@@ -15,7 +15,7 @@ import pytest
 from pydantic import BaseModel
 
 from src.services.agent_executor import AgentExecutor, _serialize_for_json
-from src.services.llm import ToolDefinition
+from src.services.llm import ToolCallRequest, ToolDefinition
 
 
 @pytest.fixture
@@ -115,6 +115,61 @@ class TestAutoAddSearchKnowledge:
 
         tool_names = [t.name for t in tools]
         assert "search_knowledge" not in tool_names
+
+
+class TestKnowledgeSearchBudget:
+    """Knowledge searches stay bounded within one chat turn."""
+
+    @pytest.mark.asyncio
+    async def test_duplicate_query_returns_short_skip_without_embedding(
+        self, executor, mock_agent
+    ):
+        mock_agent.knowledge_sources = ["halo_kb"]
+        executor._knowledge_search_budget.reserve("contact roles")
+        tool_call = ToolCallRequest(
+            id="duplicate",
+            name="search_knowledge",
+            arguments={"query": "  CONTACT   ROLES ", "limit": 10},
+        )
+
+        result = await executor._execute_knowledge_search(tool_call, mock_agent)
+
+        assert result.error is None
+        assert result.result["search_skipped"] is True
+        assert result.result["reason"] == "duplicate_query"
+        assert result.result["documents"] == []
+
+    @pytest.mark.asyncio
+    async def test_result_limit_is_clamped_before_repository_search(
+        self, executor, mock_agent
+    ):
+        mock_agent.knowledge_sources = ["halo_kb"]
+        mock_agent.organization_id = uuid4()
+        tool_call = ToolCallRequest(
+            id="oversized",
+            name="search_knowledge",
+            arguments={"query": "contact roles", "limit": 1000},
+        )
+        embedding_client = MagicMock()
+        embedding_client.embed_single = AsyncMock(return_value=[0.1, 0.2])
+        repository = MagicMock()
+        repository.search = AsyncMock(return_value=[])
+
+        with patch(
+            "src.services.embeddings.get_embedding_client",
+            new_callable=AsyncMock,
+            return_value=embedding_client,
+        ), patch(
+            "src.repositories.knowledge.KnowledgeRepository",
+            return_value=repository,
+        ):
+            result = await executor._execute_knowledge_search(tool_call, mock_agent)
+
+        assert result.error is None
+        repository.search.assert_awaited_once()
+        assert repository.search.await_args.kwargs["limit"] == 5
+        assert result.result["searches_used"] == 1
+        assert result.result["searches_remaining"] == 2
 
 
 class TestToolConflictDetection:

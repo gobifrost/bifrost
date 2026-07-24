@@ -49,6 +49,11 @@ from src.services.execution.agent_helpers import (
     resolve_agent_tools,
 )
 from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
+from src.services.knowledge.search_budget import (
+    KnowledgeSearchBudget,
+    clamp_knowledge_result_limit,
+    knowledge_search_rejection_payload,
+)
 from src.services.mcp_client import dispatch as mcp_dispatch
 from src.services.mcp_client.errors import (
     MisconfigError,
@@ -105,6 +110,7 @@ class AgentExecutor:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]):
         self._session_factory = session_factory
         self._tool_workflow_id_map: dict[str, UUID] = {}  # normalized tool name → workflow UUID
+        self._knowledge_search_budget = KnowledgeSearchBudget()
 
     @asynccontextmanager
     async def _db(self):
@@ -214,6 +220,7 @@ class AgentExecutor:
         from src.services.agent_router import AgentRouter
 
         start_time = time.time()
+        self._knowledge_search_budget.reset()
         router = AgentRouter(
             self._session_factory,
             user_id=user.user_id if user else None,
@@ -553,6 +560,13 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                             tool_name=tc.name,
                         )
                     )
+
+                if self._knowledge_search_budget.exhausted:
+                    tool_definitions = [
+                        tool
+                        for tool in tool_definitions
+                        if tool.name != "search_knowledge"
+                    ]
 
                 # Continue loop to get LLM response with tool results
 
@@ -1517,7 +1531,9 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
 
             # Get search parameters
             query = tool_call.arguments.get("query", "")
-            limit = tool_call.arguments.get("limit", 5)
+            limit = clamp_knowledge_result_limit(
+                tool_call.arguments.get("limit", 5)
+            )
 
             if not query:
                 return ToolResult(
@@ -1536,6 +1552,16 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                     tool_name=tool_call.name,
                     result=None,
                     error="No knowledge sources configured for this agent",
+                    duration_ms=int((time.time() - start_time) * 1000),
+                )
+
+            decision = self._knowledge_search_budget.reserve(query)
+            if not decision.allowed:
+                return ToolResult(
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    result=knowledge_search_rejection_payload(decision),
+                    error=None,
                     duration_ms=int((time.time() - start_time) * 1000),
                 )
 
@@ -1573,7 +1599,12 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
             return ToolResult(
                 tool_call_id=tool_call.id,
                 tool_name=tool_call.name,
-                result={"documents": search_results, "count": len(search_results)},
+                result={
+                    "documents": search_results,
+                    "count": len(search_results),
+                    "searches_used": decision.searches_used,
+                    "searches_remaining": decision.searches_remaining,
+                },
                 error=None,
                 duration_ms=duration_ms,
             )

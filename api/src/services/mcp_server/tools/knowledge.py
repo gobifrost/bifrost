@@ -11,6 +11,7 @@ from fastmcp.tools import ToolResult
 
 from src.services.mcp_server.tool_result import error_result, success_result
 from src.services.mcp_server.tools.db import get_tool_db
+from src.services.knowledge.search_budget import clamp_knowledge_result_limit
 
 # MCPContext is imported where needed to avoid circular imports
 
@@ -38,6 +39,8 @@ async def search_knowledge(
 
     if not query:
         return error_result("query is required")
+
+    limit = clamp_knowledge_result_limit(limit)
 
     # External (portal/guest) principals have no direct knowledge surface:
     # the store has no grant axis (no roles, no access_level), so it is
@@ -111,7 +114,11 @@ async def search_knowledge(
 
 # Tool metadata for registration
 TOOLS = [
-    ("search_knowledge", "Search Knowledge", "Search the Bifrost knowledge base."),
+    (
+        "search_knowledge",
+        "Search Knowledge",
+        "Search the Bifrost knowledge base. Returns at most 5 results.",
+    ),
 ]
 
 
