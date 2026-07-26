@@ -72,6 +72,8 @@ from src.routers import (
     tables_router,
     claims_router,
     solutions_router,
+    solution_builder_router,
+    solution_app_host_router,
     knowledge_sources_router,
     app_embed_secrets_router,
     applications_router,
@@ -600,6 +602,7 @@ def create_app() -> FastAPI:
     app.include_router(tables_router)
     app.include_router(claims_router)
     app.include_router(solutions_router)
+    app.include_router(solution_builder_router)
     app.include_router(knowledge_sources_router)
     app.include_router(app_embed_secrets_router)
     app.include_router(applications_router)
@@ -619,6 +622,10 @@ def create_app() -> FastAPI:
     app.include_router(mcp_oauth_callback_router)
     app.include_router(sdk_modules_router)
     app.include_router(policy_rules_router)
+    # LAST on purpose: the app host serves generated apps from the configured
+    # app origin under catch-all paths (/{solution_id}/apps/{app_id}/{path}).
+    # Registered earlier it would shadow control-plane routes.
+    app.include_router(solution_app_host_router)
 
     # Mount MCP OAuth routes at root level (required by RFC 8414/9728)
     # These must be registered BEFORE the FastMCP ASGI mount

@@ -94,6 +94,17 @@
 | DELETE | `/api/branding/logo/{logo_type}` |
 | GET | `/api/branding/logo/{logo_type}` |
 | POST | `/api/branding/logo/{logo_type}` |
+| GET | `/api/builder/solutions` |
+| POST | `/api/builder/solutions` |
+| DELETE | `/api/builder/solutions/{solution_id}` |
+| GET | `/api/builder/solutions/{solution_id}` |
+| POST | `/api/builder/solutions/{solution_id}/promotion-request` |
+| GET | `/api/builder/solutions/{solution_id}/revisions` |
+| GET | `/api/builder/solutions/{solution_id}/revisions/{revision_id}/download` |
+| GET | `/api/builder/solutions/{solution_id}/sessions` |
+| POST | `/api/builder/solutions/{solution_id}/sessions` |
+| GET | `/api/builder/solutions/{solution_id}/turns` |
+| POST | `/api/builder/solutions/{solution_id}/undo` |
 | GET | `/api/chat/conversations` |
 | POST | `/api/chat/conversations` |
 | DELETE | `/api/chat/conversations/{conversation_id}` |
@@ -493,6 +504,8 @@
 | GET | `/api/workflows/{workflow_id}/roles` |
 | POST | `/api/workflows/{workflow_id}/roles` |
 | DELETE | `/api/workflows/{workflow_id}/roles/{role_id}` |
+| DELETE | `/app-session` |
+| POST | `/app-session/token` |
 | POST | `/auth/admin/revoke-user` |
 | POST | `/auth/device/authorize` |
 | POST | `/auth/device/code` |
@@ -538,3 +551,5 @@
 | GET | `/health/detailed` |
 | GET | `/health/live` |
 | GET | `/health/ready` |
+| GET | `/launch/{code}` |
+| GET | `/{solution_id}/apps/{app_id}/{path}` |

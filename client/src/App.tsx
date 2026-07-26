@@ -48,6 +48,11 @@ const SolutionDetail = lazyWithReload(() =>
 		default: m.SolutionDetail,
 	})),
 );
+const SolutionBuilder = lazyWithReload(() =>
+	import("@/pages/SolutionBuilder").then((m) => ({
+		default: m.SolutionBuilder,
+	})),
+);
 const Users = lazyWithReload(() =>
 	import("@/pages/Users").then((m) => ({ default: m.Users })),
 );
@@ -459,6 +464,19 @@ function AppRoutes() {
 							element={
 								<ProtectedRoute requirePlatformAdmin>
 									<SolutionDetail />
+								</ProtectedRoute>
+							}
+						/>
+						{/*
+						 * Builder is owner-scoped, not admin-scoped: the server
+						 * gates it on the solutions.build capability and 404s a
+						 * non-owner, so this route must not require platform admin.
+						 */}
+						<Route
+							path="solutions/:solutionId/builder"
+							element={
+								<ProtectedRoute>
+									<SolutionBuilder />
 								</ProtectedRoute>
 							}
 						/>

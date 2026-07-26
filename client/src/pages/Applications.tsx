@@ -12,6 +12,7 @@ import {
 	Table as TableIcon,
 } from "lucide-react";
 import { AppInfoDialog } from "@/components/app-builder/AppInfoDialog";
+import { NewWithAIButton } from "@/components/builder/NewWithAIButton";
 import {
 	ApplicationListSurface,
 	type ApplicationListItem,
@@ -137,6 +138,7 @@ export function Applications() {
 					</p>
 				</div>
 				<div className="flex flex-wrap gap-2">
+					<NewWithAIButton label="Build an app" />
 					{canManageApps && (
 						<ToggleGroup
 							type="single"

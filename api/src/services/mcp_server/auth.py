@@ -599,13 +599,22 @@ class BifrostAuthProvider:
         Returns:
             AccessToken if valid, None otherwise
         """
-        from src.core.security import decode_token
+        from src.core.security import decode_token, is_actor_token
 
         logger.info(f"MCP auth: verify_token called with token prefix: {token[:20]}...")
 
         payload = decode_token(token, expected_type="access")
         if payload is None:
             logger.info("MCP auth: decode_token returned None (invalid/expired JWT)")
+            return None
+
+        # Default-deny non-user actors: MCP builds its own principal claims from
+        # the payload, so a solution_app token would act as the launching user.
+        if is_actor_token(payload):
+            logger.warning(
+                "MCP auth: rejected actor token (actor_type=%s)",
+                payload.get("actor_type"),
+            )
             return None
 
         logger.info(f"MCP auth: Token decoded for user {payload.get('email')}, checking access...")

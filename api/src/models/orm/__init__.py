@@ -54,6 +54,7 @@ from src.models.orm.solution_builder import (
     SolutionBuilderTurn,
     SolutionSourceRevision,
 )
+from src.models.orm.solution_build_jobs import SolutionBuildJob
 from src.models.orm.custom_claims import CustomClaim
 from src.models.orm.tables import Document, Table
 from src.models.orm.users import Role, User, UserRole
@@ -79,6 +80,7 @@ __all__ = [
     "SolutionExportJob",
     "PendingCaptureORM",
     # Private Solution builder
+    "SolutionBuildJob",
     "SolutionBuilderProject",
     "SolutionBuilderSession",
     "SolutionBuilderTurn",
