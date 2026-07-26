@@ -60,6 +60,25 @@ class AgentTurnOutcome:
     revision_created: bool
 
 
+_SUMMARY_MAX_CHARS = 120
+
+
+def _revision_summary(user_message: str) -> str:
+    """One-line label for the revision a turn produces.
+
+    The revision list is how a user finds the change they want to undo, so a
+    revision with no summary is unusable there. The request is the most
+    recognizable label available at write time — the model's own account of
+    what it did lands in the assistant message, not here.
+    """
+    first_line = user_message.strip().splitlines()[0].strip() if user_message.strip() else ""
+    if not first_line:
+        return "builder turn"
+    if len(first_line) <= _SUMMARY_MAX_CHARS:
+        return first_line
+    return first_line[: _SUMMARY_MAX_CHARS - 1].rstrip() + "…"
+
+
 class BuilderAgentTurnService:
     """Runs one model-driven builder turn end to end."""
 
@@ -115,6 +134,7 @@ class BuilderAgentTurnService:
             session_id=session_id,
             requested_by=requested_by,
             mutate=mutate,
+            summary=_revision_summary(user_message),
         )
         duration_ms = int((time.monotonic() - started) * 1000)
 

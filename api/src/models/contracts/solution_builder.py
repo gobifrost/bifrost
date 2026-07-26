@@ -166,3 +166,24 @@ class BuilderTurnsList(BaseModel):
 
     turns: list[BuilderTurnDTO]
     total: int
+
+
+class RunTurnRequest(BaseModel):
+    """Ask the builder agent to change the workspace."""
+
+    session_id: UUID
+    message: str = Field(min_length=1, max_length=32_000)
+
+
+class RunTurnResponse(BaseModel):
+    """What one agent turn produced.
+
+    ``revision_created`` is False for a turn the model answered without
+    editing anything (a question, or an edit that produced identical bytes);
+    the preview is unchanged in that case.
+    """
+
+    turn: BuilderTurnDTO
+    final_text: str
+    tool_call_count: int
+    revision_created: bool

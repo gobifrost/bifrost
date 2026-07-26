@@ -582,3 +582,29 @@ async def _latest_turn(db: AsyncSession, session_id: UUID) -> SolutionBuilderTur
     turn = rows.scalars().first()
     assert turn is not None
     return turn
+
+
+class TestRevisionSummary:
+    """A revision with no summary is unusable in the revision list, which is
+    where a user finds the change they want to undo."""
+
+    def test_uses_the_request_as_the_label(self) -> None:
+        from src.services.builder.agent_turns import _revision_summary
+
+        assert _revision_summary("Add a README") == "Add a README"
+
+    def test_takes_only_the_first_line(self) -> None:
+        from src.services.builder.agent_turns import _revision_summary
+
+        assert _revision_summary("Add a table\n\nwith fields x, y") == "Add a table"
+
+    def test_truncates_a_long_request(self) -> None:
+        from src.services.builder.agent_turns import _revision_summary
+
+        out = _revision_summary("x" * 500)
+        assert len(out) <= 120 and out.endswith("…")
+
+    def test_blank_request_still_gets_a_label(self) -> None:
+        from src.services.builder.agent_turns import _revision_summary
+
+        assert _revision_summary("   \n  ") == "builder turn"

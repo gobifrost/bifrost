@@ -104,6 +104,9 @@ services:
     environment:
       BIFROST_ENVIRONMENT: development
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
+      # Builder app host: generated Solution apps need a browser origin distinct
+      # from the control plane. Same API process, different port is sufficient.
+      BIFROST_APP_ORIGIN: ${BIFROST_APP_ORIGIN:-}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_REDIS_URL: redis://redis:6379/0
@@ -134,6 +137,9 @@ services:
       BIFROST_ENVIRONMENT: development
       BIFROST_DEBUG: "true"
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
+      # Builder app host: generated Solution apps need a browser origin distinct
+      # from the control plane. Same API process, different port is sufficient.
+      BIFROST_APP_ORIGIN: ${BIFROST_APP_ORIGIN:-}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_debug@rabbitmq:5672/
@@ -195,6 +201,9 @@ services:
     environment:
       BIFROST_ENVIRONMENT: development
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
+      # Builder app host: generated Solution apps need a browser origin distinct
+      # from the control plane. Same API process, different port is sufficient.
+      BIFROST_APP_ORIGIN: ${BIFROST_APP_ORIGIN:-}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_debug@rabbitmq:5672/
@@ -240,6 +249,9 @@ services:
     environment:
       BIFROST_ENVIRONMENT: development
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
+      # Builder app host: generated Solution apps need a browser origin distinct
+      # from the control plane. Same API process, different port is sufficient.
+      BIFROST_APP_ORIGIN: ${BIFROST_APP_ORIGIN:-}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_debug@rabbitmq:5672/

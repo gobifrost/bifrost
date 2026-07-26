@@ -32,12 +32,16 @@ from src.models.contracts.solution_builder import (
     PrivateSolutionCreate,
     PrivateSolutionDTO,
     PrivateSolutionsList,
+    RunTurnRequest,
+    RunTurnResponse,
     SourceRevisionsList,
     UndoRequest,
 )
 from src.models.orm.solution_builder import SolutionBuilderProject
 from src.models.orm.solutions import Solution
 from src.models.orm.users import Role, UserRole
+from src.services.builder.agent_turns import BuilderAgentTurnService
+from src.services.builder.model_gateway import BuilderModelUnavailable
 from src.services.builder.private_solutions import (
     PrivateSolutionSlugTaken,
     create_builder_session,
@@ -303,6 +307,53 @@ async def undo_to_revision(
         ) from exc
     await ctx.db.commit()
     return BuilderTurnDTO.model_validate(turn)
+
+
+@router.post(
+    "/{solution_id}/turns",
+    response_model=RunTurnResponse,
+    summary="Run one builder agent turn against this Solution (owner only)",
+)
+async def run_turn(
+    solution_id: UUID, body: RunTurnRequest, ctx: BuilderContext
+) -> RunTurnResponse:
+    """Send a message to the builder agent and apply whatever it changes.
+
+    The turn holds the per-Solution write lock for its duration, so a second
+    concurrent turn is refused with 409 rather than queued. A model or tool
+    failure still records a failed turn row and leaves the current revision
+    pointer untouched.
+    """
+    await _load_or_404(ctx, solution_id, SolutionAction.EDIT)
+    service = BuilderAgentTurnService(ctx.db)
+    try:
+        outcome = await service.run_agent_turn(
+            solution_id,
+            session_id=body.session_id,
+            requested_by=ctx.user.user_id,
+            user_message=body.message,
+        )
+    except BuilderTurnConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Another turn or deploy is already writing this Solution",
+        ) from exc
+    except BuilderProjectMissing as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    except BuilderModelUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"The builder model is not available: {exc}",
+        ) from exc
+    await ctx.db.commit()
+    return RunTurnResponse(
+        turn=BuilderTurnDTO.model_validate(outcome.turn),
+        final_text=outcome.final_text,
+        tool_call_count=outcome.tool_call_count,
+        revision_created=outcome.revision_created,
+    )
 
 
 @router.get(
