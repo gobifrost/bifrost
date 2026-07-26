@@ -327,6 +327,16 @@ class Settings(BaseSettings):
         description="Public URL for the Bifrost platform (used for MCP OAuth, workflow URLs, etc.)"
     )
 
+    app_origin: str | None = Field(
+        default=None,
+        description=(
+            "Origin serving builder-generated Solution apps (e.g. https://apps.example.com "
+            "or a second port on the platform host). A distinct browser origin is what keeps "
+            "a generated app out of the control plane's storage, DOM, and tokens; when unset, "
+            "the builder app host is unavailable rather than falling back to the control origin."
+        )
+    )
+
     # ==========================================================================
     # Anthropic API (for Claude Agent SDK)
     # ==========================================================================

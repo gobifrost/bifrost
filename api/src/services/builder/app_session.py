@@ -25,7 +25,7 @@ from uuid import UUID, uuid4
 
 import redis.asyncio as redis
 
-from src.core.security import create_access_token
+from src.core.security import ACTOR_TYPE_SOLUTION_APP, create_access_token
 
 LAUNCH_CODE_TTL_SECONDS = 60
 DEFAULT_SESSION_TTL_SECONDS = 8 * 60 * 60
@@ -36,10 +36,11 @@ _SESSION_KEY_PREFIX = "bifrost:builder:appsession:"
 # Marker claim that routes a token to solution-app validation instead of
 # normal-user validation. Downstream auth builds a UserPrincipal from any
 # access token and defaults is_superuser/embed to False when absent, so a
-# solution_app token is inert-but-indistinguishable without this claim. The
-# runtime middleware keys off actor_type; it is the only thing that makes
-# these tokens recognizable, so it must always be present.
-ACTOR_TYPE = "solution_app"
+# solution_app token is inert-but-indistinguishable without this claim. Every
+# user-auth path default-denies any token carrying actor_type, so this must
+# always be present. Defined in src.core.security (the shared decode layer) so
+# auth can reject on it without importing this module.
+ACTOR_TYPE = ACTOR_TYPE_SOLUTION_APP
 
 
 def launch_key(code: str) -> str:

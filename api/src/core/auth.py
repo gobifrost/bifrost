@@ -15,7 +15,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from src.core.db_deps import DbSession
 from src.core.principal import UserPrincipal
-from src.core.security import decode_token
+from src.core.security import decode_token, is_actor_token
 from shared.role_cache import get_user_roles
 
 if TYPE_CHECKING:
@@ -126,6 +126,17 @@ async def get_current_user_optional(
     payload = decode_token(token, expected_type=token_type)
 
     if payload is None:
+        return None
+
+    # Default-deny non-user actors. A solution_app token reuses the launching
+    # user's sub/org_id/email, so without this it would authenticate as that
+    # user on every route. Actor-specific routes must not depend on this
+    # function; they read the claim themselves.
+    if is_actor_token(payload):
+        logger.warning(
+            "Rejected actor token (actor_type=%s) on user auth path",
+            payload.get("actor_type"),
+        )
         return None
 
     # Extract user ID from token
@@ -471,6 +482,14 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
     # Decode and validate token - must be an access token
     payload = decode_token(token, expected_type="access")
     if payload is None:
+        return None
+
+    # Default-deny non-user actors (see get_current_user_optional).
+    if is_actor_token(payload):
+        logger.warning(
+            "Rejected actor token (actor_type=%s) on WebSocket auth path",
+            payload.get("actor_type"),
+        )
         return None
 
     user_id_str = payload.get("sub")

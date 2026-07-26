@@ -52,6 +52,11 @@ from src.models.orm.tables import Table
 from src.models.orm.workflow_roles import WorkflowRole
 from src.models.orm.workflows import Workflow
 from src.services.solution_deploy_preflight import preflight_workflows
+from src.services.solutions.private_deploy_guard import (
+    PrivateDeployPolicy,
+    PrivateDeployViolation,
+    is_private_install,
+)
 from src.services.solutions.storage import SolutionStorage
 from src.services.sync_ops import Upsert
 
@@ -251,6 +256,13 @@ class DeployResult:
     # global, empty roles (grant nothing until assigned). Surfaced so the
     # operator sees them — and so a typo'd manifest role name is visible.
     roles_created: list[str] = field(default_factory=list)
+    # Role names the bundle requested that do NOT exist in the target env and
+    # were deliberately NOT created because the install is private (spec:
+    # "requested role names remain portable declarations in source"). Surfaced
+    # so the promotion review can show the administrator exactly which role
+    # mappings they are being asked to materialize. Always empty for a shared
+    # Solution — there, unknown names are auto-created into ``roles_created``.
+    roles_unresolved: list[str] = field(default_factory=list)
     finalize_s3: Callable[[], Awaitable[None]] = field(
         default=_noop_finalize, compare=False, repr=False
     )
@@ -314,6 +326,11 @@ class SolutionDeployer:
         # Accumulates role names auto-created during this deploy (see
         # _resolve_roles). Surfaced on DeployResult.roles_created.
         self._created_roles: set[str] = set()
+        # Role names requested by the bundle but left unresolved because the
+        # install is private. Surfaced on DeployResult.roles_unresolved.
+        self._unresolved_roles: set[str] = set()
+        # Resolved once per deploy() call from the install's visibility.
+        self._policy = PrivateDeployPolicy(private=False)
 
     async def deploy(
         self,
@@ -343,6 +360,14 @@ class SolutionDeployer:
         """
         solution = bundle.solution
         sid = solution.id
+
+        # ── Private-install suppression policy (security invariant 9) ────────
+        # Resolved ONCE, from the persisted visibility, before any write. A
+        # private Solution's source is authored by a builder user, so its deploy
+        # must produce no shared control-plane side effects; every suppression
+        # below consults this policy. Shared installs get the all-False policy
+        # and behave exactly as before.
+        self._policy = PrivateDeployPolicy(private=await is_private_install(self.db, sid))
 
         # Source portability artifact: the exact workspace shape export/install
         # consume. Build it from the author-time bundle before per-install UUID
@@ -404,14 +429,23 @@ class SolutionDeployer:
         builds = await self._upsert_apps(solution, rb.apps)
         await self._upsert_forms(solution, rb.forms)
         await self._upsert_agents(solution, rb.agents)
-        await self._upsert_events(solution, rb.events)
+        # A private install activates no shared runtime triggers: no EventSource,
+        # no ScheduleSource/WebhookSource, no subscriptions. The declarations stay
+        # in source and are materialized only by an administrator-reviewed
+        # promotion.
+        if not self._policy.suppress_event_activation:
+            await self._upsert_events(solution, rb.events)
         await self._upsert_config_schemas(solution, rb.config_schemas)
         # Pre-create an empty integration shell for each declared connection that
         # doesn't yet exist globally (never clobbering a configured one). Uses the
         # ORIGINAL bundle: connection declarations key on integration NAME, which
         # carries no per-install id and is therefore not part of the remap.
-        shells_created = await self._upsert_integration_shells(
-            bundle.connection_schemas
+        # Suppressed while private — a global Integration/OAuthProvider row is a
+        # shared control-plane resource, so the requirement stays unresolved.
+        shells_created = (
+            0
+            if self._policy.suppress_connection_resolution
+            else await self._upsert_integration_shells(bundle.connection_schemas)
         )
         # Persist the connection DECLARATIONS on the install (keyed by the
         # install's id + integration name) so /setup surfaces a connection item
@@ -503,6 +537,14 @@ class SolutionDeployer:
                     ),
                 )
 
+        # ── Defense in depth: re-check the private post-condition ────────────
+        # The suppressions above are the primary control; this proves the
+        # outcome. If a future edit reintroduces a shared write on the private
+        # path, the deploy fails here (pre-commit, so nothing durable lands)
+        # rather than silently escalating a builder user.
+        if self._policy.private:
+            await self._assert_no_shared_side_effects(rb)
+
         return DeployResult(
             workflows_upserted=len(rb.workflows),
             workflows_deleted=wf_deleted,
@@ -520,8 +562,62 @@ class SolutionDeployer:
             claims_deleted=claim_deleted,
             integrations_shell_created=shells_created,
             roles_created=sorted(self._created_roles),
+            roles_unresolved=sorted(self._unresolved_roles),
             finalize_s3=_finalize_s3,
         )
+
+    async def _assert_no_shared_side_effects(self, rb: "SolutionBundle") -> None:
+        """Post-condition for a private deploy: no shared control-plane row.
+
+        Counts the three shared artifacts a deploy can produce — auto-created
+        ``Role`` rows, entity↔role junction rows for the deployed entities, and
+        ``EventSource`` rows for this install — and raises
+        :class:`PrivateDeployViolation` if any is non-zero. Cheap (three counted
+        selects over ids already in hand) and runs before the caller's commit.
+        """
+        from sqlalchemy import func
+
+        sid = rb.solution.id
+        if self._created_roles:
+            raise PrivateDeployViolation(
+                f"private solution {sid} deploy created roles: "
+                f"{sorted(self._created_roles)}"
+            )
+
+        junctions: list[tuple[type, str, list[dict[str, Any]]]] = [
+            (WorkflowRole, "workflow_id", rb.workflows),
+            (AppRole, "app_id", rb.apps),
+            (FormRole, "form_id", rb.forms),
+            (AgentRole, "agent_id", rb.agents),
+        ]
+        for junction, fk_col, entries in junctions:
+            ids = [UUID(str(e["id"])) for e in entries]
+            if not ids:
+                continue
+            bound = (
+                await self.db.execute(
+                    select(func.count())
+                    .select_from(junction)
+                    .where(getattr(junction, fk_col).in_(ids))
+                )
+            ).scalar_one()
+            if bound:
+                raise PrivateDeployViolation(
+                    f"private solution {sid} deploy wrote {bound} "
+                    f"{junction.__name__} row(s)"
+                )
+
+        sources = (
+            await self.db.execute(
+                select(func.count())
+                .select_from(EventSource)
+                .where(EventSource.solution_id == sid)
+            )
+        ).scalar_one()
+        if sources:
+            raise PrivateDeployViolation(
+                f"private solution {sid} deploy left {sources} EventSource row(s)"
+            )
 
     @staticmethod
     def _apply_readme(solution: Solution, bundle: Any) -> None:
@@ -672,6 +768,10 @@ class SolutionDeployer:
         deploy — created names accumulate on ``self._created_roles`` and surface
         on the result. An empty role grants nobody anything until assigned, so
         this is safe and removes the "create every role by hand first" papercut.
+
+        On a PRIVATE install nothing is created: existing names still map (so a
+        promotion review can see what already resolves), and names with no role
+        in the target env accumulate on ``self._unresolved_roles`` instead.
         """
         from src.services.manifest_import import _resolve_role_names
 
@@ -681,6 +781,8 @@ class SolutionDeployer:
         # authoritative). Only a truly ABSENT role_names defers to `roles`.
         role_names = entry.get("role_names")
         if role_names is not None:
+            if self._policy.suppress_role_materialization:
+                return await self._map_existing_roles(list(role_names))
             return [
                 UUID(r)
                 for r in await _resolve_role_names(
@@ -691,6 +793,33 @@ class SolutionDeployer:
                 )
             ]
         return [UUID(str(r)) for r in (entry.get("roles") or [])]
+
+    async def _map_existing_roles(self, names: list[str]) -> list[UUID]:
+        """Map role names to EXISTING roles only, recording the misses.
+
+        The private-deploy counterpart to ``_resolve_role_names(create_missing=
+        True)``: it never inserts a Role row. Names with no match are collected on
+        ``self._unresolved_roles`` so promotion can show the administrator which
+        role mappings the source is asking for.
+        """
+        from src.models.orm.users import Role
+
+        if not names:
+            return []
+        rows = (
+            await self.db.execute(
+                select(Role.id, Role.name).where(Role.name.in_(set(names)))
+            )
+        ).all()
+        by_name: dict[str, UUID] = {row[1]: row[0] for row in rows}
+        resolved: list[UUID] = []
+        for name in names:
+            role_id = by_name.get(name)
+            if role_id is None:
+                self._unresolved_roles.add(name)
+            else:
+                resolved.append(role_id)
+        return resolved
 
     async def _sync_entity_roles(
         self,
@@ -706,7 +835,13 @@ class SolutionDeployer:
         role-mutation endpoints are read-only for managed entities), so this must
         delete-all + insert to reflect adds AND removes across redeploys
         (Codex P1-d). Mirrors the canonical FormRole/AppRole write pattern.
+
+        A private install writes NO junction rows: the delete still runs (a
+        redeploy that flips an install private must clear stale grants), but
+        nothing is inserted — the private-owner gate supplies runtime access.
         """
+        if self._policy.suppress_entity_role_junctions:
+            role_ids = []
         await self.db.execute(
             delete(junction).where(getattr(junction, fk_col) == entity_id)
         )
@@ -755,9 +890,14 @@ class SolutionDeployer:
         ``connection_id`` refers to an env-scoped MCPConnection (not a solution
         entity), so the ids are used verbatim (no remap). ``granted_by`` is NULL
         for deploy-managed grants.
+
+        An MCP connection grant is a shared connection resource, so a private
+        install grants none — the delete still runs, nothing is inserted.
         """
         from src.models.orm.external_mcp import AgentMCPConnection
 
+        if self._policy.suppress_connection_resolution:
+            connection_ids = []
         await self.db.execute(
             delete(AgentMCPConnection).where(
                 AgentMCPConnection.agent_id == agent_id
@@ -849,6 +989,11 @@ class SolutionDeployer:
                 "organization_id": solution.organization_id,
                 "solution_id": sid,
             }
+            if self._policy.suppress_event_activation:
+                # Runtime-blocked while private: generated Python must not run
+                # through the trusted workflow pool (spec, "Generated Python").
+                # is_active is the persisted flag every dispatch path checks.
+                values["is_active"] = False
             # Safe now: the id is either absent or already this install's.
             await Upsert(
                 model=Workflow, id=wf_id, values=values, match_on="id"
@@ -1387,6 +1532,10 @@ class SolutionDeployer:
                 "organization_id": solution.organization_id,
                 "solution_id": sid,
             }
+            if self._policy.suppress_event_activation:
+                # Runtime-blocked while private — an autonomous agent must not
+                # become dispatchable off a builder-authored bundle.
+                agent_values["is_active"] = False
             if magent.get("access_level") is not None:
                 from src.models.enums import AgentAccessLevel
 
@@ -1940,9 +2089,17 @@ class SolutionDeployer:
         # schedule/webhook rows AND subscriptions cascade via the EventSource FK
         # (ondelete=CASCADE), so sweeping the source row is sufficient — no
         # separate subscription sweep needed. Count not surfaced.
-        _ = await self._reconcile_one(
-            EventSource, sid, {UUID(e["id"]) for e in bundle.events}
+        #
+        # A private install deployed NO event sources (activation is suppressed),
+        # so its keep-set is empty: any source that survives from an earlier
+        # shared deploy of this install is swept here, which is what makes
+        # "private has no active triggers" true after a visibility flip too.
+        keep_events = (
+            set()
+            if self._policy.suppress_event_activation
+            else {UUID(e["id"]) for e in bundle.events}
         )
+        _ = await self._reconcile_one(EventSource, sid, keep_events)
         return (
             wf_deleted, tbl_deleted, len(stale_app_dist), form_deleted, agent_deleted,
             claim_deleted,
