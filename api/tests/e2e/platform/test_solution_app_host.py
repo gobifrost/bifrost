@@ -82,10 +82,13 @@ def make_app(db_session, builder_alice):
     from src.models.orm.applications import Application
 
     async def _make(solution_id: str, organization_id) -> str:
+        suffix = uuid.uuid4().hex[:8]
         app = Application(
-            name=f"apphost-{uuid.uuid4().hex[:8]}",
+            name=f"apphost-{suffix}",
+            slug=f"apphost-{suffix}",
             description="app host e2e",
-            source_directory=f"apps/apphost-{uuid.uuid4().hex[:8]}",
+            repo_path=f"apps/apphost-{suffix}",
+            app_model="standalone_v2",
             organization_id=organization_id,
             solution_id=uuid.UUID(solution_id),
         )

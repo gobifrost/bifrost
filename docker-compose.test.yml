@@ -146,6 +146,11 @@ services:
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
+      # Builder app host. Generated Solution apps must be served from a browser
+      # origin distinct from the control plane; without this the app host is
+      # unavailable (503) by design, so the e2e suite could not exercise it.
+      # Same API process, different origin — that is all isolation requires.
+      BIFROST_APP_ORIGIN: http://localhost:8100
       # S3-compatible object storage
       BIFROST_S3_BUCKET: bifrost-test
       BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
@@ -214,6 +219,11 @@ services:
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
+      # Builder app host. Generated Solution apps must be served from a browser
+      # origin distinct from the control plane; without this the app host is
+      # unavailable (503) by design, so the e2e suite could not exercise it.
+      # Same API process, different origin — that is all isolation requires.
+      BIFROST_APP_ORIGIN: http://localhost:8100
       # S3-compatible object storage
       BIFROST_S3_BUCKET: bifrost-test
       BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
@@ -268,6 +278,11 @@ services:
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
+      # Builder app host. Generated Solution apps must be served from a browser
+      # origin distinct from the control plane; without this the app host is
+      # unavailable (503) by design, so the e2e suite could not exercise it.
+      # Same API process, different origin — that is all isolation requires.
+      BIFROST_APP_ORIGIN: http://localhost:8100
       # S3-compatible object storage
       BIFROST_S3_BUCKET: bifrost-test
       BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
