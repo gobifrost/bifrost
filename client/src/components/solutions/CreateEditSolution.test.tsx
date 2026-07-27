@@ -83,6 +83,11 @@ describe("CreateEditSolution — edit mode", () => {
 
 		const dialog = await screen.findByTestId("solution-dialog");
 		expect(within(dialog).getByText("Organization")).toBeInTheDocument();
+		expect(
+			within(dialog).getByText(
+				/allow shared module imports and read fallback to loose/i,
+			),
+		).toBeInTheDocument();
 		// The old manual toggle is gone — connection is derived from the URL.
 		expect(within(dialog).queryByLabelText(/git connected/i)).toBeNull();
 		expect(within(dialog).getByTestId("git-section")).toBeInTheDocument();

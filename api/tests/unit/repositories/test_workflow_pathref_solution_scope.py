@@ -143,9 +143,9 @@ class TestPathRefSolutionScope:
         assert got_a is not None and got_a.id == wf_a.id
         assert got_b is not None and got_b.id == wf_b.id
 
-    async def test_install_scope_falls_back_to_repo_when_own_absent(self, db_session) -> None:
-        """An install whose bundle does NOT ship a given path resolves the global
-        _repo/ workflow at that path (the app referenced a shared-library path)."""
+    async def test_install_scope_falls_back_to_repo_when_allowed(self, db_session) -> None:
+        """An open install whose bundle does not ship a path may resolve the
+        loose global workflow at that path."""
         db = db_session
         org = (await _add_org(db)).id
         sol = await _add_solution(db, org)
@@ -157,8 +157,35 @@ class TestPathRefSolutionScope:
         await _add_workflow(db, org_id=org, solution_id=sol.id, path="workflows/own.py")
 
         repo = WorkflowRepository(db, org_id=org, is_superuser=True)
-        got = await repo.resolve("workflows/shared.py::main", solution_scope=sol.id)
+        got = await repo.resolve(
+            "workflows/shared.py::main",
+            solution_scope=sol.id,
+            allow_shared_fallback=True,
+        )
         assert got is not None and got.id == repo_wf.id
+
+    async def test_install_scope_blocks_repo_when_shared_fallback_disabled(
+        self, db_session
+    ) -> None:
+        """A sealed install cannot resolve a loose workflow at a missing path."""
+        db = db_session
+        org = (await _add_org(db)).id
+        sol = await _add_solution(db, org)
+        await _add_workflow(
+            db,
+            org_id=None,
+            solution_id=None,
+            path="workflows/shared.py",
+            name="repo",
+        )
+
+        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        got = await repo.resolve(
+            "workflows/shared.py::main",
+            solution_scope=sol.id,
+            allow_shared_fallback=False,
+        )
+        assert got is None
 
     async def test_install_scope_prefers_own_over_repo_on_shared_path(self, db_session) -> None:
         """When a _repo/ row and the caller's OWN solution row share a path, the
@@ -256,9 +283,10 @@ class TestBareNameSolutionScope:
         assert got is not None
         assert got.id == own.id
 
-    async def test_install_scope_falls_back_to_repo_name_when_own_absent(self, db_session) -> None:
-        """A solution caller can still execute a shared _repo workflow by name
-        when its own install does not ship that workflow."""
+    async def test_install_scope_falls_back_to_repo_name_when_allowed(
+        self, db_session
+    ) -> None:
+        """An open Solution caller can execute a loose workflow by name."""
         db = db_session
         org = (await _add_org(db)).id
         sol = await _add_solution(db, org)
@@ -278,9 +306,36 @@ class TestBareNameSolutionScope:
         )
 
         repo = WorkflowRepository(db, org_id=org, is_superuser=True)
-        got = await repo.resolve("shared", solution_scope=sol.id)
+        got = await repo.resolve(
+            "shared",
+            solution_scope=sol.id,
+            allow_shared_fallback=True,
+        )
         assert got is not None
         assert got.id == repo_wf.id
+
+    async def test_install_scope_blocks_repo_name_when_shared_fallback_disabled(
+        self, db_session
+    ) -> None:
+        """A sealed Solution caller cannot execute a loose workflow by name."""
+        db = db_session
+        org = (await _add_org(db)).id
+        sol = await _add_solution(db, org)
+        await _add_workflow(
+            db,
+            org_id=org,
+            solution_id=None,
+            path="workflows/repo.py",
+            name="shared",
+        )
+
+        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        got = await repo.resolve(
+            "shared",
+            solution_scope=sol.id,
+            allow_shared_fallback=False,
+        )
+        assert got is None
 
     async def test_two_solution_installs_can_share_name_and_resolve_own(self, db_session) -> None:
         """Two installs in the same org can both ship a workflow named 'hello';
@@ -345,4 +400,69 @@ class TestBareNameSolutionScope:
 
         repo = WorkflowRepository(db, org_id=org, is_superuser=True)
         got = await repo.resolve("hello", solution_scope=sol_a.id)
+        assert got is None
+
+
+@pytest.mark.e2e
+class TestUuidSolutionScope:
+    async def test_scoped_uuid_resolves_own_workflow(self, db_session) -> None:
+        db = db_session
+        org = (await _add_org(db)).id
+        sol = await _add_solution(db, org)
+        own = await _add_workflow(
+            db,
+            org_id=org,
+            solution_id=sol.id,
+            path="workflows/own.py",
+        )
+
+        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        got = await repo.resolve(str(own.id), solution_scope=sol.id)
+        assert got is not None and got.id == own.id
+
+    async def test_scoped_uuid_gates_loose_workflow_fallback(self, db_session) -> None:
+        db = db_session
+        org = (await _add_org(db)).id
+        sol = await _add_solution(db, org)
+        shared = await _add_workflow(
+            db,
+            org_id=None,
+            solution_id=None,
+            path="workflows/shared.py",
+        )
+
+        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        denied = await repo.resolve(
+            str(shared.id),
+            solution_scope=sol.id,
+            allow_shared_fallback=False,
+        )
+        allowed = await repo.resolve(
+            str(shared.id),
+            solution_scope=sol.id,
+            allow_shared_fallback=True,
+        )
+        assert denied is None
+        assert allowed is not None and allowed.id == shared.id
+
+    async def test_scoped_uuid_never_resolves_sibling_solution(
+        self, db_session
+    ) -> None:
+        db = db_session
+        org = (await _add_org(db)).id
+        sol_a = await _add_solution(db, org)
+        sol_b = await _add_solution(db, org)
+        sibling = await _add_workflow(
+            db,
+            org_id=org,
+            solution_id=sol_b.id,
+            path="workflows/sibling.py",
+        )
+
+        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        got = await repo.resolve(
+            str(sibling.id),
+            solution_scope=sol_a.id,
+            allow_shared_fallback=True,
+        )
         assert got is None

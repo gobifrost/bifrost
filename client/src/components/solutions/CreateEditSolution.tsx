@@ -1545,7 +1545,8 @@ function EditBody({
 					<div className="space-y-0.5">
 						<Label htmlFor="edit-global-repo">Global repo access</Label>
 						<p className="text-xs text-muted-foreground">
-							Allow this install to read the global repository.
+							Allow shared module imports and read fallback to loose
+							org/global workflows, tables, and files.
 						</p>
 					</div>
 					<Switch

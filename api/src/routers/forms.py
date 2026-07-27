@@ -875,8 +875,18 @@ async def execute_form(
     # form's org. Caller identity was already used for AUTHORIZATION above.
     anchor_org_id = form.organization_id if form.organization_id is not None else ctx.org_id
 
+    from src.services.solution_scope import solution_allows_global
+
     _wf_repo = WorkflowRepository(db, org_id=anchor_org_id, is_superuser=True)
-    _resolved_wf = await _wf_repo.resolve(form.workflow_id, solution_scope=form.solution_id)
+    allow_shared_workflow = (
+        form.solution_id is None
+        or await solution_allows_global(db, form.solution_id)
+    )
+    _resolved_wf = await _wf_repo.resolve(
+        form.workflow_id,
+        solution_scope=form.solution_id,
+        allow_shared_fallback=allow_shared_workflow,
+    )
     if _resolved_wf is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -62,7 +62,10 @@ from src.models.orm.applications import Application
 from src.models.orm.agents import Agent, AgentTool
 from src.models.orm.users import Role
 from src.services.workflow_validation import _extract_relative_path
-from src.services.solution_scope import derive_execution_solution_scope
+from src.services.solution_scope import (
+    derive_execution_solution_scope,
+    solution_allows_global,
+)
 from src.services.solutions.guard import (
     assert_entity_id_not_solution_managed,
     assert_not_solution_managed,
@@ -765,12 +768,18 @@ async def execute_workflow(
         form_id=request.form_id,
         app_id=request.app_id,
     )
+    allow_shared_workflow = (
+        solution_scope is None
+        or await solution_allows_global(db, solution_scope)
+    )
 
     # Look up workflow metadata for type checking (needed for data provider handling)
     workflow = None
     if request.workflow_id:
         workflow = await workflow_repo.resolve(
-            request.workflow_id, solution_scope=solution_scope
+            request.workflow_id,
+            solution_scope=solution_scope,
+            allow_shared_fallback=allow_shared_workflow,
         )
         if not workflow:
             # A resolution miss must identify its scope inputs: a dropped or

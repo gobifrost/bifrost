@@ -34,8 +34,11 @@ class SolutionDescriptor(BaseModel):
     descriptors that still carry a ``scope:`` key load fine — it is ignored
     (``extra="ignore"``).
 
-    ``global_repo_access`` is unrelated to install scope: it controls whether
-    the Solution's code may import shared modules from ``_repo/`` (§3.3/§3.5).
+    ``global_repo_access`` is unrelated to install scope. It controls shared
+    fallback for Solution-scope-capable resources: ``_repo/`` module imports,
+    loose org/global workflows, tables, and files. Config values, integrations,
+    OAuth, and knowledge are shared instance resources without a Solution-owned
+    value tier, so this flag does not govern them.
     """
 
     # Ignore unknown/legacy keys (e.g. a pre-standard ``scope:``) so old

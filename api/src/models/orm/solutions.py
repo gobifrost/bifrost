@@ -79,8 +79,10 @@ class Solution(Base):
         index=True,
     )
 
-    # Whether this Solution's code may import shared modules from _repo/ (§3.5).
-    # Orthogonal to scope. Off by default — Solutions are self-contained worlds.
+    # Whether this Solution may fall back to shared _repo modules and loose
+    # org/global workflows, tables, and files. Orthogonal to install scope and
+    # off by default. Configs/integrations/OAuth/knowledge are shared instance
+    # resources and are not governed by this flag.
     global_repo_access: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
     )

@@ -63,17 +63,24 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
     # ==========================================================================
 
     async def resolve(
-        self, identifier: str, *, solution_scope: UUID | None = None
+        self,
+        identifier: str,
+        *,
+        solution_scope: UUID | None = None,
+        allow_shared_fallback: bool = False,
     ) -> Workflow | None:
         """Resolve a workflow by UUID, path::function_name, or scoped name.
 
         Resolution order:
-        1. If identifier parses as a UUID, look up by id.
+        1. If identifier parses as a UUID, look up by id. A Solution-scoped
+           caller may resolve its own workflow, or a loose org/global workflow
+           only when ``allow_shared_fallback`` is true. It never resolves a
+           sibling Solution's workflow.
         2. If identifier contains '::', treat as path::function_name lookup.
         3. Otherwise, treat it as a workflow name. With ``solution_scope``, look
-           in the caller's own install first, then fall back to the normal
-           non-solution org/global cascade. Without ``solution_scope``, use only
-           the non-solution cascade.
+           in the caller's own install first. Fall back to the normal
+           non-solution org/global cascade only when ``allow_shared_fallback``
+           is true. Without ``solution_scope``, use the non-solution cascade.
 
         Args:
             identifier: A workflow UUID string or "path::function_name" ref
@@ -81,27 +88,50 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
                 a Solution app/form. A v2 app's ``path::fn`` ref carries no
                 install id (it can't know the per-install uuid5), so path-ref
                 resolution disambiguates to THIS install's own workflow first,
-                falling back to the global ``_repo/`` row. Without it, two
-                same-org installs sharing a path would resolve non-deterministically
-                (Codex #8 P1). Ignored for UUID lookups (already unambiguous).
+                optionally falling back to a loose org/global workflow. Without
+                it, two same-org installs sharing a path would resolve
+                non-deterministically (Codex #8 P1).
+            allow_shared_fallback: Whether a Solution-scoped miss may resolve a
+                loose org/global workflow. Callers derive this from the
+                Solution's ``global_repo_access`` setting. Ignored for unscoped
+                callers.
 
         Returns:
             Workflow if found and accessible, None otherwise
         """
         try:
             workflow_uuid = UUID(identifier)
-            return await self.get(id=workflow_uuid)
+            workflow = await self.get(id=workflow_uuid)
+            if workflow is None or solution_scope is None:
+                return workflow
+            if workflow.solution_id == solution_scope:
+                return workflow
+            if workflow.solution_id is not None:
+                return None
+            return workflow if allow_shared_fallback else None
         except ValueError:
             pass
 
         # path::function_name format (portable ref used by app code)
         if "::" in identifier:
-            return await self._resolve_by_path_ref(identifier, solution_scope=solution_scope)
+            return await self._resolve_by_path_ref(
+                identifier,
+                solution_scope=solution_scope,
+                allow_shared_fallback=allow_shared_fallback,
+            )
 
-        return await self._resolve_by_name(identifier, solution_scope=solution_scope)
+        return await self._resolve_by_name(
+            identifier,
+            solution_scope=solution_scope,
+            allow_shared_fallback=allow_shared_fallback,
+        )
 
     async def _resolve_by_name(
-        self, name: str, *, solution_scope: UUID | None = None
+        self,
+        name: str,
+        *,
+        solution_scope: UUID | None = None,
+        allow_shared_fallback: bool = False,
     ) -> Workflow | None:
         """Resolve a bare workflow name using solution-own-first semantics.
 
@@ -138,11 +168,17 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
             own = result.scalar_one_or_none()
             if own is not None:
                 return own
+            if not allow_shared_fallback:
+                return None
 
         return await self.get(name=name, is_active=True)
 
     async def _resolve_by_path_ref(
-        self, ref: str, *, solution_scope: UUID | None = None
+        self,
+        ref: str,
+        *,
+        solution_scope: UUID | None = None,
+        allow_shared_fallback: bool = False,
     ) -> Workflow | None:
         """Resolve a path::function_name reference to a workflow.
 
@@ -177,6 +213,8 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
             own_row = (await self.session.execute(own_stmt)).scalars().first()
             if own_row is not None:
                 return own_row
+            if not allow_shared_fallback:
+                return None
 
         stmt = (
             select(Workflow)
@@ -202,10 +240,11 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
         # a lone SIBLING-install row by the count==1 shortcut.
         if solution_scope is not None:
             # A Solution app/form caller: resolve THIS install's own workflow
-            # first (no guesswork), else the global _repo/ row (the app
-            # referenced a shared-library path). NEVER a SIBLING install's row —
-            # a stale/typo'd ref in app A must not execute app B's workflow just
-            # because they share a path. Absent both → None (the caller 404s).
+            # first (no guesswork), else a loose org/global workflow only when
+            # the caller explicitly allowed that shared fallback. NEVER a
+            # SIBLING install's row — a stale/typo'd ref in app A must not
+            # execute app B's workflow just because they share a path. Absent
+            # both → None (the caller 404s).
             own = [w for w in rows if w.solution_id == solution_scope]
             if own:
                 return own[0]
