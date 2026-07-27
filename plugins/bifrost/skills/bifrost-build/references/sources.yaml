@@ -58,13 +58,33 @@ references:
 
   - file: references/solutions.md
     source_globs:
+      - api/bifrost/solution_descriptor.py
       - api/bifrost/commands/solution.py
       - api/bifrost/commands/files.py
       - api/bifrost/manifest.py
       - api/src/models/contracts/solutions.py
       - api/src/services/solution_files.py
       - api/src/services/solutions/*.py
-    verified_at_sha: 44fed5904f8b36b2f8ace25c17e144a8fb89dc87
+    verified_at_sha: ea2714bd66c640d1b7b3bf1a21ccbd7dcb462773
+
+  - file: references/solution-resource-access.md
+    source_globs:
+      - api/bifrost/config.py
+      - api/bifrost/integrations.py
+      - api/bifrost/solution_descriptor.py
+      - api/bifrost/solution_dev/proxy.py
+      - api/bifrost/tables.py
+      - api/src/core/auth.py
+      - api/src/repositories/workflows.py
+      - api/src/routers/cli.py
+      - api/src/routers/files.py
+      - api/src/routers/forms.py
+      - api/src/routers/tables.py
+      - api/src/routers/workflows.py
+      - api/src/services/solution_scope.py
+      - client/src/lib/app-sdk/*.ts
+      - client/src/lib/app-sdk/*.tsx
+    verified_at_sha: ea2714bd66c640d1b7b3bf1a21ccbd7dcb462773
 
   - file: references/tables.md
     source_globs:

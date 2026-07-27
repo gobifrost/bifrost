@@ -45,12 +45,15 @@ flowchart TD
 
     E --> F{"Solution context active?<br/><i>module_cache_sync.get_solution_context</i>"}
     F -->|"yes — solution-managed run"| G["FIRST STOP: resolve under<br/>_solutions/{id}/ (modules) /<br/>solution_id-owned row (entities)<br/><i>own-first; ctx.solution_id / X-Bifrost-App</i>"]
-    G --> H{"global_repo_access?<br/>(CODE fallback only —<br/>data fallback is ungated today)<br/><i>Solution.global_repo_access</i>"}
-    H -->|"no (code)"| HFINAL["FINAL STOP for code<br/>(no _repo/ module fallthrough —<br/>a bare _repo/ import does NOT resolve)"]
-    H -->|yes| I
+    G --> H{"Solution-owned resource tier?<br/>module · workflow · table · file"}
+    H -->|yes| GA{"global_repo_access?<br/><i>Solution.global_repo_access</i>"}
+    GA -->|no| HFINAL["FINAL STOP<br/>(no loose org/global fallback)"]
+    GA -->|yes| I
+    H -->|no| SHARED["Shared instance namespace<br/>config · integration/OAuth · knowledge<br/>(normal org/global rules)"]
     F -->|"no — plain _repo/ run"| I["Cascade: org-specific row<br/>then global (solution_id IS NULL world)"]
 
     HFINAL --> J
+    SHARED --> J
     I --> J
     J{"GATE 3 — RBAC / access_level<br/>role-table match: FormRole, AppRole,<br/>AgentRole, WorkflowRole<br/><i>org_scoped.py role filter</i>"}
     J -->|"no matching role<br/>(role_based entity)<br/>or external on authenticated tier"| DENY2["403 / not visible"]
@@ -65,12 +68,11 @@ flowchart TD
 the caller's `ExecutionContext` (gate 0a) is *whose authority it travels
 under*. They are deliberately separate. A leak of the sentinel collapses
 only the transport trust — the per-call C2 gate (gate 1) still runs against
-the caller's real flags. Solutions are a **first stop at gate 2**. For
-**code** resolution they are the **final stop unless `global_repo_access`
-is on** (the diamond above). For **data** (tables/configs/storage) the
-flag does **not** apply today — data fallback to `_repo/` is currently
-ungated; whether it should be gated is an open question (see the Solutions
-section). Table policies (gate 4) gate individual *rows* after the *table*
+the caller's real flags. Solutions are a **first stop at gate 2**.
+`global_repo_access` controls loose org/global fallback for resource types
+with a Solution-owned tier: modules, workflows, tables, and files. Config
+values, integrations/OAuth, and knowledge use shared instance namespaces
+instead. Table policies (gate 4) gate individual *rows* after the *table*
 itself has been resolved and RBAC-checked.
 
 ### External users live at gate 3 only
@@ -421,16 +423,18 @@ For entities that have it:
 
 ---
 
-## Solutions: first-stop resolution and the global-repo-access gate
+## Solutions: first-stop resolution and the shared-fallback gate
 
 A **Solution** is an installable bundle of workflows, apps, tables, configs,
 forms, and agents. Its entities live in a parallel namespace keyed by
 `solution_id`, and its code lives under `_solutions/{solution_id}/` in S3.
 A Solution inserts itself at **gate 2 (entity resolution)** as a **first
-stop**, and is the **final stop unless the install's `global_repo_access`
-flag is on**.
+stop**.
 
-There are two parallel mechanisms — same rule, different layer:
+`global_repo_access` is orthogonal to the install's org/global scope. It
+controls shared fallback for resource types with a Solution-owned tier. For
+an org install, an allowed fallback searches the install org and then global,
+so the historical field name does not mean "only the global `_repo`".
 
 ### 1. Module loads (the code side)
 
@@ -442,14 +446,11 @@ There are two parallel mechanisms — same rule, different layer:
   is on**. With it off, a bare `_repo/` import does **not** silently
   resolve — the solution is sealed **for code**.
 
-`global_repo_access` governs **code only**. See the open question at the end
-of this section for why data (gate 2's entity reads) is currently ungated.
-
 The context is per-execution and thread-local: `set_solution_context` /
 `clear_solution_context` / `get_solution_context`. No active context ==
 unchanged plain `_repo/` behavior, so non-solution runs are unaffected.
 
-### 2. Entity reads (the data side)
+### 2. Solution-scope-capable entity reads
 
 `OrgScopedRepository` (`org_scoped.py`) treats solution-managed rows
 (`solution_id IS NOT NULL`) as a **separate world resolved by id**, not by
@@ -471,6 +472,33 @@ the name cascade:
     `Application.solution_id` and routers consume it via
     `services/solution_scope.py` (e.g. `resolve_solution_table_by_name`
     used by `routers/tables.py`).
+
+After an own-install miss:
+
+- **Workflows** fall back to loose install-org/global rows only when
+  `global_repo_access` is on. The gate applies to path, name, and UUID
+  resolution; a caller never reaches a sibling Solution.
+- **Tables** fall back by name to loose install-org/global rows only when the
+  flag is on. Fallback tables are read-only from Solution context and table
+  policies still apply.
+- **Files** fall back for reads/list/exists/signed reads only when the flag is
+  on and the location is declared. Writes/deletes always target the install.
+
+### 3. Shared-by-design instance resources
+
+Configs, integrations/OAuth, and knowledge do not have a Solution-owned
+runtime value tier, so `global_repo_access` does not apply:
+
+- Config declarations ship with the bundle; values resolve through the
+  ordinary org/global config cascade.
+- Connection declarations ship with the bundle; Integration rows, mappings,
+  OAuth providers/tokens, and secret values belong to the installed instance.
+- Knowledge remains an org/global namespace with its own access rules.
+
+The Python SDK can mutate config and integration mappings, so those writes
+change shared environment state rather than install-local state. The web SDK
+does not expose configs, integrations/OAuth, or knowledge; apps must call a
+server-side workflow so decrypted secrets do not enter browser JavaScript.
 
 ### How the install id is DERIVED (the request side)
 
@@ -501,7 +529,9 @@ The install's `global_repo_access` flag is read once at dispatch in
 `jobs/consumers/workflow_execution.py` (from `Solution.global_repo_access`),
 passed to the worker as `solution_global_repo_access`, and applied via
 `set_solution_context` in `services/execution/worker.py` /
-`simple_worker.py`. It is cleared after the run.
+`simple_worker.py` for module imports. Request-time workflow/table/file
+resolvers read the same flag through `services/solution_scope.py`. The worker
+context is cleared after the run.
 
 ### Uninstall and lifecycle states
 
@@ -526,21 +556,6 @@ path: FK cascade removes all owned rows and an S3 sweep cleans the file tree.
 
 **Reinstall-over-inactive** (`POST /api/solutions/{id}/install` on a solution with
 `status == "inactive"`) reactivates the install after prompting for conflict resolution.
-
-### Open question: should data fallback be gated?
-
-`global_repo_access` gates **code** fallback (the module loader). **Data
-fallback is currently ungated**: a solution-managed run reads a `_repo/`
-table or config by name regardless of the flag. This is an asymmetry — a
-"sealed" install can't import `_repo/` code but *can* read `_repo/` data.
-
-Whether to close it is undecided. Options under consideration: reuse
-`global_repo_access` for data too (one "touch `_repo/` at all" flag), add a
-separate data-fallback flag (independent code/data sharing), or leave data
-ungated. See
-`docs/superpowers/specs/2026-06-08-solution-workflow-resolution-chokepoint-design.md`.
-Until that resolves, the current behavior — **code gated, data ungated** —
-is the truth.
 
 ---
 

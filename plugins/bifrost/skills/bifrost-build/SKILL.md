@@ -141,6 +141,7 @@ When workflows are exposed as MCP tools (via agents), their `name` becomes the M
 | I need to… | Read |
 |---|---|
 | Build in a Solution workspace | `references/solutions.md` |
+| Understand Solution access to shared/global resources | `references/solution-resource-access.md` |
 | Build in the global `_repo` workspace | `references/repo.md` |
 | Build or modify an app (TSX/React) | `references/apps.md` · `references/web-sdk-v2.md` |
 | Write or debug a Python workflow | `references/workflows-python.md` · `references/python-sdk.md` |

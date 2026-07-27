@@ -187,6 +187,13 @@ This applies to install-creating or install-selecting Solution commands (`create
 
 `bifrost.solution.yaml` is the **definition** descriptor — `slug`, `name`, `version`, `global_repo_access`, and git-source fields (`git_connected`, `git_repo_url`, `repo_subpath`, `git_ref`, `logo`). It intentionally carries **no install id** and **no install scope**. The concrete install binding lives in `.env` (`BIFROST_SOLUTION_ID`, slug, org id, scope), which is local environment state and should not be committed. The descriptor also doubles as the workspace mode marker (its presence is what switches tooling into solution mode).
 
+`global_repo_access` is not a blanket global-resource switch and is not limited
+to module imports. It gates shared fallback for `_repo` modules, loose
+org/global workflows, tables, and files. Config values, integrations/OAuth, and
+knowledge are shared instance resources regardless of the flag. Read the full
+matrix and its security/portability boundaries in
+`references/solution-resource-access.md`.
+
 The install id lives **server-side** (`Solution.id` — the `solution_id` stamped on every managed entity *at deploy time*) and in the local uncommitted `.env` binding. The repo is the **definition**; `solution create` or `solution bind` chooses which concrete install this checkout is working against. Deploy/pull then operate on that install (or an explicit `--solution` override).
 
 **Instance vs fork — the `slug` is the dividing line:**
@@ -281,6 +288,7 @@ There is no React, shadcn, or router injection from the SDK — import those fro
 ## Key constraints
 
 - Workflows must use portable `path::function` refs (e.g. `functions/hello.py::main`), not UUIDs or bare names — UUIDs are environment-specific and break portability.
+- Before depending on loose org/global resources, read `references/solution-resource-access.md`; shared fallback and shared-by-design instance state have different portability/security boundaries.
 - Solution file locations live in `.bifrost/files.yaml`; runtime file bytes are user data and only travel in encrypted full backups.
 - `_solutions/` and `_solution_artifacts/` are platform internals. Never create those folders in a Solution workspace.
 - The `bifrost:migrate` skill covers the v1→v2 migration path (slug swap, import rewrite, entity capture, etc.).
