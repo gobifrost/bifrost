@@ -45,7 +45,7 @@ vitest 1727 passed.
 | Safe workspace fs + archive library | built |
 | Private-Solution REST surface (CRUD, sessions, revisions, undo, turns) | built |
 | Turn lifecycle + scaffold + undo | built |
-| Agent tool loop (to be replaced — see below) | built |
+| Agent tool loop (`InternalLoopRuntime`) | built, **being replaced** — see decisions |
 | App-host launch codes / session / token / exact-scope resolution | built |
 | `actor_type` default-deny in core auth | built |
 | Private deploy side-effect suppression + post-condition assertion | built |
@@ -82,29 +82,42 @@ vitest 1727 passed.
 - **Bundles travel with Solutions.** `bundle_path` is relative to the Solution
   root (like an app's source path) so `bifrost solution deploy` on a repo ships
   the agent's bundle with it.
-- **Generated Python is permanently inert.** In-house sandboxing was rejected
-  (`2026-06-17-code-execution-decision.md`). Model-authored code never runs with
-  Bifrost credentials. A generated workflow is authored and deployed inert; it
-  runs only after a human reviews it and binds it as a workflow tool. WP8 is
-  deleted from the design.
+- **Model-authored Python is inert until a human reviews it.** In-house
+  sandboxing was rejected (`2026-06-17-code-execution-decision.md`): running
+  model-authored code with real credentials is RCE-by-hallucination. A generated
+  workflow is authored and deployed inert. Once a person reviews it and binds it
+  as a workflow tool it runs like any other workflow — existing engine, full
+  `ExecutionContext` and SDK, caller's normal permissions. **The gate is
+  authorship and review, not a technical sandbox**, and nothing about a reviewed
+  workflow stays second-class. WP8 (a sandboxed runtime) is deleted from the
+  design; the `external` runner is the only untrusted path and is protocol-only.
 - **Scope is every Solution entity type**, not just apps: apps, tables, files,
   workflows, forms, agents, events/schedules, configs, claims. Authoring is
   universal; *execution* of Python stays human-gated.
 
 ## Next, in order
 
-1. **Build plane.** Runner container (fixed toolchain, no credentials), build
-   job protocol over RabbitMQ, staged artifacts, deploy moved off in-process
-   `BackgroundTasks`. Ends with: a turn produces real entities and a preview
-   that renders.
-2. **Skill bundle prerequisites.** `Agent.bundle_path` (+ contracts, manifest
-   round-trip, Solutions deploy carrying bundle files) and `read_skill_asset`
-   (reuse `WorkspaceRoot._resolve` in `fs_tools.py` as the traversal barrier).
-   Then make the builder a bundle-backed agent and retire the bespoke loop.
-3. **UX rebuild.** `/build` nav destination, app-first language, edit flow,
-   live preview wired to the real app origin.
-4. **`builder_model`.** Setting + AI-settings field; it selects the model for
-   the builder agent (its `llm_model`).
+Work-package numbers below refer to the design doc's
+"Implementation work packages" section.
+
+1. **Build plane (WP3).** Runner container (fixed toolchain, no credentials),
+   build job protocol over RabbitMQ, staged artifacts, deploy moved off
+   in-process `BackgroundTasks`. Ends with: a turn produces real entities and a
+   preview that renders. **Everything else is blocked on this** — it is the
+   reason a built Solution currently looks empty.
+2. **Skill bundle prerequisites (WP4).** `Agent.bundle_path` (ORM, contracts,
+   portable `ManifestAgent` field, manifest round-trip, CLI/MCP flags, and
+   Solutions deploy carrying bundle files) plus `read_skill_asset` (reuse
+   `WorkspaceRoot._resolve` in `fs_tools.py` as the traversal barrier). Both are
+   unbuilt anywhere in the codebase and the design says they are unblocked.
+3. **Builder agent execution (WP5).** Create the bundle-backed builder agent
+   record, wire the workspace tools into `resolve_agent_tools()`, and retire
+   `InternalLoopRuntime` / `BuilderAgentRuntime`.
+4. **UX rebuild (WP7).** `/build` as a top-level nav destination (prompt box +
+   your builds), app-first language throughout, `Edit in Builder` loading
+   existing state with full history, live preview wired to the real app origin.
+5. **`builder_model`.** Setting + AI-settings field. It selects the model for
+   the builder *agent*, so that agent's `llm_model` is the natural home.
 
 ## Traps worth knowing
 
