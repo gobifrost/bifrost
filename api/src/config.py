@@ -338,6 +338,42 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
+    # Builder Build Plane (server-side app compilation coordinator)
+    # ==========================================================================
+    builder_max_concurrent_builds: int = Field(
+        default=1,
+        description="Max concurrent build jobs the coordinator will run at once"
+    )
+    builder_build_timeout_s: int = Field(
+        default=600,
+        description="Max seconds a single build job may run before being killed"
+    )
+    builder_log_limit_bytes: int = Field(
+        default=1_048_576,
+        description="Max bytes of build log output retained per build job"
+    )
+    builder_output_limit_bytes: int = Field(
+        default=104_857_600,
+        description="Max bytes of build output (compiled app dist) accepted per build job"
+    )
+    builder_staged_retention_hours: int = Field(
+        default=6,
+        description="Hours a staged (not-yet-deployed) build output is retained before cleanup"
+    )
+    builder_internal_secret: str | None = Field(
+        default=None,
+        description="Shared secret for coordinator claim/heartbeat routes; None disables those routes (503)"
+    )
+    builder_runner_url: str | None = Field(
+        default=None,
+        description="URL of the build runner image (used only by the coordinator process)"
+    )
+    internal_api_url: str = Field(
+        default="http://api:8000",
+        description="API URL for internal service-to-service calls (used only by the coordinator process)"
+    )
+
+    # ==========================================================================
     # Anthropic API (for Claude Agent SDK)
     # ==========================================================================
     anthropic_api_key: str | None = Field(
