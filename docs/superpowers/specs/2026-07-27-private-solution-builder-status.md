@@ -119,6 +119,24 @@ Work-package numbers below refer to the design doc's
 5. **`builder_model`.** Setting + AI-settings field. It selects the model for
    the builder *agent*, so that agent's `llm_model` is the natural home.
 
+## Environment state (as of 2026-07-27, survives until torn down)
+
+- **Dev stack** is UP for this worktree: `http://localhost:30463`
+  (`dev@gobifrost.com` / `password`, port mode). `./debug.sh status` confirms.
+- **OpenRouter is configured** as the platform LLM on that dev stack
+  (provider `openai`, endpoint `https://openrouter.ai/api/v1`, model
+  `anthropic/claude-sonnet-4.5`). The key came from 1Password item
+  "OpenRouter Bifrost Production Key" (Integration Services vault) via
+  `op read` and is encrypted in the stack DB — reconfigure the same way after
+  a `./debug.sh down`.
+- **Test stack** is UP (project `bifrost-test-ce8540c1`), template DB at
+  migration `20260725_build_jobs`.
+- A live-drive Solution `live-drive-tracker` (4 revisions, incl. an undo)
+  exists on the dev stack — useful as an existing fixture, safe to delete.
+- Scratch CLI venv: `/tmp/bifrost-cli-builder` (API-matched build, logged in).
+- `BIFROST_APP_ORIGIN` is wired in both compose files but **unset** in the dev
+  stack env, so the app host correctly reports unavailable there.
+
 ## Traps worth knowing
 
 - **Never run raw `docker compose` in a worktree without
