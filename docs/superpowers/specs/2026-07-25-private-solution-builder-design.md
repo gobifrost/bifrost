@@ -1,6 +1,6 @@
 # Private Solution Builder
 
-**Status:** Revised after Fable review (2026-07-25)
+**Status:** Revised 2026-07-27 — builder is a skill-bundle agent; generated Python is permanently inert
 
 **Date:** 2026-07-25
 
@@ -26,9 +26,12 @@ The product unit is a **private Solution**, not an app draft:
   Solution at a time.
 - Agent turns can run concurrently across Solutions. Expensive builds use a
   separate bounded FIFO queue, with a default concurrency of one.
-- A trusted coordinator runs the coding-agent loop with root-scoped file tools.
-  It never executes generated code.
+- The builder is an Agent record whose `system_prompt` is the `bifrost-build`
+  `SKILL.md` body and whose `bundle_path` points at that skill directory. It
+  runs through the existing `AgentExecutor`, not a parallel agent loop.
 - A separate, secretless runner performs builds. The API never runs npm.
+- Generated Python is authored and deployed inert. Execution requires human
+  review and binding as a workflow tool.
 - Generated apps run on a separate app origin with a Solution-bound renewable
   session, not the viewer's full Bifrost token.
 - An admin promotes the same Solution from Private to Company or Global. There
@@ -73,7 +76,7 @@ boundaries together:
 1. private Solution ownership;
 2. immutable source revisions;
 3. secretless build execution;
-4. a Solution-bound browser and workflow runtime identity.
+4. a Solution-bound browser runtime identity.
 
 ## Recovered decisions
 
@@ -88,8 +91,7 @@ External-Agent Platform Research note:
 - Promotion is a privileged Bifrost control-plane operation.
 - Source control may be added later, but Git is not required to persist builder
   work.
-- The current global engine token is not a valid runtime identity for generated
-  Python.
+- Generated Python is never dispatched with the current global engine token.
 - Existing Solution deployment is the canonical reconciliation mechanism.
 - The current `bifrost solution start` proxy and V2 app lifecycle are useful
   development references, but a hosted builder does not keep Vite alive between
@@ -119,9 +121,11 @@ The API must remain healthy if the runner times out, crashes, or is OOM-killed.
 ### Complete product goal
 
 Anything that can be represented in a Solution workspace can be authored in the
-builder. Generated Python becomes runnable only through the scoped, secretless
-runtime described in [Generated Python](#generated-python). It never inherits
-the existing superuser engine token.
+builder. Generated Python remains inert after authoring and deploy. It becomes
+runnable only after human review and binding as a workflow tool through the
+normal imported-workflow review path described in
+[Generated Python](#generated-python-is-inert-by-design). It never inherits the
+existing superuser engine token.
 
 ## Non-goals
 
@@ -155,6 +159,23 @@ There is no separate app-project scope. Creating a builder project creates:
 - usually one scaffolded `standalone_v2` app.
 
 The Solution ID is the scope for all deployed entities and runtime data.
+
+### Skill bundles travel with the Solution
+
+`Agent.bundle_path` is relative to the Solution root and resolves the same way
+`ManifestApp.path` resolves an app source directory. It is a new field; it does
+not reuse or revive the deprecated `ManifestAgent.path`, whose content moved
+inline.
+
+When `bifrost solution deploy` reads a repository containing agent bundles, the
+install carries each bundle's `SKILL.md`, `references/`, `scripts/`, and
+`assets/`. Bundle files use the same S3 source of truth as other Solution
+source through `RepoStorage` and `SolutionStorage`; they never use
+`get_module()`.
+
+Bundled `scripts/` are inert readable assets, never an execution surface. This
+is what lets a community or consultant repository ship a working
+agent-plus-bundle as one installable unit.
 
 ### Private is a Solution visibility, not an entity access level
 
@@ -363,8 +384,9 @@ Config isolation is enforced by the `Config.solution_id` storage boundary and
 exact-match resolution described below, not by deployer convention alone.
 
 Promotion materializes only the administrator-reviewed role mappings and
-connection grants. The promotion transaction then activates only the reviewed
-runtime entities that have an eligible isolated execution path.
+connection grants. It does not clear the runtime-blocked state on generated
+workflows, schedules, events, or autonomous agents; those follow the separate
+human-reviewed workflow-tool path described below.
 
 ## Source and revision model
 
@@ -520,9 +542,9 @@ That capability is bound to:
 - allowed internal builder operations;
 - expiry and JWT ID (`jti`).
 
-The builder uses internal streaming APIs for revision download/upload, model
-calls, build artifact upload, deploy handoff, and status. The capability cannot
-call normal platform administration routes.
+The builder uses internal streaming APIs for revision download/upload, agent
+execution, build artifact upload, deploy handoff, and status. The capability
+cannot call normal platform administration routes.
 
 RabbitMQ and Redis connection strings still exist in the trusted parent
 process. They are not exposed through any agent tool and no generated program
@@ -530,19 +552,36 @@ runs in that process.
 
 ### Agent framework
 
-The first release uses Bifrost's internal agent loop behind a small
-`BuilderAgentRuntime` interface: `BaseLLMClient` supplies the existing provider
-normalization, and the existing agent-executor patterns supply the tool loop.
-The builder needs one agent, roughly nine typed local tools, no handoffs, and
-no multi-agent graph. The OpenAI Agents SDK was evaluated and rejected for the
-first release: its value-add is concentrated in features unused here, while
-its custom-model-adapter seam against a non-OpenAI gateway is the known
-friction point. Revisit it only if the builder outgrows a single-agent loop;
-`BuilderAgentRuntime` is the swap seam.
+The builder does not get its own agent runtime. It is an `Agent` record whose
+`system_prompt` is the body of
+`plugins/bifrost/skills/bifrost-build/SKILL.md` and whose `bundle_path` points
+at that skill directory. Builder turns execute through the existing
+`AgentExecutor` path: `build_agent_system_prompt()` in
+`api/src/services/execution/agent_helpers.py` assembles the prompt, and
+`resolve_agent_tools()` resolves the tools.
 
-The internal model gateway uses the existing global LLM configuration and
-`BaseLLMClient` provider normalization. No third-party telemetry is enabled by
-default.
+This deletes `BuilderAgentRuntime` and `InternalLoopRuntime` as concepts.
+Reimplementing a tool loop would fork the platform's agent behavior and
+re-earn artifacts, delegation, Toolbox gating, and workspace tool intersection
+that already exist. The builder contributes its tools — the root-scoped
+workspace file operations — and its bundle — `bifrost-build` — not a loop.
+
+Two prerequisites are unbuilt today and owned by this program:
+
+- `Agent.bundle_path`: ORM, `AgentCreate`/`AgentUpdate`/`AgentPublic`
+  contracts, portable `ManifestAgent` field, `manifest_generator` and
+  `github_sync` round-trip, and CLI/MCP flags.
+- `read_skill_asset(path)`: a bundle-root-scoped system tool registered by
+  `get_system_tools()` in `api/src/services/mcp_server/server.py` and exposed
+  by `resolve_agent_tools()` whenever `bundle_path` is set. It reuses the
+  CodeQL-recognized realpath + `startswith` barrier; the existing
+  `WorkspaceRoot._resolve` in `api/src/services/builder/fs_tools.py` is the
+  reference implementation to reuse rather than reinvent.
+
+When `bundle_path` is set, `build_agent_system_prompt()` injects the bundle
+contract paragraph from Part A.4 of the agent-skill-bundles design. `SKILL.md`
+is not separately prompt-stuffed: `references/` and `assets/` load on demand
+through `read_skill_asset`.
 
 ### Model tools
 
@@ -559,12 +598,14 @@ make_directory
 validate_solution
 ```
 
-There is no build tool: builds are queued automatically after the turn commits
-its revision (see Turn semantics), never triggered by the model against the
-mutable workspace.
+These eight operations are workspace tools. `read_skill_asset(path)` joins them
+as an invisible system tool whenever the builder Agent has a bundle.
 
-There is no general shell, subprocess, environment, network, S3, Redis,
-RabbitMQ, database, Bifrost API, or Kubernetes tool.
+There is deliberately no build tool: builds are queued automatically after the
+turn commits its revision (see Turn semantics), never triggered by the model
+against the mutable workspace. There is deliberately no general shell,
+subprocess, environment, network, S3, Redis, RabbitMQ, database, Bifrost API,
+or Kubernetes tool.
 
 Every filesystem tool:
 
@@ -582,7 +623,8 @@ zip bombs, and oversized expansions.
 ### AI configuration
 
 Add optional `builder_model` to global AI settings, rendered with the same
-searchable model combobox used for agents:
+searchable model combobox used for agents. It resolves the model for the
+builder Agent, whose `llm_model` field is the natural runtime home:
 
 ```text
 Builder model: <model id> | Use platform default
@@ -591,7 +633,7 @@ Builder model: <model id> | Use platform default
 Resolution is:
 
 ```text
-builder_model ?? global model
+builder Agent llm_model = builder_model ?? global model
 ```
 
 The dev POC configures the existing OpenAI-compatible provider endpoint for
@@ -644,10 +686,11 @@ Use two services in Compose and separate Deployments in Kubernetes:
 
 ```text
 builder
-  trusted coordinator
+  trusted job coordinator
   RabbitMQ + Redis
   internal API job capabilities
-  coding-agent file tools
+  existing AgentExecutor path
+  bundle-backed coding-agent file tools
   never executes generated code
 
 builder-runner
@@ -881,12 +924,11 @@ A `solution_app` token:
   integrations, OAuth, `_repo`, or arbitrary admin APIs;
 - cannot override `solution_id` or organization through headers/query params.
 
-For `solution_app` tokens, and later the generated-Python runtime,
-table/file/config resolution is an exact `solution_id` match only. There is no
-organization/global cascade fallback and no `_repo` fallback. An undeclared or
-unmatched resource is 404 and is never auto-created. This sealing is a
-property of the builder runtime path implemented in Work Package 5, not of the
-`global_repo_access` flag.
+For `solution_app` tokens, table/file/config resolution is an exact
+`solution_id` match only. There is no organization/global cascade fallback and
+no `_repo` fallback. An undeclared or unmatched resource is 404 and is never
+auto-created. This sealing is a property of the builder runtime path
+implemented in Work Package 6, not of the `global_repo_access` flag.
 
 Exactness matters because cascade-by-name could resolve a declared table name
 onto an organization/global row the owner can read, turning a name collision
@@ -973,52 +1015,34 @@ parameters, downloads, and responsive layouts continue to work.
 These limitations are intentional for generated code. Existing trusted apps
 remain same-document until an explicit migration.
 
-## Generated Python
+## Generated Python is inert by design
 
-### Current blocker
+Bifrost rejected in-house sandboxing for model-authored code in
+`docs/superpowers/specs/2026-06-17-code-execution-decision.md`. Running
+model-authored code with real Bifrost credentials is RCE-by-hallucination, so
+generated Python never executes under the trusted model or in the trusted
+workflow pool.
 
-Today a workflow child receives a long-lived Bifrost engine token with
-`is_superuser=true`. Generated Python can also open its own outbound network
-connections. `global_repo_access=false`, source scanning, or a restricted
-agent tool list cannot contain that runtime.
+The builder may author and validate Python source, but private deploy stamps
+generated workflows, schedules, events, and autonomous agents as
+runtime-blocked — a persisted flag on the entity row, not derived metadata —
+regardless of what the source declares. Every workflow, schedule, event, and
+autonomous-agent dispatch path re-checks that state.
 
-Therefore the POC may author and validate Python source, but it must not execute
-generated Python through the trusted workflow pool.
+Promotion does not clear the runtime-blocked state. A generated workflow
+becomes runnable only when a human reviews it and binds it as a workflow tool
+through the normal imported-workflow review path. There is no builder-specific
+bypass.
 
-The first safe test-drive slice uses app-side Web SDK operations against
-Solution tables/files and can build substantial CRUD, intake, dashboard,
-approval, and document apps without Python.
+The gate is authorship and review, not a technical sandbox. Once a person has
+reviewed a generated workflow it runs like any other workflow — in the existing
+engine, with full `ExecutionContext` and SDK, under the caller's normal
+permission model. Nothing about it stays second-class. What is refused is
+running code on the model's say-so alone, which is why the review step cannot
+be automated away.
 
-Private deploy stamps generated workflows, schedules, events, and autonomous
-agents as runtime-blocked — a persisted flag on the entity row, not derived
-metadata — regardless of what the source declares. Every dispatch path
-checks that state again. Promotion cannot unblock generated Python until the
-scoped, secretless runtime is available and its review gates pass.
-
-### Required complete-runtime design
-
-Before generated Python is runnable for ordinary builders:
-
-1. Reuse the role-scope program's `execution_grants` model.
-2. Mint a short-lived grant bound to actor, Solution, entry point, execution,
-   and allowed table/file/workflow operations.
-3. Route private/generated workflows to a disposable secretless runtime, not
-   the trusted workflow pool.
-4. Give that runtime no DB, RabbitMQ, Redis, S3, AI, signing, integration, or
-   Kubernetes credential.
-5. Deny network egress except to a narrow runtime gateway.
-6. Make the runtime gateway enforce the execution grant and Solution scope.
-7. Restart/purge the runtime after each execution.
-8. Preserve the original actor for table/file policy evaluation.
-9. Deny integration resolution and generic `bifrost.api` routes unless an
-   admin-approved Solution connection grant explicitly allows them.
-
-This uses ordinary managed-Kubernetes primitives: separate pod/container,
-NetworkPolicy, non-root, no service-account token, read-only filesystem, and
-resource limits. An optional stronger RuntimeClass may be documented, but the
-baseline does not require nested user namespaces.
-
-Generated Python is a release gate, not an undocumented POC risk.
+The `external` runner is the only conceivable path for untrusted code, and it
+is protocol-only, deferred, and out of scope for this program.
 
 ## Promotion
 
@@ -1063,7 +1087,7 @@ The promotion screen pins one successfully deployed revision and shows:
 - requested entity access levels and role mappings;
 - table/file policies;
 - npm dependencies;
-- generated Python and its runtime eligibility;
+- generated Python and its inert/review state;
 - declared connections/integrations and requested egress;
 - `global_repo_access` state and any requested `shared_data_access`;
 - build/test results;
@@ -1075,17 +1099,19 @@ assigns users. Builders cannot use promotion to grant themselves organization
 authority.
 
 Promotion is a replay deploy: a distinct deployer mode re-runs the pinned
-revision and materializes the previously suppressed, admin-reviewed resources
-— role creation, entity-role junctions, schedules/events/agent activation,
-and connection grants — inside the promotion transaction. It is not a
-visibility-flag flip plus role mapping.
+revision and materializes the previously suppressed, admin-reviewed role
+creation, entity-role junctions, and connection grants inside the promotion
+transaction. Runtime-blocked schedules, events, autonomous agents, and
+generated workflows stay blocked. It is not a visibility-flag flip plus role
+mapping.
 
 Promotion requires:
 
 - current revision equals last successful deployed revision;
 - build and validation are green;
 - no unresolved role/connection/policy requirements;
-- generated Python is absent or the scoped runtime is enabled;
+- generated Python remains runtime-blocked pending separate human review as a
+  workflow tool;
 - `global_repo_access` remains false unless the admin explicitly changes it.
 
 ## Builder UI
@@ -1169,7 +1195,7 @@ For ordinary users, Builder entry points appear only when:
 
 - they have `solutions.build`;
 - they are not external;
-- coordinator, runner, and model gateway are healthy;
+- coordinator, runner, builder Agent, and configured model are healthy;
 - a distinct app origin is configured.
 
 Admins always see a Builder setup/status card, including:
@@ -1284,7 +1310,9 @@ practice.
 8. Private-owner bypass is exact to one owner and one Solution.
 9. A private deploy does not create shared roles or connections and does not
    activate schedules, events, autonomous agents, or generated workflows.
-10. Generated Python never uses the superuser engine token.
+10. Generated Python never executes at all under the trusted model; it is
+    authored and deployed inert, and becomes runnable only after human review
+    as a workflow tool.
 11. Promotion pins reviewed source and artifact hashes.
 12. A build crash cannot crash or OOM the API.
 13. One user's temp workspace or runner state is not reused by another user.
@@ -1299,9 +1327,9 @@ practice.
   authorization service.
 - Migrating that key into the #473 scope catalog is a later, independent change
   touching only the centralized authorization service.
-- Builder work through Work Package 7 does not block on or sequence against
-  the #473 branch (currently uncommitted local work on a stale base); only
-  Work Package 8 depends on that program's execution grants.
+- Builder work does not block on or sequence against the #473 branch (currently
+  uncommitted local work on a stale base). No work package depends on that
+  program's execution grants.
 - Create the implementation issue/PR breakdown after review.
 
 ### 1. Private Solution foundation
@@ -1358,19 +1386,42 @@ normal request remain green. A prebuilt CLI deploy still works when the build
 plane is unavailable; a server-build request returns 503 rather than running
 npm.
 
-### 4. Agent loop
+### 4. Agent skill-bundle prerequisites
 
-- Add builder job capabilities and internal model gateway.
-- Add `BuilderAgentRuntime` on the internal `BaseLLMClient` loop.
-- Add root-scoped tools and prompt.
+- Add `Agent.bundle_path` to the ORM, Agent create/update/public contracts,
+  portable `ManifestAgent` content, `manifest_generator`/`github_sync`
+  round-trip, and CLI/MCP flags.
+- Keep deprecated `ManifestAgent.path` inert; do not reuse it for bundles.
+- Add bundle-root-scoped `read_skill_asset(path)` to `get_system_tools()` and
+  expose it through `resolve_agent_tools()` whenever `bundle_path` is set.
+- Reuse the CodeQL-recognized containment barrier from
+  `WorkspaceRoot._resolve`.
+- Extend `bifrost solution deploy` so Solution source carries `SKILL.md`,
+  `references/`, `scripts/`, and `assets/` through
+  `RepoStorage`/`SolutionStorage`.
+- Add manifest round-trip, deploy, tool-gating, and path-traversal tests.
+
+Exit: a deployed Solution preserves an Agent's bundle, the prompt receives the
+bundle contract, and the Agent can read only assets beneath its own bundle
+root.
+
+### 5. Builder agent execution
+
+- Add builder job capabilities and execute turns through the existing
+  `AgentExecutor`.
+- Create the builder Agent record with the `bifrost-build` `SKILL.md` body as
+  `system_prompt` and its skill directory as `bundle_path`.
+- Resolve `builder_model` into the builder Agent's `llm_model`.
+- Wire the eight root-scoped workspace tools into `resolve_agent_tools`.
 - Link AI usage to Solution/session/turn.
 - Persist new revision and enqueue build/deploy.
 - Add per-Solution turn serialization and cross-Solution concurrency.
 
-Exit: OpenRouter-backed dev turns edit only the hydrated workspace, create a
-revision, and queue a bounded build without exposing secrets.
+Exit: OpenRouter-backed builder Agent turns edit only the hydrated workspace,
+create a revision, and queue a bounded build without exposing secrets or
+forking the platform's agent runtime.
 
-### 5. Isolated app host
+### 6. Isolated app host
 
 - Add app-origin launch/session flow.
 - Add Solution-bound runtime token and middleware.
@@ -1384,7 +1435,7 @@ Exit: generated code cannot read the control-plane token/DOM or call a route
 outside its Solution; the owner can use the app continuously through token
 renewal; nested paths/query/hash survive refresh and open-in-new-tab.
 
-### 6. Builder UI and admin settings
+### 7. Builder UI and admin settings
 
 - Add builder route and both entry points.
 - Extract reusable chat components.
@@ -1395,13 +1446,13 @@ renewal; nested paths/query/hash survive refresh and open-in-new-tab.
 - Hide the feature for ordinary users when unavailable.
 
 Exit: the authoring/preview slice of the browser POC can be test-driven
-without CLI/Git; the full capstone completes with Work Package 7.
+without CLI/Git; the full capstone completes with Work Package 8.
 
-### 7. Promotion
+### 8. Promotion
 
 - Add pinned-revision review summary.
-- Add a replay-deploy mode that enables reviewed suppressed materialization
-  inside the Company/Global promotion transaction.
+- Add a replay-deploy mode that enables reviewed role and connection
+  materialization inside the Company/Global promotion transaction.
 - Extend Global re-homing to every `solution_id`-bearing table.
 - Add target partial-index and visible-app slug conflict checks.
 - Show which referenced organization-scoped config values require re-entry.
@@ -1410,21 +1461,6 @@ without CLI/Git; the full capstone completes with Work Package 7.
 
 Exit: an admin can promote the exact reviewed revision; owner bypass disappears
 and ordinary roles/policies take effect.
-
-### 8. Generated Python runtime
-
-- Land execution grants from the authorization program.
-- Add disposable secretless runtime and scoped gateway.
-- Route generated/private workflows away from the trusted pool.
-- Deny ungranted integrations/network/API.
-- Preserve actor policy context.
-- Add adversarial runtime tests.
-
-Exit: a generated workflow can use only its own declared Solution resources and
-cannot access credentials, other org/Solution data, RabbitMQ, Redis, S3, DB,
-the engine token, or arbitrary outbound network. Declared resources explicitly
-approved through `shared_data_access` or a Solution connection grant are the
-only exceptions.
 
 ## Verification
 
@@ -1440,12 +1476,15 @@ only exceptions.
 - archive traversal, symlink, hardlink, zip-bomb, and size limits;
 - revision pointer atomicity and restore history;
 - per-Solution lock, build-queue concurrency, and per-user fairness;
+- Agent bundle manifest round-trip and Solution deploy carrying bundle files;
+- `read_skill_asset` bundle-root containment and automatic system-tool
+  exposure;
 - build job idempotency, cancellation, recovery, timeout, and OOM;
 - no API subprocess/npm assertion;
 - staged artifact hash/copy/finalize;
 - app-session issue, renew, revoke, and the allowed/denied route matrix;
 - solution/app/execution binding and IDOR attempts;
-- generated Python gate.
+- generated Python runtime-block persistence and dispatch-path re-checks.
 
 ### Frontend unit
 
@@ -1504,13 +1543,16 @@ The POC is ready for Jack to test drive only when:
 - OpenRouter is configured from 1Password without committing a secret;
 - a runner OOM does not affect API health;
 - the Playwright capstone passes;
-- generated Python is visibly gated unless Work Package 8 is complete.
+- generated Python is visibly inert and cannot be dispatched before human
+  review as a workflow tool.
 
 ## Related references
 
 - `docs/superpowers/specs/2026-06-04-solutions-v2-app-model-design.md`
 - `docs/superpowers/specs/2026-06-07-solution-start-local-dev-design.md`
 - `docs/superpowers/specs/2026-06-24-solution-storage-scope-redesign.md`
+- `docs/superpowers/specs/2026-06-17-agent-skill-bundles-and-capabilities-design.md`
+- `docs/superpowers/specs/2026-06-17-code-execution-decision.md`
 - `docs/superpowers/specs/2026-04-27-chat-v2-program-design.md`
 - `docs/superpowers/specs/2026-04-27-chat-v2-sandbox-bwrap-findings.md`
 - `docs/plans/2026-04-16-esbuild-app-bundler.md`
