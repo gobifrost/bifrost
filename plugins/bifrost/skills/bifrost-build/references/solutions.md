@@ -102,6 +102,28 @@ Runs the app's Vite dev server and local workflow functions behind one origin �
 
 Open the origin the command prints (the **proxy** port; `--port` sets it, default 3000). Vite itself binds to **`--port + 1`** behind the proxy — drive the app at the proxy port the command prints, not the Vite port.
 
+#### What `solution start` can and cannot reach
+
+There is no local platform. `solution start` runs two processes — Vite and the CLI proxy — and holds no database, no entity store, and no integration credentials. Everything the app reads comes from the bound install's instance over the network, authenticated with the developer's own CLI token (resolved from `BIFROST_API_URL`/`BIFROST_ACCESS_TOKEN`, then the nearest `.env`, then `bifrost auth token`, and injected for `vite serve` only — never for `vite build`, which would ship a credential in the bundle). **A write performed in local dev is a real write against that instance.** There is no sandbox.
+
+Access to the instance is therefore the default. The proxy then *intercepts* two route families and answers them from the Solution's own scope:
+
+| Route | Behavior under `solution start` |
+|---|---|
+| `POST /api/workflows/execute` | Resolves only refs discovered in `functions/`. Anything else fails with `not found in this Solution workspace` — unless `global_repo_access: true` (below). |
+| `/api/tables/{table}/documents/*` | Resolved against the Solution's own entities. A table the Solution does not own returns 404 — by name **and** by id, with or without `?scope=`. |
+| everything else | Proxied to the instance unchanged. |
+
+The split is easy to misread, because `/api/profile` and the `/api/tables` *list* pass straight through. An app can appear fully wired up until the first document read or non-local workflow call.
+
+#### `global_repo_access`
+
+`global_repo_access: true` in `bifrost.solution.yaml` tells `solution start` to stop resolving workflow refs locally and hand unknown refs to the platform. Those workflows then run in the instance's own runtime instead of the local process, so whatever that runtime provides — shared modules, integration credentials — is available to them. A delegated execution is identifiable from its response: a real `execution_id` with `is_transient: false`, versus the `solution-start-…` id and `is_transient: true` of a locally-run function.
+
+It governs **workflow resolution only**. It does not make Solution-external tables readable; those still 404.
+
+Leaving it `false` is the portability guardrail — a Solution whose behavior depends on entities it does not own cannot be installed cleanly into another org or instance. Enable it deliberately, for a Solution that is intentionally coupled to one instance's shared workflows, and record that trade-off in the Solution's README.
+
 The preview renews its CLI access token before expiry and replaces the
 bundle's token on realtime reconnects. An expired access token does **not**
 require restarting `solution start`. If the underlying refresh session has
@@ -280,6 +302,7 @@ There is no React, shadcn, or router injection from the SDK — import those fro
 
 ## Key constraints
 
+- `global_repo_access: true` lets `bifrost solution start` delegate unknown workflow refs to the platform; it does not cover tables, and it signals that the Solution is not self-contained. Leave it `false` for a Solution intended to install anywhere.
 - Workflows must use portable `path::function` refs (e.g. `functions/hello.py::main`), not UUIDs or bare names — UUIDs are environment-specific and break portability.
 - Solution file locations live in `.bifrost/files.yaml`; runtime file bytes are user data and only travel in encrypted full backups.
 - `_solutions/` and `_solution_artifacts/` are platform internals. Never create those folders in a Solution workspace.
