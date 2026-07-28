@@ -7,8 +7,8 @@ Uses FastMCP to expose tools via Streamable HTTP transport with Bearer token aut
 Architecture:
     - FastMCP server is mounted as an ASGI sub-application at /mcp
     - JWT Bearer token authentication using Bifrost's existing auth system
-    - Tools are dynamically loaded based on user's agent access permissions
-    - Platform admins only (initially) - controlled by system config
+    - /mcp exposes four stable agent discovery and dispatch tools
+    - /mcp/{agent_id} preserves the native agent-scoped tool surface
 
 Authentication:
     Users authenticate through Bifrost's normal login flow (UI or CLI) and use
@@ -22,15 +22,16 @@ Usage:
         -H "Content-Type: application/json"
 
     # Use token for MCP access (example with test initialize)
-    curl -X POST https://your-bifrost.com/api/mcp \
+    curl -X POST https://your-bifrost.com/mcp \
         -H "Authorization: Bearer <access_token>" \
         -H "Accept: application/json, text/event-stream" \
         -d '{"jsonrpc":"2.0","id":1,"method":"initialize",...}'
 """
 
 import logging
+from typing import NoReturn
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from starlette.middleware.cors import CORSMiddleware
 
 from src.core.auth import CurrentActiveUser
@@ -38,6 +39,11 @@ from src.core.db_deps import DbSession
 from src.models.contracts.mcp import (
     MCPConfigRequest,
     MCPConfigResponse,
+    MCPGatewayAgentResponse,
+    MCPGatewayExecuteRequest,
+    MCPGatewayExecuteResponse,
+    MCPGatewayFindAgentsResponse,
+    MCPGatewayToolSchemaResponse,
     MCPToolInfo,
     MCPToolsResponse,
 )
@@ -51,6 +57,129 @@ logger = logging.getLogger(__name__)
 # Note: Router uses /api/mcp prefix for REST endpoints (status, config)
 # The MCP protocol endpoint is also at /api/mcp (FastMCP handles it)
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
+
+
+def _gateway_service(current_user: CurrentActiveUser):
+    """Create the canonical gateway service for an authenticated REST caller."""
+    from src.services.mcp_server.gateway import MCPAgentGatewayService
+    from src.services.mcp_server.server import MCPContext
+
+    return MCPAgentGatewayService(
+        MCPContext(
+            user_id=current_user.user_id,
+            org_id=current_user.organization_id,
+            is_platform_admin=current_user.is_superuser,
+            is_external=current_user.is_external,
+            user_email=current_user.email,
+            user_name=current_user.name,
+        )
+    )
+
+
+async def _require_mcp_enabled(db: DbSession) -> None:
+    """Keep the internal gateway REST surface behind the MCP feature flag."""
+    config = await MCPConfigService(db).get_config()
+    if not config.enabled:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="External MCP access is disabled",
+        )
+
+
+def _raise_gateway_http_error(exc: Exception) -> NoReturn:
+    """Map structured gateway failures to REST status codes."""
+    from src.services.mcp_server.gateway import GatewayError
+
+    if not isinstance(exc, GatewayError):
+        raise exc
+    status_code = {
+        "INVALID_ARGUMENTS": status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "AGENT_NOT_FOUND_OR_FORBIDDEN": status.HTTP_404_NOT_FOUND,
+        "TOOL_NOT_FOUND_OR_FORBIDDEN": status.HTTP_404_NOT_FOUND,
+        "NEEDS_REAUTH": status.HTTP_409_CONFLICT,
+        "TOOL_SCHEMA_INVALID": status.HTTP_500_INTERNAL_SERVER_ERROR,
+        "TOOL_EXECUTION_FAILED": status.HTTP_502_BAD_GATEWAY,
+    }.get(exc.code, status.HTTP_500_INTERNAL_SERVER_ERROR)
+    raise HTTPException(status_code=status_code, detail=exc.as_dict()) from exc
+
+
+@router.get(
+    "/gateway/agents",
+    response_model=MCPGatewayFindAgentsResponse,
+)
+async def find_gateway_agents(
+    current_user: CurrentActiveUser,
+    db: DbSession,
+    query: str | None = None,
+    limit: int = Query(default=10, ge=1, le=20),
+) -> dict:
+    """Find accessible agents for progressive MCP discovery."""
+    await _require_mcp_enabled(db)
+    return await _gateway_service(current_user).find_agents(
+        query=query,
+        limit=limit,
+    )
+
+
+@router.get(
+    "/gateway/agents/{agent_id}",
+    response_model=MCPGatewayAgentResponse,
+)
+async def get_gateway_agent(
+    agent_id: str,
+    current_user: CurrentActiveUser,
+    db: DbSession,
+) -> dict:
+    """Load one accessible agent's live capability package."""
+    await _require_mcp_enabled(db)
+    try:
+        return await _gateway_service(current_user).get_agent(agent_id)
+    except Exception as exc:
+        _raise_gateway_http_error(exc)
+
+
+@router.get(
+    "/gateway/agents/{agent_id}/tools/{tool_ref}",
+    response_model=MCPGatewayToolSchemaResponse,
+)
+async def get_gateway_tool_schema(
+    agent_id: str,
+    tool_ref: str,
+    current_user: CurrentActiveUser,
+    db: DbSession,
+) -> dict:
+    """Load the current schema for an agent-bound tool."""
+    await _require_mcp_enabled(db)
+    try:
+        return await _gateway_service(current_user).get_tool_schema(
+            agent_id,
+            tool_ref,
+        )
+    except Exception as exc:
+        _raise_gateway_http_error(exc)
+
+
+@router.post(
+    "/gateway/agents/{agent_id}/tools/{tool_ref}/execute",
+    response_model=MCPGatewayExecuteResponse,
+)
+async def execute_gateway_tool(
+    agent_id: str,
+    tool_ref: str,
+    request: MCPGatewayExecuteRequest,
+    current_user: CurrentActiveUser,
+    db: DbSession,
+) -> dict:
+    """Re-resolve, validate, and execute an agent-bound tool."""
+    await _require_mcp_enabled(db)
+    try:
+        return await _gateway_service(current_user).execute_agent_tool(
+            agent_id,
+            tool_ref,
+            request.arguments,
+        )
+    except Exception as exc:
+        _raise_gateway_http_error(exc)
 
 
 # =============================================================================
@@ -67,10 +196,10 @@ async def mcp_status(
     Get MCP server status and available tools for the current user.
 
     This is a REST endpoint (not MCP protocol) for debugging and discovery.
-    Returns information about which tools the user has access to based on
-    their agent access permissions.
+    Returns the stable gateway tools plus the number of agents the caller
+    can discover through them.
     """
-    from src.services.mcp_server.tool_access import MCPToolAccessService
+    from src.services.mcp_server.tools.gateway import GATEWAY_TOOL_NAMES
 
     # Check MCP config for access control
     config_service = MCPConfigService(db)
@@ -82,24 +211,17 @@ async def mcp_status(
             detail="External MCP access is disabled",
         )
 
-    # Per-user tool access is role-scoped inside MCPToolAccessService — a user
-    # with no matching agent roles gets an empty list rather than a 403.
-    tool_service = MCPToolAccessService(db)
-    result = await tool_service.get_accessible_tools(
-        user_roles=current_user.roles,
-        is_superuser=current_user.is_superuser,
-        user_id=current_user.user_id,
-        org_id=current_user.organization_id,
-        is_external=current_user.is_external,
-    )
+    gateway = _gateway_service(current_user)
+    agent_result = await gateway.find_agents(limit=1)
+    gateway_tools = sorted(GATEWAY_TOOL_NAMES)
 
     return {
         "status": "available",
         "user_id": str(current_user.user_id),
         "is_platform_admin": current_user.is_superuser,
-        "tools_count": len(result.tools),
-        "tools": [tool.id for tool in result.tools],
-        "accessible_agents_count": len(result.accessible_agent_ids),
+        "tools_count": len(gateway_tools),
+        "tools": gateway_tools,
+        "accessible_agents_count": agent_result["total_matches"],
         "mcp_endpoint": "/mcp",
         "transport": "streamable-http",
         "auth": "oauth2.1",
@@ -117,8 +239,8 @@ def get_mcp_asgi_app():
     """
     Create the FastMCP ASGI application for mounting.
 
-    This creates a FastMCP server with all system tools and OAuth 2.1 authentication,
-    then returns the ASGI app that can be mounted at /api (resulting in /api/mcp endpoint).
+    This creates a FastMCP server with the stable gateway tools plus the native
+    tools retained for agent-scoped URLs, then returns the root-mounted ASGI app.
 
     Authentication:
         Uses BifrostAuthProvider which implements OAuth 2.1 with:
@@ -128,7 +250,7 @@ def get_mcp_asgi_app():
         - JWT token validation using Bifrost's existing tokens
 
         Users authenticate through Bifrost's normal login flow via OAuth redirect.
-        Only platform admins can access MCP (by default, configurable).
+        Agent and tool visibility is enforced for each authenticated caller.
 
     Returns:
         ASGI application from FastMCP
@@ -188,7 +310,7 @@ def get_mcp_asgi_app():
         """Combined lifespan that registers workflow tools and runs FastMCP lifespan."""
         # Register workflow tools on startup
         try:
-            count = await _register_workflow_tools(fastmcp_server, default_context)
+            count = await _register_workflow_tools(fastmcp_server)
             logger.info(f"Registered {count} workflow tools during MCP startup")
         except Exception as e:
             logger.warning(f"Failed to register workflow tools: {e}")
@@ -338,10 +460,10 @@ async def list_mcp_tools(
     db: DbSession,
 ) -> MCPToolsResponse:
     """
-    List all MCP tools available to the current user.
+    List underlying MCP tools available to the current user.
 
-    Returns tools from agents the user can access, filtered by
-    global MCP config allowlist/blocklist.
+    This inventory backs platform allow/block configuration. The unscoped
+    protocol endpoint itself exposes the stable gateway tools.
     """
     from src.services.mcp_server.tool_access import MCPToolAccessService
 

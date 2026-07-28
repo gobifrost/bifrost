@@ -4,7 +4,7 @@ Unit tests for agent-scoped MCP endpoint (/mcp/{agent_id}).
 Tests:
 - AgentScopeMCPMiddleware: ASGI path rewriting
 - MCPToolAccessService.get_tools_for_agent: Agent-scoped tool access
-- ToolFilterMiddleware: Agent-scoped filtering (on_initialize, on_list_tools, on_call_tool)
+- ToolFilterMiddleware: Agent-scoped filtering
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -123,7 +123,6 @@ class TestGetToolsForAgent:
         agent = MagicMock()
         agent.id = uuid4()
         agent.name = "Test Agent"
-        agent.system_prompt = "You are a helpful assistant."
         agent.access_level = MagicMock()
         agent.access_level.__eq__ = lambda self, other: str(self) == str(other)
         agent.system_tools = ["execute_workflow", "list_workflows"]
@@ -163,9 +162,6 @@ class TestGetToolsForAgent:
             )
 
         assert result is not None
-        assert result.agent_id == mock_agent.id
-        assert result.agent_name == "Test Agent"
-        assert result.system_prompt == "You are a helpful assistant."
         assert result.accessible_namespaces == ["docs", "wiki"]
         # execute_workflow and list_workflows from system_tools, plus
         # search_knowledge auto-injected because knowledge_sources is non-empty
@@ -293,7 +289,7 @@ class TestToolFilterMiddlewareAgentScope:
         mock_request.scope = {"mcp_agent_id": str(agent_id)}
 
         with patch(
-            "src.services.mcp_server.middleware.get_http_request",
+            "src.services.mcp_server.agent_scope.get_http_request",
             return_value=mock_request,
         ):
             from src.services.mcp_server.middleware import _get_agent_id_from_scope
@@ -308,7 +304,7 @@ class TestToolFilterMiddlewareAgentScope:
         mock_request.scope = {}
 
         with patch(
-            "src.services.mcp_server.middleware.get_http_request",
+            "src.services.mcp_server.agent_scope.get_http_request",
             return_value=mock_request,
         ):
             from src.services.mcp_server.middleware import _get_agent_id_from_scope
@@ -320,7 +316,7 @@ class TestToolFilterMiddlewareAgentScope:
     async def test_get_agent_id_from_scope_no_request(self):
         """_get_agent_id_from_scope returns None when no request context."""
         with patch(
-            "src.services.mcp_server.middleware.get_http_request",
+            "src.services.mcp_server.agent_scope.get_http_request",
             side_effect=RuntimeError("No request"),
         ):
             from src.services.mcp_server.middleware import _get_agent_id_from_scope

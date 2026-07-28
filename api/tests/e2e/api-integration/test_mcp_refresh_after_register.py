@@ -12,7 +12,7 @@ registration against a fresh, committed snapshot.
 This test exercises the full path:
     POST /api/workflows/register  (registers a @tool function as type=tool)
     POST /api/agents              (attaches the new tool to an agent)
-    POST /mcp  tools/list         (must include the new tool name)
+    POST /mcp/{agent_id} tools/list (must include the new tool name)
 
 Without the fix, tools/list omits the new tool because FastMCP's in-memory
 registry has no entry for it — middleware filters on `tool.name in all_tools`,
@@ -102,7 +102,7 @@ def {function_name}(message: str) -> dict:
             agent_id = agent_resp.json()["id"]
 
             init_resp = requests.post(
-                f"{TEST_API_URL}/mcp",
+                f"{TEST_API_URL}/mcp/{agent_id}",
                 json={
                     "jsonrpc": "2.0",
                     "id": 1,
@@ -118,7 +118,7 @@ def {function_name}(message: str) -> dict:
             assert init_resp.status_code == 200, init_resp.text
 
             list_resp = requests.post(
-                f"{TEST_API_URL}/mcp",
+                f"{TEST_API_URL}/mcp/{agent_id}",
                 json={
                     "jsonrpc": "2.0",
                     "id": 2,
@@ -218,7 +218,7 @@ def {function_name}(message: str) -> dict:
             assert patch_resp.json()["name"] == renamed_tool_name
 
             list_resp = requests.post(
-                f"{TEST_API_URL}/mcp",
+                f"{TEST_API_URL}/mcp/{agent_id}",
                 json={
                     "jsonrpc": "2.0",
                     "id": 2,

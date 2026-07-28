@@ -1,106 +1,46 @@
 """
 MCP Tool Filter Middleware
 
-Filters the tools/list response based on the authenticated user's
-agent access permissions. This ensures users only see tools from
-agents they have access to via their roles.
+Exposes a stable discovery/dispatch gateway on the unscoped endpoint and
+filters the agent-scoped endpoint to the selected agent's native tools.
 
 When an agent_id is present in the ASGI scope (set by AgentScopeMCPMiddleware),
-the middleware scopes tools and instructions to that specific agent.
+the middleware preserves that agent's native tool surface.
 """
 
 import logging
-from uuid import UUID
 
 from fastmcp.exceptions import ToolError
-from fastmcp.server.dependencies import get_access_token, get_http_request
+from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import Middleware, MiddlewareContext
+
+from src.services.mcp_server.agent_scope import (
+    get_scoped_agent_id as _get_agent_id_from_scope,
+)
+from src.services.mcp_server.tools.gateway import GATEWAY_TOOL_NAMES
 
 logger = logging.getLogger(__name__)
 
 
-def _get_agent_id_from_scope() -> UUID | None:
-    """Extract agent_id from the ASGI scope if present."""
-    try:
-        request = get_http_request()
-        agent_id_str = request.scope.get("mcp_agent_id")
-        if agent_id_str:
-            return UUID(agent_id_str)
-    except (RuntimeError, ValueError, AttributeError) as e:
-        # RuntimeError: get_http_request() raises if not in HTTP context (stdio MCP)
-        # ValueError: malformed UUID string in scope
-        # AttributeError: scope structure differs
-        logger.debug(f"could not extract agent_id from scope: {e}")
-    return None
-
-
 class ToolFilterMiddleware(Middleware):
     """
-    FastMCP middleware that filters tools based on user's agent access.
+    FastMCP middleware for gateway and agent-scoped tool surfaces.
 
-    This middleware intercepts the tools/list MCP method and filters
-    the response to only include tools the authenticated user has
-    access to based on their role assignments to agents.
+    The unscoped ``/mcp`` endpoint exposes only the stable gateway tools.
+    The ``/mcp/{agent_id}`` endpoint preserves the native per-agent tool
+    surface and its existing authorization checks.
 
     It also blocks execution of tools the user doesn't have access to
     as a second layer of protection.
 
     When an agent_id is in the ASGI scope:
-    - on_initialize: Sets instructions to the agent's system_prompt
     - on_list_tools: Returns only that agent's tools
     - on_call_tool: Enforces access scoped to that agent's tools
+
+    When no agent_id is present:
+    - on_list_tools: Returns only the gateway tools
+    - on_call_tool: Rejects direct calls to hidden native tools
     """
-
-    async def on_initialize(self, context: MiddlewareContext, call_next):
-        """
-        Optionally set instructions from agent's system_prompt.
-
-        If an agent_id is in the ASGI scope, the InitializeResult's
-        instructions field is set to the agent's system_prompt.
-        """
-        result = await call_next(context)
-
-        agent_id = _get_agent_id_from_scope()
-        if agent_id is None or result is None:
-            return result
-
-        token = get_access_token()
-        if token is None:
-            return result
-
-        user_roles = token.claims.get("roles", [])
-        is_superuser = token.claims.get("is_superuser", False)
-        is_external = token.claims.get("is_external", False)
-        user_id = token.claims.get("user_id")
-        org_id = token.claims.get("org_id")
-
-        try:
-            from src.core.database import get_db_context
-            from src.services.mcp_server.tool_access import MCPToolAccessService
-
-            async with get_db_context() as db:
-                service = MCPToolAccessService(db)
-                agent_result = await service.get_tools_for_agent(
-                    agent_id=agent_id,
-                    user_roles=user_roles,
-                    is_superuser=is_superuser,
-                    user_id=user_id,
-                    org_id=org_id,
-                    is_external=is_external,
-                )
-
-            if agent_result and agent_result.system_prompt:
-                result = result.model_copy(
-                    update={"instructions": agent_result.system_prompt}
-                )
-                logger.info(
-                    f"MCP initialize: Set instructions from agent '{agent_result.agent_name}'"
-                )
-
-        except Exception as e:
-            logger.exception(f"MCP initialize: Error fetching agent instructions: {e}")
-
-        return result
 
     async def on_list_tools(
         self, context: MiddlewareContext, call_next
@@ -124,15 +64,25 @@ class ToolFilterMiddleware(Middleware):
             logger.warning("MCP tools/list: No authenticated user, returning empty list")
             return []
 
+        user_email = token.claims.get("email", "unknown")
+
+        agent_id = _get_agent_id_from_scope()
+        if agent_id is None:
+            filtered_tools = [
+                tool for tool in all_tools if tool.name in GATEWAY_TOOL_NAMES
+            ]
+            logger.info(
+                "MCP tools/list: Unscoped gateway returned %s tools for user %s",
+                len(filtered_tools),
+                user_email,
+            )
+            return filtered_tools
+
         user_roles = token.claims.get("roles", [])
         is_superuser = token.claims.get("is_superuser", False)
         is_external = token.claims.get("is_external", False)
-        user_email = token.claims.get("email", "unknown")
         user_id = token.claims.get("user_id")
         org_id = token.claims.get("org_id")
-
-        agent_id = _get_agent_id_from_scope()
-
         logger.info(
             f"MCP tools/list: Filtering for user {user_email}, "
             f"roles={user_roles}, is_superuser={is_superuser}, agent_id={agent_id}"
@@ -146,33 +96,21 @@ class ToolFilterMiddleware(Middleware):
             async with get_db_context() as db:
                 service = MCPToolAccessService(db)
 
-                if agent_id is not None:
-                    # Agent-scoped: only tools from this specific agent
-                    agent_result = await service.get_tools_for_agent(
-                        agent_id=agent_id,
-                        user_roles=user_roles,
-                        is_superuser=is_superuser,
-                        user_id=user_id,
-                        org_id=org_id,
-                        is_external=is_external,
+                agent_result = await service.get_tools_for_agent(
+                    agent_id=agent_id,
+                    user_roles=user_roles,
+                    is_superuser=is_superuser,
+                    user_id=user_id,
+                    org_id=org_id,
+                    is_external=is_external,
+                )
+                if agent_result is None:
+                    logger.warning(
+                        f"MCP tools/list: Agent {agent_id} not found or access denied "
+                        f"for user {user_email}"
                     )
-                    if agent_result is None:
-                        logger.warning(
-                            f"MCP tools/list: Agent {agent_id} not found or access denied "
-                            f"for user {user_email}"
-                        )
-                        return []
-                    accessible_ids = {t.id for t in agent_result.tools}
-                else:
-                    # All-agents mode (existing behavior)
-                    result = await service.get_accessible_tools(
-                        user_roles=user_roles,
-                        is_superuser=is_superuser,
-                        user_id=user_id,
-                        org_id=org_id,
-                        is_external=is_external,
-                    )
-                    accessible_ids = {t.id for t in result.tools}
+                    return []
+                accessible_ids = {t.id for t in agent_result.tools}
 
             # Filter to only accessible tools
             filtered_tools = [
@@ -218,14 +156,33 @@ class ToolFilterMiddleware(Middleware):
         if token is None:
             raise ToolError("Authentication required to call tools")
 
+        user_email = token.claims.get("email", "unknown")
+
+        agent_id = _get_agent_id_from_scope()
+        if agent_id is None:
+            if tool_name not in GATEWAY_TOOL_NAMES:
+                logger.warning(
+                    "MCP tools/call: Unscoped endpoint denied hidden tool '%s' "
+                    "for user %s",
+                    tool_name,
+                    user_email,
+                )
+                raise ToolError(
+                    f"Tool '{tool_name}' is not available on the unscoped MCP "
+                    "endpoint. Use the Bifrost agent gateway tools."
+                )
+            logger.info(
+                "MCP tools/call: Unscoped gateway authorized '%s' for user %s",
+                tool_name,
+                user_email,
+            )
+            return await call_next(context)
+
         user_roles = token.claims.get("roles", [])
         is_superuser = token.claims.get("is_superuser", False)
         is_external = token.claims.get("is_external", False)
-        user_email = token.claims.get("email", "unknown")
         user_id = token.claims.get("user_id")
         org_id = token.claims.get("org_id")
-
-        agent_id = _get_agent_id_from_scope()
 
         # Check if user has access to this tool
         try:
@@ -235,31 +192,19 @@ class ToolFilterMiddleware(Middleware):
             async with get_db_context() as db:
                 service = MCPToolAccessService(db)
 
-                if agent_id is not None:
-                    # Agent-scoped: check against this agent's tools only
-                    agent_result = await service.get_tools_for_agent(
-                        agent_id=agent_id,
-                        user_roles=user_roles,
-                        is_superuser=is_superuser,
-                        user_id=user_id,
-                        org_id=org_id,
-                        is_external=is_external,
+                agent_result = await service.get_tools_for_agent(
+                    agent_id=agent_id,
+                    user_roles=user_roles,
+                    is_superuser=is_superuser,
+                    user_id=user_id,
+                    org_id=org_id,
+                    is_external=is_external,
+                )
+                if agent_result is None:
+                    raise ToolError(
+                        "Access denied: Agent not found or you don't have permission"
                     )
-                    if agent_result is None:
-                        raise ToolError(
-                            "Access denied: Agent not found or you don't have permission"
-                        )
-                    accessible_ids = {t.id for t in agent_result.tools}
-                else:
-                    # All-agents mode (existing behavior)
-                    result = await service.get_accessible_tools(
-                        user_roles=user_roles,
-                        is_superuser=is_superuser,
-                        user_id=user_id,
-                        org_id=org_id,
-                        is_external=is_external,
-                    )
-                    accessible_ids = {t.id for t in result.tools}
+                accessible_ids = {t.id for t in agent_result.tools}
 
             if tool_name not in accessible_ids:
                 logger.warning(

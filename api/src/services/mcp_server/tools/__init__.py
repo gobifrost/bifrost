@@ -24,6 +24,7 @@ from src.services.mcp_server.tools import (
     tables,
     workflow,
 )
+from src.services.mcp_server.tools import gateway
 
 TOOL_MODULES = [
     agents,
@@ -51,3 +52,8 @@ def register_all_tools(mcp, get_context_fn) -> None:
     """Register all system tools with FastMCP."""
     for module in TOOL_MODULES:
         module.register_tools(mcp, get_context_fn)
+
+
+def register_gateway_tools(mcp, get_context_fn) -> None:
+    """Register stable discovery/dispatch tools for the unscoped endpoint."""
+    gateway.register_tools(mcp, get_context_fn)

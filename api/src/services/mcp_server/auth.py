@@ -558,10 +558,9 @@ class BifrostAuthProvider:
         """
         Check if user is authorized for MCP access based on config.
 
-        Only gates on the global ``enabled`` switch. Per-user tool access is
-        resolved downstream by ``MCPToolAccessService`` using the user's roles
-        and agent membership — non-admins without matching roles connect
-        successfully and see an empty tool set rather than a 403.
+        Only gates on the global ``enabled`` switch. Authenticated users receive
+        the stable gateway tools; agent discovery and every dispatch re-check
+        agent and tool access downstream.
 
         Args:
             token_payload: Decoded JWT claims

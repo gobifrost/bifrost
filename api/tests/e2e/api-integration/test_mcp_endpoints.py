@@ -356,7 +356,7 @@ class TestMCPStatusEndpoint:
 
     @pytest.mark.e2e
     def test_status_success_for_platform_admin(self):
-        """Should return 200 for platform admin."""
+        """Status should report the stable default MCP gateway surface."""
         token = create_test_jwt(is_superuser=True)
         headers = auth_headers(token)
 
@@ -372,6 +372,13 @@ class TestMCPStatusEndpoint:
         assert "is_platform_admin" in data
         assert "tools_count" in data
         assert "tools" in data
+        assert set(data["tools"]) == {
+            "bifrost_find_agents",
+            "bifrost_get_agent",
+            "bifrost_get_tool_schema",
+            "bifrost_execute_tool",
+        }
+        assert data["tools_count"] == 4
 
 
 # ==================== Config Whitelist/Blacklist Tests ====================
@@ -494,6 +501,26 @@ class TestMCPConfigToolFiltering:
         assert data["is_configured"] is True
         assert data["configured_by"] == "admin@test.com"
         assert data["configured_at"] is not None
+
+    @pytest.mark.e2e
+    def test_disabled_config_blocks_gateway_rest_surface(self):
+        """Internal REST bridge endpoints must honor the MCP feature flag."""
+        token = create_test_jwt(is_superuser=True)
+        headers = auth_headers(token)
+
+        configured = requests.put(
+            f"{TEST_API_URL}/api/mcp/config",
+            json={"enabled": False},
+            headers=headers,
+        )
+        assert configured.status_code == 200
+
+        response = requests.get(
+            f"{TEST_API_URL}/api/mcp/gateway/agents",
+            headers=headers,
+        )
+        assert response.status_code == 403
+        assert response.json()["detail"] == "External MCP access is disabled"
 
     @pytest.mark.e2e
     def test_delete_resets_to_defaults(self):

@@ -7,12 +7,25 @@ route matcher works. Non-UUID paths (including /mcp/callback) pass through.
 """
 
 import re
+from uuid import UUID
+
+from fastmcp.server.dependencies import get_http_request
 
 # Match /mcp/{uuid} but not /mcp/callback or other non-UUID suffixes
 _AGENT_PATH_RE = re.compile(
     r"^(/mcp)/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(/.*)?$",
     re.IGNORECASE,
 )
+
+
+def get_scoped_agent_id() -> UUID | None:
+    """Read the agent UUID written to the current FastMCP request scope."""
+    try:
+        agent_id = get_http_request().scope.get("mcp_agent_id")
+        return UUID(agent_id) if agent_id else None
+    except (RuntimeError, ValueError, AttributeError):
+        # No HTTP context, malformed UUID, or an unexpected scope shape.
+        return None
 
 
 class AgentScopeMCPMiddleware:

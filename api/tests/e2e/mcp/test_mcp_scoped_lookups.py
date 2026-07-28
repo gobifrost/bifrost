@@ -284,7 +284,6 @@ class MockMCPContext:
         self.is_external = is_external
         self.user_email = user_email
         self.user_name = user_name
-        self.enabled_system_tools: list[str] = []
         self.accessible_namespaces: list[str] = []
         self.session = None
 

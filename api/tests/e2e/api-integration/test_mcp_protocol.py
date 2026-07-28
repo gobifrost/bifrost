@@ -117,6 +117,7 @@ class TestMCPProtocol:
         result = data["result"]
         assert "serverInfo" in result
         assert "protocolVersion" in result
+        assert "bifrost_find_agents" in result["instructions"]
 
     def test_mcp_list_tools(self):
         """Should be able to list available tools.
@@ -163,13 +164,14 @@ class TestMCPProtocol:
         assert "result" in data
         result = data["result"]
         assert "tools" in result
-        # Should have some tools available
         tools = result["tools"]
-        assert len(tools) > 0
-        # Check for expected tool names
-        tool_names = [t["name"] for t in tools]
-        assert "execute_workflow" in tool_names
-        assert "list_workflows" in tool_names
+        tool_names = {t["name"] for t in tools}
+        assert tool_names == {
+            "bifrost_find_agents",
+            "bifrost_get_agent",
+            "bifrost_get_tool_schema",
+            "bifrost_execute_tool",
+        }
 
     def test_mcp_non_admin_allowed(self):
         """Non-admin users can initialize MCP — per-user tool access is

@@ -65,7 +65,6 @@ class MockMCPContext:
         self.is_platform_admin = is_platform_admin
         self.org_id = org_id
         self.user_name = user_name
-        self.enabled_system_tools: list[str] = []
         self.accessible_namespaces: list[str] = []
         self.session = None
 

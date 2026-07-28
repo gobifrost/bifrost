@@ -114,37 +114,25 @@ class TestGenerateShortSuffix:
 
 
 class TestToolNameMappings:
-    """Tests for get_workflow_id_for_tool() and get_registered_tool_name()."""
+    """Tests for workflow UUID to registered-name lookups."""
 
     def test_lookup_before_registration(self):
         """Should return None when tool is not registered."""
-        from src.services.mcp_server.server import (
-            get_registered_tool_name,
-            get_workflow_id_for_tool,
-        )
+        from src.services.mcp_server.server import get_registered_tool_name
 
-        # Before registration, lookups should return None
-        assert get_workflow_id_for_tool("nonexistent_tool") is None
         assert get_registered_tool_name("nonexistent-id") is None
 
-    def test_mappings_are_bidirectional(self):
-        """Mappings should work in both directions after registration."""
+    def test_registered_name_lookup(self):
+        """A registered workflow ID resolves to its FastMCP name."""
         from src.services.mcp_server import server
 
-        # Simulate registration by directly updating the mappings
-        original_name_to_id = server._TOOL_NAME_TO_WORKFLOW_ID.copy()
         original_id_to_name = server._WORKFLOW_ID_TO_TOOL_NAME.copy()
 
         try:
-            server._TOOL_NAME_TO_WORKFLOW_ID["test_workflow"] = "test-uuid-123"
             server._WORKFLOW_ID_TO_TOOL_NAME["test-uuid-123"] = "test_workflow"
 
-            assert server.get_workflow_id_for_tool("test_workflow") == "test-uuid-123"
             assert server.get_registered_tool_name("test-uuid-123") == "test_workflow"
         finally:
-            # Restore original state
-            server._TOOL_NAME_TO_WORKFLOW_ID.clear()
-            server._TOOL_NAME_TO_WORKFLOW_ID.update(original_name_to_id)
             server._WORKFLOW_ID_TO_TOOL_NAME.clear()
             server._WORKFLOW_ID_TO_TOOL_NAME.update(original_id_to_name)
 
