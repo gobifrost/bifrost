@@ -85,6 +85,45 @@ class TestResolveAgentTools:
         assert tools == []
         assert id_map == {}
 
+    @pytest.mark.asyncio
+    @patch("src.services.mcp_server.server.get_system_tools", return_value=[])
+    async def test_delegation_tool_contract_remains_task_only(
+        self, _mock_get_system_tools
+    ):
+        """Delegation hardening must not change the model-facing tool contract."""
+        delegated = MagicMock()
+        delegated.name = "Echo Specialist"
+        delegated.description = "Returns a concise specialist answer."
+        delegated.is_active = True
+
+        parent = MagicMock()
+        parent.id = uuid4()
+        parent.organization_id = None
+        parent.tools = []
+        parent.system_tools = []
+        parent.knowledge_sources = []
+        parent.delegated_agents = [delegated]
+
+        tools, id_map = await resolve_agent_tools(parent, MagicMock())
+
+        assert id_map == {}
+        assert len(tools) == 1
+        assert tools[0].name == "delegate_to_echo_specialist"
+        assert tools[0].description == (
+            "Delegate a task to Echo Specialist. "
+            "Returns a concise specialist answer."
+        )
+        assert tools[0].parameters == {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "The task or question to delegate to this agent",
+                },
+            },
+            "required": ["task"],
+        }
+
 
 class TestBuildAgentSystemPrompt:
     def test_uses_agent_system_prompt(self):

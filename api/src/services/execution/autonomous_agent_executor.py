@@ -13,16 +13,17 @@ import asyncio
 import json
 import logging
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
 import redis.asyncio as aioredis
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from src.models.orm.agents import Agent
+from src.models.orm.agents import Agent, AgentDelegation
 from src.models.orm.agent_runs import AgentRun, AgentRunStep
 from src.core.constants import SYSTEM_USER_ID, SYSTEM_USER_EMAIL
 from src.core.cache.keys import agent_run_steps_stream_key
@@ -60,6 +61,22 @@ class ToolError(Exception):
     pass
 
 
+@dataclass(frozen=True)
+class DelegationOutcome:
+    """Canonical internal result for a delegated child run."""
+
+    child_run_id: UUID
+    agent_name: str
+    status: str
+    output: str | dict | None
+    error: str | None
+    duration_ms: int
+
+    @property
+    def succeeded(self) -> bool:
+        return self.status == "completed"
+
+
 class AutonomousAgentExecutor:
     """Execute an agent autonomously (no streaming, no chat session).
 
@@ -77,10 +94,12 @@ class AutonomousAgentExecutor:
         redis_client: aioredis.Redis | None = None,
         *,
         _delegation_depth: int = 0,
+        _ancestor_run_ids: tuple[str, ...] = (),
     ):
         self._session_factory = session_factory
         self.redis_client = redis_client
         self._delegation_depth = _delegation_depth
+        self._ancestor_run_ids = _ancestor_run_ids
         self._tool_workflow_id_map: dict[str, UUID] = {}
         self._current_run_id: str = ""
         self._last_delegation_run_id: str | None = None
@@ -91,6 +110,7 @@ class AutonomousAgentExecutor:
         # event-trigger), in which case dispatch resolves to the
         # service token only.
         self._caller_user_id: UUID | None = None
+        self._caller: dict[str, Any] | None = None
         # Buffers for Redis-first pattern (flushed to DB after run completes)
         self._pending_steps: list[dict[str, Any]] = []
         self._pending_ai_usage: list[dict[str, Any]] = []
@@ -140,6 +160,7 @@ class AutonomousAgentExecutor:
                 )
                 caller_user_id = None
         self._caller_user_id = caller_user_id
+        self._caller = dict(_caller) if _caller else None
 
         # Short-circuit if agent is paused. Runs already past this point continue
         # normally — this check only gates new runs at entry.
@@ -312,6 +333,8 @@ class AutonomousAgentExecutor:
                     # previous workflow's execution ID.
                     self._last_workflow_execution_id = None
                     self._last_workflow_execution_is_error = False
+                    if tc.name.startswith("delegate_to_"):
+                        self._last_delegation_run_id = None
                     result = await self._execute_tool(tc, agent)
                     tool_duration = int((time.time() - tool_start) * 1000)
 
@@ -337,12 +360,21 @@ class AutonomousAgentExecutor:
                     ))
                 except Exception as e:
                     tool_duration = int((time.time() - tool_start) * 1000)
-                    step_number += 1
-                    await self._record_step(run_id, step_number, "tool_error", {
+                    step_content = {
                         "tool_name": tc.name,
                         "error": str(e),
                         "is_error": True,
-                    }, duration_ms=tool_duration)
+                    }
+                    if tc.name.startswith("delegate_to_") and self._last_delegation_run_id:
+                        step_content["child_run_id"] = self._last_delegation_run_id
+                    step_number += 1
+                    await self._record_step(
+                        run_id,
+                        step_number,
+                        "tool_error",
+                        step_content,
+                        duration_ms=tool_duration,
+                    )
 
                     messages.append(LLMMessage(
                         role="tool",
@@ -482,11 +514,31 @@ class AutonomousAgentExecutor:
             workflow_id=str(workflow_id),
             workflow_name=tool_call.name,
             parameters=tool_call.arguments or {},
-            user_id=SYSTEM_USER_ID,
-            user_email=SYSTEM_USER_EMAIL,
-            user_name=agent.name,
+            user_id=(
+                str(self._caller_user_id)
+                if self._caller_user_id
+                else SYSTEM_USER_ID
+            ),
+            user_email=(
+                str(self._caller.get("email"))
+                if self._caller_user_id
+                and self._caller
+                and self._caller.get("email")
+                else SYSTEM_USER_EMAIL
+            ),
+            user_name=(
+                str(self._caller.get("name"))
+                if self._caller_user_id
+                and self._caller
+                and self._caller.get("name")
+                else agent.name
+            ),
             org_id=str(agent.organization_id) if agent.organization_id else None,
-            is_platform_admin=False,
+            is_platform_admin=(
+                bool(self._caller.get("is_platform_admin", False))
+                if self._caller_user_id and self._caller
+                else False
+            ),
             is_agent=True,
         )
         self._last_workflow_execution_id = response.execution_id
@@ -646,47 +698,111 @@ class AutonomousAgentExecutor:
             logger.error(f"Knowledge search failed: {e}", exc_info=True)
             raise ToolError(f"Knowledge search error: {e}") from e
 
-    async def _execute_delegation(self, tool_call: ToolCallRequest, agent: Agent) -> str:
-        """Execute delegation to another agent (recursive autonomous run)."""
-        # Check cancellation before starting potentially long delegation
-        if await self._check_cancelled(self._current_run_id):
+    async def run_delegation(
+        self,
+        *,
+        parent_agent: Agent,
+        tool_call: ToolCallRequest,
+        parent_run_id: str | None = None,
+        conversation_id: UUID | None = None,
+        caller: dict[str, Any] | None = None,
+    ) -> DelegationOutcome:
+        """Run one delegated child with a durable, caller-neutral lifecycle."""
+        if parent_run_id and await self._check_cancelled(parent_run_id):
             raise ToolError("Agent run was cancelled")
-
         if self._delegation_depth >= MAX_DELEGATION_DEPTH:
-            logger.warning(f"Delegation depth limit ({MAX_DELEGATION_DEPTH}) exceeded for {tool_call.name}")
-            raise ToolError(f"Delegation depth limit ({MAX_DELEGATION_DEPTH}) exceeded — cannot delegate further.")
+            logger.warning(
+                f"Delegation depth limit ({MAX_DELEGATION_DEPTH}) exceeded for {tool_call.name}"
+            )
+            raise ToolError(
+                f"Delegation depth limit ({MAX_DELEGATION_DEPTH}) exceeded — "
+                "cannot delegate further."
+            )
 
         task = tool_call.arguments.get("task", "")
+        if not task:
+            raise ToolError("No task provided for delegation")
 
-        target_agent = find_delegated_agent(agent, tool_call.name)
+        target_agent = find_delegated_agent(parent_agent, tool_call.name)
         if not target_agent:
             raise ToolError(f"Delegation target for '{tool_call.name}' not found.")
+        if (
+            target_agent.organization_id is not None
+            and target_agent.organization_id != parent_agent.organization_id
+        ):
+            raise ToolError(
+                f"Delegation target '{target_agent.name}' is outside the "
+                "parent agent's organization."
+            )
 
         logger.info(
-            f"Agent '{agent.name}' delegating to '{target_agent.name}' "
+            f"Agent '{parent_agent.name}' delegating to '{target_agent.name}' "
             f"(depth={self._delegation_depth + 1}/{MAX_DELEGATION_DEPTH})"
         )
 
-        # Brief DB session: re-fetch child agent with relationships + create sub-run record
-        sub_run_id = str(uuid4())
+        sub_run_id = uuid4()
+        delegation_org_id = parent_agent.organization_id
+        if (
+            delegation_org_id is None
+            and caller
+            and caller.get("organization_id")
+        ):
+            try:
+                delegation_org_id = UUID(str(caller["organization_id"]))
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Delegation from agent %s received invalid caller "
+                    "organization_id %r; retaining global run scope",
+                    parent_agent.id,
+                    caller.get("organization_id"),
+                )
+
         async with self._session_factory() as db:
             result = await db.execute(
                 select(Agent)
-                .options(selectinload(Agent.tools), selectinload(Agent.delegated_agents))
-                .where(Agent.id == target_agent.id)
+                .join(
+                    AgentDelegation,
+                    AgentDelegation.child_agent_id == Agent.id,
+                )
+                .options(
+                    selectinload(Agent.tools),
+                    selectinload(Agent.delegated_agents),
+                )
+                .where(
+                    Agent.id == target_agent.id,
+                    Agent.is_active.is_(True),
+                    AgentDelegation.parent_agent_id == parent_agent.id,
+                    or_(
+                        Agent.organization_id.is_(None),
+                        Agent.organization_id == parent_agent.organization_id,
+                    ),
+                )
+                .with_for_update()
             )
-            target_agent = result.scalar_one()
+            target_agent = result.scalar_one_or_none()
+            if target_agent is None:
+                raise ToolError(
+                    f"Delegation target for '{tool_call.name}' is no longer "
+                    "active, authorized, or in scope."
+                )
 
-            # Create a child AgentRun so steps and AI usage are properly tracked
             sub_run = AgentRun(
-                id=UUID(sub_run_id),
+                id=sub_run_id,
                 agent_id=target_agent.id,
                 trigger_type="delegation",
-                trigger_source=f"agent:{agent.name}",
-                input={"task": task, "_delegated_from": agent.name},
+                trigger_source=(
+                    f"conversation:{conversation_id}"
+                    if conversation_id
+                    else f"agent:{parent_agent.name}"
+                ),
+                conversation_id=conversation_id,
+                input={"task": task, "_delegated_from": parent_agent.name},
                 status="running",
-                org_id=agent.organization_id,
-                parent_run_id=UUID(self._current_run_id),
+                org_id=delegation_org_id,
+                caller_user_id=caller.get("user_id") if caller else None,
+                caller_email=caller.get("email") if caller else None,
+                caller_name=caller.get("name") if caller else None,
+                parent_run_id=UUID(parent_run_id) if parent_run_id else None,
                 budget_max_iterations=target_agent.max_iterations,
                 budget_max_tokens=target_agent.max_token_budget,
                 started_at=datetime.now(timezone.utc),
@@ -694,65 +810,195 @@ class AutonomousAgentExecutor:
             db.add(sub_run)
             await db.commit()
 
-        # Store for the caller to include in the tool_result step
-        self._last_delegation_run_id = sub_run_id
+        self._last_delegation_run_id = str(sub_run_id)
 
-        # Recursive run with the delegated agent (child gets its own session factory)
+        ancestor_run_ids = self._ancestor_run_ids
+        if parent_run_id and parent_run_id not in ancestor_run_ids:
+            ancestor_run_ids = (*ancestor_run_ids, parent_run_id)
         sub_executor = AutonomousAgentExecutor(
             self._session_factory,
             redis_client=self.redis_client,
             _delegation_depth=self._delegation_depth + 1,
+            _ancestor_run_ids=ancestor_run_ids,
         )
+
         sub_start = time.time()
+        cancellation: asyncio.CancelledError | None = None
         try:
             sub_result = await asyncio.wait_for(
                 sub_executor.run(
                     agent=target_agent,
-                    input_data={"task": task, "_delegated_from": agent.name},
-                    run_id=sub_run_id,
+                    input_data={
+                        "task": task,
+                        "_delegated_from": parent_agent.name,
+                    },
+                    run_id=str(sub_run_id),
+                    _caller=caller,
                 ),
                 timeout=DELEGATION_TIMEOUT_SECONDS,
             )
         except asyncio.TimeoutError:
-            duration_ms = int((time.time() - sub_start) * 1000)
-            async with self._session_factory() as db:
-                sub_run_obj = await db.get(AgentRun, UUID(sub_run_id))
-                if sub_run_obj:
-                    sub_run_obj.status = "failed"
-                    sub_run_obj.error = f"Timed out after {DELEGATION_TIMEOUT_SECONDS}s"
-                    sub_run_obj.duration_ms = duration_ms
-                    sub_run_obj.completed_at = datetime.now(timezone.utc)
-                    await db.commit()
             logger.error(
-                f"Delegation to '{target_agent.name}' timed out after {DELEGATION_TIMEOUT_SECONDS}s"
+                f"Delegation to '{target_agent.name}' timed out after "
+                f"{DELEGATION_TIMEOUT_SECONDS}s"
             )
-            raise ToolError(f"Delegation to {target_agent.name} timed out after {DELEGATION_TIMEOUT_SECONDS}s")
+            sub_result = {
+                "output": None,
+                "iterations_used": 0,
+                "tokens_used": 0,
+                "status": "timeout",
+                "llm_model": target_agent.llm_model,
+                "error": (
+                    f"Delegation to {target_agent.name} timed out after "
+                    f"{DELEGATION_TIMEOUT_SECONDS}s"
+                ),
+            }
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+            sub_result = {
+                "output": None,
+                "iterations_used": 0,
+                "tokens_used": 0,
+                "status": "cancelled",
+                "llm_model": target_agent.llm_model,
+                "error": f"Delegation to {target_agent.name} was cancelled",
+            }
+        except Exception as exc:
+            logger.error(
+                f"Delegation to '{target_agent.name}' failed: {exc}",
+                exc_info=True,
+            )
+            sub_result = {
+                "output": None,
+                "iterations_used": 0,
+                "tokens_used": 0,
+                "status": "failed",
+                "llm_model": target_agent.llm_model,
+                "error": str(exc),
+            }
 
-        # Update sub-run record with results (brief DB session)
         duration_ms = int((time.time() - sub_start) * 1000)
-        async with self._session_factory() as db:
-            sub_run_obj = await db.get(AgentRun, UUID(sub_run_id))
-            if sub_run_obj:
-                sub_run_obj.status = sub_result.get("status", "completed")
-                output = sub_result.get("output")
-                sub_run_obj.output = output if isinstance(output, dict) else {"text": output}
-                sub_run_obj.iterations_used = sub_result.get("iterations_used", 0)
-                sub_run_obj.tokens_used = sub_result.get("tokens_used", 0)
-                sub_run_obj.llm_model = sub_result.get("llm_model")
-                sub_run_obj.duration_ms = duration_ms
-                sub_run_obj.completed_at = datetime.now(timezone.utc)
-                if sub_result.get("error"):
-                    sub_run_obj.error = sub_result["error"]
+        status = str(sub_result.get("status") or "completed")
+        if status not in {
+            "completed",
+            "failed",
+            "cancelled",
+            "paused",
+            "budget_exceeded",
+            "timeout",
+        }:
+            sub_result = {
+                **sub_result,
+                "status": "failed",
+                "error": f"Delegation returned unsupported status '{status}'",
+            }
+            status = "failed"
 
-                # Flush child executor's buffered steps in the same transaction
-                await sub_executor.flush_to_db(db)
-                await db.commit()
-
-        logger.info(
-            f"Delegation to '{target_agent.name}' completed with status={sub_result.get('status')}"
+        error = self._delegation_error(target_agent.name, status, sub_result)
+        outcome = DelegationOutcome(
+            child_run_id=sub_run_id,
+            agent_name=target_agent.name,
+            status=status,
+            output=sub_result.get("output"),
+            error=error,
+            duration_ms=duration_ms,
         )
 
-        return str(sub_result.get("output", "Delegation completed with no output."))
+        async with self._session_factory() as db:
+            sub_run_obj = await db.get(AgentRun, sub_run_id)
+            if sub_run_obj is None:
+                raise RuntimeError(
+                    f"Delegated AgentRun {sub_run_id} disappeared before finalization"
+                )
+            sub_run_obj.status = status
+            output = sub_result.get("output")
+            sub_run_obj.output = (
+                output if isinstance(output, dict) else {"text": output}
+            )
+            sub_run_obj.iterations_used = sub_result.get("iterations_used", 0)
+            sub_run_obj.tokens_used = sub_result.get("tokens_used", 0)
+            sub_run_obj.llm_model = sub_result.get("llm_model")
+            sub_run_obj.duration_ms = duration_ms
+            sub_run_obj.completed_at = datetime.now(timezone.utc)
+            sub_run_obj.error = error
+
+            await sub_executor.flush_to_db(db)
+            await db.commit()
+
+        if status == "completed":
+            try:
+                from src.services.execution.run_summarizer import enqueue_summarize
+
+                await enqueue_summarize(sub_run_id)
+            except Exception:
+                logger.exception(
+                    "Failed to enqueue summarizer for delegated run %s",
+                    sub_run_id,
+                )
+
+        if self.redis_client:
+            try:
+                await self.redis_client.delete(
+                    agent_run_steps_stream_key(str(sub_run_id))
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to clean delegated run stream %s",
+                    sub_run_id,
+                    exc_info=True,
+                )
+
+        logger.info(
+            f"Delegation to '{target_agent.name}' completed with status={status}"
+        )
+
+        if cancellation is not None:
+            raise cancellation
+        return outcome
+
+    @staticmethod
+    def _delegation_error(
+        agent_name: str,
+        status: str,
+        sub_result: dict[str, Any],
+    ) -> str | None:
+        if status == "completed":
+            return None
+        if sub_result.get("error"):
+            return str(sub_result["error"])
+        if status == "paused" and sub_result.get("message"):
+            return str(sub_result["message"])
+        if status == "cancelled":
+            return f"Delegation to {agent_name} was cancelled"
+        if status == "paused":
+            return f"Delegated agent {agent_name} is paused"
+        if status == "budget_exceeded":
+            return f"Delegated agent {agent_name} exceeded its budget"
+        if status == "timeout":
+            return f"Delegation to {agent_name} timed out"
+        return f"Delegation to {agent_name} failed"
+
+    async def _execute_delegation(
+        self,
+        tool_call: ToolCallRequest,
+        agent: Agent,
+    ) -> str:
+        """Execute delegation for an autonomous parent run."""
+        outcome = await self.run_delegation(
+            parent_agent=agent,
+            tool_call=tool_call,
+            parent_run_id=self._current_run_id,
+            caller=self._caller,
+        )
+        if not outcome.succeeded:
+            raise ToolError(
+                outcome.error or f"Delegation ended with status {outcome.status}"
+            )
+        if isinstance(outcome.output, dict):
+            return json.dumps(outcome.output)
+        if outcome.output is None:
+            return "Delegation completed with no output."
+        return str(outcome.output)
 
     async def _execute_system_tool(self, tool_call: ToolCallRequest, agent: Agent) -> str:
         """Execute a system tool."""
@@ -766,11 +1012,31 @@ class AutonomousAgentExecutor:
             # Brief DB session scoped to the tool call
             async with self._session_factory() as db:
                 context = MCPContext(
-                    user_id=SYSTEM_USER_ID,
+                    user_id=(
+                        str(self._caller_user_id)
+                        if self._caller_user_id
+                        else SYSTEM_USER_ID
+                    ),
                     org_id=str(agent.organization_id) if agent.organization_id else None,
-                    is_platform_admin=False,
-                    user_email=SYSTEM_USER_EMAIL,
-                    user_name=agent.name,
+                    is_platform_admin=(
+                        bool(self._caller.get("is_platform_admin", False))
+                        if self._caller_user_id and self._caller
+                        else False
+                    ),
+                    user_email=(
+                        str(self._caller.get("email"))
+                        if self._caller_user_id
+                        and self._caller
+                        and self._caller.get("email")
+                        else SYSTEM_USER_EMAIL
+                    ),
+                    user_name=(
+                        str(self._caller.get("name"))
+                        if self._caller_user_id
+                        and self._caller
+                        and self._caller.get("name")
+                        else agent.name
+                    ),
                     session=db,
                 )
 
@@ -801,13 +1067,15 @@ class AutonomousAgentExecutor:
     # ------------------------------------------------------------------
 
     async def _check_cancelled(self, run_id: str) -> bool:
-        """Check if this agent run has been flagged for cancellation via Redis."""
+        """Check this run and every ancestor for a Redis cancellation flag."""
         if not self.redis_client:
             return False
         try:
-            key = f"bifrost:agent_run:{run_id}:cancel"
-            result = await self.redis_client.get(key)
-            return result is not None
+            for candidate_run_id in dict.fromkeys((run_id, *self._ancestor_run_ids)):
+                key = f"bifrost:agent_run:{candidate_run_id}:cancel"
+                if await self.redis_client.get(key) is not None:
+                    return True
+            return False
         except Exception:
             return False
 

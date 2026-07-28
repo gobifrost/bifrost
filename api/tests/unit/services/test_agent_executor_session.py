@@ -233,6 +233,7 @@ class TestDelegationUsesFactory:
         child_agent = _make_mock_agent()
         child_agent.name = "child agent"  # agent_delegation_slug("child agent") -> "delegate_to_child_agent"
         child_agent.is_active = True
+        child_agent.organization_id = agent.organization_id
         agent.delegated_agents = [child_agent]
 
         # Mock the select query for re-fetching child agent

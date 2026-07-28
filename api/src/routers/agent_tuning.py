@@ -89,7 +89,7 @@ async def create_tuning_session(
     await _load_agent_with_access(agent_id, db, user)
 
     try:
-        proposal = await propose_consolidated_tuning(agent_id, db)
+        proposal = await propose_consolidated_tuning(agent_id, db, user)
     except LookupError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
@@ -124,6 +124,7 @@ async def dry_run_tuning_session(
         proposed_prompt=request.proposed_prompt,
         db=db,
         session_factory=session_factory,
+        user=user,
     )
     return ConsolidatedDryRunResponse(
         results=[
@@ -158,6 +159,7 @@ async def apply_tuning_session(
             reason=request.reason,
             user_id=user.user_id,
             db=db,
+            user=user,
         )
     except LookupError as exc:
         raise HTTPException(

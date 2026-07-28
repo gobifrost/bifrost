@@ -1,6 +1,8 @@
-import pytest
+import json
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
+
+import pytest
 
 from src.services.execution.agent_run_service import enqueue_agent_run
 
@@ -39,14 +41,19 @@ class TestEnqueueAgentRun:
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
         mock_get_redis.return_value = mock_ctx
 
+        org_id = str(uuid4())
         await enqueue_agent_run(
             agent_id=str(uuid4()),
             trigger_type="sdk",
             input_data={"task": "analyze"},
             output_schema={"action": {"type": "string"}},
+            org_id=org_id,
+            caller_user_id=str(uuid4()),
         )
 
         mock_redis.set.assert_called_once()
+        context = json.loads(mock_redis.set.call_args.args[1])
+        assert context["caller"]["organization_id"] == org_id
 
     @pytest.mark.asyncio
     @patch("src.services.execution.agent_run_service.publish_message")
