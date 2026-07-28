@@ -273,6 +273,10 @@
 | DELETE | `/api/mcp/config` |
 | GET | `/api/mcp/config` |
 | PUT | `/api/mcp/config` |
+| GET | `/api/mcp/gateway/agents` |
+| GET | `/api/mcp/gateway/agents/{agent_id}` |
+| GET | `/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}` |
+| POST | `/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute` |
 | GET | `/api/mcp/status` |
 | GET | `/api/mcp/tools` |
 | GET | `/api/me/mcp-connections` |
