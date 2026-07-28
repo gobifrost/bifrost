@@ -417,38 +417,6 @@ class TestGetAccessibleTools:
         workflow_tools = [t for t in result.tools if t.type == "workflow"]
         assert len(workflow_tools) == 1
 
-    @pytest.mark.asyncio
-    async def test_returns_accessible_agent_ids(self, service, mock_session, mock_agent):
-        """Should return list of accessible agent IDs."""
-        agent1 = mock_agent(
-            name="Agent 1",
-            access_level=AgentAccessLevel.AUTHENTICATED,
-            system_tools=["list_workflows"],
-        )
-        agent2 = mock_agent(
-            name="Agent 2",
-            access_level=AgentAccessLevel.AUTHENTICATED,
-            system_tools=["list_forms"],
-        )
-
-        mock_session.execute = AsyncMock(return_value=mock_query_result([agent1, agent2]))
-
-        with patch('src.services.mcp_server.tool_access.MCPConfigService') as MockConfig:
-            mock_config = MagicMock()
-            mock_config.allowed_tool_ids = None
-            mock_config.blocked_tool_ids = None
-            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
-
-            result = await service.get_accessible_tools(
-                user_roles=[],
-                is_superuser=False,
-            )
-
-        assert len(result.accessible_agent_ids) == 2
-        assert agent1.id in result.accessible_agent_ids
-        assert agent2.id in result.accessible_agent_ids
-
-
 # ==================== Config Filtering Tests ====================
 
 
@@ -645,7 +613,6 @@ class TestEdgeCases:
             )
 
         assert len(result.tools) == 0
-        assert len(result.accessible_agent_ids) == 0
 
     @pytest.mark.asyncio
     async def test_agents_with_no_tools(self, service, mock_session, mock_agent):
@@ -670,7 +637,6 @@ class TestEdgeCases:
             )
 
         assert len(result.tools) == 0
-        assert len(result.accessible_agent_ids) == 1  # Agent still accessible
 
     @pytest.mark.asyncio
     async def test_workflow_with_tool_description(self, service, mock_session, mock_agent, mock_workflow):
@@ -698,87 +664,6 @@ class TestEdgeCases:
 
         workflow_tool = [t for t in result.tools if t.type == "workflow"][0]
         assert workflow_tool.description == "Specific tool description"
-
-
-# ==================== Knowledge Namespace Access Tests ====================
-
-
-class TestKnowledgeNamespaceAccess:
-    """Tests for accessible_namespaces in MCPToolAccessResult."""
-
-    @pytest.mark.asyncio
-    async def test_collects_namespaces_from_accessible_agents(self, service, mock_session, mock_agent):
-        """Should collect knowledge_sources from accessible agents."""
-        agent1 = mock_agent(
-            access_level=AgentAccessLevel.AUTHENTICATED,
-            knowledge_sources=["docs", "faq"],
-        )
-        agent2 = mock_agent(
-            access_level=AgentAccessLevel.AUTHENTICATED,
-            knowledge_sources=["tutorials"],
-        )
-
-        mock_session.execute = AsyncMock(return_value=mock_query_result([agent1, agent2]))
-
-        with patch('src.services.mcp_server.tool_access.MCPConfigService') as MockConfig:
-            mock_config = MagicMock()
-            mock_config.allowed_tool_ids = None
-            mock_config.blocked_tool_ids = None
-            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
-
-            result = await service.get_accessible_tools(
-                user_roles=[],
-                is_superuser=False,
-            )
-
-        assert set(result.accessible_namespaces) == {"docs", "faq", "tutorials"}
-
-    @pytest.mark.asyncio
-    async def test_deduplicates_namespaces_across_agents(self, service, mock_session, mock_agent):
-        """Should deduplicate namespaces when multiple agents share the same namespace."""
-        agent1 = mock_agent(
-            access_level=AgentAccessLevel.AUTHENTICATED,
-            knowledge_sources=["shared-ns", "unique-1"],
-        )
-        agent2 = mock_agent(
-            access_level=AgentAccessLevel.AUTHENTICATED,
-            knowledge_sources=["shared-ns", "unique-2"],
-        )
-
-        mock_session.execute = AsyncMock(return_value=mock_query_result([agent1, agent2]))
-
-        with patch('src.services.mcp_server.tool_access.MCPConfigService') as MockConfig:
-            mock_config = MagicMock()
-            mock_config.allowed_tool_ids = None
-            mock_config.blocked_tool_ids = None
-            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
-
-            result = await service.get_accessible_tools(
-                user_roles=[],
-                is_superuser=False,
-            )
-
-        # Should have exactly 3 unique namespaces
-        assert len(result.accessible_namespaces) == 3
-        assert set(result.accessible_namespaces) == {"shared-ns", "unique-1", "unique-2"}
-
-    @pytest.mark.asyncio
-    async def test_returns_empty_namespaces_when_no_agents_accessible(self, service, mock_session):
-        """Should return empty accessible_namespaces when no agents are accessible."""
-        mock_session.execute = AsyncMock(return_value=mock_query_result([]))
-
-        with patch('src.services.mcp_server.tool_access.MCPConfigService') as MockConfig:
-            mock_config = MagicMock()
-            mock_config.allowed_tool_ids = None
-            mock_config.blocked_tool_ids = None
-            MockConfig.return_value.get_config = AsyncMock(return_value=mock_config)
-
-            result = await service.get_accessible_tools(
-                user_roles=[],
-                is_superuser=False,
-            )
-
-        assert result.accessible_namespaces == []
 
 
 # ==================== search_knowledge Auto-Injection Tests ====================

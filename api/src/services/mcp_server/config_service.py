@@ -25,10 +25,9 @@ class MCPConfig:
     """
     MCP server configuration.
 
-    Controls external access to the MCP endpoint. Per-user/tool access is
-    governed by agent role membership via ``MCPToolAccessService``; this
-    config only exposes the master on/off switch plus platform-wide
-    allowlist/blocklist for tools.
+    Controls external access to the MCP endpoint. Agent discovery and dispatch
+    enforce caller-specific access; this config exposes the master on/off switch
+    plus a platform-wide allowlist/blocklist for underlying tools.
     """
 
     enabled: bool = True

@@ -248,10 +248,10 @@ export function MCP() {
 							<Label htmlFor="mcp-enabled" className="text-base">
 								Enable MCP Access
 							</Label>
-							<p className="text-sm text-muted-foreground">
-								When enabled, users can connect via MCP. Each
-								user sees only the tools they're granted access
-								to via agent roles.
+								<p className="text-sm text-muted-foreground">
+									When enabled, users can connect via MCP and
+									discover only the agents and tools they can
+									access.
 							</p>
 						</div>
 						<Switch

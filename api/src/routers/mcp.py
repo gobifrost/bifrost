@@ -7,8 +7,8 @@ Uses FastMCP to expose tools via Streamable HTTP transport with Bearer token aut
 Architecture:
     - FastMCP server is mounted as an ASGI sub-application at /mcp
     - JWT Bearer token authentication using Bifrost's existing auth system
-    - Tools are dynamically loaded based on user's agent access permissions
-    - Platform admins only (initially) - controlled by system config
+    - /mcp exposes four stable agent discovery and dispatch tools
+    - /mcp/{agent_id} preserves the native agent-scoped tool surface
 
 Authentication:
     Users authenticate through Bifrost's normal login flow (UI or CLI) and use
@@ -22,13 +22,14 @@ Usage:
         -H "Content-Type: application/json"
 
     # Use token for MCP access (example with test initialize)
-    curl -X POST https://your-bifrost.com/api/mcp \
+    curl -X POST https://your-bifrost.com/mcp \
         -H "Authorization: Bearer <access_token>" \
         -H "Accept: application/json, text/event-stream" \
         -d '{"jsonrpc":"2.0","id":1,"method":"initialize",...}'
 """
 
 import logging
+from typing import NoReturn
 
 from fastapi import APIRouter, HTTPException, Query, status
 from starlette.middleware.cors import CORSMiddleware
@@ -85,7 +86,7 @@ async def _require_mcp_enabled(db: DbSession) -> None:
         )
 
 
-def _raise_gateway_http_error(exc: Exception) -> None:
+def _raise_gateway_http_error(exc: Exception) -> NoReturn:
     """Map structured gateway failures to REST status codes."""
     from src.services.mcp_server.gateway import GatewayError
 
@@ -135,7 +136,6 @@ async def get_gateway_agent(
         return await _gateway_service(current_user).get_agent(agent_id)
     except Exception as exc:
         _raise_gateway_http_error(exc)
-        raise
 
 
 @router.get(
@@ -157,7 +157,6 @@ async def get_gateway_tool_schema(
         )
     except Exception as exc:
         _raise_gateway_http_error(exc)
-        raise
 
 
 @router.post(
@@ -181,7 +180,6 @@ async def execute_gateway_tool(
         )
     except Exception as exc:
         _raise_gateway_http_error(exc)
-        raise
 
 
 # =============================================================================
@@ -241,8 +239,8 @@ def get_mcp_asgi_app():
     """
     Create the FastMCP ASGI application for mounting.
 
-    This creates a FastMCP server with all system tools and OAuth 2.1 authentication,
-    then returns the ASGI app that can be mounted at /api (resulting in /api/mcp endpoint).
+    This creates a FastMCP server with the stable gateway tools plus the native
+    tools retained for agent-scoped URLs, then returns the root-mounted ASGI app.
 
     Authentication:
         Uses BifrostAuthProvider which implements OAuth 2.1 with:
@@ -252,7 +250,7 @@ def get_mcp_asgi_app():
         - JWT token validation using Bifrost's existing tokens
 
         Users authenticate through Bifrost's normal login flow via OAuth redirect.
-        Only platform admins can access MCP (by default, configurable).
+        Agent and tool visibility is enforced for each authenticated caller.
 
     Returns:
         ASGI application from FastMCP
@@ -312,7 +310,7 @@ def get_mcp_asgi_app():
         """Combined lifespan that registers workflow tools and runs FastMCP lifespan."""
         # Register workflow tools on startup
         try:
-            count = await _register_workflow_tools(fastmcp_server, default_context)
+            count = await _register_workflow_tools(fastmcp_server)
             logger.info(f"Registered {count} workflow tools during MCP startup")
         except Exception as e:
             logger.warning(f"Failed to register workflow tools: {e}")

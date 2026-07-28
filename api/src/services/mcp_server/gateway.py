@@ -538,7 +538,6 @@ class MCPAgentGatewayService:
             is_external=self.context.is_external,
             user_email=self.context.user_email,
             user_name=self.context.user_name,
-            enabled_system_tools=list(agent.system_tools or []),
             accessible_namespaces=list(agent.knowledge_sources or []),
         )
         result = await func(context, **arguments)

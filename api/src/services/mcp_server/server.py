@@ -26,6 +26,9 @@ from fastmcp.tools import ToolResult
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
+from src.services.mcp_server.agent_scope import (
+    get_scoped_agent_id as _get_agent_id_from_scope,
+)
 from src.services.mcp_server.tools import (
     TOOL_MODULES,
     register_all_tools,
@@ -65,16 +68,12 @@ BIFROST_WEBSITE_URL = "https://docs.gobifrost.com"
 # =============================================================================
 
 # Workflow tools are registered with normalized names for MCP compatibility.
-# These mappings track the relationship between tool names and workflow UUIDs.
-
-# Forward mapping: normalized tool_name -> workflow_id
-_TOOL_NAME_TO_WORKFLOW_ID: dict[str, str] = {}
-# Reverse mapping: workflow_id -> tool_name
+# The reverse mapping lets agent-scoped access resolve a workflow UUID to its
+# current FastMCP tool name. Its values also track names during refresh.
 _WORKFLOW_ID_TO_TOOL_NAME: dict[str, str] = {}
 
 # Stored references for refresh_workflow_tools()
 _fastmcp_instance: "FastMCP | None" = None
-_default_mcp_context: "MCPContext | None" = None
 
 
 def _normalize_tool_name(name: str) -> str:
@@ -109,19 +108,6 @@ def _generate_short_suffix(length: int = 3) -> str:
     return "".join(secrets.choice(chars) for _ in range(length))
 
 
-def get_workflow_id_for_tool(tool_name: str) -> str | None:
-    """
-    Get workflow UUID for a registered MCP tool name.
-
-    Args:
-        tool_name: The MCP tool name (e.g., "review_tickets")
-
-    Returns:
-        Workflow UUID string or None if not found
-    """
-    return _TOOL_NAME_TO_WORKFLOW_ID.get(tool_name)
-
-
 def get_registered_tool_name(workflow_id: str) -> str | None:
     """
     Get the registered MCP tool name for a workflow ID.
@@ -154,9 +140,6 @@ class MCPContext:
     user_email: str = ""
     user_name: str = ""
 
-    # System tools enabled for this context (from agent.system_tools)
-    enabled_system_tools: list[str] = field(default_factory=list)
-
     # Knowledge namespaces accessible to this user (from agent.knowledge_sources)
     accessible_namespaces: list[str] = field(default_factory=list)
 
@@ -176,26 +159,6 @@ class MCPContext:
 # =============================================================================
 # Context Helper Functions (for FastMCP authentication)
 # =============================================================================
-
-
-def _get_agent_id_from_scope() -> UUID | None:
-    """Read the agent UUID written to the ASGI scope by AgentScopeMCPMiddleware.
-
-    Returns ``None`` outside an HTTP request context (e.g. stdio MCP) or when
-    the request is to the un-scoped /mcp mount.
-    """
-    from fastmcp.server.dependencies import get_http_request
-
-    try:
-        request = get_http_request()
-        agent_id_str = request.scope.get("mcp_agent_id")
-        if agent_id_str:
-            return UUID(agent_id_str)
-    except (RuntimeError, ValueError, AttributeError) as e:
-        # RuntimeError: not in HTTP context; ValueError: bad UUID; AttributeError:
-        # scope shape unexpected. None of these should crash tool execution.
-        logger.debug(f"could not extract agent_id from scope: {e}")
-    return None
 
 
 def _get_context_from_token() -> MCPContext:
@@ -324,11 +287,6 @@ class BifrostMCPServer:
         self.context = context
         self._name = name
 
-        # Determine enabled tools
-        self._enabled_tools: set[str] | None = None
-        if context.enabled_system_tools:
-            self._enabled_tools = set(context.enabled_system_tools)
-
         # FastMCP server (lazy initialized)
         self._fastmcp: Any = None
 
@@ -363,8 +321,8 @@ class BifrostMCPServer:
                 )
             ]
 
-        # Per-request context: pull user from the JWT and scope namespaces by
-        # the ASGI mount (agent-scoped vs. union). Falls back to the server's
+        # Per-request context: pull user from the JWT and scope namespaces for
+        # the agent-specific mount. Falls back to the server's
         # default_context only when there is no FastMCP request context at all
         # (e.g. tool introspection at startup); other failures (auth required,
         # DB error) are real errors and must not silently degrade to the
@@ -419,16 +377,6 @@ class BifrostMCPServer:
             )
             logger.info(f"Created FastMCP server with {tool_count} tools")
         return self._fastmcp
-
-    def get_tool_names(self) -> list[str]:
-        """Get list of registered tool names (prefixed for SDK use)."""
-        all_tools = [tool_id for m in TOOL_MODULES for tool_id, _, _ in m.TOOLS]
-        if self._enabled_tools:
-            tools = [t for t in all_tools if t in self._enabled_tools]
-        else:
-            tools = all_tools
-        return [f"mcp__{self._name}__{t}" for t in tools]
-
 
 def get_system_tools() -> list[dict[str, Any]]:
     """
@@ -556,44 +504,6 @@ def get_system_tool_function(tool_id: str) -> Any | None:
                 if hasattr(module, tool_id):
                     return getattr(module, tool_id)
     return None
-
-
-# =============================================================================
-# Factory Function
-# =============================================================================
-
-
-async def create_user_mcp_server(
-    user_id: UUID | str,
-    org_id: UUID | str | None = None,
-    is_platform_admin: bool = False,
-    enabled_tools: list[str] | None = None,
-    user_email: str = "",
-    user_name: str = "",
-) -> BifrostMCPServer:
-    """
-    Create an MCP server scoped to a user's permissions.
-
-    Args:
-        user_id: User ID
-        org_id: Organization ID (optional)
-        is_platform_admin: Whether user is platform admin
-        enabled_tools: List of enabled tool IDs (None = all)
-        user_email: User email for context
-        user_name: User name for context
-
-    Returns:
-        BifrostMCPServer configured for this user
-    """
-    context = MCPContext(
-        user_id=user_id,
-        org_id=org_id,
-        is_platform_admin=is_platform_admin,
-        enabled_system_tools=enabled_tools or [],
-        user_email=user_email,
-        user_name=user_name,
-    )
-    return BifrostMCPServer(context)
 
 
 # =============================================================================
@@ -761,7 +671,7 @@ async def _notify_duplicate_workflow_names(duplicates: dict[str, list]) -> None:
         )
 
 
-async def _register_workflow_tools(mcp: "FastMCP", context: MCPContext) -> int:
+async def _register_workflow_tools(mcp: "FastMCP") -> int:
     """
     Register workflow tools with FastMCP server using human-readable names.
 
@@ -775,12 +685,10 @@ async def _register_workflow_tools(mcp: "FastMCP", context: MCPContext) -> int:
     Returns:
         Number of workflow tools registered
     """
-    global _TOOL_NAME_TO_WORKFLOW_ID, _WORKFLOW_ID_TO_TOOL_NAME
-    global _fastmcp_instance, _default_mcp_context
+    global _WORKFLOW_ID_TO_TOOL_NAME, _fastmcp_instance
 
-    # Store refs so refresh_workflow_tools() can re-call us
+    # Store the live server so refresh_workflow_tools() can re-register tools.
     _fastmcp_instance = mcp
-    _default_mcp_context = context
 
     if not HAS_FASTMCP or _WorkflowTool is None:
         logger.warning("FastMCP not available, skipping workflow tool registration")
@@ -795,7 +703,6 @@ async def _register_workflow_tools(mcp: "FastMCP", context: MCPContext) -> int:
             tools = await registry.get_all_tools()
 
             # Clear previous mappings (in case of re-registration)
-            _TOOL_NAME_TO_WORKFLOW_ID = {}
             _WORKFLOW_ID_TO_TOOL_NAME = {}
 
             # Group workflows by normalized name to detect duplicates
@@ -842,8 +749,7 @@ async def _register_workflow_tools(mcp: "FastMCP", context: MCPContext) -> int:
                     else:
                         tool_name = f"{base_name}_{_generate_short_suffix()}"
 
-                    # Store mapping for middleware lookups
-                    _TOOL_NAME_TO_WORKFLOW_ID[tool_name] = workflow_id
+                    # Store the registered name for agent-scoped lookups.
                     _WORKFLOW_ID_TO_TOOL_NAME[workflow_id] = tool_name
 
                     # Build JSON Schema from parameters_schema
@@ -903,13 +809,13 @@ async def refresh_workflow_tools() -> int:
 
     Call this after workflow create/update/delete to keep MCP tool list current.
     """
-    if not _fastmcp_instance or not _default_mcp_context:
+    if not _fastmcp_instance:
         logger.debug("MCP not initialized, skipping workflow tool refresh")
         return 0
 
-    old_tool_names = set(_TOOL_NAME_TO_WORKFLOW_ID.keys())
-    count = await _register_workflow_tools(_fastmcp_instance, _default_mcp_context)
-    new_tool_names = set(_TOOL_NAME_TO_WORKFLOW_ID.keys())
+    old_tool_names = set(_WORKFLOW_ID_TO_TOOL_NAME.values())
+    count = await _register_workflow_tools(_fastmcp_instance)
+    new_tool_names = set(_WORKFLOW_ID_TO_TOOL_NAME.values())
 
     # Remove tools that no longer exist from FastMCP
     for stale_name in old_tool_names - new_tool_names:

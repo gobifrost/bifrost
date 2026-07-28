@@ -5,34 +5,21 @@ Exposes a stable discovery/dispatch gateway on the unscoped endpoint and
 filters the agent-scoped endpoint to the selected agent's native tools.
 
 When an agent_id is present in the ASGI scope (set by AgentScopeMCPMiddleware),
-the middleware scopes tools and instructions to that specific agent.
+the middleware preserves that agent's native tool surface.
 """
 
 import logging
-from uuid import UUID
 
 from fastmcp.exceptions import ToolError
-from fastmcp.server.dependencies import get_access_token, get_http_request
+from fastmcp.server.dependencies import get_access_token
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 
+from src.services.mcp_server.agent_scope import (
+    get_scoped_agent_id as _get_agent_id_from_scope,
+)
 from src.services.mcp_server.tools.gateway import GATEWAY_TOOL_NAMES
 
 logger = logging.getLogger(__name__)
-
-
-def _get_agent_id_from_scope() -> UUID | None:
-    """Extract agent_id from the ASGI scope if present."""
-    try:
-        request = get_http_request()
-        agent_id_str = request.scope.get("mcp_agent_id")
-        if agent_id_str:
-            return UUID(agent_id_str)
-    except (RuntimeError, ValueError, AttributeError) as e:
-        # RuntimeError: get_http_request() raises if not in HTTP context (stdio MCP)
-        # ValueError: malformed UUID string in scope
-        # AttributeError: scope structure differs
-        logger.debug(f"could not extract agent_id from scope: {e}")
-    return None
 
 
 class ToolFilterMiddleware(Middleware):
@@ -77,12 +64,7 @@ class ToolFilterMiddleware(Middleware):
             logger.warning("MCP tools/list: No authenticated user, returning empty list")
             return []
 
-        user_roles = token.claims.get("roles", [])
-        is_superuser = token.claims.get("is_superuser", False)
-        is_external = token.claims.get("is_external", False)
         user_email = token.claims.get("email", "unknown")
-        user_id = token.claims.get("user_id")
-        org_id = token.claims.get("org_id")
 
         agent_id = _get_agent_id_from_scope()
         if agent_id is None:
@@ -96,6 +78,11 @@ class ToolFilterMiddleware(Middleware):
             )
             return filtered_tools
 
+        user_roles = token.claims.get("roles", [])
+        is_superuser = token.claims.get("is_superuser", False)
+        is_external = token.claims.get("is_external", False)
+        user_id = token.claims.get("user_id")
+        org_id = token.claims.get("org_id")
         logger.info(
             f"MCP tools/list: Filtering for user {user_email}, "
             f"roles={user_roles}, is_superuser={is_superuser}, agent_id={agent_id}"
@@ -169,12 +156,7 @@ class ToolFilterMiddleware(Middleware):
         if token is None:
             raise ToolError("Authentication required to call tools")
 
-        user_roles = token.claims.get("roles", [])
-        is_superuser = token.claims.get("is_superuser", False)
-        is_external = token.claims.get("is_external", False)
         user_email = token.claims.get("email", "unknown")
-        user_id = token.claims.get("user_id")
-        org_id = token.claims.get("org_id")
 
         agent_id = _get_agent_id_from_scope()
         if agent_id is None:
@@ -195,6 +177,12 @@ class ToolFilterMiddleware(Middleware):
                 user_email,
             )
             return await call_next(context)
+
+        user_roles = token.claims.get("roles", [])
+        is_superuser = token.claims.get("is_superuser", False)
+        is_external = token.claims.get("is_external", False)
+        user_id = token.claims.get("user_id")
+        org_id = token.claims.get("org_id")
 
         # Check if user has access to this tool
         try:
