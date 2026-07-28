@@ -26,7 +26,15 @@ from fastmcp.tools import ToolResult
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
-from src.services.mcp_server.tools import TOOL_MODULES, register_all_tools
+from src.services.mcp_server.tools import (
+    TOOL_MODULES,
+    register_all_tools,
+    register_gateway_tools,
+)
+from src.services.mcp_server.tools.gateway import (
+    GATEWAY_INSTRUCTIONS,
+    GATEWAY_TOOL_NAMES,
+)
 from src.services.mcp_server.tool_result import error_result, success_result
 
 logger = logging.getLogger(__name__)
@@ -224,14 +232,14 @@ def _get_context_from_token() -> MCPContext:
 async def _get_runtime_context() -> MCPContext:
     """Build the per-request MCPContext used by tool execution.
 
-    Populates ``accessible_namespaces`` according to the ASGI mount:
+    Populates ``accessible_namespaces`` only for the agent-scoped mount:
 
     - ``/mcp/{agent_id}`` (agent-scoped): namespaces == that agent's
       ``knowledge_sources`` only. Cross-namespace requests are rejected
       by the tool itself, so a session bound to an agent can only see
       that agent's knowledge.
-    - ``/mcp`` (un-scoped): namespaces == union of the user's accessible
-      agents' ``knowledge_sources``.
+    - ``/mcp`` (unscoped): the gateway resolves the selected agent and
+      constructs a tool-specific context at dispatch time.
     """
     from fastmcp.exceptions import ToolError
     from fastmcp.server.dependencies import get_access_token
@@ -251,10 +259,10 @@ async def _get_runtime_context() -> MCPContext:
     agent_id = _get_agent_id_from_scope()
 
     accessible_namespaces: list[str] = []
-    try:
-        async with get_db_context() as db:
-            service = MCPToolAccessService(db)
-            if agent_id is not None:
+    if agent_id is not None:
+        try:
+            async with get_db_context() as db:
+                service = MCPToolAccessService(db)
                 agent_result = await service.get_tools_for_agent(
                     agent_id=agent_id,
                     user_roles=user_roles,
@@ -265,17 +273,8 @@ async def _get_runtime_context() -> MCPContext:
                 )
                 if agent_result is not None:
                     accessible_namespaces = list(agent_result.accessible_namespaces)
-            else:
-                result = await service.get_accessible_tools(
-                    user_roles=user_roles,
-                    is_superuser=is_superuser,
-                    user_id=user_id,
-                    org_id=org_id,
-                    is_external=is_external,
-                )
-                accessible_namespaces = list(result.accessible_namespaces)
-    except Exception as e:
-        logger.warning(f"Failed to resolve accessible namespaces: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to resolve accessible namespaces: {e}")
 
     return MCPContext(
         user_id=token.claims.get("user_id", ""),
@@ -390,11 +389,16 @@ class BifrostMCPServer:
             mcp = _FastMCP(
                 self._name,
                 auth=auth,
+                instructions=GATEWAY_INSTRUCTIONS,
                 website_url=BIFROST_WEBSITE_URL,
                 icons=icons,
             )
+            register_gateway_tools(mcp, get_context_fn)
             register_all_tools(mcp, get_context_fn)
-            tool_count = sum(len(m.TOOLS) for m in TOOL_MODULES)
+            tool_count = (
+                len(GATEWAY_TOOL_NAMES)
+                + sum(len(m.TOOLS) for m in TOOL_MODULES)
+            )
             logger.info(f"Created FastMCP server with {tool_count} tools and auth")
             return mcp
 
@@ -403,11 +407,16 @@ class BifrostMCPServer:
             assert _FastMCP is not None
             self._fastmcp = _FastMCP(
                 self._name,
+                instructions=GATEWAY_INSTRUCTIONS,
                 website_url=BIFROST_WEBSITE_URL,
                 icons=icons,
             )
+            register_gateway_tools(self._fastmcp, get_context_fn)
             register_all_tools(self._fastmcp, get_context_fn)
-            tool_count = sum(len(m.TOOLS) for m in TOOL_MODULES)
+            tool_count = (
+                len(GATEWAY_TOOL_NAMES)
+                + sum(len(m.TOOLS) for m in TOOL_MODULES)
+            )
             logger.info(f"Created FastMCP server with {tool_count} tools")
         return self._fastmcp
 
@@ -808,7 +817,9 @@ async def _register_workflow_tools(mcp: "FastMCP", context: MCPContext) -> int:
                 )
 
             # Get native tool names to avoid collisions
-            native_tool_names = {tool_id for m in TOOL_MODULES for tool_id, _, _ in m.TOOLS}
+            native_tool_names = {
+                tool_id for m in TOOL_MODULES for tool_id, _, _ in m.TOOLS
+            } | set(GATEWAY_TOOL_NAMES)
 
             # Assign unique tool names and register
             count = 0

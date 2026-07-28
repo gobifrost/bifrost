@@ -5,6 +5,7 @@ Pydantic models for MCP configuration API requests and responses.
 """
 
 from datetime import datetime
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -69,3 +70,73 @@ class MCPToolsResponse(BaseModel):
     """Response model for listing MCP tools."""
 
     tools: list[MCPToolInfo] = Field(description="List of available MCP tools")
+
+
+class MCPGatewayAgentSummary(BaseModel):
+    """Compact agent metadata returned by gateway discovery."""
+
+    id: str
+    name: str
+    description: str | None = None
+
+
+class MCPGatewayFindAgentsResponse(BaseModel):
+    """Search results for agents visible to the caller."""
+
+    query: str | None = None
+    agents: list[MCPGatewayAgentSummary]
+    count: int
+    total_matches: int
+    has_more: bool
+
+
+class MCPGatewayAgentDetail(MCPGatewayAgentSummary):
+    """Live task instructions for a selected agent."""
+
+    instructions: str | None = None
+
+
+class MCPGatewayToolSummary(BaseModel):
+    """Schema-free tool metadata returned with an agent."""
+
+    tool_ref: str
+    name: str
+    description: str
+    source: str
+
+
+class MCPGatewayAgentResponse(BaseModel):
+    """Selected agent instructions and compact tool catalog."""
+
+    agent: MCPGatewayAgentDetail
+    tools: list[MCPGatewayToolSummary]
+    tool_count: int
+
+
+class MCPGatewayToolSchemaResponse(BaseModel):
+    """Live schema for one agent-bound tool reference."""
+
+    agent_id: str
+    tool_ref: str
+    name: str
+    description: str
+    source: str
+    input_schema: dict[str, Any]
+
+
+class MCPGatewayExecuteRequest(BaseModel):
+    """Arguments passed to an agent-bound tool."""
+
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class MCPGatewayExecuteResponse(BaseModel):
+    """Auditable envelope returned after a gateway tool call."""
+
+    agent_id: str
+    agent_name: str
+    tool_ref: str
+    tool_name: str
+    source: str
+    duration_ms: int
+    result: Any

@@ -6589,6 +6589,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mcp/gateway/agents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Find Gateway Agents
+         * @description Find accessible agents for progressive MCP discovery.
+         */
+        get: operations["find_gateway_agents_api_mcp_gateway_agents_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/gateway/agents/{agent_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Gateway Agent
+         * @description Load one accessible agent's live capability package.
+         */
+        get: operations["get_gateway_agent_api_mcp_gateway_agents__agent_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Gateway Tool Schema
+         * @description Load the current schema for an agent-bound tool.
+         */
+        get: operations["get_gateway_tool_schema_api_mcp_gateway_agents__agent_id__tools__tool_ref__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Execute Gateway Tool
+         * @description Re-resolve, validate, and execute an agent-bound tool.
+         */
+        post: operations["execute_gateway_tool_api_mcp_gateway_agents__agent_id__tools__tool_ref__execute_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/mcp/status": {
         parameters: {
             query?: never;
@@ -6601,8 +6681,8 @@ export interface paths {
          * @description Get MCP server status and available tools for the current user.
          *
          *     This is a REST endpoint (not MCP protocol) for debugging and discovery.
-         *     Returns information about which tools the user has access to based on
-         *     their agent access permissions.
+         *     Returns the stable gateway tools plus the number of agents the caller
+         *     can discover through them.
          */
         get: operations["mcp_status_api_mcp_status_get"];
         put?: never;
@@ -6662,10 +6742,10 @@ export interface paths {
         };
         /**
          * List Mcp Tools
-         * @description List all MCP tools available to the current user.
+         * @description List underlying MCP tools available to the current user.
          *
-         *     Returns tools from agents the user can access, filtered by
-         *     global MCP config allowlist/blocklist.
+         *     This inventory backs platform allow/block configuration. The unscoped
+         *     protocol endpoint itself exposes the stable gateway tools.
          */
         get: operations["list_mcp_tools_api_mcp_tools_get"];
         put?: never;
@@ -17486,6 +17566,123 @@ export interface components {
             available_to_autonomous?: boolean | null;
             /** Service Oauth Token Id */
             service_oauth_token_id?: string | null;
+        };
+        /**
+         * MCPGatewayAgentDetail
+         * @description Live task instructions for a selected agent.
+         */
+        MCPGatewayAgentDetail: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            /** Instructions */
+            instructions?: string | null;
+        };
+        /**
+         * MCPGatewayAgentResponse
+         * @description Selected agent instructions and compact tool catalog.
+         */
+        MCPGatewayAgentResponse: {
+            agent: components["schemas"]["MCPGatewayAgentDetail"];
+            /** Tools */
+            tools: components["schemas"]["MCPGatewayToolSummary"][];
+            /** Tool Count */
+            tool_count: number;
+        };
+        /**
+         * MCPGatewayAgentSummary
+         * @description Compact agent metadata returned by gateway discovery.
+         */
+        MCPGatewayAgentSummary: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+        };
+        /**
+         * MCPGatewayExecuteRequest
+         * @description Arguments passed to an agent-bound tool.
+         */
+        MCPGatewayExecuteRequest: {
+            /** Arguments */
+            arguments?: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * MCPGatewayExecuteResponse
+         * @description Auditable envelope returned after a gateway tool call.
+         */
+        MCPGatewayExecuteResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Agent Name */
+            agent_name: string;
+            /** Tool Ref */
+            tool_ref: string;
+            /** Tool Name */
+            tool_name: string;
+            /** Source */
+            source: string;
+            /** Duration Ms */
+            duration_ms: number;
+            /** Result */
+            result: unknown;
+        };
+        /**
+         * MCPGatewayFindAgentsResponse
+         * @description Search results for agents visible to the caller.
+         */
+        MCPGatewayFindAgentsResponse: {
+            /** Query */
+            query?: string | null;
+            /** Agents */
+            agents: components["schemas"]["MCPGatewayAgentSummary"][];
+            /** Count */
+            count: number;
+            /** Total Matches */
+            total_matches: number;
+            /** Has More */
+            has_more: boolean;
+        };
+        /**
+         * MCPGatewayToolSchemaResponse
+         * @description Live schema for one agent-bound tool reference.
+         */
+        MCPGatewayToolSchemaResponse: {
+            /** Agent Id */
+            agent_id: string;
+            /** Tool Ref */
+            tool_ref: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Source */
+            source: string;
+            /** Input Schema */
+            input_schema: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * MCPGatewayToolSummary
+         * @description Schema-free tool metadata returned with an agent.
+         */
+        MCPGatewayToolSummary: {
+            /** Tool Ref */
+            tool_ref: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Source */
+            source: string;
         };
         /**
          * MCPServerCreate
@@ -35564,6 +35761,137 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ToolsResponse"];
+                };
+            };
+        };
+    };
+    find_gateway_agents_api_mcp_gateway_agents_get: {
+        parameters: {
+            query?: {
+                query?: string | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MCPGatewayFindAgentsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_gateway_agent_api_mcp_gateway_agents__agent_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MCPGatewayAgentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_gateway_tool_schema_api_mcp_gateway_agents__agent_id__tools__tool_ref__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+                tool_ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MCPGatewayToolSchemaResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    execute_gateway_tool_api_mcp_gateway_agents__agent_id__tools__tool_ref__execute_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+                tool_ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MCPGatewayExecuteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MCPGatewayExecuteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

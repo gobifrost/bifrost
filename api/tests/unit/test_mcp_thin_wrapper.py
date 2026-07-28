@@ -48,6 +48,7 @@ from src.services.mcp_server.tools import (  # noqa: E402
     claims as claims_mod,
     configs as configs_mod,
     files as files_mod,
+    gateway as gateway_mod,
     integrations as integrations_mod,
     organizations as organizations_mod,
     policy_rules as policy_rules_mod,
@@ -95,6 +96,12 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "create_policy_rule",
         "delete_policy_rule",
     },
+    "gateway": {
+        "bifrost_find_agents",
+        "bifrost_get_agent",
+        "bifrost_get_tool_schema",
+        "bifrost_execute_tool",
+    },
 }
 
 
@@ -107,6 +114,7 @@ MODULES = {
     "workflow": workflow_mod,
     "files": files_mod,
     "policy_rules": policy_rules_mod,
+    "gateway": gateway_mod,
 }
 
 

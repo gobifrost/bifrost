@@ -129,6 +129,7 @@ dependencies = [
     # =========================================================================
     "mcp>=1.27.0",  # Model Context Protocol SDK - structuredContent support requires 1.26+
     "fastmcp>=3.2.4,<4",  # FastMCP for MCP server (internal + external access)
+    "jsonschema>=4.26.0,<5",  # Validate live gateway tool arguments
 
     # =========================================================================
     # Vector Store (Knowledge/RAG)

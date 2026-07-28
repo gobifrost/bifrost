@@ -1,8 +1,8 @@
 """
 Unit tests for MCP Tool Filter Middleware.
 
-Tests the ToolFilterMiddleware which filters the tools/list MCP response
-based on the authenticated user's agent access permissions.
+Tests the ToolFilterMiddleware gateway surface on the unscoped MCP endpoint.
+Agent-scoped behavior is covered in test_mcp_agent_scope.py.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -87,114 +87,66 @@ class TestOnListTools:
         assert result == []
 
     @pytest.mark.asyncio
-    async def test_filters_to_accessible_tools(
-        self, mock_tool, mock_access_token, mock_tool_info
-    ):
-        """Should filter tools to only those the user has access to."""
-        from src.services.mcp_server.middleware import ToolFilterMiddleware
-
-        middleware = ToolFilterMiddleware()
-
-        # User has access to tool1 and tool3, but not tool2
-        all_tools = [
-            mock_tool("execute_workflow"),
-            mock_tool("list_workflows"),
-            mock_tool("search_knowledge"),
-        ]
-
-        accessible_tools = [
-            mock_tool_info("execute_workflow"),
-            mock_tool_info("search_knowledge"),
-        ]
-
-        call_next = AsyncMock(return_value=all_tools)
-        context = MagicMock()
-        token = mock_access_token(roles=["admin"], is_superuser=False)
-
-        mock_service_instance = MagicMock()
-        mock_result = MagicMock()
-        mock_result.tools = accessible_tools
-        mock_service_instance.get_accessible_tools = AsyncMock(return_value=mock_result)
-
-        with patch("src.services.mcp_server.middleware.get_access_token", return_value=token), \
-             patch("src.core.database.get_db_context") as mock_db_context, \
-             patch("src.services.mcp_server.tool_access.MCPToolAccessService", return_value=mock_service_instance):
-
-            mock_db_context.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
-            mock_db_context.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            result = await middleware.on_list_tools(context, call_next)
-
-        # Should only include execute_workflow and search_knowledge
-        assert len(result) == 2
-        assert result[0].name == "execute_workflow"
-        assert result[1].name == "search_knowledge"
-
-    @pytest.mark.asyncio
-    async def test_calls_service_with_user_roles(
-        self, mock_tool, mock_access_token, mock_tool_info
-    ):
-        """Should call MCPToolAccessService with user's roles from token."""
-        from src.services.mcp_server.middleware import ToolFilterMiddleware
-
-        middleware = ToolFilterMiddleware()
-
-        all_tools = [mock_tool("execute_workflow")]
-        call_next = AsyncMock(return_value=all_tools)
-        context = MagicMock()
-
-        user_roles = ["admin", "developer"]
-        token = mock_access_token(roles=user_roles, is_superuser=True)
-
-        mock_service_instance = MagicMock()
-        mock_result = MagicMock()
-        mock_result.tools = [mock_tool_info("execute_workflow")]
-        mock_service_instance.get_accessible_tools = AsyncMock(return_value=mock_result)
-
-        with patch("src.services.mcp_server.middleware.get_access_token", return_value=token), \
-             patch("src.core.database.get_db_context") as mock_db_context, \
-             patch("src.services.mcp_server.tool_access.MCPToolAccessService", return_value=mock_service_instance):
-
-            mock_db_context.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
-            mock_db_context.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            await middleware.on_list_tools(context, call_next)
-
-        # Verify service was called with the user's roles + identity claims.
-        # The service uses ``user_id`` and ``org_id`` to build a
-        # WorkflowRepository for per-workflow gating (see
-        # MCPToolAccessService._build_workflow_repo). The middleware now
-        # forwards these from the JWT, so the call must include them.
-        call_kwargs = mock_service_instance.get_accessible_tools.call_args.kwargs
-        assert call_kwargs["user_roles"] == user_roles
-        assert call_kwargs["is_superuser"] is True
-        assert "user_id" in call_kwargs
-        assert "org_id" in call_kwargs
-
-    @pytest.mark.asyncio
-    async def test_returns_empty_on_service_error(
+    async def test_unscoped_returns_only_gateway_tools(
         self, mock_tool, mock_access_token
     ):
-        """Should return empty list if service throws an error."""
+        """The default endpoint should hide every native and workflow tool."""
         from src.services.mcp_server.middleware import ToolFilterMiddleware
+        from src.services.mcp_server.tools.gateway import GATEWAY_TOOL_NAMES
 
         middleware = ToolFilterMiddleware()
 
-        all_tools = [mock_tool("execute_workflow")]
+        all_tools = [
+            *[mock_tool(name) for name in GATEWAY_TOOL_NAMES],
+            mock_tool("execute_workflow"),
+            mock_tool("search_knowledge"),
+        ]
         call_next = AsyncMock(return_value=all_tools)
         context = MagicMock()
         token = mock_access_token()
 
-        with patch("src.services.mcp_server.middleware.get_access_token", return_value=token), \
-             patch("src.core.database.get_db_context") as mock_db_context:
-
-            mock_db_context.return_value.__aenter__ = AsyncMock(
-                side_effect=Exception("Database error")
-            )
-
+        with (
+            patch(
+                "src.services.mcp_server.middleware.get_access_token",
+                return_value=token,
+            ),
+            patch(
+                "src.services.mcp_server.middleware._get_agent_id_from_scope",
+                return_value=None,
+            ),
+        ):
             result = await middleware.on_list_tools(context, call_next)
 
-        assert result == []
+        assert {tool.name for tool in result} == GATEWAY_TOOL_NAMES
+
+    @pytest.mark.asyncio
+    async def test_unscoped_does_not_query_legacy_access_service(
+        self, mock_tool, mock_access_token
+    ):
+        """Gateway discovery, not middleware aggregation, resolves access."""
+        from src.services.mcp_server.middleware import ToolFilterMiddleware
+
+        middleware = ToolFilterMiddleware()
+        all_tools = [mock_tool("bifrost_find_agents")]
+        call_next = AsyncMock(return_value=all_tools)
+        context = MagicMock()
+        token = mock_access_token()
+
+        with (
+            patch(
+                "src.services.mcp_server.middleware.get_access_token",
+                return_value=token,
+            ),
+            patch(
+                "src.services.mcp_server.middleware._get_agent_id_from_scope",
+                return_value=None,
+            ),
+            patch("src.core.database.get_db_context") as mock_db_context,
+        ):
+            result = await middleware.on_list_tools(context, call_next)
+
+        assert [tool.name for tool in result] == ["bifrost_find_agents"]
+        mock_db_context.assert_not_called()
 
 
 # ==================== on_call_tool Tests ====================
@@ -221,91 +173,60 @@ class TestOnCallTool:
         call_next.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_allows_authorized_tool_call(
-        self, mock_context, mock_access_token, mock_tool_info
+    async def test_allows_gateway_tool_call(
+        self, mock_context, mock_access_token
     ):
-        """Should allow tool call when user has access."""
+        """The unscoped endpoint should execute a registered gateway tool."""
         from src.services.mcp_server.middleware import ToolFilterMiddleware
 
         middleware = ToolFilterMiddleware()
 
-        mock_context.message.name = "execute_workflow"
+        mock_context.message.name = "bifrost_execute_tool"
         expected_result = {"success": True}
         call_next = AsyncMock(return_value=expected_result)
-        token = mock_access_token(roles=["admin"], is_superuser=True)
+        token = mock_access_token()
 
-        mock_service_instance = MagicMock()
-        mock_result = MagicMock()
-        mock_result.tools = [mock_tool_info("execute_workflow")]
-        mock_service_instance.get_accessible_tools = AsyncMock(return_value=mock_result)
-
-        with patch("src.services.mcp_server.middleware.get_access_token", return_value=token), \
-             patch("src.core.database.get_db_context") as mock_db_context, \
-             patch("src.services.mcp_server.tool_access.MCPToolAccessService", return_value=mock_service_instance):
-
-            mock_db_context.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
-            mock_db_context.return_value.__aexit__ = AsyncMock(return_value=None)
-
+        with (
+            patch(
+                "src.services.mcp_server.middleware.get_access_token",
+                return_value=token,
+            ),
+            patch(
+                "src.services.mcp_server.middleware._get_agent_id_from_scope",
+                return_value=None,
+            ),
+        ):
             result = await middleware.on_call_tool(mock_context, call_next)
 
         assert result == expected_result
         call_next.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_blocks_unauthorized_tool_call(
-        self, mock_context, mock_access_token, mock_tool_info
-    ):
-        """Should raise ToolError when user doesn't have access to tool."""
-        from src.services.mcp_server.middleware import ToolFilterMiddleware
-
-        middleware = ToolFilterMiddleware()
-
-        mock_context.message.name = "execute_workflow"
-        call_next = AsyncMock()
-        token = mock_access_token(roles=["viewer"])
-
-        # User only has access to list_workflows, not execute_workflow
-        mock_service_instance = MagicMock()
-        mock_result = MagicMock()
-        mock_result.tools = [mock_tool_info("list_workflows")]
-        mock_service_instance.get_accessible_tools = AsyncMock(return_value=mock_result)
-
-        with patch("src.services.mcp_server.middleware.get_access_token", return_value=token), \
-             patch("src.core.database.get_db_context") as mock_db_context, \
-             patch("src.services.mcp_server.tool_access.MCPToolAccessService", return_value=mock_service_instance):
-
-            mock_db_context.return_value.__aenter__ = AsyncMock(return_value=MagicMock())
-            mock_db_context.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with pytest.raises(Exception) as exc_info:
-                await middleware.on_call_tool(mock_context, call_next)
-
-        assert "Access denied" in str(exc_info.value)
-        assert "execute_workflow" in str(exc_info.value)
-        call_next.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_raises_error_on_service_failure(
+    async def test_blocks_native_tool_call_on_unscoped_endpoint(
         self, mock_context, mock_access_token
     ):
-        """Should raise ToolError if service check fails."""
+        """A caller cannot bypass discovery by naming a hidden native tool."""
         from src.services.mcp_server.middleware import ToolFilterMiddleware
 
         middleware = ToolFilterMiddleware()
 
         mock_context.message.name = "execute_workflow"
         call_next = AsyncMock()
-        token = mock_access_token(is_superuser=True)
+        token = mock_access_token()
 
-        with patch("src.services.mcp_server.middleware.get_access_token", return_value=token), \
-             patch("src.core.database.get_db_context") as mock_db_context:
-
-            mock_db_context.return_value.__aenter__ = AsyncMock(
-                side_effect=Exception("Database error")
-            )
-
+        with (
+            patch(
+                "src.services.mcp_server.middleware.get_access_token",
+                return_value=token,
+            ),
+            patch(
+                "src.services.mcp_server.middleware._get_agent_id_from_scope",
+                return_value=None,
+            ),
+        ):
             with pytest.raises(Exception) as exc_info:
                 await middleware.on_call_tool(mock_context, call_next)
 
-        assert "Authorization check failed" in str(exc_info.value)
+        assert "not available on the unscoped MCP endpoint" in str(exc_info.value)
+        assert "execute_workflow" in str(exc_info.value)
         call_next.assert_not_called()
