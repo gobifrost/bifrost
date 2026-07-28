@@ -508,6 +508,17 @@ def get_system_tools() -> list[dict[str, Any]]:
                         if param.default is inspect.Parameter.empty:
                             parameters["required"].append(param_name)
 
+                if tool_id == "search_knowledge":
+                    from src.services.knowledge.search_budget import (
+                        MAX_KNOWLEDGE_RESULTS,
+                    )
+
+                    parameters["properties"]["limit"].update({
+                        "minimum": 1,
+                        "maximum": MAX_KNOWLEDGE_RESULTS,
+                        "default": MAX_KNOWLEDGE_RESULTS,
+                    })
+
                 tools.append({
                     "id": tool_id,
                     "name": name,

@@ -2,9 +2,10 @@
 Knowledge Repository
 
 Data access layer for the knowledge store (RAG).
-Handles vector storage, semantic search, and namespace management.
+Handles vector storage, hybrid search, and namespace management.
 """
 
+import re
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -16,6 +17,15 @@ from src.models.orm import KnowledgeStore
 from src.repositories.org_scoped import OrgScopedRepository
 from src.services.embeddings import BaseEmbeddingClient
 from src.services.knowledge.chunking import reassemble_chunks, split_into_chunks
+
+
+HYBRID_CANDIDATE_LIMIT = 20
+RRF_K = 60
+VECTOR_RRF_WEIGHT = 0.5
+LEXICAL_RRF_WEIGHT = 0.5
+
+_LEXICAL_TERM_RE = re.compile(r"[^\W_]+", re.UNICODE)
+_MAX_LEXICAL_TERMS = 24
 
 
 @dataclass
@@ -38,6 +48,37 @@ class NamespaceInfo:
 
     namespace: str
     scopes: dict[str, int]  # {"global": count, "org": count, "total": count}
+
+
+@dataclass
+class _HybridCandidate:
+    """One physical chunk participating in reciprocal-rank fusion."""
+
+    row: KnowledgeStore
+    rrf_score: float = 0.0
+    vector_score: float | None = None
+    lexical_score: float | None = None
+
+
+def _lexical_websearch_query(query: str) -> str:
+    """Build a safe OR query for broad full-text candidate retrieval.
+
+    ``websearch_to_tsquery`` handles stemming and stop words. Joining parsed
+    word tokens with OR avoids requiring every conversational filler word to
+    appear in a chunk, while vector rank fusion keeps broad lexical matches
+    from dominating the final result.
+    """
+    terms: list[str] = []
+    seen: set[str] = set()
+    for match in _LEXICAL_TERM_RE.finditer(query.casefold()):
+        term = match.group(0)
+        if len(term) < 2 or term in seen:
+            continue
+        seen.add(term)
+        terms.append(term)
+        if len(terms) >= _MAX_LEXICAL_TERMS:
+            break
+    return " OR ".join(terms)
 
 
 class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
@@ -344,6 +385,7 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
         self,
         query_embedding: list[float],
         namespace: str | list[str],
+        query_text: str | None = None,
         organization_id: UUID | None = None,
         limit: int = 5,
         min_score: float | None = None,
@@ -352,77 +394,131 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
         group_by_key: bool = True,
     ) -> list[KnowledgeDocument]:
         """
-        Search for similar documents using vector similarity.
+        Search for relevant chunks.
+
+        When ``query_text`` is provided, retrieve a broad candidate set from
+        both vector similarity and PostgreSQL full-text search, then combine
+        their ranks with reciprocal-rank fusion (RRF). Without query text the
+        method preserves the original vector-only behavior for SDK callers
+        that already supply a precomputed embedding.
 
         Args:
             query_embedding: Query vector
             namespace: Namespace(s) to search
+            query_text: Original query text. Enables hybrid lexical/vector search.
             organization_id: Organization scope. Defaults to self.org_id.
             limit: Maximum results
-            min_score: Minimum similarity score (0-1)
+            min_score: Minimum vector similarity or normalized fused score (0-1)
             metadata_filter: Filter by metadata fields
             fallback: If True, also search global scope
             group_by_key: If True, return at most one chunk per keyed document
 
         Returns:
-            List of KnowledgeDocument sorted by similarity
+            List of KnowledgeDocument sorted by relevance
         """
-        # Use self.org_id as default if not explicitly provided
         target_org_id = organization_id if organization_id is not None else self.org_id
         namespaces = [namespace] if isinstance(namespace, str) else namespace
 
-        # Build the query
-        # We use cosine distance (1 - cosine_similarity), so lower is better
-        # Convert to similarity score: 1 - distance
-        distance_expr = KnowledgeStore.embedding.cosine_distance(query_embedding)
-        score_expr = (1 - distance_expr).label("score")
+        filters = [KnowledgeStore.namespace.in_(namespaces)]
 
-        stmt = select(
-            KnowledgeStore,
-            score_expr,
-        ).where(
-            KnowledgeStore.namespace.in_(namespaces)
-        )
-
-        # Organization scoping with optional fallback
+        # Organization scoping with optional fallback.
         if target_org_id and fallback:
-            # Search both org and global
-            stmt = stmt.where(
-                (KnowledgeStore.organization_id == target_org_id) |
-                (KnowledgeStore.organization_id.is_(None))
+            filters.append(
+                (KnowledgeStore.organization_id == target_org_id)
+                | (KnowledgeStore.organization_id.is_(None))
             )
         elif target_org_id:
-            # Only org scope
-            stmt = stmt.where(KnowledgeStore.organization_id == target_org_id)
+            filters.append(KnowledgeStore.organization_id == target_org_id)
         else:
-            # Only global scope
-            stmt = stmt.where(KnowledgeStore.organization_id.is_(None))
+            filters.append(KnowledgeStore.organization_id.is_(None))
 
-        # Metadata filtering using JSONB containment
         if metadata_filter:
-            for key, value in metadata_filter.items():
-                # Use @> containment operator
-                stmt = stmt.where(
-                    KnowledgeStore.doc_metadata.contains({key: value})
+            filters.extend(
+                KnowledgeStore.doc_metadata.contains({key: value})
+                for key, value in metadata_filter.items()
+            )
+
+        # Cosine distance is lower-is-better; expose similarity as 0..1.
+        distance_expr = KnowledgeStore.embedding.cosine_distance(query_embedding)
+        vector_score_expr = (1 - distance_expr).label("vector_score")
+        candidate_limit = max(HYBRID_CANDIDATE_LIMIT, limit * 4)
+        vector_stmt = (
+            select(KnowledgeStore, vector_score_expr)
+            .where(*filters)
+            .order_by(vector_score_expr.desc())
+            .limit(candidate_limit)
+        )
+        vector_rows = (await self.session.execute(vector_stmt)).all()
+
+        lexical_query = _lexical_websearch_query(query_text or "")
+        if not lexical_query:
+            ranked_rows = [
+                (row[0], float(row[1]))
+                for row in vector_rows
+                if min_score is None or row[1] >= min_score
+            ]
+        else:
+            ts_query = func.websearch_to_tsquery("english", lexical_query)
+            lexical_score_expr = func.ts_rank_cd(
+                KnowledgeStore.search_tsv,
+                ts_query,
+                32,
+            ).label("lexical_score")
+            lexical_stmt = (
+                select(KnowledgeStore, lexical_score_expr)
+                .where(
+                    *filters,
+                    KnowledgeStore.search_tsv.op("@@")(ts_query),
                 )
+                .order_by(lexical_score_expr.desc())
+                .limit(candidate_limit)
+            )
+            lexical_rows = (await self.session.execute(lexical_stmt)).all()
 
-        stmt = stmt.order_by(score_expr.desc())
-        raw_limit = limit * 4 if group_by_key else limit
-        stmt = stmt.limit(raw_limit)
+            candidates: dict[UUID, _HybridCandidate] = {}
+            for rank, row in enumerate(vector_rows, start=1):
+                chunk = row[0]
+                candidate = candidates.setdefault(
+                    chunk.id,
+                    _HybridCandidate(row=chunk),
+                )
+                candidate.vector_score = float(row[1])
+                candidate.rrf_score += VECTOR_RRF_WEIGHT / (RRF_K + rank)
 
-        result = await self.session.execute(stmt)
-        rows = result.all()
+            for rank, row in enumerate(lexical_rows, start=1):
+                chunk = row[0]
+                candidate = candidates.setdefault(
+                    chunk.id,
+                    _HybridCandidate(row=chunk),
+                )
+                candidate.lexical_score = float(row[1])
+                candidate.rrf_score += LEXICAL_RRF_WEIGHT / (RRF_K + rank)
+
+            # Normalize against the theoretical score for rank 1 in both
+            # retrievers so the public score remains an intuitive 0..1 value.
+            max_rrf_score = (
+                VECTOR_RRF_WEIGHT + LEXICAL_RRF_WEIGHT
+            ) / (RRF_K + 1)
+            ranked_candidates = sorted(
+                candidates.values(),
+                key=lambda item: (
+                    item.rrf_score,
+                    item.lexical_score if item.lexical_score is not None else -1.0,
+                    item.vector_score if item.vector_score is not None else -1.0,
+                    str(item.row.id),
+                ),
+                reverse=True,
+            )
+            ranked_rows = [
+                (candidate.row, candidate.rrf_score / max_rrf_score)
+                for candidate in ranked_candidates
+                if min_score is None
+                or candidate.rrf_score / max_rrf_score >= min_score
+            ]
 
         documents: list[KnowledgeDocument] = []
         seen_keys: set[tuple[str, str | None, str]] = set()
-        for row in rows:
-            doc = row[0]
-            score = row[1]
-
-            # Filter by min_score if specified
-            if min_score is not None and score < min_score:
-                continue
-
+        for doc, score in ranked_rows:
             if group_by_key and doc.key is not None:
                 dedup_key = (
                     doc.namespace,
@@ -439,7 +535,7 @@ class KnowledgeRepository(OrgScopedRepository[KnowledgeStore]):
                     namespace=doc.namespace,
                     content=doc.content,
                     metadata=doc.doc_metadata,
-                    score=float(score),
+                    score=score,
                     organization_id=str(doc.organization_id) if doc.organization_id else None,
                     key=doc.key,
                     created_at=doc.created_at,

@@ -4417,8 +4417,8 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Search for similar documents
-         * @description Search for similar documents using vector similarity.
+         * Hybrid-search knowledge documents
+         * @description Search knowledge using fused lexical and vector rankings.
          */
         post: operations["cli_knowledge_search_api_sdk_knowledge_search_post"];
         delete?: never;

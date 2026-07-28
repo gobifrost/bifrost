@@ -1,5 +1,6 @@
 """Unit tests for AutonomousAgentExecutor."""
 import asyncio
+import json
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -7,6 +8,7 @@ from uuid import uuid4
 
 from src.models.contracts.executions import WorkflowExecutionResponse
 from src.models.enums import ExecutionStatus
+from src.repositories.knowledge import KnowledgeDocument
 from src.services.execution.agent_helpers import find_delegated_agent
 from src.services.execution.autonomous_agent_executor import (
     AutonomousAgentExecutor,
@@ -58,6 +60,61 @@ def mock_agent():
 
 
 class TestAutonomousAgentExecutor:
+    @pytest.mark.asyncio
+    async def test_knowledge_search_deduplicates_evidence_across_queries(
+        self,
+        mock_session,
+        mock_agent,
+    ):
+        mock_agent.knowledge_sources = ["halo_kb"]
+        embedding_client = MagicMock()
+        embedding_client.embed_single = AsyncMock(return_value=[0.1, 0.2])
+        document = KnowledgeDocument(
+            id="chunk-1",
+            content="Configure Technical POC with Contact Types.",
+            namespace="halo_kb",
+            score=0.9,
+            key="contact-types",
+            metadata={"title": "Contact Types"},
+        )
+        repository = MagicMock()
+        repository.search = AsyncMock(return_value=[document])
+        executor = AutonomousAgentExecutor(mock_session)
+
+        with patch(
+            "src.services.embeddings.get_embedding_client",
+            new_callable=AsyncMock,
+            return_value=embedding_client,
+        ), patch(
+            "src.repositories.knowledge.KnowledgeRepository",
+            return_value=repository,
+        ):
+            first = json.loads(
+                await executor._execute_knowledge_search(
+                    ToolCallRequest(
+                        id="first",
+                        name="search_knowledge",
+                        arguments={"query": "technical poc"},
+                    ),
+                    mock_agent,
+                )
+            )
+            second = json.loads(
+                await executor._execute_knowledge_search(
+                    ToolCallRequest(
+                        id="second",
+                        name="search_knowledge",
+                        arguments={"query": "billing contact role"},
+                    ),
+                    mock_agent,
+                )
+            )
+
+        assert first["count"] == 1
+        assert second["count"] == 0
+        assert second["omitted_duplicate_evidence"] == 1
+        assert repository.search.call_count == 2
+
     @pytest.mark.asyncio
     @patch("src.services.execution.autonomous_agent_executor.get_llm_client")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")

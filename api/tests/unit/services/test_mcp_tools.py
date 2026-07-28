@@ -339,6 +339,7 @@ class TestSearchKnowledge:
         assert len(data["results"]) == 1
         assert data["results"][0]["content"] == "This is documentation about the SDK"
         assert data["count"] == 1
+        assert mock_repo.search.await_args.kwargs["query_text"] == "SDK documentation"
 
     @pytest.mark.asyncio
     async def test_returns_no_results_message(self, org_user_context):

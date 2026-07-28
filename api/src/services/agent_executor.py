@@ -49,6 +49,13 @@ from src.services.execution.agent_helpers import (
     resolve_agent_tools,
 )
 from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
+from src.services.knowledge.search_budget import (
+    KnowledgeSearchBudget,
+    clamp_knowledge_result_limit,
+    compact_knowledge_metadata,
+    knowledge_search_rejection_payload,
+    select_novel_knowledge_evidence,
+)
 from src.services.mcp_client import dispatch as mcp_dispatch
 from src.services.mcp_client.errors import (
     MisconfigError,
@@ -105,6 +112,7 @@ class AgentExecutor:
     def __init__(self, session_factory: async_sessionmaker[AsyncSession]):
         self._session_factory = session_factory
         self._tool_workflow_id_map: dict[str, UUID] = {}  # normalized tool name → workflow UUID
+        self._knowledge_search_budget = KnowledgeSearchBudget()
 
     @asynccontextmanager
     async def _db(self):
@@ -214,6 +222,7 @@ class AgentExecutor:
         from src.services.agent_router import AgentRouter
 
         start_time = time.time()
+        self._knowledge_search_budget.reset()
         router = AgentRouter(
             self._session_factory,
             user_id=user.user_id if user else None,
@@ -553,6 +562,13 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                             tool_name=tc.name,
                         )
                     )
+
+                if self._knowledge_search_budget.exhausted:
+                    tool_definitions = [
+                        tool
+                        for tool in tool_definitions
+                        if tool.name != "search_knowledge"
+                    ]
 
                 # Continue loop to get LLM response with tool results
 
@@ -1517,7 +1533,9 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
 
             # Get search parameters
             query = tool_call.arguments.get("query", "")
-            limit = tool_call.arguments.get("limit", 5)
+            limit = clamp_knowledge_result_limit(
+                tool_call.arguments.get("limit", 5)
+            )
 
             if not query:
                 return ToolResult(
@@ -1539,6 +1557,16 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                     duration_ms=int((time.time() - start_time) * 1000),
                 )
 
+            decision = self._knowledge_search_budget.reserve(query)
+            if not decision.allowed:
+                return ToolResult(
+                    tool_call_id=tool_call.id,
+                    tool_name=tool_call.name,
+                    result=knowledge_search_rejection_payload(decision),
+                    error=None,
+                    duration_ms=int((time.time() - start_time) * 1000),
+                )
+
             # Generate query embedding
             async with self._db() as session:
                 embedding_client = await get_embedding_client(session)
@@ -1552,6 +1580,7 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                 results = await repo.search(
                     query_embedding=query_embedding,
                     namespace=namespaces,
+                    query_text=query,
                     limit=limit,
                     fallback=True,
                 )
@@ -1559,21 +1588,38 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
             duration_ms = int((time.time() - start_time) * 1000)
 
             # Format results for the agent
-            search_results = [
-                {
-                    "content": doc.content,
-                    "namespace": doc.namespace,
-                    "score": round(doc.score, 4) if doc.score else None,
-                    "key": doc.key,
-                    "metadata": doc.metadata,
-                }
-                for doc in results
-            ]
+            evidence = select_novel_knowledge_evidence(
+                self._knowledge_search_budget,
+                [
+                    (
+                        doc.id,
+                        {
+                            "content": doc.content,
+                            "namespace": doc.namespace,
+                            "score": round(doc.score, 4)
+                            if doc.score is not None
+                            else None,
+                            "key": doc.key,
+                            "metadata": compact_knowledge_metadata(doc.metadata),
+                        },
+                    )
+                    for doc in results
+                ],
+            )
 
             return ToolResult(
                 tool_call_id=tool_call.id,
                 tool_name=tool_call.name,
-                result={"documents": search_results, "count": len(search_results)},
+                result={
+                    "documents": evidence.documents,
+                    "count": len(evidence.documents),
+                    "omitted_duplicate_evidence": evidence.omitted_duplicates,
+                    "omitted_for_evidence_budget": evidence.omitted_for_budget,
+                    "searches_used": decision.searches_used,
+                    "searches_remaining": decision.searches_remaining,
+                    "evidence_chars_used": evidence.evidence_chars_used,
+                    "evidence_chars_remaining": evidence.evidence_chars_remaining,
+                },
                 error=None,
                 duration_ms=duration_ms,
             )
