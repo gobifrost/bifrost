@@ -18,7 +18,11 @@ import {
 } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { UsageTrend } from "@/services/usage";
-import { formatCurrency, formatNumber } from "./formatters";
+import {
+	formatChartDateLabel,
+	formatCurrency,
+	formatNumber,
+} from "./formatters";
 
 export interface UsageChartsProps {
 	trends: UsageTrend[] | undefined;
@@ -80,9 +84,7 @@ export function UsageCharts({ trends, isLoading }: UsageChartsProps) {
 										name as string,
 									];
 								}}
-								labelFormatter={(label) =>
-									format(new Date(label), "PPP")
-								}
+								labelFormatter={formatChartDateLabel}
 							/>
 							<Legend
 								formatter={(value) => {

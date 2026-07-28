@@ -452,6 +452,8 @@ services:
       - ./client/playwright.config.ts:/app/playwright.config.ts:ro
       - ./client/package.json:/app/package.json:ro
       - ./client/tsconfig.json:/app/tsconfig.json:ro
+      - ./client/tsconfig.app.json:/app/tsconfig.app.json:ro
+      - ./client/tsconfig.node.json:/app/tsconfig.node.json:ro
       - playwright-results:/app/playwright-results
     depends_on:
       client:

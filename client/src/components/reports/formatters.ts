@@ -2,6 +2,18 @@
  * Shared formatting utilities for usage report components.
  */
 
+import { format } from "date-fns";
+
+/**
+ * Format the primitive date labels supplied by chart data.
+ */
+export function formatChartDateLabel(label: unknown): string {
+	if (typeof label !== "string" && typeof label !== "number") {
+		throw new TypeError("Chart date label must be a string or number");
+	}
+	return format(new Date(label), "PPP");
+}
+
 /**
  * Format a number as currency (USD)
  */
