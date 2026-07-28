@@ -11,7 +11,7 @@
  *   - no workflow execution is created by file operations
  */
 
-import { test, expect } from "./fixtures/api-fixture";
+import { test, expect, publishAppAndWait } from "./fixtures/api-fixture";
 import type { AuthedApi } from "./fixtures/api-fixture";
 import type { Browser, Page } from "@playwright/test";
 import * as fs from "fs";
@@ -224,10 +224,7 @@ test.describe("Files — App Direct SDK", () => {
 			expect(write.ok(), `write ${relPath}: ${await write.text()}`).toBe(true);
 		}
 
-		const publish = await api.post(`/api/applications/${appId}/publish`, {
-			data: { message: "seed files sdk direct test" },
-		});
-		expect(publish.ok(), await publish.text()).toBe(true);
+		await publishAppAndWait(api, appId, "seed files sdk direct test");
 	});
 
 	test.afterAll(async ({ api }) => {

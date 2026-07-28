@@ -29,6 +29,8 @@ from src.core.pubsub import publish_git_op_completed
 from src.core.redis_reconnect import ResilientPubSubListener
 from src.jobs.schedulers.cron_scheduler import process_schedule_sources
 from src.jobs.schedulers.execution_cleanup import cleanup_stuck_executions
+from src.jobs.schedulers.platform_jobs import process_platform_jobs
+from src.scheduler.health import heartbeat_loop, write_heartbeat
 
 
 # Configure logging
@@ -67,6 +69,7 @@ class Scheduler:
         self._shutdown_event = asyncio.Event()
         self._scheduler: AsyncIOScheduler | None = None
         self._pubsub_listener: ResilientPubSubListener | None = None
+        self._heartbeat_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         """Start the scheduler."""
@@ -86,6 +89,8 @@ class Scheduler:
         # Start Redis pub/sub listener for on-demand requests
         logger.info("Starting Redis pub/sub listener...")
         await self._start_pubsub_listener()
+        write_heartbeat()
+        self._heartbeat_task = asyncio.create_task(heartbeat_loop())
 
         logger.info("Bifrost Scheduler started")
         logger.info("Running... (Ctrl+C to stop)")
@@ -249,6 +254,18 @@ class Scheduler:
             logger.info("Solution export jobs scheduled (process every 15s, cleanup hourly)")
         except ImportError:
             logger.warning("Solution export jobs scheduler not available")
+
+        # Durable non-execution work runs through the common platform-job host.
+        scheduler.add_job(
+            process_platform_jobs,
+            IntervalTrigger(seconds=2),
+            id="platform_jobs",
+            name="Process durable scheduler-owned platform jobs",
+            replace_existing=True,
+            next_run_time=datetime.now(timezone.utc),
+            **misfire_options,
+        )
+        logger.info("Platform jobs scheduled (every 2s)")
 
         # Event cleanup - daily at 3:00 AM UTC (30-day retention)
         try:
@@ -582,6 +599,11 @@ class Scheduler:
         """Stop the scheduler gracefully."""
         logger.info("Stopping Bifrost Scheduler...")
         self.running = False
+
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            await asyncio.gather(self._heartbeat_task, return_exceptions=True)
+            self._heartbeat_task = None
 
         # Stop pub/sub listener
         if self._pubsub_listener:

@@ -15,6 +15,7 @@ from src.models.orm.summary_backfill_job import SummaryBackfillJob
 from src.models.orm.agents import Agent, AgentDelegation, AgentRole, AgentTool, Conversation, Message
 from src.models.orm.ai_usage import AIModelPricing, AIUsage
 from src.models.orm.app_embed_secrets import AppEmbedSecret
+from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.form_embed_secrets import FormEmbedSecret
 from src.models.orm.app_roles import AppRole
 from src.models.orm.applications import Application
@@ -73,6 +74,7 @@ __all__ = [
     "PendingCaptureORM",
     # Applications (App Builder)
     "Application",
+    "PlatformJob",
     "AppEmbedSecret",
     "AppRole",
     # Users and Roles

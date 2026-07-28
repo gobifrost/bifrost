@@ -25,7 +25,10 @@ or cosmetic changes do NOT bump it. The tripwire in
 #     callers poll SolutionDeployJobStatus (whose install_id is now nullable —
 #     a zip install resolves its target inside the job) for the solution_id
 #     (2026-07-02)
-CONTRACT_VERSION: int = 7
+# v8: Application publish is async: POST /api/applications/{id}/publish returns
+#     202 + PlatformJobAccepted (was 200 + ApplicationPublic); callers poll the
+#     standardized PlatformJobPublic contract (2026-07-28)
+CONTRACT_VERSION: int = 8
 
 
 def get_contract_version() -> int:

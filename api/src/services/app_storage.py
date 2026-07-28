@@ -15,10 +15,12 @@ Data flow:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
-from typing import Literal
+from collections.abc import Awaitable, Callable, Iterable
+from typing import Any, Literal
 
 from aiobotocore.session import get_session
 
@@ -28,6 +30,8 @@ from src.core.log_safety import log_safe
 logger = logging.getLogger(__name__)
 
 APPS_PREFIX = "_apps/"
+PUBLISH_COPY_CONCURRENCY = 16
+S3_DELETE_BATCH_SIZE = 1000
 
 AppMode = Literal["preview", "live"]
 
@@ -293,8 +297,19 @@ class AppStorageService:
     # Publish: copy preview → live
     # -----------------------------------------------------------------
 
-    async def publish(self, app_id: str) -> int:
-        """Copy all preview files to live, removing stale live files.
+    async def publish(
+        self,
+        app_id: str,
+        progress_callback: Callable[[int, int], Awaitable[None]] | None = None,
+    ) -> int:
+        """Promote the current preview bundle to live.
+
+        Only artifacts declared by the freshly built ``manifest.json`` are
+        promoted. Hashed chunks from older preview builds can accumulate under
+        the preview prefix; copying all of them made publish time grow without
+        bound and could promote stale artifacts. Bundle outputs are copied with
+        bounded concurrency, then ``manifest.json`` is copied last as the live
+        pointer. Stale live and preview objects are removed in S3 batches.
 
         Returns:
             Number of files published.
@@ -303,46 +318,147 @@ class AppStorageService:
         live_prefix = self._key(app_id, "live")
 
         async with self._get_client() as client:
-            # List preview files
             preview_keys = await self._list_keys(client, preview_prefix)
-            preview_relative = set()
-            for pk in preview_keys:
-                rel = pk[len(preview_prefix):]
-                if rel:
-                    preview_relative.add(rel)
-
-            if not preview_relative:
+            preview_relative = {
+                key[len(preview_prefix):]
+                for key in preview_keys
+                if key[len(preview_prefix):]
+            }
+            if "manifest.json" not in preview_relative:
                 logger.warning(f"No preview files to publish for app {log_safe(app_id)}")
                 return 0
 
-            # Copy preview → live
-            for rel_path in preview_relative:
-                src_key = f"{preview_prefix}{rel_path}"
-                dst_key = f"{live_prefix}{rel_path}"
-                await client.copy_object(
-                    Bucket=self._bucket,
-                    CopySource={"Bucket": self._bucket, "Key": src_key},
-                    Key=dst_key,
+            manifest_response = await client.get_object(
+                Bucket=self._bucket,
+                Key=f"{preview_prefix}manifest.json",
+            )
+            manifest_bytes = await manifest_response["Body"].read()
+            artifacts = self._bundle_artifacts(manifest_bytes)
+            missing = artifacts - preview_relative
+            if missing:
+                missing_sample = ", ".join(sorted(missing)[:5])
+                raise ValueError(
+                    "Preview bundle is incomplete; missing artifact(s): "
+                    f"{missing_sample}"
                 )
 
-            # Remove stale live files
+            output_artifacts = sorted(artifacts - {"manifest.json"})
+            total = len(artifacts)
+            completed = 0
+            if progress_callback:
+                await progress_callback(completed, total)
+
+            semaphore = asyncio.Semaphore(PUBLISH_COPY_CONCURRENCY)
+
+            async def _copy_output(rel_path: str) -> None:
+                async with semaphore:
+                    await client.copy_object(
+                        Bucket=self._bucket,
+                        CopySource={
+                            "Bucket": self._bucket,
+                            "Key": f"{preview_prefix}{rel_path}",
+                        },
+                        Key=f"{live_prefix}{rel_path}",
+                    )
+
+            tasks = [
+                asyncio.create_task(_copy_output(rel_path))
+                for rel_path in output_artifacts
+            ]
+            try:
+                for task in asyncio.as_completed(tasks):
+                    await task
+                    completed += 1
+                    if progress_callback:
+                        await progress_callback(completed, total)
+            except BaseException:
+                for task in tasks:
+                    task.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
+                raise
+
+            # The manifest is the live bundle pointer, so publish it only after
+            # every referenced output is durable.
+            rel_path = "manifest.json"
+            await client.copy_object(
+                Bucket=self._bucket,
+                CopySource={"Bucket": self._bucket, "Key": f"{preview_prefix}{rel_path}"},
+                Key=f"{live_prefix}{rel_path}",
+            )
+            completed += 1
+            if progress_callback:
+                await progress_callback(completed, total)
+
             live_keys = await self._list_keys(client, live_prefix)
-            live_relative = {k[len(live_prefix):] for k in live_keys if k[len(live_prefix):]}
-            stale = live_relative - preview_relative
-            for rel_path in stale:
-                await client.delete_object(
-                    Bucket=self._bucket,
-                    Key=f"{live_prefix}{rel_path}",
+            stale_live = [
+                key for key in live_keys if key[len(live_prefix):] not in artifacts
+            ]
+            try:
+                await self._delete_keys(client, stale_live)
+            except Exception:
+                logger.warning(
+                    "Published current app manifest but failed to clean stale "
+                    "live objects",
+                    extra={"app_id": log_safe(app_id)},
+                    exc_info=True,
                 )
 
-            published = len(preview_relative)
+            stale_preview = [
+                key
+                for key in preview_keys
+                if key[len(preview_prefix):] not in artifacts
+            ]
+            try:
+                await self._delete_keys(client, stale_preview)
+            except Exception:
+                logger.warning(
+                    "Published current app manifest but failed to clean stale "
+                    "preview objects",
+                    extra={"app_id": log_safe(app_id)},
+                    exc_info=True,
+                )
+
+            published = len(artifacts)
             logger.info(
                 f"Published {published} files for app {log_safe(app_id)}"
-                f" (removed {len(stale)} stale)"
+                f" (removed {len(stale_live)} stale live and "
+                f"{len(stale_preview)} stale preview objects)"
             )
 
         await self.invalidate_render_cache(app_id)
         return published
+
+    @staticmethod
+    def _bundle_artifacts(manifest_bytes: bytes) -> set[str]:
+        """Return the exact preview objects referenced by a bundle manifest."""
+        try:
+            manifest: Any = json.loads(manifest_bytes)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("Preview bundle manifest is invalid JSON") from exc
+
+        outputs = manifest.get("outputs") if isinstance(manifest, dict) else None
+        entry = manifest.get("entry") if isinstance(manifest, dict) else None
+        if not isinstance(outputs, list) or not all(
+            isinstance(item, str) and item for item in outputs
+        ):
+            raise ValueError("Preview bundle manifest has invalid outputs")
+        artifacts = set(outputs)
+        if not isinstance(entry, str) or entry not in artifacts:
+            raise ValueError("Preview bundle manifest entry is not in outputs")
+        artifacts.add("manifest.json")
+        return artifacts
+
+    async def _delete_keys(self, client: Any, keys: Iterable[str]) -> None:
+        """Delete S3 objects in batches instead of one request per object."""
+        key_list = list(keys)
+        for start in range(0, len(key_list), S3_DELETE_BATCH_SIZE):
+            batch = key_list[start : start + S3_DELETE_BATCH_SIZE]
+            if not batch:
+                continue
+            await client.delete_objects(
+                Bucket=self._bucket,
+                Delete={"Objects": [{"Key": key} for key in batch], "Quiet": True},
+            )
 
     # -----------------------------------------------------------------
     # Render cache (Redis → S3 fallback)

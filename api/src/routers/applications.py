@@ -26,7 +26,7 @@ from sqlalchemy.exc import IntegrityError
 from src.core.auth import Context, CurrentUser
 from src.core.log_safety import log_safe
 from src.core.org_filter import resolve_org_filter
-from src.core.pubsub import publish_app_draft_update, publish_app_published
+from src.core.pubsub import publish_app_draft_update
 from src.models.contracts.applications import (
     ApplicationCreate,
     ApplicationDefinition,
@@ -39,7 +39,17 @@ from src.models.contracts.applications import (
     ApplicationSwapSlugsRequest,
     ApplicationUpdate,
 )
+from src.jobs.platform.application_publish import (
+    APPLICATION_PUBLISH_DEFINITION,
+    ApplicationPublishPayload,
+)
+from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.models.orm.applications import Application
+from src.services.platform_jobs import (
+    enqueue_platform_job,
+    ensure_platform_job_notification,
+    publish_platform_job_update,
+)
 from src.services.solutions.guard import assert_entity_id_not_solution_managed
 from src.core.exceptions import AccessDeniedError
 from shared.svg_sanitizer import SvgSanitizationError, sanitize_svg
@@ -527,53 +537,76 @@ async def save_draft(
 
 @router.post(
     "/{app_id}/publish",
-    response_model=ApplicationPublic,
+    response_model=PlatformJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
     summary="Publish draft to live",
 )
 async def publish_application(
     app_id: UUID,
     ctx: Context,
     user: CurrentUser,
+    response: Response,
     data: ApplicationPublishRequest | None = None,
-) -> ApplicationPublic:
+) -> PlatformJobAccepted:
     """
-    Publish the draft to live.
+    Queue a durable publish of the current source.
 
-    Copies all draft files to a new live version.
+    The platform scheduler rebuilds source into preview and only promotes the
+    freshly generated bundle when that build succeeds. Read
+    ``/api/platform-jobs/{id}`` or subscribe to the caller's notification
+    WebSocket channel for progress. A repeated
+    request while the same app is queued or running returns the existing
+    operation instead of launching a conflicting publish.
     """
     # Publishing a solution-managed app is a deploy-owned action.
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
-    repo = ApplicationRepository(
+    application = await get_application_by_id_or_404(ctx, app_id)
+    job, reused = await enqueue_platform_job(
         ctx.db,
-        ctx.org_id,
-        user_id=user.user_id,
-        is_superuser=user.is_platform_admin,
-        is_external=user.is_external,
+        APPLICATION_PUBLISH_DEFINITION,
+        ApplicationPublishPayload(
+            application_id=application.id,
+            message=data.message if data else None,
+        ),
+        dedupe_key=str(application.id),
+        organization_id=application.organization_id,
+        requested_by_user_id=user.user_id,
+        requested_by_email=user.email,
+        requested_by_name=user.name or user.email or "Unknown",
+        resource_type="application",
+        resource_id=str(application.id),
+        title=f"Publishing {application.name}",
+        action_url=f"/apps/{application.slug}/edit",
     )
-
-    try:
-        message = data.message if data else None
-        application = await repo.publish(app_id, user.email, message)
-        if not application:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Application '{app_id}' not found",
+    if reused and job.requested_by_user_id != str(user.user_id):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An application publish is already in progress",
+        )
+    if job.notification_id is None:
+        try:
+            await ensure_platform_job_notification(ctx.db, job)
+        except Exception:
+            logger.warning(
+                "Application publish queued without a progress notification",
+                extra={"platform_job_id": str(job.id)},
+                exc_info=True,
             )
 
-        # Emit event for real-time updates
-        await publish_app_published(
-            app_id=str(app_id),
-            user_id=str(user.user_id),
-            user_name=user.name or user.email or "Unknown",
-            new_version_id=application.published_at.isoformat() if application.published_at else "",
-        )
+    # Make the durable row visible to the scheduler only after its optional
+    # notification ID is attached. This removes the claim-before-notification
+    # race while still allowing publishes to proceed when Redis is unavailable.
+    await ctx.db.commit()
+    await ctx.db.refresh(job)
+    await publish_platform_job_update(job)
 
-        return await application_to_public(application, repo)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
+    response.headers["Location"] = f"/api/platform-jobs/{job.id}"
+    return PlatformJobAccepted(
+        job_id=job.id,
+        notification_id=job.notification_id,
+        status=job.status,
+        reused=reused,
+    )
 
 
 # =============================================================================

@@ -13,7 +13,12 @@
  * app-internal react-router wiring the bundler emits in _entry.tsx.
  */
 
-import { test, expect, grantWorkspaceAppPolicy } from "./fixtures/api-fixture";
+import {
+	test,
+	expect,
+	grantWorkspaceAppPolicy,
+	publishAppAndWait,
+} from "./fixtures/api-fixture";
 import type { Page } from "@playwright/test";
 
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
@@ -170,8 +175,7 @@ test.describe("Apps Preview", () => {
 		expect(tracker.errors, tracker.errors.join("\n")).toEqual([]);
 
 		// --- Step 4: publish, live path shows V2 ---
-		const pubResp = await api.post(`/api/applications/${appId}/publish`);
-		expect(pubResp.ok(), await pubResp.text()).toBe(true);
+		await publishAppAndWait(api, appId);
 
 		// Reset the tracker before the next navigation so prior-step noise
 		// doesn't cross-contaminate the live-path assertion.

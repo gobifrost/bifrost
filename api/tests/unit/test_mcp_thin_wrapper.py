@@ -50,6 +50,7 @@ from src.services.mcp_server.tools import (  # noqa: E402
     files as files_mod,
     integrations as integrations_mod,
     organizations as organizations_mod,
+    apps as apps_mod,
     policy_rules as policy_rules_mod,
     roles as roles_mod,
     workflow as workflow_mod,
@@ -90,6 +91,7 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "set_file_policy",
         "delete_file_policy",
     },
+    "apps": {"publish_app", "get_app_publish_status"},
     "policy_rules": {
         "list_policy_rules",
         "create_policy_rule",
@@ -107,6 +109,7 @@ MODULES = {
     "workflow": workflow_mod,
     "files": files_mod,
     "policy_rules": policy_rules_mod,
+    "apps": apps_mod,
 }
 
 

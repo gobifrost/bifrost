@@ -105,7 +105,21 @@ for (const [rel, file] of [
 	log("wrote", rel);
 }
 const pub = await api("POST", `/api/applications/${appId}/publish`, { message: "gallery demo" });
-log("publish", pub.status);
+if (!pub.ok) throw new Error(`enqueue publish: ${pub.status} ${JSON.stringify(pub.json)}`);
+for (;;) {
+	const job = await api("GET", `/api/platform-jobs/${pub.json.job_id}`);
+	if (!job.ok) throw new Error(`publish status: ${job.status} ${JSON.stringify(job.json)}`);
+	if (job.json.status === "succeeded") {
+		log("publish", job.json.status, job.json.result);
+		break;
+	}
+	if (job.json.status === "failed" || job.json.status === "cancelled") {
+		throw new Error(
+			`publish ${job.json.status}: ${job.json.error?.message ?? "no error detail"}`,
+		);
+	}
+	await new Promise((resolve) => setTimeout(resolve, 1000));
+}
 
 // ---- 5. Seed files into all three trees: global, orgA, orgB ---------------
 async function seed(name, bytes, contentType, scope, asTok = tok) {

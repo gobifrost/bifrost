@@ -288,6 +288,52 @@ class TestNotificationService:
         assert result.status == NotificationStatus.FAILED
         assert result.error == "Failed to clone repository: Authentication failed"
 
+    async def test_update_notification_can_clear_retry_state(
+        self,
+        notification_service,
+        mock_redis,
+    ):
+        """Explicit nulls clear stale error/result while omitted fields survive."""
+        from src.models.contracts.notifications import (
+            NotificationCategory,
+            NotificationStatus,
+            NotificationUpdate,
+        )
+
+        service, mock_pubsub = notification_service
+        existing = {
+            "id": "notif-123",
+            "category": NotificationCategory.SYSTEM.value,
+            "title": "Durable job",
+            "description": "Retrying",
+            "status": NotificationStatus.PENDING.value,
+            "percent": 40.0,
+            "error": "Runner stopped",
+            "result": {"partial": True},
+            "metadata": None,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "user_id": "user-123",
+        }
+        mock_redis.get.return_value = json.dumps(existing)
+        mock_redis.sismember.return_value = False
+
+        update = NotificationUpdate(
+            status=NotificationStatus.RUNNING,
+            error=None,
+            result=None,
+            percent=None,
+        )
+        with patch("src.services.notification_service.pubsub_manager", mock_pubsub):
+            result = await service.update_notification("notif-123", update)
+
+        assert result is not None
+        assert result.status == NotificationStatus.RUNNING
+        assert result.description == "Retrying"
+        assert result.error is None
+        assert result.result is None
+        assert result.percent is None
+
     async def test_update_notification_not_found(self, notification_service, mock_redis):
         """Test updating non-existent notification returns None."""
         from src.models.contracts.notifications import NotificationUpdate, NotificationStatus

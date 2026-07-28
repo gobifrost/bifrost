@@ -85,6 +85,8 @@ export interface AppPublishedUpdate {
 	timestamp: string;
 }
 
+export type PlatformJobUpdate = components["schemas"]["PlatformJobPublic"];
+
 // Frontend-specific WebSocket event types (wrappers around backend messages)
 export interface ExecutionUpdate {
 	executionId: string;
@@ -445,6 +447,7 @@ type WebSocketMessage =
 	| { type: "notification_created"; notification: NotificationPayload }
 	| { type: "notification_updated"; notification: NotificationPayload }
 	| { type: "notification_dismissed"; notification_id: string }
+	| { type: "platform_job_updated"; job: PlatformJobUpdate }
 	| {
 			type: "progress";
 			action: "install" | "uninstall";
@@ -529,6 +532,7 @@ type ChatStreamCallback = (chunk: ChatStreamChunk) => void;
 type AppDraftUpdateCallback = (update: AppDraftUpdate) => void;
 type AppCodeFileUpdateCallback = (update: AppCodeFileUpdate) => void;
 type AppPublishedUpdateCallback = (update: AppPublishedUpdate) => void;
+type PlatformJobUpdateCallback = (update: PlatformJobUpdate) => void;
 type PoolMessageCallback = (message: PoolMessage) => void;
 type FileActivityCallback = (event: FileActivityEvent) => void;
 type AgentRunUpdateCallback = (update: AgentRunUpdate) => void;
@@ -592,6 +596,10 @@ class WebSocketService {
 	private appPublishedUpdateCallbacks = new Map<
 		string,
 		Set<AppPublishedUpdateCallback>
+	>();
+	private platformJobUpdateCallbacks = new Map<
+		string,
+		Set<PlatformJobUpdateCallback>
 	>();
 	private poolMessageCallbacks = new Set<PoolMessageCallback>();
 	private fileActivityCallbacks = new Set<FileActivityCallback>();
@@ -825,6 +833,12 @@ class WebSocketService {
 				useNotificationStore
 					.getState()
 					.removeNotification(message.notification_id);
+				break;
+
+			case "platform_job_updated":
+				this.platformJobUpdateCallbacks
+					.get(message.job.id)
+					?.forEach((callback) => callback(message.job));
 				break;
 
 			case "progress":
@@ -1613,6 +1627,26 @@ class WebSocketService {
 			this.appPublishedUpdateCallbacks.get(appId)?.delete(callback);
 			if (this.appPublishedUpdateCallbacks.get(appId)?.size === 0) {
 				this.appPublishedUpdateCallbacks.delete(appId);
+			}
+		};
+	}
+
+	/**
+	 * Observe the durable HTTP job contract over the user's existing
+	 * notification WebSocket channel.
+	 */
+	onPlatformJobUpdate(
+		jobId: string,
+		callback: PlatformJobUpdateCallback,
+	): () => void {
+		if (!this.platformJobUpdateCallbacks.has(jobId)) {
+			this.platformJobUpdateCallbacks.set(jobId, new Set());
+		}
+		this.platformJobUpdateCallbacks.get(jobId)!.add(callback);
+		return () => {
+			this.platformJobUpdateCallbacks.get(jobId)?.delete(callback);
+			if (this.platformJobUpdateCallbacks.get(jobId)?.size === 0) {
+				this.platformJobUpdateCallbacks.delete(jobId);
 			}
 		};
 	}

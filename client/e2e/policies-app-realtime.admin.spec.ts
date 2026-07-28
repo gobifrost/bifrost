@@ -12,7 +12,13 @@
  * which had used the now-removed `useTableSubscription` low-level hook.
  */
 
-import { test, expect, csrfHeader, grantWorkspaceAppPolicy } from "./fixtures/api-fixture";
+import {
+	test,
+	expect,
+	csrfHeader,
+	grantWorkspaceAppPolicy,
+	publishAppAndWait,
+} from "./fixtures/api-fixture";
 import type { BrowserContext, Page } from "@playwright/test";
 import * as fs from "fs";
 import * as path from "path";
@@ -337,10 +343,7 @@ test.describe("Policies — Visibility-gain via reassignment", () => {
 		// (/apps/{slug}/*, requireOrgUser) is the only one a non-admin can
 		// reach; the /preview/* route is gated to platform admins. Publishing
 		// also triggers the bundle build so the live shell can load.
-		const publish = await api.post(`/api/applications/${appId}/publish`, {
-			data: { message: "seed for visibility-gain test" },
-		});
-		expect(publish.ok(), await publish.text()).toBe(true);
+		await publishAppAndWait(api, appId, "seed for visibility-gain test");
 
 		// 5. Build per-user browser contexts from the auth states global
 		//    setup persisted. Alice gets a Page (she renders the app);

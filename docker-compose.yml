@@ -229,8 +229,9 @@ services:
       api:
         condition: service_healthy
 
-  # Scheduler Service (APScheduler only)
-  # MUST run as single instance - handles CRON jobs, cleanup tasks, OAuth refresh
+  # Scheduler Service + isolated platform-job host
+  # MUST run as single instance - handles CRON, maintenance, and durable
+  # non-workflow jobs. Workflow/agent execution remains in worker containers.
   scheduler:
     # build:
     #   context: .
@@ -264,8 +265,21 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-m", "src.scheduler.health", "--max-age", "60"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     deploy:
       replicas: 1 # MUST be single instance
+      resources:
+        reservations:
+          cpus: "0.05"
+          memory: 256M
+        limits:
+          cpus: "1.0"
+          memory: 1G
     command: >
       python -m src.scheduler.main
 

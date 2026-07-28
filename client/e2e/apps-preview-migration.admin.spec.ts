@@ -24,7 +24,12 @@
  * react-router-dom and broke in-app navigation.
  */
 
-import { test, expect, grantWorkspaceAppPolicy } from "./fixtures/api-fixture";
+import {
+	test,
+	expect,
+	grantWorkspaceAppPolicy,
+	publishAppAndWait,
+} from "./fixtures/api-fixture";
 import type { Page } from "@playwright/test";
 
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
@@ -198,8 +203,7 @@ test.describe("Apps Preview — auto-migration", () => {
 		expect(tracker.errors, tracker.errors.join("\n")).toEqual([]);
 
 		// --- Step 4: publish, live path renders the same way.
-		const pubResp = await api.post(`/api/applications/${appId}/publish`);
-		expect(pubResp.ok(), await pubResp.text()).toBe(true);
+		await publishAppAndWait(api, appId);
 
 		tracker.errors.length = 0;
 

@@ -3807,6 +3807,13 @@ async def _api_request(method: str, endpoint: str, body: Any | None, client: "Bi
         except Exception:
             print(response.text)
         return 0 if response.status_code < 400 else 1
+    except httpx.TimeoutException:
+        print(
+            "Error: request timed out after 30 seconds. The server may still "
+            "be processing it; check operation status before retrying.",
+            file=sys.stderr,
+        )
+        return 1
     except httpx.ConnectError:
         print("Error: could not connect to Bifrost API.", file=sys.stderr)
         return 1

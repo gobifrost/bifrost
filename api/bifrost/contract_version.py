@@ -23,7 +23,10 @@ integers agree and fails if a CLI-consumed contract changed without a decision.
 #     /install/from-repo return 202 + deploy_job_id (was 200/201 + Solution);
 #     callers poll SolutionDeployJobStatus (install_id now nullable) for the
 #     solution_id (2026-07-02)
-CONTRACT_VERSION: int = 7
+# v8: Application publish is async: POST /api/applications/{id}/publish returns
+#     202 + PlatformJobAccepted (was 200 + ApplicationPublic); callers poll the
+#     standardized PlatformJobPublic contract (2026-07-28)
+CONTRACT_VERSION: int = 8
 
 
 def get_contract_version() -> int:

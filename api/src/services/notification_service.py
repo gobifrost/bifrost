@@ -167,16 +167,19 @@ class NotificationService:
         if update.status is not None:
             notification_dict["status"] = update.status.value
 
-        if update.description is not None:
+        # Nullable fields use Pydantic's explicit-field set so callers can
+        # clear stale progress/error/result values during a durable-job retry.
+        # An omitted field still means "leave unchanged".
+        if "description" in update.model_fields_set:
             notification_dict["description"] = update.description
 
-        if update.percent is not None:
+        if "percent" in update.model_fields_set:
             notification_dict["percent"] = update.percent
 
-        if update.error is not None:
+        if "error" in update.model_fields_set:
             notification_dict["error"] = update.error
 
-        if update.result is not None:
+        if "result" in update.model_fields_set:
             notification_dict["result"] = update.result
 
         notification_dict["updated_at"] = now.isoformat()

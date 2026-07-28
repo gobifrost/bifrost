@@ -159,7 +159,7 @@ EXPECTED_CRUD_COMMANDS: dict[str, set[str]] = {
     "roles": {"list", "get", "create", "update", "delete"},
     "forms": {"list", "get", "create", "update", "delete"},
     "agents": {"list", "get", "create", "update", "delete"},
-    "apps": {"list", "get", "create", "update", "delete"},
+    "apps": {"list", "get", "create", "update", "publish", "delete"},
     "configs": {"list", "get", "create", "update", "delete"},
     "tables": {"list", "get", "create", "update", "delete"},
     "integrations": {"list", "get", "create", "update"},

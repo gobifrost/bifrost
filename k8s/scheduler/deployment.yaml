@@ -35,17 +35,20 @@ spec:
           resources:
             requests:
               cpu: "50m"
-              memory: "128Mi"
+              memory: "256Mi"
             limits:
-              cpu: "500m"
-              memory: "512Mi"
-          # Scheduler doesn't have HTTP endpoints, use exec probe
+              cpu: "1"
+              memory: "1Gi"
+          # Verify the asyncio event loop is still advancing. Platform-job
+          # subprocesses share this cgroup and are stopped before hard pressure.
           livenessProbe:
             exec:
               command:
                 - python
-                - -c
-                - "import sys; sys.exit(0)"
+                - -m
+                - src.scheduler.health
+                - --max-age
+                - "60"
             initialDelaySeconds: 10
             periodSeconds: 30
             timeoutSeconds: 5

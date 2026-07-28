@@ -16,6 +16,8 @@ parity follow-up:
   live application without a staging step.
 * ``bifrost apps set-deps <ref>`` → ``PUT /api/applications/{uuid}/dependencies``
   with ``--deps @package.json`` (or a JSON literal).
+* ``bifrost apps publish <ref>`` → enqueue a durable rebuild/publish operation
+  and poll its short status requests to a terminal result.
 * ``bifrost apps delete <ref>`` → ``DELETE /api/applications/{uuid}``.
 
 ``REF`` resolution supports slug, UUID, and name, handled by
@@ -37,6 +39,8 @@ Two-call orchestration for ``apps create --deps``:
 
 from __future__ import annotations
 
+import asyncio
+import time
 from typing import Any
 
 import click
@@ -59,6 +63,7 @@ from bifrost.contracts import (
 from .base import _apply_flags, entity_group, output_result, pass_resolver, run_async
 
 apps_group = entity_group("apps", "Manage applications.")
+APPLICATION_PUBLISH_TIMEOUT_SECONDS = 20 * 60
 
 
 _CREATE_FLAGS = build_cli_flags(
@@ -402,6 +407,111 @@ async def set_deps(
     )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
+
+
+async def _poll_publish_job(
+    client: BifrostClient,
+    job_id: str,
+    *,
+    interval: float = 2.0,
+    timeout_seconds: float = APPLICATION_PUBLISH_TIMEOUT_SECONDS,
+) -> dict[str, Any]:
+    """Poll one publish job without holding any HTTP request open."""
+    started = time.monotonic()
+    last_progress: tuple[str | None, int, int | None] | None = None
+    while True:
+        try:
+            response = await client.get(
+                f"/api/platform-jobs/{job_id}"
+            )
+        except httpx.TimeoutException as exc:
+            raise click.ClickException(
+                f"Timed out reading application publish job {job_id}. "
+                "The durable operation may still be running; retry the command "
+                "to follow the existing job."
+            ) from exc
+        response.raise_for_status()
+        body = response.json()
+        status_value = body.get("status")
+        if status_value == "succeeded":
+            return body
+        if status_value in ("failed", "cancelled"):
+            error = body.get("error") or {}
+            raise click.ClickException(
+                f"Application publish failed (job {job_id}): "
+                f"{error.get('message') or status_value}"
+            )
+
+        progress_body = body.get("progress") or {}
+        phase = progress_body.get("phase")
+        current = int(progress_body.get("current") or 0)
+        total = progress_body.get("total")
+        progress = (phase, current, total)
+        if progress != last_progress:
+            count = f" ({current}/{total})" if total is not None else ""
+            click.echo(
+                f"Publish {phase or status_value or 'in progress'}{count}",
+                err=True,
+            )
+            last_progress = progress
+
+        if time.monotonic() - started >= timeout_seconds:
+            raise click.ClickException(
+                f"Application publish polling timed out after "
+                f"{int(timeout_seconds)}s (job {job_id}). "
+                "The durable operation may still be running; check its status "
+                "before retrying."
+            )
+        await asyncio.sleep(interval)
+
+
+@apps_group.command("publish")
+@click.argument("ref")
+@click.option(
+    "--message",
+    type=str,
+    default=None,
+    help="Optional publish message (maximum 500 characters).",
+)
+@click.pass_context
+@pass_resolver
+@run_async
+async def publish_app(
+    ctx: click.Context,
+    ref: str,
+    message: str | None,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+) -> None:
+    """Rebuild and publish an application, polling durable progress.
+
+    ``REF`` is a slug, UUID, or application name. The enqueue request returns
+    quickly; this command then polls short status requests, so a multi-minute
+    build cannot hit the client's per-request 30-second timeout.
+    """
+    app_uuid = await resolver.resolve("app", ref)
+    try:
+        response = await client.post(
+            f"/api/applications/{app_uuid}/publish",
+            json={"message": message} if message else {},
+        )
+    except httpx.TimeoutException as exc:
+        raise click.ClickException(
+            "Timed out while queueing the application publish. The request may "
+            "have been accepted; retrying is safe and will follow the existing "
+            "active publish job."
+        ) from exc
+    response.raise_for_status()
+    enqueued = response.json()
+    job_id = str(enqueued["job_id"])
+    reused = bool(enqueued.get("reused"))
+    click.echo(
+        f"{'Following existing' if reused else 'Queued'} publish job {job_id}",
+        err=True,
+    )
+    completed = await _poll_publish_job(client, job_id)
+    output_result(completed, ctx=ctx)
 
 
 @apps_group.command("delete")

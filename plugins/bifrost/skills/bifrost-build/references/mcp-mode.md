@@ -62,7 +62,8 @@ These are the real tool names as registered in `api/src/services/mcp_server/tool
 - `get_app` — get an app's full config
 - `create_app` — create an app
 - `update_app` — update app metadata
-- `publish_app` — publish an app (makes the draft live)
+- `publish_app` — queue a durable rebuild-and-publish; returns a publish job ID
+- `get_app_publish_status` — poll publish phase/progress and the persisted result or error
 - `replace_app` — repoint an app's source directory
 - `validate_app` — validate an app's source before publish
 - `push_files` — push source files into an app

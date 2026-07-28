@@ -57,6 +57,7 @@ from src.models.orm import (
     FileIndex,
     # Applications (App Builder)
     Application,
+    PlatformJob,
     AppRole,
 )
 
@@ -120,6 +121,7 @@ __all__ = [
     "FileIndex",
     # Applications (App Builder)
     "Application",
+    "PlatformJob",
     "AppRole",
     # Enums
     "ExecutionStatus",

@@ -310,6 +310,9 @@
 | POST | `/api/packages/install` |
 | GET | `/api/packages/updates` |
 | DELETE | `/api/packages/{package_name}` |
+| GET | `/api/platform-jobs` |
+| GET | `/api/platform-jobs/{job_id}` |
+| POST | `/api/platform-jobs/{job_id}/cancel` |
 | GET | `/api/platform/queue` |
 | GET | `/api/platform/stuck-history` |
 | GET | `/api/platform/workers` |

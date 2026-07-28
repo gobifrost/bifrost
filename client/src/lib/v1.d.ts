@@ -3685,6 +3685,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/platform-jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the caller's platform jobs */
+        get: operations["list_platform_jobs_api_platform_jobs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/platform-jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get durable platform-job status */
+        get: operations["get_platform_job_status_api_platform_jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/platform-jobs/{job_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Request cancellation of a platform job */
+        post: operations["cancel_platform_job_api_platform_jobs__job_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/oauth/connections/{connection_name}": {
         parameters: {
             query?: never;
@@ -8177,9 +8228,14 @@ export interface paths {
         put?: never;
         /**
          * Publish draft to live
-         * @description Publish the draft to live.
+         * @description Queue a durable publish of the current source.
          *
-         *     Copies all draft files to a new live version.
+         *     The platform scheduler rebuilds source into preview and only promotes the
+         *     freshly generated bundle when that build succeeds. Read
+         *     ``/api/platform-jobs/{id}`` or subscribe to the caller's notification
+         *     WebSocket channel for progress. A repeated
+         *     request while the same app is queued or running returns the existing
+         *     operation instead of launching a conflicting publish.
          */
         post: operations["publish_application_api_applications__app_id__publish_post"];
         delete?: never;
@@ -19129,6 +19185,127 @@ export interface components {
              */
             affected_entities?: components["schemas"]["AffectedEntity"][];
         };
+        /**
+         * PlatformJobAccepted
+         * @description Response returned immediately after a platform job is enqueued.
+         */
+        PlatformJobAccepted: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            status: components["schemas"]["PlatformJobStatus"];
+            /**
+             * Reused
+             * @default false
+             */
+            reused: boolean;
+            /** Notification Id */
+            notification_id?: string | null;
+        };
+        /** PlatformJobCancelResponse */
+        PlatformJobCancelResponse: {
+            job: components["schemas"]["PlatformJobPublic"];
+            /** Accepted */
+            accepted: boolean;
+        };
+        /** PlatformJobError */
+        PlatformJobError: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /**
+             * Retryable
+             * @default false
+             */
+            retryable: boolean;
+        };
+        /** PlatformJobListResponse */
+        PlatformJobListResponse: {
+            /** Jobs */
+            jobs: components["schemas"]["PlatformJobPublic"][];
+        };
+        /** PlatformJobProgress */
+        PlatformJobProgress: {
+            /** Phase */
+            phase?: string | null;
+            /**
+             * Current
+             * @default 0
+             */
+            current: number;
+            /** Total */
+            total?: number | null;
+            /** Percent */
+            percent?: number | null;
+        };
+        /**
+         * PlatformJobPublic
+         * @description Sanitized durable state returned by HTTP and WebSocket.
+         */
+        PlatformJobPublic: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Job Type */
+            job_type: string;
+            /** Payload Version */
+            payload_version: number;
+            /** Organization Id */
+            organization_id?: string | null;
+            /** Resource Type */
+            resource_type?: string | null;
+            /** Resource Id */
+            resource_id?: string | null;
+            /** Title */
+            title: string;
+            /** Action Url */
+            action_url?: string | null;
+            /** Requested By User Id */
+            requested_by_user_id: string;
+            /** Requested By Name */
+            requested_by_name: string;
+            status: components["schemas"]["PlatformJobStatus"];
+            progress: components["schemas"]["PlatformJobProgress"];
+            /** Revision */
+            revision: number;
+            /** Attempt */
+            attempt: number;
+            /** Max Attempts */
+            max_attempts: number;
+            /** Can Cancel */
+            can_cancel: boolean;
+            /** Result */
+            result?: {
+                [key: string]: unknown;
+            } | null;
+            error?: components["schemas"]["PlatformJobError"] | null;
+            /** Notification Id */
+            notification_id?: string | null;
+            /** Started At */
+            started_at?: string | null;
+            /** Completed At */
+            completed_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * PlatformJobStatus
+         * @enum {string}
+         */
+        PlatformJobStatus: "queued" | "running" | "cancel_requested" | "succeeded" | "failed" | "cancelled";
         /**
          * PlatformMetricsResponse
          * @description Platform metrics snapshot response.
@@ -30478,6 +30655,100 @@ export interface operations {
             };
         };
     };
+    list_platform_jobs_api_platform_jobs_get: {
+        parameters: {
+            query?: {
+                active_only?: boolean;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_platform_job_status_api_platform_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_platform_job_api_platform_jobs__job_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobCancelResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_connection_api_oauth_connections__connection_name__get: {
         parameters: {
             query?: never;
@@ -38701,12 +38972,12 @@ export interface operations {
         };
         responses: {
             /** @description Successful Response */
-            200: {
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ApplicationPublic"];
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
                 };
             };
             /** @description Validation Error */

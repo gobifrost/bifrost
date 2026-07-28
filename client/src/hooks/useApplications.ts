@@ -17,6 +17,8 @@ export type ApplicationListResponse =
 	components["schemas"]["ApplicationListResponse"];
 export type ApplicationPublishRequest =
 	components["schemas"]["ApplicationPublishRequest"];
+export type PlatformJobAccepted =
+	components["schemas"]["PlatformJobAccepted"];
 
 // Export type for applications
 export type ApplicationExport = ApplicationPublic;
@@ -191,23 +193,25 @@ export function useDeleteApplication() {
 }
 
 /**
- * Hook to publish an application (promote draft to active)
+ * Queue application publishing. Live progress and the terminal result are
+ * delivered by the existing notification WebSocket channel.
  */
 export function usePublishApplication() {
-	const queryClient = useQueryClient();
-
 	return $api.useMutation("post", "/api/applications/{app_id}/publish", {
-		onSuccess: () => {
-			queryClient.invalidateQueries({
-				queryKey: ["get", "/api/applications"],
-			});
-			queryClient.invalidateQueries({
-				queryKey: ["get", "/api/applications/{slug}"],
-			});
-			toast.success("Application published");
+		onSuccess: (operation) => {
+			toast.success(
+				operation.reused
+					? "Following existing application publish"
+					: "Application publish queued",
+				{
+					description: operation.notification_id
+						? "Progress will appear in notifications."
+						: `Track durable job ${operation.job_id}.`,
+				},
+			);
 		},
 		onError: (error) => {
-			toast.error("Failed to publish application", {
+			toast.error("Failed to queue application publish", {
 				description: getErrorMessage(error, "Unknown error"),
 			});
 		},
@@ -332,20 +336,17 @@ export async function deleteApplication(appId: string): Promise<void> {
 export async function publishApplication(
 	appId: string,
 	message?: string,
-): Promise<ApplicationPublic> {
+): Promise<PlatformJobAccepted> {
 	const { data, error } = await apiClient.POST(
 		"/api/applications/{app_id}/publish",
 		{
-			params: {
-				path: { app_id: appId },
-			},
-			body: message ? { message } : {},
+			params: { path: { app_id: appId } },
+			body: { message: message || null },
 		},
 	);
-	if (error)
-		throw new Error(
-			getErrorMessage(error, "Failed to publish application"),
-		);
+	if (error) {
+		throw new Error(getErrorMessage(error, "Failed to queue application publish"));
+	}
 	return data;
 }
 

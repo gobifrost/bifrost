@@ -5,6 +5,7 @@ Tests application CRUD operations, draft/live versioning, and rollback functiona
 Applications are stored in the database (DB-first model).
 """
 
+import time
 import uuid
 
 import pytest
@@ -28,6 +29,33 @@ def _create_app(e2e_client, headers, slug, name=None, params=None, **json_extra)
 def _delete_app(e2e_client, headers, app_id, **kwargs):
     """Delete an app by UUID."""
     e2e_client.delete(f"/api/applications/{app_id}", headers=headers, **kwargs)
+
+
+def _publish_and_wait(e2e_client, headers, app_id, app_slug):
+    response = e2e_client.post(
+        f"/api/applications/{app_id}/publish",
+        headers=headers,
+    )
+    assert response.status_code == 202, response.text
+    job_id = response.json()["job_id"]
+    for _ in range(120):
+        status_response = e2e_client.get(
+            f"/api/platform-jobs/{job_id}",
+            headers=headers,
+        )
+        assert status_response.status_code == 200, status_response.text
+        body = status_response.json()
+        if body["status"] in ("succeeded", "failed", "cancelled"):
+            if body["status"] == "succeeded":
+                application_response = e2e_client.get(
+                    f"/api/applications/{app_slug}",
+                    headers=headers,
+                )
+                assert application_response.status_code == 200
+                body["application"] = application_response.json()
+            return body
+        time.sleep(0.25)
+    raise AssertionError(f"publish job {job_id} did not finish")
 
 
 @pytest.mark.e2e
@@ -333,12 +361,14 @@ class TestApplicationVersioning:
     def test_multiple_publishes(self, e2e_client, platform_admin, test_app):
         """Multiple publishes update the published state."""
         # First publish
-        response = e2e_client.post(
-            f"/api/applications/{test_app['id']}/publish",
-            headers=platform_admin.headers,
+        first_job = _publish_and_wait(
+            e2e_client,
+            platform_admin.headers,
+            test_app["id"],
+            test_app["slug"],
         )
-        assert response.status_code == 200, f"First publish failed: {response.text}"
-        v1 = response.json()
+        assert first_job["status"] == "succeeded", first_job
+        v1 = first_job["application"]
         assert v1["is_published"] is True, "First publish should mark app as published"
         v1_published_at = v1["published_at"]
 
@@ -350,12 +380,14 @@ class TestApplicationVersioning:
         )
 
         # Second publish
-        response = e2e_client.post(
-            f"/api/applications/{test_app['id']}/publish",
-            headers=platform_admin.headers,
+        second_job = _publish_and_wait(
+            e2e_client,
+            platform_admin.headers,
+            test_app["id"],
+            test_app["slug"],
         )
-        assert response.status_code == 200, f"Second publish failed: {response.text}"
-        v2 = response.json()
+        assert second_job["status"] == "succeeded", second_job
+        v2 = second_job["application"]
         assert v2["is_published"] is True
         assert v2["published_at"] != v1_published_at, \
             "Each publish should update published_at"

@@ -91,6 +91,58 @@ export async function grantWorkspaceAppPolicy(
 	}
 }
 
+/**
+ * Publish an application through the durable async API and wait for its
+ * persisted terminal state. Keeping this in the shared fixture prevents specs
+ * from treating the 202 acknowledgement as if the live bundle were ready.
+ */
+export async function publishAppAndWait(
+	api: AuthedApi,
+	appId: string,
+	message?: string,
+	timeoutMs = 2 * 60 * 1000,
+): Promise<Record<string, unknown>> {
+	const enqueue = await api.post(`/api/applications/${appId}/publish`, {
+		data: { message: message ?? null },
+	});
+	if (!enqueue.ok()) {
+		throw new Error(
+			`enqueue application publish failed: ${enqueue.status()} ${await enqueue.text()}`,
+		);
+	}
+	const accepted = (await enqueue.json()) as { job_id: string };
+	const startedAt = Date.now();
+
+	for (;;) {
+		const response = await api.get(
+			`/api/platform-jobs/${accepted.job_id}`,
+		);
+		if (!response.ok()) {
+			throw new Error(
+				`read application publish ${accepted.job_id} failed: ` +
+					`${response.status()} ${await response.text()}`,
+			);
+		}
+		const job = (await response.json()) as Record<string, unknown> & {
+			status: string;
+			error?: { message?: string } | null;
+		};
+		if (job.status === "succeeded") return job;
+		if (job.status === "failed" || job.status === "cancelled") {
+			throw new Error(
+				job.error?.message || `Application publish ${accepted.job_id} failed`,
+			);
+		}
+		if (Date.now() - startedAt >= timeoutMs) {
+			throw new Error(
+				`Application publish ${accepted.job_id} remained ` +
+					`${job.status} after ${timeoutMs}ms`,
+			);
+		}
+		await new Promise((resolve) => setTimeout(resolve, 500));
+	}
+}
+
 export async function csrfHeader(
 	context: BrowserContext,
 ): Promise<Record<string, string>> {

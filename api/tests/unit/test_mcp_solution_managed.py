@@ -101,13 +101,11 @@ def _fake_db_cm(db_session):
 
 
 async def test_mcp_publish_app_refuses_managed_without_s3_write(db_session, monkeypatch):
-    """publish_app must reject a solution-managed app BEFORE copying preview→live."""
+    """publish_app delegates the managed-app guard to canonical REST."""
     from src.services.app_storage import AppStorageService
     from src.services.mcp_server.tools import apps as mcp_apps
 
     aid = await _managed_app(db_session, repo_path="apps/managed-pub")
-
-    monkeypatch.setattr(mcp_apps, "get_tool_db", _fake_db_cm(db_session))
 
     # Sentinel: publish() (the preview→live S3 copy) must never be invoked.
     published = {"called": False}
@@ -117,6 +115,14 @@ async def test_mcp_publish_app_refuses_managed_without_s3_write(db_session, monk
         raise AssertionError("S3 publish must not run for a solution-managed app")
 
     monkeypatch.setattr(AppStorageService, "publish", _boom_publish)
+
+    async def _guarded_rest(context, method, path, *, json_body=None):  # noqa: ANN001
+        assert method == "POST"
+        assert path == f"/api/applications/{aid}/publish"
+        assert json_body == {}
+        return 409, {"detail": SOLUTION_MANAGED_MESSAGE}
+
+    monkeypatch.setattr(mcp_apps, "call_rest", _guarded_rest)
 
     context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
     result = await mcp_apps.publish_app(context, app_id=str(aid))

@@ -45,6 +45,7 @@ from src.routers import (
     packages_router,
     github_router,
     jobs_router,
+    platform_jobs_router,
     oauth_connections_router,
     endpoints_router,
     cli_router,
@@ -572,6 +573,7 @@ def create_app() -> FastAPI:
     app.include_router(packages_router)
     app.include_router(github_router)
     app.include_router(jobs_router)
+    app.include_router(platform_jobs_router)
     app.include_router(oauth_connections_router)
     app.include_router(endpoints_router)
     app.include_router(cli_router)

@@ -129,19 +129,14 @@ export function AppCodeEditorPage() {
 		try {
 			await publishApplication.mutateAsync({
 				params: { path: { app_id: existingApp.id } },
-				body: {
-					message: publishMessage || null,
-				},
+				body: { message: publishMessage || null },
 			});
-			toast.success("Application published");
 			setIsPublishDialogOpen(false);
 			setPublishMessage("");
-		} catch (error) {
-			toast.error(
-				error instanceof Error
-					? error.message
-					: "Failed to publish application",
-			);
+			publishApplication.reset();
+		} catch {
+			// The hook presents enqueue failures in a toast. Once accepted,
+			// progress and terminal errors arrive through notifications.
 		}
 	};
 
@@ -357,7 +352,12 @@ export function AppCodeEditorPage() {
 			{/* Publish Dialog */}
 			<Dialog
 				open={isPublishDialogOpen}
-				onOpenChange={setIsPublishDialogOpen}
+				onOpenChange={(open) => {
+					if (!isPublishing) {
+						setIsPublishDialogOpen(open);
+						if (!open) publishApplication.reset();
+					}
+				}}
 			>
 				<DialogContent>
 					<DialogHeader>
@@ -378,18 +378,30 @@ export function AppCodeEditorPage() {
 								onChange={(e) => setPublishMessage(e.target.value)}
 								placeholder="What changed in this version?"
 								rows={3}
+								disabled={isPublishing}
 							/>
 						</div>
 					</div>
 					<DialogFooter>
 						<Button
 							variant="outline"
-							onClick={() => setIsPublishDialogOpen(false)}
+							onClick={() => {
+								setIsPublishDialogOpen(false);
+								publishApplication.reset();
+							}}
+							disabled={isPublishing}
 						>
 							Cancel
 						</Button>
 						<Button onClick={handlePublish} disabled={isPublishing}>
-							{isPublishing ? "Publishing..." : "Publish"}
+							{isPublishing ? (
+								<>
+									<Loader2 className="mr-2 h-4 w-4 animate-spin" />
+									Publishing...
+								</>
+							) : (
+								"Publish"
+							)}
 						</Button>
 					</DialogFooter>
 				</DialogContent>

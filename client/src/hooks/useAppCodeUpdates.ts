@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useState, useCallback } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
 	webSocketService,
 	type AppCodeFileUpdate,
@@ -55,6 +56,7 @@ interface UseAppCodeUpdatesOptions {
  */
 export function useAppCodeUpdates(options: UseAppCodeUpdatesOptions) {
 	const { appId, enabled = true, onUpdate } = options;
+	const queryClient = useQueryClient();
 
 	// Local cache of file contents (path -> CodeFile)
 	const [files, setFiles] = useState<Map<string, CodeFile>>(new Map());
@@ -125,8 +127,19 @@ export function useAppCodeUpdates(options: UseAppCodeUpdatesOptions) {
 				action: "update",
 				path: "published",
 			});
+			void queryClient.invalidateQueries({
+				predicate: (query) => {
+					const key = query.queryKey;
+					return (
+						Array.isArray(key) &&
+						key[0] === "get" &&
+						(key[1] === "/api/applications/{slug}" ||
+							key[1] === "/api/applications")
+					);
+				},
+			});
 		},
-		[appId, enabled],
+		[appId, enabled, queryClient],
 	);
 
 	// Helper to get a file by path
