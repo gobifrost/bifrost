@@ -11,8 +11,8 @@ When a cache miss occurs, we fall back via two paths (tried in order):
 1. API module-fetch endpoint (GET /api/sdk/modules/<path>) — preferred when
    BIFROST_API_URL is set and a credentials file is present.  This path does
    not require BIFROST_S3_* in the child env (Phase 2 hardening).
-2. Direct S3 access via botocore — legacy fallback, only active when
-   BIFROST_S3_ACCESS_KEY/SECRET_KEY are set in the environment.
+2. Direct object storage access — legacy fallback, only active when configured
+   in the environment.
 
 Self-healing: on any successful fetch, the result is re-cached to Redis so
 subsequent calls on the same worker hit the fast path.
@@ -121,9 +121,12 @@ def candidate_index_prefixes(base_path: str) -> list[str]:
         return [rooted, f"{base}/"]
     return [rooted]
 
-# Cached S3 client — reused across calls to avoid repeated setup
+
+# Cached object storage clients — reused across calls to avoid repeated setup
 _s3_client: Any = None
 _s3_available: bool | None = None
+_blob_container_client: Any = None
+_blob_available: bool | None = None
 
 
 @lru_cache(maxsize=1)
@@ -154,6 +157,7 @@ def _get_engine_credentials() -> tuple[str, str] | None:
     """
     try:
         from bifrost.credentials import get_credentials
+
         creds = get_credentials()
         if creds and creds.get("access_token") and creds.get("api_url"):
             return creds["api_url"].rstrip("/"), creds["access_token"]
@@ -198,9 +202,7 @@ def _fetch_module_from_api(path: str) -> CachedModule | None:
         if resp.status_code == 404:
             return None
         if resp.status_code != 200:
-            logger.warning(
-                f"API module-fetch returned {resp.status_code} for {path}"
-            )
+            logger.warning(f"API module-fetch returned {resp.status_code} for {path}")
             return None
 
         data: CachedModule = resp.json()
@@ -285,6 +287,9 @@ def _get_s3_client() -> Any:
     """
     global _s3_client, _s3_available
 
+    if _object_storage_provider() != "s3":
+        return None
+
     if _s3_available is False:
         return None
 
@@ -321,6 +326,66 @@ def _get_s3_client() -> Any:
         return None
 
 
+def _object_storage_provider() -> str:
+    provider = os.environ.get("BIFROST_OBJECT_STORAGE_PROVIDER")
+    if provider:
+        return provider.lower()
+    if os.environ.get("BIFROST_AZURE_BLOB_ACCOUNT_URL") and os.environ.get(
+        "BIFROST_AZURE_BLOB_CONTAINER"
+    ):
+        return "azure_blob"
+    return "s3"
+
+
+def _get_blob_container_client() -> Any:
+    """Get or create a sync Azure Blob container client."""
+    global _blob_available, _blob_container_client
+
+    if _blob_available is False:
+        return None
+
+    if _blob_container_client is not None:
+        return _blob_container_client
+
+    account_url = os.environ.get("BIFROST_AZURE_BLOB_ACCOUNT_URL")
+    container = os.environ.get("BIFROST_AZURE_BLOB_CONTAINER")
+    auth_mode = os.environ.get("BIFROST_AZURE_BLOB_AUTH", "default_credential")
+    account_key = os.environ.get("BIFROST_AZURE_BLOB_ACCOUNT_KEY")
+
+    if not account_url or not container:
+        logger.debug("Azure Blob not configured, skipping Blob fallback")
+        _blob_available = False
+        return None
+
+    try:
+        from azure.storage.blob import BlobServiceClient
+
+        credential: Any
+        if auth_mode == "account_key":
+            if not account_key:
+                logger.debug("Azure Blob account_key auth selected without account key")
+                _blob_available = False
+                return None
+            credential = account_key
+        elif auth_mode == "default_credential":
+            from azure.identity import DefaultAzureCredential
+
+            credential = DefaultAzureCredential()
+        else:
+            logger.debug("Unsupported Azure Blob auth mode: %s", auth_mode)
+            _blob_available = False
+            return None
+
+        service_client = BlobServiceClient(account_url, credential=credential)
+        _blob_container_client = service_client.get_container_client(container)
+        _blob_available = True
+        return _blob_container_client
+    except Exception as e:
+        _blob_available = False
+        logger.debug("Azure Blob fallback disabled: %s", e)
+        return None
+
+
 def _storage_path_to_s3_key(storage_path: str) -> str:
     """Map a storage path to its S3 key.
 
@@ -330,6 +395,24 @@ def _storage_path_to_s3_key(storage_path: str) -> str:
     if storage_path.startswith(f"{SOLUTIONS_ROOT}/"):
         return storage_path
     return f"{REPO_PREFIX}{storage_path}"
+
+
+def _get_blob_module(storage_path: str) -> bytes | None:
+    """Fetch a module from Azure Blob by storage path (synchronous)."""
+    client = _get_blob_container_client()
+    if client is None:
+        return None
+
+    try:
+        key = _storage_path_to_s3_key(storage_path)
+        return client.download_blob(key).readall()
+    except Exception as e:
+        error_code = getattr(e, "error_code", "")
+        if error_code == "BlobNotFound":
+            logger.debug(f"Module not found in Azure Blob: {storage_path}")
+            return None
+        logger.warning(f"Azure Blob fallback error for {storage_path}: {e}")
+        return None
 
 
 def _get_s3_module(storage_path: str) -> bytes | None:
@@ -365,6 +448,12 @@ def _get_s3_module(storage_path: str) -> bytes | None:
         return None
 
 
+def _get_object_storage_module(storage_path: str) -> bytes | None:
+    if _object_storage_provider() == "azure_blob":
+        return _get_blob_module(storage_path)
+    return _get_s3_module(storage_path)
+
+
 def get_module_sync(path: str) -> CachedModule | None:
     """
     Fetch a single module from cache (synchronous).
@@ -382,7 +471,7 @@ def get_module_sync(path: str) -> CachedModule | None:
     2. API endpoint GET /api/sdk/modules/<storage_path>  — preferred cold-cache
        fallback (no S3 env vars required; uses engine token from credentials
        file; the server performs the Redis→S3 lookup)
-    3. Direct S3 via botocore — legacy fallback when BIFROST_S3_* are present
+    3. Direct object storage access — legacy fallback when configured
     Then the next candidate; None if no candidate resolves.
 
     On any successful fallback hit the module is re-cached to Redis (under the
@@ -409,17 +498,19 @@ def get_module_sync(path: str) -> CachedModule | None:
                     logger.warning(f"Failed to re-cache API module to Redis: {e}")
                 return api_module
 
-            # --- Cold-cache fallback 2: direct S3 (legacy; not needed post-scrub) ---
-            s3_content = _get_s3_module(storage_path)
-            if s3_content is None:
+            # --- Cold-cache fallback 2: direct object storage ---
+            storage_content = _get_object_storage_module(storage_path)
+            if storage_content is None:
                 continue
             try:
-                content_str = s3_content.decode("utf-8")
+                content_str = storage_content.decode("utf-8")
             except UnicodeDecodeError:
-                logger.warning(f"Could not decode S3 module as UTF-8: {storage_path}")
+                logger.warning(
+                    f"Could not decode object storage module as UTF-8: {storage_path}"
+                )
                 continue
 
-            content_hash = hashlib.sha256(s3_content).hexdigest()
+            content_hash = hashlib.sha256(storage_content).hexdigest()
             module: CachedModule = {
                 "content": content_str,
                 "path": path,
@@ -431,11 +522,11 @@ def get_module_sync(path: str) -> CachedModule | None:
                 client.setex(key, MODULE_CACHE_TTL, json.dumps(module))
                 client.sadd(MODULE_INDEX_KEY, storage_path)
             except redis.RedisError as e:
-                logger.warning(f"Failed to cache S3 module to Redis: {e}")
+                logger.warning(f"Failed to cache object storage module to Redis: {e}")
 
             return module
 
-        logger.debug(f"Module not in cache, API, or S3: {path}")
+        logger.debug(f"Module not in cache, API, or object storage: {path}")
         return None
 
     except redis.RedisError as e:
@@ -467,11 +558,37 @@ def _list_s3_modules() -> set[str]:
                 key: str = obj["Key"]
                 if key.endswith(".py"):
                     # Strip the _repo/ prefix to get the relative path
-                    paths.add(key[len(REPO_PREFIX):])
+                    paths.add(key[len(REPO_PREFIX) :])
     except Exception as e:
         logger.warning(f"S3 list error when rebuilding module index: {e}")
 
     return paths
+
+
+def _list_blob_modules(prefix: str = REPO_PREFIX) -> set[str]:
+    """List all Python module paths from Azure Blob under a storage prefix."""
+    client = _get_blob_container_client()
+    if client is None:
+        return set()
+
+    paths: set[str] = set()
+    try:
+        for blob in client.list_blobs(name_starts_with=prefix):
+            key: str = blob.name
+            if key.endswith(".py"):
+                if prefix == REPO_PREFIX:
+                    paths.add(key[len(REPO_PREFIX) :])
+                else:
+                    paths.add(key)
+    except Exception as e:
+        logger.warning(f"Azure Blob list error when rebuilding module index: {e}")
+    return paths
+
+
+def _list_object_storage_modules() -> set[str]:
+    if _object_storage_provider() == "azure_blob":
+        return _list_blob_modules()
+    return _list_s3_modules()
 
 
 def get_module_index_sync() -> set[str]:
@@ -506,16 +623,16 @@ def get_module_index_sync() -> set[str]:
                 logger.warning(f"Failed to repopulate module index from API: {e}")
             return api_paths
 
-        # API not available — try direct S3 (legacy path)
-        logger.debug("API index unavailable, falling back to S3 listing")
-        s3_paths = _list_s3_modules()
-        if s3_paths:
+        # API not available — try direct object storage (legacy path)
+        logger.debug("API index unavailable, falling back to object storage listing")
+        storage_paths = _list_object_storage_modules()
+        if storage_paths:
             try:
-                client.sadd(MODULE_INDEX_KEY, *s3_paths)
+                client.sadd(MODULE_INDEX_KEY, *storage_paths)
                 client.expire(MODULE_INDEX_KEY, MODULE_CACHE_TTL)
             except redis.RedisError as e:
                 logger.warning(f"Failed to repopulate module index in Redis: {e}")
-            return s3_paths
+            return storage_paths
 
         return set()
     except redis.RedisError as e:
@@ -531,7 +648,8 @@ def solution_has_submodules(base_path: str) -> bool:
     it's first loaded, but it can't load until its parent package resolves as a
     namespace — a chicken-and-egg. So when a solution is active we check the
     API-backed module index under ``_solutions/{id}/{base_path}/`` first, then
-    direct S3 as the legacy fallback when the child still has S3 credentials.
+    direct object storage as the legacy fallback when the child still has
+    provider credentials.
 
     Returns False when no solution is active (the _repo/ index path already handles
     that case) or neither fallback can prove a submodule exists.
@@ -544,6 +662,9 @@ def solution_has_submodules(base_path: str) -> bool:
     api_paths = _fetch_module_index_from_api(solution_id=ctx.solution_id)
     if any(path.startswith(prefix) for path in api_paths):
         return True
+
+    if _object_storage_provider() == "azure_blob":
+        return bool(_list_blob_modules(prefix=prefix))
 
     bucket = os.environ.get("BIFROST_S3_BUCKET")
     if not bucket:
@@ -569,3 +690,10 @@ def reset_s3_client() -> None:
     global _s3_client, _s3_available
     _s3_client = None
     _s3_available = None
+
+
+def reset_blob_client() -> None:
+    """Reset the cached Azure Blob client. Used for testing."""
+    global _blob_container_client, _blob_available
+    _blob_container_client = None
+    _blob_available = None

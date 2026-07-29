@@ -12,17 +12,30 @@ class DummyDB:
         return None
 
 
-def _settings(s3_configured: bool = True):
+def _settings(
+    s3_configured: bool = True,
+    *,
+    object_storage_provider: str = "s3",
+    azure_blob_configured: bool = False,
+):
     return SimpleNamespace(
         environment="test",
         redis_url="redis://redis-secret@example:6379/0",
         rabbitmq_url="amqp://rabbit-secret@example:5672/",
+        object_storage_provider=object_storage_provider,
         s3_configured=s3_configured,
         s3_bucket="bucket-secret" if s3_configured else None,
         s3_endpoint_url="http://object-store-secret:8333" if s3_configured else None,
         s3_access_key="access-secret" if s3_configured else None,
         s3_secret_key="secret-secret" if s3_configured else None,
         s3_region="us-east-1",
+        azure_blob_configured=azure_blob_configured,
+        azure_blob_account_url=(
+            "http://azurite:10000/devstoreaccount1" if azure_blob_configured else None
+        ),
+        azure_blob_container=("bifrost-contract" if azure_blob_configured else None),
+        azure_blob_auth="account_key",
+        azure_blob_account_key="account-key-secret" if azure_blob_configured else None,
     )
 
 
@@ -118,6 +131,22 @@ class FakeS3Session:
         return self.context
 
 
+class FakeAzureBlobStorageClient:
+    instances: list["FakeAzureBlobStorageClient"] = []
+
+    def __init__(self, settings):
+        self.settings = settings
+        self.head_bucket_count = 0
+        self.close_count = 0
+        self.__class__.instances.append(self)
+
+    async def head_bucket(self, Bucket):
+        self.head_bucket_count += 1
+
+    async def close(self):
+        self.close_count += 1
+
+
 @pytest.mark.asyncio
 async def test_health_is_liveness_and_does_not_check_dependencies(monkeypatch):
     async def fail_if_called(*args, **kwargs):
@@ -175,6 +204,7 @@ async def test_ready_returns_503_when_required_dependency_fails(monkeypatch, com
         "type": components[component]["type"],
         "error": "RuntimeError",
     }
+
     async def build_components(db, settings):
         return components
 
@@ -190,8 +220,14 @@ async def test_ready_returns_503_when_required_dependency_fails(monkeypatch, com
 @pytest.mark.asyncio
 async def test_s3_not_configured_does_not_fail_readiness(monkeypatch):
     monkeypatch.setattr(health, "get_settings", lambda: _settings(s3_configured=False))
-    monkeypatch.setattr(health, "check_database", lambda db: _healthy_component("database", "postgresql"))
-    monkeypatch.setattr(health, "check_redis", lambda settings: _healthy_component("redis", "redis"))
+    monkeypatch.setattr(
+        health,
+        "check_database",
+        lambda db: _healthy_component("database", "postgresql"),
+    )
+    monkeypatch.setattr(
+        health, "check_redis", lambda settings: _healthy_component("redis", "redis")
+    )
     monkeypatch.setattr(
         health,
         "check_rabbitmq",
@@ -236,7 +272,9 @@ async def test_rabbitmq_check_reuses_cached_connection(monkeypatch):
 @pytest.mark.asyncio
 async def test_rabbitmq_check_reports_unhealthy_when_channel_fails(monkeypatch):
     await health.close_rabbitmq_health_connection()
-    failed_connection = FakeRabbitMQConnection(channel_error=RuntimeError("channel failed"))
+    failed_connection = FakeRabbitMQConnection(
+        channel_error=RuntimeError("channel failed")
+    )
 
     async def connect_robust(url):
         return failed_connection
@@ -340,6 +378,37 @@ async def test_s3_check_closes_cached_client_when_settings_change(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_azure_blob_check_reports_not_configured():
+    settings = _settings(
+        object_storage_provider="azure_blob",
+        azure_blob_configured=False,
+    )
+
+    component_name, component = await health.check_s3(settings)
+
+    assert component_name == "s3"
+    assert component == {"status": "not_configured", "type": "azure_blob"}
+
+
+@pytest.mark.asyncio
+async def test_azure_blob_check_uses_azure_client(monkeypatch):
+    FakeAzureBlobStorageClient.instances.clear()
+    monkeypatch.setattr(health, "AzureBlobStorageClient", FakeAzureBlobStorageClient)
+    settings = _settings(
+        object_storage_provider="azure_blob",
+        azure_blob_configured=True,
+    )
+
+    component_name, component = await health.check_s3(settings)
+
+    assert component_name == "s3"
+    assert component == {"status": "healthy", "type": "azure_blob"}
+    assert len(FakeAzureBlobStorageClient.instances) == 1
+    assert FakeAzureBlobStorageClient.instances[0].head_bucket_count == 1
+    assert FakeAzureBlobStorageClient.instances[0].close_count == 1
+
+
+@pytest.mark.asyncio
 async def test_rabbitmq_check_reports_unhealthy_when_connect_fails(monkeypatch):
     await health.close_rabbitmq_health_connection()
 
@@ -391,10 +460,15 @@ async def test_error_output_does_not_include_secret_values(monkeypatch):
 @pytest.mark.asyncio
 async def test_detailed_uses_same_component_status_logic(monkeypatch):
     monkeypatch.setattr(health, "get_settings", _settings)
+
     async def build_components(db, settings):
         return {
             "database": {"status": "healthy", "type": "postgresql"},
-            "redis": {"status": "unhealthy", "type": "redis", "error": "ConnectionError"},
+            "redis": {
+                "status": "unhealthy",
+                "type": "redis",
+                "error": "ConnectionError",
+            },
             "rabbitmq": {"status": "healthy", "type": "rabbitmq"},
             "s3": {"status": "healthy", "type": "s3"},
         }

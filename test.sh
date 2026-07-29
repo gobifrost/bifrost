@@ -177,7 +177,11 @@ stack_up() {
     "$SCRIPT_DIR/scripts/stack_template_init.sh"
 
     echo "Starting API + Worker + Scheduler..."
-    docker compose -f "$COMPOSE_FILE" --profile e2e up -d "$build_flag"
+    if ! docker compose -f "$COMPOSE_FILE" --profile e2e up -d "$build_flag"; then
+        echo "ERROR: stack services failed to start. Recent logs:" >&2
+        docker compose -f "$COMPOSE_FILE" logs --tail=200 init api worker scheduler >&2 || true
+        exit 1
+    fi
     echo "Waiting for API to be serving traffic on /health/ready..."
     wait_for_api_ready "$COMPOSE_FILE"
 

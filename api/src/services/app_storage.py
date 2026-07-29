@@ -1,5 +1,5 @@
 """
-App Storage Service — S3 operations scoped to _apps/ prefix.
+App Storage Service — object storage operations scoped to _apps/ prefix.
 
 Manages the app serving store:
   _apps/{app_id}/preview/   ← draft/editor files
@@ -9,21 +9,20 @@ Data flow:
 1. Git sync/import: copy from _repo/{app_path}/ to _apps/{app_id}/preview/
 2. Editor write: write to _apps/{app_id}/preview/
 3. Publish: copy preview → live
-4. Serve draft: read from preview (Redis cache → S3 fallback)
-5. Serve live: read from live (Redis cache → S3 fallback)
+4. Serve draft: read from preview (Redis cache → object storage fallback)
+5. Serve live: read from live (Redis cache → object storage fallback)
 """
 
 from __future__ import annotations
 
 import json
 import logging
-from contextlib import asynccontextmanager
 from typing import Literal
-
-from aiobotocore.session import get_session
 
 from src.config import Settings, get_settings
 from src.core.log_safety import log_safe
+from src.services.file_storage.azure_blob_client import AzureBlobStorageClient
+from src.services.file_storage.s3_client import S3StorageClient
 
 logger = logging.getLogger(__name__)
 
@@ -33,23 +32,19 @@ AppMode = Literal["preview", "live"]
 
 
 class AppStorageService:
-    """S3 storage scoped to _apps/ prefix for app serving."""
+    """Object storage scoped to _apps/ prefix for app serving."""
 
     def __init__(self, settings: Settings | None = None):
         self._settings = settings or get_settings()
-        self._bucket: str = self._settings.s3_bucket or ""
+        if self._settings.object_storage_provider == "azure_blob":
+            self._storage = AzureBlobStorageClient(self._settings)
+            self._bucket = self._settings.azure_blob_container or ""
+        else:
+            self._storage = S3StorageClient(self._settings)
+            self._bucket = self._settings.s3_bucket or ""
 
-    @asynccontextmanager
-    async def _get_client(self):
-        session = get_session()
-        async with session.create_client(
-            "s3",
-            endpoint_url=self._settings.s3_endpoint_url,
-            aws_access_key_id=self._settings.s3_access_key,
-            aws_secret_access_key=self._settings.s3_secret_key,
-            region_name=self._settings.s3_region,
-        ) as client:
-            yield client
+    def _get_client(self):
+        return self._storage.get_client()
 
     def _key(self, app_id: str, mode: AppMode, relative_path: str = "") -> str:
         """Build S3 key: _apps/{app_id}/{mode}/{relative_path}"""
@@ -86,7 +81,7 @@ class AppStorageService:
             # List existing preview files
             existing_preview_keys = await self._list_keys(client, preview_prefix)
             existing_relative = {
-                k[len(preview_prefix):] for k in existing_preview_keys
+                k[len(preview_prefix) :] for k in existing_preview_keys
             }
 
             synced = 0
@@ -94,7 +89,7 @@ class AppStorageService:
 
             for source_key in source_keys:
                 # Derive relative path within the app dir
-                rel_path = source_key[len(source_prefix):]
+                rel_path = source_key[len(source_prefix) :]
                 if not rel_path:
                     continue
 
@@ -118,7 +113,9 @@ class AppStorageService:
                 )
 
             if stale:
-                logger.info(f"Removed {len(stale)} stale preview files for app {app_id}")
+                logger.info(
+                    f"Removed {len(stale)} stale preview files for app {app_id}"
+                )
 
             logger.info(f"Synced {synced} files to preview for app {app_id}")
 
@@ -153,13 +150,13 @@ class AppStorageService:
             # List existing preview files
             existing_preview_keys = await self._list_keys(client, preview_prefix)
             existing_relative = {
-                k[len(preview_prefix):] for k in existing_preview_keys
+                k[len(preview_prefix) :] for k in existing_preview_keys
             }
 
             # Read all source files and collect TS/TSX for compilation
             source_files: list[tuple[str, bytes]] = []  # (rel_path, content)
             for source_key in source_keys:
-                rel_path = source_key[len(source_prefix):]
+                rel_path = source_key[len(source_prefix) :]
                 if not rel_path:
                     continue
                 response = await client.get_object(Bucket=self._bucket, Key=source_key)
@@ -221,7 +218,9 @@ class AppStorageService:
                 )
 
             if stale:
-                logger.info(f"Removed {len(stale)} stale preview files for app {app_id}")
+                logger.info(
+                    f"Removed {len(stale)} stale preview files for app {app_id}"
+                )
 
             logger.info(
                 f"Synced {synced} compiled files to preview for app {app_id}"
@@ -239,14 +238,27 @@ class AppStorageService:
         self, app_id: str, relative_path: str, content: bytes
     ) -> None:
         """Write a single file to _apps/{app_id}/preview/ and bust render cache."""
-        key = self._key(app_id, "preview", relative_path)
+        await self._write_file(app_id, "preview", relative_path, content)
+        await self.invalidate_render_cache(app_id)
+
+    async def write_live_file(
+        self, app_id: str, relative_path: str, content: bytes
+    ) -> None:
+        """Write a single file to _apps/{app_id}/live/ and bust render cache."""
+        await self._write_file(app_id, "live", relative_path, content)
+        await self.invalidate_render_cache(app_id)
+
+    async def _write_file(
+        self, app_id: str, mode: AppMode, relative_path: str, content: bytes
+    ) -> None:
+        key = self._key(app_id, mode, relative_path)
         async with self._get_client() as client:
             await client.put_object(
                 Bucket=self._bucket,
                 Key=key,
                 Body=content,
+                ContentType=S3StorageClient.guess_content_type(relative_path),
             )
-        await self.invalidate_render_cache(app_id)
 
     async def delete_preview_file(self, app_id: str, relative_path: str) -> None:
         """Delete a single file from _apps/{app_id}/preview/ and bust render cache."""
@@ -258,9 +270,7 @@ class AppStorageService:
                 pass  # Idempotent
         await self.invalidate_render_cache(app_id)
 
-    async def read_file(
-        self, app_id: str, mode: AppMode, relative_path: str
-    ) -> bytes:
+    async def read_file(self, app_id: str, mode: AppMode, relative_path: str) -> bytes:
         """Read a single file from _apps/{app_id}/{mode}/{path}.
 
         Raises:
@@ -272,10 +282,14 @@ class AppStorageService:
                 response = await client.get_object(Bucket=self._bucket, Key=key)
                 return await response["Body"].read()
             except client.exceptions.NoSuchKey:
-                raise FileNotFoundError(f"App file not found: {relative_path} (mode={mode})")
+                raise FileNotFoundError(
+                    f"App file not found: {relative_path} (mode={mode})"
+                )
             except Exception as e:
                 if "NoSuchKey" in str(type(e).__name__) or "404" in str(e):
-                    raise FileNotFoundError(f"App file not found: {relative_path} (mode={mode})")
+                    raise FileNotFoundError(
+                        f"App file not found: {relative_path} (mode={mode})"
+                    )
                 raise
 
     async def list_files(self, app_id: str, mode: AppMode) -> list[str]:
@@ -287,7 +301,7 @@ class AppStorageService:
         prefix = self._key(app_id, mode)
         async with self._get_client() as client:
             keys = await self._list_keys(client, prefix)
-            return [k[len(prefix):] for k in keys if k[len(prefix):]]
+            return [k[len(prefix) :] for k in keys if k[len(prefix) :]]
 
     # -----------------------------------------------------------------
     # Publish: copy preview → live
@@ -307,12 +321,14 @@ class AppStorageService:
             preview_keys = await self._list_keys(client, preview_prefix)
             preview_relative = set()
             for pk in preview_keys:
-                rel = pk[len(preview_prefix):]
+                rel = pk[len(preview_prefix) :]
                 if rel:
                     preview_relative.add(rel)
 
             if not preview_relative:
-                logger.warning(f"No preview files to publish for app {log_safe(app_id)}")
+                logger.warning(
+                    f"No preview files to publish for app {log_safe(app_id)}"
+                )
                 return 0
 
             # Copy preview → live
@@ -327,7 +343,9 @@ class AppStorageService:
 
             # Remove stale live files
             live_keys = await self._list_keys(client, live_prefix)
-            live_relative = {k[len(live_prefix):] for k in live_keys if k[len(live_prefix):]}
+            live_relative = {
+                k[len(live_prefix) :] for k in live_keys if k[len(live_prefix) :]
+            }
             stale = live_relative - preview_relative
             for rel_path in stale:
                 await client.delete_object(
@@ -401,7 +419,9 @@ class AppStorageService:
                 self._render_cache_key(app_id, "live"),
             )
         except Exception as e:
-            logger.warning(f"Failed to invalidate render cache for app {log_safe(app_id)}: {log_safe(e)}")
+            logger.warning(
+                f"Failed to invalidate render cache for app {log_safe(app_id)}: {log_safe(e)}"
+            )
 
     # -----------------------------------------------------------------
     # Helpers

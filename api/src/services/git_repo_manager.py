@@ -5,6 +5,10 @@ Manages the lifecycle of a persistent local git working directory backed by
 S3 _repo/. Uses `aws s3 sync` for efficient incremental transfer of the
 entire directory tree including .git/ objects.
 
+This path intentionally remains S3-only. `BIFROST_OBJECT_STORAGE_PROVIDER=azure_blob`
+routes normal object operations through Azure Blob, but git working-tree bulk
+sync still depends on `aws s3 sync` and has no Azure equivalent yet.
+
 The working directory is persistent at PERSISTENT_WORK_DIR and is NOT deleted
 between operations. This allows incremental syncs (only changed files are
 transferred) and preserves the .git/ directory across operations.
@@ -127,6 +131,7 @@ class GitRepoManager:
 
     async def sync_down(self, target: Path) -> None:
         """Sync _repo/ from S3 to a local directory."""
+        self._ensure_s3_provider()
         target.mkdir(parents=True, exist_ok=True)
         s3_uri = self._s3_uri()
         cmd = self._build_sync_cmd(source=s3_uri, dest=str(target))
@@ -135,6 +140,7 @@ class GitRepoManager:
 
     async def sync_up(self, source: Path) -> None:
         """Sync a local directory back to S3 _repo/ with --delete."""
+        self._ensure_s3_provider()
         s3_uri = self._s3_uri()
         cmd = self._build_sync_cmd(source=str(source), dest=s3_uri, delete=True)
         logger.info(f"sync_up: {source} -> {s3_uri}")
@@ -150,6 +156,14 @@ class GitRepoManager:
         """Build the S3 URI for _repo/."""
         bucket = self._settings.s3_bucket
         return f"s3://{bucket}/_repo/"
+
+    def _ensure_s3_provider(self) -> None:
+        """Fail fast when the bulk git sync path is used outside S3 mode."""
+        if self._settings.object_storage_provider != "s3":
+            raise RuntimeError(
+                "GitRepoManager bulk sync is S3-only because it shells out to "
+                "`aws s3 sync`; Azure Blob support for this path is not implemented."
+            )
 
     def _build_sync_cmd(
         self,
