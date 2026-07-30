@@ -45,6 +45,7 @@ async def enqueue_agent_run(
             "user_id": caller_user_id,
             "email": caller_email,
             "name": caller_name,
+            "organization_id": org_id,
         },
         "event_delivery_id": event_delivery_id,
         "sync": sync,

@@ -18,6 +18,7 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import delete, select
 
+from src.core.principal import UserPrincipal
 from src.models.orm.agent_prompt_history import AgentPromptHistory
 from src.models.orm.agent_run_flag_conversations import AgentRunFlagConversation
 from src.models.orm.agent_runs import AgentRun
@@ -46,6 +47,16 @@ def _build_mock_client(response):
     client.complete = AsyncMock(return_value=response)
     client.provider_name = "anthropic"
     return client
+
+
+def _superuser_principal(user) -> UserPrincipal:  # type: ignore[no-untyped-def]
+    return UserPrincipal(
+        user_id=user.id,
+        email=user.email,
+        name=user.name or "",
+        organization_id=user.organization_id,
+        is_superuser=True,
+    )
 
 
 @pytest_asyncio.fixture
@@ -92,7 +103,7 @@ async def seed_agent_with_flagged_runs(db_session, seed_agent):
 
 @pytest.mark.asyncio
 async def test_propose_returns_proposal_with_flagged_runs(
-    db_session, seed_agent_with_flagged_runs
+    db_session, seed_agent_with_flagged_runs, seed_user
 ):
     """LLM is called once; response parsed into proposal containing all flagged runs."""
     from src.services.execution import tuning_service as mod
@@ -110,7 +121,11 @@ async def test_propose_returns_proposal_with_flagged_runs(
         "get_tuning_client",
         new=AsyncMock(return_value=(mock_client, "claude-sonnet-4-6")),
     ):
-        proposal = await propose_consolidated_tuning(agent.id, db_session)
+        proposal = await propose_consolidated_tuning(
+            agent.id,
+            db_session,
+            _superuser_principal(seed_user),
+        )
 
     assert proposal.summary == "Routing is too eager."
     assert "careful agent" in proposal.proposed_prompt
@@ -119,10 +134,14 @@ async def test_propose_returns_proposal_with_flagged_runs(
 
 
 @pytest.mark.asyncio
-async def test_propose_no_flagged_runs_raises(db_session, seed_agent):
+async def test_propose_no_flagged_runs_raises(db_session, seed_agent, seed_user):
     """No flagged runs -> LookupError (router maps to 404)."""
     with pytest.raises(LookupError):
-        await propose_consolidated_tuning(seed_agent.id, db_session)
+        await propose_consolidated_tuning(
+            seed_agent.id,
+            db_session,
+            _superuser_principal(seed_user),
+        )
 
 
 @pytest.mark.asyncio
@@ -140,6 +159,7 @@ async def test_apply_updates_prompt_creates_history_resets_verdicts(
         reason="Consolidated tuning from 3 flagged runs.",
         user_id=seed_user.id,
         db=db_session,
+        user=_superuser_principal(seed_user),
     )
     await db_session.commit()
 
@@ -185,7 +205,7 @@ async def test_apply_updates_prompt_creates_history_resets_verdicts(
 
 
 @pytest.mark.asyncio
-async def test_dry_run_caps_at_limit(db_session, seed_agent):
+async def test_dry_run_caps_at_limit(db_session, seed_agent, seed_user):
     """Even with 12 flagged runs, dry-run only evaluates the cap."""
     from src.services.execution import tuning_service as mod
 
@@ -226,6 +246,7 @@ async def test_dry_run_caps_at_limit(db_session, seed_agent):
                 proposed_prompt="Stricter prompt.",
                 db=db_session,
                 session_factory=MagicMock(),
+                user=_superuser_principal(seed_user),
             )
 
         assert len(results) == CONSOLIDATED_DRY_RUN_LIMIT

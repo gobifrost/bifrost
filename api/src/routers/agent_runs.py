@@ -52,6 +52,7 @@ from src.models.orm.agents import Agent
 from src.models.orm.solutions import Solution
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
 from src.core.redis_client import get_redis_client
+from src.services.execution.agent_run_access import agent_run_visibility_conditions
 from src.services.execution.agent_run_service import (
     enqueue_agent_run,
     wait_for_agent_run_result,
@@ -148,12 +149,12 @@ async def list_agent_runs(
     # real executions of that agent and should not disappear from its Runs tab.
     query = select(AgentRun).join(AgentRun.agent)
     if agent_id is None:
-        query = query.where(AgentRun.parent_run_id.is_(None))
+        query = query.where(
+            AgentRun.parent_run_id.is_(None),
+            AgentRun.trigger_type != "delegation",
+        )
 
-    # Org filter: non-superusers see only their org's runs
-    if not user.is_superuser:
-        if user.organization_id:
-            query = query.where(AgentRun.org_id == user.organization_id)
+    query = query.where(*agent_run_visibility_conditions(user))
 
     # Apply optional filters
     if agent_id is not None:
@@ -284,9 +285,10 @@ async def get_metadata_keys(
     extracts on this agent.
     """
     _enforce_agent_scope(agent_id, user)
-    conditions = [AgentRun.agent_id == agent_id]
-    if not user.is_superuser and user.organization_id:
-        conditions.append(AgentRun.org_id == user.organization_id)
+    conditions = [
+        AgentRun.agent_id == agent_id,
+        *agent_run_visibility_conditions(user),
+    ]
 
     # jsonb_object_keys explodes the top-level keys of each row's metadata;
     # DISTINCT + ORDER BY gives the UI a stable, deduped list.
@@ -318,9 +320,10 @@ async def get_metadata_values(
     them pick from a known-value list instead of free-typing.
     """
     _enforce_agent_scope(agent_id, user)
-    conditions = [AgentRun.agent_id == agent_id]
-    if not user.is_superuser and user.organization_id:
-        conditions.append(AgentRun.org_id == user.organization_id)
+    conditions = [
+        AgentRun.agent_id == agent_id,
+        *agent_run_visibility_conditions(user),
+    ]
 
     value_col = AgentRun.run_metadata[key].astext
     stmt = (
@@ -442,10 +445,7 @@ async def get_agent_run(
         .where(AgentRun.id == run_id)
     )
 
-    # Org filter: non-superusers see only their org's runs
-    if not user.is_superuser:
-        if user.organization_id:
-            query = query.where(AgentRun.org_id == user.organization_id)
+    query = query.where(*agent_run_visibility_conditions(user))
 
     result = await db.execute(query)
     run = result.scalar_one_or_none()
@@ -628,10 +628,7 @@ async def rerun_agent_run(
     """Rerun an agent run with the same input (async, non-blocking)."""
     query = select(AgentRun).where(AgentRun.id == run_id)
 
-    # Org filter: non-superusers see only their org's runs
-    if not user.is_superuser:
-        if user.organization_id:
-            query = query.where(AgentRun.org_id == user.organization_id)
+    query = query.where(*agent_run_visibility_conditions(user))
 
     result = await db.execute(query)
     original = result.scalar_one_or_none()
@@ -658,7 +655,14 @@ async def rerun_agent_run(
     return AgentRunRerunResponse(run_id=UUID(new_run_id))
 
 
-TERMINAL_STATUSES = {"completed", "failed", "cancelled", "budget_exceeded", "timeout"}
+TERMINAL_STATUSES = {
+    "completed",
+    "failed",
+    "cancelled",
+    "paused",
+    "budget_exceeded",
+    "timeout",
+}
 
 
 @router.post("/{run_id}/cancel")
@@ -670,10 +674,7 @@ async def cancel_agent_run(
     """Cancel a queued or running agent run."""
     query = select(AgentRun).where(AgentRun.id == run_id)
 
-    # Org filter: non-superusers see only their org's runs
-    if not user.is_superuser:
-        if user.organization_id:
-            query = query.where(AgentRun.org_id == user.organization_id)
+    query = query.where(*agent_run_visibility_conditions(user))
 
     result = await db.execute(query)
     agent_run = result.scalar_one_or_none()
@@ -742,10 +743,7 @@ async def set_verdict(
     """Set a verdict on a completed run. Records an audit row."""
     query = select(AgentRun).where(AgentRun.id == run_id)
 
-    # Org filter: non-superusers see only their org's runs
-    if not user.is_superuser:
-        if user.organization_id:
-            query = query.where(AgentRun.org_id == user.organization_id)
+    query = query.where(*agent_run_visibility_conditions(user))
 
     result = await db.execute(query)
     run = result.scalar_one_or_none()
@@ -798,10 +796,7 @@ async def clear_verdict(
     """Clear the verdict on a run. Records an audit row."""
     query = select(AgentRun).where(AgentRun.id == run_id)
 
-    # Org filter: non-superusers see only their org's runs
-    if not user.is_superuser:
-        if user.organization_id:
-            query = query.where(AgentRun.org_id == user.organization_id)
+    query = query.where(*agent_run_visibility_conditions(user))
 
     result = await db.execute(query)
     run = result.scalar_one_or_none()
@@ -855,8 +850,7 @@ async def get_flag_conversation(
     stream messages into a stable ``id``.
     """
     query = select(AgentRun).where(AgentRun.id == run_id)
-    if not user.is_superuser and user.organization_id:
-        query = query.where(AgentRun.org_id == user.organization_id)
+    query = query.where(*agent_run_visibility_conditions(user))
     run = (await db.execute(query)).scalar_one_or_none()
     if not run:
         raise HTTPException(
@@ -888,8 +882,7 @@ async def send_flag_message(
 ) -> FlagConversationResponse:
     """Append a user turn and synchronously get the tuning-model reply."""
     query = select(AgentRun).where(AgentRun.id == run_id)
-    if not user.is_superuser and user.organization_id:
-        query = query.where(AgentRun.org_id == user.organization_id)
+    query = query.where(*agent_run_visibility_conditions(user))
     run = (await db.execute(query)).scalar_one_or_none()
     if not run:
         raise HTTPException(
@@ -961,8 +954,7 @@ async def dry_run_agent_run(
     tracking (``sequence=8000``).
     """
     query = select(AgentRun).where(AgentRun.id == run_id)
-    if not user.is_superuser and user.organization_id:
-        query = query.where(AgentRun.org_id == user.organization_id)
+    query = query.where(*agent_run_visibility_conditions(user))
 
     run = (await db.execute(query)).scalar_one_or_none()
     if not run:

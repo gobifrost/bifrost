@@ -11,7 +11,6 @@ Handles the chat completion loop for AI agents, including:
 - Agent delegation
 """
 
-import asyncio
 import json
 import logging
 import time
@@ -48,7 +47,10 @@ from src.services.execution.agent_helpers import (
     parse_mcp_tool_name,
     resolve_agent_tools,
 )
-from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
+from src.services.execution.autonomous_agent_executor import (
+    AutonomousAgentExecutor,
+    ToolError,
+)
 from src.services.knowledge.search_budget import (
     KnowledgeSearchBudget,
     clamp_knowledge_result_limit,
@@ -79,6 +81,13 @@ def _serialize_for_json(value: Any) -> str:
     import pydantic_core
 
     return pydantic_core.to_json(value, fallback=str).decode()
+
+
+def _serialize_tool_result_for_history(tool_result: ToolResult) -> str:
+    """Serialize what the parent model sees, with failures taking precedence."""
+    if tool_result.error:
+        return tool_result.error
+    return _serialize_for_json(tool_result.result)
 
 
 # Maximum tool call iterations to prevent infinite loops
@@ -295,6 +304,25 @@ class AgentExecutor:
             # auth-resolution layer makes the user-vs-service decision
             # exactly once per call.
             caller_user_id: UUID | None = conversation.user_id
+            caller = (
+                {
+                    "user_id": str(user.user_id),
+                    "email": user.email,
+                    "name": user.name,
+                    "organization_id": (
+                        str(user.organization_id)
+                        if user.organization_id
+                        else None
+                    ),
+                    "is_platform_admin": user.is_superuser,
+                }
+                if user
+                else (
+                    {"user_id": str(caller_user_id)}
+                    if caller_user_id
+                    else None
+                )
+            )
             tool_definitions = (
                 await self._get_agent_tools(agent, caller_user_id=caller_user_id)
                 if agent
@@ -525,13 +553,22 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                         conversation,
                         execution_id=execution_id,
                         caller_user_id=caller_user_id,
+                        caller=caller,
                     )
 
                     # Update TOOL_CALL message with result and state
+                    persisted_tool_result = (
+                        tool_result.result
+                        if not tool_result.error
+                        else {
+                            "error": tool_result.error,
+                            **(tool_result.metadata or {}),
+                        }
+                    )
                     await self._update_tool_call_message(
                         message_id=tool_call_msg.id,
                         tool_state="completed" if not tool_result.error else "error",
-                        tool_result=tool_result.result if not tool_result.error else {"error": tool_result.error},
+                        tool_result=persisted_tool_result,
                         duration_ms=tool_result.duration_ms,
                     )
 
@@ -542,11 +579,17 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                             message_id=str(tool_call_msg.id),
                         )
 
+                    # Errors take precedence when a tool happens to return both
+                    # a partial result and an error.
+                    tool_history_content = _serialize_tool_result_for_history(
+                        tool_result
+                    )
+
                     # Still save TOOL message for Anthropic API compatibility (history reconstruction)
                     await self._save_message(
                         conversation_id=conversation.id,
                         role=MessageRole.TOOL,
-                        content=_serialize_for_json(tool_result.result) if tool_result.result else tool_result.error,
+                        content=tool_history_content,
                         tool_call_id=tc.id,
                         tool_name=tc.name,
                         execution_id=execution_id,
@@ -557,7 +600,7 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                     messages.append(
                         LLMMessage(
                             role="tool",
-                            content=_serialize_for_json(tool_result.result) if tool_result.result else tool_result.error,
+                            content=tool_history_content,
                             tool_call_id=tc.id,
                             tool_name=tc.name,
                         )
@@ -1239,6 +1282,7 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
         execution_id: str | None = None,
         *,
         caller_user_id: UUID | None = None,
+        caller: dict[str, Any] | None = None,
     ) -> ToolResult:
         """
         Execute a tool (workflow, delegation, system tool, knowledge search,
@@ -1256,7 +1300,12 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
 
         # Check if this is a delegation tool call
         if tool_call.name.startswith("delegate_to_") and agent:
-            return await self._execute_delegation(tool_call, agent)
+            return await self._execute_delegation(
+                tool_call,
+                agent,
+                conversation=conversation,
+                caller=caller,
+            )
 
         # Check if this is a system tool call
         if agent and tool_call.name in (agent.system_tools or []):
@@ -1638,6 +1687,9 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
         self,
         tool_call: ToolCallRequest,
         agent: Agent,
+        *,
+        conversation: Conversation | None = None,
+        caller: dict[str, Any] | None = None,
     ) -> ToolResult:
         """Execute a delegation to another agent via AutonomousAgentExecutor."""
         start_time = time.time()
@@ -1664,57 +1716,66 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
 
         try:
             from src.core.cache import get_shared_redis
-            from src.services.execution.autonomous_agent_executor import DELEGATION_TIMEOUT_SECONDS
 
             logger.info(f"Agent '{agent.name}' delegating to '{delegated_agent.name}' via chat")
 
-            # Re-fetch with relationships loaded — the parent's selectinload
-            # doesn't transitively load the child agent's own relationships
-            async with self._db() as session:
-                result = await session.execute(
-                    select(Agent)
-                    .options(selectinload(Agent.tools), selectinload(Agent.delegated_agents))
-                    .where(Agent.id == delegated_agent.id)
-                )
-                delegated_agent = result.scalar_one()
-
             redis_client = await get_shared_redis()
-            sub_executor = AutonomousAgentExecutor(self._session_factory, redis_client=redis_client)
-            try:
-                sub_result = await asyncio.wait_for(
-                    sub_executor.run(
-                        agent=delegated_agent,
-                        input_data={"task": task, "_delegated_from": agent.name},
-                    ),
-                    timeout=DELEGATION_TIMEOUT_SECONDS,
-                )
-            except asyncio.TimeoutError:
-                logger.error(
-                    f"Delegation to '{delegated_agent.name}' timed out after {DELEGATION_TIMEOUT_SECONDS}s"
-                )
+            delegation_executor = AutonomousAgentExecutor(
+                self._session_factory,
+                redis_client=redis_client,
+            )
+            outcome = await delegation_executor.run_delegation(
+                parent_agent=agent,
+                tool_call=tool_call,
+                conversation_id=conversation.id if conversation else None,
+                caller=caller,
+            )
+            metadata = {
+                "child_run_id": str(outcome.child_run_id),
+                "agent": outcome.agent_name,
+                "status": outcome.status,
+            }
+
+            logger.info(
+                f"Delegation to '{outcome.agent_name}' completed with "
+                f"status={outcome.status}"
+            )
+
+            if not outcome.succeeded:
                 return ToolResult(
                     tool_call_id=tool_call.id,
                     tool_name=tool_call.name,
                     result=None,
-                    error=f"Delegation to {delegated_agent.name} timed out after {DELEGATION_TIMEOUT_SECONDS}s",
-                    duration_ms=int((time.time() - start_time) * 1000),
+                    error=(
+                        outcome.error
+                        or f"Delegation ended with status {outcome.status}"
+                    ),
+                    duration_ms=outcome.duration_ms,
+                    metadata=metadata,
                 )
-
-            duration_ms = int((time.time() - start_time) * 1000)
-            output = sub_result.get("output", "Delegation completed with no output.")
-
-            logger.info(
-                f"Delegation to '{delegated_agent.name}' completed with status={sub_result.get('status')}"
-            )
 
             return ToolResult(
                 tool_call_id=tool_call.id,
                 tool_name=tool_call.name,
-                result={"response": str(output), "agent": delegated_agent.name},
-                error=None if sub_result.get("status") != "failed" else sub_result.get("error"),
-                duration_ms=duration_ms,
+                result={
+                    "response": str(outcome.output),
+                    "agent": outcome.agent_name,
+                    "status": outcome.status,
+                    "child_run_id": str(outcome.child_run_id),
+                },
+                error=None,
+                duration_ms=outcome.duration_ms,
+                metadata=metadata,
             )
 
+        except ToolError as e:
+            return ToolResult(
+                tool_call_id=tool_call.id,
+                tool_name=tool_call.name,
+                result=None,
+                error=str(e),
+                duration_ms=int((time.time() - start_time) * 1000),
+            )
         except Exception as e:
             logger.error(f"Delegation error for {tool_call.name}: {e}", exc_info=True)
             return ToolResult(
