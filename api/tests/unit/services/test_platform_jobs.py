@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock
@@ -144,6 +145,9 @@ async def test_progress_and_terminal_writes_are_fenced(
     token = uuid4()
     job.status = "running"
     job.lease_token = token
+    # The test stack also runs the real scheduler. Model a live lease so its
+    # recovery loop cannot correctly reclaim this synthetic in-flight job.
+    job.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=1)
     await db_session.commit()
 
     @asynccontextmanager
