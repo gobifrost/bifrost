@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import os
 import signal
 import socket
@@ -23,8 +22,6 @@ from src.services.execution.memory_monitor import get_cgroup_memory
 from src.services.platform_jobs import (
     publish_platform_job_update,
 )
-
-logger = logging.getLogger(__name__)
 
 LEASE_DURATION = timedelta(seconds=30)
 HEARTBEAT_INTERVAL_SECONDS = 5
@@ -228,6 +225,7 @@ async def _terminate_runner(process: asyncio.subprocess.Process) -> None:
         try:
             os.killpg(process.pid, signal.SIGKILL)
         except ProcessLookupError:
+            # The runner exited after the grace timeout; reap it below.
             pass
         await process.wait()
 
@@ -299,6 +297,7 @@ async def run_claimed_platform_job(claim: ClaimedPlatformJob) -> bool:
             )
             break
         except TimeoutError:
+            # Expected heartbeat tick while the runner is still active.
             pass
 
         status = await _heartbeat(claim.id, claim.lease_token)
