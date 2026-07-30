@@ -6,6 +6,31 @@ MSP automation platform built with FastAPI and React.
 
 All changes — features, fixes, refactors, doc edits — must be made in a git worktree, never directly on `main` (or any shared branch) in the primary checkout. If a task is about to modify files and the current working directory is the primary `bifrost` checkout, stop and create or enter a worktree first. Use `EnterWorktree` (or `git worktree add .claude/worktrees/<name>`). The only edits permitted on `main` are ones the user explicitly requests be made there.
 
+## Long-running platform jobs (CRITICAL)
+
+`PlatformJob` is the canonical system for durable, non-workflow work that can
+outlive an HTTP request. Read
+[`docs/architecture/platform-jobs.md`](docs/architecture/platform-jobs.md)
+before adding or changing background work.
+
+- Use a platform job for user-initiated platform operations that need durable
+  status, progress, retries, cancellation, deduplication, or resource
+  protection.
+- Do **not** create a feature-specific job table, worker/container, status
+  contract, status endpoint, WebSocket event, or browser polling loop. Extend
+  the platform-job definition, registry, runner policy, and shared transports.
+- The UI receives platform-job progress through the existing notification
+  WebSocket system. The CLI may poll the shared
+  `/api/platform-jobs/{job_id}` endpoint with short requests.
+- Workflow and agent execution still use the execution worker infrastructure.
+  Short request-scoped work remains synchronous. Recurring scheduler triggers
+  may enqueue platform jobs when their units of work need this durability.
+- Existing bespoke job systems are migration candidates, not templates for new
+  work. If the shared platform-job system cannot express a requirement, propose
+  an extension to it instead of building a parallel system.
+
+Keep this section identical in `AGENTS.md` and `CLAUDE.md`.
+
 ## Org scoping (CRITICAL)
 
 If you are touching code that reads or writes anything with an `organization_id` column, **read `api/src/repositories/README.md` before you write code.** That file is the single source of truth.
