@@ -39,8 +39,8 @@ PostgreSQL is the source of truth. Each `platform_jobs` row stores the typed
 payload version, requester and resource scope, progress, result or structured
 error, retry policy, timestamps, and lease state.
 
-The existing singleton scheduler container is the platform-job host; there is
-no separate platform-job container. Every two seconds it:
+Every scheduler replica is a platform-job host; there is no separate
+platform-job container. Each replica runs one claim loop that:
 
 1. recovers expired leases from a stopped scheduler or runner;
 2. claims one available row with `FOR UPDATE SKIP LOCKED`;
@@ -57,14 +57,69 @@ reaches its limit. If the scheduler container still exits or is OOM-killed, the
 durable lease expires and a later scheduler instance retries or fails the job
 according to policy.
 
-The host currently runs one platform job at a time. If shared concurrency or
-different resource classes become necessary, evolve the common host and its
-policy contract; do not add per-feature worker containers.
+Each replica runs one platform job at a time, so adding replicas adds execution
+capacity without co-locating multiple platform jobs in one container. PostgreSQL
+row locking assigns each job to one replica. If resource classes become
+necessary, evolve the common host and its policy contract; do not add
+per-feature worker containers.
+
+One replica also holds the fenced `scheduler-triggers` database lease. Only
+that trigger leader runs APScheduler and the legacy scheduler Redis pub/sub
+listener. The lease uses database-time expiry rather than a session advisory
+lock because supported deployments use transaction-mode PgBouncer. A follower
+takes over after expiry when the leader stops renewing; trigger services stop
+before a healthy leader voluntarily releases its lease.
+
+Leader failover recreates APScheduler's in-memory schedules. Existing callbacks
+configured to run immediately at scheduler startup therefore have at-least-once
+failover behavior. Long-running callbacks must migrate by making the elected
+callback enqueue a deduplicated platform job. Small, idempotent housekeeping may
+remain leader-only scheduler work.
+
+This scaling foundation changes ownership immediately, but does not turn legacy
+callbacks into `PlatformJob` rows. The elected leader continues to run workflow
+schedule promotion, deferred execution promotion, OAuth refresh, metrics and
+knowledge snapshots, webhook renewal, Solution update checks and exports, event
+cleanup, worker metrics, and the git/reimport/reindex pub/sub handlers. The
+durable worker loop currently executes registered platform jobs such as
+application publishing on every replica. Follow-up migrations should prioritize
+the long-running or independently observable OAuth, webhook, Solution export,
+git/reimport, and embedding-reindex work; short promotion, cleanup, and metric
+callbacks can remain leader-only.
 
 Lease-token checks fence stale runners: only the current attempt may update
 progress or record a terminal result. A handler may be retried after runner
 loss only when its side effects are idempotent. Otherwise set
 `retry_on_runner_loss=False` or use a single attempt.
+
+## Capacity and resource policy
+
+`PlatformJobPolicy` is an execution guardrail, not a second container scheduler.
+Every job type must declare a timeout, retry behavior, minimum memory headroom,
+and admission/hard memory ratios. The host evaluates those values against the
+container's cgroup-v2 working set and memory limit before and during execution.
+Deployments therefore need a real container memory limit; without one, memory
+admission is unavailable.
+
+Size a scheduler replica for the scheduler process plus the heaviest job type it
+admits, because a replica runs only one platform job at a time. Establish a new
+job's initial policy from representative data volume: record peak cgroup working
+set and wall-clock duration, include operational margin, and exercise low-memory
+deferral and timeout behavior in tests. These measurements inform policy and
+deployment guidance; they are not per-job CPU or memory reservations.
+
+The kernel does not currently persist per-attempt CPU or process-tree memory
+telemetry. Its cgroup reading includes the scheduler host and any leader-only
+callback running at the same time, so it is a container safety signal rather
+than exact job attribution. Add shared process-tree telemetry only when policy
+tuning from representative benchmarks and operational signals proves
+insufficient; do not make every handler invent its own measurement path.
+
+Start with the deployment defaults and scale replicas when queue wait time grows.
+Increase container memory only when representative jobs are repeatedly deferred
+or approach the hard ratio. Do not add Kubernetes-style resource classes until
+observed workloads show that one common scheduler size cannot safely serve the
+registered job types.
 
 ## Shared caller contract
 
@@ -166,6 +221,7 @@ surfaces.
 | Registered job types | `api/src/jobs/platform/registry.py` |
 | Isolated child runner | `api/src/jobs/platform/runner.py` |
 | Lease recovery, claiming, and resource enforcement | `api/src/jobs/schedulers/platform_jobs.py` |
+| Trigger leader election | `api/src/scheduler/leadership.py` |
 | Generic status and cancellation API | `api/src/routers/platform_jobs.py` |
 | Scheduler host registration | `api/src/scheduler/main.py` |
 | Browser WebSocket transport | `client/src/services/websocket.ts` |

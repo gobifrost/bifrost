@@ -5,10 +5,12 @@ Main entry point for the scheduler service.
 Handles APScheduler for cron jobs, cleanup tasks, and OAuth token refresh.
 
 This container is responsible for:
-- Running APScheduler for scheduled tasks (CRON workflows, cleanup, OAuth refresh)
+- Competing for the singleton trigger lease used by APScheduler and Redis pub/sub
+- Running one durable platform job at a time on every replica
 
-IMPORTANT: This container MUST run as a single instance (replicas: 1)
-because APScheduler jobs should not run in parallel across multiple instances.
+Scheduler replicas are interchangeable. PostgreSQL lease fencing ensures only
+one replica runs scheduled triggers while durable job rows are claimed across
+all replicas with ``FOR UPDATE SKIP LOCKED``.
 
 NOTE: File watching and DB sync has been moved to the Discovery container.
 """
@@ -29,8 +31,9 @@ from src.core.pubsub import publish_git_op_completed
 from src.core.redis_reconnect import ResilientPubSubListener
 from src.jobs.schedulers.cron_scheduler import process_schedule_sources
 from src.jobs.schedulers.execution_cleanup import cleanup_stuck_executions
-from src.jobs.schedulers.platform_jobs import process_platform_jobs
+from src.jobs.schedulers.platform_jobs import platform_job_worker_loop
 from src.scheduler.health import heartbeat_loop, write_heartbeat
+from src.scheduler.leadership import SchedulerLeadershipLease
 
 
 # Configure logging
@@ -49,6 +52,9 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
+LEADERSHIP_RETRY_SECONDS = 5.0
+LEADERSHIP_RENEW_SECONDS = 10.0
+
 
 class Scheduler:
     """
@@ -63,13 +69,20 @@ class Scheduler:
     - Git sync requests (bifrost:scheduler:git-op)
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        leadership_lease: SchedulerLeadershipLease | None = None,
+    ):
         self.settings = get_settings()
         self.running = False
         self._shutdown_event = asyncio.Event()
+        self._leadership_lease = leadership_lease or SchedulerLeadershipLease()
         self._scheduler: AsyncIOScheduler | None = None
         self._pubsub_listener: ResilientPubSubListener | None = None
         self._heartbeat_task: asyncio.Task[None] | None = None
+        self._leadership_task: asyncio.Task[None] | None = None
+        self._platform_job_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         """Start the scheduler."""
@@ -82,21 +95,46 @@ class Scheduler:
         await init_db()
         logger.info("Database connection established")
 
-        # Start APScheduler
-        logger.info("Starting APScheduler...")
-        await self._start_scheduler()
-
-        # Start Redis pub/sub listener for on-demand requests
-        logger.info("Starting Redis pub/sub listener...")
-        await self._start_pubsub_listener()
         write_heartbeat()
         self._heartbeat_task = asyncio.create_task(heartbeat_loop())
+        self._platform_job_task = asyncio.create_task(
+            platform_job_worker_loop(self._shutdown_event),
+            name="platform-job-worker",
+        )
+        self._leadership_task = asyncio.create_task(
+            self._leadership_loop(),
+            name="scheduler-leadership",
+        )
+        self._platform_job_task.add_done_callback(self._background_task_done)
+        self._leadership_task.add_done_callback(self._background_task_done)
 
-        logger.info("Bifrost Scheduler started")
+        logger.info("Bifrost Scheduler replica started")
         logger.info("Running... (Ctrl+C to stop)")
 
         # Keep running until shutdown
         await self._shutdown_event.wait()
+
+        for task in (self._platform_job_task, self._leadership_task):
+            if (
+                self.running
+                and task is not None
+                and task.done()
+                and not task.cancelled()
+            ):
+                error = task.exception()
+                await self.stop()
+                if error is not None:
+                    raise RuntimeError(
+                        f"Scheduler background task {task.get_name()} failed"
+                    ) from error
+                raise RuntimeError(
+                    f"Scheduler background task {task.get_name()} stopped unexpectedly"
+                )
+
+    def _background_task_done(self, _task: asyncio.Task[None]) -> None:
+        """Terminate the replica if an always-on control loop exits."""
+        if self.running and not self._shutdown_event.is_set():
+            self._shutdown_event.set()
 
     async def _start_scheduler(self) -> None:
         """Start APScheduler with all scheduled jobs."""
@@ -255,18 +293,6 @@ class Scheduler:
         except ImportError:
             logger.warning("Solution export jobs scheduler not available")
 
-        # Durable non-execution work runs through the common platform-job host.
-        scheduler.add_job(
-            process_platform_jobs,
-            IntervalTrigger(seconds=2),
-            id="platform_jobs",
-            name="Process durable scheduler-owned platform jobs",
-            replace_existing=True,
-            next_run_time=datetime.now(timezone.utc),
-            **misfire_options,
-        )
-        logger.info("Platform jobs scheduled (every 2s)")
-
         # Event cleanup - daily at 3:00 AM UTC (30-day retention)
         try:
             from src.jobs.schedulers.event_cleanup import cleanup_old_events
@@ -333,6 +359,113 @@ class Scheduler:
         scheduler.start()
         self._scheduler = scheduler
         logger.info("APScheduler started with scheduled jobs")
+
+    async def _start_leader_services(self) -> None:
+        """Start services that must have exactly one active replica."""
+        if self._scheduler is not None or self._pubsub_listener is not None:
+            return
+        await self._start_scheduler()
+        try:
+            await self._start_pubsub_listener()
+        except Exception:
+            await self._stop_leader_services()
+            raise
+
+    async def _stop_leader_services(self) -> None:
+        """Stop singleton trigger services before surrendering leadership."""
+        stop_error: Exception | None = None
+        if self._pubsub_listener is not None:
+            listener = self._pubsub_listener
+            try:
+                await listener.stop()
+                self._pubsub_listener = None
+                logger.info("Pub/sub listener stopped")
+            except Exception as exc:
+                stop_error = exc
+                logger.exception("Failed to stop pub/sub listener")
+
+        if self._scheduler is not None:
+            scheduler = self._scheduler
+            try:
+                scheduler.shutdown(wait=False)
+                self._scheduler = None
+                logger.info("APScheduler stopped")
+            except Exception as exc:
+                stop_error = stop_error or exc
+                logger.exception("Failed to stop APScheduler")
+
+        if stop_error is not None:
+            raise stop_error
+
+    async def _wait_or_shutdown(self, seconds: float) -> None:
+        try:
+            await asyncio.wait_for(self._shutdown_event.wait(), timeout=seconds)
+        except TimeoutError:
+            pass
+
+    async def _leadership_loop(self) -> None:
+        """Elect one trigger leader while every replica remains a job runner."""
+        try:
+            while self.running and not self._shutdown_event.is_set():
+                if not self._leadership_lease.is_leader:
+                    try:
+                        acquired = await self._leadership_lease.try_acquire()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.exception("Failed to acquire scheduler trigger lease")
+                        await self._wait_or_shutdown(LEADERSHIP_RETRY_SECONDS)
+                        continue
+
+                    if not acquired:
+                        await self._wait_or_shutdown(LEADERSHIP_RETRY_SECONDS)
+                        continue
+
+                    logger.info(
+                        "Scheduler replica became trigger leader",
+                        extra={"owner_id": self._leadership_lease.owner_id},
+                    )
+                    try:
+                        await self._start_leader_services()
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        logger.exception("Failed to start scheduler leader services")
+                        await self._stop_leader_services()
+                        try:
+                            await self._leadership_lease.release()
+                        except Exception:
+                            logger.exception("Failed to release scheduler trigger lease")
+                        await self._wait_or_shutdown(LEADERSHIP_RETRY_SECONDS)
+                        continue
+
+                await self._wait_or_shutdown(LEADERSHIP_RENEW_SECONDS)
+                if self._shutdown_event.is_set():
+                    break
+
+                try:
+                    renewed = await self._leadership_lease.renew()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("Failed to renew scheduler trigger lease")
+                    renewed = False
+
+                if renewed:
+                    continue
+
+                logger.warning("Scheduler replica lost trigger leadership")
+                await self._stop_leader_services()
+                try:
+                    await self._leadership_lease.release()
+                except Exception:
+                    logger.exception("Failed to clear lost scheduler trigger lease")
+        finally:
+            await self._stop_leader_services()
+            try:
+                await self._leadership_lease.release()
+            except Exception:
+                logger.exception("Failed to release scheduler trigger lease on shutdown")
 
     async def _start_pubsub_listener(self) -> None:
         """Start Redis pub/sub listener for on-demand requests."""
@@ -597,29 +730,33 @@ class Scheduler:
 
     async def stop(self) -> None:
         """Stop the scheduler gracefully."""
+        if not self.running:
+            return
         logger.info("Stopping Bifrost Scheduler...")
         self.running = False
+        self._shutdown_event.set()
+
+        tasks = [
+            task
+            for task in (self._platform_job_task, self._leadership_task)
+            if task is not None
+        ]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._platform_job_task = None
+        self._leadership_task = None
 
         if self._heartbeat_task:
             self._heartbeat_task.cancel()
             await asyncio.gather(self._heartbeat_task, return_exceptions=True)
             self._heartbeat_task = None
 
-        # Stop pub/sub listener
-        if self._pubsub_listener:
-            await self._pubsub_listener.stop()
-            logger.info("Pub/sub listener stopped")
-
-        # Stop scheduler
-        if self._scheduler:
-            self._scheduler.shutdown(wait=False)
-            logger.info("APScheduler stopped")
-
         # Close database connections
         await close_db()
         logger.info("Database connections closed")
 
-        self._shutdown_event.set()
         logger.info("Bifrost Scheduler stopped")
 
     def handle_signal(self, signum: int, frame) -> None:
