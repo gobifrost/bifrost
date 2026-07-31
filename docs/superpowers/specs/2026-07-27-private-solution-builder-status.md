@@ -1,13 +1,18 @@
 # Private Solution Builder — Implementation Status
 
-**Updated:** 2026-07-30
+**Updated:** 2026-07-31
 **Branch:** `code-builder` (worktree only; `main` untouched)
 **Worktree:** `.worktrees/ai-solution-builder-spec`
 **Design:** `2026-07-25-private-solution-builder-design.md`
 
 ## Outcome
 
-The private Solution Builder plan is implemented end to end.
+The original private Solution Builder implementation is present on this branch,
+but it is not yet the production contract. Product review identified required
+authorization, collaboration, runtime-routing, and operational changes that
+must land before release. The branch was rebased onto `origin/main` on
+2026-07-31; the new canonical platform-job system and four-tool Agent MCP
+gateway now replace several assumptions in the first implementation.
 
 A user with `solutions.build` can open `/build`, describe an app, create a
 private workspace and builder session, run the bundle-backed builder Agent,
@@ -41,16 +46,16 @@ That is no longer true.
 | Full-width Agent access selector with explicit Private support and menu-only descriptions | complete |
 | Eight hidden builder workspace tools plus traversal-safe `read_skill_asset` | complete |
 | Portable `Agent.bundle_path` across ORM, REST, MCP, CLI, manifests, capture/export/git sync, and Solution deploy | complete |
-| External builder coordinator and credential-free fixed-toolchain runner protocol | complete |
+| External builder coordinator and credential-free fixed-toolchain runner protocol | implemented, coordinator superseded by platform jobs |
 | Source-only app build, staged artifact validation, and real deploy materialization | complete |
 | Durable deploy input staging, integrity hashes, encrypted options, leases, idempotency, recovery, and worker consumer | complete |
-| Separate app-host process and exact Solution/app/org/JTI actor-token seal | complete |
-| Zero-DNS preview origin default: the same Bifrost hostname on a second port in local, Netbird, Compose, and Kubernetes guidance | complete |
+| Separate app-host process and exact Solution/app/org/JTI actor-token seal | implemented, routing contract must move behind transparent `/apps/*` URLs |
+| Zero-DNS preview routing | redesign required; no public second port, DNS record, or alternate app origin |
 | Actor-only table, file, execution, artifact, launch, renewal, and revocation routes | complete |
 | Actor WebSocket subscriptions for exact table/file/execution scope | complete |
 | Private deploy suppression for roles, connections, events, schedules, autonomous agents, and generated Python activation | complete |
 | Admin Promotion review queue with pinned revision, exact hash, build/deploy result, entity/change evidence, blockers, scope, role/connection approvals, and guarded confirmation | complete |
-| Docker Compose and Kubernetes services for builder, runner, and app host | complete |
+| Docker Compose and Kubernetes services for builder, runner, and app host | implemented, dedicated builder coordinator must be removed |
 
 The bespoke `InternalLoopRuntime` / builder model gateway were removed. Builder
 turns now use the same Agent execution path as the rest of the platform.
@@ -83,6 +88,10 @@ turns now use the same Agent execution path as the rest of the platform.
   `references/`, and `scripts/`.
 
 ## Verification performed
+
+The results below were recorded before the 2026-07-31 rebase. They are useful
+historical evidence, not a post-rebase release claim. The complete required
+verification suite must run again after the architecture changes below land.
 
 Green gates:
 
@@ -169,7 +178,7 @@ Builder authorization:
 - `actor_type` selects a credential contract but grants no permission by
   itself.
 
-`solutions.build` now is the first custom-role-assignable Builder action
+`solutions.build` is the first custom-role-assignable Builder action
 scope. It is registered in the code-owned catalog, stored in first-class
 `Role.scopes`, included in effective human-token scopes, and enforced by
 `principal.has_scope("solutions.build")`. The earlier free-form
@@ -182,9 +191,35 @@ The `solution_app` credential now uses the same catalog. Its attenuated
 `scopes` claim is validated against the fixed app-runtime subset, while its
 separate API surface and immutable Solution/app/org/JTI bindings continue to
 constrain where those actions apply. Runtime SDK routes require both their
-cataloged action scope and the existing exact resource/data gates. Build-job
-capabilities likewise carry the cataloged `solutions.jobs.execute` scope
-rather than deriving authority from actor type alone.
+cataloged action scope and the existing exact resource/data gates.
+
+`solutions.build` is a human authorization to use Builder on projects the
+principal can reach. It is not the permission used by a process that happens to
+execute a build. Once Builder coordination uses canonical platform jobs, the
+role catalog should not expose `solutions.jobs.execute`,
+`solutions.builds.execute`, or a second synonym. The trusted scheduler executes
+the registered platform-job handler. The isolated runner receives only a
+single-job, lease-bound capability for its fixed protocol and exact artifact
+hashes; that capability is not assignable to a human role and cannot be used as
+a general SDK/API token.
+
+Platform Admin migration is a compatibility backfill from legacy
+`is_superuser`, followed by a staged period in which the old and new checks run
+in parallel until every route family has moved to `principal.has_scope()`.
+Platform Operator is different: provider-organization membership is only
+eligibility and must not silently create a durable Operator grant. During the
+transition the legacy provider check remains available in shadow/rollout mode,
+the admin receives a readiness report of affected users, and an administrator
+explicitly assigns Platform Operator before legacy enforcement is removed.
+
+Platform Operator initially grants `organization.impersonation`. Normal
+product access will move into a granular Organization Member role, so a support
+operator is the composition `Organization Member + Platform Operator`, not a
+new mega-scope. Builder access remains independent. Builder setup may offer to
+create a mutable **Platform Builder** role containing `solutions.build`, but an
+administrator owns its assignments and may create a differently named role
+instead. Platform Admin remains the immutable built-in wildcard role; Platform
+Builder is not silently bundled into Operator.
 
 Role grants and removals become effective when the user's access token is
 minted or refreshed in this foundation release. The planned token-version and
@@ -199,7 +234,7 @@ free-form-permission checks. A route-classification test must eventually fail
 for every new protected endpoint that declares neither a human action scope nor
 an explicit non-human actor contract.
 
-### A. Preview and publication contract
+### A. Platform jobs, preview, and publication contract
 
 **Current behavior:** source generation starts from an immutable revision in a
 temporary Agent workspace. App compilation runs in the credential-free fixed
@@ -209,7 +244,8 @@ process. Preview is therefore isolated from the control-plane application, but
 it is not a separate staging environment: private and promoted Solutions use
 the same Bifrost database and object store.
 
-There is no per-build or per-app runtime container. Kubernetes currently runs:
+There is no per-build or per-app runtime container. The first implementation
+currently adds three shared components:
 
 - two shared `bifrost-app-host` pods (`uvicorn src.app_host:app`) for all
   generated apps; each requests 100m CPU / 256 MiB and is limited to 1 CPU /
@@ -245,14 +281,17 @@ normally replaced by that fresh launch flow. A queued/running turn is
 rediscovered and polled, while a missing app origin, missing first deploy, or
 failed launch still produces the corresponding preview state.
 
-The default app origin does not require another DNS record: it uses the same
-Bifrost hostname on a distinct port. Port-mode debug allocates separate
-localhost ports; Netbird debug uses the control-plane hostname plus port 8100;
-the Kubernetes example uses the Bifrost hostname plus external port 8443,
-routed to `app-host:8100`. A sibling hostname remains a documented fallback
-only for proxies that cannot expose a second TLS port. Because the browser
-origin must remain distinct, serving generated apps on the control-plane
-scheme/host/port tuple is not an acceptable fallback.
+The second-public-port/app-origin design is superseded. It is not compatible
+with common public proxies and creates setup work that should not be necessary.
+The public application URL remains `/apps/{slug}` for every application. A
+server-authoritative release field selects `isolated` or `trusted` runtime
+mode; there is no user-controlled query flag. Existing V1/V2 applications stay
+trusted and keep their current SDK behavior. Builder previews are always
+isolated. The `/apps/*` router renders the trusted runtime directly or an
+isolated shell whose sandboxed iframe is backed internally by `app-host`.
+`app-host` is not exposed as a separately configured public origin, and the
+iframe omits same-origin authority so generated JavaScript cannot read control
+plane DOM, storage, or cookies.
 
 The app origin currently uses one host-wide cookie name and path; opening
 another generated app replaces the first app's browser session, so multiple app
@@ -263,23 +302,41 @@ before publication is considered end-to-end.
 
 **Decisions / work remaining:**
 
-- Decide whether a promoted builder app remains on the isolated app-host or
-  transitions to the existing trusted same-document application runtime.
-- If it remains isolated, add shared-user app-host session authorization,
-  production URL semantics, and post-promotion release/iteration behavior.
+- The canonical platform-job kernel from PR #533 is already merged. Before
+  Builder adds sustained load, finish issue #532's scheduler HA/capacity phase:
+  one elected schedule-trigger leader, platform-job claiming on every scheduler
+  replica, one execution slot per replica initially, and measured resource
+  diagnostics. Builder then registers ordinary durable job types (initially
+  `solution.builder.turn`, `solution.build`, and where useful
+  `solution.deploy`) instead of keeping a parallel coordinator, poller, and
+  recovery system.
+- Remove the dedicated trusted builder coordinator container. The existing
+  scheduler owns trusted Builder orchestration, AI/provider access, database
+  state, leases, progress, retries, and recovery through platform jobs.
+- Keep the credential-free, network-isolated fixed-toolchain runner as a
+  separate execution boundary. Model-authored source and package/toolchain
+  processing must not inherit scheduler/API secrets. The runner consumes only
+  a staged artifact and exact one-job capability.
+- Keep `app-host` as a separate narrow runtime service, routed internally by
+  the existing client/API proxy under `/apps/*`. It is a long-lived serving
+  boundary, not a scheduler job.
+- Make promotion preserve `isolated` runtime by default. An administrator may
+  explicitly promote a reviewed revision to `trusted` runtime with a clear
+  warning; existing V1/V2 apps remain trusted without migration or SDK change.
+- Add shared-user app-host session authorization and post-promotion
+  release/iteration behavior while retaining the transparent `/apps/{slug}`
+  address.
 - Scope app-host session cookies so multiple generated apps can stay open
   concurrently.
-- Add an administrator-facing app-host readiness flow. It should first test the
-  zero-DNS same-host/second-port route, persist the validated result in platform
-  configuration, and keep Builder unavailable to ordinary users until the
-  health and launch checks succeed. Administrators should see a clear setup
-  screen linked to Settings rather than a broken Builder.
-- When the second-port check fails, guide the administrator through the sibling
-  hostname/DNS fallback with proxy, certificate, DNS, and verification
-  instructions. Save progress so setup cannot be accidentally skipped.
-- Add HPA/concurrency sizing guidance and load tests for the shared app-host,
-  coordinator, and runner instead of treating the initial replica and
-  one-build-at-a-time values as final production sizing.
+- Add a blocking administrator readiness flow. It configures the AI provider
+  and Builder model, then reports live health for the scheduler/platform-job
+  system, isolated runner, app host, artifact storage, and an end-to-end launch
+  probe. Readiness is persisted; ordinary users do not see Builder until it is
+  enabled. There is no DNS, public-port, or app-origin field in the normal
+  setup flow.
+- Add concurrency/resource guidance and load tests for the existing scheduler,
+  shared app host, and isolated runner. Scheduler capacity and runner replicas
+  are the normal scale controls; the UI should explain detected saturation.
 - Give `app-host` an explicit NetworkPolicy and least-privilege configuration
   and secret projection. It currently imports the whole Bifrost ConfigMap and
   Secret even though its ASGI router is intentionally narrow.
@@ -306,9 +363,13 @@ work for customers.
   itself into one shared install and make the workbench disappear.
 - Ownership represents responsibility and attribution, not invisibility.
   Provider-team builds should be discoverable to provider staff by default.
-- The build catalog should provide **My work**, **Team builds**, **Customer
-  builds**, **Needs review**, and **Ready to publish** views with owner,
-  customer/scope, activity, build status, reviewer, and release state.
+- The build catalog defaults to **My work** (owned projects plus projects where
+  the viewer is an explicit participant). Privileged users receive an **All
+  builds** tab with server-side owner, participant, organization/customer,
+  activity, build status, reviewer, and release-state filters. **Needs review**
+  is a focused queue/filter. This keeps everyday navigation uncluttered while
+  allowing administrators and scoped support staff to find any build they are
+  authorized to manage.
 - Provider staff may discover and preview work across managed customer scopes.
   Customer users may only see builds for their own organization when their
   role permits it. No customer user may discover another customer's work.
@@ -383,17 +444,14 @@ The AI Builder only targets owner-private Solutions and cannot target `_repo`.
 
 ## Operational state
 
-- The worktree's debug stack is currently up at
-  `http://bifrost-debug-ai-solution-builder-spec-54-121.netbird.cloud`.
-  Its generated-app origin is reachable on the same hostname at port 8100.
-  Port-mode debug instead allocates separate localhost ports automatically.
-- Test stack: Compose project `bifrost-test-ce8540c1`, rebuilt clean at migration
-  `20260730_role_authorization_scopes`.
-- `BIFROST_APP_ORIGIN` must be configured in a deployed environment for preview
-  launch; unset environments fail closed. Kubernetes operators can normally
-  use the existing Bifrost hostname with a second external port, as documented
-  in `k8s/README.md`, without creating DNS. The persisted administrator
-  readiness/setup flow described above is not implemented yet.
+- The branch was checkpointed and rebased onto `origin/main` at `de93eb6ae`.
+  Backup branch: `codex/code-builder-pre-rebase-20260731`.
+- Conflict resolution produced a clean checkpoint; this status document was
+  then updated with the post-rebase decisions. The test stack is currently
+  down; post-rebase verification has not yet been run.
+- The current branch still contains `BIFROST_APP_ORIGIN`, second-port routing,
+  a dedicated builder coordinator, and their deployment manifests. They are
+  implementation debt to remove, not the target production setup.
 - The canonical skill source remains `.claude/skills/bifrost-build`; scaffolded
   private Solutions receive it at the workspace-root-relative
   `skills/bifrost-build`, while `.bifrost/agents.yaml` only stores that portable
@@ -401,8 +459,23 @@ The AI Builder only targets owner-private Solutions and cannot target `_repo`.
 
 ## Remaining handoff
 
-No implementation work package from the original design remains open. The
-follow-on product decisions above are deliberately out-of-scope backlog rather
-than hidden incompleteness. The worktree is intentionally uncommitted and
-unpushed so the final diff can be reviewed and committed as one deliberate
-change.
+The original implementation is a substantial foundation, but the product is
+not complete until the follow-up plan is implemented and the full verification
+sequence passes. The critical path is:
+
+1. finish issue #532's scheduler HA/capacity phase on top of the already-merged
+   platform-job kernel;
+2. rebase Builder again and replace its trusted coordinator with platform-job
+   handlers while preserving the isolated runner;
+3. integrate actual bundled `SKILL.md` instructions and asset context into the
+   rebased four-tool MCP Agent gateway;
+4. complete the staged Platform Admin migration and explicit Platform Operator
+   assignment/readiness flow;
+5. implement My work / All builds / Needs review, central project
+   authorization, participants, and privileged support management;
+6. add the admin Global Workspace proposal/diff/test/apply/rollback flow for
+   `_repo`;
+7. replace public app-origin configuration with transparent `/apps/*`
+   trusted/isolated routing and finish the blocking admin readiness wizard; and
+8. run API quality, generated contracts, frontend checks, full backend/client
+   tests, Playwright, and production manifest rendering.
