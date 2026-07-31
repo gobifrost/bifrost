@@ -356,7 +356,7 @@ export function Solutions() {
 					</p>
 				</div>
 				<div className="flex flex-wrap gap-2">
-					<NewWithAIButton label="New with AI" />
+					<NewWithAIButton label="Build an app" />
 					<input
 						ref={fileInputRef}
 						type="file"

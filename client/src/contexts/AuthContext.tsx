@@ -30,6 +30,7 @@ export interface AuthUser {
 	isSuperuser: boolean;
 	organizationId: string | null;
 	roles: string[];
+	scopes: string[];
 }
 
 // Login response with MFA state
@@ -53,6 +54,7 @@ interface AuthContextValue {
 	isPlatformAdmin: boolean;
 	isOrgUser: boolean;
 	hasRole: (role: string) => boolean;
+	hasScope: (scope: string) => boolean;
 
 	// Actions
 	login: (email: string, password: string) => Promise<LoginResult>;
@@ -87,6 +89,7 @@ interface JwtPayload {
 	is_superuser?: boolean;
 	org_id?: string | null;
 	roles?: string[];
+	scopes?: string[];
 	exp?: number;
 }
 
@@ -115,15 +118,19 @@ function parseJwt(token: string): JwtPayload | null {
 function extractUser(payload: JwtPayload): AuthUser {
 	const isSuperuser = payload.is_superuser || false;
 	const organizationId = payload.org_id || null;
+	const scopes = payload.scopes || [];
+	const hasPlatformAdminScope = scopes.includes("platform.superuser");
 	return {
 		id: payload.sub || "",
 		email: payload.email || "",
 		name: payload.name || "",
-		// Derive userType from is_superuser: platform users are superusers
-		userType: isSuperuser ? "PLATFORM" : "ORG",
+		// Platform administration is role-backed; the boolean remains a
+		// compatibility claim during migration.
+		userType: isSuperuser || hasPlatformAdminScope ? "PLATFORM" : "ORG",
 		isSuperuser,
 		organizationId,
 		roles: payload.roles || [],
+		scopes,
 	};
 }
 
@@ -437,23 +444,32 @@ export function AuthProvider({ children }: AuthProviderProps) {
 	}, [isLoading, user, needsSetup, location.pathname, navigate]);
 
 	const value: AuthContextValue = useMemo(
-		() => ({
-			user,
-			isAuthenticated: !!user,
-			isLoading,
-			needsSetup,
-			isPlatformAdmin: user?.isSuperuser ?? false,
-			isOrgUser: !user?.isSuperuser && user?.organizationId != null,
-			hasRole: (role: string) => user?.roles.includes(role) ?? false,
-			login,
-			loginWithMfa,
-			loginWithOAuth,
-			loginWithPasskey,
-			completeLoginWithToken,
-			logout,
-			refreshToken,
-			checkAuthStatus,
-		}),
+		() => {
+			const isPlatformAdmin =
+				user?.isSuperuser === true ||
+				user?.scopes.includes("platform.superuser") === true;
+			return {
+				user,
+				isAuthenticated: !!user,
+				isLoading,
+				needsSetup,
+				isPlatformAdmin,
+				isOrgUser: !isPlatformAdmin && user?.organizationId != null,
+				hasRole: (role: string) => user?.roles.includes(role) ?? false,
+				hasScope: (scope: string) =>
+					user?.isSuperuser === true ||
+					user?.scopes.includes("platform.superuser") === true ||
+					user?.scopes.includes(scope) === true,
+				login,
+				loginWithMfa,
+				loginWithOAuth,
+				loginWithPasskey,
+				completeLoginWithToken,
+				logout,
+				refreshToken,
+				checkAuthStatus,
+			};
+		},
 		[
 			user,
 			isLoading,

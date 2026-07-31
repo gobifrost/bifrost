@@ -51,6 +51,26 @@ class SolutionBuilderProject(Base):
         default="none",
         server_default="none",
     )
+    promotion_revision_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(
+            "solution_source_revisions.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_solution_builder_projects_promotion_revision_id",
+        ),
+        nullable=True,
+        default=None,
+    )
+    promotion_requested_by: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        default=None,
+    )
+    promotion_requested_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

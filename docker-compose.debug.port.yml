@@ -5,3 +5,6 @@ services:
   client:
     ports:
       - "${DEBUG_CLIENT_PORT}:80"
+  app-host:
+    ports:
+      - "${DEBUG_APP_PORT}:8100"

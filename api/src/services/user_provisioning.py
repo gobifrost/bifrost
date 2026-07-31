@@ -11,12 +11,13 @@ Key Features:
 """
 
 import logging
+from collections.abc import Iterable
 from dataclasses import dataclass
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.constants import PROVIDER_ORG_ID
+from src.core.constants import PLATFORM_ADMIN_ROLE_ID, PROVIDER_ORG_ID
 from src.core.log_safety import log_safe
 from src.models import User
 from src.repositories.organizations import OrganizationRepository
@@ -109,6 +110,12 @@ async def ensure_user_provisioned(
             is_superuser=True,
             organization_id=PROVIDER_ORG_ID,
         )
+        await sync_platform_admin_role(
+            db,
+            user_id=user.id,
+            enabled=True,
+            assigned_by="system@internal.gobifrost.com",
+        )
         await db.commit()
         await db.refresh(user)
 
@@ -160,6 +167,85 @@ async def ensure_user_provisioned(
     )
 
 
+async def sync_platform_admin_role(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    enabled: bool,
+    assigned_by: str,
+) -> bool:
+    """Keep the legacy admin bit and built-in role assignment compatible."""
+
+    from sqlalchemy import delete, select
+
+    from src.models import UserRole
+
+    existing = await db.execute(
+        select(UserRole).where(
+            UserRole.user_id == user_id,
+            UserRole.role_id == PLATFORM_ADMIN_ROLE_ID,
+        )
+    )
+    assignment = existing.scalar_one_or_none()
+
+    if enabled:
+        if assignment is not None:
+            return False
+        db.add(
+            UserRole(
+                user_id=user_id,
+                role_id=PLATFORM_ADMIN_ROLE_ID,
+                assigned_by=assigned_by,
+            )
+        )
+        return True
+
+    if assignment is None:
+        return False
+    await db.execute(
+        delete(UserRole).where(
+            UserRole.user_id == user_id,
+            UserRole.role_id == PLATFORM_ADMIN_ROLE_ID,
+        )
+    )
+    return True
+
+
+async def validate_platform_admin_removal(
+    db: AsyncSession,
+    *,
+    user_ids: Iterable[UUID],
+    actor_user_id: UUID,
+) -> None:
+    """Prevent self-demotion and removal of the final active human admin."""
+
+    from sqlalchemy import select
+
+    from src.models import UserRole
+
+    requested = set(user_ids)
+    if not requested:
+        return
+
+    result = await db.execute(
+        select(UserRole.user_id)
+        .join(User, User.id == UserRole.user_id)
+        .where(
+            UserRole.role_id == PLATFORM_ADMIN_ROLE_ID,
+            User.is_active.is_(True),
+            User.is_system.is_(False),
+        )
+    )
+    active_admin_ids = set(result.scalars().all())
+    removals = active_admin_ids & requested
+    if not removals:
+        return
+    if actor_user_id in removals:
+        raise ValueError("You cannot remove your own Platform Admin role")
+    if not active_admin_ids - removals:
+        raise ValueError("At least one active Platform Admin is required")
+
+
 async def get_user_roles(
     db: AsyncSession,
     user_id: UUID,
@@ -183,3 +269,27 @@ async def get_user_roles(
         .where(UserRole.user_id == user_id)
     )
     return list(result.scalars().all())
+
+
+async def get_user_scopes(
+    db: AsyncSession,
+    user_id: UUID,
+) -> list[str]:
+    """Return the validated union of authorization scopes from assigned roles."""
+
+    from sqlalchemy import select
+
+    from shared.authorization_scopes import validate_role_scopes
+    from src.models import Role, UserRole
+
+    result = await db.execute(
+        select(Role.scopes)
+        .join(UserRole, UserRole.role_id == Role.id)
+        .where(UserRole.user_id == user_id)
+    )
+    scopes = {
+        scope
+        for role_scopes in result.scalars().all()
+        for scope in (role_scopes or [])
+    }
+    return validate_role_scopes(scopes, custom_role=False)

@@ -66,7 +66,11 @@ from src.core.security import (
     verify_password,
 )
 from src.repositories.users import UserRepository
-from src.services.user_provisioning import ensure_user_provisioned, get_user_roles
+from src.services.user_provisioning import (
+    ensure_user_provisioned,
+    get_user_roles,
+    get_user_scopes,
+)
 from shared.external_access import (
     resolve_external_claim,
     resolve_provider_org_claim,
@@ -634,6 +638,7 @@ async def mfa_initial_verify(
         "is_provider_org": await resolve_provider_org_claim(db, user),
         "org_id": str(user.organization_id) if user.organization_id else None,
         "roles": roles,
+        "scopes": await get_user_scopes(db, user.id),
     }
 
     access_token = create_access_token(data=token_data)
@@ -783,6 +788,7 @@ async def _generate_login_tokens(user, db, response: Response | None = None) -> 
         "is_provider_org": await resolve_provider_org_claim(db, user),
         "org_id": str(user.organization_id) if user.organization_id else None,
         "roles": roles,
+        "scopes": await get_user_scopes(db, user.id),
     }
 
     # Generate tokens
@@ -947,6 +953,7 @@ async def refresh_token(
         "is_provider_org": await resolve_provider_org_claim(db, user),
         "org_id": str(user.organization_id) if user.organization_id else None,
         "roles": roles,
+        "scopes": await get_user_scopes(db, user.id),
     }
 
     # Generate new tokens with rotation
@@ -1695,6 +1702,7 @@ async def setup_passkey_verify(
         "is_provider_org": await resolve_provider_org_claim(db, user),
         "org_id": str(user.organization_id) if user.organization_id else None,
         "roles": roles,
+        "scopes": await get_user_scopes(db, user.id),
     }
 
     access_token = create_access_token(data=token_data)

@@ -63,19 +63,25 @@ class PrivateDeployPolicy:
     """
 
     private: bool
+    promotion: bool = False
+
+    @property
+    def strict_private(self) -> bool:
+        """True for ordinary owner-authored preview deploys only."""
+        return self.private and not self.promotion
 
     @property
     def suppress_role_materialization(self) -> bool:
         """Spec: "deploy cannot create, rename, assign, or delete
         organization/global roles" — requested role names stay portable source
         declarations, so unknown names must not auto-create global Role rows."""
-        return self.private
+        return self.strict_private
 
     @property
     def suppress_entity_role_junctions(self) -> bool:
         """Spec: "entity-role junctions remain empty because the private-owner
         gate supplies runtime access"."""
-        return self.private
+        return self.strict_private
 
     @property
     def suppress_event_activation(self) -> bool:
@@ -88,7 +94,7 @@ class PrivateDeployPolicy:
         """Spec: "deploy cannot create or read organization integration mappings,
         OAuth mappings, credentials, or connection grants" — declared connection
         requirements remain unresolved while private."""
-        return self.private
+        return self.strict_private
 
     @property
     def suppress_shared_config_writes(self) -> bool:

@@ -9,5 +9,11 @@ resources:
   - client/service.yaml
   - worker/deployment.yaml
   - scheduler/deployment.yaml
+  - builder/deployment.yaml
+  - builder-runner/deployment.yaml
+  - builder-runner/service.yaml
+  - builder-runner/network-policy.yaml
+  - app-host/deployment.yaml
+  - app-host/service.yaml
   - rabbitmq/deployment.yaml
   - rabbitmq/service.yaml

@@ -45,6 +45,7 @@ async def _publish_pending(
     is_platform_admin: bool,
     file_path: str | None,
     event: dict[str, Any] | None = None,
+    actor_jti: str | None = None,
 ) -> None:
     """
     Write a pending-execution blob to Redis, register with the queue tracker,
@@ -70,6 +71,7 @@ async def _publish_pending(
         api_key_id=api_key_id,
         sync=sync,
         is_platform_admin=is_platform_admin,
+        actor_jti=actor_jti,
         event=event,
     )
 
@@ -147,6 +149,7 @@ async def enqueue_workflow_execution(
         is_platform_admin=context.is_platform_admin,
         file_path=file_path,
         event=event_payload,
+        actor_jti=context.actor_jti,
     )
 
     logger.info(

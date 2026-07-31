@@ -191,6 +191,7 @@ async def get_current_user_optional(
         is_external=payload.get("is_external", False),
         is_provider_org=payload.get("is_provider_org", False),
         roles=payload.get("roles", []),
+        scopes=payload.get("scopes", []),
         embed=payload.get("embed", False),
         jti=payload.get("jti"),
         app_id=payload.get("app_id"),
@@ -261,7 +262,7 @@ async def get_current_superuser(
     user: Annotated[UserPrincipal, Depends(get_current_active_user)],
 ) -> UserPrincipal:
     """
-    Get the current superuser (platform admin).
+    Get the current principal with full platform-administration scope.
 
     Raises HTTPException if user is not a superuser.
 
@@ -274,7 +275,9 @@ async def get_current_superuser(
     Raises:
         HTTPException: If user is not a superuser
     """
-    if not user.is_superuser:
+    from shared.authorization_scopes import PLATFORM_SUPERUSER_SCOPE
+
+    if not user.has_scope(PLATFORM_SUPERUSER_SCOPE):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Superuser privileges required"
@@ -541,6 +544,7 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
         is_external=payload.get("is_external", False),
         is_provider_org=payload.get("is_provider_org", False),
         roles=payload.get("roles", []),
+        scopes=payload.get("scopes", []),
         embed=payload.get("embed", False),
         jti=payload.get("jti"),
         app_id=payload.get("app_id"),

@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: builder-runner
+  namespace: bifrost
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: bifrost-builder-runner
+  ports:
+    - name: http
+      port: 8300
+      targetPort: 8300

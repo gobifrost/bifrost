@@ -41,7 +41,11 @@ def test_project_is_keyed_by_solution_and_cascades() -> None:
 
 def test_project_revision_pointers_are_nullable_and_use_alter() -> None:
     table = SolutionBuilderProject.__table__
-    for column in ("current_revision_id", "deployed_revision_id"):
+    for column in (
+        "current_revision_id",
+        "deployed_revision_id",
+        "promotion_revision_id",
+    ):
         assert table.columns[column].nullable
         assert _fk_targets(table, column) == {("solution_source_revisions.id", "SET NULL")}
 
@@ -49,6 +53,7 @@ def test_project_revision_pointers_are_nullable_and_use_alter() -> None:
     assert named == {
         "fk_solution_builder_projects_current_revision_id",
         "fk_solution_builder_projects_deployed_revision_id",
+        "fk_solution_builder_projects_promotion_revision_id",
     }
 
 

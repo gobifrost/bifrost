@@ -328,6 +328,7 @@ export function ToolExecutionCard({
 	if (!resolvedToolCall) {
 		return null;
 	}
+	const isSkillActivity = resolvedToolCall.name === "read_skill_asset";
 
 	return (
 		<div
@@ -361,7 +362,9 @@ export function ToolExecutionCard({
 
 					{/* Tool Name */}
 					<span className="font-medium text-sm">
-						{resolvedToolCall.name}
+						{isSkillActivity
+							? "Skill · read asset"
+							: resolvedToolCall.name}
 					</span>
 				</div>
 

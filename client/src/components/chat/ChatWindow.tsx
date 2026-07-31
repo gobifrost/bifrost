@@ -7,7 +7,7 @@
 
 import { useEffect, useRef, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bot, MessageSquare } from "lucide-react";
+import { Bot, Loader2, MessageSquare } from "lucide-react";
 import { ChatMessage } from "./ChatMessage";
 import { ChatInput } from "./ChatInput";
 import { ToolExecutionCard } from "./ToolExecutionCard";
@@ -21,6 +21,7 @@ import { useChatStore, useTodos } from "@/stores/chatStore";
 import { useCreateConversation, useMessages } from "@/hooks/useChat";
 import { useChatStream } from "@/hooks/useChatStream";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
 import type { components } from "@/lib/v1";
 import { integrateMessages, type UnifiedMessage } from "@/lib/chat-utils";
 
@@ -52,12 +53,7 @@ function MessageWithToolCards({
 	// Check if this message has tool calls
 	const hasToolCalls = message.tool_calls && message.tool_calls.length > 0;
 	if (!hasToolCalls) {
-		return (
-			<ChatMessage
-				message={message}
-				isStreaming={isStreaming}
-			/>
-		);
+		return <ChatMessage message={message} isStreaming={isStreaming} />;
 	}
 
 	// Determine if these are SDK tools (no workflow execution) or workflow tools
@@ -162,6 +158,14 @@ function MessageWithToolCards({
 interface ChatWindowProps {
 	conversationId: string | undefined;
 	agentName?: string | null;
+	/**
+	 * Optional message transport for specialized conversation surfaces.
+	 * The regular Chat page keeps the websocket stream; the Solution builder
+	 * uses its owner-scoped turn endpoint while reusing this transcript UI.
+	 */
+	onSend?: (message: string) => void;
+	isSending?: boolean;
+	inputPlaceholder?: string;
 }
 
 // Threshold in pixels - if within this distance from bottom, consider "at bottom"
@@ -170,6 +174,9 @@ const SCROLL_THRESHOLD = 100;
 export function ChatWindow({
 	conversationId,
 	agentName,
+	onSend,
+	isSending = false,
+	inputPlaceholder,
 }: ChatWindowProps) {
 	const navigate = useNavigate();
 	const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -192,8 +199,13 @@ export function ChatWindow({
 	}, [checkIfAtBottom]);
 
 	// Get messages from API and local cache
-	const { data: apiMessages, isLoading: isLoadingMessages } =
-		useMessages(conversationId);
+	const {
+		data: apiMessages,
+		isLoading: isLoadingMessages,
+		hasNextPage,
+		isFetchingNextPage,
+		fetchNextPage,
+	} = useMessages(conversationId);
 	const localMessages = useChatStore(
 		(state) =>
 			(conversationId && state.messagesByConversation[conversationId]) ||
@@ -236,6 +248,16 @@ export function ChatWindow({
 
 		return integrateMessages(apiMsgs, localMsgs);
 	}, [apiMessages, localMessages]);
+
+	const loadEarlierMessages = useCallback(async () => {
+		const container = containerRef.current;
+		const priorScrollHeight = container?.scrollHeight ?? 0;
+		await fetchNextPage();
+		requestAnimationFrame(() => {
+			if (!container) return;
+			container.scrollTop += container.scrollHeight - priorScrollHeight;
+		});
+	}, [fetchNextPage]);
 
 	// Build a map of tool_call_id -> tool result message for reconstructing state
 	const toolResultMessages = useMemo(() => {
@@ -316,26 +338,41 @@ export function ChatWindow({
 	}, [messages, systemEvents, pendingQuestion, isAtBottom]);
 
 	// Handle send message
-	const handleSendMessage = (message: string) => {
-		if (!conversationId) {
-			createConversation.mutate(
-				{
-					body: { channel: "chat" },
-				},
-				{
-					onSuccess: (data) => {
-						setActiveConversation(data.id);
-						setActiveAgent(data.agent_id ?? null);
-						navigate(`/chat/${data.id}`);
-						sendMessage(message, data.id);
+	const handleSendMessage = useCallback(
+		(message: string) => {
+			if (onSend) {
+				onSend(message);
+				return;
+			}
+			if (!conversationId) {
+				createConversation.mutate(
+					{
+						body: { channel: "chat" },
 					},
-				},
-			);
-			return;
-		}
+					{
+						onSuccess: (data) => {
+							setActiveConversation(data.id);
+							setActiveAgent(data.agent_id ?? null);
+							navigate(`/chat/${data.id}`);
+							sendMessage(message, data.id);
+						},
+					},
+				);
+				return;
+			}
 
-		sendMessage(message);
-	};
+			sendMessage(message);
+		},
+		[
+			conversationId,
+			createConversation,
+			navigate,
+			onSend,
+			sendMessage,
+			setActiveAgent,
+			setActiveConversation,
+		],
+	);
 
 	// Empty state
 	if (!conversationId) {
@@ -348,13 +385,15 @@ export function ChatWindow({
 					</h3>
 					<p className="text-sm text-center max-w-sm">
 						Send a message to start a new conversation. If you need
-						specialized capabilities, I'll find the right tools to help.
+						specialized capabilities, I'll find the right tools to
+						help.
 					</p>
 				</div>
 				<ChatInput
 					onSend={handleSendMessage}
-					disabled={createConversation.isPending}
-					placeholder="Send a message..."
+					disabled={createConversation.isPending || isSending}
+					isLoading={isSending}
+					placeholder={inputPlaceholder ?? "Send a message..."}
 				/>
 			</div>
 		);
@@ -400,7 +439,9 @@ export function ChatWindow({
 				</div>
 				<ChatInput
 					onSend={handleSendMessage}
-					placeholder="Send a message..."
+					disabled={isSending}
+					isLoading={isSending}
+					placeholder={inputPlaceholder ?? "Send a message..."}
 				/>
 			</div>
 		);
@@ -415,6 +456,24 @@ export function ChatWindow({
 				className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent"
 			>
 				<div className="max-w-4xl mx-auto pt-8">
+					{hasNextPage ? (
+						<div className="flex justify-center px-4 pb-4">
+							<Button
+								type="button"
+								variant="ghost"
+								size="sm"
+								disabled={isFetchingNextPage}
+								onClick={loadEarlierMessages}
+							>
+								{isFetchingNextPage ? (
+									<Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+								) : null}
+								{isFetchingNextPage
+									? "Restoring earlier messages"
+									: "Load earlier messages"}
+							</Button>
+						</div>
+					) : null}
 					{/* Unified message and event rendering */}
 					{timeline.map((item) => {
 						if (item.type === "event") {
@@ -434,30 +493,45 @@ export function ChatWindow({
 											<ToolExecutionBadge
 												key={tc.id}
 												toolCall={{
-													id: tc.tool_call_id || tc.id,
-													name: tc.tool_name || "unknown",
-													arguments: tc.tool_input || {},
+													id:
+														tc.tool_call_id ||
+														tc.id,
+													name:
+														tc.tool_name ||
+														"unknown",
+													arguments:
+														tc.tool_input || {},
 												}}
 												status={
-													tc.tool_state === "completed"
+													tc.tool_state ===
+													"completed"
 														? "success"
-														: tc.tool_state === "error"
+														: tc.tool_state ===
+															  "error"
 															? "failed"
 															: "pending"
 												}
 												result={tc.tool_result}
 												error={
 													tc.tool_state === "error"
-														? (tc.tool_result as { error?: string })?.error
+														? (
+																tc.tool_result as {
+																	error?: string;
+																}
+															)?.error
 														: undefined
 												}
-												durationMs={tc.duration_ms || undefined}
+												durationMs={
+													tc.duration_ms || undefined
+												}
 											/>
 										))}
 									</ToolExecutionGroup>
 									{/* Inline reconnect prompts for any needs_reauth result. */}
 									{item.data.map((tc) => {
-										const reauth = extractNeedsReauth(tc.tool_result);
+										const reauth = extractNeedsReauth(
+											tc.tool_result,
+										);
 										if (!reauth) return null;
 										return (
 											<NeedsReauthCard
@@ -508,10 +582,13 @@ export function ChatWindow({
 			{/* Input Area */}
 			<ChatInput
 				onSend={handleSendMessage}
-				isLoading={isStreaming}
-				onStop={stopStreaming}
+				isLoading={onSend ? isSending : isStreaming}
+				onStop={onSend ? undefined : stopStreaming}
 				placeholder={
-					agentName ? `Message ${agentName}...` : "Send a message..."
+					inputPlaceholder ??
+					(agentName
+						? `Message ${agentName}...`
+						: "Send a message...")
 				}
 			/>
 		</div>

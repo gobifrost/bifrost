@@ -50,6 +50,11 @@
 | GET | `/api/agents/{agent_id}/logo` |
 | POST | `/api/agents/{agent_id}/logo` |
 | POST | `/api/agents/{agent_id}/promote` |
+| GET | `/api/agents/{agent_id}/skill` |
+| DELETE | `/api/agents/{agent_id}/skill/bundle` |
+| PUT | `/api/agents/{agent_id}/skill/bundle` |
+| GET | `/api/agents/{agent_id}/skill/download` |
+| GET | `/api/agents/{agent_id}/skill/file` |
 | GET | `/api/agents/{agent_id}/stats` |
 | GET | `/api/agents/{agent_id}/tools` |
 | POST | `/api/agents/{agent_id}/tuning-session` |
@@ -98,12 +103,19 @@
 | POST | `/api/builder/solutions` |
 | DELETE | `/api/builder/solutions/{solution_id}` |
 | GET | `/api/builder/solutions/{solution_id}` |
+| POST | `/api/builder/solutions/{solution_id}/apps/{app_id}/launch` |
+| GET | `/api/builder/solutions/{solution_id}/build-jobs/{job_id}` |
+| GET | `/api/builder/solutions/{solution_id}/deploy-jobs/{job_id}` |
 | POST | `/api/builder/solutions/{solution_id}/promotion-request` |
 | GET | `/api/builder/solutions/{solution_id}/revisions` |
+| GET | `/api/builder/solutions/{solution_id}/revisions/{revision_id}/diff` |
 | GET | `/api/builder/solutions/{solution_id}/revisions/{revision_id}/download` |
+| GET | `/api/builder/solutions/{solution_id}/revisions/{revision_id}/file` |
+| GET | `/api/builder/solutions/{solution_id}/revisions/{revision_id}/files` |
 | GET | `/api/builder/solutions/{solution_id}/sessions` |
 | POST | `/api/builder/solutions/{solution_id}/sessions` |
 | GET | `/api/builder/solutions/{solution_id}/turns` |
+| POST | `/api/builder/solutions/{solution_id}/turns` |
 | POST | `/api/builder/solutions/{solution_id}/undo` |
 | GET | `/api/chat/conversations` |
 | POST | `/api/chat/conversations` |
@@ -354,6 +366,7 @@
 | GET | `/api/reports/usage` |
 | GET | `/api/roles` |
 | POST | `/api/roles` |
+| GET | `/api/roles/scopes` |
 | DELETE | `/api/roles/{role_id}` |
 | GET | `/api/roles/{role_id}` |
 | PATCH | `/api/roles/{role_id}` |
@@ -426,6 +439,9 @@
 | DELETE | `/api/settings/oauth/{provider}` |
 | GET | `/api/settings/oauth/{provider}` |
 | POST | `/api/settings/oauth/{provider}/test` |
+| GET | `/api/solution-promotions` |
+| GET | `/api/solution-promotions/{solution_id}` |
+| POST | `/api/solution-promotions/{solution_id}/promote` |
 | GET | `/api/solutions` |
 | POST | `/api/solutions` |
 | GET | `/api/solutions/deploy-jobs/{job_id}` |
@@ -504,8 +520,6 @@
 | GET | `/api/workflows/{workflow_id}/roles` |
 | POST | `/api/workflows/{workflow_id}/roles` |
 | DELETE | `/api/workflows/{workflow_id}/roles/{role_id}` |
-| DELETE | `/app-session` |
-| POST | `/app-session/token` |
 | POST | `/auth/admin/revoke-user` |
 | POST | `/auth/device/authorize` |
 | POST | `/auth/device/code` |
@@ -551,5 +565,3 @@
 | GET | `/health/detailed` |
 | GET | `/health/live` |
 | GET | `/health/ready` |
-| GET | `/launch/{code}` |
-| GET | `/{solution_id}/apps/{app_id}/{path}` |

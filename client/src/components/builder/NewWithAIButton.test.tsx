@@ -1,6 +1,6 @@
 /**
  * Tests for the builder entry point — the capability gate (a 403 hides the
- * button rather than raising an error) and the create-and-navigate flow.
+ * button rather than raising an error) and navigation to the app-first home.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -18,7 +18,6 @@ vi.mock("react-router-dom", async () => {
 });
 
 const mockListBuilderSolutions = vi.fn();
-const mockCreateBuilderSolution = vi.fn();
 vi.mock("@/services/builder", async () => {
 	const actual =
 		await vi.importActual<typeof import("@/services/builder")>(
@@ -28,20 +27,22 @@ vi.mock("@/services/builder", async () => {
 		...actual,
 		listBuilderSolutions: (...args: unknown[]) =>
 			mockListBuilderSolutions(...args),
-		createBuilderSolution: (...args: unknown[]) =>
-			mockCreateBuilderSolution(...args),
 	};
 });
 
 beforeEach(() => {
 	mockNavigate.mockReset();
 	mockListBuilderSolutions.mockReset();
-	mockCreateBuilderSolution.mockReset();
 });
 
 describe("capability gating", () => {
 	it("renders the button when the caller can build", async () => {
-		mockListBuilderSolutions.mockResolvedValue([]);
+		mockListBuilderSolutions.mockResolvedValue({
+			solutions: [],
+			total: 0,
+			ai_configured: true,
+			is_platform_admin: false,
+		});
 
 		renderWithProviders(<NewWithAIButton label="New with AI" />);
 
@@ -71,69 +72,50 @@ describe("capability gating", () => {
 
 		expect(screen.queryByTestId("builder-entry-point")).not.toBeInTheDocument();
 	});
+
+	it("hides Build from ordinary users until AI is configured", async () => {
+		mockListBuilderSolutions.mockResolvedValue({
+			solutions: [],
+			total: 0,
+			ai_configured: false,
+			is_platform_admin: false,
+		});
+
+		renderWithProviders(<NewWithAIButton label="New with AI" />);
+
+		await waitFor(() => expect(mockListBuilderSolutions).toHaveBeenCalled());
+		expect(screen.queryByTestId("builder-entry-point")).not.toBeInTheDocument();
+	});
+
+	it("keeps Build visible to an admin who needs to configure AI", async () => {
+		mockListBuilderSolutions.mockResolvedValue({
+			solutions: [],
+			total: 0,
+			ai_configured: false,
+			is_platform_admin: true,
+		});
+
+		renderWithProviders(<NewWithAIButton label="New with AI" />);
+
+		expect(await screen.findByTestId("builder-entry-point")).toBeInTheDocument();
+	});
 });
 
-describe("create flow", () => {
-	beforeEach(() => {
-		mockListBuilderSolutions.mockResolvedValue([]);
-	});
-
-	it("derives a slug from the name and navigates to the new builder", async () => {
-		mockCreateBuilderSolution.mockResolvedValue({ id: "sol-9" });
-
-		const { user } = renderWithProviders(
-			<NewWithAIButton label="New with AI" />,
-		);
-
-		await user.click(await screen.findByTestId("builder-entry-point"));
-		await user.type(screen.getByLabelText(/name/i), "Expense Tracker");
-
-		expect(screen.getByText("expense-tracker")).toBeInTheDocument();
-
-		await user.click(screen.getByRole("button", { name: /^create$/i }));
-
-		await waitFor(() =>
-			expect(mockCreateBuilderSolution).toHaveBeenCalledWith({
-				slug: "expense-tracker",
-				name: "Expense Tracker",
-			}),
-		);
-		await waitFor(() =>
-			expect(mockNavigate).toHaveBeenCalledWith("/solutions/sol-9/builder"),
-		);
-	});
-
-	it("keeps Create disabled until a name yields a slug", async () => {
-		const { user } = renderWithProviders(
-			<NewWithAIButton label="New with AI" />,
-		);
-
-		await user.click(await screen.findByTestId("builder-entry-point"));
-
-		expect(screen.getByRole("button", { name: /^create$/i })).toBeDisabled();
-
-		await user.type(screen.getByLabelText(/name/i), "Notes");
-
-		expect(screen.getByRole("button", { name: /^create$/i })).toBeEnabled();
-	});
-
-	it("surfaces a create failure without navigating", async () => {
-		mockCreateBuilderSolution.mockRejectedValue(
-			new BuilderApiError(409, "Slug already in use"),
-		);
+describe("navigation", () => {
+	it("opens the shared app-first build home", async () => {
+		mockListBuilderSolutions.mockResolvedValue({
+			solutions: [],
+			total: 0,
+			ai_configured: true,
+			is_platform_admin: false,
+		});
 
 		const { user } = renderWithProviders(
 			<NewWithAIButton label="New with AI" />,
 		);
 
 		await user.click(await screen.findByTestId("builder-entry-point"));
-		await user.type(screen.getByLabelText(/name/i), "Notes");
-		await user.click(screen.getByRole("button", { name: /^create$/i }));
-
-		expect(await screen.findByRole("alert")).toHaveTextContent(
-			"Slug already in use",
-		);
-		expect(mockNavigate).not.toHaveBeenCalled();
+		expect(mockNavigate).toHaveBeenCalledWith("/build");
 	});
 });
 

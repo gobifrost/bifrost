@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from src.services.builder.staged_artifacts import (
+    BuildArtifactIntegrityError,
     BuildOutputTooLarge,
     StagedBuildArtifactStorage,
 )
@@ -88,6 +89,17 @@ async def test_write_output_raises_when_cumulative_exceeds_cap(build_job_id) -> 
     await storage.delete_job()
 
 
+async def test_write_output_rejects_unsafe_path(build_job_id) -> None:
+    storage = StagedBuildArtifactStorage(build_job_id)
+    with pytest.raises(ValueError, match="unsafe build output path"):
+        await storage.write_output(
+            uuid.uuid4(),
+            "../escape.js",
+            _achunks(b"nope"),
+            max_total_bytes=100,
+        )
+
+
 def _dist_key(app_id: uuid.UUID, rel: str) -> str:
     """Mirrors SolutionAppBuilder._dist_key — AppStorageService's AppMode
     Literal doesn't include "dist" (that prefix is only ever written by the
@@ -102,15 +114,19 @@ async def test_copy_outputs_to_app_dist_lands_and_prunes_stale(build_job_id) -> 
     storage = StagedBuildArtifactStorage(build_job_id)
     app_id = uuid.uuid4()
 
-    await storage.write_output(
+    index_sha, index_size = await storage.write_output(
         app_id, "index.html", _achunks(b"<html></html>"), max_total_bytes=10_000_000
     )
-    await storage.write_output(
+    js_sha, js_size = await storage.write_output(
         app_id, "assets/app.js", _achunks(b"console.log(1)"), max_total_bytes=10_000_000
     )
 
     count = await storage.copy_outputs_to_app_dist(
-        app_id, [{"rel_path": "index.html"}, {"rel_path": "assets/app.js"}]
+        app_id,
+        [
+            {"path": "index.html", "sha256": index_sha, "size": index_size},
+            {"path": "assets/app.js", "sha256": js_sha, "size": js_size},
+        ],
     )
     assert count == 2
 
@@ -128,18 +144,35 @@ async def test_copy_outputs_to_app_dist_lands_and_prunes_stale(build_job_id) -> 
         ) as client:
             resp = await client.list_objects_v2(Bucket=bucket, Prefix=f"_apps/{app_id}/dist/")
             prefix_len = len(f"_apps/{app_id}/dist/")
-            return {obj["Key"][prefix_len:] for obj in resp.get("Contents", [])}
+            return {
+                key[prefix_len:]
+                for obj in resp.get("Contents", [])
+                if (key := obj.get("Key")) is not None
+            }
 
     dist_files = await _list_dist()
     assert dist_files == {"index.html", "assets/app.js"}
 
     # Second copy with a pruned manifest removes the stale key.
-    count2 = await storage.copy_outputs_to_app_dist(app_id, [{"rel_path": "index.html"}])
+    # The exact-manifest invariant requires the staged set to match. A deploy
+    # using only index.html is represented by a separate build job.
+    second_storage = StagedBuildArtifactStorage(uuid.uuid4())
+    second_sha, second_size = await second_storage.write_output(
+        app_id,
+        "index.html",
+        _achunks(b"<html></html>"),
+        max_total_bytes=10_000_000,
+    )
+    count2 = await second_storage.copy_outputs_to_app_dist(
+        app_id,
+        [{"path": "index.html", "sha256": second_sha, "size": second_size}],
+    )
     assert count2 == 1
     dist_files_after = await _list_dist()
     assert dist_files_after == {"index.html"}
 
     await storage.delete_job()
+    await second_storage.delete_job()
     # cleanup the dist/ output too, since it's a shared prefix outside build_artifacts
     async with session.create_client(
         "s3",
@@ -150,6 +183,25 @@ async def test_copy_outputs_to_app_dist_lands_and_prunes_stale(build_job_id) -> 
     ) as client:
         for rel in await _list_dist():
             await client.delete_object(Bucket=bucket, Key=_dist_key(app_id, rel))
+
+
+async def test_copy_rejects_manifest_hash_mismatch(build_job_id) -> None:
+    storage = StagedBuildArtifactStorage(build_job_id)
+    app_id = uuid.uuid4()
+    _, size = await storage.write_output(
+        app_id,
+        "index.html",
+        _achunks(b"<html></html>"),
+        max_total_bytes=10_000_000,
+    )
+
+    with pytest.raises(BuildArtifactIntegrityError):
+        await storage.copy_outputs_to_app_dist(
+            app_id,
+            [{"path": "index.html", "sha256": "0" * 64, "size": size}],
+        )
+
+    await storage.delete_job()
 
 
 async def test_delete_job_empties_prefix(build_job_id) -> None:

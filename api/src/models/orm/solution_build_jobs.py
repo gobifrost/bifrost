@@ -39,9 +39,10 @@ class SolutionBuildJob(Base):
     solution_id: Mapped[UUID] = mapped_column(
         ForeignKey("solutions.id", ondelete="CASCADE"), index=True
     )
-    app_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("applications.id", ondelete="SET NULL"), default=None
-    )
+    # Deliberately not an FK: a build is requested before the deploy transaction
+    # inserts its Application row. Holding an uncommitted app FK while waiting
+    # for a separately committed worker job deadlocks the build plane.
+    app_id: Mapped[UUID | None] = mapped_column(default=None)
     source_revision_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("solution_source_revisions.id", ondelete="SET NULL"), default=None
     )
@@ -69,6 +70,12 @@ class SolutionBuildJob(Base):
         server_default=text("NOW()"),
     )
     started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    claimed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
+    last_progress_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None
     )
     completed_at: Mapped[datetime | None] = mapped_column(

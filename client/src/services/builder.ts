@@ -20,8 +20,18 @@ export interface BuilderSolution {
 	visibility: SolutionVisibility;
 	owner_user_id: string | null;
 	organization_id: string | null;
+	app_origin?: string | null;
 	status: string;
 	promotion_status: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface BuilderProject {
+	solution_id: string;
+	current_revision_id: string | null;
+	deployed_revision_id: string | null;
+	promotion_status: string;
 	created_at: string;
 	updated_at: string;
 }
@@ -47,6 +57,40 @@ export interface BuilderRevision {
 	is_deployed: boolean;
 }
 
+export interface BuilderRevisionFile {
+	path: string;
+	size_bytes: number;
+	is_text: boolean;
+}
+
+export interface BuilderRevisionFileContent {
+	revision_id: string;
+	path: string;
+	size_bytes: number;
+	encoding: "utf-8" | "binary";
+	content: string | null;
+	truncated: boolean;
+}
+
+export interface BuilderRevisionDiffFile {
+	path: string;
+	status: "added" | "modified" | "deleted";
+	additions: number;
+	deletions: number;
+	is_binary: boolean;
+	diff: string | null;
+	truncated: boolean;
+}
+
+export interface BuilderRevisionDiff {
+	revision_id: string;
+	against_revision_id: string | null;
+	files: BuilderRevisionDiffFile[];
+	total: number;
+	additions: number;
+	deletions: number;
+}
+
 export type BuilderTurnStatus = "queued" | "running" | "succeeded" | "failed";
 
 export interface BuilderTurn {
@@ -56,9 +100,18 @@ export interface BuilderTurn {
 	error: string | null;
 	base_revision_id: string | null;
 	output_revision_id: string | null;
+	build_job_id: string | null;
+	deploy_job_id: string | null;
 	created_at: string;
 	started_at: string | null;
 	completed_at: string | null;
+}
+
+export interface BuilderTurnResult {
+	turn: BuilderTurn;
+	final_text: string;
+	tool_call_count: number;
+	revision_created: boolean;
 }
 
 export interface CreateBuilderSolutionRequest {
@@ -66,9 +119,20 @@ export interface CreateBuilderSolutionRequest {
 	name: string;
 }
 
+export interface BuilderLaunch {
+	launch_url: string;
+}
+
 export interface BuilderDownload {
 	blob: Blob;
 	filename: string;
+}
+
+export interface BuilderSolutionsList {
+	solutions: BuilderSolution[];
+	total: number;
+	ai_configured: boolean;
+	is_platform_admin: boolean;
 }
 
 interface RequestOptions {
@@ -108,7 +172,7 @@ async function errorFrom(
 	fallback: string,
 ): Promise<BuilderApiError> {
 	if (response.status === 404) {
-		return new BuilderApiError(404, "Solution not found");
+		return new BuilderApiError(404, "App not found");
 	}
 	if (response.status === 403) {
 		return new BuilderApiError(
@@ -144,8 +208,8 @@ function filenameFrom(response: Response, fallback: string): string {
 
 export async function listBuilderSolutions(
 	options: RequestOptions = {},
-): Promise<BuilderSolution[]> {
-	return requestJson<BuilderSolution[]>(
+): Promise<BuilderSolutionsList> {
+	return requestJson<BuilderSolutionsList>(
 		BASE,
 		"Failed to list builder solutions",
 		{ signal: options.signal },
@@ -156,7 +220,7 @@ export async function createBuilderSolution(
 	request: CreateBuilderSolutionRequest,
 	options: RequestOptions = {},
 ): Promise<BuilderSolution> {
-	return requestJson<BuilderSolution>(BASE, "Failed to create solution", {
+	return requestJson<BuilderSolution>(BASE, "Failed to create app", {
 		method: "POST",
 		body: JSON.stringify(request),
 		signal: options.signal,
@@ -190,8 +254,8 @@ export async function deleteBuilderSolution(
 export async function requestPromotion(
 	solutionId: string,
 	options: RequestOptions = {},
-): Promise<BuilderSolution> {
-	return requestJson<BuilderSolution>(
+): Promise<BuilderProject> {
+	return requestJson<BuilderProject>(
 		`${BASE}/${solutionId}/promotion-request`,
 		"Failed to request promotion",
 		{ method: "POST", signal: options.signal },
@@ -202,11 +266,15 @@ export async function listBuilderSessions(
 	solutionId: string,
 	options: RequestOptions = {},
 ): Promise<BuilderSession[]> {
-	return requestJson<BuilderSession[]>(
+	const result = await requestJson<{
+		sessions: BuilderSession[];
+		total: number;
+	}>(
 		`${BASE}/${solutionId}/sessions`,
 		"Failed to list builder sessions",
 		{ signal: options.signal },
 	);
+	return result.sessions;
 }
 
 export async function createBuilderSession(
@@ -216,7 +284,7 @@ export async function createBuilderSession(
 	return requestJson<BuilderSession>(
 		`${BASE}/${solutionId}/sessions`,
 		"Failed to start a builder session",
-		{ method: "POST", signal: options.signal },
+		{ method: "POST", body: JSON.stringify({}), signal: options.signal },
 	);
 }
 
@@ -224,11 +292,15 @@ export async function listRevisions(
 	solutionId: string,
 	options: RequestOptions = {},
 ): Promise<BuilderRevision[]> {
-	return requestJson<BuilderRevision[]>(
+	const result = await requestJson<{
+		revisions: BuilderRevision[];
+		total: number;
+	}>(
 		`${BASE}/${solutionId}/revisions`,
 		"Failed to list revisions",
 		{ signal: options.signal },
 	);
+	return result.revisions;
 }
 
 export async function downloadRevision(
@@ -249,12 +321,61 @@ export async function downloadRevision(
 	};
 }
 
+export async function listRevisionFiles(
+	solutionId: string,
+	revisionId: string,
+	options: RequestOptions = {},
+): Promise<BuilderRevisionFile[]> {
+	const result = await requestJson<{
+		revision_id: string;
+		files: BuilderRevisionFile[];
+		total: number;
+	}>(
+		`${BASE}/${solutionId}/revisions/${revisionId}/files`,
+		"Failed to list revision files",
+		{ signal: options.signal },
+	);
+	return result.files;
+}
+
+export async function getRevisionFile(
+	solutionId: string,
+	revisionId: string,
+	path: string,
+	options: RequestOptions = {},
+): Promise<BuilderRevisionFileContent> {
+	const query = new URLSearchParams({ path });
+	return requestJson<BuilderRevisionFileContent>(
+		`${BASE}/${solutionId}/revisions/${revisionId}/file?${query.toString()}`,
+		"Failed to read revision file",
+		{ signal: options.signal },
+	);
+}
+
+export async function getRevisionDiff(
+	solutionId: string,
+	revisionId: string,
+	againstRevisionId?: string | null,
+	options: RequestOptions = {},
+): Promise<BuilderRevisionDiff> {
+	const query = new URLSearchParams();
+	if (againstRevisionId) {
+		query.set("against_revision_id", againstRevisionId);
+	}
+	const suffix = query.size > 0 ? `?${query.toString()}` : "";
+	return requestJson<BuilderRevisionDiff>(
+		`${BASE}/${solutionId}/revisions/${revisionId}/diff${suffix}`,
+		"Failed to load revision diff",
+		{ signal: options.signal },
+	);
+}
+
 export async function undoToRevision(
 	solutionId: string,
 	params: { toRevisionId: string; sessionId: string },
 	options: RequestOptions = {},
-): Promise<BuilderRevision> {
-	return requestJson<BuilderRevision>(
+): Promise<BuilderTurn> {
+	return requestJson<BuilderTurn>(
 		`${BASE}/${solutionId}/undo`,
 		"Failed to undo",
 		{
@@ -272,10 +393,47 @@ export async function listTurns(
 	solutionId: string,
 	options: RequestOptions = {},
 ): Promise<BuilderTurn[]> {
-	return requestJson<BuilderTurn[]>(
+	const result = await requestJson<{
+		turns: BuilderTurn[];
+		total: number;
+	}>(
 		`${BASE}/${solutionId}/turns`,
 		"Failed to list builder turns",
 		{ signal: options.signal },
+	);
+	return result.turns;
+}
+
+export async function runBuilderTurn(
+	solutionId: string,
+	params: { sessionId: string; message: string },
+	options: RequestOptions = {},
+): Promise<BuilderTurnResult> {
+	return requestJson<BuilderTurnResult>(
+		`${BASE}/${solutionId}/turns`,
+		"Failed to run builder turn",
+		{
+			method: "POST",
+			body: JSON.stringify({
+				session_id: params.sessionId,
+				message: params.message,
+			}),
+			signal: options.signal,
+		},
+	);
+}
+
+export async function createBuilderAppLaunch(
+	solutionId: string,
+	appId: string,
+	path: string,
+	options: RequestOptions = {},
+): Promise<BuilderLaunch> {
+	const query = new URLSearchParams({ path });
+	return requestJson<BuilderLaunch>(
+		`${BASE}/${solutionId}/apps/${appId}/launch?${query.toString()}`,
+		"Failed to launch app preview",
+		{ method: "POST", signal: options.signal },
 	);
 }
 

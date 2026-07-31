@@ -133,6 +133,59 @@ class TestConnectedBundleCompleteness:
         assert [f["id"] for f in bundle.forms] == [form_id]
         assert [a["id"] for a in bundle.agents] == [agent_id]
 
+    async def test_bundle_carries_agent_assets_and_keeps_scripts_inert(
+        self, tmp_path
+    ) -> None:
+        from src.services.solutions.git_sync import read_workspace_bundle
+
+        (tmp_path / "bifrost.solution.yaml").write_text(
+            "slug: bundled\nname: Bundled\n"
+        )
+        (tmp_path / ".bifrost").mkdir()
+        agent_id = str(uuid.uuid4())
+        (tmp_path / ".bifrost" / "agents.yaml").write_text(
+            "agents:\n"
+            f"  {agent_id}:\n"
+            f"    id: {agent_id}\n"
+            "    name: helper\n"
+            "    system_prompt: Follow the skill.\n"
+            "    bundle_path: agents/helper\n"
+        )
+        root = tmp_path / "agents" / "helper"
+        (root / "references").mkdir(parents=True)
+        (root / "scripts").mkdir()
+        (root / "assets").mkdir()
+        (root / "SKILL.md").write_text("# Helper\n")
+        (root / "references" / "guide.md").write_text("Guide")
+        (root / "scripts" / "example.py").write_text("raise SystemExit\n")
+        (root / "assets" / "pixel.bin").write_bytes(b"\x00\x01")
+
+        sol = Solution(id=uuid.uuid4(), slug="bundled", name="Bundled")
+        bundle = read_workspace_bundle(sol, tmp_path)
+
+        assert bundle.bundle_files == {
+            "agents/helper/SKILL.md": b"# Helper\n",
+            "agents/helper/assets/pixel.bin": b"\x00\x01",
+            "agents/helper/references/guide.md": b"Guide",
+            "agents/helper/scripts/example.py": b"raise SystemExit\n",
+        }
+        assert "agents/helper/scripts/example.py" not in bundle.python_files
+
+    def test_bundle_rejects_symlinked_asset_directory(self, tmp_path) -> None:
+        from bifrost.commands.solution import _collect_agent_bundle_files
+
+        bundle_root = tmp_path / "agents" / "helper"
+        bundle_root.mkdir(parents=True)
+        (bundle_root / "SKILL.md").write_text("# Helper\n")
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "secret.txt").write_text("secret")
+        (bundle_root / "references").symlink_to(outside, target_is_directory=True)
+
+        agents = [{"bundle_path": "agents/helper"}]
+        with pytest.raises(ValueError, match="contains a symlink"):
+            _collect_agent_bundle_files(tmp_path, agents)
+
 
 class TestReadWorkspaceBundleConfigSchemas:
     """read_workspace_bundle must collect config_schemas from .bifrost/configs.yaml.

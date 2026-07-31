@@ -431,10 +431,10 @@ def _v2_scaffold_files(slug: str, api_url: str) -> dict[str, str]:
         },
         "devDependencies": {
             "@vitejs/plugin-react": "^4.2.0",
-            "@tailwindcss/vite": "^4.0.0",
-            "tailwindcss": "^4.0.0",
+            "@tailwindcss/vite": "^4.3.1",
+            "tailwindcss": "^4.3.1",
             "tw-animate-css": "^1.2.0",
-            "typescript": "^5.4.0",
+            "typescript": "^5.4.5",
             "vite": "^5.2.0",
         },
     }
@@ -921,6 +921,100 @@ def _app_source_dirs(workspace: pathlib.Path) -> set[str]:
     return out
 
 
+_AGENT_BUNDLE_DIRS = frozenset({"references", "scripts", "assets"})
+_AGENT_BUNDLE_FILE_LIMIT = 1_000
+_AGENT_BUNDLE_BYTE_LIMIT = 50 * 1024 * 1024
+
+
+def _agent_bundle_roots(
+    workspace: pathlib.Path,
+    agents: list[dict] | None = None,
+) -> dict[str, pathlib.Path]:
+    """Resolve declared agent bundle roots beneath a Solution workspace.
+
+    The canonical realpath containment check mirrors the source collectors'
+    existing traversal barrier. A declared bundle is a contract, so a missing
+    root or SKILL.md fails deploy instead of silently producing an agent whose
+    runtime capability cannot read its instructions.
+    """
+
+    ws_root = os.path.realpath(workspace)
+    roots: dict[str, pathlib.Path] = {}
+    for agent in agents if agents is not None else _collect_agents(workspace):
+        raw = agent.get("bundle_path")
+        if raw is None:
+            continue
+        if not isinstance(raw, str) or not raw or "\\" in raw or "\x00" in raw:
+            raise ValueError("agent bundle_path must be a non-empty relative path")
+        pure = pathlib.PurePosixPath(raw)
+        if pure.is_absolute() or ".." in pure.parts:
+            raise ValueError(f"unsafe agent bundle_path: {raw}")
+        lexical_root = pathlib.Path(ws_root).joinpath(*pure.parts)
+        current = pathlib.Path(ws_root)
+        for part in pure.parts:
+            current /= part
+            if current.is_symlink():
+                raise ValueError(f"agent bundle_path contains a symlink: {raw}")
+        bundle_real = os.path.realpath(lexical_root)
+        if not bundle_real.startswith(ws_root + os.sep):
+            raise ValueError(f"agent bundle_path escapes the workspace: {raw}")
+        bundle_root = pathlib.Path(bundle_real)
+        if not bundle_root.is_dir():
+            raise ValueError(f"agent bundle directory not found: {raw}")
+        skill_file = bundle_root / "SKILL.md"
+        if not skill_file.is_file() or skill_file.is_symlink():
+            raise ValueError(f"agent bundle is missing SKILL.md: {raw}")
+        roots[pure.as_posix()] = bundle_root
+    return roots
+
+
+def _collect_agent_bundle_files(
+    workspace: pathlib.Path,
+    agents: list[dict] | None = None,
+) -> dict[str, bytes]:
+    """Collect portable Agent Skills files, including inert scripts/assets."""
+
+    files: dict[str, bytes] = {}
+    total_bytes = 0
+    for bundle_path, bundle_root in _agent_bundle_roots(workspace, agents).items():
+        candidates = [bundle_root / "SKILL.md"]
+        for dirname in sorted(_AGENT_BUNDLE_DIRS):
+            directory = bundle_root / dirname
+            if directory.is_symlink():
+                raise ValueError(
+                    f"agent bundle contains a symlink: {directory}"
+                )
+            if directory.is_dir():
+                for path in directory.rglob("*"):
+                    if path.is_symlink():
+                        raise ValueError(
+                            f"agent bundle contains a symlink: {path}"
+                        )
+                    if path.is_file():
+                        candidates.append(path)
+
+        root_real = os.path.realpath(bundle_root)
+        for path in candidates:
+            if path.is_symlink():
+                raise ValueError(f"agent bundle contains a symlink: {path}")
+            file_real = os.path.realpath(path)
+            if not file_real.startswith(root_real + os.sep):
+                raise ValueError(f"agent bundle file escapes its root: {path}")
+            relative = pathlib.Path(file_real).relative_to(bundle_root).as_posix()
+            content = pathlib.Path(file_real).read_bytes()
+            total_bytes += len(content)
+            if len(files) + 1 > _AGENT_BUNDLE_FILE_LIMIT:
+                raise ValueError(
+                    f"agent bundles exceed the {_AGENT_BUNDLE_FILE_LIMIT}-file limit"
+                )
+            if total_bytes > _AGENT_BUNDLE_BYTE_LIMIT:
+                raise ValueError(
+                    f"agent bundles exceed the {_AGENT_BUNDLE_BYTE_LIMIT}-byte limit"
+                )
+            files[f"{bundle_path}/{relative}"] = content
+    return files
+
+
 def _collect_python_files(workspace: pathlib.Path) -> dict[str, str]:
     """Collect installable Python source (relative path → text), layout-agnostic.
 
@@ -931,6 +1025,9 @@ def _collect_python_files(workspace: pathlib.Path) -> dict[str, str]:
     deploys with a row but no code (shakeout HIGH).
     """
     app_dirs = _app_source_dirs(workspace)
+    # Bundled scripts are portable readable assets, never executable Solution
+    # modules. Exclude the whole bundle root from Python collection.
+    bundle_dirs = set(_agent_bundle_roots(workspace))
     files: dict[str, str] = {}
     ws_root = os.path.realpath(workspace)
     for dirpath, _dirnames, filenames in os.walk(ws_root):
@@ -949,6 +1046,11 @@ def _collect_python_files(workspace: pathlib.Path) -> dict[str, str]:
                 continue
             rel_posix = pathlib.PurePath(rel).as_posix()
             if any(rel_posix == d or rel_posix.startswith(d + "/") for d in app_dirs):
+                continue
+            if any(
+                rel_posix == d or rel_posix.startswith(d + "/")
+                for d in bundle_dirs
+            ):
                 continue
             files[rel_posix] = pathlib.Path(py_real).read_text(encoding="utf-8")
     return files

@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 import pytest
 
+from shared.authorization_scopes import SOLUTION_APP_RUNTIME_SCOPES
 from src.core.security import decode_token
 from src.services.builder.app_session import (
     DEFAULT_SESSION_TTL_SECONDS,
@@ -251,6 +252,7 @@ class TestAppToken:
         assert payload["app_id"] == str(session.app_id)
         assert payload["organization_id"] == str(session.organization_id)
         assert payload["jti"]
+        assert set(payload["scopes"]) == SOLUTION_APP_RUNTIME_SCOPES
         UUID(payload["jti"])
         assert payload["exp"]
 

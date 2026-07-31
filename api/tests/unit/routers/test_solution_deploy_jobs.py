@@ -3,134 +3,158 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
-from uuid import uuid4
 
 import pytest
 
+from src.jobs.consumers.solution_deploy import SolutionDeployConsumer
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
 from src.models.orm.solutions import Solution
-from src.routers.solutions import (
-    DEPLOY_JOB_TIMEOUT,
-    _run_deploy_job,
-    expire_deploy_job_if_timed_out,
-    reconcile_orphaned_deploy_jobs,
+from src.services.solutions.deploy_jobs import (
+    create_staged_deploy_job,
+    execute_deploy_job,
+    recover_deploy_jobs,
 )
 
 
 @pytest.mark.asyncio
-async def test_reconcile_orphaned_deploy_jobs_fails_stale_non_terminal_jobs(db_session):
+async def test_recovery_requeues_expired_claim_and_keeps_terminal_jobs(db_session):
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    sol = Solution(slug="demo", name="Demo")
-    db_session.add(sol)
+    solution = Solution(slug="demo", name="Demo")
+    db_session.add(solution)
     await db_session.flush()
-
-    stale_queued = SolutionDeployJob(
-        install_id=sol.id,
-        status="queued",
-        created_at=now - timedelta(minutes=30),
-        updated_at=now - timedelta(minutes=30),
-    )
-    stale_running = SolutionDeployJob(
-        install_id=sol.id,
-        status="running",
-        created_at=now - timedelta(minutes=30),
-        updated_at=now - timedelta(minutes=30),
-    )
-    fresh_queued = SolutionDeployJob(
-        install_id=sol.id,
+    queued = SolutionDeployJob(
+        install_id=solution.id,
         status="queued",
         created_at=now,
         updated_at=now,
     )
-    succeeded = SolutionDeployJob(
-        install_id=sol.id,
-        status="succeeded",
-        created_at=now - timedelta(minutes=30),
-        updated_at=now - timedelta(minutes=30),
+    already_published = SolutionDeployJob(
+        install_id=solution.id,
+        status="queued",
+        published_at=now,
+        created_at=now,
+        updated_at=now,
     )
-    db_session.add_all([stale_queued, stale_running, fresh_queued, succeeded])
+    stale = SolutionDeployJob(
+        install_id=solution.id,
+        status="running",
+        claim_token=None,
+        lease_expires_at=now - timedelta(seconds=1),
+        created_at=now,
+        updated_at=now,
+    )
+    live = SolutionDeployJob(
+        install_id=solution.id,
+        status="running",
+        lease_expires_at=now + timedelta(minutes=1),
+        created_at=now,
+        updated_at=now,
+    )
+    succeeded = SolutionDeployJob(
+        install_id=solution.id,
+        status="succeeded",
+        created_at=now,
+        updated_at=now,
+    )
+    db_session.add_all([queued, already_published, stale, live, succeeded])
     await db_session.flush()
 
-    changed = await reconcile_orphaned_deploy_jobs(
-        db_session,
-        older_than=timedelta(minutes=10),
-        now=now,
-    )
+    recovered = await recover_deploy_jobs(db_session, now=now)
 
-    assert changed == 2
-    assert stale_queued.status == "failed"
-    assert stale_running.status == "failed"
-    assert "API restarted" in (stale_queued.error or "")
-    assert "API restarted" in (stale_running.error or "")
-    assert fresh_queued.status == "queued"
-    assert fresh_queued.error is None
+    assert set(recovered) == {queued.id, stale.id}
+    assert stale.status == "queued"
+    assert stale.lease_expires_at is None
+    assert stale.result == {"phase": "requeued after an interrupted worker"}
+    assert live.status == "running"
+    assert already_published.status == "queued"
     assert succeeded.status == "succeeded"
 
 
 @pytest.mark.asyncio
-async def test_expire_deploy_job_if_timed_out_marks_running_job_failed(db_session):
-    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    job = SolutionDeployJob(
-        install_id=None,
-        status="running",
-        result={"phase": "building app dist"},
-        created_at=now - DEPLOY_JOB_TIMEOUT - timedelta(seconds=1),
-        updated_at=now - DEPLOY_JOB_TIMEOUT - timedelta(seconds=1),
+async def test_create_job_stages_before_persisting_and_publishes_only_id(
+    db_session, tmp_path, monkeypatch
+):
+    input_path = tmp_path / "input.zip"
+    input_path.write_bytes(b"validated")
+    write_path = AsyncMock(return_value=("a" * 64, len(b"validated")))
+    publish = AsyncMock()
+    monkeypatch.setattr(
+        "src.services.solutions.deploy_jobs.SolutionDeployJobStorage.write_path",
+        write_path,
     )
-    db_session.add(job)
-    await db_session.flush()
-
-    changed = expire_deploy_job_if_timed_out(job, now=now)
-
-    assert changed is True
-    assert job.status == "failed"
-    assert job.result is None
-    assert "15-minute" in (job.error or "")
-
-
-def test_expire_deploy_job_if_timed_out_leaves_terminal_job_unchanged():
-    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    job = SolutionDeployJob(
-        install_id=None,
-        status="succeeded",
-        result={"solution_id": "abc"},
-        created_at=now - DEPLOY_JOB_TIMEOUT - timedelta(seconds=1),
-        updated_at=now,
+    monkeypatch.setattr(
+        "src.services.solutions.deploy_jobs.publish_message",
+        publish,
     )
 
-    changed = expire_deploy_job_if_timed_out(job, now=now)
+    job = await create_staged_deploy_job(
+        db_session,
+        kind="install",
+        install_id=None,
+        options={"password": "never-plaintext", "config_values": {"key": "secret"}},
+        input_path=input_path,
+    )
 
-    assert changed is False
-    assert job.status == "succeeded"
-    assert job.result == {"solution_id": "abc"}
+    write_path.assert_awaited_once_with(input_path)
+    publish.assert_awaited_once_with(
+        "solution-deploys",
+        {"job_id": str(job.id)},
+    )
+    assert job.kind == "install"
+    assert job.input_key == f"_solution_deploy_jobs/{job.id}/input.zip"
+    assert job.input_sha256 == "a" * 64
+    assert job.published_at is not None
+    assert "never-plaintext" not in (job.encrypted_options or "")
+    assert "secret" not in (job.encrypted_options or "")
 
 
 @pytest.mark.asyncio
-async def test_run_deploy_job_does_not_start_after_job_is_terminal(
-    tmp_path, monkeypatch
+async def test_terminal_job_is_not_executed_again(
+    db_session,
+    async_session_factory,
+    monkeypatch,
 ):
-    job = SolutionDeployJob(id=uuid4(), install_id=None, status="failed")
-
-    class FakeDB:
-        async def get(self, model, row_id):  # noqa: ANN001, ANN201
-            assert model is SolutionDeployJob
-            assert row_id == job.id
-            return job
+    job = SolutionDeployJob(status="succeeded", kind="deploy")
+    db_session.add(job)
+    await db_session.commit()
 
     @asynccontextmanager
-    async def fake_db_context():
-        yield FakeDB()
+    async def test_db_context():
+        async with async_session_factory() as db:
+            try:
+                yield db
+                await db.commit()
+            except Exception:
+                await db.rollback()
+                raise
 
-    from src.core import database
-    from src.services.solutions import zip_install
+    monkeypatch.setattr(
+        "src.services.solutions.deploy_jobs.get_db_context",
+        test_db_context,
+    )
+    execute = AsyncMock()
+    monkeypatch.setattr(
+        "src.services.solutions.deploy_jobs._run_claimed_job",
+        execute,
+    )
 
-    deploy = AsyncMock()
-    monkeypatch.setattr(database, "get_db_context", fake_db_context)
-    monkeypatch.setattr(zip_install, "deploy_zip_to_solution_path", deploy)
-    zip_path = tmp_path / "deploy.zip"
-    zip_path.write_bytes(b"not used")
+    await execute_deploy_job(job.id)
 
-    await _run_deploy_job(job.id, uuid4(), zip_path, force=False)
+    execute.assert_not_awaited()
 
-    deploy.assert_not_awaited()
-    assert not zip_path.exists()
+
+@pytest.mark.asyncio
+async def test_consumer_rejects_payload_with_job_parameters(monkeypatch):
+    execute = AsyncMock()
+    monkeypatch.setattr(
+        "src.jobs.consumers.solution_deploy.execute_deploy_job",
+        execute,
+    )
+    consumer = SolutionDeployConsumer()
+
+    with pytest.raises(ValueError, match="only job_id"):
+        await consumer.process_message(
+            {"job_id": "8c416226-329d-4f0b-8980-8c004cf5ed3b", "force": True}
+        )
+
+    execute.assert_not_awaited()

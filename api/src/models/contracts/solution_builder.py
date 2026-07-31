@@ -10,6 +10,7 @@ connection state, so it gets its own read shape rather than a widened one.
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -43,6 +44,7 @@ class PrivateSolutionDTO(BaseModel):
     visibility: str
     owner_user_id: UUID | None = None
     organization_id: UUID | None = None
+    app_origin: str | None = None
     status: str
     promotion_status: str
     created_at: datetime
@@ -54,6 +56,8 @@ class PrivateSolutionsList(BaseModel):
 
     solutions: list[PrivateSolutionDTO]
     total: int
+    ai_configured: bool
+    is_platform_admin: bool
 
 
 class BuilderProjectDTO(BaseModel):
@@ -65,8 +69,84 @@ class BuilderProjectDTO(BaseModel):
     current_revision_id: UUID | None = None
     deployed_revision_id: UUID | None = None
     promotion_status: str
+    promotion_revision_id: UUID | None = None
+    promotion_requested_by: UUID | None = None
+    promotion_requested_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class PromotionTargetRequest(BaseModel):
+    """Administrator approval of one pinned private-Solution revision."""
+
+    target: Literal["company", "global"]
+    approve_role_creation: bool = False
+    approved_connection_names: list[str] = Field(default_factory=list)
+    allow_global_repo_access: bool = False
+    role_user_assignments: dict[str, list[UUID]] = Field(default_factory=dict)
+
+
+class PromotionEntityCounts(BaseModel):
+    workflows: int = 0
+    tables: int = 0
+    apps: int = 0
+    forms: int = 0
+    agents: int = 0
+    claims: int = 0
+    configs: int = 0
+    files: int = 0
+    file_policies: int = 0
+    policy_rules: int = 0
+    events: int = 0
+
+
+class PromotionReviewDTO(BaseModel):
+    """Pinned source and readiness facts shown on the admin review surface."""
+
+    solution_id: UUID
+    slug: str
+    name: str
+    owner_user_id: UUID | None = None
+    organization_id: UUID | None = None
+    promotion_status: str
+    pinned_revision_id: UUID | None = None
+    source_sha256: str | None = None
+    source_size_bytes: int | None = None
+    prior_deployed_revision_id: UUID | None = None
+    changed_paths: list[str] = Field(default_factory=list)
+    requested_at: datetime | None = None
+    requested_by: UUID | None = None
+    current_revision_id: UUID | None = None
+    deployed_revision_id: UUID | None = None
+    build_job_id: UUID | None = None
+    deploy_job_id: UUID | None = None
+    build_status: str | None = None
+    deploy_status: str | None = None
+    entity_counts: PromotionEntityCounts = Field(
+        default_factory=PromotionEntityCounts
+    )
+    unresolved_roles: list[str] = Field(default_factory=list)
+    connection_names: list[str] = Field(default_factory=list)
+    config_keys_requiring_reentry_for_global: list[str] = Field(
+        default_factory=list
+    )
+    global_repo_access: bool = False
+    ready: bool = False
+    blockers: list[str] = Field(default_factory=list)
+
+
+class PromotionReviewsList(BaseModel):
+    promotions: list[PromotionReviewDTO]
+    total: int
+
+
+class PromotionResultDTO(BaseModel):
+    solution_id: UUID
+    target: Literal["company", "global"]
+    visibility: Literal["shared"]
+    organization_id: UUID | None = None
+    promoted_revision_id: UUID
+    roles_created: list[str] = Field(default_factory=list)
 
 
 class CreateSessionRequest(BaseModel):
@@ -133,6 +213,48 @@ class SourceRevisionsList(BaseModel):
     total: int
 
 
+class RevisionFileDTO(BaseModel):
+    """One regular file inside an immutable source revision."""
+
+    path: str
+    size_bytes: int
+    is_text: bool
+
+
+class RevisionFilesList(BaseModel):
+    revision_id: UUID
+    files: list[RevisionFileDTO]
+    total: int
+
+
+class RevisionFileContentDTO(BaseModel):
+    revision_id: UUID
+    path: str
+    size_bytes: int
+    encoding: Literal["utf-8", "binary"]
+    content: str | None = None
+    truncated: bool = False
+
+
+class RevisionDiffFileDTO(BaseModel):
+    path: str
+    status: Literal["added", "modified", "deleted"]
+    additions: int = 0
+    deletions: int = 0
+    is_binary: bool = False
+    diff: str | None = None
+    truncated: bool = False
+
+
+class RevisionDiffDTO(BaseModel):
+    revision_id: UUID
+    against_revision_id: UUID | None = None
+    files: list[RevisionDiffFileDTO]
+    total: int
+    additions: int = 0
+    deletions: int = 0
+
+
 class UndoRequest(BaseModel):
     """Restore an earlier revision's content as a new revision.
 
@@ -154,6 +276,8 @@ class BuilderTurnDTO(BaseModel):
     requested_by: UUID | None = None
     base_revision_id: UUID | None = None
     output_revision_id: UUID | None = None
+    build_job_id: UUID | None = None
+    deploy_job_id: UUID | None = None
     status: str
     error: str | None = None
     created_at: datetime
@@ -187,3 +311,43 @@ class RunTurnResponse(BaseModel):
     final_text: str
     tool_call_count: int
     revision_created: bool
+
+
+class BuildOutputEntry(BaseModel):
+    """One immutable dist artifact accepted from the build coordinator."""
+
+    path: str = Field(min_length=1, max_length=2048)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    size: int = Field(ge=0)
+
+
+class BuildJobStatusUpdate(BaseModel):
+    """Terminal transition reported by a one-job build capability."""
+
+    status: Literal["succeeded", "failed", "timeout", "cancelled"]
+    error: str | None = None
+    log_excerpt: str | None = None
+    output_manifest: list[BuildOutputEntry] | None = None
+
+
+class ClaimedBuildJob(BaseModel):
+    """The credential-free coordinator's bounded runner instruction."""
+
+    id: UUID
+    solution_id: UUID
+    app_id: UUID
+    timeout_s: int
+
+
+class BuildJobPublic(BaseModel):
+    """Owner-visible build status used by builder polling."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    app_id: UUID | None = None
+    status: str
+    error: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None

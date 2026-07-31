@@ -13,17 +13,22 @@ import {
 	createBuilderSession,
 	createBuilderSolution,
 	currentRevision,
+	createBuilderAppLaunch,
 	deleteBuilderSolution,
 	deployedRevision,
 	downloadRevision,
+	getRevisionDiff,
+	getRevisionFile,
 	getBuilderSolution,
 	isPreviewStale,
 	latestTurn,
 	listBuilderSessions,
 	listBuilderSolutions,
 	listRevisions,
+	listRevisionFiles,
 	listTurns,
 	requestPromotion,
+	runBuilderTurn,
 	undoToRevision,
 } from "./builder";
 
@@ -69,6 +74,8 @@ function turn(overrides: Partial<BuilderTurn> = {}): BuilderTurn {
 		error: null,
 		base_revision_id: null,
 		output_revision_id: null,
+		build_job_id: null,
+		deploy_job_id: null,
 		created_at: "2026-07-25T10:00:00Z",
 		started_at: null,
 		completed_at: null,
@@ -83,7 +90,12 @@ beforeEach(() => {
 describe("builder solutions", () => {
 	it("lists private solutions", async () => {
 		mockAuthFetch.mockResolvedValue(
-			jsonResponse([{ id: "sol-1", slug: "todo", name: "Todo" }]),
+			jsonResponse({
+				solutions: [{ id: "sol-1", slug: "todo", name: "Todo" }],
+				total: 1,
+				ai_configured: true,
+				is_platform_admin: false,
+			}),
 		);
 
 		const out = await listBuilderSolutions();
@@ -91,8 +103,9 @@ describe("builder solutions", () => {
 		expect(mockAuthFetch).toHaveBeenCalledWith("/api/builder/solutions", {
 			signal: undefined,
 		});
-		expect(out).toHaveLength(1);
-		expect(out[0].slug).toBe("todo");
+		expect(out.solutions).toHaveLength(1);
+		expect(out.solutions[0].slug).toBe("todo");
+		expect(out.ai_configured).toBe(true);
 	});
 
 	it("creates a solution with a slug and name body", async () => {
@@ -151,7 +164,10 @@ describe("builder solutions", () => {
 describe("builder sessions", () => {
 	it("lists sessions", async () => {
 		mockAuthFetch.mockResolvedValue(
-			jsonResponse([{ id: "sess-1", conversation_id: "conv-1" }]),
+			jsonResponse({
+				sessions: [{ id: "sess-1", conversation_id: "conv-1" }],
+				total: 1,
+			}),
 		);
 
 		const out = await listBuilderSessions("sol-1");
@@ -170,7 +186,7 @@ describe("builder sessions", () => {
 
 		expect(mockAuthFetch).toHaveBeenCalledWith(
 			"/api/builder/solutions/sol-1/sessions",
-			{ method: "POST", signal: undefined },
+			{ method: "POST", body: JSON.stringify({}), signal: undefined },
 		);
 		expect(out.id).toBe("sess-2");
 	});
@@ -178,7 +194,9 @@ describe("builder sessions", () => {
 
 describe("revisions and turns", () => {
 	it("lists revisions", async () => {
-		mockAuthFetch.mockResolvedValue(jsonResponse([revision()]));
+		mockAuthFetch.mockResolvedValue(
+			jsonResponse({ revisions: [revision()], total: 1 }),
+		);
 
 		const out = await listRevisions("sol-1");
 
@@ -209,6 +227,76 @@ describe("revisions and turns", () => {
 		expect(out).toEqual({ blob, filename: "todo-rev-3.zip" });
 	});
 
+	it("lists files inside a revision", async () => {
+		mockAuthFetch.mockResolvedValue(
+			jsonResponse({
+				revision_id: "rev-3",
+				files: [
+					{
+						path: "apps/demo/src/App.tsx",
+						size_bytes: 120,
+						is_text: true,
+					},
+				],
+				total: 1,
+			}),
+		);
+
+		const files = await listRevisionFiles("sol-1", "rev-3");
+
+		expect(mockAuthFetch).toHaveBeenCalledWith(
+			"/api/builder/solutions/sol-1/revisions/rev-3/files",
+			{ signal: undefined },
+		);
+		expect(files[0].path).toBe("apps/demo/src/App.tsx");
+	});
+
+	it("reads a source file with an encoded path query", async () => {
+		mockAuthFetch.mockResolvedValue(
+			jsonResponse({
+				revision_id: "rev-3",
+				path: "apps/demo/src/App.tsx",
+				size_bytes: 20,
+				encoding: "utf-8",
+				content: "export default App",
+				truncated: false,
+			}),
+		);
+
+		const content = await getRevisionFile(
+			"sol-1",
+			"rev-3",
+			"apps/demo/src/App.tsx",
+		);
+
+		expect(mockAuthFetch).toHaveBeenCalledWith(
+			"/api/builder/solutions/sol-1/revisions/rev-3/file?path=apps%2Fdemo%2Fsrc%2FApp.tsx",
+			{ signal: undefined },
+		);
+		expect(content.content).toBe("export default App");
+	});
+
+	it("loads a revision diff against its parent by default", async () => {
+		mockAuthFetch.mockResolvedValue(
+			jsonResponse({
+				revision_id: "rev-3",
+				against_revision_id: "rev-2",
+				files: [],
+				total: 0,
+				additions: 0,
+				deletions: 0,
+			}),
+		);
+
+		const diff = await getRevisionDiff("sol-1", "rev-3");
+
+		expect(mockAuthFetch).toHaveBeenCalledWith(
+			"/api/builder/solutions/sol-1/revisions/rev-3/diff",
+			{ signal: undefined },
+		);
+		expect(diff.against_revision_id).toBe("rev-2");
+	});
+
 	it("falls back to a derived filename when the header is absent", async () => {
 		mockAuthFetch.mockResolvedValue({
 			ok: true,
@@ -224,7 +312,13 @@ describe("revisions and turns", () => {
 
 	it("posts undo with snake_cased body fields", async () => {
 		mockAuthFetch.mockResolvedValue(
-			jsonResponse(revision({ id: "rev-4", restored_from_revision_id: "rev-2" })),
+			jsonResponse(
+				turn({
+					id: "turn-4",
+					base_revision_id: "rev-3",
+					output_revision_id: "rev-4",
+				}),
+			),
 		);
 
 		const out = await undoToRevision("sol-1", {
@@ -243,11 +337,13 @@ describe("revisions and turns", () => {
 				signal: undefined,
 			},
 		);
-		expect(out.restored_from_revision_id).toBe("rev-2");
+		expect(out.output_revision_id).toBe("rev-4");
 	});
 
 	it("lists turns", async () => {
-		mockAuthFetch.mockResolvedValue(jsonResponse([turn({ status: "running" })]));
+		mockAuthFetch.mockResolvedValue(
+			jsonResponse({ turns: [turn({ status: "running" })], total: 1 }),
+		);
 
 		const out = await listTurns("sol-1");
 
@@ -260,7 +356,9 @@ describe("revisions and turns", () => {
 
 	it("threads an abort signal through", async () => {
 		const controller = new AbortController();
-		mockAuthFetch.mockResolvedValue(jsonResponse([]));
+		mockAuthFetch.mockResolvedValue(
+			jsonResponse({ revisions: [], total: 0 }),
+		);
 
 		await listRevisions("sol-1", { signal: controller.signal });
 
@@ -268,6 +366,55 @@ describe("revisions and turns", () => {
 			"/api/builder/solutions/sol-1/revisions",
 			{ signal: controller.signal },
 		);
+	});
+
+	it("runs a builder turn through the specialized endpoint", async () => {
+		mockAuthFetch.mockResolvedValue(
+			jsonResponse({
+				turn: turn({ id: "turn-8" }),
+				final_text: "Added a chart",
+				tool_call_count: 2,
+				revision_created: true,
+			}),
+		);
+
+		const out = await runBuilderTurn("sol-1", {
+			sessionId: "sess-1",
+			message: "Add a chart",
+		});
+
+		expect(mockAuthFetch).toHaveBeenCalledWith(
+			"/api/builder/solutions/sol-1/turns",
+			{
+				method: "POST",
+				body: JSON.stringify({
+					session_id: "sess-1",
+					message: "Add a chart",
+				}),
+				signal: undefined,
+			},
+		);
+		expect(out.revision_created).toBe(true);
+	});
+
+	it("mints an exact app-host launch URL for the requested route", async () => {
+		mockAuthFetch.mockResolvedValue(
+			jsonResponse({
+				launch_url: "https://apps.example.test/launch/code",
+			}),
+		);
+
+		const out = await createBuilderAppLaunch(
+			"sol-1",
+			"app-1",
+			"/reports",
+		);
+
+		expect(mockAuthFetch).toHaveBeenCalledWith(
+			"/api/builder/solutions/sol-1/apps/app-1/launch?path=%2Freports",
+			{ method: "POST", signal: undefined },
+		);
+		expect(out.launch_url).toContain("/launch/code");
 	});
 });
 
@@ -290,7 +437,7 @@ describe("error mapping", () => {
 
 		expect(error).toBeInstanceOf(BuilderApiError);
 		expect(error.isNotFound).toBe(true);
-		expect(error.message).toBe("Solution not found");
+		expect(error.message).toBe("App not found");
 		expect(error.message).not.toMatch(/permission|forbidden|access/i);
 	});
 

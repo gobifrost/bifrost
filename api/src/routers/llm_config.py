@@ -68,6 +68,7 @@ async def get_llm_config(
         default_system_prompt=config.default_system_prompt,
         summarization_model=config.summarization_model,
         tuning_model=config.tuning_model,
+        builder_model=config.builder_model,
         is_configured=config.is_configured,
         api_key_set=config.api_key_set,
     )
@@ -97,6 +98,7 @@ async def set_llm_config(
             default_system_prompt=request.default_system_prompt,
             summarization_model=request.summarization_model,
             tuning_model=request.tuning_model,
+            builder_model=request.builder_model,
             updated_by=user.email,
         )
     except ValueError as e:
@@ -150,6 +152,7 @@ async def set_llm_config(
         default_system_prompt=request.default_system_prompt,
         summarization_model=request.summarization_model,
         tuning_model=request.tuning_model,
+        builder_model=request.builder_model,
         is_configured=True,
         api_key_set=api_key_set,
     )
@@ -934,5 +937,4 @@ async def _cache_model_mapping_from_result(
         await cache_model_mapping(redis_client, provider, mapping)
     except Exception as e:
         logger.warning(f"Failed to cache model mapping for {log_safe(provider)}: {log_safe(e)}")
-
 

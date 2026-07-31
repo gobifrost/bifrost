@@ -32,6 +32,7 @@ from shared.external_access import (
     resolve_external_claim,
     resolve_provider_org_claim,
 )
+from src.services.user_provisioning import get_user_scopes
 
 logger = logging.getLogger(__name__)
 
@@ -433,6 +434,7 @@ class BifrostAuthProvider:
                     "is_external": await resolve_external_claim(db, user),
                     "is_provider_org": await resolve_provider_org_claim(db, user),
                     "org_id": str(user.organization_id) if user.organization_id else None,
+                    "scopes": await get_user_scopes(db, user.id),
                     "type": "access",
                 }
                 access_token = create_access_token(data=token_data)
@@ -488,6 +490,7 @@ class BifrostAuthProvider:
                     "is_external": await resolve_external_claim(db, user),
                     "is_provider_org": await resolve_provider_org_claim(db, user),
                     "org_id": str(user.organization_id) if user.organization_id else None,
+                    "scopes": await get_user_scopes(db, user.id),
                     "type": "access",
                 }
                 access_token = create_access_token(data=token_data)

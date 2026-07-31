@@ -20,8 +20,11 @@ inside it (hence ``workflows/.gitkeep``).
 from __future__ import annotations
 
 import hashlib
+import os
+import shutil
 import zipfile
 from pathlib import Path
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 import yaml
 
@@ -36,8 +39,44 @@ _README_TEMPLATE = """# {name}
 Built with the Bifrost Solution builder.
 """
 
+BUILDER_SKILL_BUNDLE_PATH = "skills/bifrost-build"
+BUILDER_AGENT_SYSTEM_TOOLS = [
+    "list_files",
+    "read_file",
+    "search_text",
+    "write_file",
+    "apply_patch",
+    "delete_file",
+    "make_directory",
+    "validate_solution",
+]
+_BUILDER_AGENT_ID_KEY = "bifrost-private-solution-builder-agent"
 
-def build_initial_workspace(dir: Path, *, slug: str, name: str) -> None:
+
+def _builder_skill_source() -> Path:
+    configured = os.getenv("BIFROST_BUILDER_SKILL_PATH")
+    candidates = [
+        Path(configured) if configured else None,
+        Path("/app/.claude/skills/bifrost-build"),
+        Path(__file__).resolve().parents[4] / ".claude/skills/bifrost-build",
+    ]
+    for candidate in candidates:
+        if candidate is not None and (candidate / "SKILL.md").is_file():
+            return candidate
+    raise FileNotFoundError("canonical bifrost-build skill bundle is unavailable")
+
+
+def builder_agent_id(solution_id: UUID) -> UUID:
+    return uuid5(solution_id, _BUILDER_AGENT_ID_KEY)
+
+
+def build_initial_workspace(
+    dir: Path,
+    *,
+    slug: str,
+    name: str,
+    solution_id: UUID | None = None,
+) -> None:
     """Write a minimal valid Solution workspace into ``dir``.
 
     ``dir`` is created if absent. The result parses as a Solution workspace and
@@ -48,11 +87,43 @@ def build_initial_workspace(dir: Path, *, slug: str, name: str) -> None:
     descriptor = yaml.safe_dump({"slug": slug, "name": name}, sort_keys=False, allow_unicode=True)
     (dir / DESCRIPTOR_FILENAME).write_text(descriptor, encoding="utf-8")
 
+    skill_source = _builder_skill_source()
+    agent_id = builder_agent_id(
+        solution_id or uuid5(NAMESPACE_URL, f"bifrost-builder:{slug}")
+    )
+
     workflows = dir / "workflows"
     workflows.mkdir(exist_ok=True)
     (workflows / ".gitkeep").write_text("", encoding="utf-8")
 
     (dir / "README.md").write_text(_README_TEMPLATE.format(name=name), encoding="utf-8")
+    shutil.copytree(
+        skill_source,
+        dir / BUILDER_SKILL_BUNDLE_PATH,
+        symlinks=False,
+    )
+    manifest_dir = dir / ".bifrost"
+    manifest_dir.mkdir(exist_ok=True)
+    agents = {
+        "agents": {
+            str(agent_id): {
+                "id": str(agent_id),
+                "name": f"{name} Builder",
+                "description": "Private Solution authoring agent",
+                "system_prompt": (skill_source / "SKILL.md").read_text(
+                    encoding="utf-8"
+                ),
+                "bundle_path": BUILDER_SKILL_BUNDLE_PATH,
+                "channels": ["chat"],
+                "system_tools": BUILDER_AGENT_SYSTEM_TOOLS,
+                "access_level": "role_based",
+            }
+        }
+    }
+    (manifest_dir / "agents.yaml").write_text(
+        yaml.safe_dump(agents, sort_keys=False, allow_unicode=True),
+        encoding="utf-8",
+    )
 
 
 def validate_workspace(dir: Path) -> list[str]:

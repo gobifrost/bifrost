@@ -15,7 +15,7 @@ from __future__ import annotations
 from enum import Enum
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, or_
+from sqlalchemy import ColumnElement, exists, or_, select
 
 from src.models.orm.solutions import Solution
 
@@ -81,3 +81,55 @@ def visible_solutions_criterion(
         Solution.visibility == VISIBILITY_SHARED,
         Solution.owner_user_id == actor_user_id,
     )
+
+
+def visible_solution_child_criterion(
+    *,
+    child_solution_id,
+    actor_user_id: UUID | None,
+    is_external: bool,
+) -> ColumnElement[bool]:
+    """SQL predicate for an entity optionally owned by a Solution.
+
+    Loose entities remain visible to their existing repository policy. A
+    Solution-owned entity is visible only when its parent is visible to this
+    actor. Keeping this predicate beside :func:`can_access_solution` prevents
+    repository-specific interpretations of the private-parent invariant.
+    """
+    return or_(
+        child_solution_id.is_(None),
+        exists(
+            select(Solution.id).where(
+                Solution.id == child_solution_id,
+                visible_solutions_criterion(
+                    actor_user_id=actor_user_id,
+                    is_external=is_external,
+                ),
+            )
+        ),
+    )
+
+
+async def is_private_solution_owner(
+    db,
+    *,
+    solution_id: UUID | None,
+    actor_user_id: UUID | None,
+    is_external: bool,
+) -> bool:
+    """Whether this actor owns this exact, still-private Solution.
+
+    This is the server-derived policy-bypass fact used by table/file runtime
+    checks. It is recomputed from the parent row so promotion stops the bypass
+    immediately and callers cannot assert it in a token or request body.
+    """
+    if solution_id is None or actor_user_id is None or is_external:
+        return False
+    result = await db.execute(
+        select(Solution.id).where(
+            Solution.id == solution_id,
+            Solution.visibility == VISIBILITY_PRIVATE,
+            Solution.owner_user_id == actor_user_id,
+        )
+    )
+    return result.scalar_one_or_none() is not None

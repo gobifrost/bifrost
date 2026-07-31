@@ -1,0 +1,75 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bifrost-app-host
+  namespace: bifrost
+  labels:
+    app.kubernetes.io/name: bifrost-app-host
+    app.kubernetes.io/component: app-host
+    app.kubernetes.io/part-of: bifrost
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bifrost-app-host
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bifrost-app-host
+        app.kubernetes.io/component: app-host
+        app.kubernetes.io/part-of: bifrost
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: app-host
+          image: ghcr.io/gobifrost/bifrost-api:latest
+          command:
+            - uvicorn
+            - src.app_host:app
+            - --host
+            - 0.0.0.0
+            - --port
+            - "8100"
+          ports:
+            - name: http
+              containerPort: 8100
+          envFrom:
+            - configMapRef:
+                name: bifrost-config
+            - secretRef:
+                name: bifrost-secrets
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "256Mi"
+            limits:
+              cpu: "1000m"
+              memory: "1Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          readinessProbe:
+            httpGet:
+              path: /health/ready
+              port: 8100
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8100
+            periodSeconds: 10
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000

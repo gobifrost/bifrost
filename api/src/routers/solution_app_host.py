@@ -40,6 +40,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config import Settings, get_settings
 from src.core.database import get_db
 from src.models.orm.applications import Application
+from src.models.orm.solutions import Solution
 from src.models.orm.users import User
 from src.routers.solution_builder import BuilderContext
 from src.services.builder.app_session import (
@@ -48,7 +49,10 @@ from src.services.builder.app_session import (
     mint_app_token,
 )
 from src.services.builder.private_solutions import load_accessible_private_solution
-from src.services.solutions.access import SolutionAction
+from src.services.solutions.access import (
+    VISIBILITY_PRIVATE,
+    SolutionAction,
+)
 from src.services.solutions.app_build import SolutionAppBuilder
 
 router = APIRouter(prefix="", tags=["solution-app-host"])
@@ -66,6 +70,58 @@ INDEX_FILE = "index.html"
 # stale asset graph.
 _IMMUTABLE_CACHE = "public, max-age=31536000, immutable"
 _NO_STORE = "no-store"
+_BOOTSTRAP_PATH = "/_bifrost/bootstrap.js"
+
+_BOOTSTRAP_JS = r"""
+const entryScript = [...document.querySelectorAll('script[type="module"][src]')]
+  .find((node) => !node.src.endsWith('/_bifrost/bootstrap.js'));
+if (!entryScript) throw new Error("Missing generated app module entry");
+
+const tokenResponse = await fetch("/app-session/token", {
+  method: "POST",
+  credentials: "same-origin",
+  headers: { "Accept": "application/json" },
+});
+if (!tokenResponse.ok) throw new Error("App session has expired");
+const bootstrap = await tokenResponse.json();
+
+const entryUrl = new URL(entryScript.src, window.location.href).href;
+const module = await import(entryUrl);
+if (!module?.mount) throw new Error("Generated app does not export mount()");
+
+const reportNavigation = () => window.parent.postMessage({
+  type: "bifrost:app-navigation",
+  path: window.location.pathname.slice(bootstrap.basename.length) || "/",
+  search: window.location.search,
+  hash: window.location.hash,
+}, bootstrap.control_origin);
+for (const method of ["pushState", "replaceState"]) {
+  const original = history[method].bind(history);
+  history[method] = (...args) => {
+    const result = original(...args);
+    reportNavigation();
+    return result;
+  };
+}
+window.addEventListener("popstate", reportNavigation);
+window.addEventListener("hashchange", reportNavigation);
+
+const mountEl = document.getElementById("root");
+if (!mountEl) throw new Error("Missing #root mount element");
+module.mount(mountEl, {
+  basename: bootstrap.basename,
+  baseUrl: `${window.location.origin}/_bifrost`,
+  token: bootstrap.access_token,
+  orgScope: bootstrap.organization_id,
+  appId: bootstrap.app_id,
+  onLogout: async () => {
+    await fetch("/app-session", { method: "DELETE", credentials: "same-origin" });
+    window.location.reload();
+  },
+  theme: window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
+});
+reportNavigation();
+""".strip()
 
 
 def get_launch_service(
@@ -101,6 +157,30 @@ async def require_app_session(
 CurrentAppSession = Annotated[AppSession, Depends(require_app_session)]
 
 
+async def _validate_session_binding(
+    db: AsyncSession,
+    session: AppSession,
+) -> str | None:
+    """Return the owner's current email only while this launch remains valid."""
+    return (
+        await db.execute(
+            select(User.email)
+            .select_from(Solution)
+            .join(Application, Application.solution_id == Solution.id)
+            .join(User, User.id == session.user_id)
+            .where(
+                Solution.id == session.solution_id,
+                Solution.visibility == VISIBILITY_PRIVATE,
+                Solution.status == "active",
+                Solution.owner_user_id == session.user_id,
+                Solution.organization_id == session.organization_id,
+                Application.id == session.app_id,
+                Application.organization_id == session.organization_id,
+            )
+        )
+    ).scalar_one_or_none()
+
+
 def _csp(settings: Settings) -> str:
     """Restrictive CSP for generated apps.
 
@@ -113,6 +193,9 @@ def _csp(settings: Settings) -> str:
         "default-src 'self'; "
         "script-src 'self'; "
         "connect-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "font-src 'self' data:; "
         "object-src 'none'; "
         "base-uri 'none'; "
         f"frame-ancestors {settings.public_url}"
@@ -147,22 +230,31 @@ async def redeem_launch(
 
 @router.post("/app-session/token", summary="Mint a short-lived Solution app token")
 async def mint_session_token(
-    session: CurrentAppSession, launches: LaunchService, db: Db
+    session: CurrentAppSession,
+    launches: LaunchService,
+    db: Db,
+    settings: SettingsDep,
 ) -> dict[str, str]:
+    email = await _validate_session_binding(db, session)
+    if email is None:
+        await launches.revoke_session(session.session_id)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="The app launch is no longer authorized",
+        )
     if not await launches.renew_session(session.session_id):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="App-host session has expired",
         )
-    email = (
-        await db.execute(select(User.email).where(User.id == session.user_id))
-    ).scalar_one_or_none()
-    if email is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="The launching user no longer exists",
-        )
-    return {"access_token": mint_app_token(session, user_email=email), "token_type": "bearer"}
+    return {
+        "access_token": mint_app_token(session, user_email=email),
+        "token_type": "bearer",
+        "app_id": str(session.app_id),
+        "organization_id": str(session.organization_id),
+        "basename": f"/{session.solution_id}/apps/{session.app_id}",
+        "control_origin": settings.public_url.rstrip("/"),
+    }
 
 
 @router.delete(
@@ -177,6 +269,18 @@ async def revoke_session(
     response.delete_cookie(SESSION_COOKIE, path="/")
 
 
+@router.get(_BOOTSTRAP_PATH, summary="Serve the fixed app-host bootstrap")
+async def serve_bootstrap() -> Response:
+    return Response(
+        content=_BOOTSTRAP_JS,
+        media_type="text/javascript",
+        headers={
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": _NO_STORE,
+        },
+    )
+
+
 @router.get(
     "/{solution_id}/apps/{app_id}/{path:path}",
     summary="Serve a built Solution app artifact",
@@ -187,11 +291,14 @@ async def serve_app_artifact(
     path: str,
     session: CurrentAppSession,
     settings: SettingsDep,
+    db: Db,
 ) -> Response:
     # A session is bound to exactly one launch. 404, not 403: a Solution the
     # session is not bound to must be indistinguishable from one that does not
     # exist.
     if session.solution_id != solution_id or session.app_id != app_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    if await _validate_session_binding(db, session) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
     builder = SolutionAppBuilder(settings)
@@ -220,6 +327,20 @@ async def serve_app_artifact(
             ) from None
 
     is_index = rel == INDEX_FILE
+    if is_index:
+        try:
+            html = body.decode("utf-8")
+        except UnicodeDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Built app index is not UTF-8",
+            ) from None
+        bootstrap_tag = f'<script type="module" src="{_BOOTSTRAP_PATH}"></script>'
+        if "</body>" in html:
+            html = html.replace("</body>", f"{bootstrap_tag}</body>", 1)
+        else:
+            html = f"{html}{bootstrap_tag}"
+        body = html.encode("utf-8")
     media_type = mimetypes.guess_type(rel)[0] or "application/octet-stream"
     headers = {
         "X-Content-Type-Options": "nosniff",

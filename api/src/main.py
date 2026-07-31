@@ -73,7 +73,8 @@ from src.routers import (
     claims_router,
     solutions_router,
     solution_builder_router,
-    solution_app_host_router,
+    solution_promotions_router,
+    internal_builder_router,
     solution_app_launch_router,
     knowledge_sources_router,
     app_embed_secrets_router,
@@ -147,20 +148,6 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await create_default_user()
 
     from src.core.database import get_session_factory
-    from src.routers.solutions import reconcile_orphaned_deploy_jobs
-
-    try:
-        session_factory = get_session_factory()
-        async with session_factory() as db:
-            count = await reconcile_orphaned_deploy_jobs(db)
-            if count:
-                await db.commit()
-                logger.warning(
-                    "Marked %d orphaned solution deploy job(s) as failed after API startup",
-                    count,
-                )
-    except Exception as e:
-        logger.warning(f"Solution deploy job reconciliation failed: {e}")
 
     # Seed built-in policy rules (idempotent; must exist before any file prefix
     # with {"$ref": "admin_bypass"} is created).
@@ -604,6 +591,8 @@ def create_app() -> FastAPI:
     app.include_router(claims_router)
     app.include_router(solutions_router)
     app.include_router(solution_builder_router)
+    app.include_router(solution_promotions_router)
+    app.include_router(internal_builder_router)
     # Control-plane half of the app host: mints launch URLs under the builder
     # prefix using normal user auth. The app-origin half registers last.
     app.include_router(solution_app_launch_router)
@@ -626,11 +615,6 @@ def create_app() -> FastAPI:
     app.include_router(mcp_oauth_callback_router)
     app.include_router(sdk_modules_router)
     app.include_router(policy_rules_router)
-    # LAST on purpose: the app host serves generated apps from the configured
-    # app origin under catch-all paths (/{solution_id}/apps/{app_id}/{path}).
-    # Registered earlier it would shadow control-plane routes.
-    app.include_router(solution_app_host_router)
-
     # Mount MCP OAuth routes at root level (required by RFC 8414/9728)
     # These must be registered BEFORE the FastMCP ASGI mount
     try:

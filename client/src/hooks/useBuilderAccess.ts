@@ -19,6 +19,10 @@ export const builderSolutionsQueryKey = ["builder", "solutions"] as const;
 export interface BuilderAccess {
 	/** Whether builder entry points should render at all. */
 	canBuild: boolean;
+	/** The caller holds the capability, regardless of AI readiness. */
+	hasPermission: boolean;
+	/** Whether a usable platform AI provider is configured. */
+	aiConfigured: boolean;
 	/** True while the capability is still being probed — render nothing yet. */
 	isLoading: boolean;
 	/** The caller's private Solutions, empty when access is denied. */
@@ -36,9 +40,14 @@ export function useBuilderAccess(): BuilderAccess {
 		},
 	});
 
+	const hasPermission = !isLoading && !error;
+	const aiConfigured = data?.ai_configured ?? false;
 	return {
-		canBuild: !isLoading && !error,
+		canBuild:
+			hasPermission && (aiConfigured || (data?.is_platform_admin ?? false)),
+		hasPermission,
+		aiConfigured,
 		isLoading,
-		solutions: data ?? [],
+		solutions: data?.solutions ?? [],
 	};
 }

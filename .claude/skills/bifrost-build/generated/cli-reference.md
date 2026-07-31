@@ -41,6 +41,7 @@ Options:
   --name TEXT                     name  [required]
   --description TEXT              description
   --system-prompt TEXT            system_prompt  [required]
+  --bundle-path TEXT              bundle_path
   --channels TEXT                 channels (repeat for multiple).
   --access-level [authenticated|everyone|role_based|private]
                                   access_level
@@ -125,6 +126,7 @@ Options:
   --name TEXT                     name
   --description TEXT              description
   --system-prompt TEXT            system_prompt
+  --bundle-path TEXT              bundle_path
   --channels TEXT                 channels (repeat for multiple).
   --access-level [authenticated|everyone|role_based|private]
                                   access_level
@@ -1664,6 +1666,7 @@ Options:
   --description TEXT  description
   --permissions TEXT  permissions as JSON literal or @path to a YAML/JSON
                       file.
+  --scopes TEXT       scopes (repeat for multiple).
   --json              Emit JSON instead of human-readable output.
   --help              Show this message and exit.
 ```
@@ -1721,6 +1724,7 @@ Options:
   --description TEXT  description
   --permissions TEXT  permissions as JSON literal or @path to a YAML/JSON
                       file.
+  --scopes TEXT       scopes (repeat for multiple).
   --json              Emit JSON instead of human-readable output.
   --help              Show this message and exit.
 ```

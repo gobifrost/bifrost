@@ -3,10 +3,18 @@ Agent and Chat contract models for Bifrost.
 """
 
 from datetime import datetime
+from pathlib import PurePosixPath
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from src.models.contracts.refs import WorkflowRef
 from src.models.enums import AgentAccessLevel, AgentChannel, MessageRole
@@ -51,11 +59,34 @@ class ToolResult(BaseModel):
 # ==================== AGENT MODELS ====================
 
 
+def validate_agent_bundle_path(value: str | None) -> str | None:
+    """Validate the portable, workspace-relative Agent Skills root."""
+    if value is None:
+        return None
+    if not value or len(value) > 1024 or "\x00" in value or "\\" in value:
+        raise ValueError("bundle_path must be a relative POSIX path")
+    pure = PurePosixPath(value)
+    if (
+        pure.is_absolute()
+        or not pure.parts
+        or ".." in pure.parts
+        or pure.as_posix() != value
+    ):
+        raise ValueError("bundle_path must be a canonical relative POSIX path")
+    return value
+
+
 class AgentCreate(BaseModel):
     """Request model for creating an agent."""
     name: str = Field(..., min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
     system_prompt: str = Field(..., min_length=1, max_length=50000)
+    bundle_path: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=1024,
+        description="Relative path to the agent's portable skill-bundle root.",
+    )
     channels: list[AgentChannel] = Field(default_factory=lambda: [AgentChannel.CHAT])
     access_level: AgentAccessLevel = Field(default=AgentAccessLevel.ROLE_BASED)
     organization_id: UUID | None = Field(
@@ -79,12 +110,25 @@ class AgentCreate(BaseModel):
     max_iterations: int | None = Field(default=None, ge=1, le=200, description="Max LLM iterations for autonomous runs")
     max_token_budget: int | None = Field(default=None, ge=1000, le=1000000, description="Max token budget for autonomous runs")
 
+    _validate_bundle_path = field_validator("bundle_path")(
+        validate_agent_bundle_path
+    )
+
 
 class AgentUpdate(BaseModel):
     """Request model for updating an agent."""
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
     system_prompt: str | None = Field(default=None, min_length=1, max_length=50000)
+    bundle_path: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=1024,
+        description=(
+            "Relative path to the agent's portable skill-bundle root. "
+            "Explicit null clears the bundle."
+        ),
+    )
     channels: list[AgentChannel] | None = None
     access_level: AgentAccessLevel | None = None
     organization_id: UUID | None = Field(
@@ -109,6 +153,10 @@ class AgentUpdate(BaseModel):
     llm_max_tokens: int | None = Field(default=None, ge=1, le=200000, description="Override max tokens")
     max_iterations: int | None = Field(default=None, ge=1, le=200, description="Max LLM iterations for autonomous runs")
     max_token_budget: int | None = Field(default=None, ge=1000, le=1000000, description="Max token budget for autonomous runs")
+
+    _validate_bundle_path = field_validator("bundle_path")(
+        validate_agent_bundle_path
+    )
 
 
 class AgentPromoteRequest(BaseModel):
@@ -146,6 +194,7 @@ class AgentPublic(BaseModel):
     name: str
     description: str | None = None
     system_prompt: str
+    bundle_path: str | None = None
     channels: list[str]
     access_level: AgentAccessLevel | None = None
     organization_id: UUID | None = None
@@ -188,6 +237,27 @@ class AgentPublic(BaseModel):
     def serialize_dt(self, dt: datetime | None) -> str | None:
         return dt.isoformat() if dt else None
 
+
+class AgentSkillPublic(BaseModel):
+    """Portable skill projection and companion-file inventory for one Agent."""
+
+    name: str
+    description: str
+    bundle_path: str | None = None
+    skill_markdown: str
+    files: list[str] = Field(default_factory=list)
+    companion_files: list[str] = Field(default_factory=list)
+    automatic_capabilities: list[str] = Field(default_factory=list)
+    source: Literal["inline", "upload", "solution"]
+    is_managed: bool = False
+
+
+class AgentSkillFilePublic(BaseModel):
+    """One browser-readable file from an Agent Skill bundle."""
+
+    path: str
+    encoding: Literal["utf-8", "base64"]
+    content: str
 
 class AgentSummary(BaseModel):
     """Lightweight agent summary for listings."""

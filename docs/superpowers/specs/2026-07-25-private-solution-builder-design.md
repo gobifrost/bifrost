@@ -291,55 +291,117 @@ slug collision check and requires a rename if necessary.
 
 ## Builder permission
 
-### Current release
+### Canonical scope model
 
-Use the stable capability key:
+Builder authorization is the first production use of the role-scope model, not
+a temporary permission system. Roles are bundles of validated scope keys,
+effective scopes are placed in the user's access token, and principals expose
+one authorization API:
+
+```text
+principal.has_scope(scope)
+```
+
+Scope keys follow the Graph-inspired Bifrost grammar:
+
+```text
+<resource>[.<subresource>].<action>[.all]
+```
+
+- keys are lowercase and dot-delimited;
+- entity resources use the same stable plural noun throughout the catalog;
+- a subresource is used only when the parent exposes meaningfully different
+  authorization surfaces, such as table schema versus table documents;
+- the action is a specific verb such as `read`, `write`, `execute`, `build`,
+  or `publish`;
+- the base scope performs the action only where the ordinary resource audience
+  and data policy also admit the actor;
+- `.all` may bypass an individual resource's audience only inside an already
+  authorized effective organization;
+- `.all` never means every organization;
+- organization reach remains a separate context grant;
+- resource ownership, Solution/app binding, and table/file policies are not
+  encoded into scope names.
+
+`platform.superuser` is the documented compatibility wildcard and
+`organization.impersonation` is the documented effective-organization grant.
+They are reserved system scopes rather than examples for naming ordinary
+route actions. New action scopes must follow the grammar above and be registered
+in the code-owned catalog before a role, token, or route may reference them.
+
+The Builder uses the stable action scope:
 
 ```text
 solutions.build
 ```
 
-For the current role model, a centralized
-`BuilderAuthorizationService.can_build(user)` reads the existing
-`Role.permissions` JSON across the user's assigned roles. Platform admins
-bypass it. External users are denied even if accidentally assigned such a
-role.
+This name is consistent with the convention: `solutions` is the protected
+resource family and `build` is the action. It means:
 
-Do not scatter `role.permissions.get("solutions.build")` throughout routers.
+> May create and modify builder projects and private Solution source within the
+> project/resource boundary that separately admits the current user.
 
-Role create and update are superuser-only today: every route in
-`api/src/routers/roles.py` uses `CurrentSuperuser`. The platform administrator
-is therefore the grant authority for `solutions.build`. If role management is
-ever delegated below platform admin, privileged permission keys, including
-`solutions.build`, must move behind a privileged-key guard so delegated role
-editors cannot grant them.
+It does not grant organization reach, another user's project, publication,
+role management, integration grants, platform settings, or global `_repo`
+access.
 
-### Future role scopes
+### Role and token control in this release
 
-When the role-scope foundation lands, add the same key to the validated scope
-catalog and change only the centralized authorization service to call:
+- Add `solutions.build` to the code-owned authorization scope catalog as a
+  privileged, custom-role-assignable action scope.
+- Store it in first-class `Role.scopes`; do not store or mirror it in the
+  legacy free-form `Role.permissions` JSON.
+- Resolve a user's effective scopes as the union of their assigned roles.
+- Mint the validated effective scope set into every human access token through
+  the shared authentication service.
+- Gate every Builder entry point through:
 
 ```text
 principal.has_scope("solutions.build")
 ```
 
-The meaning remains:
+- Keep the project/Solution access service as the independent resource gate.
+  A valid action scope is necessary but never sufficient to access a specific
+  project.
+- Platform administrators satisfy the check through the catalog's reserved
+  `platform.superuser` wildcard during the RBAC migration.
+- External users remain denied by the Builder persona gate even if a role is
+  misconfigured with `solutions.build`.
+- Role create/update remains platform-administrator-only until dedicated role
+  management scopes land.
 
-> May create and modify private Solutions owned by the current user.
+An assignment change is reflected when a token is minted or refreshed in the
+initial foundation. The role-scope program's token-version and revocation
+release later makes privileged scope removal immediate without changing
+Builder routes or scope names.
 
-It does not grant:
+### Route control after the broader RBAC migration
 
-- organization impersonation;
-- editing another user's Solution;
-- promotion;
-- role membership management;
-- integration grants;
-- platform settings;
-- global `_repo` access.
+The same catalog and `has_scope` dependency expands route family by route
+family. Each non-public route must ultimately declare exactly one
+authorization classification: ordinary authenticated compatibility, a
+cataloged human action scope, or an explicitly named non-human actor contract.
+A coverage test fails when a new protected route has no classification.
 
-Future resource-scoped roles may narrow this capability further without
-changing builder routes because those routes already pass `solution_id`,
-owner, and action into the authorization service.
+Migration uses shadow comparison before enforcement. Existing
+`is_superuser`, provider-membership, role-name, and ad-hoc permission decisions
+remain authoritative for an endpoint family until its parity matrix passes.
+After cutover, the scope decision becomes authoritative and the legacy branch
+is removed. The end state is:
+
+```text
+allowed =
+  valid token/session
+  AND principal.has_scope(required_action)
+  AND may_target(effective_organization)
+  AND resource_access_policy(resource, principal)
+  AND data_policy(operation, row_or_path, principal)
+```
+
+Human, app, embed, and execution credentials use the same scope catalog.
+Non-human credentials contain only an attenuated subset plus immutable
+resource bindings; `actor_type` selects the credential contract but does not
+itself grant API permissions.
 
 ## Roles and sharing
 
@@ -355,9 +417,10 @@ For the POC:
 - admins invite users and manage membership;
 - the builder user cannot self-grant `roles.manage` through generated source.
 
-Later, a dedicated `roles.manage.solution` scope could let approved Solution
-owners manage runtime membership only for that Solution. It is intentionally
-not implied by `solutions.build`.
+Later, `roles.manage` carried in a Solution-bound credential could let approved
+Solution owners manage runtime membership only for that bound Solution. The
+resource binding supplies the narrowness; it is not encoded as an ad-hoc suffix
+in the action-scope key. It is intentionally not implied by `solutions.build`.
 
 ### Private deploy cannot mutate shared control-plane resources
 
@@ -895,9 +958,31 @@ actor_user_id
 solution_id
 app_id
 organization_id
+scopes
 jti
 exp
 ```
+
+`scopes` is a validated, attenuated subset of the same code-owned catalog used
+by human roles. It contains only the runtime actions approved for this app
+launch; it never contains Builder or publication authority such as
+`solutions.build` or `solutions.publish`. The initial runtime surface includes
+only:
+
+```text
+tables.documents.read
+tables.documents.write
+files.content.read
+files.content.write
+workflows.execute
+executions.read
+```
+
+`executions.read` remains constrained to executions created by the token's
+JTI/session, and every other scope remains constrained to the bound Solution
+and app. Adding an SDK endpoint does not add authority automatically: its scope
+must exist in the catalog, be included in the app grant, and be required by the
+app-runtime route.
 
 The token is renewable through the app-host session while the user's launch
 authorization remains valid. A 10-15 minute access-token lifetime limits theft;
@@ -917,6 +1002,7 @@ as routes evolve and must not be replicated.
 A `solution_app` token:
 
 - may load only its bound app and artifacts;
+- must hold the cataloged action scope required by each runtime route;
 - may access only declared tables/files/configs in its bound Solution;
 - may execute only workflows owned by its bound Solution;
 - may read only executions created by its JTI/session;
@@ -1323,13 +1409,20 @@ practice.
 
 ### 0. Authorization baseline
 
-- Land `solutions.build` now as a `Role.permissions` key behind the centralized
-  authorization service.
-- Migrating that key into the #473 scope catalog is a later, independent change
-  touching only the centralized authorization service.
-- Builder work does not block on or sequence against the #473 branch (currently
-  uncommitted local work on a stale base). No work package depends on that
-  program's execution grants.
+- Rebase and land the additive #473 role/scope foundation in this worktree:
+  code-owned catalog, first-class `Role.scopes`, effective-scope resolution,
+  token claims, `principal.has_scope`, built-in Platform Admin compatibility,
+  role API/UI, migrations, and tests.
+- Register `solutions.build` in that catalog and grant it through roles.
+- Remove the Builder's transitional `Role.permissions` lookup; Builder routes
+  authorize from the principal's effective scopes.
+- Add the canonical naming grammar and route-classification contract above to
+  catalog validation and tests.
+- Keep broader route enforcement and execution-token cutover independently
+  staged; the Builder consumes the foundation without making unfinished RBAC
+  phases a hidden prerequisite for unrelated routes.
+- Make `solution_app` the first attenuated non-human consumer of the shared
+  scope catalog rather than a permanent actor-type-only allowlist.
 - Create the implementation issue/PR breakdown after review.
 
 ### 1. Private Solution foundation

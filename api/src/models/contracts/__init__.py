@@ -27,6 +27,7 @@ from src.models.contracts.users import (
     AssignKnowledgeToRoleRequest,
     AssignUsersToRoleRequest,
     AssignWorkflowsToRoleRequest,
+    AuthorizationScopePublic,
     CreateRoleRequest,
     CreateUserRequest,
     GrantPermissionsRequest,
@@ -617,6 +618,7 @@ __all__ = [
     "RoleCreate",
     "RoleUpdate",
     "RolePublic",
+    "AuthorizationScopePublic",
     # User/Role assignments
     "UserPermission",
     "PermissionsData",

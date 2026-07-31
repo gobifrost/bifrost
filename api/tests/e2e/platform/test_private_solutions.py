@@ -11,8 +11,11 @@ import hashlib
 import io
 import uuid
 import zipfile
+from datetime import datetime, timezone
 
 import pytest
+
+from tests.e2e.fixtures.setup import _login_user
 
 BUILDER_URL = "/api/builder/solutions"
 
@@ -38,7 +41,7 @@ def builder_role(e2e_client, platform_admin):
         json={
             "name": f"E2E Builder {uuid.uuid4().hex[:8]}",
             "description": "private solution builder e2e",
-            "permissions": {"solutions.build": True},
+            "scopes": ["solutions.build"],
         },
     )
     assert resp.status_code == 201, resp.text
@@ -56,11 +59,13 @@ def builder_alice(e2e_client, platform_admin, builder_role, alice_user):
         json={"user_ids": [str(alice_user.user_id)]},
     )
     assert resp.status_code == 204, resp.text
+    _login_user(e2e_client, alice_user)
     yield alice_user
     e2e_client.delete(
         f"/api/roles/{builder_role['id']}/users/{alice_user.user_id}",
         headers=platform_admin.headers,
     )
+    _login_user(e2e_client, alice_user)
 
 
 @pytest.fixture
@@ -111,6 +116,7 @@ class TestPrivateInvisibility:
 
         listing = e2e_client.get(BUILDER_URL, headers=builder_alice.headers)
         assert listing.status_code == 200, listing.text
+        assert listing.json()["is_platform_admin"] is False
         assert alice_solution["id"] in {s["id"] for s in listing.json()["solutions"]}
 
     def test_another_builder_gets_404_and_empty_list(
@@ -123,6 +129,7 @@ class TestPrivateInvisibility:
             json={"user_ids": [str(bob_user.user_id)]},
         )
         assert grant.status_code == 204, grant.text
+        _login_user(e2e_client, bob_user)
         try:
             detail = e2e_client.get(
                 f"{BUILDER_URL}/{alice_solution['id']}", headers=bob_user.headers
@@ -144,6 +151,7 @@ class TestPrivateInvisibility:
                 f"/api/roles/{builder_role['id']}/users/{bob_user.user_id}",
                 headers=platform_admin.headers,
             )
+            _login_user(e2e_client, bob_user)
 
     def test_platform_admin_does_not_see_it_here(
         self, e2e_client, platform_admin, alice_solution
@@ -151,12 +159,35 @@ class TestPrivateInvisibility:
         """Private installs stay out of the admin catalog on this surface."""
         listing = e2e_client.get(BUILDER_URL, headers=platform_admin.headers)
         assert listing.status_code == 200, listing.text
+        assert listing.json()["is_platform_admin"] is True
         assert alice_solution["id"] not in {s["id"] for s in listing.json()["solutions"]}
 
         detail = e2e_client.get(
             f"{BUILDER_URL}/{alice_solution['id']}", headers=platform_admin.headers
         )
         assert detail.status_code == 404, detail.text
+
+    def test_platform_admin_standard_catalog_does_not_see_private_solution(
+        self, e2e_client, platform_admin, alice_solution
+    ):
+        """The legacy admin surface is not an implicit private-content bypass."""
+        listing = e2e_client.get("/api/solutions", headers=platform_admin.headers)
+        assert listing.status_code == 200, listing.text
+        assert alice_solution["id"] not in {
+            row["id"] for row in listing.json()["solutions"]
+        }
+
+        detail = e2e_client.get(
+            f"/api/solutions/{alice_solution['id']}",
+            headers=platform_admin.headers,
+        )
+        assert detail.status_code == 404, detail.text
+
+        entities = e2e_client.get(
+            f"/api/solutions/{alice_solution['id']}/entities",
+            headers=platform_admin.headers,
+        )
+        assert entities.status_code == 404, entities.text
 
 
 @pytest.mark.e2e
@@ -172,6 +203,7 @@ class TestSlugIdentity:
             json={"user_ids": [str(bob_user.user_id)]},
         )
         assert grant.status_code == 204, grant.text
+        _login_user(e2e_client, bob_user)
         slug = _slug("shared-slug")
         alice_resp = _create(e2e_client, builder_alice.headers, slug)
         assert alice_resp.status_code == 201, alice_resp.text
@@ -192,6 +224,7 @@ class TestSlugIdentity:
                 f"/api/roles/{builder_role['id']}/users/{bob_user.user_id}",
                 headers=platform_admin.headers,
             )
+            _login_user(e2e_client, bob_user)
 
     def test_same_owner_duplicate_slug_conflicts(self, e2e_client, builder_alice):
         slug = _slug("dupe")
@@ -209,9 +242,19 @@ class TestSlugIdentity:
 @pytest.mark.e2e
 class TestPromotionAndDelete:
 
-    def test_owner_can_request_promotion(
-        self, e2e_client, builder_alice, alice_solution
+    async def test_owner_can_request_promotion(
+        self, e2e_client, db_session, builder_alice, alice_solution
     ):
+        from src.models.orm.solution_builder import SolutionBuilderProject
+
+        project = await db_session.get(
+            SolutionBuilderProject,
+            uuid.UUID(alice_solution["id"]),
+        )
+        assert project is not None
+        project.deployed_revision_id = project.current_revision_id
+        await db_session.commit()
+
         resp = e2e_client.post(
             f"{BUILDER_URL}/{alice_solution['id']}/promotion-request",
             headers=builder_alice.headers,
@@ -223,6 +266,15 @@ class TestPromotionAndDelete:
             f"{BUILDER_URL}/{alice_solution['id']}", headers=builder_alice.headers
         )
         assert detail.json()["promotion_status"] == "requested"
+
+    def test_unbuilt_revision_cannot_request_promotion(
+        self, e2e_client, builder_alice, alice_solution
+    ):
+        resp = e2e_client.post(
+            f"{BUILDER_URL}/{alice_solution['id']}/promotion-request",
+            headers=builder_alice.headers,
+        )
+        assert resp.status_code == 409, resp.text
 
     def test_non_owner_cannot_request_promotion(
         self, e2e_client, bob_user, alice_solution
@@ -248,6 +300,124 @@ class TestPromotionAndDelete:
             f"{BUILDER_URL}/{solution_id}", headers=builder_alice.headers
         )
         assert gone.status_code == 404, gone.text
+
+    async def test_admin_promotes_the_exact_green_revision_to_company(
+        self,
+        e2e_client,
+        db_session,
+        builder_alice,
+        platform_admin,
+    ):
+        from src.models.orm.solution_build_jobs import SolutionBuildJob
+        from src.models.orm.solution_builder import (
+            SolutionBuilderProject,
+            SolutionBuilderTurn,
+            SolutionSourceRevision,
+        )
+        from src.models.orm.solution_deploy_jobs import SolutionDeployJob
+
+        slug = _slug("promote")
+        created = _create(e2e_client, builder_alice.headers, slug)
+        assert created.status_code == 201, created.text
+        solution = created.json()
+        solution_id = uuid.UUID(solution["id"])
+        try:
+            session_response = e2e_client.post(
+                f"{BUILDER_URL}/{solution_id}/sessions",
+                headers=builder_alice.headers,
+                json={"title": "Promotion review"},
+            )
+            assert session_response.status_code == 201, session_response.text
+            session_id = uuid.UUID(session_response.json()["id"])
+
+            project = await db_session.get(SolutionBuilderProject, solution_id)
+            assert project is not None and project.current_revision_id is not None
+            revision = await db_session.get(
+                SolutionSourceRevision,
+                project.current_revision_id,
+            )
+            assert revision is not None
+            build = SolutionBuildJob(
+                solution_id=solution_id,
+                source_revision_id=revision.id,
+                requested_by=builder_alice.user_id,
+                source_sha256=revision.source_sha256,
+                toolchain_version="e2e-reviewed",
+                status="succeeded",
+                completed_at=datetime.now(timezone.utc),
+            )
+            deploy = SolutionDeployJob(
+                install_id=solution_id,
+                status="succeeded",
+                kind="deploy",
+                result={"roles_unresolved": [], "build_job_ids": []},
+            )
+            db_session.add_all([build, deploy])
+            await db_session.flush()
+            db_session.add(
+                SolutionBuilderTurn(
+                    session_id=session_id,
+                    requested_by=builder_alice.user_id,
+                    base_revision_id=revision.id,
+                    output_revision_id=revision.id,
+                    build_job_id=build.id,
+                    deploy_job_id=deploy.id,
+                    status="succeeded",
+                    started_at=datetime.now(timezone.utc),
+                    completed_at=datetime.now(timezone.utc),
+                )
+            )
+            project.deployed_revision_id = revision.id
+            await db_session.commit()
+
+            requested = e2e_client.post(
+                f"{BUILDER_URL}/{solution_id}/promotion-request",
+                headers=builder_alice.headers,
+            )
+            assert requested.status_code == 200, requested.text
+            assert requested.json()["promotion_revision_id"] == str(revision.id)
+
+            review = e2e_client.get(
+                f"/api/solution-promotions/{solution_id}",
+                headers=platform_admin.headers,
+            )
+            assert review.status_code == 200, review.text
+            assert review.json()["ready"] is True
+            assert review.json()["pinned_revision_id"] == str(revision.id)
+            assert review.json()["source_sha256"] == revision.source_sha256
+
+            promoted = e2e_client.post(
+                f"/api/solution-promotions/{solution_id}/promote",
+                headers=platform_admin.headers,
+                json={
+                    "target": "company",
+                    "approve_role_creation": True,
+                    "approved_connection_names": review.json()[
+                        "connection_names"
+                    ],
+                },
+                timeout=120,
+            )
+            assert promoted.status_code == 200, promoted.text
+            assert promoted.json()["visibility"] == "shared"
+            assert promoted.json()["promoted_revision_id"] == str(revision.id)
+
+            owner_private = e2e_client.get(
+                f"{BUILDER_URL}/{solution_id}",
+                headers=builder_alice.headers,
+            )
+            assert owner_private.status_code == 404
+            admin_shared = e2e_client.get(
+                f"/api/solutions/{solution_id}",
+                headers=platform_admin.headers,
+            )
+            assert admin_shared.status_code == 200, admin_shared.text
+        finally:
+            e2e_client.delete(
+                f"/api/solutions/{solution_id}",
+                headers=platform_admin.headers,
+                params={"confirm": slug},
+            )
 
 
 @pytest.fixture
@@ -368,6 +538,47 @@ class TestSourceRevisions:
         archive = zipfile.ZipFile(io.BytesIO(resp.content))
         assert archive.testzip() is None
         assert "bifrost.solution.yaml" in archive.namelist()
+
+    def test_owner_can_browse_source_and_review_the_revision_diff(
+        self, e2e_client, builder_alice, alice_solution
+    ):
+        listing = e2e_client.get(
+            f"{BUILDER_URL}/{alice_solution['id']}/revisions",
+            headers=builder_alice.headers,
+        )
+        revision = listing.json()["revisions"][0]
+        revision_url = (
+            f"{BUILDER_URL}/{alice_solution['id']}/revisions/{revision['id']}"
+        )
+
+        files = e2e_client.get(
+            f"{revision_url}/files",
+            headers=builder_alice.headers,
+        )
+        assert files.status_code == 200, files.text
+        paths = {item["path"] for item in files.json()["files"]}
+        assert "bifrost.solution.yaml" in paths
+
+        source = e2e_client.get(
+            f"{revision_url}/file",
+            params={"path": "bifrost.solution.yaml"},
+            headers=builder_alice.headers,
+        )
+        assert source.status_code == 200, source.text
+        assert source.json()["encoding"] == "utf-8"
+        assert alice_solution["slug"] in source.json()["content"]
+
+        diff = e2e_client.get(
+            f"{revision_url}/diff",
+            headers=builder_alice.headers,
+        )
+        assert diff.status_code == 200, diff.text
+        body = diff.json()
+        assert body["against_revision_id"] is None
+        assert body["total"] == len(paths)
+        assert {
+            item["path"] for item in body["files"] if item["status"] == "added"
+        } == paths
 
     def test_download_of_another_solutions_revision_is_404(
         self, e2e_client, builder_alice, alice_solution
@@ -525,6 +736,7 @@ class TestNonOwnerCannotReachBuilderRoutes:
             json={"user_ids": [str(bob_user.user_id)]},
         )
         assert grant.status_code == 204, grant.text
+        _login_user(e2e_client, bob_user)
         base = f"{BUILDER_URL}/{alice_solution['id']}"
         try:
             probes = [
@@ -557,3 +769,4 @@ class TestNonOwnerCannotReachBuilderRoutes:
                 f"/api/roles/{builder_role['id']}/users/{bob_user.user_id}",
                 headers=platform_admin.headers,
             )
+            _login_user(e2e_client, bob_user)

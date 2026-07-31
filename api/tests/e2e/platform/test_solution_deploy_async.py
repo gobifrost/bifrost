@@ -1,21 +1,18 @@
 """End-to-end: solution deploy is async + observable.
 
-The deploy endpoint enqueues a background job and returns a ``deploy_job_id``
-immediately; the operator polls ``GET /api/solutions/deploy-jobs/{id}`` until
-the job reaches a terminal status. This decouples the (sometimes >100s) deploy
-from the HTTP request, which previously timed out client-side while the server
-completed successfully (Task 7 bug).
+The deploy endpoint stages a durable input, enqueues a worker job, and returns a
+``deploy_job_id`` immediately; the operator polls
+``GET /api/solutions/deploy-jobs/{id}`` until the job reaches a terminal status.
+This decouples the (sometimes >100s) deploy from the HTTP request and survives
+API or worker restarts.
 """
 from __future__ import annotations
 
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
-
 import pytest
 
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
-from src.routers.solutions import DEPLOY_JOB_TIMEOUT
 
 pytestmark = pytest.mark.e2e
 
@@ -140,16 +137,13 @@ def test_async_deploy_reports_failure(e2e_client, platform_admin):
 
 
 @pytest.mark.asyncio
-async def test_polling_expires_abandoned_deploy_job(
+async def test_polling_preserves_recoverable_running_deploy_job(
     e2e_client, platform_admin, db_session
 ):
-    now = datetime.now(timezone.utc)
     job = SolutionDeployJob(
         install_id=None,
         status="running",
         result={"phase": "building app dist"},
-        created_at=now - DEPLOY_JOB_TIMEOUT - timedelta(seconds=1),
-        updated_at=now - DEPLOY_JOB_TIMEOUT - timedelta(seconds=1),
     )
     db_session.add(job)
     await db_session.commit()
@@ -160,6 +154,5 @@ async def test_polling_expires_abandoned_deploy_job(
 
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "failed"
-    assert body["result"] is None
-    assert "15-minute" in body["error"]
+    assert body["status"] == "running"
+    assert body["result"] == {"phase": "building app dist"}

@@ -139,7 +139,12 @@ class BuilderTurnService:
         revision_id = uuid4()
         with _private_tempdir() as scratch:
             workspace = scratch / _WORKSPACE_DIRNAME
-            build_initial_workspace(workspace, slug=slug, name=name)
+            build_initial_workspace(
+                workspace,
+                slug=slug,
+                name=name,
+                solution_id=solution_id,
+            )
 
             errors = validate_workspace(workspace)
             if errors:

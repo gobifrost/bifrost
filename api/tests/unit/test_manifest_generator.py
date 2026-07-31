@@ -59,6 +59,7 @@ def _mock_agent(name="test_agent", org_id=None, access_level=None):
     # Inline content fields
     agent.description = None
     agent.system_prompt = None
+    agent.bundle_path = None
     agent.channels = []
     agent.knowledge_sources = []
     agent.system_tools = []
@@ -381,5 +382,4 @@ def test_serialize_workflow_carries_tool_description():
 
     out = serialize_workflow(wf)
     assert out.tool_description == "CURATED-TOOLDESC"
-
 

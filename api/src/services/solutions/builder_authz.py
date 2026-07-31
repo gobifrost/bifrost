@@ -1,32 +1,16 @@
 """Builder capability authorization (``solutions.build``).
 
-Single decision point for "may this user use the private-Solution builder"
-(2026-07-25 private-solution-builder spec, "Builder permission"). Routers must
-call this service rather than scattering ``role.permissions.get(...)`` checks;
-when the #473 scope catalog lands, only this module changes.
+The action grant comes from the principal's role-derived authorization scopes.
+Organization reach and per-Solution access remain separate gates.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from shared.authorization_scopes import SOLUTIONS_BUILD_SCOPE
+from src.core.principal import UserPrincipal
 
-SOLUTIONS_BUILD_PERMISSION = "solutions.build"
 
+def can_build(principal: UserPrincipal) -> bool:
+    """Whether a human principal may enter the Builder capability boundary."""
 
-def can_build(
-    *,
-    is_platform_admin: bool,
-    is_external: bool,
-    role_permissions: Iterable[Mapping[str, object]],
-) -> bool:
-    """Decide builder access from JWT-derived flags and the user's role rows.
-
-    External users are denied even if accidentally assigned a granting role;
-    platform admins bypass the role check. ``role_permissions`` is the
-    ``Role.permissions`` JSON of each role assigned to the user.
-    """
-    if is_external:
-        return False
-    if is_platform_admin:
-        return True
-    return any(bool(perms.get(SOLUTIONS_BUILD_PERMISSION)) for perms in role_permissions)
+    return not principal.is_external and principal.has_scope(SOLUTIONS_BUILD_SCOPE)

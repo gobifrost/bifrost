@@ -188,6 +188,13 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # Application publish now returns 202 + a standardized platform job instead
     # of ApplicationPublic, and the CLI polls PlatformJobPublic for durable
     # progress/result/error (2026-07-28). CONTRACT_VERSION bumped to 8.
+    #
+    # AgentCreate/AgentUpdate gained optional bundle_path (2026-07-27).
+    # ADDITIVE: old CLIs omit it and retain inline-only Agent behavior.
+    #
+    # RoleCreate/RoleUpdate gained additive scopes fields (2026-07-30).
+    # Old CLIs omit them and retain empty-scope custom-role behavior.
+    # Fingerprint is refreshed after replaying both additive changes on v8.
     "94bf28d5039d7dd17d747f2f66ff7ae254ef118a14b6652d2119d427acb3b316"
 )
 

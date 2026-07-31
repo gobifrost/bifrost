@@ -28,6 +28,7 @@ from src.repositories.forms import FormRepository
 from src.repositories.workflows import WorkflowRepository
 from src.models import Execution as ExecutionORM
 from src.models import Form as FormORM, FormField as FormFieldORM, FormRole as FormRoleORM
+from src.services.solutions.access import visible_solution_child_criterion
 from src.services.solutions.guard import assert_not_solution_managed
 from src.models import Role as RoleORM
 from src.models import Workflow as WorkflowORM
@@ -52,6 +53,17 @@ from src.services.workflow_role_service import sync_form_roles_to_workflows
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/forms", tags=["Forms"])
+
+
+def _visible_form_query(ctx: Context, query):
+    """Apply the private parent gate before any form-specific authorization."""
+    return query.where(
+        visible_solution_child_criterion(
+            child_solution_id=FormORM.solution_id,
+            actor_user_id=ctx.user.user_id,
+            is_external=ctx.user.is_external,
+        )
+    )
 
 
 def _form_schema_to_fields(form_schema: dict, form_id: UUID) -> list[FormFieldORM]:
@@ -522,9 +534,12 @@ async def update_form(
     to JSON on-the-fly for git sync operations.
     """
     result = await db.execute(
-        select(FormORM)
-        .options(selectinload(FormORM.fields))
-        .where(FormORM.id == form_id)
+        _visible_form_query(
+            ctx,
+            select(FormORM)
+            .options(selectinload(FormORM.fields))
+            .where(FormORM.id == form_id),
+        )
     )
     form = result.scalar_one_or_none()
 
@@ -612,9 +627,12 @@ async def update_form(
 
     # Reload form with fields eager-loaded
     result = await db.execute(
-        select(FormORM)
-        .options(selectinload(FormORM.fields))
-        .where(FormORM.id == form_id)
+        _visible_form_query(
+            ctx,
+            select(FormORM)
+            .options(selectinload(FormORM.fields))
+            .where(FormORM.id == form_id),
+        )
     )
     form = result.scalar_one()
 
@@ -671,8 +689,10 @@ async def delete_form(
     With purge=true, permanently removes the form and its related records from the database.
     """
     result = await db.execute(
-        select(FormORM)
-        .where(FormORM.id == form_id)
+        _visible_form_query(
+            ctx,
+            select(FormORM).where(FormORM.id == form_id),
+        )
     )
     form = result.scalar_one_or_none()
 
@@ -817,7 +837,12 @@ async def execute_form(
         request = FormExecuteRequest()
 
     # Get the form
-    result = await db.execute(select(FormORM).where(FormORM.id == form_id))
+    result = await db.execute(
+        _visible_form_query(
+            ctx,
+            select(FormORM).where(FormORM.id == form_id),
+        )
+    )
     form = result.scalar_one_or_none()
 
     if not form or not form.is_active:
@@ -1039,7 +1064,12 @@ async def execute_startup_workflow(
     from src.services.execution.service import run_workflow, WorkflowNotFoundError, WorkflowLoadError
 
     # Get the form
-    result = await db.execute(select(FormORM).where(FormORM.id == form_id))
+    result = await db.execute(
+        _visible_form_query(
+            ctx,
+            select(FormORM).where(FormORM.id == form_id),
+        )
+    )
     form = result.scalar_one_or_none()
 
     if not form or not form.is_active:
@@ -1251,9 +1281,12 @@ async def generate_upload_url(
 
     # Verify form exists and user has access
     result = await db.execute(
-        select(FormORM)
-        .options(selectinload(FormORM.fields))
-        .where(FormORM.id == form_id)
+        _visible_form_query(
+            ctx,
+            select(FormORM)
+            .options(selectinload(FormORM.fields))
+            .where(FormORM.id == form_id),
+        )
     )
     form = result.scalar_one_or_none()
 

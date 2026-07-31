@@ -364,6 +364,7 @@ class SolutionCaptureService:
         python_files = await self._python_files(
             workflows, include_imports=include_imports
         )
+        bundle_files = await self._agent_bundle_files(solution.id, agents)
         config_values: dict[str, str] = {}
         if include_values:
             config_values = await self._config_values(solution)
@@ -376,6 +377,7 @@ class SolutionCaptureService:
         return SolutionBundle(
             solution=solution,
             python_files=python_files,
+            bundle_files=bundle_files,
             workflows=workflows,
             tables=tables,
             apps=apps,
@@ -393,6 +395,71 @@ class SolutionCaptureService:
             table_data=table_data,
             solution_files=solution_files,
         )
+
+    async def _agent_bundle_files(
+        self,
+        solution_id: UUID,
+        agents: list[dict[str, Any]],
+    ) -> dict[str, bytes]:
+        """Load the portable companion files for bundled agents.
+
+        Once a Solution has deployed, its scoped SolutionStorage copy is
+        authoritative. A freshly captured loose Agent still has its uploaded
+        bundle in agent-owned storage, so capture copies from that isolated
+        namespace rather than granting access to ``_repo/``.
+        """
+        from pathlib import PurePosixPath
+
+        from src.models.contracts.agents import validate_agent_bundle_path
+        from src.services.agent_skill_storage import AgentSkillStorage
+        from src.services.solutions.storage import SolutionStorage
+
+        allowed_dirs = {"references", "scripts", "assets"}
+        scoped = SolutionStorage(solution_id)
+        out: dict[str, bytes] = {}
+        for agent in agents:
+            bundle_path = agent.get("bundle_path")
+            if not isinstance(bundle_path, str) or not bundle_path:
+                continue
+            bundle_path = validate_agent_bundle_path(bundle_path)
+            assert bundle_path is not None
+            prefix = bundle_path.rstrip("/") + "/"
+            scoped_paths = await scoped.list(prefix)
+            if scoped_paths:
+                source = scoped
+                paths = scoped_paths
+            else:
+                created_by = agent.get("created_by")
+                if created_by is None and self.db is not None:
+                    created_by = (
+                        await self.db.execute(
+                            select(Agent.created_by).where(
+                                Agent.id == UUID(str(agent["id"]))
+                            )
+                        )
+                    ).scalar_one_or_none()
+                source = (
+                    self.repo
+                    if created_by == "file_sync"
+                    else AgentSkillStorage(agent["id"])
+                )
+                paths = await source.list(prefix)
+            if f"{prefix}SKILL.md" not in paths:
+                raise ValueError(
+                    f"agent bundle is missing SKILL.md: {bundle_path}"
+                )
+            for path in paths:
+                if not path.startswith(prefix):
+                    continue
+                relative = path[len(prefix):]
+                pure = PurePosixPath(relative)
+                if (
+                    relative != "SKILL.md"
+                    and (len(pure.parts) < 2 or pure.parts[0] not in allowed_dirs)
+                ):
+                    continue
+                out[path] = await source.read(path)
+        return out
 
     async def _workflow_entries(self, solution_id: UUID) -> list[dict[str, Any]]:
         from bifrost.manifest import ManifestWorkflow

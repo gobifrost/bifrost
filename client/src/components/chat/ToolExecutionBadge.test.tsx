@@ -82,6 +82,16 @@ describe("ToolExecutionBadge — status rendering", () => {
 		);
 		expect(screen.getByText("grep_code")).toBeInTheDocument();
 	});
+
+	it("identifies runtime skill asset usage", () => {
+		renderWithProviders(
+			<ToolExecutionBadge
+				toolCall={makeToolCall({ name: "read_skill_asset" })}
+				status="success"
+			/>,
+		);
+		expect(screen.getByText("Skill · read asset")).toBeInTheDocument();
+	});
 });
 
 describe("ToolExecutionBadge — popover details", () => {

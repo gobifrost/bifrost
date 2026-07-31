@@ -10,11 +10,14 @@ Git sync serializes agents on-the-fly from the database.
 
 import base64
 import logging
+import tempfile
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
+from starlette.background import BackgroundTask
 from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 
@@ -28,6 +31,8 @@ from src.models.contracts.agents import (
     AgentCreate,
     AgentPromoteRequest,
     AgentPublic,
+    AgentSkillFilePublic,
+    AgentSkillPublic,
     AgentSummary,
     AgentUpdate,
     AccessibleKnowledgeSource,
@@ -45,6 +50,21 @@ from src.models.orm import (
 )
 from shared.svg_sanitizer import SvgSanitizationError, sanitize_svg
 from src.repositories.agents import AgentRepository
+from src.services.agent_skills import (
+    build_agent_skill_archive,
+    get_agent_skill_markdown,
+    list_agent_skill_files,
+    parse_skill_frontmatter,
+    read_agent_skill_file,
+    skill_slug,
+)
+from src.services.agent_skill_import import (
+    AGENT_SKILL_ARCHIVE_LIMIT,
+    import_agent_skill_archive,
+    skill_instruction_body,
+)
+from src.services.agent_skill_storage import AgentSkillStorage
+from src.services.builder.fs_tools import WorkspaceViolation
 from src.services.solutions.guard import assert_not_solution_managed
 from src.routers.tools import get_system_tool_ids
 from src.services.agent_stats import get_agent_stats, get_fleet_stats
@@ -56,6 +76,29 @@ router = APIRouter(prefix="/api/agents", tags=["Agents"])
 
 LOGO_ALLOWED_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/svg+xml"}
 LOGO_MAX_SIZE = 5 * 1024 * 1024  # 5 MB
+SKILL_UPLOAD_CHUNK_SIZE = 1024 * 1024
+
+
+async def _accessible_agent(
+    db: DbSession,
+    user,
+    agent_id: UUID,
+) -> Agent | None:
+    """Resolve an agent after the private-Solution parent gate.
+
+    Mutation handlers retain their established 403 response for visible,
+    non-owned loose agents. ``get_agent`` is intentionally the raw ID lookup
+    with the central private-parent criterion applied; the handler's ownership
+    check remains the authorization gate for the mutation itself.
+    """
+    repo = AgentRepository(
+        session=db,
+        org_id=user.organization_id,
+        user_id=user.user_id,
+        is_superuser=user.is_platform_admin,
+        is_external=user.is_external,
+    )
+    return await repo.get_agent(agent_id)
 
 
 async def _validate_agent_references(
@@ -200,6 +243,49 @@ async def _user_has_permission(
     return False
 
 
+def _assert_can_manage_skill(agent: Agent, user) -> None:
+    """Authorize direct Skill uploads without exposing a shared storage root."""
+    assert_not_solution_managed(agent)
+    if user.is_platform_admin:
+        return
+    if (
+        agent.owner_user_id != user.user_id
+        or agent.access_level != AgentAccessLevel.PRIVATE
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="You can only manage Skills for your own private agents",
+        )
+
+
+async def _spool_skill_upload(file: UploadFile) -> Path:
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in {".zip", ".skill"}:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Upload a .zip or .skill archive",
+        )
+    tmp = tempfile.NamedTemporaryFile(
+        prefix="bifrost-agent-skill-", suffix=suffix, delete=False
+    )
+    path = Path(tmp.name)
+    total = 0
+    try:
+        with tmp:
+            while chunk := await file.read(SKILL_UPLOAD_CHUNK_SIZE):
+                total += len(chunk)
+                if total > AGENT_SKILL_ARCHIVE_LIMIT:
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail="Agent Skill archive exceeds the 25 MiB upload limit",
+                    )
+                tmp.write(chunk)
+        return path
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+
+
 def _logo_data_url(data: bytes | None, content_type: str | None) -> str | None:
     """Encode a binary logo as a data URL, or None if no logo is set."""
     if not data:
@@ -221,6 +307,7 @@ def _agent_to_public(agent: Agent) -> AgentPublic:
         name=agent.name,
         description=agent.description,
         system_prompt=agent.system_prompt,
+        bundle_path=agent.bundle_path,
         channels=agent.channels,
         access_level=agent.access_level,
         organization_id=agent.organization_id,
@@ -348,6 +435,11 @@ async def create_agent(
     Regular users can only create private agents with tools they have access to.
     """
     is_admin = user.is_platform_admin
+    if "bundle_path" in agent_data.model_fields_set:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Create the agent first, then upload its .skill or .zip bundle",
+        )
 
     # Org targeting follows the unified --org standard: an OMITTED
     # organization_id (HOME) defaults to the caller's org, so a bare create
@@ -368,6 +460,9 @@ async def create_agent(
         agent_data.knowledge_sources = []
         agent_data.delegated_agent_ids = []
         agent_data.role_ids = []
+        # Bundle roots grant read access to every companion asset beneath them.
+        # Only administrators may bind that capability to an ad-hoc Agent.
+        agent_data.bundle_path = None
         # Non-admins cannot grant MCP connections — those are an
         # org-admin tool. Private agents simply don't surface MCP tools.
         agent_data.mcp_connection_ids = []
@@ -394,6 +489,7 @@ async def create_agent(
         name=agent_data.name,
         description=agent_data.description,
         system_prompt=agent_data.system_prompt,
+        bundle_path=agent_data.bundle_path,
         channels=[c.value for c in agent_data.channels],
         access_level=agent_data.access_level,
         organization_id=agent_data.organization_id,
@@ -619,6 +715,262 @@ async def get_agent(
     return _agent_to_public(agent)
 
 
+@router.get(
+    "/{agent_id}/skill",
+    response_model=AgentSkillPublic,
+    summary="Inspect an Agent's portable skill projection",
+)
+async def get_agent_skill(
+    agent_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> AgentSkillPublic:
+    repo = AgentRepository(
+        session=db,
+        org_id=user.organization_id,
+        user_id=user.user_id,
+        is_superuser=user.is_platform_admin,
+        is_external=user.is_external,
+    )
+    agent = await repo.get_agent_with_access_check(agent_id)
+    if agent is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent {agent_id} not found",
+        )
+
+    try:
+        markdown = await get_agent_skill_markdown(agent)
+        companion_files = await list_agent_skill_files(agent)
+        if agent.bundle_path:
+            skill_name, skill_description = parse_skill_frontmatter(markdown)
+        else:
+            skill_name = skill_slug(agent.name)
+            skill_description = (
+                agent.description or f"Use the {agent.name} agent"
+            ).strip()
+    except (WorkspaceViolation, FileNotFoundError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    return AgentSkillPublic(
+        name=skill_name,
+        description=skill_description,
+        bundle_path=agent.bundle_path,
+        skill_markdown=markdown,
+        files=["SKILL.md", *companion_files],
+        companion_files=companion_files,
+        automatic_capabilities=["read_skill_asset"] if agent.bundle_path else [],
+        source=(
+            "solution"
+            if agent.solution_id is not None
+            else "upload"
+            if agent.bundle_path
+            else "inline"
+        ),
+        is_managed=agent.solution_id is not None,
+    )
+
+
+@router.get(
+    "/{agent_id}/skill/file",
+    response_model=AgentSkillFilePublic,
+    summary="Read one file from an Agent Skill bundle",
+)
+async def get_agent_skill_file(
+    agent_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+    path: str = Query(..., min_length=1, max_length=1024),
+) -> AgentSkillFilePublic:
+    repo = AgentRepository(
+        session=db,
+        org_id=user.organization_id,
+        user_id=user.user_id,
+        is_superuser=user.is_platform_admin,
+        is_external=user.is_external,
+    )
+    agent = await repo.get_agent_with_access_check(agent_id)
+    if agent is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent {agent_id} not found",
+        )
+    try:
+        content = await read_agent_skill_file(agent, path)
+    except WorkspaceViolation as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Skill file not found: {path}",
+        ) from exc
+    try:
+        encoded = content.decode("utf-8")
+        encoding = "utf-8"
+    except UnicodeDecodeError:
+        encoded = base64.b64encode(content).decode("ascii")
+        encoding = "base64"
+    return AgentSkillFilePublic(path=path, encoding=encoding, content=encoded)
+
+
+@router.put(
+    "/{agent_id}/skill/bundle",
+    response_model=AgentSkillPublic,
+    summary="Upload or replace an Agent Skill bundle",
+)
+async def upload_agent_skill(
+    agent_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+    file: UploadFile = File(..., description=".skill or .zip Agent Skill archive"),
+) -> AgentSkillPublic:
+    agent = await _accessible_agent(db, user, agent_id)
+    if agent is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent {agent_id} not found",
+        )
+    _assert_can_manage_skill(agent, user)
+    archive_path = await _spool_skill_upload(file)
+    try:
+        imported = import_agent_skill_archive(archive_path)
+    except WorkspaceViolation as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    finally:
+        archive_path.unlink(missing_ok=True)
+
+    storage = AgentSkillStorage(agent.id)
+    previous_paths = set(await storage.list())
+    for storage_path, content in imported.files.items():
+        await storage.write(storage_path, content)
+
+    agent.bundle_path = imported.bundle_path
+    # Runtime compatibility: execution still reads Agent.system_prompt. The
+    # bundle's SKILL.md is the canonical source and replaces that materialized
+    # value wholesale on every upload.
+    agent.system_prompt = imported.skill_markdown
+    # An administrator may replace a git-synced bundle interactively. From
+    # this point forward the Agent is backed by its isolated upload namespace,
+    # not by the git workspace's `_repo/` tree.
+    agent.created_by = user.email
+    agent.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+
+    current_paths = set(imported.files)
+    for stale_path in sorted(previous_paths - current_paths):
+        await storage.delete(stale_path)
+
+    companion_files = sorted(
+        path[len(imported.bundle_path) + 1 :]
+        for path in current_paths
+        if not path.endswith("/SKILL.md")
+    )
+    return AgentSkillPublic(
+        name=imported.name,
+        description=imported.description,
+        bundle_path=imported.bundle_path,
+        skill_markdown=imported.skill_markdown,
+        files=["SKILL.md", *companion_files],
+        companion_files=companion_files,
+        automatic_capabilities=["read_skill_asset"],
+        source="upload",
+        is_managed=False,
+    )
+
+
+@router.delete(
+    "/{agent_id}/skill/bundle",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Detach an uploaded bundle and return the Agent to inline instructions",
+)
+async def detach_agent_skill(
+    agent_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> Response:
+    agent = await _accessible_agent(db, user, agent_id)
+    if agent is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent {agent_id} not found",
+        )
+    _assert_can_manage_skill(agent, user)
+    if not agent.bundle_path:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+    markdown = await get_agent_skill_markdown(agent)
+    instructions = skill_instruction_body(markdown)
+    if not instructions:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="SKILL.md has no instruction body to preserve",
+        )
+    agent.system_prompt = instructions
+    agent.bundle_path = None
+    agent.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await AgentSkillStorage(agent.id).clear()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/{agent_id}/skill/download",
+    summary="Download an Agent as a portable Agent Skill",
+)
+async def download_agent_skill(
+    agent_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> FileResponse:
+    """Stream ``SKILL.md`` plus companion bundle assets for an accessible Agent."""
+    repo = AgentRepository(
+        session=db,
+        org_id=user.organization_id,
+        user_id=user.user_id,
+        is_superuser=user.is_platform_admin,
+        is_external=user.is_external,
+    )
+    agent = await repo.get_agent_with_access_check(agent_id)
+    if agent is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent {agent_id} not found",
+        )
+
+    archive_context = build_agent_skill_archive(agent)
+    try:
+        archive_path = await archive_context.__aenter__()
+    except WorkspaceViolation as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    async def cleanup() -> None:
+        await archive_context.__aexit__(None, None, None)
+
+    portable_name = (
+        parse_skill_frontmatter(await get_agent_skill_markdown(agent))[0]
+        if agent.bundle_path
+        else agent.name
+    )
+    filename = f"{skill_slug(portable_name)}.zip"
+    return FileResponse(
+        archive_path,
+        media_type="application/zip",
+        filename=filename,
+        background=BackgroundTask(cleanup),
+    )
+
+
 @router.put("/{agent_id}")
 async def update_agent(
     agent_id: UUID,
@@ -627,18 +979,7 @@ async def update_agent(
     user: CurrentActiveUser,
 ) -> AgentPublic:
     """Update an agent. Admins can update any agent. Users can update their own private agents."""
-    result = await db.execute(
-        select(Agent)
-        .options(
-            selectinload(Agent.tools),
-            selectinload(Agent.delegated_agents),
-            selectinload(Agent.roles),
-            selectinload(Agent.owner),
-            selectinload(Agent.mcp_connections),
-        )
-        .where(Agent.id == agent_id)
-    )
-    agent = result.scalar_one_or_none()
+    agent = await _accessible_agent(db, user, agent_id)
 
     if not agent:
         raise HTTPException(
@@ -648,6 +989,16 @@ async def update_agent(
 
     # Solution-managed agents are read-only here; deploy is the writer.
     assert_not_solution_managed(agent)
+    if "bundle_path" in agent_data.model_fields_set:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Use the Agent Skill upload or remove action to manage bundles",
+        )
+    if agent.bundle_path and agent_data.system_prompt is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Bundled Agent instructions come from SKILL.md; replace or remove the bundle",
+        )
 
     is_admin = user.is_platform_admin
 
@@ -851,10 +1202,7 @@ async def delete_agent(
     System agents can be deleted - they will be recreated on next startup
     if they are still defined in the system agent definitions.
     """
-    result = await db.execute(
-        select(Agent).where(Agent.id == agent_id)
-    )
-    agent = result.scalar_one_or_none()
+    agent = await _accessible_agent(db, user, agent_id)
 
     if not agent:
         raise HTTPException(
@@ -885,17 +1233,7 @@ async def promote_agent(
     user: CurrentActiveUser,
 ) -> AgentPublic:
     """Promote a private agent to organization scope."""
-    result = await db.execute(
-        select(Agent)
-        .options(
-            selectinload(Agent.tools),
-            selectinload(Agent.delegated_agents),
-            selectinload(Agent.roles),
-            selectinload(Agent.owner),
-        )
-        .where(Agent.id == agent_id)
-    )
-    agent = result.scalar_one_or_none()
+    agent = await _accessible_agent(db, user, agent_id)
     if not agent:
         raise HTTPException(404, f"Agent {agent_id} not found")
     assert_not_solution_managed(agent)

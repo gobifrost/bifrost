@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import AsyncIterator
+from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import select
@@ -53,7 +54,12 @@ class PrivateSolutionSlugTaken(Exception):
     """The caller already owns a private Solution at this slug."""
 
 
-def to_dto(solution: Solution, project: SolutionBuilderProject) -> PrivateSolutionDTO:
+def to_dto(
+    solution: Solution,
+    project: SolutionBuilderProject,
+    *,
+    app_origin: str | None = None,
+) -> PrivateSolutionDTO:
     """Flatten an install row plus its builder project into the read shape."""
     return PrivateSolutionDTO(
         id=solution.id,
@@ -62,6 +68,7 @@ def to_dto(solution: Solution, project: SolutionBuilderProject) -> PrivateSoluti
         visibility=solution.visibility,
         owner_user_id=solution.owner_user_id,
         organization_id=solution.organization_id,
+        app_origin=app_origin,
         status=solution.status,
         promotion_status=project.promotion_status,
         created_at=solution.created_at,
@@ -224,14 +231,27 @@ async def delete_private_solution(db: AsyncSession, solution: Solution) -> None:
 
 
 async def request_promotion(
-    db: AsyncSession, project: SolutionBuilderProject
+    db: AsyncSession,
+    project: SolutionBuilderProject,
+    *,
+    requested_by: UUID,
 ) -> SolutionBuilderProject:
     """Flag the project as awaiting administrator promotion review.
 
     The owner may only *request*; performing the promotion is a platform-admin
     action on a separate surface (spec, "Private access invariant").
     """
+    if (
+        project.deployed_revision_id is None
+        or project.current_revision_id != project.deployed_revision_id
+    ):
+        raise ValueError(
+            "The current revision must have a successful preview deploy before promotion"
+        )
     project.promotion_status = PROMOTION_STATUS_REQUESTED
+    project.promotion_revision_id = project.deployed_revision_id
+    project.promotion_requested_by = requested_by
+    project.promotion_requested_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(project)
     return project

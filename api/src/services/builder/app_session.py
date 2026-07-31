@@ -25,6 +25,7 @@ from uuid import UUID, uuid4
 
 import redis.asyncio as redis
 
+from shared.authorization_scopes import SOLUTION_APP_RUNTIME_SCOPES
 from src.core.security import ACTOR_TYPE_SOLUTION_APP, create_access_token
 
 LAUNCH_CODE_TTL_SECONDS = 60
@@ -126,6 +127,7 @@ def mint_app_token(
         "organization_id": str(session.organization_id),
         "org_id": str(session.organization_id),
         "jti": str(uuid4()),
+        "scopes": sorted(SOLUTION_APP_RUNTIME_SCOPES),
     }
     return create_access_token(claims, expires_delta=timedelta(minutes=expires_minutes))
 

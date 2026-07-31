@@ -4,7 +4,7 @@
  * Lists all App Builder applications with management capabilities.
  */
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
 	RefreshCw,
@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useApplications, useDeleteApplication } from "@/hooks/useApplications";
+import { useBuilderAccess } from "@/hooks/useBuilderAccess";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { SearchBox } from "@/components/search/SearchBox";
@@ -44,6 +45,7 @@ export function Applications() {
 	const navigate = useNavigate();
 	const terminology = useTerminology();
 	const { isPlatformAdmin } = useAuth();
+	const { solutions: builderSolutions } = useBuilderAccess();
 	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
 		undefined,
 	);
@@ -69,6 +71,10 @@ export function Applications() {
 			: undefined,
 	);
 	const applications = applicationsData?.applications ?? [];
+	const editableBuilderSolutionIds = useMemo(
+		() => new Set(builderSolutions.map((solution) => solution.id)),
+		[builderSolutions],
+	);
 	const deleteApplication = useDeleteApplication();
 
 	// Fetch organizations for name lookup (platform admins only)
@@ -88,6 +94,12 @@ export function Applications() {
 
 	const handleOpenCode = (app: ApplicationListItem) => {
 		navigate(`/apps/${app.slug}/edit`);
+	};
+
+	const handleEditInBuilder = (app: ApplicationListItem) => {
+		if (app.solution_id) {
+			navigate(`/solutions/${app.solution_id}/builder`);
+		}
 	};
 
 	const handleOpenSettings = (app: ApplicationListItem) => {
@@ -207,6 +219,13 @@ export function Applications() {
 					onPreview={handlePreview}
 					onOpenSettings={handleOpenSettings}
 					onOpenCode={handleOpenCode}
+					onEditInBuilder={handleEditInBuilder}
+					canEditInBuilder={(app) =>
+						Boolean(
+							app.solution_id &&
+								editableBuilderSolutionIds.has(app.solution_id),
+						)
+					}
 					onDelete={handleDelete}
 					emptySearchActive={Boolean(searchTerm)}
 				/>

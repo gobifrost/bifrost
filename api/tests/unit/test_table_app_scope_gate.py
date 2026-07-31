@@ -48,6 +48,7 @@ def _ctx(db, *, app_id, is_superuser, is_provider_org=False) -> Any:
         user=SimpleNamespace(
             user_id=uuid4(),
             is_superuser=is_superuser,
+            is_platform_admin=is_superuser,
             is_provider_org=is_provider_org,
             is_external=False,
         ),

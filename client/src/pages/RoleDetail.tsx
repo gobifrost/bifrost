@@ -15,6 +15,7 @@ import {
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -113,9 +114,6 @@ export function RoleDetail() {
 	);
 	const deleteRole = useDeleteRole();
 
-	const currentTab: ConsumerKey =
-		tab && TABS.some((t) => t.key === tab) ? (tab as ConsumerKey) : "users";
-
 	if (!roleId) {
 		return (
 			<div className="p-8 text-center text-muted-foreground">
@@ -150,6 +148,14 @@ export function RoleDetail() {
 		);
 	}
 
+	const availableTabs = role.assignable_to_resources
+		? TABS
+		: TABS.filter(({ key }) => key === "users");
+	const currentTab: ConsumerKey =
+		tab && availableTabs.some((item) => item.key === tab)
+			? (tab as ConsumerKey)
+			: "users";
+
 	const handleDelete = () => {
 		deleteRole.mutate(
 			{ params: { path: { role_id: role.id } } },
@@ -183,27 +189,35 @@ export function RoleDetail() {
 					<h1 className="text-3xl font-extrabold tracking-tight">
 						{role.name}
 					</h1>
+					{role.is_builtin && (
+						<Badge variant="secondary" className="mt-2 font-normal">
+							Built-in · Managed by Bifrost
+						</Badge>
+					)}
 					{role.description && (
 						<p className="mt-1 text-muted-foreground">{role.description}</p>
 					)}
 					<p className="mt-2 text-xs text-muted-foreground">
-						A role grants access to every user, form, agent, app, workflow, and
-						knowledge namespace you assign below.
+						{role.assignable_to_resources
+							? "A role grants access to every user, form, agent, app, workflow, and knowledge namespace you assign below."
+							: "Assign users to this role to grant its fixed platform capabilities."}
 					</p>
 				</div>
 				<div className="flex gap-2">
 					<Button variant="outline" onClick={() => setEditOpen(true)}>
 						<Pencil className="h-4 w-4 mr-1.5" />
-						Edit
+						{role.is_builtin ? "View" : "Edit"}
 					</Button>
-					<Button
-						variant="outline"
-						className="text-destructive hover:text-destructive"
-						onClick={() => setDeleteOpen(true)}
-					>
-						<Trash2 className="h-4 w-4 mr-1.5" />
-						Delete
-					</Button>
+					{!role.is_builtin && (
+						<Button
+							variant="outline"
+							className="text-destructive hover:text-destructive"
+							onClick={() => setDeleteOpen(true)}
+						>
+							<Trash2 className="h-4 w-4 mr-1.5" />
+							Delete
+						</Button>
+					)}
 				</div>
 			</div>
 
@@ -214,7 +228,7 @@ export function RoleDetail() {
 				className="flex-1 min-h-0 flex flex-col"
 			>
 				<TabsList className="self-start">
-					{TABS.map(({ key, label, Icon }) => {
+					{availableTabs.map(({ key, label, Icon }) => {
 						const count = role.consumer_counts?.[key] ?? 0;
 						return (
 							<TabsTrigger key={key} value={key} className="gap-1.5">

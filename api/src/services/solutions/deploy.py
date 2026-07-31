@@ -263,6 +263,7 @@ class DeployResult:
     # mappings they are being asked to materialize. Always empty for a shared
     # Solution — there, unknown names are auto-created into ``roles_created``.
     roles_unresolved: list[str] = field(default_factory=list)
+    build_job_ids: list[UUID] = field(default_factory=list)
     finalize_s3: Callable[[], Awaitable[None]] = field(
         default=_noop_finalize, compare=False, repr=False
     )
@@ -272,14 +273,15 @@ class DeployResult:
 class SolutionBundle:
     """The deployable contents of one Solution install.
 
-    ``python_files`` maps relative paths (e.g. ``workflows/w1.py``,
-    ``modules/x.py``) to source text, installed verbatim under the install's
-    ``_solutions/{id}/`` prefix. ``workflows`` (and, in later sub-plans,
-    apps/forms/agents/tables) are manifest-shaped entity dicts to upsert.
+    ``python_files`` maps executable Solution source to text. ``bundle_files``
+    maps portable Agent Skills files to bytes; bundled ``scripts/`` remain
+    inert assets and are deliberately not merged into ``python_files``. Both
+    install verbatim under the install's ``_solutions/{id}/`` prefix.
     """
 
     solution: Solution
     python_files: dict[str, str] = field(default_factory=dict)
+    bundle_files: dict[str, bytes] = field(default_factory=dict)
     workflows: list[dict[str, Any]] = field(default_factory=list)
     tables: list[dict[str, Any]] = field(default_factory=list)
     apps: list[dict[str, Any]] = field(default_factory=list)
@@ -337,6 +339,7 @@ class SolutionDeployer:
         bundle: SolutionBundle,
         force: bool = False,
         file_mode: str = "replace",
+        promotion: bool = False,
     ) -> DeployResult:
         """Full-replace this install from ``bundle`` — DB phase + app COMPILE.
 
@@ -367,7 +370,10 @@ class SolutionDeployer:
         # must produce no shared control-plane side effects; every suppression
         # below consults this policy. Shared installs get the all-False policy
         # and behave exactly as before.
-        self._policy = PrivateDeployPolicy(private=await is_private_install(self.db, sid))
+        self._policy = PrivateDeployPolicy(
+            private=await is_private_install(self.db, sid),
+            promotion=promotion,
+        )
 
         # Source portability artifact: the exact workspace shape export/install
         # consume. Build it from the author-time bundle before per-install UUID
@@ -422,13 +428,24 @@ class SolutionDeployer:
         if name_errors:
             raise SolutionWorkflowNameMismatch("\n".join(name_errors))
 
+        # ── BUILD source apps before any deploy-owned DB writes ──────────────
+        # Build jobs use their own committed transactions and target the
+        # deterministic remapped app ids. Running them here keeps a failed build
+        # atomic with respect to the deploy while avoiding the deadlock that
+        # occurs when a deploy waits on a job tied to its uncommitted app row.
+        self._validate_app_models(rb.apps)
+        app_outputs = await self._prepare_app_outputs(solution, rb.apps)
+
         # ── DB-only phase (validates + reconciles; rolls back cleanly) ───────
         await self._upsert_workflows(solution, rb.workflows)
         await self._upsert_claims(solution, rb.claims)
         await self._upsert_tables(solution, rb.tables)
-        builds = await self._upsert_apps(solution, rb.apps)
+        await self._upsert_apps(solution, rb.apps)
         await self._upsert_forms(solution, rb.forms)
-        await self._upsert_agents(solution, rb.agents)
+        await self._upsert_agents(
+            solution,
+            self._agents_with_canonical_skills(rb.agents, rb.bundle_files),
+        )
         # A private install activates no shared runtime triggers: no EventSource,
         # no ScheduleSource/WebhookSource, no subscriptions. The declarations stay
         # in source and are materialized only by an administrator-reviewed
@@ -495,10 +512,6 @@ class SolutionDeployer:
         # => cleared), same lifecycle as the logo above.
         self._apply_readme(solution, bundle)
 
-        # ── COMPILE app dists to memory NOW (pre-commit) — a vite/npm failure
-        #    raises here and rolls back the whole deploy, no S3 touched. ───────
-        compiled = await self._compile_app_dists(builds)
-
         # ── S3 phase, DEFERRED until after the caller's commit (cheap PUTs) ───
         # Every step is FULL-REPLACE (idempotent), so a transient storage blip is
         # absorbed by RETRYING the step rather than failing an already-committed
@@ -513,11 +526,13 @@ class SolutionDeployer:
             )
             await _retry_idempotent(
                 "write python source", sid,
-                lambda: self._write_python(sid, rb.python_files),
+                lambda: self._write_python(
+                    sid, {**rb.python_files, **rb.bundle_files}
+                ),
             )
             await _retry_idempotent(
                 "upload app dists", sid,
-                lambda: self._upload_compiled_dists(compiled),
+                lambda: self._publish_app_outputs(app_outputs),
             )
             await _retry_idempotent(
                 "sweep stale dist", sid,
@@ -542,7 +557,7 @@ class SolutionDeployer:
         # outcome. If a future edit reintroduces a shared write on the private
         # path, the deploy fails here (pre-commit, so nothing durable lands)
         # rather than silently escalating a builder user.
-        if self._policy.private:
+        if self._policy.strict_private:
             await self._assert_no_shared_side_effects(rb)
 
         return DeployResult(
@@ -563,6 +578,11 @@ class SolutionDeployer:
             integrations_shell_created=shells_created,
             roles_created=sorted(self._created_roles),
             roles_unresolved=sorted(self._unresolved_roles),
+            build_job_ids=[
+                output["build_job_id"]
+                for output in app_outputs
+                if output.get("build_job_id") is not None
+            ],
             finalize_s3=_finalize_s3,
         )
 
@@ -728,6 +748,7 @@ class SolutionDeployer:
         return SolutionBundle(
             solution=bundle.solution,
             python_files=bundle.python_files,
+            bundle_files=bundle.bundle_files,
             workflows=workflows,
             tables=tables,
             apps=apps,
@@ -920,15 +941,17 @@ class SolutionDeployer:
 
         await SolutionSourceArtifactStorage(sid).write(source_zip)
 
-    async def _write_python(self, sid: UUID, python_files: dict[str, str]) -> None:
-        """Full-replace this install's Python source and keep the module cache
-        consistent.
+    async def _write_python(
+        self,
+        sid: UUID,
+        source_files: dict[str, str | bytes],
+    ) -> None:
+        """Full-replace executable source plus inert skill-bundle assets.
 
         get_module_sync reads Redis (keyed by the _solutions/{id}/ storage path)
         BEFORE S3, so a plain S3 write would leave stale bytes cached for the
-        24h TTL and removed files would still resolve. So: write-through each
-        bundle file to Redis with fresh content, and delete (S3 + Redis) any
-        prior solution file absent from the new bundle (Codex P1).
+        24h TTL and removed Python files would still resolve. Only
+        ``python_files`` are cached; skill assets always read S3 directly.
         """
         from src.core.module_cache import invalidate_module, set_module
 
@@ -936,14 +959,15 @@ class SolutionDeployer:
 
         # Prior state: every file currently under this install's prefix.
         prior = set(await storage.list(""))
-        new_rel = set(python_files.keys())
+        new_rel = set(source_files)
 
-        for rel_path, content in python_files.items():
-            content_hash = await storage.write(rel_path, content.encode("utf-8"))
+        for rel_path, content in source_files.items():
+            raw = content.encode("utf-8") if isinstance(content, str) else content
+            content_hash = await storage.write(rel_path, raw)
             storage_key = storage._key(rel_path)  # _solutions/{id}/<rel>
-            # Write-through so the next execution reads the new bytes, not the
-            # 24h-TTL cache. Only .py files are import-cached.
-            if rel_path.endswith(".py"):
+            # Only executable source arrives as text. Bundle files arrive as
+            # bytes, so an inert scripts/example.py never enters module cache.
+            if isinstance(content, str) and rel_path.endswith(".py"):
                 await set_module(storage_key, content, content_hash)
 
         # Remove files dropped from the bundle (full replace of source).
@@ -1177,6 +1201,19 @@ class SolutionDeployer:
                 model=CustomClaim, id=claim_id, values=values, match_on="id"
             ).execute(self.db)
 
+    @staticmethod
+    def _validate_app_models(apps: list[dict[str, Any]]) -> None:
+        """Reject legacy app models before dispatching any build work."""
+        for app in apps:
+            slug = str(app.get("slug") or app.get("id") or "unknown")
+            app_model = app.get("app_model", "inline_v1")
+            if app_model != "standalone_v2":
+                raise SolutionDeployConflict(
+                    f"app '{slug}' has app_model='{app_model}'; Solution apps must "
+                    f"be standalone_v2 (scaffold with `bifrost solution scaffold-app`). "
+                    f"inline_v1 apps are not supported in a Solution bundle."
+                )
+
     async def _upsert_apps(
         self, solution: Solution, apps: list[dict[str, Any]]
     ) -> list[dict[str, Any]]:
@@ -1263,18 +1300,6 @@ class SolutionDeployer:
                     f"two apps cannot share /apps/{slug} for any org — rename one."
                 )
             app_model = mapp.get("app_model", "inline_v1")
-            # Solution apps must be standalone_v2: only those are built to dist/
-            # and served from _apps/{id}/. An inline_v1 app (the legacy default
-            # when app_model is omitted) has NO working deploy path here — its
-            # source would be dropped, leaving a published-but-sourceless app that
-            # 404s or serves unrelated _repo/ source (Codex #11). Reject it loudly
-            # BEFORE writing any row, rather than persist a broken app.
-            if app_model != "standalone_v2":
-                raise SolutionDeployConflict(
-                    f"app '{slug}' has app_model='{app_model}'; Solution apps must "
-                    f"be standalone_v2 (scaffold with `bifrost solution scaffold-app`). "
-                    f"inline_v1 apps are not supported in a Solution bundle."
-                )
             now = datetime.now(timezone.utc)
             # Build model-field dict; transport extra "repo_path" maps to model field "path".
             # _collect_apps (CLI zip path) emits neither "path" nor "repo_path" — fall
@@ -1328,70 +1353,83 @@ class SolutionDeployer:
             })
         return builds
 
-    async def _compile_app_dists(
-        self, builds: list[dict[str, Any]]
-    ) -> list[tuple[UUID, dict[str, bytes]]]:
-        """PRE-COMMIT: compile each app's dist to memory (npm install + vite
-        build, or a shipped prebuilt dist). This is the failure-prone step — a
-        build error raises HERE, before the deploy commits, so the whole deploy
-        rolls back with no S3 side effects (Codex R4 atomicity). No S3 writes.
-
-        Returns ``[(app_id, dist_bytes), ...]`` for the post-commit upload.
-        """
-        import asyncio
+    async def _prepare_app_outputs(
+        self,
+        solution: Solution,
+        apps: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Build source apps on the dedicated plane; decode prebuilt fast paths."""
         import base64 as _b64
 
-        from src.services.solutions.app_build import SolutionAppBuilder
+        from src.services.builder.build_requests import (
+            await_build_jobs,
+            request_app_build,
+        )
 
-        if not builds:
+        if not apps:
             return []
-        builder = SolutionAppBuilder()
-        out: list[tuple[UUID, dict[str, bytes]]] = []
-        for b in builds:
-            prebuilt = b["dist"]
-            bin_prebuilt = b.get("bin_dist")
+        outputs: list[dict[str, Any]] = []
+        pending: list[tuple[UUID, Any]] = []
+        for app in apps:
+            app_id = UUID(app["id"])
+            prebuilt = app.get("dist_files")
+            bin_prebuilt = app.get("bin_dist_files")
             prebuilt_bytes: dict[str, bytes] | None = None
             if prebuilt or bin_prebuilt:
                 prebuilt_bytes = {}
-                # UTF-8 dist text → raw bytes.
                 for k, v in (prebuilt or {}).items():
                     prebuilt_bytes[k] = v.encode("utf-8") if isinstance(v, str) else v
-                # Non-UTF-8 dist assets travel as base64 — decode to the original
-                # bytes so images/fonts/wasm round-trip byte-for-byte (a plain
-                # .encode("utf-8") on the base64 string would write the base64
-                # TEXT to S3, corrupting the asset).
                 for k, v in (bin_prebuilt or {}).items():
                     prebuilt_bytes[k] = _b64.b64decode(v) if isinstance(v, str) else v
+                outputs.append({"app_id": app_id, "prebuilt": prebuilt_bytes})
+                continue
+
             src_bytes = {
                 k: v.encode("utf-8") if isinstance(v, str) else v
-                for k, v in b["src"].items()
+                for k, v in (app.get("src_files") or {}).items()
             }
-            for rel, b64 in (b.get("bin") or {}).items():
+            for rel, b64 in (app.get("bin_files") or {}).items():
                 src_bytes[rel] = _b64.b64decode(b64)
-            # compile_dist is subprocess-bound (npm/vite) → run off the loop.
-            dist = await asyncio.to_thread(
-                builder.compile_dist,
-                b["app_id"],
-                src_bytes,
-                b["dependencies"],
-                prebuilt_bytes,
+            job = await request_app_build(
+                solution_id=solution.id,
+                app_id=app_id,
+                requested_by=solution.owner_user_id,
+                src_files=src_bytes,
+                dependencies=app.get("dependencies") or {},
             )
-            out.append((b["app_id"], dist))
-        return out
+            pending.append((app_id, job))
 
-    async def _upload_compiled_dists(
-        self, compiled: list[tuple[UUID, dict[str, bytes]]]
-    ) -> None:
-        """POST-COMMIT: upload the already-compiled dists (cheap, retryable
-        PUTs). The compile already succeeded pre-commit, so this can't fail the
-        deploy on bad input — only a transient S3 outage, which is re-runnable."""
+        completed = await await_build_jobs([job for _app_id, job in pending])
+        by_id = {job.id: job for job in completed}
+        for app_id, requested in pending:
+            finished = by_id[requested.id]
+            outputs.append(
+                {
+                    "app_id": app_id,
+                    "build_job_id": finished.id,
+                    "manifest": finished.output_manifest or [],
+                }
+            )
+        return outputs
+
+    async def _publish_app_outputs(self, outputs: list[dict[str, Any]]) -> None:
+        """POST-COMMIT: upload prebuilt bytes or copy verified staged outputs."""
+        from src.services.builder.staged_artifacts import StagedBuildArtifactStorage
         from src.services.solutions.app_build import SolutionAppBuilder
 
-        if not compiled:
+        if not outputs:
             return
         builder = SolutionAppBuilder()
-        for app_id, dist in compiled:
-            await builder.upload_dist(app_id, dist)
+        for output in outputs:
+            if (prebuilt := output.get("prebuilt")) is not None:
+                await builder.upload_dist(output["app_id"], prebuilt)
+                continue
+            await StagedBuildArtifactStorage(
+                output["build_job_id"]
+            ).copy_outputs_to_app_dist(
+                output["app_id"],
+                output["manifest"],
+            )
 
     async def _delete_stale_app_dist(self, app_ids: set[UUID]) -> None:
         """S3 phase: delete the dist artifacts of apps reconciled away."""
@@ -1492,6 +1530,41 @@ class SolutionDeployer:
                 FormRole, "form_id", form_id, await self._resolve_roles(mform)
             )
 
+    @staticmethod
+    def _agents_with_canonical_skills(
+        agents: list[dict[str, Any]],
+        bundle_files: dict[str, bytes],
+    ) -> list[dict[str, Any]]:
+        """Materialize each bundled Agent's real ``SKILL.md`` for runtime use."""
+        resolved: list[dict[str, Any]] = []
+        for agent in agents:
+            bundle_path = agent.get("bundle_path")
+            if not bundle_path:
+                resolved.append(agent)
+                continue
+            skill_path = f"{str(bundle_path).rstrip('/')}/SKILL.md"
+            content = bundle_files.get(skill_path)
+            if content is None:
+                raise SolutionDeployConflict(
+                    f"agent {agent.get('id')}: bundle is missing {skill_path}"
+                )
+            try:
+                markdown = content.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise SolutionDeployConflict(
+                    f"agent {agent.get('id')}: SKILL.md must be UTF-8 text"
+                ) from exc
+            if not markdown.strip():
+                raise SolutionDeployConflict(
+                    f"agent {agent.get('id')}: SKILL.md cannot be empty"
+                )
+            if len(markdown) > 50_000:
+                raise SolutionDeployConflict(
+                    f"agent {agent.get('id')}: SKILL.md exceeds the 50,000-character limit"
+                )
+            resolved.append({**agent, "system_prompt": markdown})
+        return resolved
+
     async def _upsert_agents(
         self, solution: Solution, agents: list[dict[str, Any]]
     ) -> None:
@@ -1531,6 +1604,7 @@ class SolutionDeployer:
             agent_values: dict[str, Any] = {
                 "organization_id": solution.organization_id,
                 "solution_id": sid,
+                "bundle_path": magent.get("bundle_path"),
             }
             if self._policy.suppress_event_activation:
                 # Runtime-blocked while private — an autonomous agent must not

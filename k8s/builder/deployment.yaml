@@ -1,0 +1,89 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bifrost-builder
+  namespace: bifrost
+  labels:
+    app.kubernetes.io/name: bifrost-builder
+    app.kubernetes.io/component: builder
+    app.kubernetes.io/part-of: bifrost
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: bifrost-builder
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: bifrost-builder
+        app.kubernetes.io/component: builder
+        app.kubernetes.io/part-of: bifrost
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: builder
+          image: ghcr.io/gobifrost/bifrost-api:latest
+          command: ["python", "-m", "src.builder.main"]
+          env:
+            - name: BIFROST_ENVIRONMENT
+              value: production
+            - name: BIFROST_RABBITMQ_URL
+              valueFrom:
+                secretKeyRef:
+                  name: bifrost-secrets
+                  key: BIFROST_RABBITMQ_URL
+            - name: BIFROST_BUILDER_INTERNAL_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: bifrost-secrets
+                  key: BIFROST_BUILDER_INTERNAL_SECRET
+            - name: BIFROST_INTERNAL_API_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: bifrost-config
+                  key: BIFROST_INTERNAL_API_URL
+            - name: BIFROST_BUILDER_RUNNER_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: bifrost-config
+                  key: BIFROST_BUILDER_RUNNER_URL
+            - name: BIFROST_BUILDER_MAX_CONCURRENT_BUILDS
+              valueFrom:
+                configMapKeyRef:
+                  name: bifrost-config
+                  key: BIFROST_BUILDER_MAX_CONCURRENT_BUILDS
+            - name: BIFROST_BUILDER_BUILD_TIMEOUT_S
+              valueFrom:
+                configMapKeyRef:
+                  name: bifrost-config
+                  key: BIFROST_BUILDER_BUILD_TIMEOUT_S
+            - name: BIFROST_BUILDER_OUTPUT_LIMIT_BYTES
+              valueFrom:
+                configMapKeyRef:
+                  name: bifrost-config
+                  key: BIFROST_BUILDER_OUTPUT_LIMIT_BYTES
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
