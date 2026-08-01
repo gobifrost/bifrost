@@ -51,7 +51,18 @@ class AnthropicClient(BaseLLMClient):
         max_tokens: int | None = None,
         model: str | None = None,
     ) -> LLMResponse:
-        """Non-streaming completion via Anthropic API."""
+        """Non-streaming completion via Anthropic API.
+
+        Uses ``messages.stream()`` + ``get_final_message()`` under the hood
+        rather than ``messages.create()``: the caller still receives one fully
+        assembled ``LLMResponse``, but streaming avoids the Anthropic SDK's
+        client-side guard that refuses a *non-streaming* request whenever
+        ``max_tokens`` is large enough to risk a >10-minute completion
+        ("Streaming is required for operations that may take longer than 10
+        minutes"). That guard fires at ``max_tokens`` above ~21k, which breaks
+        run summarization whenever the admin-configured ``LLMConfig.max_tokens``
+        is set that high, since the summarizer inherits it.
+        """
         # Extract system message and convert rest
         system_prompt, anthropic_messages = self._convert_messages(messages)
         anthropic_tools = self._convert_tools(tools) if tools else None
@@ -67,7 +78,8 @@ class AnthropicClient(BaseLLMClient):
         if anthropic_tools:
             kwargs["tools"] = anthropic_tools
 
-        response = await self.client.messages.create(**kwargs)
+        async with self.client.messages.stream(**kwargs) as stream:
+            response = await stream.get_final_message()
 
         # Extract content and tool calls
         content_parts: list[str] = []

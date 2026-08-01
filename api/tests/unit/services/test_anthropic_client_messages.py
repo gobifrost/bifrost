@@ -146,3 +146,80 @@ class TestConvertMessages:
         assert isinstance(content, list)
         assert len(content) == 3
         assert [b["tool_use_id"] for b in content] == ["c1", "c2", "c3"]
+
+
+class TestComplete:
+    """complete() must stream internally so a large max_tokens never trips the
+    Anthropic SDK's non-streaming ">10 minute" guard (which otherwise breaks run
+    summarization whenever the admin-configured max_tokens is set above ~21k)."""
+
+    @staticmethod
+    def _final_message():
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "hello world"
+        usage = MagicMock()
+        usage.input_tokens = 12
+        usage.output_tokens = 3
+        msg = MagicMock()
+        msg.content = [text_block]
+        msg.stop_reason = "end_turn"
+        msg.usage = usage
+        msg.model = "claude-sonnet-4-20250514"
+        return msg
+
+    def _mock_stream(self, client, final_message):
+        """Wire client.messages.stream to an async CM yielding final_message."""
+        from unittest.mock import AsyncMock
+
+        stream_obj = MagicMock()
+        stream_obj.get_final_message = AsyncMock(return_value=final_message)
+
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=stream_obj)
+        cm.__aexit__ = AsyncMock(return_value=False)
+
+        client.client.messages.stream = MagicMock(return_value=cm)
+        client.client.messages.create = MagicMock(
+            side_effect=AssertionError("complete() must not call messages.create")
+        )
+        return cm
+
+    @pytest.mark.asyncio
+    async def test_complete_uses_streaming(self, client):
+        cm = self._mock_stream(client, self._final_message())
+
+        result = await client.complete(
+            [LLMMessage(role="user", content="hi")], max_tokens=64000
+        )
+
+        # Streamed, not created — this is what avoids the 10-minute guard.
+        client.client.messages.stream.assert_called_once()
+        client.client.messages.create.assert_not_called()
+        # max_tokens is forwarded verbatim; the guard would have fired on create().
+        assert client.client.messages.stream.call_args.kwargs["max_tokens"] == 64000
+        cm.__aenter__.assert_awaited_once()
+
+        # Non-streaming return contract is preserved.
+        assert result.content == "hello world"
+        assert result.finish_reason == "end_turn"
+        assert result.input_tokens == 12
+        assert result.output_tokens == 3
+
+    @pytest.mark.asyncio
+    async def test_complete_assembles_tool_calls(self, client):
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.id = "toolu_1"
+        tool_block.name = "search"
+        tool_block.input = {"q": "cats"}
+        final = self._final_message()
+        final.content = [tool_block]
+        final.stop_reason = "tool_use"
+        self._mock_stream(client, final)
+
+        result = await client.complete([LLMMessage(role="user", content="hi")])
+
+        assert result.tool_calls is not None
+        assert result.tool_calls[0].name == "search"
+        assert result.tool_calls[0].arguments == {"q": "cats"}
