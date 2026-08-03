@@ -14,6 +14,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import Settings, get_settings
+from src.core.log_safety import log_safe
 from .models import (
     WriteResult,
     WorkflowIdConflictInfo,
@@ -476,7 +477,10 @@ class FileStorageService:
                         )
                         if pending:
                             return content, False, False, None, [], pending, available
-                    logger.info(f"Skipping indexing for module without decorators: {path}")
+                    logger.info(
+                        "Skipping indexing for module without decorators: "
+                        f"{log_safe(path)}"
+                    )
                     return content, False, False, None, [], None, None
 
                 # Python files with decorators: do deactivation check then index
@@ -486,7 +490,9 @@ class FileStorageService:
                     workflows_to_deactivate=workflows_to_deactivate,
                 )
         except Exception as e:
-            logger.warning(f"Failed to extract metadata from {path}: {e}")
+            logger.warning(
+                f"Failed to extract metadata from {log_safe(path)}: {log_safe(e)}"
+            )
 
         return content, False, False, None, [], None, None
 
@@ -533,7 +539,9 @@ class FileStorageService:
             try:
                 tree = ast.parse(content_str, filename=path)
             except SyntaxError as e:
-                logger.warning(f"Syntax error parsing {path}: {e}")
+                logger.warning(
+                    f"Syntax error parsing {log_safe(path)}: {log_safe(e)}"
+                )
                 diagnostics.append(FileDiagnosticInfo(
                     severity="error",
                     message=f"Syntax error: {e.msg}" if e.msg else str(e),
