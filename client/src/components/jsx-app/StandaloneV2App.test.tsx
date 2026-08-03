@@ -8,9 +8,10 @@ import {
 	type StandaloneV2Module,
 } from "./StandaloneV2App";
 
-vi.mock("@/hooks/useOrgScope", () => ({
-	useOrgScope: () => ({ scope: { type: "global", orgId: null } }),
-}));
+vi.mock("@/hooks/useOrgScope", () => {
+	const scope = { type: "global" as const, orgId: null };
+	return { useOrgScope: () => ({ scope }) };
+});
 
 function props(entry: string) {
 	return {
