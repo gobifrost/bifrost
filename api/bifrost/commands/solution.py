@@ -1761,9 +1761,6 @@ def pull_cmd(path: str, solution_id: str | None, org: str | None, is_global: boo
     entities it materialized so the matching ``pending_captures`` rows clear.
     Safe for an agent to run (it only rewrites the generated manifest).
     """
-    import io
-    import zipfile
-
     workspace = _workspace_from_path_arg(path)
     if not is_solution_workspace(workspace):
         raise click.ClickException(
