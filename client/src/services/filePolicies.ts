@@ -52,7 +52,7 @@ async function parseResponse<T>(response: Response): Promise<T> {
 		if (response.status === 204) return undefined as T;
 		return (await response.json()) as T;
 	}
-	let detail = response.statusText;
+	let detail: string;
 	try {
 		const body = (await response.json()) as { detail?: unknown; message?: unknown };
 		const raw = body.detail ?? body.message;
