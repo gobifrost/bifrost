@@ -151,6 +151,15 @@ from src.models.contracts.platform_jobs import (
     PlatformJobPublic,
     PlatformJobStatus,
 )
+from src.models.contracts.scheduler_diagnostics import (
+    SchedulerCapacityStatus,
+    SchedulerDiagnosticsResponse,
+    SchedulerLeaderStatus,
+    SchedulerReplicaStatus,
+    SchedulerTaskRunStatus,
+    SchedulerTaskStatus,
+    SystemDiagnosticLogPublic,
+)
 
 # Agents & Chat
 from src.models.contracts.agents import (
@@ -1055,6 +1064,13 @@ __all__ = [
     "PlatformJobProgress",
     "PlatformJobPublic",
     "PlatformJobStatus",
+    "SchedulerCapacityStatus",
+    "SchedulerDiagnosticsResponse",
+    "SchedulerLeaderStatus",
+    "SchedulerReplicaStatus",
+    "SchedulerTaskRunStatus",
+    "SchedulerTaskStatus",
+    "SystemDiagnosticLogPublic",
     # Platform Admin
     "PoolDetail",
     "PoolsListResponse",

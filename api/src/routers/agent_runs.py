@@ -1157,7 +1157,11 @@ async def backfill_summaries(
         )
 
     # Persist the orchestration row first so the worker can increment counters.
+    from uuid import uuid4
+
+    central_job_id = uuid4()
     job = SummaryBackfillJob(
+        id=central_job_id,
         agent_id=request.agent_id,
         requested_by=user.user_id,
         status="running",
@@ -1175,19 +1179,30 @@ async def backfill_summaries(
         .where(AgentRun.id.in_(run_ids))
         .values(summary_status="pending", summary_error=None)
     )
+    from src.jobs.platform.summary_backfill import (
+        SUMMARY_BACKFILL_DEFINITION,
+        SummaryBackfillPayload,
+    )
+    from src.services.platform_jobs import enqueue_platform_job, publish_platform_job_update
+
+    platform_job, _ = await enqueue_platform_job(
+        db,
+        SUMMARY_BACKFILL_DEFINITION,
+        SummaryBackfillPayload(backfill_job_id=job.id, run_ids=run_ids),
+        dedupe_key=str(job.id),
+        priority=100,
+        organization_id=None,
+        requested_by_user_id=user.user_id,
+        requested_by_email=user.email,
+        requested_by_name=user.name or user.email or "Unknown",
+        resource_type="summary_backfill",
+        resource_id=str(job.id),
+        title=f"Summarizing {eligible} agent runs",
+        action_url="/agents",
+        job_id=central_job_id,
+    )
     await db.commit()
-
-    # Now enqueue one message per run, tagged with the job id. Backfills go
-    # to a dedicated queue so a 2000-run bulk operation doesn't starve the
-    # live ``agent-summarization`` path that serves just-finished runs.
-    from src.jobs.rabbitmq import publish_message
-    from src.services.execution.run_summarizer import SUMMARIZE_BACKFILL_QUEUE
-
-    for rid in run_ids:
-        await publish_message(
-            SUMMARIZE_BACKFILL_QUEUE,
-            {"run_id": str(rid), "backfill_job_id": str(job.id)},
-        )
+    await publish_platform_job_update(platform_job)
 
     return BackfillSummariesResponse(
         job_id=job.id,
@@ -1271,6 +1286,13 @@ async def cancel_backfill_job(
     job.status = "cancelled"
     job.completed_at = datetime.now(timezone.utc)
     await db.commit()
+
+    from src.models.orm.platform_jobs import PlatformJob
+    from src.services.platform_jobs import request_platform_job_cancel
+
+    platform_job = await db.get(PlatformJob, job_id)
+    if platform_job is not None:
+        await request_platform_job_cancel(db, platform_job)
 
     # Broadcast so any attached progress card dismisses itself.
     from src.core.pubsub import publish_summary_backfill_update

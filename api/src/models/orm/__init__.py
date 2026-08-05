@@ -17,6 +17,12 @@ from src.models.orm.ai_usage import AIModelPricing, AIUsage
 from src.models.orm.app_embed_secrets import AppEmbedSecret
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.scheduler_leases import SchedulerLease
+from src.models.orm.scheduler_diagnostics import (
+    SchedulerReplica,
+    SchedulerTaskRun,
+    SchedulerTaskState,
+    SystemDiagnosticLog,
+)
 from src.models.orm.form_embed_secrets import FormEmbedSecret
 from src.models.orm.form_publications import FormPublication
 from src.models.orm.app_roles import AppRole
@@ -78,6 +84,10 @@ __all__ = [
     "Application",
     "PlatformJob",
     "SchedulerLease",
+    "SchedulerReplica",
+    "SchedulerTaskRun",
+    "SchedulerTaskState",
+    "SystemDiagnosticLog",
     "AppEmbedSecret",
     "AppRole",
     # Users and Roles

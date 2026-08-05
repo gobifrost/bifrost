@@ -253,8 +253,8 @@ services:
     profiles:
       - e2e  # Only start in E2E mode
 
-  # Scheduler (Test) - Only started for E2E tests
-  # Handles background jobs like GitHub sync via Redis pubsub
+  # Scheduler (Test) - Only started for E2E tests. Every replica is a durable
+  # platform-job runner; the trigger leader is elected in PostgreSQL.
   scheduler:
     image: bifrost-test-api-dev:latest
     build:
@@ -297,6 +297,7 @@ services:
         condition: service_started
       api:
         condition: service_healthy
+    mem_limit: 1g
     # Entrypoint handles permissions; run as root so it can fix volume ownership
     user: root
     command: ["python", "-m", "src.scheduler.main"]

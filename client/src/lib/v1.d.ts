@@ -3840,6 +3840,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/platform/scheduler": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Scheduler Diagnostics */
+        get: operations["get_scheduler_diagnostics_api_platform_scheduler_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/oauth/connections/{connection_name}": {
         parameters: {
             query?: never;
@@ -19897,6 +19914,13 @@ export interface components {
             resource_type?: string | null;
             /** Resource Id */
             resource_id?: string | null;
+            /** Resource Lock Key */
+            resource_lock_key?: string | null;
+            /**
+             * Priority
+             * @default 100
+             */
+            priority: number;
             /** Title */
             title: string;
             /** Action Url */
@@ -19922,6 +19946,12 @@ export interface components {
             error?: components["schemas"]["PlatformJobError"] | null;
             /** Notification Id */
             notification_id?: string | null;
+            /** Memory Start Bytes */
+            memory_start_bytes?: number | null;
+            /** Memory Peak Bytes */
+            memory_peak_bytes?: number | null;
+            /** Memory Limit Bytes */
+            memory_limit_bytes?: number | null;
             /** Started At */
             started_at?: string | null;
             /** Completed At */
@@ -19941,7 +19971,7 @@ export interface components {
          * PlatformJobStatus
          * @enum {string}
          */
-        PlatformJobStatus: "queued" | "running" | "cancel_requested" | "succeeded" | "failed" | "cancelled";
+        PlatformJobStatus: "queued" | "running" | "waiting" | "cancel_requested" | "succeeded" | "failed" | "cancelled";
         /**
          * PlatformMetricsResponse
          * @description Platform metrics snapshot response.
@@ -20689,31 +20719,6 @@ export interface components {
             pid?: number | null;
         };
         /**
-         * RefreshAllResponse
-         * @description Response for triggering refresh of all tokens.
-         */
-        RefreshAllResponse: {
-            /** Triggered */
-            triggered: boolean;
-            /** Message */
-            message: string;
-            /**
-             * Connections Queued
-             * @default 0
-             */
-            connections_queued: number;
-            /**
-             * Refreshed Successfully
-             * @default 0
-             */
-            refreshed_successfully: number;
-            /**
-             * Refresh Failed
-             * @default 0
-             */
-            refresh_failed: number;
-        };
-        /**
          * RefreshJobRun
          * @description Details of a single refresh job run.
          */
@@ -20755,7 +20760,9 @@ export interface components {
             /** Error */
             error?: string | null;
             /** Errors */
-            errors?: string[];
+            errors?: (string | {
+                [key: string]: unknown;
+            })[];
         };
         /**
          * RefreshJobStatusResponse
@@ -21728,6 +21735,131 @@ export interface components {
              * @default skip
              */
             overlap_policy: components["schemas"]["ScheduleOverlapPolicy"];
+        };
+        /** SchedulerCapacityStatus */
+        SchedulerCapacityStatus: {
+            /** Replicas Online */
+            replicas_online: number;
+            /** Slots Total */
+            slots_total: number;
+            /** Slots Running */
+            slots_running: number;
+            /** Jobs Queued */
+            jobs_queued: number;
+            /** Jobs Waiting For Memory */
+            jobs_waiting_for_memory: number;
+            /** Oldest Queued Seconds */
+            oldest_queued_seconds?: number | null;
+            /** Max Memory Utilization Percent */
+            max_memory_utilization_percent?: number | null;
+        };
+        /** SchedulerDiagnosticsResponse */
+        SchedulerDiagnosticsResponse: {
+            /**
+             * Generated At
+             * Format: date-time
+             */
+            generated_at: string;
+            leader: components["schemas"]["SchedulerLeaderStatus"];
+            capacity: components["schemas"]["SchedulerCapacityStatus"];
+            /** Replicas */
+            replicas: components["schemas"]["SchedulerReplicaStatus"][];
+            /** Tasks */
+            tasks: components["schemas"]["SchedulerTaskStatus"][];
+            /** Logs */
+            logs: components["schemas"]["SystemDiagnosticLogPublic"][];
+        };
+        /** SchedulerLeaderStatus */
+        SchedulerLeaderStatus: {
+            /** Owner Id */
+            owner_id?: string | null;
+            /** Lease Expires At */
+            lease_expires_at?: string | null;
+            /**
+             * Healthy
+             * @default false
+             */
+            healthy: boolean;
+        };
+        /** SchedulerReplicaStatus */
+        SchedulerReplicaStatus: {
+            /** Id */
+            id: string;
+            /** Hostname */
+            hostname: string;
+            /** Pid */
+            pid: number;
+            /** Is Leader */
+            is_leader: boolean;
+            /** Online */
+            online: boolean;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /**
+             * Last Heartbeat At
+             * Format: date-time
+             */
+            last_heartbeat_at: string;
+            /** Memory Current Bytes */
+            memory_current_bytes?: number | null;
+            /** Memory Limit Bytes */
+            memory_limit_bytes?: number | null;
+            /** Active Platform Job Id */
+            active_platform_job_id?: string | null;
+        };
+        /** SchedulerTaskRunStatus */
+        SchedulerTaskRunStatus: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Status */
+            status: string;
+            /** Leader Owner Id */
+            leader_owner_id: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Completed At */
+            completed_at?: string | null;
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Summary */
+            summary?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            /** Platform Job Id */
+            platform_job_id?: string | null;
+            /** Platform Job Status */
+            platform_job_status?: string | null;
+            /** Platform Job Memory Start Bytes */
+            platform_job_memory_start_bytes?: number | null;
+            /** Platform Job Memory Peak Bytes */
+            platform_job_memory_peak_bytes?: number | null;
+            /** Platform Job Memory Limit Bytes */
+            platform_job_memory_limit_bytes?: number | null;
+        };
+        /** SchedulerTaskStatus */
+        SchedulerTaskStatus: {
+            /** Task Id */
+            task_id: string;
+            /** Name */
+            name: string;
+            /** Schedule */
+            schedule: string;
+            /** Execution Mode */
+            execution_mode: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Next Run At */
+            next_run_at?: string | null;
+            last_run?: components["schemas"]["SchedulerTaskRunStatus"] | null;
         };
         /**
          * SearchRequest
@@ -23162,6 +23294,28 @@ export interface components {
              * @default false
              */
             confirm_deletes: boolean;
+        };
+        /** SystemDiagnosticLogPublic */
+        SystemDiagnosticLogPublic: {
+            /** Id */
+            id: number;
+            /** Source */
+            source: string;
+            /** Level */
+            level: string;
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Scheduler Run Id */
+            scheduler_run_id?: string | null;
+            /** Platform Job Id */
+            platform_job_id?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
         /**
          * TableCreate
@@ -31640,6 +31794,37 @@ export interface operations {
             };
         };
     };
+    get_scheduler_diagnostics_api_platform_scheduler_get: {
+        parameters: {
+            query?: {
+                log_limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulerDiagnosticsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_connection_api_oauth_connections__connection_name__get: {
         parameters: {
             query?: never;
@@ -31965,7 +32150,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["RefreshAllResponse"];
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
                 };
             };
         };

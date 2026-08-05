@@ -226,6 +226,9 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
+    # Keep cgroup admission and Diagnostics representative in debug. Override
+    # upward when exercising a job with a larger declared headroom.
+    mem_limit: ${SCHEDULER_MEMORY_LIMIT:-1g}
     user: root
     command: >
       watchmedo auto-restart --directory=/app/src --directory=/app/shared

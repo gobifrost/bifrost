@@ -90,18 +90,15 @@ async def test_stopping_leader_services_cancels_running_scheduler_callback() -> 
 
 
 @pytest.mark.asyncio
-async def test_failed_leader_service_stop_is_not_treated_as_released() -> None:
+async def test_failed_scheduler_shutdown_is_reported() -> None:
     scheduler = Scheduler(leadership_lease=FakeLeadershipLease())  # type: ignore[arg-type]
-    listener = MagicMock()
-    listener.stop = AsyncMock(side_effect=RuntimeError("listener still active"))
     apscheduler = MagicMock()
-    scheduler._pubsub_listener = listener
+    apscheduler.shutdown.side_effect = RuntimeError("scheduler still active")
     scheduler._scheduler = apscheduler
 
-    with pytest.raises(RuntimeError, match="listener still active"):
+    with pytest.raises(RuntimeError, match="scheduler still active"):
         await scheduler._stop_leader_services()
 
-    assert scheduler._pubsub_listener is listener
     assert scheduler._scheduler is None
     apscheduler.shutdown.assert_called_once_with(wait=False)
 

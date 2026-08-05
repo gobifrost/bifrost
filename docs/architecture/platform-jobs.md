@@ -7,10 +7,11 @@ can outlive an HTTP request. New platform operations must extend this system
 instead of creating a feature-specific job table, worker, scheduler host,
 status endpoint, progress event, or UI polling implementation.
 
-Application publishing (`application.publish`) is the first migrated consumer.
-Older systems such as Solution deploy/export jobs and reindexing remain
-migration candidates. Their existing implementations are not templates for new
-work.
+The migrated job families are application publishing, OAuth refresh, webhook
+renewal, Solution update checks, Solution export/deploy/install, embedding
+reindex, workspace reimport and git operations, and agent-summary backfills.
+Feature-specific rows that remain for API compatibility are projections; they
+do not own execution.
 
 ## When to use it
 
@@ -64,8 +65,8 @@ necessary, evolve the common host and its policy contract; do not add
 per-feature worker containers.
 
 One replica also holds the fenced `scheduler-triggers` database lease. Only
-that trigger leader runs APScheduler and the legacy scheduler Redis pub/sub
-listener. The lease uses database-time expiry rather than a session advisory
+that trigger leader runs APScheduler. On-demand work is persisted directly to
+PostgreSQL and does not depend on Redis delivery. The lease uses database-time expiry rather than a session advisory
 lock because supported deployments use transaction-mode PgBouncer. A follower
 takes over after expiry when the leader stops renewing; trigger services stop
 before a healthy leader voluntarily releases its lease.
@@ -76,16 +77,16 @@ failover behavior. Long-running callbacks must migrate by making the elected
 callback enqueue a deduplicated platform job. Small, idempotent housekeeping may
 remain leader-only scheduler work.
 
-This scaling foundation changes ownership immediately, but does not turn legacy
-callbacks into `PlatformJob` rows. The elected leader continues to run workflow
-schedule promotion, deferred execution promotion, OAuth refresh, metrics and
-knowledge snapshots, webhook renewal, Solution update checks and exports, event
-cleanup, worker metrics, and the git/reimport/reindex pub/sub handlers. The
-durable worker loop currently executes registered platform jobs such as
-application publishing on every replica. Follow-up migrations should prioritize
-the long-running or independently observable OAuth, webhook, Solution export,
-git/reimport, and embedding-reindex work; short promotion, cleanup, and metric
-callbacks can remain leader-only.
+The elected leader retains only short trigger and housekeeping callbacks:
+workflow schedule processing, deferred execution promotion, stuck execution and
+event cleanup, metric snapshots, knowledge-storage metrics, artifact retention,
+and diagnostics/backfill reconciliation. Recurring OAuth, webhook, and Solution
+update callbacks enqueue singleton high-priority platform jobs. User-initiated
+long-running work is claimed by any replica.
+
+A handler may release its scheduler slot in `waiting` state after dispatching
+durable child work. The child tracker completes the parent row later. Summary
+backfills use this path so RabbitMQ fan-out does not occupy scheduler capacity.
 
 Lease-token checks fence stale runners: only the current attempt may update
 progress or record a terminal result. A handler may be retried after runner
@@ -108,18 +109,25 @@ set and wall-clock duration, include operational margin, and exercise low-memory
 deferral and timeout behavior in tests. These measurements inform policy and
 deployment guidance; they are not per-job CPU or memory reservations.
 
-The kernel does not currently persist per-attempt CPU or process-tree memory
-telemetry. Its cgroup reading includes the scheduler host and any leader-only
-callback running at the same time, so it is a container safety signal rather
-than exact job attribution. Add shared process-tree telemetry only when policy
-tuning from representative benchmarks and operational signals proves
-insufficient; do not make every handler invent its own measurement path.
+The kernel persists the cgroup working set at job start, the peak observed while
+the attempt runs, and the cgroup limit. The difference between start and peak is
+shown in Scheduler Diagnostics as a practical per-job sizing sample. It still
+includes scheduler-host activity, so treat it as an operational upper-bound
+signal rather than exact process-tree attribution. Add shared process-tree/CPU
+telemetry only when these representative samples prove insufficient.
 
 Start with the deployment defaults and scale replicas when queue wait time grows.
 Increase container memory only when representative jobs are repeatedly deferred
 or approach the hard ratio. Do not add Kubernetes-style resource classes until
 observed workloads show that one common scheduler size cannot safely serve the
 registered job types.
+
+`GET /api/platform/scheduler` and the Diagnostics → Scheduler tab expose leader
+health, online replicas and active claims, queue age, memory-admission waits,
+maximum replica memory utilization, every registered schedule and its last run,
+per-job memory samples, and explicitly published operator-safe logs. Persistent
+memory waits/high utilization indicate vertical scaling; a growing queue while
+all slots are occupied indicates horizontal scaling.
 
 ## Shared caller contract
 
@@ -168,8 +176,10 @@ invoke handlers or repositories directly.
 
 1. Add `api/src/jobs/platform/<job_name>.py`.
 2. Define a Pydantic payload model and version. Stored payloads must be
-   sufficient to run after the request context is gone, but must not contain
-   secrets that should not be persisted.
+   sufficient to run after the request context is gone. Set
+   `encrypt_payload=True` when the durable payload contains credentials, config
+   values, passwords, or other protected inputs; the public JSON column then
+   contains only a protected marker.
 3. Implement a handler with the
    `PlatformJobHandler(PlatformJobContext, payload)` contract. Report meaningful
    phases and bounded progress with `context.report(...)`. Return a
@@ -224,4 +234,7 @@ surfaces.
 | Trigger leader election | `api/src/scheduler/leadership.py` |
 | Generic status and cancellation API | `api/src/routers/platform_jobs.py` |
 | Scheduler host registration | `api/src/scheduler/main.py` |
+| Scheduler run/replica/log diagnostics | `api/src/services/scheduler_diagnostics.py` |
+| Diagnostics API | `api/src/routers/scheduler_diagnostics.py` |
+| Diagnostics UI | `client/src/pages/diagnostics/components/SchedulerTab.tsx` |
 | Browser WebSocket transport | `client/src/services/websocket.ts` |

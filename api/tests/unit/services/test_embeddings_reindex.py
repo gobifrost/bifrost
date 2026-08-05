@@ -136,7 +136,7 @@ async def test_run_reindex_completes_immediately_when_no_rows():
         patch.object(reindex, "clear_cancel_flag", AsyncMock()),
         patch.object(reindex, "is_cancelled", AsyncMock(return_value=False)),
     ):
-        await reindex.run_reindex("nid")
+        outcome = await reindex.run_reindex("nid")
 
     # Last update should have status=completed.
     final_call = notif_service.update_notification.await_args_list[-1]
@@ -144,6 +144,7 @@ async def test_run_reindex_completes_immediately_when_no_rows():
     assert final_update.status is not None
     assert final_update.status.value == "completed"
     assert final_update.percent == 100.0
+    assert outcome == reindex.ReindexOutcome("succeeded", 0, 0, 0)
 
 
 @pytest.mark.asyncio
@@ -178,7 +179,7 @@ async def test_run_reindex_bails_on_cancellation_before_first_batch():
             reindex, "get_embedding_client", AsyncMock(return_value=embedding_client)
         ),
     ):
-        await reindex.run_reindex("nid")
+        outcome = await reindex.run_reindex("nid")
 
     # Embedding client should never have been called — we bailed immediately.
     embedding_client.embed.assert_not_awaited()
@@ -187,6 +188,7 @@ async def test_run_reindex_bails_on_cancellation_before_first_batch():
     final_update = final_call.args[1]
     assert final_update.status is not None
     assert final_update.status.value == "cancelled"
+    assert outcome.status == "cancelled"
 
 
 # --- Terminal-status tests for issue #198 ---

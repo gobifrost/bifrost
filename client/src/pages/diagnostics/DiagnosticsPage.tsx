@@ -4,6 +4,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { AlertCircle } from "lucide-react";
 import { WorkersTab } from "./components/WorkersTab";
+import { SchedulerTab } from "./components/SchedulerTab";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export function DiagnosticsPage() {
 	const { isPlatformAdmin } = useAuth();
@@ -38,9 +40,20 @@ export function DiagnosticsPage() {
 				</p>
 			</div>
 
-			<div className="flex-1 overflow-auto">
-				<WorkersTab />
-			</div>
+			<Tabs defaultValue="workers" className="flex min-h-0 flex-1 flex-col">
+				<div className="max-w-[1100px] mx-auto w-full">
+					<TabsList>
+						<TabsTrigger value="workers">Workers</TabsTrigger>
+						<TabsTrigger value="scheduler">Scheduler</TabsTrigger>
+					</TabsList>
+				</div>
+				<TabsContent value="workers" className="min-h-0 flex-1 overflow-auto pt-4">
+					<WorkersTab />
+				</TabsContent>
+				<TabsContent value="scheduler" className="min-h-0 flex-1 overflow-auto pt-4">
+					<SchedulerTab />
+				</TabsContent>
+			</Tabs>
 		</div>
 	);
 }

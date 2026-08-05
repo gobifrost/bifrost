@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select, text
 
 from src.core.database import get_db_context
 from src.jobs.platform.base import PlatformJobPolicy
@@ -132,7 +132,7 @@ async def claim_platform_job() -> ClaimedPlatformJob | None:
                     PlatformJob.status == "queued",
                     PlatformJob.available_at <= _now(),
                 )
-                .order_by(PlatformJob.created_at.asc())
+                .order_by(PlatformJob.priority.desc(), PlatformJob.created_at.asc())
                 .limit(20)
             )
         ).scalars().all()
@@ -161,6 +161,44 @@ async def claim_platform_job() -> ClaimedPlatformJob | None:
                 job.revision += 1
                 updated.append(job)
                 continue
+            if definition.policy.max_concurrency is not None:
+                handler_lock = (
+                    await db.execute(
+                        text("SELECT pg_try_advisory_xact_lock(hashtext(:key))"),
+                        {"key": f"bifrost:platform-job-type:{job.job_type}"},
+                    )
+                ).scalar_one()
+                if not handler_lock:
+                    continue
+                running_count = (
+                    await db.execute(
+                        select(func.count(PlatformJob.id)).where(
+                            PlatformJob.job_type == job.job_type,
+                            PlatformJob.status.in_(("running", "cancel_requested")),
+                        )
+                    )
+                ).scalar_one()
+                if running_count >= definition.policy.max_concurrency:
+                    continue
+            if job.resource_lock_key is not None:
+                resource_lock = (
+                    await db.execute(
+                        text("SELECT pg_try_advisory_xact_lock(hashtext(:key))"),
+                        {"key": f"bifrost:platform-job-resource:{job.resource_lock_key}"},
+                    )
+                ).scalar_one()
+                if not resource_lock:
+                    continue
+                resource_busy = (
+                    await db.execute(
+                        select(func.count(PlatformJob.id)).where(
+                            PlatformJob.resource_lock_key == job.resource_lock_key,
+                            PlatformJob.status.in_(("running", "cancel_requested")),
+                        )
+                    )
+                ).scalar_one()
+                if resource_busy:
+                    continue
             if not _memory_allows_start(definition.policy):
                 if job.phase != "Waiting for scheduler memory":
                     job.phase = "Waiting for scheduler memory"
@@ -181,6 +219,10 @@ async def claim_platform_job() -> ClaimedPlatformJob | None:
             job.error_code = None
             job.error_message = None
             job.error_retryable = None
+            current_memory, memory_limit = get_cgroup_memory()
+            job.memory_start_bytes = current_memory if current_memory >= 0 else None
+            job.memory_peak_bytes = current_memory if current_memory >= 0 else None
+            job.memory_limit_bytes = memory_limit if memory_limit > 0 else None
             job.revision += 1
             await db.commit()
             claimed = ClaimedPlatformJob(
@@ -221,6 +263,11 @@ async def _heartbeat(
         now = _now()
         job.heartbeat_at = now
         job.lease_expires_at = now + LEASE_DURATION
+        current_memory, memory_limit = get_cgroup_memory()
+        if current_memory >= 0:
+            job.memory_peak_bytes = max(job.memory_peak_bytes or 0, current_memory)
+        if memory_limit > 0:
+            job.memory_limit_bytes = memory_limit
         await db.commit()
         return job.status
 

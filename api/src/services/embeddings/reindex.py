@@ -2,8 +2,7 @@
 Knowledge-store reindex service.
 
 Re-embeds every row in `knowledge_store` against the currently-configured
-embedder. Runs on the scheduler container (see api/src/scheduler/main.py),
-triggered via the `bifrost:scheduler:embedding-reindex` Redis channel.
+embedder. Runs as a durable platform job on any scheduler replica.
 
 Progress + cancellation flow through the existing NotificationService /
 WebSocket pipeline; the client subscribes to `notification:{user_id}` and
@@ -18,6 +17,8 @@ deliberate trade-off the user agreed to when they confirmed.
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
+from typing import Literal
 from typing import cast
 
 from sqlalchemy import select, update
@@ -40,6 +41,14 @@ logger = logging.getLogger(__name__)
 # for round-trip efficiency. Progress notifications fire per-row, not per-batch,
 # so this doesn't affect UI smoothness.
 EMBED_BATCH_SIZE = 256
+
+
+@dataclass(frozen=True)
+class ReindexOutcome:
+    status: Literal["succeeded", "failed", "cancelled"]
+    processed: int
+    total: int
+    failed_batches: int
 
 
 def _cancel_key(notification_id: str) -> str:
@@ -126,7 +135,7 @@ async def run_reindex_for_group(
     return len(new_ids)
 
 
-async def run_reindex(notification_id: str) -> None:
+async def run_reindex(notification_id: str) -> ReindexOutcome:
     """
     Re-embed every row in knowledge_store against the saved embedding config.
 
@@ -186,7 +195,12 @@ async def run_reindex(notification_id: str) -> None:
                         result={"processed": 0, "total": 0, "failed_batches": 0},
                     ),
                 )
-                return
+                return ReindexOutcome(
+                    status="succeeded",
+                    processed=0,
+                    total=0,
+                    failed_batches=0,
+                )
 
             client = await get_embedding_client(db)
 
@@ -211,7 +225,12 @@ async def run_reindex(notification_id: str) -> None:
                             },
                         ),
                     )
-                    return
+                    return ReindexOutcome(
+                        status="cancelled",
+                        processed=processed,
+                        total=total,
+                        failed_batches=failed_batches,
+                    )
 
                 try:
                     await run_reindex_for_group(
@@ -255,7 +274,12 @@ async def run_reindex(notification_id: str) -> None:
                             },
                         ),
                     )
-                    return
+                    return ReindexOutcome(
+                        status="cancelled",
+                        processed=processed,
+                        total=total,
+                        failed_batches=failed_batches,
+                    )
 
                 try:
                     vector = await client.embed_single(row.content)
@@ -302,6 +326,12 @@ async def run_reindex(notification_id: str) -> None:
                         },
                     ),
                 )
+                return ReindexOutcome(
+                    status="failed",
+                    processed=processed,
+                    total=total,
+                    failed_batches=failed_batches,
+                )
             else:
                 description = f"Reindexed {processed}/{total} knowledge document(s)."
                 if failed_batches:
@@ -323,6 +353,12 @@ async def run_reindex(notification_id: str) -> None:
                         },
                     ),
                 )
+                return ReindexOutcome(
+                    status="succeeded",
+                    processed=processed,
+                    total=total,
+                    failed_batches=failed_batches,
+                )
 
     except Exception as e:
         logger.exception("Reindex job failed")
@@ -338,6 +374,12 @@ async def run_reindex(notification_id: str) -> None:
                     "failed_batches": failed_batches,
                 },
             ),
+        )
+        return ReindexOutcome(
+            status="failed",
+            processed=processed,
+            total=total,
+            failed_batches=failed_batches,
         )
     finally:
         await clear_cancel_flag(notification_id)
@@ -397,6 +439,7 @@ async def count_knowledge_rows_at_other_dims(target_dim: int) -> int:
 
 __all__ = [
     "EMBED_BATCH_SIZE",
+    "ReindexOutcome",
     "run_reindex",
     "run_reindex_for_group",
     "is_cancelled",

@@ -10,12 +10,11 @@ from __future__ import annotations
 
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 import pytest
 
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
-from src.routers.solutions import DEPLOY_JOB_TIMEOUT
 
 pytestmark = pytest.mark.e2e
 
@@ -140,16 +139,17 @@ def test_async_deploy_reports_failure(e2e_client, platform_admin):
 
 
 @pytest.mark.asyncio
-async def test_polling_expires_abandoned_deploy_job(
+async def test_polling_does_not_mutate_deploy_job_state(
     e2e_client, platform_admin, db_session
 ):
+    """Status reads are projections; central lease recovery owns failure state."""
     now = datetime.now(timezone.utc)
     job = SolutionDeployJob(
         install_id=None,
         status="running",
         result={"phase": "building app dist"},
-        created_at=now - DEPLOY_JOB_TIMEOUT - timedelta(seconds=1),
-        updated_at=now - DEPLOY_JOB_TIMEOUT - timedelta(seconds=1),
+        created_at=now,
+        updated_at=now,
     )
     db_session.add(job)
     await db_session.commit()
@@ -160,6 +160,6 @@ async def test_polling_expires_abandoned_deploy_job(
 
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "failed"
-    assert body["result"] is None
-    assert "15-minute" in body["error"]
+    assert body["status"] == "running"
+    assert body["result"] == {"phase": "building app dist"}
+    assert body["error"] is None

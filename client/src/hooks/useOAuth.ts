@@ -351,7 +351,9 @@ export function useTriggerOAuthRefreshJob() {
 				queryKey: ["get", "/api/oauth/refresh_job_status"],
 			});
 			toast.success(
-				`Refresh job completed: ${data.refreshed_successfully} refreshed, ${data.refresh_failed} failed`,
+				data.reused
+					? "An OAuth refresh job is already running"
+					: "OAuth refresh job queued",
 			);
 		},
 		onError: () => {

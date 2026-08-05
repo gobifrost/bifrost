@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock
@@ -192,6 +193,121 @@ async def test_memory_admission_defers_without_claiming(
     assert job.status == "queued"
     assert job.phase == "Waiting for scheduler memory"
     assert job.lease_token is None
+
+
+@pytest.mark.asyncio
+async def test_claims_highest_priority_first(db_session: AsyncSession) -> None:
+    low = await _queued_job(db_session)
+    low.priority = 10
+    high_id = uuid4()
+    high, _ = await enqueue_platform_job(
+        db_session,
+        APPLICATION_PUBLISH_DEFINITION,
+        ApplicationPublishPayload(application_id=high_id),
+        dedupe_key=str(high_id),
+        priority=1000,
+        organization_id=None,
+        requested_by_user_id=uuid4(),
+        requested_by_email="dev@example.com",
+        requested_by_name="Dev",
+        resource_type="application",
+        resource_id=str(high_id),
+        title="High priority",
+        action_url=None,
+    )
+
+    claim = await scheduler.claim_platform_job()
+
+    assert claim is not None
+    assert claim.id == high.id
+
+
+@pytest.mark.asyncio
+async def test_resource_lock_serializes_matching_jobs(db_session: AsyncSession) -> None:
+    first = await _queued_job(db_session)
+    first.resource_lock_key = "solution:one"
+    second_id = uuid4()
+    second, _ = await enqueue_platform_job(
+        db_session,
+        APPLICATION_PUBLISH_DEFINITION,
+        ApplicationPublishPayload(application_id=second_id),
+        dedupe_key=str(second_id),
+        resource_lock_key="solution:one",
+        organization_id=None,
+        requested_by_user_id=uuid4(),
+        requested_by_email="dev@example.com",
+        requested_by_name="Dev",
+        resource_type="application",
+        resource_id=str(second_id),
+        title="Second",
+        action_url=None,
+    )
+
+    first_claim = await scheduler.claim_platform_job()
+    second_claim = await scheduler.claim_platform_job()
+
+    assert first_claim is not None
+    assert first_claim.id in {first.id, second.id}
+    assert second_claim is None
+
+
+@pytest.mark.asyncio
+async def test_type_concurrency_limit_is_enforced(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    await _queued_job(db_session)
+    second_id = uuid4()
+    await enqueue_platform_job(
+        db_session,
+        APPLICATION_PUBLISH_DEFINITION,
+        ApplicationPublishPayload(application_id=second_id),
+        dedupe_key=str(second_id),
+        organization_id=None,
+        requested_by_user_id=uuid4(),
+        requested_by_email="dev@example.com",
+        requested_by_name="Dev",
+        resource_type="application",
+        resource_id=str(second_id),
+        title="Second",
+        action_url=None,
+    )
+    limited = replace(
+        APPLICATION_PUBLISH_DEFINITION,
+        policy=replace(APPLICATION_PUBLISH_DEFINITION.policy, max_concurrency=1),
+    )
+    monkeypatch.setattr(scheduler, "get_platform_job_definition", lambda _type: limited)
+
+    assert await scheduler.claim_platform_job() is not None
+    assert await scheduler.claim_platform_job() is None
+
+
+@pytest.mark.asyncio
+async def test_protected_payload_is_not_stored_in_plaintext(
+    db_session: AsyncSession,
+) -> None:
+    await db_session.execute(delete(PlatformJob))
+    protected = replace(APPLICATION_PUBLISH_DEFINITION, encrypt_payload=True)
+    app_id = uuid4()
+
+    job, _ = await enqueue_platform_job(
+        db_session,
+        protected,
+        ApplicationPublishPayload(application_id=app_id),
+        dedupe_key=str(app_id),
+        organization_id=None,
+        requested_by_user_id=uuid4(),
+        requested_by_email="dev@example.com",
+        requested_by_name="Dev",
+        resource_type="application",
+        resource_id=str(app_id),
+        title="Protected",
+        action_url=None,
+    )
+
+    assert job.payload == {"protected": True}
+    assert job.encrypted_payload is not None
+    assert str(app_id) not in job.encrypted_payload
 
 
 @pytest.mark.asyncio
