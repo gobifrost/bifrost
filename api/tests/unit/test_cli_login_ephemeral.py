@@ -117,6 +117,26 @@ class TestPasswordLoginSuccess:
         assert "MFA" in captured.err
         assert "ephemeral" in captured.err.lower()
 
+    def test_null_expiry_uses_default(
+        self, monkeypatch, tmp_path, isolated_credentials,
+    ):
+        stub = _stub_post({
+            "access_token": "at_value",
+            "refresh_token": "rt_value",
+            "expires_in": None,
+        })
+        monkeypatch.setattr("httpx.AsyncClient", stub)
+        monkeypatch.chdir(tmp_path)
+
+        rc = cli.handle_login([
+            "--email", "dev@gobifrost.com",
+            "--password", "password",
+            "--url", "http://localhost:38421",
+        ])
+
+        assert rc == 0
+        assert creds_mod.get_credentials("http://localhost:38421") is not None
+
     def test_does_not_change_saved_default(
         self, capsys, monkeypatch, tmp_path, isolated_credentials,
     ):

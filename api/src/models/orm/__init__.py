@@ -17,6 +17,7 @@ from src.models.orm.ai_usage import AIModelPricing, AIUsage
 from src.models.orm.app_embed_secrets import AppEmbedSecret
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.form_embed_secrets import FormEmbedSecret
+from src.models.orm.form_publications import FormPublication
 from src.models.orm.app_roles import AppRole
 from src.models.orm.applications import Application
 from src.models.orm.audit import AuditLog
@@ -104,6 +105,7 @@ __all__ = [
     "FormField",
     "FormRole",
     "FormEmbedSecret",
+    "FormPublication",
     # Executions
     "Execution",
     "ExecutionLog",

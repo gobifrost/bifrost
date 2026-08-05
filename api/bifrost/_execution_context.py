@@ -128,7 +128,14 @@ class ExecutionContext:
     # ==================== LAUNCH WORKFLOW DATA ====================
     # Results from the launch workflow (pre-execution context population)
     # Access via context.startup (None if no launch workflow)
-    startup: dict[str, Any] | None = field(default=None)
+    startup: Any | None = field(default=None)
+
+    # Validated values submitted through a form. These remain separate from
+    # signed embed context so browser fields can never overwrite trusted data.
+    form_inputs: dict[str, Any] = field(default_factory=dict)
+
+    # HMAC-verified embed values. Empty for authenticated and public forms.
+    embed: dict[str, Any] = field(default_factory=dict)
 
     # ==================== EVENT ====================
     # Populated when a workflow is triggered by an Event row (topic, webhook, schedule).
@@ -238,6 +245,8 @@ class ExecutionContext:
             "public_url": self.public_url,
             "parameters": self.parameters,
             "startup": self.startup,
+            "form_inputs": self.form_inputs,
+            "embed": self.embed,
             "roi": {
                 "time_saved": self.roi.time_saved,
                 "value": self.roi.value,

@@ -98,7 +98,7 @@ async def test_form_schedule_with_delay_seconds_creates_scheduled_row(
     before = datetime.now(timezone.utc)
 
     resp = e2e_client.post(
-        f"/api/forms/{scheduled_form['id']}/execute",
+        f"/api/forms/{scheduled_form['id']}/submissions",
         headers=platform_admin.headers,
         json={
             "form_data": {"foo": "baz"},
@@ -140,7 +140,7 @@ async def test_form_schedule_past_scheduled_at_is_422(
 ):
     past = datetime.now(timezone.utc) - timedelta(seconds=5)
     resp = e2e_client.post(
-        f"/api/forms/{scheduled_form['id']}/execute",
+        f"/api/forms/{scheduled_form['id']}/submissions",
         headers=platform_admin.headers,
         json={
             "form_data": {},
@@ -158,7 +158,7 @@ async def test_form_schedule_both_fields_is_422(
 ):
     future = datetime.now(timezone.utc) + timedelta(minutes=5)
     resp = e2e_client.post(
-        f"/api/forms/{scheduled_form['id']}/execute",
+        f"/api/forms/{scheduled_form['id']}/submissions",
         headers=platform_admin.headers,
         json={
             "form_data": {},

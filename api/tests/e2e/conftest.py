@@ -299,7 +299,7 @@ def execute_form_sync(
 ) -> dict:
     """Execute a form and poll until completion.
 
-    The /api/forms/{form_id}/execute endpoint is async by default - it queues
+    The /api/forms/{form_id}/submissions endpoint is async by default - it queues
     the execution and returns immediately with status=Pending. This helper polls
     the execution status until it reaches a terminal state (Success/Failed).
 
@@ -317,7 +317,7 @@ def execute_form_sync(
         AssertionError: If execution fails or times out
     """
     response = e2e_client.post(
-        f"/api/forms/{form_id}/execute",
+        f"/api/forms/{form_id}/submissions",
         headers=headers,
         json={"form_data": form_data},
     )

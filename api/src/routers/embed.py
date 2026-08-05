@@ -1,20 +1,23 @@
 """Public embed entry point — HMAC-verified iframe loading."""
 
 import logging
-import uuid
 from datetime import timedelta
+from urllib.parse import urlencode
 
-from fastapi import APIRouter, HTTPException, Path, Request
+from fastapi import APIRouter, HTTPException, Path, Request, Response
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 from starlette.responses import RedirectResponse
 
-from src.core.constants import SYSTEM_USER_ID
 from src.core.database import get_db_context
-from src.core.security import create_access_token, decrypt_secret
+from src.core.rate_limit import RateLimiter, get_client_ip
+from src.core.security import create_embed_access_token, decrypt_secret
 from src.models.orm.applications import Application
 from src.models.orm.forms import Form as FormORM
+from src.models.orm.form_publications import FormPublication
+from src.models.orm.solutions import Solution
 from src.services.embed_auth import verify_embed_hmac
+from shared.form_runtime import form_capability_fingerprint
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +25,79 @@ router = APIRouter(
     prefix="/embed",
     tags=["Embed"],
 )
+
+_public_bootstrap_limiter = RateLimiter(max_requests=30, window_seconds=60)
+
+_FORM_PRESENTATION_VALUES = {
+    "theme": {"light", "dark", "system"},
+    "header": {"true", "false"},
+    "background": {"solid", "transparent"},
+}
+
+
+def _form_presentation_query(query_params: dict[str, str]) -> str:
+    """Return the validated, presentation-only query for the SPA document."""
+
+    values = [
+        (key, query_params[key])
+        for key, allowed_values in _FORM_PRESENTATION_VALUES.items()
+        if query_params.get(key) in allowed_values
+    ]
+    return urlencode(values)
+
+
+def _form_redirect_url(
+    path: str, query_params: dict[str, str], access_token: str
+) -> str:
+    presentation_query = _form_presentation_query(query_params)
+    query_suffix = f"?{presentation_query}" if presentation_query else ""
+    return f"{path}{query_suffix}#embed_token={access_token}"
+
+
+def _frame_policy_response(frame_ancestors: str) -> Response:
+    """Return the policy consumed by the SPA server for the final document."""
+
+    return Response(
+        status_code=204,
+        headers={
+            "Content-Security-Policy": f"frame-ancestors {frame_ancestors}",
+            "X-Bifrost-Frame-Ancestors": frame_ancestors,
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+async def _load_current_publication(public_key: str) -> FormPublication:
+    async with get_db_context() as db:
+        result = await db.execute(
+            select(FormPublication)
+            .where(
+                FormPublication.public_key == public_key,
+                FormPublication.is_active.is_(True),
+            )
+            .options(
+                selectinload(FormPublication.form).selectinload(FormORM.fields)
+            )
+        )
+        publication = result.scalar_one_or_none()
+
+    if publication is None or not publication.form.is_active:
+        raise HTTPException(status_code=404, detail="Form unavailable")
+
+    if publication.form.solution_id is not None:
+        async with get_db_context() as db:
+            solution_status = await db.scalar(
+                select(Solution.status).where(
+                    Solution.id == publication.form.solution_id
+                )
+            )
+        if solution_status != "active":
+            raise HTTPException(status_code=404, detail="Form unavailable")
+
+    fingerprint = form_capability_fingerprint(publication.form)
+    if fingerprint != publication.approved_fingerprint:
+        raise HTTPException(status_code=404, detail="Form unavailable")
+    return publication
 
 
 @router.get("/apps/{slug}")
@@ -80,25 +156,14 @@ async def embed_app(
     # Issue a scoped embed access token — NOT a superuser.
     # The token is org-scoped and carries app_id + embed flag so the
     # auth middleware can restrict it to app-rendering endpoints only.
-    token_data = {
-        "sub": SYSTEM_USER_ID,
-        "jti": str(uuid.uuid4()),
-        "app_id": str(app.id),
-        "org_id": str(app.organization_id) if app.organization_id else None,
-        "verified_params": verified_params,
-        "email": "embed@internal.gobifrost.com",
-        "is_superuser": False,
-        "embed": True,
-        # OPEN-D: an embed end user is EXTERNAL-equivalent — the token is
-        # handed to an untrusted third-party-embedded browser. Stamping
-        # is_external engages the external gates (no global config secrets,
-        # no global knowledge/tables) even if a future endpoint slips past
-        # the EmbedScopeMiddleware allowlist. Embed rendering itself is
-        # HMAC-pre-authorized and bound to this app/form id, not tiers.
-        "is_external": True,
-        "roles": ["EmbedUser"],
-    }
-    access_token = create_access_token(token_data, expires_delta=timedelta(hours=8))
+    access_token = create_embed_access_token(
+        embed_kind="app",
+        grant="hmac",
+        resource_id=str(app.id),
+        org_id=str(app.organization_id) if app.organization_id else None,
+        verified_context=verified_params,
+        expires_delta=timedelta(hours=8),
+    )
 
     # Pass token in URL fragment — fragments are never sent to the server,
     # keeping the token client-side only. This avoids cross-origin cookie
@@ -113,6 +178,66 @@ async def embed_app(
     redirect.headers["X-Frame-Options"] = "ALLOWALL"
 
     return redirect
+
+
+@router.get("/forms/public/{public_key}")
+async def embed_public_form(request: Request, public_key: str = Path(...)):
+    """Mint a short-lived form session from an active public publication."""
+
+    await _public_bootstrap_limiter.check(
+        "public_form_bootstrap",
+        f"{public_key}:{get_client_ip(request)}",
+    )
+    publication = await _load_current_publication(public_key)
+    fingerprint = publication.approved_fingerprint
+
+    token = create_embed_access_token(
+        embed_kind="form",
+        grant="public",
+        resource_id=str(publication.form.id),
+        org_id=(
+            str(publication.form.organization_id)
+            if publication.form.organization_id
+            else None
+        ),
+        verified_context={},
+        capability_fingerprint=fingerprint,
+        expires_delta=timedelta(minutes=30),
+    )
+    logger.info(
+        "Public form session issued",
+        extra={"form_id": str(publication.form.id), "grant": "public"},
+    )
+    return RedirectResponse(
+        url=_form_redirect_url(
+            f"/embedded/forms/public/{public_key}",
+            dict(request.query_params),
+            token,
+        ),
+        status_code=302,
+    )
+
+
+@router.get("/forms/public/{public_key}/frame-policy", include_in_schema=False)
+async def public_form_frame_policy(public_key: str = Path(...)) -> Response:
+    """Resolve the CSP applied to the final public-form SPA document."""
+
+    publication = await _load_current_publication(public_key)
+    ancestors = " ".join(publication.allowed_origins) or "*"
+    return _frame_policy_response(ancestors)
+
+
+@router.get("/forms/hmac/{form_id}/frame-policy", include_in_schema=False)
+async def hmac_form_frame_policy(form_id: str = Path(...)) -> Response:
+    """HMAC form links intentionally allow framing from any parent origin."""
+
+    from uuid import UUID as PyUUID
+
+    try:
+        PyUUID(form_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="Form not found") from exc
+    return _frame_policy_response("*")
 
 
 @router.get("/forms/{form_id}")
@@ -143,7 +268,15 @@ async def embed_form(
         )
         form = result.scalar_one_or_none()
 
-    if not form:
+        solution_status = None
+        if form is not None and form.solution_id is not None:
+            solution_status = await db.scalar(
+                select(Solution.status).where(Solution.id == form.solution_id)
+            )
+
+    if not form or not form.is_active or (
+        form.solution_id is not None and solution_status != "active"
+    ):
         raise HTTPException(status_code=404, detail="Form not found")
 
     active_secrets = [s for s in form.embed_secrets if s.is_active]
@@ -162,31 +295,30 @@ async def embed_form(
         raise HTTPException(status_code=403, detail="Invalid HMAC signature")
 
     # Extract verified params (everything except hmac)
-    verified_params = {k: v for k, v in query_params.items() if k != "hmac"}
+    verified_params = {
+        k: v
+        for k, v in query_params.items()
+        if k != "hmac" and k not in _FORM_PRESENTATION_VALUES
+    }
 
     # Issue a scoped embed access token
-    token_data = {
-        "sub": SYSTEM_USER_ID,
-        "jti": str(uuid.uuid4()),
-        "form_id": str(form.id),
-        "org_id": str(form.organization_id) if form.organization_id else None,
-        "verified_params": verified_params,
-        "email": "embed@internal.gobifrost.com",
-        "is_superuser": False,
-        "embed": True,
-        # OPEN-D: an embed end user is EXTERNAL-equivalent — the token is
-        # handed to an untrusted third-party-embedded browser. Stamping
-        # is_external engages the external gates (no global config secrets,
-        # no global knowledge/tables) even if a future endpoint slips past
-        # the EmbedScopeMiddleware allowlist. Embed rendering itself is
-        # HMAC-pre-authorized and bound to this app/form id, not tiers.
-        "is_external": True,
-        "roles": ["EmbedUser"],
-    }
-    access_token = create_access_token(token_data, expires_delta=timedelta(hours=8))
+    access_token = create_embed_access_token(
+        embed_kind="form",
+        grant="hmac",
+        resource_id=str(form.id),
+        org_id=str(form.organization_id) if form.organization_id else None,
+        verified_context=verified_params,
+        expires_delta=timedelta(hours=8),
+    )
+    logger.info(
+        "HMAC form session issued",
+        extra={"form_id": str(form.id), "grant": "hmac"},
+    )
 
     redirect = RedirectResponse(
-        url=f"/execute/{form.id}#embed_token={access_token}",
+        url=_form_redirect_url(
+            f"/embedded/forms/hmac/{form.id}", query_params, access_token
+        ),
         status_code=302,
     )
 

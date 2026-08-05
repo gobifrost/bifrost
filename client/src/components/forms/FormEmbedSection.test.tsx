@@ -1,7 +1,7 @@
 /**
  * Component tests for FormEmbedSection.
  *
- * Section that manages embed secrets. We stub authFetch and toast so we can
+ * Sharing tab that manages embed secrets. We stub authFetch and toast so we can
  * assert on the network calls and on the UI transitions (secret listing,
  * one-time reveal banner, delete confirmation).
  */
@@ -38,38 +38,26 @@ function jsonResponse(body: unknown, ok = true) {
 	} as unknown as Response;
 }
 
+function mockInitialSettings(secrets: unknown[]) {
+	mockAuthFetch.mockResolvedValueOnce(jsonResponse(secrets));
+}
+
 beforeEach(() => {
 	mockAuthFetch.mockReset();
 });
 
-describe("FormEmbedSection — collapsed by default", () => {
-	it("does not fetch secrets until the section is expanded", () => {
+describe("FormEmbedSection", () => {
+	it("fetches and lists secrets when mounted", async () => {
+		mockInitialSettings([
+			{
+				id: "s1",
+				name: "Prod",
+				is_active: true,
+				created_at: "2026-04-20T00:00:00Z",
+			},
+		]);
+
 		renderWithProviders(<FormEmbedSection formId="form-1" />);
-
-		expect(mockAuthFetch).not.toHaveBeenCalled();
-		expect(screen.getByText(/embed settings/i)).toBeInTheDocument();
-	});
-});
-
-describe("FormEmbedSection — expanded", () => {
-	it("fetches and lists secrets when opened", async () => {
-		mockAuthFetch.mockResolvedValueOnce(
-			jsonResponse([
-				{
-					id: "s1",
-					name: "Prod",
-					is_active: true,
-					created_at: "2026-04-20T00:00:00Z",
-				},
-			]),
-		);
-
-		const { user } = renderWithProviders(
-			<FormEmbedSection formId="form-1" />,
-		);
-		await user.click(
-			screen.getByRole("button", { name: /embed settings/i }),
-		);
 
 		await waitFor(() => {
 			expect(mockAuthFetch).toHaveBeenCalledWith(
@@ -81,14 +69,9 @@ describe("FormEmbedSection — expanded", () => {
 	});
 
 	it("shows an empty state when there are no secrets", async () => {
-		mockAuthFetch.mockResolvedValueOnce(jsonResponse([]));
+		mockInitialSettings([]);
 
-		const { user } = renderWithProviders(
-			<FormEmbedSection formId="form-1" />,
-		);
-		await user.click(
-			screen.getByRole("button", { name: /embed settings/i }),
-		);
+		renderWithProviders(<FormEmbedSection formId="form-1" />);
 
 		expect(
 			await screen.findByText(/no embed secrets configured/i),
@@ -98,9 +81,8 @@ describe("FormEmbedSection — expanded", () => {
 
 describe("FormEmbedSection — create secret", () => {
 	it("POSTs a new secret and reveals the raw value once", async () => {
+		mockInitialSettings([]);
 		mockAuthFetch
-			// initial list
-			.mockResolvedValueOnce(jsonResponse([]))
 			// create
 			.mockResolvedValueOnce(
 				jsonResponse({
@@ -125,9 +107,6 @@ describe("FormEmbedSection — create secret", () => {
 
 		const { user } = renderWithProviders(
 			<FormEmbedSection formId="form-1" />,
-		);
-		await user.click(
-			screen.getByRole("button", { name: /embed settings/i }),
 		);
 
 		// Open the create form.

@@ -14,6 +14,10 @@ from fastmcp.tools import ToolResult
 from src.services.mcp_server.tool_result import error_result, success_result
 from src.services.mcp_server.tools._org_scope import apply_mcp_org_scope
 from src.services.mcp_server.tools.db import get_tool_db
+from shared.form_runtime import (
+    DEFAULT_FORM_CONFIRMATION_MARKDOWN,
+    MAX_FORM_CONFIRMATION_MARKDOWN_LENGTH,
+)
 
 # MCPContext is imported where needed to avoid circular imports
 
@@ -180,6 +184,7 @@ async def create_form(
     workflow_id: str,
     fields: list[dict[str, Any]],
     description: str | None = None,
+    confirmation_markdown: str = DEFAULT_FORM_CONFIRMATION_MARKDOWN,
     launch_workflow_id: str | None = None,
     scope: str = "organization",
     organization_id: str | None = None,
@@ -192,6 +197,7 @@ async def create_form(
         workflow_id: UUID of workflow to execute on form submit
         fields: Array of field definitions
         description: Optional form description
+        confirmation_markdown: Markdown shown after an embedded submission
         launch_workflow_id: Optional UUID of workflow to run before form display
         scope: 'global' (visible to all orgs) or 'organization' (default)
         organization_id: Override context.org_id when scope='organization'
@@ -220,6 +226,8 @@ async def create_form(
         return error_result("fields array is required")
     if len(name) > 200:
         return error_result("name must be 200 characters or less")
+    if len(confirmation_markdown) > MAX_FORM_CONFIRMATION_MARKDOWN_LENGTH:
+        return error_result("confirmation_markdown must be 20000 characters or less")
 
     # Validate scope parameter
     if scope not in ("global", "organization"):
@@ -295,6 +303,7 @@ async def create_form(
             form = FormORM(
                 name=name,
                 description=description,
+                confirmation_markdown=confirmation_markdown,
                 workflow_id=workflow_id,
                 launch_workflow_id=launch_workflow_id,
                 access_level="role_based",
@@ -330,6 +339,7 @@ async def create_form(
                 "success": True,
                 "id": str(form.id),
                 "name": form.name,
+                "confirmation_markdown": form.confirmation_markdown,
                 "url": f"/forms/{form.id}",
                 "workflow_id": workflow_id,
                 "workflow_name": workflow.name,
@@ -437,6 +447,7 @@ async def get_form(
                 "id": str(form.id),
                 "name": form.name,
                 "description": form.description,
+                "confirmation_markdown": form.confirmation_markdown,
                 "url": f"/forms/{form.id}",
                 "is_active": form.is_active,
                 "access_level": form.access_level or "role_based",
@@ -483,6 +494,7 @@ async def update_form(
     form_id: str,
     name: str | None = None,
     description: str | None = None,
+    confirmation_markdown: str | None = None,
     workflow_id: str | None = None,
     launch_workflow_id: str | None = None,
     fields: list[dict[str, Any]] | None = None,
@@ -495,6 +507,7 @@ async def update_form(
         form_id: Form UUID (required)
         name: New form name
         description: New description
+        confirmation_markdown: New embedded-submission Markdown
         workflow_id: New workflow UUID
         launch_workflow_id: New launch workflow UUID
         fields: New field definitions (replaces all fields)
@@ -571,6 +584,14 @@ async def update_form(
             if description is not None:
                 form.description = description
                 updates_made.append("description")
+
+            if confirmation_markdown is not None:
+                if len(confirmation_markdown) > MAX_FORM_CONFIRMATION_MARKDOWN_LENGTH:
+                    return error_result(
+                        "confirmation_markdown must be 20000 characters or less"
+                    )
+                form.confirmation_markdown = confirmation_markdown
+                updates_made.append("confirmation_markdown")
 
             if workflow_id is not None:
                 try:
@@ -668,6 +689,7 @@ async def update_form(
                 "success": True,
                 "id": str(form.id),
                 "name": form.name,
+                "confirmation_markdown": form.confirmation_markdown,
                 "updates": updates_made,
             })
 

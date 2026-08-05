@@ -45,6 +45,7 @@ export type FormFieldType =
 	| "checkbox"
 	| "textarea"
 	| "radio"
+	| "date"
 	| "datetime"
 	| "markdown"
 	| "html"
@@ -85,6 +86,7 @@ export interface FormField {
 	required?: boolean;
 	validation?: FormFieldValidation | null;
 	data_provider_id?: string | null;
+	has_dynamic_options?: boolean;
 	data_provider_inputs?: Record<string, DataProviderInputConfig> | null;
 	default_value?: unknown;
 	placeholder?: string | null;

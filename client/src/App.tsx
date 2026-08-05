@@ -26,6 +26,7 @@ import {
 	useCmdCtrlShortcut,
 } from "@/contexts/KeyboardContext";
 import { lazyWithReload } from "@/lib/lazy-with-reload";
+import { RunFormRoute } from "@/pages/run-form-route";
 
 // Lazy load all page components for code splitting
 const Dashboard = lazyWithReload(() =>
@@ -82,9 +83,6 @@ const AgentRunDetailPage = lazyWithReload(() =>
 );
 const FormBuilder = lazyWithReload(() =>
 	import("@/pages/FormBuilder").then((m) => ({ default: m.FormBuilder })),
-);
-const RunForm = lazyWithReload(() =>
-	import("@/pages/RunForm").then((m) => ({ default: m.RunForm })),
 );
 const Workflows = lazyWithReload(() =>
 	import("@/pages/Workflows").then((m) => ({ default: m.Workflows })),
@@ -322,6 +320,22 @@ function AppRoutes() {
 							</ProtectedRoute>
 						}
 					/>
+					<Route
+						path="embedded/forms/public/:publicKey"
+						element={
+							<ProtectedRoute requireOrgUser>
+								<RunFormRoute />
+							</ProtectedRoute>
+						}
+					/>
+					<Route
+						path="embedded/forms/hmac/:formId"
+						element={
+							<ProtectedRoute requireOrgUser>
+								<RunFormRoute />
+							</ProtectedRoute>
+						}
+					/>
 
 					<Route path="/" element={<Layout />}>
 						{/* Dashboard - PlatformAdmin only (OrgUsers redirected to /forms) */}
@@ -358,7 +372,7 @@ function AppRoutes() {
 							path="execute/:formId"
 							element={
 								<ProtectedRoute requireOrgUser>
-									<RunForm />
+									<RunFormRoute />
 								</ProtectedRoute>
 							}
 						/>
@@ -640,8 +654,7 @@ function AppRoutes() {
 							}
 						/>
 
-
-{/* Event Sources - PlatformAdmin only */}
+						{/* Event Sources - PlatformAdmin only */}
 						<Route
 							path="event-sources"
 							element={
@@ -740,7 +753,6 @@ function AppRoutes() {
 								</ProtectedRoute>
 							}
 						/>
-
 					</Route>
 
 					{/* ContentLayout - Pages without default padding */}

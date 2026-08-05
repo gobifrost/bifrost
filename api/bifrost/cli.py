@@ -1035,7 +1035,7 @@ Examples:
         rc, data = asyncio.run(password_login_flow(api_url, email, password))
         if rc == 0 and data is not None:
             expires_at = datetime.now(timezone.utc) + timedelta(
-                seconds=data.get("expires_in", 1800)
+                seconds=data.get("expires_in") or 1800
             )
             credentials.save_credentials(
                 api_url=api_url,

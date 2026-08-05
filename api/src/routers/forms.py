@@ -10,33 +10,73 @@ They are serialized to JSON on-the-fly for git sync operations.
 """
 
 import logging
+import json
 import re
+import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Body, HTTPException, Query, status
+from fastapi import APIRouter, Body, HTTPException, Query, Request, status
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.core.auth import Context, CurrentActiveUser, CurrentSuperuser
+from src.config import get_settings
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.core.org_filter import resolve_org_filter
+from src.core.rate_limit import RateLimiter, get_client_ip
 from src.models.enums import FormAccessLevel
 from src.repositories.forms import FormRepository
 from src.repositories.workflows import WorkflowRepository
 from src.models import Execution as ExecutionORM
 from src.models import Form as FormORM, FormField as FormFieldORM, FormRole as FormRoleORM
+from src.models import FormPublication as FormPublicationORM
 from src.services.solutions.guard import assert_not_solution_managed
 from src.models import Role as RoleORM
 from src.models import Workflow as WorkflowORM
+from src.models.orm.solutions import Solution
 from src.models import FormCreate, FormUpdate, FormPublic
 from src.models.contracts.forms import FormField, FormSchema
-from src.models import WorkflowExecutionResponse
 from src.models import FileUploadRequest, FileUploadResponse, UploadedFileMetadata
-from src.models import FormExecuteRequest, FormStartupResponse
+from src.models import FormStartupResponse
 from src.models.enums import ExecutionStatus
+from src.models.contracts.forms import (
+    FormPublicationPublic,
+    FormPublicationReview,
+    FormPublicationUpdate,
+    FormConfirmationResponse,
+    FormExecutionResponse,
+    FormCaptchaChallenge,
+    FormFieldOptionsRequest,
+    FormFieldOptionsResponse,
+    FormRuntimeDefinition,
+    FormSubmissionRequest,
+    FormSubmissionResponse,
+)
+from shared.form_publication import build_publication_review
+from shared.form_captcha import (
+    FormCaptchaError,
+    create_form_captcha_challenge,
+    redeem_form_captcha_solution,
+)
+from shared.form_provider import FormProviderError, execute_form_field_provider
+from shared.form_runtime import (
+    FormRuntimeValidationError,
+    accept_external_submission,
+    clear_embed_upload_references,
+    consume_startup_result,
+    form_capability_fingerprint,
+    load_startup_result,
+    normalize_allowed_origins,
+    release_external_submission,
+    register_embed_upload,
+    reserve_external_submission,
+    store_startup_result,
+    validate_embed_upload_references,
+    validate_form_submission,
+)
 
 # Import cache invalidation
 try:
@@ -52,6 +92,24 @@ from src.services.workflow_role_service import sync_form_roles_to_workflows
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/forms", tags=["Forms"])
+
+_FORM_EMBED_LIMITERS = {
+    "runtime": RateLimiter(max_requests=120, window_seconds=60),
+    "startup": RateLimiter(max_requests=20, window_seconds=60),
+    "provider": RateLimiter(max_requests=120, window_seconds=60),
+    "upload": RateLimiter(max_requests=30, window_seconds=60),
+    "submission": RateLimiter(max_requests=10, window_seconds=60),
+    "captcha": RateLimiter(max_requests=30, window_seconds=60),
+}
+
+
+async def _limit_embed_action(http_request: Request, ctx, action: str) -> None:
+    if not ctx.user.embed:
+        return
+    if not ctx.user.jti:
+        raise HTTPException(status_code=403, detail="Invalid form session")
+    identifier = f"{ctx.user.jti}:{get_client_ip(http_request)}"
+    await _FORM_EMBED_LIMITERS[action].check(f"form_embed_{action}", identifier)
 
 
 def _form_schema_to_fields(form_schema: dict, form_id: UUID) -> list[FormFieldORM]:
@@ -333,6 +391,54 @@ async def _load_form_role_ids(db: AsyncSession, form_id: UUID) -> list[UUID]:
     return list(result.scalars().all())
 
 
+async def _load_form_for_publication(db: AsyncSession, form_id: UUID) -> FormORM:
+    result = await db.execute(
+        select(FormORM)
+        .options(selectinload(FormORM.fields), selectinload(FormORM.publication))
+        .where(FormORM.id == form_id)
+    )
+    form = result.scalar_one_or_none()
+    if form is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
+    return form
+
+
+async def _publication_response(
+    db: AsyncSession, form: FormORM
+) -> FormPublicationPublic:
+    review = FormPublicationReview.model_validate(
+        await build_publication_review(db, form)
+    )
+    publication = form.publication
+    if publication is None or not publication.is_active:
+        publication_status = "unpublished"
+    elif publication.approved_fingerprint != review.fingerprint or review.blockers:
+        publication_status = "needs_review"
+    else:
+        publication_status = "published"
+
+    return FormPublicationPublic(
+        form_id=form.id,
+        status=publication_status,
+        public_key=publication.public_key if publication is not None else None,
+        allowed_origins=(publication.allowed_origins if publication is not None else []),
+        spam_protection_enabled=(
+            publication.spam_protection_enabled if publication is not None else True
+        ),
+        approved_fingerprint=(
+            publication.approved_fingerprint if publication is not None else None
+        ),
+        current_fingerprint=review.fingerprint,
+        iframe_path=(
+            f"/embed/forms/public/{publication.public_key}"
+            if publication is not None and publication.is_active
+            else None
+        ),
+        warnings=review.warnings,
+        blockers=review.blockers,
+    )
+
+
 @router.post(
     "",
     response_model=FormPublic,
@@ -379,6 +485,7 @@ async def create_form(
     form = FormORM(
         name=request.name,
         description=request.description,
+        confirmation_markdown=request.confirmation_markdown,
         workflow_id=request.workflow_id,
         launch_workflow_id=request.launch_workflow_id,
         default_launch_params=request.default_launch_params,
@@ -425,6 +532,233 @@ async def create_form(
 
     form.role_ids = await _load_form_role_ids(db, form.id)  # type: ignore[attr-defined]
     return FormPublic.model_validate(form)
+
+
+@router.get(
+    "/{form_id}/publication-review",
+    response_model=FormPublicationReview,
+    summary="Review a form's public capabilities",
+)
+async def review_form_publication(
+    form_id: UUID,
+    user: CurrentSuperuser,
+    db: DbSession,
+) -> FormPublicationReview:
+    form = await _load_form_for_publication(db, form_id)
+    return FormPublicationReview.model_validate(
+        await build_publication_review(db, form)
+    )
+
+
+@router.get(
+    "/{form_id}/publication",
+    response_model=FormPublicationPublic,
+    summary="Get public form publication settings",
+)
+async def get_form_publication(
+    form_id: UUID,
+    user: CurrentSuperuser,
+    db: DbSession,
+) -> FormPublicationPublic:
+    form = await _load_form_for_publication(db, form_id)
+    return await _publication_response(db, form)
+
+
+@router.put(
+    "/{form_id}/publication",
+    response_model=FormPublicationPublic,
+    summary="Publish a form after reviewing its capabilities",
+)
+async def publish_form(
+    form_id: UUID,
+    request: FormPublicationUpdate,
+    ctx: Context,
+    user: CurrentSuperuser,
+    db: DbSession,
+) -> FormPublicationPublic:
+    form = await _load_form_for_publication(db, form_id)
+    review = FormPublicationReview.model_validate(
+        await build_publication_review(db, form)
+    )
+    if request.reviewed_fingerprint != review.fingerprint:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The form's public capabilities changed. Review them again.",
+        )
+    if review.blockers:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "This form cannot be published until its blockers are resolved.",
+                "blockers": [blocker.model_dump() for blocker in review.blockers],
+            },
+        )
+
+    try:
+        allowed_origins = normalize_allowed_origins(request.allowed_origins)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    now = datetime.now(timezone.utc)
+    publication = form.publication
+    if publication is None:
+        publication = FormPublicationORM(
+            form_id=form.id,
+            public_key=secrets.token_urlsafe(32),
+            allowed_origins=allowed_origins,
+            approved_fingerprint=review.fingerprint,
+            spam_protection_enabled=request.spam_protection_enabled,
+            is_active=True,
+            created_by=ctx.user.user_id,
+            created_at=now,
+            updated_at=now,
+        )
+        db.add(publication)
+        form.publication = publication
+    else:
+        publication.allowed_origins = allowed_origins
+        publication.approved_fingerprint = review.fingerprint
+        publication.spam_protection_enabled = request.spam_protection_enabled
+        publication.is_active = True
+        publication.updated_at = now
+
+    await db.flush()
+    logger.info(
+        "Public form publication enabled",
+        extra={
+            "form_id": str(form.id),
+            "allowed_origin_count": len(allowed_origins),
+        },
+    )
+    return await _publication_response(db, form)
+
+
+@router.delete(
+    "/{form_id}/publication",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Unpublish a public form",
+)
+async def unpublish_form(
+    form_id: UUID,
+    user: CurrentSuperuser,
+    db: DbSession,
+) -> None:
+    form = await _load_form_for_publication(db, form_id)
+    if form.publication is not None:
+        form.publication.is_active = False
+        form.publication.updated_at = datetime.now(timezone.utc)
+        await db.flush()
+        logger.info(
+            "Public form publication disabled",
+            extra={"form_id": str(form.id)},
+        )
+
+
+@router.post(
+    "/{form_id}/publication/rotate-key",
+    response_model=FormPublicationPublic,
+    summary="Rotate a public form key",
+)
+async def rotate_form_publication_key(
+    form_id: UUID,
+    user: CurrentSuperuser,
+    db: DbSession,
+) -> FormPublicationPublic:
+    form = await _load_form_for_publication(db, form_id)
+    if form.publication is None or not form.publication.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Publish the form before rotating its public key.",
+        )
+
+    form.publication.public_key = secrets.token_urlsafe(32)
+    form.publication.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+    logger.info(
+        "Public form publication key rotated",
+        extra={"form_id": str(form.id)},
+    )
+    return await _publication_response(db, form)
+
+
+@router.get(
+    "/{form_id}/runtime",
+    response_model=FormRuntimeDefinition,
+    summary="Load a sanitized form runtime definition",
+)
+async def get_form_runtime(
+    form_id: UUID,
+    http_request: Request,
+    ctx: Context,
+    user: CurrentActiveUser,
+    db: DbSession,
+) -> FormRuntimeDefinition:
+    repo = FormRepository(
+        session=db,
+        org_id=None,
+        user_id=ctx.user.user_id if not ctx.user.is_superuser else None,
+        is_superuser=ctx.user.is_superuser,
+        is_external=ctx.user.is_external,
+    )
+    form = await repo.get_form(form_id)
+    if form is None or not form.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
+
+    publication = await _authorize_form_runtime(db, ctx, form)
+    await _limit_embed_action(http_request, ctx, "runtime")
+
+    runtime = FormRuntimeDefinition.model_validate(form)
+    return runtime.model_copy(
+        update={
+            "captcha_required": bool(
+                publication is not None and publication.spam_protection_enabled
+            )
+        }
+    )
+
+
+@router.post(
+    "/{form_id}/captcha/challenge",
+    response_model=FormCaptchaChallenge,
+    summary="Create an anonymous public form verification challenge",
+)
+async def create_form_captcha(
+    form_id: UUID,
+    http_request: Request,
+    ctx: Context,
+    user: CurrentActiveUser,
+    db: DbSession,
+) -> FormCaptchaChallenge:
+    result = await db.execute(
+        select(FormORM)
+        .options(selectinload(FormORM.fields))
+        .where(FormORM.id == form_id)
+    )
+    form = result.scalar_one_or_none()
+    if form is None or not form.is_active:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
+
+    publication = await _authorize_form_runtime(db, ctx, form)
+    if publication is None or not publication.spam_protection_enabled or not ctx.user.jti:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form unavailable")
+    await _limit_embed_action(http_request, ctx, "captcha")
+
+    try:
+        challenge = create_form_captcha_challenge(
+            master_secret=get_settings().secret_key,
+            form_id=str(form.id),
+            session_id=ctx.user.jti,
+            session_expires_at=ctx.user.token_exp,
+        )
+    except FormCaptchaError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=str(exc),
+        ) from exc
+    return FormCaptchaChallenge.model_validate(challenge)
 
 
 @router.get(
@@ -555,6 +889,8 @@ async def update_form(
         form.name = request.name
     if request.description is not None:
         form.description = request.description
+    if request.confirmation_markdown is not None:
+        form.confirmation_markdown = request.confirmation_markdown
     if request.workflow_id is not None:
         form.workflow_id = request.workflow_id
     if request.launch_workflow_id is not None:
@@ -784,19 +1120,77 @@ def _embed_can_access_form(ctx, form: FormORM) -> bool:
     return False
 
 
+async def _authorize_form_runtime(
+    db: AsyncSession, ctx, form: FormORM
+) -> FormPublicationORM | None:
+    """Authorize one form runtime action and enforce public approval freshness."""
+
+    if ctx.user.embed:
+        if form.solution_id is not None:
+            solution_status = await db.scalar(
+                select(Solution.status).where(Solution.id == form.solution_id)
+            )
+            if solution_status != "active":
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Form unavailable",
+                )
+        if not _embed_can_access_form(ctx, form):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Form unavailable",
+            )
+        if ctx.user.embed_kind == "form" and ctx.user.grant == "public":
+            publication = (
+                await db.execute(
+                    select(FormPublicationORM).where(
+                        FormPublicationORM.form_id == form.id,
+                        FormPublicationORM.is_active.is_(True),
+                    )
+                )
+            ).scalar_one_or_none()
+            current = form_capability_fingerprint(form)
+            if (
+                publication is None
+                or publication.approved_fingerprint != current
+                or ctx.user.capability_fingerprint != current
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Form unavailable",
+                )
+            return publication
+        return None
+
+    if not await _check_form_access(
+        db,
+        form,
+        ctx.user.user_id,
+        ctx.org_id,
+        ctx.user.is_superuser,
+        is_external=ctx.user.is_external,
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to form",
+        )
+    return None
+
+
 @router.post(
-    "/{form_id}/execute",
-    response_model=WorkflowExecutionResponse,
-    summary="Execute a form",
-    description="Execute the workflow linked to a form. Requires appropriate access based on form's access_level.",
+    "/{form_id}/submissions",
+    response_model=FormSubmissionResponse,
+    summary="Submit a form",
+    description="Validate and submit the exact workflow linked to a form.",
 )
-async def execute_form(
+async def submit_form(
     form_id: UUID,
+    http_request: Request,
     ctx: Context,
     user: CurrentActiveUser,
     db: DbSession,
-    request: FormExecuteRequest = Body(default=None),
-) -> WorkflowExecutionResponse:
+    request: FormSubmissionRequest = Body(default=None),
+) -> FormSubmissionResponse:
     """
     Execute the workflow linked to a form.
 
@@ -805,19 +1199,23 @@ async def execute_form(
     - 'authenticated': Any logged-in user can execute
     - 'role_based': User must be assigned to a role that has this form
 
-    The request body can include:
-    - form_data: Form field values to pass to the workflow
-    - startup_data: Results from /startup call (launch workflow) available via context.startup
+    Anonymous public sessions receive an opaque confirmation response. Trusted
+    HMAC sessions and authenticated users retain the execution summary used by
+    the existing result journey.
     """
     from src.sdk.context import ExecutionContext as SharedContext, Organization
     from src.services.execution.service import run_workflow, WorkflowNotFoundError, WorkflowLoadError
 
     # Default request if None (backward compatibility with empty body)
     if request is None:
-        request = FormExecuteRequest()
+        request = FormSubmissionRequest()
 
     # Get the form
-    result = await db.execute(select(FormORM).where(FormORM.id == form_id))
+    result = await db.execute(
+        select(FormORM)
+        .options(selectinload(FormORM.fields))
+        .where(FormORM.id == form_id)
+    )
     form = result.scalar_one_or_none()
 
     if not form or not form.is_active:
@@ -826,29 +1224,8 @@ async def execute_form(
             detail="Form not found",
         )
 
-    # Check access. Embed users are pre-authorized via HMAC — but ONLY for the
-    # form their token is bound to (EXT-1 NEW-I): an unbound embed token must
-    # not execute a cross-tenant form's workflow as sentinel in the victim org.
-    if ctx.user.embed:
-        if not _embed_can_access_form(ctx, form):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Form not found",
-            )
-    else:
-        has_access = await _check_form_access(
-            db,
-            form,
-            ctx.user.user_id,
-            ctx.org_id,
-            ctx.user.is_superuser,
-            is_external=ctx.user.is_external,
-        )
-        if not has_access:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to this form",
-            )
+    publication = await _authorize_form_runtime(db, ctx, form)
+    await _limit_embed_action(http_request, ctx, "submission")
 
     # Form must have a workflow_id
     if not form.workflow_id:
@@ -856,6 +1233,79 @@ async def execute_form(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Form has no workflow configured",
         )
+
+    if ctx.user.embed and (request.scheduled_at or request.delay_seconds):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Embedded form sessions cannot schedule submissions",
+        )
+    if ctx.user.embed and request.honeypot:
+        logger.info(
+            "Embedded form submission rejected by honeypot",
+            extra={"form_id": str(form.id), "grant": ctx.user.grant},
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Form submission rejected",
+        )
+    if ctx.user.embed and request.submission_nonce is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A submission nonce is required",
+        )
+
+    try:
+        validated_inputs = validate_form_submission(
+            form,
+            request.form_data,
+            embed_upload_prefix=(
+                f"{form.id}/{ctx.user.jti}/" if ctx.user.embed else None
+            ),
+        )
+    except FormRuntimeValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=exc.errors,
+        ) from exc
+
+    if ctx.user.embed:
+        try:
+            await validate_embed_upload_references(
+                ctx.user,
+                form,
+                validated_inputs,
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Attachment reference is invalid",
+            ) from exc
+
+    startup_result = None
+    if form.launch_workflow_id:
+        if request.startup_handle is None:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Run form startup before submitting",
+            )
+        try:
+            startup_result = await load_startup_result(
+                handle=request.startup_handle,
+                form_id=str(form.id),
+                organization_id=(
+                    str(form.organization_id) if form.organization_id else None
+                ),
+                user=ctx.user,
+            )
+        except ValueError as exc:
+            logger.info(
+                "Embedded form startup handle rejected",
+                extra={"form_id": str(form.id), "grant": ctx.user.grant},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Startup handle is invalid or expired",
+            ) from exc
 
     # Resolve the form's workflow ref to a concrete workflow. form.workflow_id
     # may be a portable path::function ref (solution-managed forms) or a UUID.
@@ -894,9 +1344,10 @@ async def execute_form(
         )
     resolved_workflow_id = str(_resolved_wf.id)
 
-    # Merge: defaults < verified HMAC params < user form input
-    verified_params = ctx.user.verified_params or {}
-    merged_params = {**(form.default_launch_params or {}), **verified_params, **request.form_data}
+    # Keep signed embed context out of top-level workflow parameters. Validated
+    # form inputs remain top-level for workflow signature compatibility and are
+    # also available through context.form_inputs.
+    merged_params = {**(form.default_launch_params or {}), **validated_inputs}
 
     # Scheduled execution: normalize delay_seconds -> scheduled_at and insert a
     # SCHEDULED row directly. The deferred_execution_promoter job picks it up
@@ -927,7 +1378,8 @@ async def execute_form(
             f"Form {log_safe(form_id)} scheduled by user {ctx.user.email}, "
             f"execution_id={exec_id}, scheduled_at={scheduled_at.isoformat()}"
         )
-        return WorkflowExecutionResponse(
+        return FormExecutionResponse(
+            mode="execution",
             execution_id=str(exec_id),
             workflow_id=str(workflow.id),
             workflow_name=workflow.name,
@@ -940,8 +1392,7 @@ async def execute_form(
     if anchor_org_id:
         org = Organization(id=str(anchor_org_id), name="", is_active=True)
 
-    # Create shared context for execution
-    # startup_data from the request is passed to context.startup
+    # Create shared context with explicit trust domains.
     shared_ctx = SharedContext(
         user_id=str(ctx.user.user_id),
         name=ctx.user.name,
@@ -951,10 +1402,49 @@ async def execute_form(
         is_platform_admin=ctx.user.is_superuser,
         is_function_key=False,
         execution_id=str(uuid4()),
-        startup=request.startup_data,
+        startup=startup_result,
+        form_inputs=validated_inputs,
+        embed=ctx.user.verified_context or {},
     )
 
+    if ctx.user.embed:
+        try:
+            await reserve_external_submission(ctx.user, request.submission_nonce)
+        except ValueError as exc:
+            logger.info(
+                "Embedded form duplicate submission rejected",
+                extra={"form_id": str(form.id), "grant": ctx.user.grant},
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=str(exc),
+            ) from exc
+
+    external_workflow_accepted = False
     try:
+        if publication is not None and publication.spam_protection_enabled:
+            if not ctx.user.jti:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Invalid form session",
+                )
+            try:
+                await redeem_form_captcha_solution(
+                    payload=request.captcha_payload,
+                    master_secret=get_settings().secret_key,
+                    form_id=str(form.id),
+                    session_id=ctx.user.jti,
+                )
+            except FormCaptchaError as exc:
+                logger.info(
+                    "Anonymous form verification rejected",
+                    extra={"form_id": str(form.id)},
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=str(exc),
+                ) from exc
+
         # Execute workflow by ID
         response = await run_workflow(
             context=shared_ctx,
@@ -962,38 +1452,92 @@ async def execute_form(
             input_data=merged_params,
             form_id=str(form.id),
         )
+        external_workflow_accepted = ctx.user.embed
 
-        logger.info(f"Form {log_safe(form_id)} executed by user {ctx.user.email}, execution_id={response.execution_id}")
+        if not ctx.user.embed:
+            logger.info(
+                "Authenticated form executed",
+                extra={
+                    "form_id": str(form.id),
+                    "execution_id": str(response.execution_id),
+                    "user_id": str(ctx.user.user_id),
+                },
+            )
 
-        # Register execution in Redis for embed session scoping
-        if ctx.user.embed and ctx.user.jti:
-            from src.core.cache.keys import embed_execution_key, TTL_EMBED_EXECUTION
-            from src.core.cache.redis_client import get_redis
-
-            async with get_redis() as r:
-                await r.setex(
-                    embed_execution_key(ctx.user.jti, response.execution_id),
-                    TTL_EMBED_EXECUTION,
-                    "1",
+        if ctx.user.embed:
+            assert request.submission_nonce is not None
+            await accept_external_submission(ctx.user, request.submission_nonce)
+            logger.info(
+                "Embedded form submission accepted",
+                extra={"form_id": str(form.id), "grant": ctx.user.grant},
+            )
+            try:
+                if request.startup_handle is not None:
+                    await consume_startup_result(request.startup_handle)
+                await clear_embed_upload_references(ctx.user)
+            except Exception:
+                # Acceptance is irreversible once the workflow has run. Keep
+                # the session accepted and let expiring auxiliary state clean
+                # itself up instead of enabling a duplicate retry.
+                logger.warning(
+                    "Embedded form post-acceptance cleanup failed",
+                    extra={"form_id": str(form.id), "grant": ctx.user.grant},
+                    exc_info=True,
                 )
 
-        return response
+            if ctx.user.grant == "hmac":
+                if not ctx.user.jti:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="Invalid form session",
+                    )
+
+                from src.core.cache.keys import embed_execution_key, TTL_EMBED_EXECUTION
+                from src.core.cache.redis_client import get_redis
+
+                async with get_redis() as redis:
+                    await redis.setex(
+                        embed_execution_key(ctx.user.jti, str(response.execution_id)),
+                        TTL_EMBED_EXECUTION,
+                        "1",
+                    )
+                return FormExecutionResponse.model_validate(
+                    {"mode": "execution", **response.model_dump()}
+                )
+
+            return FormConfirmationResponse(
+                mode="confirmation",
+                status="accepted",
+                confirmation_markdown=form.confirmation_markdown,
+            )
+
+        return FormExecutionResponse.model_validate(
+            {"mode": "execution", **response.model_dump()}
+        )
 
     except WorkflowNotFoundError as e:
+        if ctx.user.embed and not external_workflow_accepted:
+            await release_external_submission(ctx.user)
         logger.error(f"Workflow not found for form {log_safe(form_id)}: {log_safe(e)}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Workflow not found: {form.workflow_id}",
         )
     except WorkflowLoadError as e:
+        if ctx.user.embed and not external_workflow_accepted:
+            await release_external_submission(ctx.user)
         logger.error(f"Workflow load error for form {log_safe(form_id)}: {log_safe(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to load workflow: {str(e)}",
         )
     except HTTPException:
+        if ctx.user.embed and not external_workflow_accepted:
+            await release_external_submission(ctx.user)
         raise
     except Exception as e:
+        if ctx.user.embed and not external_workflow_accepted:
+            await release_external_submission(ctx.user)
         logger.error(f"Error executing form {log_safe(form_id)}: {log_safe(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1014,6 +1558,7 @@ async def execute_form(
 )
 async def execute_startup_workflow(
     form_id: UUID,
+    http_request: Request,
     ctx: Context,
     user: CurrentActiveUser,
     db: DbSession,
@@ -1023,9 +1568,9 @@ async def execute_startup_workflow(
     Execute the launch workflow to populate form context.
 
     The launch workflow runs BEFORE the form is displayed to the user.
-    Its results are returned to the client, which stores them and passes
-    them back during /execute. The main workflow can then access these
-    results via context.startup.
+    Its results are returned for display and stored server-side. Submission
+    sends only the opaque handle; the browser cannot replace trusted startup
+    state.
 
     Use cases:
     - Pre-fetch dynamic options based on user's org
@@ -1039,7 +1584,11 @@ async def execute_startup_workflow(
     from src.services.execution.service import run_workflow, WorkflowNotFoundError, WorkflowLoadError
 
     # Get the form
-    result = await db.execute(select(FormORM).where(FormORM.id == form_id))
+    result = await db.execute(
+        select(FormORM)
+        .options(selectinload(FormORM.fields))
+        .where(FormORM.id == form_id)
+    )
     form = result.scalar_one_or_none()
 
     if not form or not form.is_active:
@@ -1048,29 +1597,24 @@ async def execute_startup_workflow(
             detail="Form not found",
         )
 
-    # Check access. Embed users are pre-authorized via HMAC — but ONLY for the
-    # form their token is bound to (EXT-1 NEW-I): an unbound embed token must
-    # not run a cross-tenant form's launch workflow as sentinel.
-    if ctx.user.embed:
-        if not _embed_can_access_form(ctx, form):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Form not found",
-            )
-    else:
-        has_access = await _check_form_access(
-            db,
-            form,
-            ctx.user.user_id,
-            ctx.org_id,
-            ctx.user.is_superuser,
-            is_external=ctx.user.is_external,
+    await _authorize_form_runtime(db, ctx, form)
+    await _limit_embed_action(http_request, ctx, "startup")
+
+    allowed_startup_inputs = set(form.allowed_query_params or [])
+    unexpected_inputs = set(input_data) - allowed_startup_inputs
+    if unexpected_inputs:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Startup input contains fields that are not allowed",
         )
-        if not has_access:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to this form",
-            )
+    if (
+        len(input_data) > 50
+        or len(json.dumps(input_data, default=str).encode("utf-8")) > 64 * 1024
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Startup input is too large",
+        )
 
     # If no launch workflow, return empty result
     if not form.launch_workflow_id:
@@ -1100,9 +1644,9 @@ async def execute_startup_workflow(
         )
     resolved_launch_workflow_id = str(_resolved_launch.id)
 
-    # Merge: defaults < verified HMAC params < user input
-    verified_params = ctx.user.verified_params or {}
-    merged_params = {**(form.default_launch_params or {}), **verified_params, **input_data}
+    # Signed HMAC values stay in context.embed and are never flattened into
+    # browser-editable workflow parameters.
+    merged_params = {**(form.default_launch_params or {}), **input_data}
 
     # The launch workflow runs in the form's data world (same anchor as
     # resolution above and as the execute path).
@@ -1119,6 +1663,7 @@ async def execute_startup_workflow(
         is_platform_admin=ctx.user.is_superuser,
         is_function_key=False,
         execution_id=str(uuid4()),
+        embed=ctx.user.verified_context or {},
     )
 
     try:
@@ -1128,11 +1673,25 @@ async def execute_startup_workflow(
             workflow_id=resolved_launch_workflow_id,
             input_data=merged_params,
             form_id=str(form.id),
+            transient=True,
+            sync=True,
         )
 
         logger.info(f"Launch workflow executed for form {log_safe(form_id)} by user {ctx.user.email}")
 
-        return FormStartupResponse(result=response.result)
+        handle, expires_at = await store_startup_result(
+            form_id=str(form.id),
+            organization_id=(
+                str(form.organization_id) if form.organization_id else None
+            ),
+            user=ctx.user,
+            result=response.result,
+        )
+        return FormStartupResponse(
+            result=response.result,
+            startup_handle=handle,
+            expires_at=expires_at,
+        )
 
     except WorkflowNotFoundError as e:
         logger.error(f"Launch workflow not found for form {log_safe(form_id)}: {log_safe(e)}")
@@ -1154,6 +1713,80 @@ async def execute_startup_workflow(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to execute launch workflow",
         )
+
+
+# =============================================================================
+# Field Data Providers
+# =============================================================================
+
+
+@router.post(
+    "/{form_id}/fields/{field_name}/options",
+    response_model=FormFieldOptionsResponse,
+    summary="Load options for a configured form field",
+)
+async def get_form_field_options(
+    form_id: UUID,
+    field_name: str,
+    http_request: Request,
+    request: FormFieldOptionsRequest,
+    ctx: Context,
+    user: CurrentActiveUser,
+    db: DbSession,
+) -> FormFieldOptionsResponse:
+    result = await db.execute(
+        select(FormORM)
+        .options(selectinload(FormORM.fields))
+        .where(FormORM.id == form_id)
+    )
+    form = result.scalar_one_or_none()
+    if form is None or not form.is_active:
+        raise HTTPException(status_code=404, detail="Form unavailable")
+    await _authorize_form_runtime(db, ctx, form)
+    await _limit_embed_action(http_request, ctx, "provider")
+
+    field = next((item for item in form.fields if item.name == field_name), None)
+    if field is None or field.data_provider_id is None:
+        raise HTTPException(status_code=404, detail="Field options unavailable")
+
+    try:
+        options = await execute_form_field_provider(
+            db=db,
+            form=form,
+            field=field,
+            user=ctx.user,
+            caller_org_id=ctx.org_id,
+            browser_inputs=request.inputs,
+        )
+    except FormProviderError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                str(exc)
+                if ctx.user.is_superuser and not ctx.user.embed
+                else "Unable to load field options"
+            ),
+        ) from exc
+    except Exception as exc:
+        logger.warning(
+            "Form provider failed for form %s field %s",
+            log_safe(form_id),
+            log_safe(field_name),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Unable to load field options",
+        ) from exc
+    logger.info(
+        "Form field provider options returned",
+        extra={
+            "form_id": str(form.id),
+            "field_name": field.name,
+            "option_count": len(options),
+            "grant": ctx.user.grant if ctx.user.embed else "authenticated",
+        },
+    )
+    return FormFieldOptionsResponse(options=options)
 
 
 # =============================================================================
@@ -1231,6 +1864,7 @@ def _check_mime_type_allowed(content_type: str, allowed_types: list[str]) -> boo
 )
 async def generate_upload_url(
     form_id: UUID,
+    http_request: Request,
     request: FileUploadRequest,
     ctx: Context,
     user: CurrentActiveUser,
@@ -1263,29 +1897,14 @@ async def generate_upload_url(
             detail="Form not found",
         )
 
-    # Check access. Embed users are pre-authorized via HMAC — but ONLY for the
-    # form their token is bound to (EXT-1 NEW-I): an unbound embed token must
-    # not mint an upload URL for a cross-tenant form.
-    if ctx.user.embed:
-        if not _embed_can_access_form(ctx, form):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Form not found",
-            )
-    else:
-        has_access = await _check_form_access(
-            db,
-            form,
-            ctx.user.user_id,
-            ctx.org_id,
-            ctx.user.is_superuser,
-            is_external=ctx.user.is_external,
+    await _authorize_form_runtime(db, ctx, form)
+    await _limit_embed_action(http_request, ctx, "upload")
+
+    if ctx.user.embed and not request.field_name:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="A file field is required",
         )
-        if not has_access:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Access denied to this form",
-            )
 
     # Server-side validation of file constraints if field_name provided
     if request.field_name:
@@ -1293,6 +1912,11 @@ async def generate_upload_url(
             (f for f in form.fields if f.name == request.field_name),
             None
         )
+        if field is None or field.type != "file":
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="File field not found",
+            )
         if field:
             # Validate file type
             if field.allowed_types:
@@ -1318,7 +1942,8 @@ async def generate_upload_url(
     from shared.file_paths import resolve_s3_key
     file_uuid = str(uuid4())
     sanitized_name = _sanitize_filename(request.file_name)
-    relative_path = f"{form_id}/{file_uuid}/{sanitized_name}"
+    owner_segment = f"{ctx.user.jti}/" if ctx.user.embed else ""
+    relative_path = f"{form_id}/{owner_segment}{file_uuid}/{sanitized_name}"
     upload_scope = str(ctx.org_id) if ctx.org_id else "global"
     s3_key = resolve_s3_key("uploads", upload_scope, relative_path)
 
@@ -1341,6 +1966,16 @@ async def generate_upload_url(
 
     # Calculate expiration time
     expires_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat() + "Z"
+
+    if ctx.user.embed:
+        assert request.field_name is not None
+        await register_embed_upload(
+            ctx.user,
+            path=relative_path,
+            field_name=request.field_name,
+            content_type=request.content_type,
+            file_size=request.file_size,
+        )
 
     return FileUploadResponse(
         upload_url=upload_url,

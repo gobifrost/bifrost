@@ -44,7 +44,6 @@ import { useWorkflowsMetadata } from "@/hooks/useWorkflows";
 import { useRoles } from "@/hooks/useRoles";
 import { useAuth } from "@/contexts/AuthContext";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
-import { FormEmbedSection } from "@/components/forms/FormEmbedSection";
 import type { components } from "@/lib/v1";
 
 type WorkflowParameter = components["schemas"]["WorkflowParameter"];
@@ -70,10 +69,6 @@ interface FormInfoDialogProps {
 	onClose: () => void;
 	onSave: (info: FormInfoValues) => void;
 	initialData?: FormPublic | null;
-	/** Whether this is editing an existing form (org cannot be changed) */
-	isEditing?: boolean;
-	/** Form ID for embed settings (only available when editing) */
-	formId?: string;
 	/** Role IDs currently assigned to this form */
 	initialRoleIds?: string[];
 }
@@ -83,8 +78,6 @@ export function FormInfoDialog({
 	onClose,
 	onSave,
 	initialData,
-	isEditing = false,
-	formId,
 	initialRoleIds,
 }: FormInfoDialogProps) {
 	const [rolesPopoverOpen, setRolesPopoverOpen] = useState(false);
@@ -116,11 +109,22 @@ export function FormInfoDialog({
 		},
 	});
 
-	const accessLevel = useWatch({ control: form.control, name: "access_level" });
-	const launchWorkflowId = useWatch({ control: form.control, name: "launch_workflow_id" });
-	const defaultLaunchParams = useWatch({ control: form.control, name: "default_launch_params" });
-	const selectedRoleIds = useWatch({ control: form.control, name: "role_ids" });
-
+	const accessLevel = useWatch({
+		control: form.control,
+		name: "access_level",
+	});
+	const launchWorkflowId = useWatch({
+		control: form.control,
+		name: "launch_workflow_id",
+	});
+	const defaultLaunchParams = useWatch({
+		control: form.control,
+		name: "default_launch_params",
+	});
+	const selectedRoleIds = useWatch({
+		control: form.control,
+		name: "role_ids",
+	});
 	// Reset form when dialog opens or initialData changes
 	useEffect(() => {
 		if (open) {
@@ -131,12 +135,17 @@ export function FormInfoDialog({
 					workflow_id: initialData.workflow_id || "",
 					launch_workflow_id: initialData.launch_workflow_id || "",
 					default_launch_params:
-						(initialData.default_launch_params as Record<string, unknown>) || {},
+						(initialData.default_launch_params as Record<
+							string,
+							unknown
+						>) || {},
 					access_level:
-						(initialData.access_level as "authenticated" | "everyone" | "role_based") ||
+						(initialData.access_level as
+							"authenticated" | "everyone" | "role_based") ||
 						"role_based",
 					role_ids: initialRoleIds || [],
-					organization_id: initialData.organization_id ?? defaultOrgId,
+					organization_id:
+						initialData.organization_id ?? defaultOrgId,
 				});
 			} else {
 				form.reset({
@@ -365,13 +374,15 @@ export function FormInfoDialog({
 	const handleSave = (values: FormInfoValues) => {
 		// Handle "__none__" special value for launch workflow
 		const finalLaunchWorkflowId =
-			values.launch_workflow_id === "__none__" || !values.launch_workflow_id.trim()
+			values.launch_workflow_id === "__none__" ||
+			!values.launch_workflow_id.trim()
 				? ""
 				: values.launch_workflow_id.trim();
 
 		// Only include defaultLaunchParams if launch workflow is set and params exist
 		const finalDefaultParams =
-			finalLaunchWorkflowId && Object.keys(values.default_launch_params).length > 0
+			finalLaunchWorkflowId &&
+			Object.keys(values.default_launch_params).length > 0
 				? values.default_launch_params
 				: {};
 
@@ -393,7 +404,10 @@ export function FormInfoDialog({
 	const toggleRole = (roleId: string) => {
 		const current = form.getValues("role_ids");
 		if (current.includes(roleId)) {
-			form.setValue("role_ids", current.filter((id) => id !== roleId));
+			form.setValue(
+				"role_ids",
+				current.filter((id) => id !== roleId),
+			);
 		} else {
 			form.setValue("role_ids", [...current, roleId]);
 		}
@@ -401,7 +415,10 @@ export function FormInfoDialog({
 
 	const removeRole = (roleId: string) => {
 		const current = form.getValues("role_ids");
-		form.setValue("role_ids", current.filter((id) => id !== roleId));
+		form.setValue(
+			"role_ids",
+			current.filter((id) => id !== roleId),
+		);
 	};
 
 	return (
@@ -436,7 +453,8 @@ export function FormInfoDialog({
 											/>
 										</FormControl>
 										<FormDescription>
-											Global forms are available to all organizations
+											Global forms are available to all
+											organizations
 										</FormDescription>
 										<FormMessage />
 									</FormItem>
@@ -473,16 +491,24 @@ export function FormInfoDialog({
 											onValueChange={field.onChange}
 											options={
 												metadata?.workflows?.map(
-													(workflow: WorkflowMetadata) => {
+													(
+														workflow: WorkflowMetadata,
+													) => {
 														const option: {
 															value: string;
 															label: string;
 															description?: string;
 														} = {
-															value: workflow.id ?? "",
-															label: workflow.name ?? "Unnamed",
+															value:
+																workflow.id ??
+																"",
+															label:
+																workflow.name ??
+																"Unnamed",
 														};
-														if (workflow.description) {
+														if (
+															workflow.description
+														) {
 															option.description =
 																workflow.description;
 														}
@@ -497,8 +523,8 @@ export function FormInfoDialog({
 										/>
 									</FormControl>
 									<FormDescription>
-										The workflow that will be executed when this form is
-										submitted
+										The workflow that will be executed when
+										this form is submitted
 									</FormDescription>
 									<FormMessage />
 								</FormItem>
@@ -557,7 +583,8 @@ export function FormInfoDialog({
 										/>
 									</FormControl>
 									<FormDescription>
-										Controls who can view and execute this form
+										Controls who can view and execute this
+										form
 									</FormDescription>
 									<FormMessage />
 								</FormItem>
@@ -607,31 +634,44 @@ export function FormInfoDialog({
 															No roles found.
 														</CommandEmpty>
 														<CommandGroup>
-															{roles?.map((role: Role) => (
-																<CommandItem
-																	key={role.id}
-																	value={role.name || ""}
-																	data-checked={selectedRoleIds.includes(
-																		role.id,
-																	)}
-																	onSelect={() =>
-																		toggleRole(role.id)
-																	}
-																>
-																	<div className="flex flex-col flex-1">
-																		<span className="font-medium">
-																			{role.name}
-																		</span>
-																		{role.description && (
-																			<span className="text-xs text-muted-foreground">
+															{roles?.map(
+																(
+																	role: Role,
+																) => (
+																	<CommandItem
+																		key={
+																			role.id
+																		}
+																		value={
+																			role.name ||
+																			""
+																		}
+																		data-checked={selectedRoleIds.includes(
+																			role.id,
+																		)}
+																		onSelect={() =>
+																			toggleRole(
+																				role.id,
+																			)
+																		}
+																	>
+																		<div className="flex flex-col flex-1">
+																			<span className="font-medium">
 																				{
-																					role.description
+																					role.name
 																				}
 																			</span>
-																		)}
-																	</div>
-																</CommandItem>
-															))}
+																			{role.description && (
+																				<span className="text-xs text-muted-foreground">
+																					{
+																						role.description
+																					}
+																				</span>
+																			)}
+																		</div>
+																	</CommandItem>
+																),
+															)}
 														</CommandGroup>
 													</CommandList>
 												</Command>
@@ -639,31 +679,39 @@ export function FormInfoDialog({
 										</Popover>
 										{selectedRoleIds.length > 0 && (
 											<div className="flex flex-wrap gap-2 rounded-md bg-muted/50 p-2 ring-1 ring-foreground/5">
-												{selectedRoleIds.map((roleId) => {
-													const role = roles?.find(
-														(r: Role) => r.id === roleId,
-													);
-													return (
-														<Badge
-															key={roleId}
-															variant="secondary"
-															className="gap-1"
-														>
-															{role?.name || roleId}
-															<X
-																className="h-3 w-3 cursor-pointer"
-																onClick={() =>
-																	removeRole(roleId)
-																}
-															/>
-														</Badge>
-													);
-												})}
+												{selectedRoleIds.map(
+													(roleId) => {
+														const role =
+															roles?.find(
+																(r: Role) =>
+																	r.id ===
+																	roleId,
+															);
+														return (
+															<Badge
+																key={roleId}
+																variant="secondary"
+																className="gap-1"
+															>
+																{role?.name ||
+																	roleId}
+																<X
+																	className="h-3 w-3 cursor-pointer"
+																	onClick={() =>
+																		removeRole(
+																			roleId,
+																		)
+																	}
+																/>
+															</Badge>
+														);
+													},
+												)}
 											</div>
 										)}
 										<FormDescription>
-											Users must have at least one of these roles to
-											access the form
+											Users must have at least one of
+											these roles to access the form
 										</FormDescription>
 										<FormMessage />
 									</FormItem>
@@ -682,23 +730,33 @@ export function FormInfoDialog({
 									<FormControl>
 										<Combobox
 											value={field.value}
-											onValueChange={handleLaunchWorkflowChange}
+											onValueChange={
+												handleLaunchWorkflowChange
+											}
 											options={[
 												{
 													value: "__none__",
 													label: "None",
 												},
 												...(metadata?.workflows?.map(
-													(workflow: WorkflowMetadata) => {
+													(
+														workflow: WorkflowMetadata,
+													) => {
 														const option: {
 															value: string;
 															label: string;
 															description?: string;
 														} = {
-															value: workflow.id ?? "",
-															label: workflow.name ?? "Unnamed",
+															value:
+																workflow.id ??
+																"",
+															label:
+																workflow.name ??
+																"Unnamed",
 														};
-														if (workflow.description) {
+														if (
+															workflow.description
+														) {
 															option.description =
 																workflow.description;
 														}
@@ -713,8 +771,8 @@ export function FormInfoDialog({
 										/>
 									</FormControl>
 									<FormDescription>
-										Workflow to execute when form loads (results
-										available in context.workflow)
+										Workflow to execute when form loads
+										(results available in context.workflow)
 									</FormDescription>
 									<FormMessage />
 								</FormItem>
@@ -733,16 +791,18 @@ export function FormInfoDialog({
 										<p className="text-xs text-muted-foreground mt-1">
 											Set default values for workflow
 											parameters. Required parameters must
-											have either a default value or a form
-											field with "Allow as Query Param"
-											enabled.
+											have either a default value or a
+											form field with "Allow as Query
+											Param" enabled.
 										</p>
 									</div>
 									<div className="space-y-3">
 										{launchWorkflowParams.map(
 											(param: WorkflowParameter) => (
 												<div key={param.name}>
-													{renderParameterInput(param)}
+													{renderParameterInput(
+														param,
+													)}
 												</div>
 											),
 										)}
@@ -751,21 +811,17 @@ export function FormInfoDialog({
 							)}
 
 						<DialogFooter>
-							<Button type="button" variant="outline" onClick={onClose}>
+							<Button
+								type="button"
+								variant="outline"
+								onClick={onClose}
+							>
 								Cancel
 							</Button>
-							<Button type="submit">
-								Save
-							</Button>
+							<Button type="submit">Save</Button>
 						</DialogFooter>
 					</form>
 				</Form>
-
-				{isEditing && formId && (
-					<div className="min-w-0 overflow-hidden">
-						<FormEmbedSection formId={formId} />
-					</div>
-				)}
 			</DialogContent>
 		</Dialog>
 	);

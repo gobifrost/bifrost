@@ -258,9 +258,9 @@ def _form_ids(e2e_client, user) -> set[str]:
 
 def _execute_form(e2e_client, user, form_id):
     return e2e_client.post(
-        f"/api/forms/{form_id}/execute",
+        f"/api/forms/{form_id}/submissions",
         headers=user.headers,
-        json={"form_data": {"foo": "x"}},
+        json={"form_data": {}},
     )
 
 

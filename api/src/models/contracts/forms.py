@@ -2,15 +2,21 @@
 Form contract models for Bifrost.
 """
 
+import json
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 
 from src.models.enums import FormAccessLevel, FormFieldType
 from src.models.contracts.base import DataProviderInputMode
+from src.models.contracts.executions import WorkflowExecutionResponse
 from src.models.contracts.refs import WorkflowRef
+from shared.form_runtime import (
+    DEFAULT_FORM_CONFIRMATION_MARKDOWN,
+    MAX_FORM_CONFIRMATION_MARKDOWN_LENGTH,
+)
 
 if TYPE_CHECKING:
     pass
@@ -161,6 +167,10 @@ class Form(BaseModel):
     org_id: str = Field(..., description="Organization ID or 'GLOBAL'")
     name: str = Field(..., min_length=1, max_length=200)
     description: str | None = None
+    confirmation_markdown: str = Field(
+        default=DEFAULT_FORM_CONFIRMATION_MARKDOWN,
+        max_length=MAX_FORM_CONFIRMATION_MARKDOWN_LENGTH,
+    )
     workflow_id: str | None = Field(default=None, description="Workflow ID (UUID) to execute when form is submitted")
     form_schema: FormSchema
     is_active: bool = Field(default=True)
@@ -182,6 +192,10 @@ class CreateFormRequest(BaseModel):
     """Request model for creating a form"""
     name: str = Field(..., min_length=1, max_length=200)
     description: str | None = None
+    confirmation_markdown: str = Field(
+        default=DEFAULT_FORM_CONFIRMATION_MARKDOWN,
+        max_length=MAX_FORM_CONFIRMATION_MARKDOWN_LENGTH,
+    )
     workflow_id: str = Field(..., description="Workflow ID (UUID) to execute when form is submitted")
     form_schema: FormSchema
     is_global: bool = Field(default=False)
@@ -199,6 +213,9 @@ class UpdateFormRequest(BaseModel):
     """Request model for updating a form"""
     name: str | None = Field(default=None, min_length=1, max_length=200)
     description: str | None = None
+    confirmation_markdown: str | None = Field(
+        default=None, max_length=MAX_FORM_CONFIRMATION_MARKDOWN_LENGTH
+    )
     workflow_id: str | None = Field(default=None, description="Workflow ID (UUID) to execute when form is submitted")
     form_schema: FormSchema | None = None
     is_active: bool | None = None
@@ -211,10 +228,13 @@ class UpdateFormRequest(BaseModel):
         default=None, description="Default parameter values for workflow execution")
 
 
-class FormExecuteRequest(BaseModel):
-    """Request model for executing a form"""
+class FormSubmissionRequest(BaseModel):
+    """Request model for submitting a form."""
+
+    model_config = ConfigDict(extra="forbid")
+
     form_data: dict[str, Any] = Field(default_factory=dict, description="Form field values")
-    startup_data: dict[str, Any] | None = Field(default=None, description="Results from /startup call (launch workflow)")
+    startup_handle: str | None = Field(default=None, min_length=32, max_length=512)
     scheduled_at: datetime | None = Field(
         default=None,
         description=(
@@ -231,9 +251,16 @@ class FormExecuteRequest(BaseModel):
             "Mutually exclusive with scheduled_at."
         ),
     )
+    submission_nonce: str | None = Field(default=None, min_length=16, max_length=256)
+    honeypot: str = Field(default="", max_length=500)
+    captcha_payload: str | None = Field(default=None, max_length=16_384)
 
     @model_validator(mode="after")
-    def validate_scheduling(self) -> "FormExecuteRequest":
+    def validate_scheduling(self) -> "FormSubmissionRequest":
+        if len(self.form_data) > 200:
+            raise ValueError("Form submission contains too many fields")
+        if len(json.dumps(self.form_data, default=str).encode("utf-8")) > 256 * 1024:
+            raise ValueError("Form submission is too large")
         if self.scheduled_at is not None and self.delay_seconds is not None:
             raise ValueError(
                 "'scheduled_at' and 'delay_seconds' are mutually exclusive"
@@ -254,6 +281,28 @@ class FormExecuteRequest(BaseModel):
 class FormStartupResponse(BaseModel):
     """Response model for form startup/launch workflow execution"""
     result: dict[str, Any] | list[Any] | str | None = Field(default=None, description="Workflow execution result")
+    startup_handle: str | None = None
+    expires_at: datetime | None = None
+
+
+class FormConfirmationResponse(BaseModel):
+    """Opaque success returned to anonymous public form sessions."""
+
+    mode: Literal["confirmation"] = "confirmation"
+    status: Literal["accepted"] = "accepted"
+    confirmation_markdown: str
+
+
+class FormExecutionResponse(WorkflowExecutionResponse):
+    """Execution detail returned to authenticated users and trusted HMAC sessions."""
+
+    mode: Literal["execution"] = "execution"
+
+
+FormSubmissionResponse = Annotated[
+    FormConfirmationResponse | FormExecutionResponse,
+    Field(discriminator="mode"),
+]
 
 
 # CRUD Pattern Models for Form
@@ -261,6 +310,10 @@ class FormCreate(BaseModel):
     """Input for creating a form."""
     name: str
     description: str | None = None
+    confirmation_markdown: str = Field(
+        default=DEFAULT_FORM_CONFIRMATION_MARKDOWN,
+        max_length=MAX_FORM_CONFIRMATION_MARKDOWN_LENGTH,
+    )
     workflow_id: str | None = None
     launch_workflow_id: str | None = None
     default_launch_params: dict | None = None
@@ -279,6 +332,9 @@ class FormUpdate(BaseModel):
     """Input for updating a form."""
     name: str | None = None
     description: str | None = None
+    confirmation_markdown: str | None = Field(
+        default=None, max_length=MAX_FORM_CONFIRMATION_MARKDOWN_LENGTH
+    )
     workflow_id: str | None = None
     launch_workflow_id: str | None = None
     default_launch_params: dict | None = None
@@ -303,6 +359,7 @@ class FormPublic(BaseModel):
     id: UUID
     name: str
     description: str | None = None
+    confirmation_markdown: str = DEFAULT_FORM_CONFIRMATION_MARKDOWN
     workflow_id: Annotated[str | None, WorkflowRef()] = None
     launch_workflow_id: Annotated[str | None, WorkflowRef()] = None
     default_launch_params: dict | None = None
@@ -364,6 +421,11 @@ class FormPublic(BaseModel):
                 "id": data.id,
                 "name": data.name,
                 "description": data.description,
+                "confirmation_markdown": getattr(
+                    data,
+                    "confirmation_markdown",
+                    DEFAULT_FORM_CONFIRMATION_MARKDOWN,
+                ),
                 "workflow_id": data.workflow_id,
                 "launch_workflow_id": data.launch_workflow_id,
                 "default_launch_params": data.default_launch_params,
@@ -393,6 +455,11 @@ class FormPublic(BaseModel):
                 "id": data.id,
                 "name": data.name,
                 "description": data.description,
+                "confirmation_markdown": getattr(
+                    data,
+                    "confirmation_markdown",
+                    DEFAULT_FORM_CONFIRMATION_MARKDOWN,
+                ),
                 "workflow_id": data.workflow_id,
                 "launch_workflow_id": data.launch_workflow_id,
                 "default_launch_params": data.default_launch_params,
@@ -412,3 +479,167 @@ class FormPublic(BaseModel):
     @field_serializer("created_at", "updated_at")
     def serialize_dt(self, dt: datetime | None) -> str | None:
         return dt.isoformat() if dt else None
+
+
+class FormRuntimeField(BaseModel):
+    """Renderable field definition with internal provider identity removed."""
+
+    name: str
+    label: str | None = None
+    type: FormFieldType
+    required: bool = False
+    validation: dict[str, Any] | None = None
+    has_dynamic_options: bool = False
+    data_provider_inputs: dict[str, DataProviderInputConfig] | None = None
+    default_value: Any | None = None
+    placeholder: str | None = None
+    help_text: str | None = None
+    visibility_expression: str | None = None
+    options: list[dict[str, str]] | None = None
+    allowed_types: list[str] | None = None
+    multiple: bool | None = None
+    max_size_mb: int | None = None
+    content: str | None = None
+    allow_as_query_param: bool | None = None
+    auto_fill: dict[str, str] | None = None
+
+
+class FormRuntimeSchema(BaseModel):
+    fields: list[FormRuntimeField]
+
+
+class FormRuntimeDefinition(BaseModel):
+    """Sanitized definition consumed by every form renderer."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    name: str
+    description: str | None = None
+    form_schema: FormRuntimeSchema
+    allowed_query_params: list[str] | None = None
+    has_startup: bool = False
+    captcha_required: bool = False
+    is_active: bool
+
+    @model_validator(mode="before")
+    @classmethod
+    def project_runtime_fields(cls, data):
+        if isinstance(data, dict):
+            return data
+
+        fields = []
+        for field in sorted(data.fields, key=lambda item: item.position):
+            fields.append(
+                FormRuntimeField(
+                    name=field.name,
+                    label=field.label,
+                    type=field.type,
+                    required=field.required,
+                    validation=field.validation,
+                    has_dynamic_options=field.data_provider_id is not None,
+                    data_provider_inputs=field.data_provider_inputs,
+                    default_value=field.default_value,
+                    placeholder=field.placeholder,
+                    help_text=field.help_text,
+                    visibility_expression=field.visibility_expression,
+                    options=field.options,
+                    allowed_types=field.allowed_types,
+                    multiple=field.multiple,
+                    max_size_mb=field.max_size_mb,
+                    content=field.content,
+                    allow_as_query_param=field.allow_as_query_param,
+                    auto_fill=field.auto_fill,
+                )
+            )
+
+        return {
+            "id": data.id,
+            "name": data.name,
+            "description": data.description,
+            "form_schema": FormRuntimeSchema(fields=fields),
+            "allowed_query_params": data.allowed_query_params,
+            "has_startup": data.launch_workflow_id is not None,
+            "is_active": data.is_active,
+        }
+
+
+class FormFieldOptionsRequest(BaseModel):
+    """Evaluated browser inputs for one configured provider-backed field."""
+
+    model_config = ConfigDict(extra="forbid")
+    inputs: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_size(self) -> "FormFieldOptionsRequest":
+        if len(self.inputs) > 50:
+            raise ValueError("Too many provider inputs")
+        if len(json.dumps(self.inputs, default=str).encode("utf-8")) > 64 * 1024:
+            raise ValueError("Provider inputs are too large")
+        return self
+
+
+class FormFieldOption(BaseModel):
+    value: str
+    label: str
+    description: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
+class FormFieldOptionsResponse(BaseModel):
+    options: list[FormFieldOption]
+
+
+class FormPublicationWorkflow(BaseModel):
+    ref: str
+    name: str
+
+
+class FormPublicationProviderField(BaseModel):
+    field_name: str
+    provider_ref: str
+    provider_name: str
+    configured_inputs: list[str] = Field(default_factory=list)
+    metadata_paths: list[str] = Field(default_factory=list)
+
+
+class FormPublicationFinding(BaseModel):
+    code: str
+    message: str
+    field_name: str | None = None
+
+
+class FormPublicationReview(BaseModel):
+    fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    submission_workflow: FormPublicationWorkflow | None = None
+    startup_workflow: FormPublicationWorkflow | None = None
+    provider_fields: list[FormPublicationProviderField] = Field(default_factory=list)
+    file_fields: list[str] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[FormPublicationFinding] = Field(default_factory=list)
+
+
+class FormPublicationUpdate(BaseModel):
+    reviewed_fingerprint: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    allowed_origins: list[str] = Field(default_factory=list, max_length=50)
+    spam_protection_enabled: bool = True
+
+
+class FormPublicationPublic(BaseModel):
+    form_id: UUID
+    status: Literal["unpublished", "published", "needs_review"]
+    public_key: str | None = None
+    allowed_origins: list[str] = Field(default_factory=list)
+    spam_protection_enabled: bool = True
+    approved_fingerprint: str | None = None
+    current_fingerprint: str
+    iframe_path: str | None = None
+    warnings: list[str] = Field(default_factory=list)
+    blockers: list[FormPublicationFinding] = Field(default_factory=list)
+
+
+class FormCaptchaChallenge(BaseModel):
+    """ALTCHA proof-of-work challenge for one anonymous public form session."""
+
+    parameters: dict[str, Any]
+    signature: str

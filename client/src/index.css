@@ -306,6 +306,12 @@
 		@apply bg-background text-foreground;
 	}
 
+	html.embed-transparent,
+	html.embed-transparent body,
+	html.embed-transparent #root {
+		background: transparent;
+	}
+
 	/* Enable smooth animations everywhere */
 	* {
 		transition-property:
@@ -587,7 +593,8 @@
 
 /* Tiptap Editor Styles */
 .tiptap-editor,
-.ProseMirror {
+.ProseMirror,
+.markdown-content {
 	& > :first-child {
 		margin-top: 0;
 	}

@@ -13,6 +13,7 @@ interface TiptapEditorProps {
 	readOnly?: boolean;
 	placeholder?: string;
 	className?: string;
+	ariaLabel?: string;
 }
 
 export function TiptapEditor({
@@ -21,6 +22,7 @@ export function TiptapEditor({
 	readOnly = false,
 	placeholder = "Start writing...",
 	className,
+	ariaLabel,
 }: TiptapEditorProps) {
 	const editor = useEditor({
 		extensions: [
@@ -51,6 +53,7 @@ export function TiptapEditor({
 		editorProps: {
 			attributes: {
 				class: "tiptap-editor min-h-[200px] h-full overflow-y-auto p-3 focus:outline-none prose prose-sm dark:prose-invert max-w-none",
+				...(ariaLabel ? { "aria-label": ariaLabel } : {}),
 			},
 		},
 	});
@@ -76,8 +79,17 @@ export function TiptapEditor({
 	}
 
 	return (
-		<div className={cn("border rounded-md overflow-hidden flex flex-col", className)}>
-			{!readOnly && <div className="shrink-0"><TiptapToolbar editor={editor} /></div>}
+		<div
+			className={cn(
+				"border rounded-md overflow-hidden flex flex-col",
+				className,
+			)}
+		>
+			{!readOnly && (
+				<div className="shrink-0">
+					<TiptapToolbar editor={editor} />
+				</div>
+			)}
 			<div className="flex-1 min-h-0">
 				<EditorContent editor={editor} className="h-full [&_.tiptap]:h-full" />
 			</div>

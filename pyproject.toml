@@ -52,6 +52,7 @@ dependencies = [
     "cryptography>=47.0.0",  # Encryption utilities
     "pyotp",  # TOTP/HOTP for MFA
     "webauthn>=2.7.1",  # WebAuthn/Passkeys support
+    "altcha>=2.1.0",  # Self-hosted proof-of-work protection for public forms
 
     # =========================================================================
     # Configuration

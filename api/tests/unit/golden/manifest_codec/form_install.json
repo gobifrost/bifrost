@@ -1,5 +1,6 @@
 {
   "access_level": "role_based",
+  "confirmation_markdown": "## Form submitted\n\nThank you!",
   "description": "install parity form",
   "form_schema": {
     "fields": [

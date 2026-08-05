@@ -117,7 +117,9 @@ async def get_current_user_optional(
     # Fall back to embed_token cookie (iframe embed sessions)
     elif "embed_token" in request.cookies:
         token = request.cookies["embed_token"]
-        token_type = "embed"
+        # Embed sessions are deliberately access tokens with additional typed
+        # capability claims; the cookie name is only a credential location.
+        token_type = "access"
 
     if not token:
         return None
@@ -181,10 +183,15 @@ async def get_current_user_optional(
         is_provider_org=payload.get("is_provider_org", False),
         roles=payload.get("roles", []),
         embed=payload.get("embed", False),
+        embed_kind=payload.get("embed_kind"),
+        grant=payload.get("grant"),
         jti=payload.get("jti"),
         app_id=payload.get("app_id"),
         form_id=payload.get("form_id"),
         verified_params=payload.get("verified_params"),
+        verified_context=payload.get("verified_context"),
+        capability_fingerprint=payload.get("capability_fingerprint"),
+        token_exp=payload.get("exp"),
     )
 
 
@@ -523,8 +530,13 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
         is_provider_org=payload.get("is_provider_org", False),
         roles=payload.get("roles", []),
         embed=payload.get("embed", False),
+        embed_kind=payload.get("embed_kind"),
+        grant=payload.get("grant"),
         jti=payload.get("jti"),
         app_id=payload.get("app_id"),
         form_id=payload.get("form_id"),
         verified_params=payload.get("verified_params"),
+        verified_context=payload.get("verified_context"),
+        capability_fingerprint=payload.get("capability_fingerprint"),
+        token_exp=payload.get("exp"),
     )

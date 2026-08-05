@@ -1,4 +1,5 @@
 {
+  "confirmation_markdown": "## Form submitted\n\nThank you!",
   "description": "partition test form",
   "form_schema": {
     "fields": [

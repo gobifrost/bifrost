@@ -19,7 +19,15 @@ import {
 	ACCESS_TOKEN_KEY,
 	clearAuthTokens,
 	clearEmbedToken,
+	consumeEmbedTokenFromHash,
+	getActiveToken,
+	isEmbedSession,
 } from "@/lib/auth-token";
+
+// Consume the fragment before AuthProvider performs its initial auth check.
+// api-client does the same defensively before requests; this keeps auth state
+// correct even on a route whose first render has not imported an API service.
+consumeEmbedTokenFromHash();
 
 // User info extracted from JWT
 export interface AuthUser {
@@ -211,7 +219,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 			// Check for existing token
 			// Note: embed tokens from URL fragments are extracted at module load
 			// time in api-client.ts, before any API calls or auth checks run.
-			let token = localStorage.getItem(ACCESS_TOKEN_KEY);
+			let token = getActiveToken();
 			if (!token) {
 				// No access token in localStorage, but refresh_token cookie may still be valid
 				const refreshed = await refreshTokenInternal();
@@ -230,6 +238,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
 			// Check if token is expired
 			if (isTokenExpired(token)) {
+				if (isEmbedSession()) {
+					clearEmbedToken();
+					setUser(null);
+					setIsLoading(false);
+					return;
+				}
 				// Try to refresh
 				const refreshed = await refreshTokenInternal();
 				if (!refreshed) {
@@ -240,7 +254,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 			}
 
 			// Parse user from token (re-read in case it was refreshed)
-			const currentToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+			const currentToken = getActiveToken();
 			const payload = parseJwt(currentToken || token);
 			if (payload) {
 				const extractedUser = extractUser(payload);
