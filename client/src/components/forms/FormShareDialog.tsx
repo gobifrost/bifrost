@@ -907,8 +907,7 @@ export function FormShareDialog({
 														void saveConfirmation()
 													}
 														disabled={
-															loadError ||
-														isSavingConfirmation ||
+															isSavingConfirmation ||
 														confirmationMarkdown ===
 															savedConfirmationMarkdown
 													}
