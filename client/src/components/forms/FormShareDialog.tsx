@@ -576,13 +576,10 @@ export function FormShareDialog({
 													</p>
 												</div>
 											</div>
-											<Switch
-												id={`public-form-spam-protection-${formId}`}
-												checked={spamProtectionEnabled}
-												disabled={
-													isLoading ||
-													isSavingSpamProtection
-												}
+												<Switch
+													id={`public-form-spam-protection-${formId}`}
+													checked={spamProtectionEnabled}
+													disabled={isSavingSpamProtection}
 												onCheckedChange={(checked) =>
 													void saveSpamProtection(
 														checked,
@@ -909,9 +906,8 @@ export function FormShareDialog({
 													onClick={() =>
 														void saveConfirmation()
 													}
-													disabled={
-														isLoading ||
-														loadError ||
+														disabled={
+															loadError ||
 														isSavingConfirmation ||
 														confirmationMarkdown ===
 															savedConfirmationMarkdown

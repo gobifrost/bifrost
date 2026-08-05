@@ -338,9 +338,10 @@ async def e2e_public_form_submit(
         )
         assert duplicate.status_code == 409, duplicate.text
 
-        assert e2e_client.delete(
+        deleted = e2e_client.delete(
             f"/api/forms/{form_id}/publication", headers=platform_admin.headers
-        ).status_code == 204
+        )
+        assert deleted.status_code == 204
         assert e2e_client.get(
             f"/api/forms/{form_id}/runtime", headers=headers
         ).status_code == 404

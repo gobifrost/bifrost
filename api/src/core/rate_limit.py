@@ -76,10 +76,8 @@ class RateLimiter:
             # Get remaining TTL for Retry-After header
             ttl = await r.ttl(key)
             logger.warning(
-                f"Rate limit exceeded for {endpoint}",
+                "Rate limit exceeded",
                 extra={
-                    "endpoint": endpoint,
-                    "identifier": identifier,
                     "requests": current,
                     "limit": self.max_requests,
                 }

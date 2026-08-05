@@ -10,6 +10,8 @@ from datetime import date, datetime, timezone
 from typing import Any, Awaitable, cast
 from urllib.parse import urlsplit
 
+from email_validator import EmailNotValidError, validate_email
+
 DEFAULT_FORM_CONFIRMATION_MARKDOWN = "## Form submitted\n\nThank you!"
 MAX_FORM_CONFIRMATION_MARKDOWN_LENGTH = 20_000
 FORM_STARTUP_TTL_SECONDS = 30 * 60
@@ -92,7 +94,9 @@ def validate_form_submission(
             continue
 
         if kind == "email" and isinstance(value, str):
-            if re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value) is None:
+            try:
+                validate_email(value, check_deliverability=False)
+            except EmailNotValidError:
                 errors.append({"field": name, "message": "Invalid email address"})
                 continue
         if kind == "date" and isinstance(value, str):
