@@ -44,7 +44,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Auto-install on first run so step [1/3] doesn't die with ERR_MODULE_NOT_FOUND.
 if [ ! -d "$SCRIPT_DIR/node_modules" ]; then
     echo "=== installing scripts/docs deps (first run) ==="
-    (cd "$SCRIPT_DIR" && npm install --silent)
+    (cd "$SCRIPT_DIR" && npm ci --silent)
 fi
 
 # Reset the test-stack state before capturing. The capture spec's global setup

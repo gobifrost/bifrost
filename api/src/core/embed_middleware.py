@@ -1,16 +1,9 @@
-"""
-Embed Token Scope Middleware
-
-Restricts embed tokens to only the API endpoints needed for rendering
-an embedded app. Embed tokens are NOT superusers and should only access
-app rendering, workflow execution, and related endpoints.
-
-Also enforces execution scoping: embed tokens can only access executions
-they created (tracked via Redis using the token's jti).
-"""
+"""Deny-by-default HTTP capability policy for typed embed sessions."""
 
 import logging
 import re
+from collections.abc import Callable
+from typing import Any
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -20,57 +13,51 @@ from src.core.security import decode_token
 
 logger = logging.getLogger(__name__)
 
-# Paths that embed tokens are allowed to access.
-# Uses regex patterns to support path parameters.
-EMBED_ALLOWED_PATTERNS = [
-    # App loading and rendering
-    r"^/api/applications/[^/]+$",          # GET /api/applications/{slug}
-    r"^/api/applications/[^/]+/render$",   # GET /api/applications/{app_id}/render
-    r"^/api/applications/[^/]+/files",     # GET /api/applications/{app_id}/files/...
-    r"^/api/applications/[^/]+/dependencies$",  # GET /api/applications/{app_id}/dependencies
+_COMMON_RULES = {
+    ("GET", "/auth/status"),
+    ("GET", "/api/branding"),
+    ("GET", "/health"),
+}
 
-    # Workflow execution
-    r"^/api/workflows/execute$",           # POST /api/workflows/execute
-    r"^/api/executions/",                  # GET /api/executions/{id}...
+_APP_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("GET", re.compile(r"^/api/applications/[^/]+$")),
+    ("GET", re.compile(r"^/api/applications/[^/]+/render$")),
+    ("GET", re.compile(r"^/api/applications/[^/]+/files(?:/.*)?$")),
+    ("GET", re.compile(r"^/api/applications/[^/]+/dependencies$")),
+    ("POST", re.compile(r"^/api/workflows/execute$")),
+    ("GET", re.compile(r"^/api/executions/[0-9a-f-]{36}(?:/.*)?$")),
+    ("GET", re.compile(r"^/api/forms/[0-9a-f-]{36}/runtime$")),
+    ("POST", re.compile(r"^/api/forms/[0-9a-f-]{36}/startup$")),
+    ("POST", re.compile(r"^/api/forms/[0-9a-f-]{36}/upload$")),
+    ("POST", re.compile(r"^/api/forms/[0-9a-f-]{36}/submissions$")),
+    (
+        "POST",
+        re.compile(r"^/api/forms/[0-9a-f-]{36}/fields/[^/]+/options$"),
+    ),
+)
 
-    # Auth status (SPA checks this on load)
-    r"^/auth/status$",
-
-    # Branding (SPA loads this for theming)
-    r"^/api/branding$",
-
-    # WebSocket for execution streaming
-    r"^/ws",
-
-    # Health check
-    r"^/health$",
-
-    # Form loading and execution
-    r"^/api/forms/[^/]+$",              # GET /api/forms/{form_id}
-    r"^/api/forms/[^/]+/execute$",      # POST /api/forms/{form_id}/execute
-    r"^/api/forms/[^/]+/startup$",      # POST /api/forms/{form_id}/startup
-    r"^/api/forms/[^/]+/upload$",       # POST /api/forms/{form_id}/upload
-]
-
-_COMPILED_PATTERNS = [re.compile(p) for p in EMBED_ALLOWED_PATTERNS]
-
-# Pattern to extract execution_id from /api/executions/{id}... paths
+_FORM_RUNTIME_RE = re.compile(
+    r"^/api/forms/(?P<form_id>[0-9a-f-]{36})/"
+    r"(?P<action>runtime|startup|upload|submissions|captcha/challenge|fields/[^/]+/options)$"
+)
+_FORM_METHODS = {
+    "runtime": "GET",
+    "startup": "POST",
+    "upload": "POST",
+    "submissions": "POST",
+    "captcha/challenge": "POST",
+}
 _EXECUTION_PATH_RE = re.compile(r"^/api/executions/([0-9a-f-]{36})")
+_MAX_FORM_SESSION_BODY_BYTES = 512 * 1024
 
 
-def _get_embed_payload(request: Request) -> dict | None:
-    """Return the decoded JWT payload if this is an embed token, else None.
+def _get_embed_payload(request: Request) -> dict[str, Any] | None:
+    """Decode an embed JWT from every credential location accepted by auth."""
 
-    OPEN-D: the token is inspected from EVERY path auth accepts it on — the
-    Authorization header AND the ``access_token`` / ``embed_token`` cookies
-    (mirroring ``get_current_user_optional``'s precedence). Header-only
-    inspection let an embed end user replay their token as a cookie and reach
-    non-allowlisted endpoints (e.g. /api/sdk/config/get) unscoped.
-    """
     token = None
     auth_header = request.headers.get("authorization", "")
     if auth_header.lower().startswith("bearer "):
-        token = auth_header[7:]  # Strip "Bearer "
+        token = auth_header[7:]
     elif "access_token" in request.cookies:
         token = request.cookies["access_token"]
     elif "embed_token" in request.cookies:
@@ -79,40 +66,80 @@ def _get_embed_payload(request: Request) -> dict | None:
     if not token:
         return None
 
-    payload = decode_token(token)
-    if payload is None:
+    payload = decode_token(token, expected_type="access")
+    if payload is None or payload.get("embed") is not True:
         return None
-
-    if payload.get("embed", False) is not True:
-        return None
-
     return payload
 
 
-def _path_allowed(path: str) -> bool:
-    """Check if the path is in the embed allowlist."""
-    return any(pattern.match(path) for pattern in _COMPILED_PATTERNS)
+def _matches_rules(
+    method: str,
+    path: str,
+    rules: tuple[tuple[str, re.Pattern[str]], ...],
+) -> bool:
+    return any(rule_method == method and pattern.fullmatch(path) for rule_method, pattern in rules)
+
+
+def embed_request_allowed(method: str, path: str, payload: dict[str, Any]) -> bool:
+    """Return whether a typed embed claim authorizes this HTTP request."""
+
+    method = method.upper()
+    if (method, path) in _COMMON_RULES:
+        return True
+
+    embed_kind = payload.get("embed_kind")
+    if embed_kind == "app":
+        return _matches_rules(method, path, _APP_RULES)
+    if embed_kind != "form":
+        return False
+
+    if payload.get("grant") == "hmac" and _EXECUTION_PATH_RE.fullmatch(path):
+        return method == "GET"
+
+    match = _FORM_RUNTIME_RE.fullmatch(path)
+    if match is None or match.group("form_id") != payload.get("form_id"):
+        return False
+
+    action = match.group("action")
+    if action == "captcha/challenge" and payload.get("grant") != "public":
+        return False
+    expected_method = (
+        "POST" if action.startswith("fields/") else _FORM_METHODS.get(action)
+    )
+    return method == expected_method
 
 
 class EmbedScopeMiddleware(BaseHTTPMiddleware):
-    """Restrict embed tokens to app-rendering endpoints only."""
+    """Apply the typed embed capability policy before router authorization."""
 
-    async def dispatch(self, request: Request, call_next):
-        # Only check requests with Bearer tokens that have embed=true
+    async def dispatch(self, request: Request, call_next: Callable):
         payload = _get_embed_payload(request)
         if payload is None:
             return await call_next(request)
 
-        if not _path_allowed(request.url.path):
+        if not embed_request_allowed(request.method, request.url.path, payload):
             logger.warning(
-                f"Embed token denied access to {request.method} {request.url.path}"
+                "Embed token denied access to %s %s",
+                request.method,
+                request.url.path,
             )
             return JSONResponse(
                 status_code=403,
                 content={"detail": "Embed tokens cannot access this endpoint"},
             )
 
-        # Enforce execution scoping: embed tokens can only access their own executions
+        if payload.get("embed_kind") == "form" and request.method == "POST":
+            content_length = request.headers.get("content-length")
+            if (
+                content_length is not None
+                and content_length.isdigit()
+                and int(content_length) > _MAX_FORM_SESSION_BODY_BYTES
+            ):
+                return JSONResponse(
+                    status_code=413,
+                    content={"detail": "Form request is too large"},
+                )
+
         match = _EXECUTION_PATH_RE.match(request.url.path)
         if match:
             execution_id = match.group(1)
@@ -126,9 +153,8 @@ class EmbedScopeMiddleware(BaseHTTPMiddleware):
             from src.core.cache.keys import embed_execution_key
             from src.core.cache.redis_client import get_redis
 
-            async with get_redis() as r:
-                exists = await r.exists(embed_execution_key(jti, execution_id))
-
+            async with get_redis() as redis:
+                exists = await redis.exists(embed_execution_key(jti, execution_id))
             if not exists:
                 return JSONResponse(
                     status_code=403,

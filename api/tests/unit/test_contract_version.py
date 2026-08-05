@@ -188,7 +188,10 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # Application publish now returns 202 + a standardized platform job instead
     # of ApplicationPublic, and the CLI polls PlatformJobPublic for durable
     # progress/result/error (2026-07-28). CONTRACT_VERSION bumped to 8.
-    "94bf28d5039d7dd17d747f2f66ff7ae254ef118a14b6652d2119d427acb3b316"
+    #
+    # Forms gained optional confirmation_markdown (2026-08-04). ADDITIVE: old
+    # clients omit it and continue receiving the prior default confirmation.
+    "b439c518e0e97014ae0db4629fd750640053ec5e0e9c6809bafc5bf427b5a2f6"
 )
 
 

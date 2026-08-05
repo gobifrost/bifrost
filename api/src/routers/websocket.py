@@ -705,13 +705,25 @@ async def can_access_execution(user: UserPrincipal, execution_id: str) -> bool:
     if user.is_superuser:
         return True
 
-    # Embed users: check Redis key linking their session (jti) to the execution
-    if user.embed and user.jti:
+    # App embeds and trusted HMAC form sessions retain exact-execution scoping
+    # through their session JTI. Anonymous public form sessions never receive
+    # execution channels or status data.
+    if (
+        user.embed
+        and user.jti
+        and (
+            user.embed_kind == "app"
+            or (user.embed_kind == "form" and user.grant == "hmac")
+        )
+    ):
         from src.core.cache.keys import embed_execution_key
         from src.core.cache.redis_client import get_redis
 
         async with get_redis() as r:
             return bool(await r.exists(embed_execution_key(user.jti, execution_id)))
+
+    if user.embed and user.embed_kind == "form":
+        return False
 
     try:
         execution_uuid = UUID(execution_id)
@@ -815,6 +827,11 @@ async def websocket_connect(
         # Must accept before closing, otherwise client sees HTTP 403
         await websocket.accept()
         await websocket.close(code=4001, reason="Unauthorized")
+        return
+
+    if user.embed and user.embed_kind == "form":
+        await websocket.accept()
+        await websocket.close(code=4003, reason="Form sessions cannot use WebSockets")
         return
 
     # Filter channels - users can only subscribe to their own user channel
@@ -1297,6 +1314,9 @@ async def websocket_execution(
 
     if not user:
         await websocket.close(code=4001, reason="Unauthorized")
+        return
+    if user.embed and user.embed_kind == "form":
+        await websocket.close(code=4003, reason="Form sessions cannot use WebSockets")
         return
 
     # Validate user has access to this execution

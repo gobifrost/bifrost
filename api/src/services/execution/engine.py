@@ -93,7 +93,9 @@ class ExecutionRequest:
     parameters: dict[str, Any] = field(default_factory=dict)
 
     # Launch workflow results (available via context.startup)
-    startup: dict[str, Any] | None = None
+    startup: Any | None = None
+    form_inputs: dict[str, Any] = field(default_factory=dict)
+    embed: dict[str, Any] = field(default_factory=dict)
 
     # ROI initialization (from workflow defaults)
     roi: dict[str, Any] | None = None
@@ -291,6 +293,8 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         workflow_name=request.name or "",  # Workflow/script name for context
         public_url=get_settings().public_url,
         startup=request.startup,  # Launch workflow results (from form execution)
+        form_inputs=request.form_inputs,
+        embed=request.embed,
         roi=roi,
         event=request.event,
         solution_id=request.solution_id,  # install scope for SDK name lookups

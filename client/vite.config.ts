@@ -1,12 +1,61 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 import { bifrostModuleStubs } from "./src/build-plugins/bifrost-module-stubs";
 
+function embeddedFormFramePolicy(): Plugin {
+	return {
+		name: "embedded-form-frame-policy",
+		configureServer(server) {
+			server.middlewares.use(async (request, response, next) => {
+				const pathname = new URL(request.url || "/", "http://localhost")
+					.pathname;
+				const publicMatch = pathname.match(
+					/^\/embedded\/forms\/public\/([^/]+)$/,
+				);
+				const hmacMatch = pathname.match(
+					/^\/embedded\/forms\/hmac\/([0-9a-fA-F-]{36})$/,
+				);
+				if (!publicMatch && !hmacMatch) {
+					next();
+					return;
+				}
+
+				const apiBase = process.env.API_URL || "http://localhost:8000";
+				const policyPath = publicMatch
+					? `/embed/forms/public/${encodeURIComponent(publicMatch[1])}/frame-policy`
+					: `/embed/forms/hmac/${hmacMatch![1]}/frame-policy`;
+				try {
+					const policy = await fetch(`${apiBase}${policyPath}`);
+					if (!policy.ok) {
+						response.statusCode = policy.status;
+						response.end("Form unavailable");
+						return;
+					}
+					const csp = policy.headers.get("content-security-policy");
+					if (csp) response.setHeader("Content-Security-Policy", csp);
+					response.setHeader(
+						"Cache-Control",
+						"no-store, must-revalidate",
+					);
+					next();
+				} catch (error) {
+					next(error);
+				}
+			});
+		},
+	};
+}
+
 // https://vite.dev/config/
 export default defineConfig({
-	plugins: [tailwindcss(), react(), bifrostModuleStubs()],
+	plugins: [
+		embeddedFormFramePolicy(),
+		tailwindcss(),
+		react(),
+		bifrostModuleStubs(),
+	],
 	resolve: {
 		alias: {
 			"@": path.resolve(__dirname, "./src"),
@@ -20,7 +69,11 @@ export default defineConfig({
 				manualChunks: (id) => {
 					const chunkGroups: Record<string, string[]> = {
 						// React core - always needed
-						"react-vendor": ["react", "react-dom", "react-router-dom"],
+						"react-vendor": [
+							"react",
+							"react-dom",
+							"react-router-dom",
+						],
 
 						// Monaco Editor - large dependency, split separately
 						monaco: ["monaco-editor", "@monaco-editor/react"],
@@ -63,7 +116,11 @@ export default defineConfig({
 						"syntax-highlighter": ["react-syntax-highlighter"],
 
 						// Forms
-						forms: ["react-hook-form", "@hookform/resolvers", "zod"],
+						forms: [
+							"react-hook-form",
+							"@hookform/resolvers",
+							"zod",
+						],
 
 						// UI Utils
 						"ui-utils": [
@@ -84,9 +141,12 @@ export default defineConfig({
 					};
 
 					if (!id.includes("node_modules")) return null;
-					for (const [chunkName, packages] of Object.entries(chunkGroups)) {
+					for (const [chunkName, packages] of Object.entries(
+						chunkGroups,
+					)) {
 						for (const pkg of packages) {
-							if (id.includes(`/node_modules/${pkg}/`)) return chunkName;
+							if (id.includes(`/node_modules/${pkg}/`))
+								return chunkName;
 						}
 					}
 					return null;
@@ -188,7 +248,9 @@ export default defineConfig({
 		proxy: {
 			// Proxy S3 presigned URLs through Vite so the browser can reach local object storage
 			"/s3": {
-				target: process.env.BIFROST_S3_ENDPOINT_URL || "http://seaweedfs:8333",
+				target:
+					process.env.BIFROST_S3_ENDPOINT_URL ||
+					"http://seaweedfs:8333",
 				changeOrigin: true,
 				rewrite: (path) => path.replace(/^\/s3/, ""),
 			},
@@ -247,7 +309,7 @@ export default defineConfig({
 				changeOrigin: true,
 			},
 			// Embed entry point (HMAC-verified iframe loading)
-			"/embed": {
+			"^/embed/": {
 				target: process.env.API_URL || "http://localhost:8000",
 				changeOrigin: true,
 			},

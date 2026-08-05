@@ -22,6 +22,28 @@ export const EMBED_TOKEN_KEY = "bifrost_embed_token";
 
 const EMBED_HASH_PREFIX = "#embed_token=";
 
+export interface EmbedTokenClaims {
+	embed?: boolean;
+	embed_kind?: "app" | "form";
+	grant?: "hmac" | "public";
+	form_id?: string;
+}
+
+function parseTokenClaims(token: string): EmbedTokenClaims | null {
+	try {
+		const encoded = token.split(".")[1];
+		if (!encoded) return null;
+		const normalized = encoded.replace(/-/g, "+").replace(/_/g, "/");
+		const padded = normalized.padEnd(
+			normalized.length + ((4 - (normalized.length % 4)) % 4),
+			"=",
+		);
+		return JSON.parse(atob(padded)) as EmbedTokenClaims;
+	} catch {
+		return null;
+	}
+}
+
 /**
  * Detect whether this browsing context is rendered inside an iframe.
  * A SecurityError when reading `window.top` indicates a cross-origin parent —
@@ -72,6 +94,12 @@ export function getActiveToken(): string | null {
 	const embed = sessionStorage.getItem(EMBED_TOKEN_KEY);
 	if (embed) return embed;
 	return localStorage.getItem(ACCESS_TOKEN_KEY);
+}
+
+/** Read non-sensitive routing claims from the tab-scoped embed token. */
+export function getEmbedTokenClaims(): EmbedTokenClaims | null {
+	const token = sessionStorage.getItem(EMBED_TOKEN_KEY);
+	return token ? parseTokenClaims(token) : null;
 }
 
 /**

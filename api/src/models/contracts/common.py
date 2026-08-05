@@ -94,11 +94,13 @@ class BrandingUpdateRequest(BaseModel):
 
 class FileUploadRequest(BaseModel):
     """Request model for generating file upload SAS URL"""
-    file_name: str = Field(..., description="Original file name")
-    content_type: str = Field(..., description="MIME type of the file")
-    file_size: int = Field(..., description="File size in bytes")
+    file_name: str = Field(..., min_length=1, max_length=255, description="Original file name")
+    content_type: str = Field(..., min_length=1, max_length=255, description="MIME type of the file")
+    file_size: int = Field(..., ge=0, le=5 * 1024 * 1024 * 1024, description="File size in bytes")
     field_name: str | None = Field(
         default=None,
+        min_length=1,
+        max_length=200,
         description="Form field name for server-side validation of allowed types and max size"
     )
 

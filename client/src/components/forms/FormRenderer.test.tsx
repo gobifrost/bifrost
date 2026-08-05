@@ -40,9 +40,10 @@ vi.mock("@/hooks/useForms", () => ({
 // and /history on scheduled submits.
 const mockNavigate = vi.fn();
 vi.mock("react-router-dom", async () => {
-	const actual = await vi.importActual<typeof import("react-router-dom")>(
-		"react-router-dom",
-	);
+	const actual =
+		await vi.importActual<typeof import("react-router-dom")>(
+			"react-router-dom",
+		);
 	return {
 		...actual,
 		useNavigate: () => mockNavigate,
@@ -107,7 +108,19 @@ vi.mock("@/components/forms/FormContextPanel", () => ({
 
 // dataProviders: we don't exercise data providers in these tests.
 vi.mock("@/services/dataProviders", () => ({
-	getDataProviderOptions: vi.fn().mockResolvedValue([]),
+	getFormFieldOptions: vi.fn().mockResolvedValue([]),
+}));
+
+vi.mock("@/components/forms/FormCaptcha", () => ({
+	FormCaptcha: ({
+		onPayloadChange,
+	}: {
+		onPayloadChange: (payload: string) => void;
+	}) => (
+		<button type="button" onClick={() => onPayloadChange("captcha-proof")}>
+			Verify visitor
+		</button>
+	),
 }));
 
 import { FormRenderer } from "./FormRenderer";
@@ -151,9 +164,76 @@ describe("FormRenderer — required validation", () => {
 		expect(screen.getByRole("button", { name: /submit/i })).toBeDisabled();
 	});
 
+	it("replaces an embedded form with its Markdown confirmation", async () => {
+		mockMutateAsync.mockResolvedValueOnce({
+			mode: "confirmation",
+			status: "accepted",
+			confirmation_markdown: "## Thank you\n\nWe received it.",
+		});
+		const form = makeForm([
+			{
+				name: "comment",
+				label: "Comment",
+				type: "text",
+				required: false,
+			},
+		]);
+		const { user } = renderWithProviders(
+			<FormRenderer form={form} preventNavigation />,
+		);
+		fireEvent.change(screen.getByLabelText(/comment/i), {
+			target: { value: "hello" },
+		});
+		await user.click(screen.getByRole("button", { name: /submit/i }));
+
+		expect(
+			await screen.findByRole("heading", { name: "Thank you" }),
+		).toBeInTheDocument();
+		expect(screen.getByText("We received it.")).toBeInTheDocument();
+		expect(mockNavigate).not.toHaveBeenCalled();
+		expect(
+			screen.queryByRole("button", { name: /submit/i }),
+		).not.toBeInTheDocument();
+	});
+
+	it("can navigate to a result without exposing scheduling controls", async () => {
+		const form = makeForm([
+			{
+				name: "comment",
+				label: "Comment",
+				type: "text",
+				required: false,
+			},
+		]);
+		const { user } = renderWithProviders(
+			<FormRenderer
+				form={form}
+				preventNavigation={false}
+				allowScheduling={false}
+			/>,
+		);
+
+		expect(
+			screen.queryByRole("checkbox", { name: /schedule for later/i }),
+		).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: /submit/i }));
+
+		await waitFor(() => {
+			expect(mockNavigate).toHaveBeenCalledWith(
+				"/history/exec-1",
+				expect.any(Object),
+			);
+		});
+	});
+
 	it("submits with the typed value and calls the mutation with the right payload", async () => {
 		const form = makeForm([
-			{ name: "comment", label: "Comment", type: "text", required: false },
+			{
+				name: "comment",
+				label: "Comment",
+				type: "text",
+				required: false,
+			},
 		]);
 		const { user } = renderWithProviders(<FormRenderer form={form} />);
 
@@ -175,6 +255,28 @@ describe("FormRenderer — required validation", () => {
 		const body = mockMutateAsync.mock.calls[0]![0];
 		expect(body.params.path.form_id).toBe("form-1");
 		expect(body.body.form_data.comment).toBe("hello world");
+		expect(body.body.submission_nonce).toMatch(/^[A-Za-z0-9-]{16,}$/);
+	});
+
+	it("requires and submits a CAPTCHA payload for an anonymous runtime", async () => {
+		const form = {
+			...makeForm([]),
+			captcha_required: true,
+		} as Form;
+		const { user } = renderWithProviders(
+			<FormRenderer form={form} preventNavigation />,
+		);
+
+		const submit = screen.getByRole("button", { name: /submit/i });
+		expect(submit).toBeDisabled();
+		await user.click(screen.getByRole("button", { name: "Verify visitor" }));
+		await waitFor(() => expect(submit).toBeEnabled());
+		await user.click(submit);
+
+		await waitFor(() => expect(mockMutateAsync).toHaveBeenCalledTimes(1));
+		expect(mockMutateAsync.mock.calls[0]![0].body.captcha_payload).toBe(
+			"captcha-proof",
+		);
 	});
 
 	it("surfaces an 'Invalid email' error for a malformed email on change", async () => {
@@ -256,7 +358,12 @@ describe("FormRenderer — field types", () => {
 describe("FormRenderer — scheduling", () => {
 	it("submits a body without scheduled_at or delay_seconds when the schedule checkbox is untouched", async () => {
 		const form = makeForm([
-			{ name: "comment", label: "Comment", type: "text", required: false },
+			{
+				name: "comment",
+				label: "Comment",
+				type: "text",
+				required: false,
+			},
 		]);
 		const { user } = renderWithProviders(<FormRenderer form={form} />);
 
@@ -294,7 +401,12 @@ describe("FormRenderer — scheduling", () => {
 
 	it("sends delay_seconds: 900 when the user picks 'In 15 min' and submits", async () => {
 		const form = makeForm([
-			{ name: "comment", label: "Comment", type: "text", required: false },
+			{
+				name: "comment",
+				label: "Comment",
+				type: "text",
+				required: false,
+			},
 		]);
 		const { user } = renderWithProviders(<FormRenderer form={form} />);
 
@@ -333,7 +445,12 @@ describe("FormRenderer — scheduling", () => {
 		});
 
 		const form = makeForm([
-			{ name: "comment", label: "Comment", type: "text", required: false },
+			{
+				name: "comment",
+				label: "Comment",
+				type: "text",
+				required: false,
+			},
 		]);
 		const { user } = renderWithProviders(<FormRenderer form={form} />);
 

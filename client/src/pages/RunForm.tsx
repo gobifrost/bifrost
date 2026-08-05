@@ -1,21 +1,40 @@
 import { useState, useEffect } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { ArrowLeft, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { FormRenderer } from "@/components/forms/FormRenderer";
-import { useForm } from "@/hooks/useForms";
+import { useFormRuntime } from "@/hooks/useForms";
 import { useAuth } from "@/contexts/AuthContext";
 import { Skeleton } from "@/components/ui/skeleton";
+import { getEmbedTokenClaims } from "@/lib/auth-token";
+import { parseFormEmbedPresentation } from "@/lib/form-embed-presentation";
 
 const DEV_MODE_STORAGE_KEY = "bifrost.devMode";
 
 export function RunForm() {
 	const { formId } = useParams();
 	const navigate = useNavigate();
-	const { data: form, isLoading, error } = useForm(formId);
+	const location = useLocation();
 	const { isPlatformAdmin, hasRole } = useAuth();
 	const isEmbed = hasRole("EmbedUser");
+	const [embedClaims] = useState(() => getEmbedTokenClaims());
+	const embedFormId = embedClaims?.form_id;
+	const runtimeFormId = formId || embedFormId;
+	const { data: form, isLoading, error } = useFormRuntime(runtimeFormId);
+	const embedPresentation = parseFormEmbedPresentation(
+		location.pathname,
+		location.search,
+	);
+
+	useEffect(() => {
+		const root = document.documentElement;
+		root.classList.toggle(
+			"embed-transparent",
+			isEmbed && embedPresentation?.transparentBackground === true,
+		);
+		return () => root.classList.remove("embed-transparent");
+	}, [embedPresentation?.transparentBackground, isEmbed]);
 
 	// Developer mode state - persisted to localStorage
 	const [devMode, setDevMode] = useState(() => {
@@ -76,19 +95,23 @@ export function RunForm() {
 
 	if (isEmbed) {
 		return (
-			<div className="p-6 max-w-2xl mx-auto space-y-6">
-				<div className="text-center">
-					<h1 className="text-4xl font-extrabold tracking-tight">
-						{form.name}
-					</h1>
-					{form.description && (
-						<p className="mt-2 text-muted-foreground">
-							{form.description}
-						</p>
-					)}
-				</div>
+			<div className="mx-auto min-h-full max-w-2xl space-y-6 p-4 sm:p-6">
+				{embedPresentation?.showHeader !== false ? (
+					<div className="text-center">
+						<h1 className="text-4xl font-extrabold tracking-tight">
+							{form.name}
+						</h1>
+						{form.description && (
+							<p className="mt-2 text-muted-foreground">
+								{form.description}
+							</p>
+						)}
+					</div>
+				) : null}
 				<FormRenderer
 					form={form}
+					preventNavigation={embedClaims?.grant !== "hmac"}
+					allowScheduling={false}
 				/>
 			</div>
 		);

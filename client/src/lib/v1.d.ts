@@ -2294,6 +2294,93 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/forms/{form_id}/publication-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Review a form's public capabilities */
+        get: operations["review_form_publication_api_forms__form_id__publication_review_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forms/{form_id}/publication": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get public form publication settings */
+        get: operations["get_form_publication_api_forms__form_id__publication_get"];
+        /** Publish a form after reviewing its capabilities */
+        put: operations["publish_form_api_forms__form_id__publication_put"];
+        post?: never;
+        /** Unpublish a public form */
+        delete: operations["unpublish_form_api_forms__form_id__publication_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forms/{form_id}/publication/rotate-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rotate a public form key */
+        post: operations["rotate_form_publication_key_api_forms__form_id__publication_rotate_key_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forms/{form_id}/runtime": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Load a sanitized form runtime definition */
+        get: operations["get_form_runtime_api_forms__form_id__runtime_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forms/{form_id}/captcha/challenge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create an anonymous public form verification challenge */
+        post: operations["create_form_captcha_api_forms__form_id__captcha_challenge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/forms/{form_id}": {
         parameters: {
             query?: never;
@@ -2322,7 +2409,7 @@ export interface paths {
         patch: operations["update_form_api_forms__form_id__patch"];
         trace?: never;
     };
-    "/api/forms/{form_id}/execute": {
+    "/api/forms/{form_id}/submissions": {
         parameters: {
             query?: never;
             header?: never;
@@ -2332,10 +2419,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Execute a form
-         * @description Execute the workflow linked to a form. Requires appropriate access based on form's access_level.
+         * Submit a form
+         * @description Validate and submit the exact workflow linked to a form.
          */
-        post: operations["execute_form_api_forms__form_id__execute_post"];
+        post: operations["submit_form_api_forms__form_id__submissions_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2356,6 +2443,23 @@ export interface paths {
          * @description Execute the launch workflow to populate form context before main execution.
          */
         post: operations["execute_startup_workflow_api_forms__form_id__startup_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/forms/{form_id}/fields/{field_name}/options": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Load options for a configured form field */
+        post: operations["get_form_field_options_api_forms__form_id__fields__field_name__options_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8701,6 +8805,26 @@ export interface paths {
          *     issues an 8-hour embed JWT cookie, and returns a confirmation response.
          */
         get: operations["embed_app_embed_apps__slug__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/embed/forms/public/{public_key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Embed Public Form
+         * @description Mint a short-lived form session from an active public publication.
+         */
+        get: operations["embed_public_form_embed_forms_public__public_key__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -15474,6 +15598,37 @@ export interface components {
          */
         FormAccessLevel: "authenticated" | "everyone" | "role_based";
         /**
+         * FormCaptchaChallenge
+         * @description ALTCHA proof-of-work challenge for one anonymous public form session.
+         */
+        FormCaptchaChallenge: {
+            /** Parameters */
+            parameters: {
+                [key: string]: unknown;
+            };
+            /** Signature */
+            signature: string;
+        };
+        /**
+         * FormConfirmationResponse
+         * @description Opaque success returned to anonymous public form sessions.
+         */
+        FormConfirmationResponse: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            mode: "confirmation";
+            /**
+             * Status
+             * @default accepted
+             * @constant
+             */
+            status: "accepted";
+            /** Confirmation Markdown */
+            confirmation_markdown: string;
+        };
+        /**
          * FormCreate
          * @description Input for creating a form.
          */
@@ -15482,6 +15637,13 @@ export interface components {
             name: string;
             /** Description */
             description?: string | null;
+            /**
+             * Confirmation Markdown
+             * @default ## Form submitted
+             *
+             *     Thank you!
+             */
+            confirmation_markdown: string;
             /** Workflow Id */
             workflow_id?: string | null;
             /** Launch Workflow Id */
@@ -15510,34 +15672,58 @@ export interface components {
             role_ids?: string[];
         };
         /**
-         * FormExecuteRequest
-         * @description Request model for executing a form
+         * FormExecutionResponse
+         * @description Execution detail returned to authenticated users and trusted HMAC sessions.
          */
-        FormExecuteRequest: {
-            /**
-             * Form Data
-             * @description Form field values
-             */
-            form_data?: {
+        FormExecutionResponse: {
+            /** Execution Id */
+            execution_id: string;
+            /** Workflow Id */
+            workflow_id?: string | null;
+            /** Workflow Name */
+            workflow_name?: string | null;
+            status: components["schemas"]["ExecutionStatus"];
+            /** Result */
+            result?: {
                 [key: string]: unknown;
-            };
+            } | unknown[] | string | null;
+            /** Error */
+            error?: string | null;
+            /** Error Type */
+            error_type?: string | null;
+            /** Details */
+            details?: {
+                [key: string]: unknown;
+            } | null;
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Started At */
+            started_at?: string | null;
+            /** Completed At */
+            completed_at?: string | null;
             /**
-             * Startup Data
-             * @description Results from /startup call (launch workflow)
+             * Scheduled At
+             * @description For scheduled executions, the target run time.
              */
-            startup_data?: {
+            scheduled_at?: string | null;
+            /** Logs */
+            logs?: {
+                [key: string]: unknown;
+            }[] | null;
+            /** Variables */
+            variables?: {
                 [key: string]: unknown;
             } | null;
             /**
-             * Scheduled At
-             * @description Run at this tz-aware timestamp (ISO-8601). Must be strictly in the future and within 1 year of now. Mutually exclusive with delay_seconds.
+             * Is Transient
+             * @default false
              */
-            scheduled_at?: string | null;
+            is_transient: boolean;
             /**
-             * Delay Seconds
-             * @description Run this many seconds from now (≤ 1 year). Mutually exclusive with scheduled_at.
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
              */
-            delay_seconds?: number | null;
+            mode: "execution";
         };
         /**
          * FormField
@@ -15627,6 +15813,34 @@ export interface components {
                 [key: string]: string;
             } | null;
         };
+        /** FormFieldOption */
+        FormFieldOption: {
+            /** Value */
+            value: string;
+            /** Label */
+            label: string;
+            /** Description */
+            description?: string | null;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /**
+         * FormFieldOptionsRequest
+         * @description Evaluated browser inputs for one configured provider-backed field.
+         */
+        FormFieldOptionsRequest: {
+            /** Inputs */
+            inputs?: {
+                [key: string]: unknown;
+            };
+        };
+        /** FormFieldOptionsResponse */
+        FormFieldOptionsResponse: {
+            /** Options */
+            options: components["schemas"]["FormFieldOption"][];
+        };
         /**
          * FormFieldType
          * @description Form field types
@@ -15647,6 +15861,13 @@ export interface components {
             name: string;
             /** Description */
             description?: string | null;
+            /**
+             * Confirmation Markdown
+             * @default ## Form submitted
+             *
+             *     Thank you!
+             */
+            confirmation_markdown: string;
             /** Workflow Id */
             workflow_id?: string | null;
             /** Launch Workflow Id */
@@ -15693,6 +15914,184 @@ export interface components {
              */
             solution_id?: string | null;
         };
+        /** FormPublicationFinding */
+        FormPublicationFinding: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Field Name */
+            field_name?: string | null;
+        };
+        /** FormPublicationProviderField */
+        FormPublicationProviderField: {
+            /** Field Name */
+            field_name: string;
+            /** Provider Ref */
+            provider_ref: string;
+            /** Provider Name */
+            provider_name: string;
+            /** Configured Inputs */
+            configured_inputs?: string[];
+            /** Metadata Paths */
+            metadata_paths?: string[];
+        };
+        /** FormPublicationPublic */
+        FormPublicationPublic: {
+            /**
+             * Form Id
+             * Format: uuid
+             */
+            form_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "unpublished" | "published" | "needs_review";
+            /** Public Key */
+            public_key?: string | null;
+            /** Allowed Origins */
+            allowed_origins?: string[];
+            /**
+             * Spam Protection Enabled
+             * @default true
+             */
+            spam_protection_enabled: boolean;
+            /** Approved Fingerprint */
+            approved_fingerprint?: string | null;
+            /** Current Fingerprint */
+            current_fingerprint: string;
+            /** Iframe Path */
+            iframe_path?: string | null;
+            /** Warnings */
+            warnings?: string[];
+            /** Blockers */
+            blockers?: components["schemas"]["FormPublicationFinding"][];
+        };
+        /** FormPublicationReview */
+        FormPublicationReview: {
+            /** Fingerprint */
+            fingerprint: string;
+            submission_workflow?: components["schemas"]["FormPublicationWorkflow"] | null;
+            startup_workflow?: components["schemas"]["FormPublicationWorkflow"] | null;
+            /** Provider Fields */
+            provider_fields?: components["schemas"]["FormPublicationProviderField"][];
+            /** File Fields */
+            file_fields?: string[];
+            /** Warnings */
+            warnings?: string[];
+            /** Blockers */
+            blockers?: components["schemas"]["FormPublicationFinding"][];
+        };
+        /** FormPublicationUpdate */
+        FormPublicationUpdate: {
+            /** Reviewed Fingerprint */
+            reviewed_fingerprint: string;
+            /** Allowed Origins */
+            allowed_origins?: string[];
+            /**
+             * Spam Protection Enabled
+             * @default true
+             */
+            spam_protection_enabled: boolean;
+        };
+        /** FormPublicationWorkflow */
+        FormPublicationWorkflow: {
+            /** Ref */
+            ref: string;
+            /** Name */
+            name: string;
+        };
+        /**
+         * FormRuntimeDefinition
+         * @description Sanitized definition consumed by every form renderer.
+         */
+        FormRuntimeDefinition: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            form_schema: components["schemas"]["FormRuntimeSchema"];
+            /** Allowed Query Params */
+            allowed_query_params?: string[] | null;
+            /**
+             * Has Startup
+             * @default false
+             */
+            has_startup: boolean;
+            /**
+             * Captcha Required
+             * @default false
+             */
+            captcha_required: boolean;
+            /** Is Active */
+            is_active: boolean;
+        };
+        /**
+         * FormRuntimeField
+         * @description Renderable field definition with internal provider identity removed.
+         */
+        FormRuntimeField: {
+            /** Name */
+            name: string;
+            /** Label */
+            label?: string | null;
+            type: components["schemas"]["FormFieldType"];
+            /**
+             * Required
+             * @default false
+             */
+            required: boolean;
+            /** Validation */
+            validation?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Has Dynamic Options
+             * @default false
+             */
+            has_dynamic_options: boolean;
+            /** Data Provider Inputs */
+            data_provider_inputs?: {
+                [key: string]: components["schemas"]["DataProviderInputConfig"];
+            } | null;
+            /** Default Value */
+            default_value?: unknown | null;
+            /** Placeholder */
+            placeholder?: string | null;
+            /** Help Text */
+            help_text?: string | null;
+            /** Visibility Expression */
+            visibility_expression?: string | null;
+            /** Options */
+            options?: {
+                [key: string]: string;
+            }[] | null;
+            /** Allowed Types */
+            allowed_types?: string[] | null;
+            /** Multiple */
+            multiple?: boolean | null;
+            /** Max Size Mb */
+            max_size_mb?: number | null;
+            /** Content */
+            content?: string | null;
+            /** Allow As Query Param */
+            allow_as_query_param?: boolean | null;
+            /** Auto Fill */
+            auto_fill?: {
+                [key: string]: string;
+            } | null;
+        };
+        /** FormRuntimeSchema */
+        FormRuntimeSchema: {
+            /** Fields */
+            fields: components["schemas"]["FormRuntimeField"][];
+        };
         /**
          * FormSchema
          * @description Form schema with field definitions
@@ -15716,6 +16115,44 @@ export interface components {
             result?: {
                 [key: string]: unknown;
             } | unknown[] | string | null;
+            /** Startup Handle */
+            startup_handle?: string | null;
+            /** Expires At */
+            expires_at?: string | null;
+        };
+        /**
+         * FormSubmissionRequest
+         * @description Request model for submitting a form.
+         */
+        FormSubmissionRequest: {
+            /**
+             * Form Data
+             * @description Form field values
+             */
+            form_data?: {
+                [key: string]: unknown;
+            };
+            /** Startup Handle */
+            startup_handle?: string | null;
+            /**
+             * Scheduled At
+             * @description Run at this tz-aware timestamp (ISO-8601). Must be strictly in the future and within 1 year of now. Mutually exclusive with delay_seconds.
+             */
+            scheduled_at?: string | null;
+            /**
+             * Delay Seconds
+             * @description Run this many seconds from now (≤ 1 year). Mutually exclusive with scheduled_at.
+             */
+            delay_seconds?: number | null;
+            /** Submission Nonce */
+            submission_nonce?: string | null;
+            /**
+             * Honeypot
+             * @default
+             */
+            honeypot: string;
+            /** Captcha Payload */
+            captcha_payload?: string | null;
         };
         /**
          * FormUpdate
@@ -15726,6 +16163,8 @@ export interface components {
             name?: string | null;
             /** Description */
             description?: string | null;
+            /** Confirmation Markdown */
+            confirmation_markdown?: string | null;
             /** Workflow Id */
             workflow_id?: string | null;
             /** Launch Workflow Id */
@@ -28431,6 +28870,225 @@ export interface operations {
             };
         };
     };
+    review_form_publication_api_forms__form_id__publication_review_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                form_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormPublicationReview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_form_publication_api_forms__form_id__publication_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                form_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormPublicationPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_form_api_forms__form_id__publication_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                form_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FormPublicationUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormPublicationPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    unpublish_form_api_forms__form_id__publication_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                form_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rotate_form_publication_key_api_forms__form_id__publication_rotate_key_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                form_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormPublicationPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_form_runtime_api_forms__form_id__runtime_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                form_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormRuntimeDefinition"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_form_captcha_api_forms__form_id__captcha_challenge_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                form_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormCaptchaChallenge"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_form_api_forms__form_id__get: {
         parameters: {
             query?: never;
@@ -28529,7 +29187,7 @@ export interface operations {
             };
         };
     };
-    execute_form_api_forms__form_id__execute_post: {
+    submit_form_api_forms__form_id__submissions_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -28540,7 +29198,7 @@ export interface operations {
         };
         requestBody?: {
             content: {
-                "application/json": components["schemas"]["FormExecuteRequest"];
+                "application/json": components["schemas"]["FormSubmissionRequest"];
             };
         };
         responses: {
@@ -28550,7 +29208,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkflowExecutionResponse"];
+                    "application/json": components["schemas"]["FormConfirmationResponse"] | components["schemas"]["FormExecutionResponse"];
                 };
             };
             /** @description Validation Error */
@@ -28588,6 +29246,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FormStartupResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_form_field_options_api_forms__form_id__fields__field_name__options_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                form_id: string;
+                field_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FormFieldOptionsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FormFieldOptionsResponse"];
                 };
             };
             /** @description Validation Error */
@@ -39989,6 +40683,37 @@ export interface operations {
             header?: never;
             path: {
                 slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    embed_public_form_embed_forms_public__public_key__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                public_key: string;
             };
             cookie?: never;
         };

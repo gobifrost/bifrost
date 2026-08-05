@@ -328,8 +328,7 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
     api_url = api_url.rstrip("/")
 
     # Surface keyring fallback here — login is the user's chance to fix it.
-    from bifrost.credentials import warn_if_keyring_fallback
-    warn_if_keyring_fallback()
+    credentials.warn_if_keyring_fallback()
 
     try:
         async with httpx.AsyncClient(base_url=api_url, timeout=30.0) as client:
@@ -1036,7 +1035,7 @@ Examples:
         rc, data = asyncio.run(password_login_flow(api_url, email, password))
         if rc == 0 and data is not None:
             expires_at = datetime.now(timezone.utc) + timedelta(
-                seconds=data.get("expires_in", 1800)
+                seconds=data.get("expires_in") or 1800
             )
             credentials.save_credentials(
                 api_url=api_url,

@@ -246,6 +246,7 @@ class ManifestForm(EntityCodec, BaseModel):
     access_level: str | None = Field(default=None, description="role_based | authenticated | everyone | public", **classify(FieldClass.CONTENT, import_owner="restamp"))
     # -- Portable content (inline) --
     description: str | None = Field(default=None, description="Form description", **classify(FieldClass.CONTENT, import_owner="indexer"))
+    confirmation_markdown: str | None = Field(default=None, description="Markdown shown after embedded submission", **classify(FieldClass.CONTENT, import_owner="indexer"))
     workflow_id: str | None = Field(default=None, description="Workflow UUID to execute on submit", **classify(FieldClass.REFERENCE, import_owner="indexer"))
     launch_workflow_id: str | None = Field(default=None, description="Workflow UUID to run on form load", **classify(FieldClass.REFERENCE, import_owner="indexer"))
     default_launch_params: dict | None = Field(default=None, description="Default params for launch workflow", **classify(FieldClass.CONTENT, import_owner="indexer"))
@@ -266,6 +267,10 @@ class ManifestForm(EntityCodec, BaseModel):
         if fields:
             schema = {"fields": [_form_field_to_schema_dict(f) for f in fields]}
 
+        confirmation_markdown = getattr(form, "confirmation_markdown", None)
+        if not isinstance(confirmation_markdown, str):
+            confirmation_markdown = "## Form submitted\n\nThank you!"
+
         return cls(
             id=str(form.id),
             name=form.name,
@@ -273,6 +278,7 @@ class ManifestForm(EntityCodec, BaseModel):
             roles=roles or [],
             access_level=form.access_level.value if form.access_level else "role_based",
             description=form.description,
+            confirmation_markdown=confirmation_markdown,
             workflow_id=form.workflow_id,
             launch_workflow_id=form.launch_workflow_id,
             default_launch_params=form.default_launch_params,
@@ -294,6 +300,8 @@ class ManifestForm(EntityCodec, BaseModel):
         indexer: dict = {"id": self.id, "name": self.name or ""}
         if self.description is not None:
             indexer["description"] = self.description
+        if self.confirmation_markdown is not None:
+            indexer["confirmation_markdown"] = self.confirmation_markdown
         if self.workflow_id is not None:
             indexer["workflow_id"] = self.workflow_id
         if self.launch_workflow_id is not None:

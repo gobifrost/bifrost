@@ -79,6 +79,8 @@ async def promote_due_executions() -> tuple[int, int]:
                     user_email="",  # Not persisted on the row; worker hydrates from user record.
                     form_id=str(row.form_id) if row.form_id else None,
                     startup=None,  # Scheduled runs do not carry stale startup results.
+                    form_inputs={},
+                    embed={},
                     api_key_id=str(row.api_key_id) if row.api_key_id else None,
                     sync=False,
                     is_platform_admin=bool(

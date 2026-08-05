@@ -56,11 +56,16 @@ class UserPrincipal:
     # principals (e.g. system accounts) and embed sessions.
     role_ids: list[UUID] = field(default_factory=list)
     role_names: list[str] = field(default_factory=list)
-    embed: bool = False  # True for embed session tokens (scoped to app_id)
+    embed: bool = False  # True for typed app/form embed session tokens
+    embed_kind: str | None = None  # "app" or "form"
+    grant: str | None = None  # "hmac" or "public"
     jti: str | None = None  # JWT ID for embed tokens (used for execution scoping)
     app_id: str | None = None  # App ID for embed tokens
     form_id: str | None = None  # Form ID for form embed tokens
     verified_params: dict[str, str] | None = None  # HMAC-verified query params
+    verified_context: dict[str, str] | None = None
+    capability_fingerprint: str | None = None
+    token_exp: int | None = None
 
     @property
     def is_platform_admin(self) -> bool:

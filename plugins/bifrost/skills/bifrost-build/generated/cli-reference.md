@@ -1104,6 +1104,7 @@ Usage: forms create [OPTIONS]
 Options:
   --name TEXT                     name  [required]
   --description TEXT              description
+  --confirmation-markdown TEXT    confirmation_markdown
   --workflow TEXT                 workflow ref (UUID or name) for workflow_id.
   --launch-workflow TEXT          workflow ref (UUID or name) for
                                   launch_workflow_id.
@@ -1182,6 +1183,7 @@ Usage: forms update [OPTIONS] REF
 Options:
   --name TEXT                     name
   --description TEXT              description
+  --confirmation-markdown TEXT    confirmation_markdown
   --workflow TEXT                 workflow ref (UUID or name) for workflow_id.
   --launch-workflow TEXT          workflow ref (UUID or name) for
                                   launch_workflow_id.

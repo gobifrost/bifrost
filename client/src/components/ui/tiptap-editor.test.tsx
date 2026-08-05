@@ -39,13 +39,20 @@ import { TiptapEditor } from "./tiptap-editor";
 
 describe("TiptapEditor", () => {
 	it("applies the shared TipTap editor class used by global markdown spacing rules", () => {
-		render(<TiptapEditor content="# Hello" readOnly />);
+		render(
+			<TiptapEditor
+				content="# Hello"
+				readOnly
+				ariaLabel="Confirmation Message editor"
+			/>,
+		);
 
 		expect(mockUseEditor).toHaveBeenCalledWith(
 			expect.objectContaining({
 				editorProps: expect.objectContaining({
 					attributes: expect.objectContaining({
 						class: expect.stringContaining("tiptap-editor"),
+						"aria-label": "Confirmation Message editor",
 					}),
 				}),
 			}),

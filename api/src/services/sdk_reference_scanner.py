@@ -17,6 +17,7 @@ from typing import Literal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.log_safety import log_safe
 from src.models.orm import Config, Integration, IntegrationMapping
 
 logger = logging.getLogger(__name__)
@@ -190,7 +191,10 @@ class SDKReferenceScanner:
                     issue_type="config",
                     key=key,
                 ))
-                logger.debug(f"Missing config reference: {key} at {path}:{line_num}")
+                logger.debug(
+                    f"Missing config reference: {log_safe(key)} at "
+                    f"{log_safe(path)}:{line_num}"
+                )
 
         # Validate integration references
         if integration_refs:
@@ -204,10 +208,15 @@ class SDKReferenceScanner:
                     issue_type="integration",
                     key=name,
                 ))
-                logger.debug(f"Missing integration reference: {name} at {path}:{line_num}")
+                logger.debug(
+                    f"Missing integration reference: {log_safe(name)} at "
+                    f"{log_safe(path)}:{line_num}"
+                )
 
         if issues:
-            logger.info(f"Found {len(issues)} SDK issue(s) in {path}")
+            logger.info(
+                f"Found {len(issues)} SDK issue(s) in {log_safe(path)}"
+            )
 
         return issues
 

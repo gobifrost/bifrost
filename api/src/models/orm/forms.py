@@ -18,6 +18,7 @@ from src.models.orm.base import Base
 if TYPE_CHECKING:
     from src.models.orm.executions import Execution
     from src.models.orm.form_embed_secrets import FormEmbedSecret
+    from src.models.orm.form_publications import FormPublication
     from src.models.orm.organizations import Organization
 
 
@@ -94,6 +95,12 @@ class Form(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(255))
     description: Mapped[str | None] = mapped_column(Text, default=None)
+    confirmation_markdown: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="## Form submitted\n\nThank you!",
+        server_default="## Form submitted\n\nThank you!",
+    )
     workflow_id: Mapped[str | None] = mapped_column(String(255), default=None)
     launch_workflow_id: Mapped[str | None] = mapped_column(String(255), default=None)
     default_launch_params: Mapped[dict | None] = mapped_column(JSONB, default=None)
@@ -151,6 +158,13 @@ class Form(Base):
     )
     embed_secrets: Mapped[list["FormEmbedSecret"]] = relationship(
         "FormEmbedSecret", back_populates="form", cascade="all, delete-orphan", passive_deletes=True
+    )
+    publication: Mapped["FormPublication | None"] = relationship(
+        "FormPublication",
+        back_populates="form",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        uselist=False,
     )
 
     __table_args__: tuple = ()

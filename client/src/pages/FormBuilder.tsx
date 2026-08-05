@@ -1,7 +1,7 @@
 import { useState, useMemo } from "react";
 import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { parseSolutionFrom } from "@/lib/solution-back-nav";
-import { ArrowLeft, Save, Eye, Pencil, Info, Play } from "lucide-react";
+import { ArrowLeft, Save, Eye, Pencil, Info, Play, Share2 } from "lucide-react";
 import { SolutionManagedBanner } from "@/components/solutions/SolutionManagedBanner";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -23,6 +23,7 @@ import {
 import { assignRolesToForm } from "@/hooks/useRoles";
 import { useWorkflowsMetadata } from "@/hooks/useWorkflows";
 import { FormInfoDialog } from "@/components/forms/FormInfoDialog";
+import { FormShareDialog } from "@/components/forms/FormShareDialog";
 import type { FormInfoValues } from "@/components/forms/FormInfoDialog";
 import { FieldsPanelDnD } from "@/components/forms/FieldsPanelDnD";
 import { FormPreview } from "@/components/forms/FormPreview";
@@ -66,6 +67,7 @@ export function FormBuilder() {
 
 	// UI state
 	const [isInfoDialogOpen, setIsInfoDialogOpen] = useState(() => !isEditing);
+	const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
 	const [isContextDialogOpen, setIsContextDialogOpen] = useState(false);
 	const [workflowResultsDialogOpen, setWorkflowResultsDialogOpen] =
 		useState(false);
@@ -81,9 +83,9 @@ export function FormBuilder() {
 	// during render with a "previous existingForm" sentinel is the React-
 	// recommended idiom for prop-driven resets and avoids an extra effect
 	// render cycle.
-	const [prevExistingFormId, setPrevExistingFormId] = useState<
-		string | null
-	>(null);
+	const [prevExistingFormId, setPrevExistingFormId] = useState<string | null>(
+		null,
+	);
 	const currentExistingFormId = existingForm?.id ?? null;
 	if (existingForm && prevExistingFormId !== currentExistingFormId) {
 		setPrevExistingFormId(currentExistingFormId);
@@ -107,9 +109,13 @@ export function FormBuilder() {
 				workflow_id: existingForm.workflow_id || "",
 				launch_workflow_id: existingForm.launch_workflow_id || "",
 				default_launch_params:
-					(existingForm.default_launch_params as Record<string, unknown>) || {},
+					(existingForm.default_launch_params as Record<
+						string,
+						unknown
+					>) || {},
 				access_level:
-					(existingForm.access_level as "authenticated" | "everyone" | "role_based") ||
+					(existingForm.access_level as
+						"authenticated" | "everyone" | "role_based") ||
 					"role_based",
 				role_ids: [],
 				organization_id: existingForm.organization_id ?? defaultOrgId,
@@ -119,17 +125,26 @@ export function FormBuilder() {
 
 	// Derive display values from formInfo (dialog-saved) or existingForm (server data)
 	const formName = formInfo?.name || existingForm?.name || "";
-	const formDescription = formInfo?.description || existingForm?.description || "";
-	const linkedWorkflow = formInfo?.workflow_id || existingForm?.workflow_id || "";
-	const launchWorkflowId = formInfo?.launch_workflow_id || existingForm?.launch_workflow_id || "";
-	const defaultLaunchParams = formInfo?.default_launch_params ||
-		(existingForm?.default_launch_params as Record<string, unknown>) || {};
-	const accessLevel = formInfo?.access_level ||
-		(existingForm?.access_level as "authenticated" | "everyone" | "role_based") ||
+	const formDescription =
+		formInfo?.description || existingForm?.description || "";
+	const linkedWorkflow =
+		formInfo?.workflow_id || existingForm?.workflow_id || "";
+	const launchWorkflowId =
+		formInfo?.launch_workflow_id || existingForm?.launch_workflow_id || "";
+	const defaultLaunchParams =
+		formInfo?.default_launch_params ||
+		(existingForm?.default_launch_params as Record<string, unknown>) ||
+		{};
+	const accessLevel =
+		formInfo?.access_level ||
+		(existingForm?.access_level as
+			"authenticated" | "everyone" | "role_based") ||
 		"role_based";
 	const selectedRoleIds = formInfo?.role_ids || [];
-	const organizationId = formInfo?.organization_id ??
-		existingForm?.organization_id ?? defaultOrgId;
+	const organizationId =
+		formInfo?.organization_id ??
+		existingForm?.organization_id ??
+		defaultOrgId;
 	const isGlobal = organizationId === null;
 
 	const handleInfoSave = (info: FormInfoValues) => {
@@ -176,6 +191,7 @@ export function FormBuilder() {
 				const createRequest: FormCreate = {
 					name: formName,
 					description: formDescription || null,
+					confirmation_markdown: "## Form submitted\n\nThank you!",
 					workflow_id: linkedWorkflow || null,
 					form_schema: { fields },
 					access_level: accessLevel,
@@ -377,7 +393,9 @@ export function FormBuilder() {
 						variant="outline"
 						size="icon"
 						onClick={() => navigate(backTo)}
-						title={fromSolution ? "Back to Solution" : "Back to Forms"}
+						title={
+							fromSolution ? "Back to Solution" : "Back to Forms"
+						}
 					>
 						<ArrowLeft className="h-4 w-4" />
 					</Button>
@@ -400,6 +418,17 @@ export function FormBuilder() {
 						>
 							<Info className="h-4 w-4" />
 						</Button>
+						{formId ? (
+							<Button
+								variant="outline"
+								size="icon"
+								onClick={() => setIsShareDialogOpen(true)}
+								title="Share Form"
+								className="rounded-none border-l-0"
+							>
+								<Share2 className="h-4 w-4" />
+							</Button>
+						) : null}
 						{launchWorkflowId && (
 							<Button
 								variant="outline"
@@ -424,7 +453,7 @@ export function FormBuilder() {
 							onClick={handleSave}
 							disabled={
 								isSaveDisabled ||
-									isSolutionManaged ||
+								isSolutionManaged ||
 								createForm.isPending ||
 								updateForm.isPending
 							}
@@ -488,12 +517,19 @@ export function FormBuilder() {
 			<FormInfoDialog
 				open={isInfoDialogOpen}
 				onClose={() => setIsInfoDialogOpen(false)}
-				formId={formId}
 				onSave={handleInfoSave}
 				initialData={existingForm}
 				initialRoleIds={selectedRoleIds}
-				isEditing={isEditing}
 			/>
+
+			{formId ? (
+				<FormShareDialog
+					formId={formId}
+					formName={formName || "Form"}
+					open={isShareDialogOpen}
+					onOpenChange={setIsShareDialogOpen}
+				/>
+			) : null}
 
 			<Dialog
 				open={isContextDialogOpen}

@@ -2,7 +2,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("@/lib/api-client", () => ({ authFetch: vi.fn() }));
 import { authFetch } from "@/lib/api-client";
-import { effectiveAccess, testAllActions } from "./filePolicies";
+import {
+	effectiveAccess,
+	saveFilePolicy,
+	testAllActions,
+} from "./filePolicies";
 
 function jsonResponse(body: unknown) {
 	return { ok: true, status: 200, json: async () => body } as Response;
@@ -52,5 +56,26 @@ describe("testAllActions", () => {
 			"read",
 			"write",
 		]);
+	});
+});
+
+describe("saveFilePolicy", () => {
+	beforeEach(() => vi.mocked(authFetch).mockReset());
+
+	it("throws the API error detail when saving fails", async () => {
+		vi.mocked(authFetch).mockResolvedValue({
+			ok: false,
+			status: 400,
+			statusText: "Bad Request",
+			json: async () => ({ detail: "Policy is invalid" }),
+		} as Response);
+
+		await expect(
+			saveFilePolicy({
+				location: "gallery",
+				path: "team/",
+				policies: { policies: [] },
+			}),
+		).rejects.toThrow("Policy is invalid");
 	});
 });

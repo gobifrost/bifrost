@@ -3,8 +3,11 @@ import {
 	Building2,
 	FileCode,
 	Globe,
+	MoreVertical,
 	Pencil,
 	PlayCircle,
+	Power,
+	Share2,
 	Trash2,
 } from "lucide-react";
 
@@ -26,6 +29,13 @@ import {
 	DataTableHeader,
 	DataTableRow,
 } from "@/components/ui/data-table";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -56,6 +66,7 @@ export interface FormListSurfaceProps {
 	getOrgName: (orgId: string | null | undefined) => string;
 	formValidation: Map<string, FormValidationState>;
 	onLaunch: (form: FormListItem) => void;
+	onShare?: (form: FormListItem) => void;
 	onEdit?: (form: FormListItem) => void;
 	onDelete?: (form: FormListItem) => void;
 	onToggleActive?: (form: FormListItem) => void;
@@ -72,6 +83,7 @@ export function FormListSurface({
 	getOrgName,
 	formValidation,
 	onLaunch,
+	onShare,
 	onEdit,
 	onDelete,
 	onToggleActive,
@@ -142,7 +154,9 @@ export function FormListSurface({
 							)}
 							<DataTableHead>Name</DataTableHead>
 							<DataTableHead>Description</DataTableHead>
-							<DataTableHead className="w-0 whitespace-nowrap">Status</DataTableHead>
+							<DataTableHead className="w-0 whitespace-nowrap">
+								Status
+							</DataTableHead>
 							<DataTableHead className="w-0 whitespace-nowrap text-right" />
 						</DataTableRow>
 					</DataTableHeader>
@@ -154,12 +168,20 @@ export function FormListSurface({
 									{isPlatformAdmin && (
 										<DataTableCell className="w-0 whitespace-nowrap">
 											{form.organization_id ? (
-												<Badge variant="outline" className="text-xs">
+												<Badge
+													variant="outline"
+													className="text-xs"
+												>
 													<Building2 className="mr-1 h-3 w-3" />
-													{getOrgName(form.organization_id)}
+													{getOrgName(
+														form.organization_id,
+													)}
 												</Badge>
 											) : (
-												<Badge variant="default" className="text-xs">
+												<Badge
+													variant="default"
+													className="text-xs"
+												>
 													<Globe className="mr-1 h-3 w-3" />
 													Global
 												</Badge>
@@ -171,7 +193,9 @@ export function FormListSurface({
 									</DataTableCell>
 									<DataTableCell className="max-w-xs truncate text-muted-foreground">
 										{form.description || (
-											<span className="italic">No description</span>
+											<span className="italic">
+												No description
+											</span>
 										)}
 									</DataTableCell>
 									<DataTableCell className="w-0 whitespace-nowrap">
@@ -180,8 +204,14 @@ export function FormListSurface({
 												<TooltipTrigger asChild>
 													<div className="w-fit">
 														<Switch
-															checked={form.is_active}
-															onCheckedChange={() => onToggleActive(form)}
+															checked={
+																form.is_active
+															}
+															onCheckedChange={() =>
+																onToggleActive(
+																	form,
+																)
+															}
 															id={`form-active-table-${form.id}`}
 														/>
 													</div>
@@ -193,8 +223,16 @@ export function FormListSurface({
 												</TooltipContent>
 											</Tooltip>
 										) : (
-											<Badge variant={form.is_active ? "default" : "secondary"}>
-												{form.is_active ? "Enabled" : "Inactive"}
+											<Badge
+												variant={
+													form.is_active
+														? "default"
+														: "secondary"
+												}
+											>
+												{form.is_active
+													? "Enabled"
+													: "Inactive"}
 											</Badge>
 										)}
 									</DataTableCell>
@@ -204,13 +242,15 @@ export function FormListSurface({
 												size="sm"
 												onClick={() => onLaunch(form)}
 												disabled={
-													(!form.is_active && !canManageForms) ||
+													(!form.is_active &&
+														!canManageForms) ||
 													!validation?.valid
 												}
 												title={
 													!validation?.valid
 														? `Cannot launch: Missing ${validation?.missingParams.join(", ")}`
-														: !form.is_active && !canManageForms
+														: !form.is_active &&
+															  !canManageForms
 															? `${term(terminology, "form", "singular")} is disabled`
 															: `Launch ${term(terminology, "form", "singularLower")}`
 												}
@@ -218,32 +258,82 @@ export function FormListSurface({
 												<PlayCircle className="h-4 w-4" />
 											</Button>
 											{form.is_solution_managed && (
-												<SolutionManagedBadge solutionId={form.solution_id} />
+												<SolutionManagedBadge
+													solutionId={
+														form.solution_id
+													}
+												/>
 											)}
-											{canManageForms && !form.is_solution_managed && (
-												<>
-													{onEdit && (
-														<Button
-															variant="ghost"
-															size="sm"
-															onClick={() => onEdit(form)}
-															title={`Edit ${term(terminology, "form", "singularLower")}`}
+											{canManageForms &&
+												(onShare ||
+													onEdit ||
+													onDelete) && (
+													<DropdownMenu>
+														<DropdownMenuTrigger
+															asChild
 														>
-															<Pencil className="h-4 w-4" />
-														</Button>
-													)}
-													{onDelete && (
-														<Button
-															variant="ghost"
-															size="sm"
-															onClick={() => onDelete(form)}
-															title={`Delete ${term(terminology, "form", "singularLower")}`}
+															<Button
+																variant="ghost"
+																size="icon"
+																aria-label={`${form.name} actions`}
+															>
+																<MoreVertical className="h-4 w-4" />
+															</Button>
+														</DropdownMenuTrigger>
+														<DropdownMenuContent
+															align="end"
+															className="w-48"
 														>
-															<Trash2 className="h-4 w-4" />
-														</Button>
-													)}
-												</>
-											)}
+															{onShare && (
+																<DropdownMenuItem
+																	className="min-h-9 whitespace-nowrap px-3"
+																	onClick={() =>
+																		onShare(
+																			form,
+																		)
+																	}
+																>
+																	<Share2 />{" "}
+																	Share Form
+																</DropdownMenuItem>
+															)}
+															{!form.is_solution_managed &&
+																onEdit && (
+																	<DropdownMenuItem
+																		className="min-h-9 whitespace-nowrap px-3"
+																		onClick={() =>
+																			onEdit(
+																				form,
+																			)
+																		}
+																	>
+																		<Pencil />{" "}
+																		Edit
+																		Form
+																	</DropdownMenuItem>
+																)}
+															{!form.is_solution_managed &&
+																onDelete && (
+																	<>
+																		<DropdownMenuSeparator />
+																		<DropdownMenuItem
+																			variant="destructive"
+																			className="min-h-9 whitespace-nowrap px-3"
+																			onClick={() =>
+																				onDelete(
+																					form,
+																				)
+																			}
+																		>
+																			<Trash2 />{" "}
+																			Delete
+																			Form
+																		</DropdownMenuItem>
+																	</>
+																)}
+														</DropdownMenuContent>
+													</DropdownMenu>
+												)}
 										</div>
 									</DataTableCell>
 								</DataTableRow>
@@ -265,11 +355,27 @@ export function FormListSurface({
 						className="hover:border-primary transition-colors flex flex-col"
 					>
 						<CardHeader className="pb-3">
-							<CardTitle className="text-base truncate" title={form.name}>
-								{form.name}
-							</CardTitle>
+							<div className="flex items-start justify-between gap-2">
+								<CardTitle
+									className="min-w-0 truncate text-base"
+									title={form.name}
+								>
+									{form.name}
+								</CardTitle>
+								<Badge
+									variant={
+										form.is_active ? "default" : "secondary"
+									}
+									className="shrink-0"
+								>
+									{form.is_active ? "Enabled" : "Disabled"}
+								</Badge>
+							</div>
 							{!validation?.valid && canManageForms && (
-								<Badge variant="destructive" className="gap-1 w-fit mt-1">
+								<Badge
+									variant="destructive"
+									className="gap-1 w-fit mt-1"
+								>
 									<AlertTriangle className="h-3 w-3" />
 									Invalid
 								</Badge>
@@ -289,15 +395,17 @@ export function FormListSurface({
 										Missing required parameters:
 									</span>
 									<div className="mt-1.5 flex flex-wrap gap-1">
-										{validation?.missingParams.map((param) => (
-											<Badge
-												key={param}
-												variant="outline"
-												className="text-xs font-mono"
-											>
-												{param}
-											</Badge>
-										))}
+										{validation?.missingParams.map(
+											(param) => (
+												<Badge
+													key={param}
+													variant="outline"
+													className="text-xs font-mono"
+												>
+													{param}
+												</Badge>
+											),
+										)}
 									</div>
 								</div>
 							)}
@@ -307,12 +415,18 @@ export function FormListSurface({
 							{isPlatformAdmin && (
 								<div className="mb-3">
 									{form.organization_id ? (
-										<Badge variant="outline" className="text-xs">
+										<Badge
+											variant="outline"
+											className="text-xs"
+										>
 											<Building2 className="mr-1 h-3 w-3" />
 											{getOrgName(form.organization_id)}
 										</Badge>
 									) : (
-										<Badge variant="default" className="text-xs">
+										<Badge
+											variant="default"
+											className="text-xs"
+										>
 											<Globe className="mr-1 h-3 w-3" />
 											Global
 										</Badge>
@@ -325,7 +439,8 @@ export function FormListSurface({
 									className="flex-1"
 									onClick={() => onLaunch(form)}
 									disabled={
-										(!form.is_active && !canManageForms) || !validation?.valid
+										(!form.is_active && !canManageForms) ||
+										!validation?.valid
 									}
 									title={
 										!validation?.valid
@@ -339,50 +454,87 @@ export function FormListSurface({
 									Launch
 								</Button>
 								{form.is_solution_managed && (
-									<SolutionManagedBadge solutionId={form.solution_id} />
+									<SolutionManagedBadge
+										solutionId={form.solution_id}
+									/>
 								)}
-								{canManageForms && !form.is_solution_managed && (
-									<>
-										{onEdit && (
-											<Button
-												variant="outline"
-												size="icon"
-												onClick={() => onEdit(form)}
-												title={`Edit ${term(terminology, "form", "singularLower")}`}
+								{canManageForms &&
+									(onShare ||
+										onEdit ||
+										onDelete ||
+										onToggleActive) && (
+										<DropdownMenu>
+											<DropdownMenuTrigger asChild>
+												<Button
+													variant="outline"
+													size="icon"
+													aria-label={`${form.name} actions`}
+												>
+													<MoreVertical className="h-4 w-4" />
+												</Button>
+											</DropdownMenuTrigger>
+											<DropdownMenuContent
+												align="end"
+												className="w-48"
 											>
-												<Pencil className="h-4 w-4" />
-											</Button>
-										)}
-										{onDelete && (
-											<Button
-												variant="outline"
-												size="icon"
-												onClick={() => onDelete(form)}
-												title={`Delete ${term(terminology, "form", "singularLower")}`}
-											>
-												<Trash2 className="h-4 w-4" />
-											</Button>
-										)}
-										{onToggleActive && (
-											<Tooltip>
-												<TooltipTrigger asChild>
-													<div className="shrink-0 ml-auto">
-														<Switch
-															checked={form.is_active}
-															onCheckedChange={() => onToggleActive(form)}
-															id={`form-active-${form.id}`}
-														/>
-													</div>
-												</TooltipTrigger>
-												<TooltipContent>
-													{form.is_active
-														? "Enabled - click to disable"
-														: "Disabled - click to enable"}
-												</TooltipContent>
-											</Tooltip>
-										)}
-									</>
-								)}
+												{onShare && (
+													<DropdownMenuItem
+														className="min-h-9 whitespace-nowrap px-3"
+														onClick={() =>
+															onShare(form)
+														}
+													>
+														<Share2 /> Share Form
+													</DropdownMenuItem>
+												)}
+												{!form.is_solution_managed &&
+													onEdit && (
+														<DropdownMenuItem
+															className="min-h-9 whitespace-nowrap px-3"
+															onClick={() =>
+																onEdit(form)
+															}
+														>
+															<Pencil /> Edit Form
+														</DropdownMenuItem>
+													)}
+												{!form.is_solution_managed &&
+													onToggleActive && (
+														<DropdownMenuItem
+															className="min-h-9 whitespace-nowrap px-3"
+															onClick={() =>
+																onToggleActive(
+																	form,
+																)
+															}
+														>
+															<Power />{" "}
+															{form.is_active
+																? "Disable Form"
+																: "Enable Form"}
+														</DropdownMenuItem>
+													)}
+												{!form.is_solution_managed &&
+													onDelete && (
+														<>
+															<DropdownMenuSeparator />
+															<DropdownMenuItem
+																variant="destructive"
+																className="min-h-9 whitespace-nowrap px-3"
+																onClick={() =>
+																	onDelete(
+																		form,
+																	)
+																}
+															>
+																<Trash2 />{" "}
+																Delete Form
+															</DropdownMenuItem>
+														</>
+													)}
+											</DropdownMenuContent>
+										</DropdownMenu>
+									)}
 							</div>
 						</CardContent>
 					</Card>

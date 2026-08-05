@@ -95,6 +95,27 @@ class TestFormCRUD:
         updated = response.json()
         assert updated["description"] == "Updated description"
 
+    def test_confirmation_markdown_defaults_and_updates(
+        self, e2e_client, platform_admin, test_form
+    ):
+        assert test_form["confirmation_markdown"] == "## Form submitted\n\nThank you!"
+
+        custom = "## We received it\n\n![Done](https://example.com/done.png)"
+        response = e2e_client.patch(
+            f"/api/forms/{test_form['id']}",
+            headers=platform_admin.headers,
+            json={"confirmation_markdown": custom},
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["confirmation_markdown"] == custom
+
+        get_response = e2e_client.get(
+            f"/api/forms/{test_form['id']}", headers=platform_admin.headers
+        )
+        assert get_response.status_code == 200, get_response.text
+        assert get_response.json()["confirmation_markdown"] == custom
+
 
 @pytest.mark.e2e
 class TestFormAccessLevels:
@@ -552,6 +573,52 @@ async def e2e_form_test_dp(org_id: str | None = None):
         assert "org_id" in dp_field["data_provider_inputs"], "org_id input not found"
         assert dp_field["data_provider_inputs"]["org_id"]["mode"] == "static"
         assert dp_field["data_provider_inputs"]["org_id"]["value"] == "test_org_123"
+
+    def test_field_options_execute_only_the_configured_provider(
+        self, e2e_client, platform_admin, comprehensive_form
+    ):
+        response = e2e_client.post(
+            f"/api/forms/{comprehensive_form['id']}/fields/select_with_dp/options",
+            headers=platform_admin.headers,
+            json={"inputs": {"org_id": "browser-cannot-replace-static"}},
+        )
+        assert response.status_code == 200, response.text
+        assert response.json() == {
+            "options": [
+                {
+                    "value": "opt_1",
+                    "label": "Option 1",
+                    "description": None,
+                    "metadata": None,
+                },
+                {
+                    "value": "opt_2",
+                    "label": "Option 2",
+                    "description": None,
+                    "metadata": None,
+                },
+                {
+                    "value": "opt_3",
+                    "label": "Option 3",
+                    "description": None,
+                    "metadata": None,
+                },
+            ]
+        }
+
+        unknown_input = e2e_client.post(
+            f"/api/forms/{comprehensive_form['id']}/fields/select_with_dp/options",
+            headers=platform_admin.headers,
+            json={"inputs": {"provider_id": "substitution-attempt"}},
+        )
+        assert unknown_input.status_code == 422, unknown_input.text
+
+        wrong_field = e2e_client.post(
+            f"/api/forms/{comprehensive_form['id']}/fields/text_with_attrs/options",
+            headers=platform_admin.headers,
+            json={"inputs": {}},
+        )
+        assert wrong_field.status_code == 404, wrong_field.text
 
     def test_form_visibility_expression_preserved(self, comprehensive_form):
         """Verify visibility_expression is stored correctly."""

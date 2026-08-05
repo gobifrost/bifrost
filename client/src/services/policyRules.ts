@@ -64,7 +64,7 @@ export async function deletePolicyRule(domain: string, name: string): Promise<vo
 	if (!error) return;
 
 	// Try to surface a structured in-use payload when the server sends 409.
-	if (typeof error === "object" && error !== null && "detail" in error) {
+	if (typeof error === "object" && "detail" in error) {
 		const detail = (error as { detail: unknown }).detail;
 		if (typeof detail === "object" && detail !== null && "usages" in detail) {
 			const inUse: PolicyRuleInUseError = {

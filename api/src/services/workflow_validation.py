@@ -79,7 +79,12 @@ def _convert_workflow_metadata_to_model(
         tags=workflow_metadata.tags or [],
         parameters=parameters,
         execution_mode=workflow_metadata.execution_mode,
-        timeout_seconds=workflow_metadata.timeout_seconds or 1800,
+        # NOT `or 1800` — 0 means "no timeout" and `or` would clobber it.
+        timeout_seconds=(
+            workflow_metadata.timeout_seconds
+            if workflow_metadata.timeout_seconds is not None
+            else 1800
+        ),
         retry_policy=None,
         schedule=None,
         endpoint_enabled=False,

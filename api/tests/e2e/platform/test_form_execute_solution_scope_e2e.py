@@ -123,7 +123,7 @@ class TestFormExecuteSolutionScope:
 
 @pytest.mark.e2e
 class TestFormExecuteEndpointRbac:
-    """Drive the real POST /api/forms/{id}/execute endpoint as a NON-superuser
+    """Drive the real POST /api/forms/{id}/submissions endpoint as a NON-superuser
     with form access but NO role on a role_based workflow. Against the pre-fix
     code (resolver constructed with the user's privileges) this 404s; with the
     fix it executes."""
@@ -197,7 +197,7 @@ class TestFormExecuteEndpointRbac:
             # but no role on the workflow. Must NOT be 403 (form gate) or 404
             # (workflow RBAC filter) — the regression manifested as a 404 here.
             r = e2e_client.post(
-                f"/api/forms/{form_id}/execute",
+                f"/api/forms/{form_id}/submissions",
                 headers=org1_user.headers,
                 json={"form_data": {"message": "hello"}},
             )
@@ -278,7 +278,7 @@ class TestCrossOrgFormExecuteAnchor:
         # handler itself (no worker round-trip), so both the resolution anchor
         # AND the execution's organization_id are observable deterministically.
         r = e2e_client.post(
-            f"/api/forms/{form.id}/execute",
+            f"/api/forms/{form.id}/submissions",
             headers=platform_admin.headers,
             json={"form_data": {}, "delay_seconds": 3600},
         )

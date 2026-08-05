@@ -288,6 +288,8 @@ async def _run_execution(execution_id: str, context_data: dict[str, Any]) -> dic
             cache_ttl_seconds=context_data.get("cache_ttl_seconds", 300),
             parameters=context_data.get("parameters", {}),
             startup=context_data.get("startup"),  # Launch workflow results
+            form_inputs=context_data.get("form_inputs", {}),
+            embed=context_data.get("embed", {}),
             roi=context_data.get("roi"),  # ROI initialization
             transient=context_data.get("transient", False),
             no_cache=context_data.get("no_cache", False),

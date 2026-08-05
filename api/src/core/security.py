@@ -10,7 +10,7 @@ Uses pwdlib (modern replacement for unmaintained passlib) for password hashing.
 import base64
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 
 import jwt
 from cryptography.fernet import Fernet
@@ -242,40 +242,42 @@ def decode_mfa_token(token: str, expected_purpose: str = "mfa_verify") -> dict[s
         return None
 
 
-def create_embed_token(
-    app_id: str,
+def create_embed_access_token(
+    *,
+    embed_kind: Literal["app", "form"],
+    grant: Literal["hmac", "public"],
+    resource_id: str,
     org_id: str | None,
-    verified_params: dict[str, str],
+    verified_context: dict[str, str] | None = None,
+    capability_fingerprint: str | None = None,
+    expires_delta: timedelta = timedelta(hours=8),
 ) -> str:
-    """Create an 8-hour JWT for embed iframe sessions.
+    """Mint the single access-token contract used by embedded sessions."""
+    import uuid
 
-    Args:
-        app_id: Application UUID string.
-        org_id: Organization UUID string (from the app).
-        verified_params: HMAC-verified query parameters.
-
-    Returns:
-        Encoded JWT string with type="embed".
-    """
     from src.core.constants import SYSTEM_USER_ID
 
-    settings = get_settings()
-    expire = datetime.now(timezone.utc) + timedelta(hours=8)
-
-    to_encode = {
+    data: dict[str, Any] = {
         "sub": SYSTEM_USER_ID,
-        "app_id": app_id,
+        "jti": str(uuid.uuid4()),
         "org_id": org_id,
-        "verified_params": verified_params,
         "email": "embed@internal.gobifrost.com",
-        "is_superuser": True,
-        "exp": expire,
-        "type": "embed",
-        "iss": settings.jwt_issuer,
-        "aud": settings.jwt_audience,
+        "is_superuser": False,
+        "embed": True,
+        "embed_kind": embed_kind,
+        "grant": grant,
+        "is_external": True,
+        "roles": ["EmbedUser"],
     }
+    data[f"{embed_kind}_id"] = resource_id
+    if verified_context:
+        data["verified_context"] = verified_context
+        if embed_kind == "app":
+            data["verified_params"] = verified_context
+    if capability_fingerprint is not None:
+        data["capability_fingerprint"] = capability_fingerprint
 
-    return jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
+    return create_access_token(data, expires_delta=expires_delta)
 
 
 # =============================================================================

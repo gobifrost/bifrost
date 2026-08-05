@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Public Form Embed Test</title>
+		<style>
+			:root {
+				font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+				color: #e7e7e7;
+				background: #090909;
+			}
+			* {
+				box-sizing: border-box;
+			}
+			body {
+				margin: 0;
+				min-height: 100vh;
+				padding: 32px;
+			}
+			main {
+				width: min(1100px, 100%);
+				margin: 0 auto;
+			}
+			h1 {
+				margin: 0 0 8px;
+				font-size: 28px;
+			}
+			p {
+				color: #a3a3a3;
+				line-height: 1.5;
+			}
+			.controls {
+				display: grid;
+				grid-template-columns:
+					minmax(0, 2fr) minmax(0, 1fr) repeat(
+						3,
+						minmax(110px, 0.6fr)
+					)
+					auto;
+				gap: 12px;
+				margin: 24px 0;
+			}
+			.field {
+				display: grid;
+				gap: 6px;
+				min-width: 0;
+			}
+			label {
+				color: #d4d4d8;
+				font-size: 13px;
+				font-weight: 600;
+			}
+			input,
+			select {
+				width: 100%;
+				min-width: 0;
+				border: 1px solid #3f3f46;
+				border-radius: 8px;
+				background: #18181b;
+				color: inherit;
+				padding: 10px 12px;
+			}
+			button {
+				align-self: end;
+				border: 0;
+				border-radius: 8px;
+				background: #f4f4f5;
+				color: #18181b;
+				font-weight: 600;
+				padding: 10px 16px;
+				cursor: pointer;
+			}
+			iframe {
+				width: 100%;
+				min-height: 720px;
+				border: 1px solid #27272a;
+				border-radius: 12px;
+				background: #111;
+			}
+			.notice {
+				font-size: 14px;
+			}
+			@media (max-width: 760px) {
+				body {
+					padding: 20px;
+				}
+				.controls {
+					grid-template-columns: 1fr;
+				}
+			}
+		</style>
+	</head>
+	<body>
+		<main>
+			<h1>Public Form Embed Test</h1>
+			<p>
+				This page runs on a separate origin and hosts a published
+				Bifrost form inside an iframe.
+			</p>
+			<form class="controls" id="controls">
+				<div class="field">
+					<label for="bifrost-url">Bifrost URL</label>
+					<input
+						id="bifrost-url"
+						name="base_url"
+						placeholder="http://bifrost-debug-example.netbird.cloud"
+						required
+					/>
+				</div>
+				<div class="field">
+					<label for="public-key">Public Form Key</label>
+					<input
+						id="public-key"
+						name="public_key"
+						placeholder="Public form key"
+						required
+					/>
+				</div>
+				<div class="field">
+					<label for="theme">Theme</label>
+					<select id="theme" name="theme">
+						<option value="light">Light</option>
+						<option value="dark">Dark</option>
+						<option value="system">System</option>
+					</select>
+				</div>
+				<div class="field">
+					<label for="header">Header</label>
+					<select id="header" name="header">
+						<option value="true">Show</option>
+						<option value="false">Hide</option>
+					</select>
+				</div>
+				<div class="field">
+					<label for="background">Canvas</label>
+					<select id="background" name="background">
+						<option value="solid">Solid</option>
+						<option value="transparent">Transparent</option>
+					</select>
+				</div>
+				<button type="submit">Load Form</button>
+			</form>
+			<p class="notice" id="notice" role="status"></p>
+			<iframe id="form-frame" title="Published Bifrost Form"></iframe>
+		</main>
+		<script>
+			const controls = document.querySelector("#controls");
+			const baseUrlInput = document.querySelector("#bifrost-url");
+			const publicKeyInput = document.querySelector("#public-key");
+			const themeInput = document.querySelector("#theme");
+			const headerInput = document.querySelector("#header");
+			const backgroundInput = document.querySelector("#background");
+			const frame = document.querySelector("#form-frame");
+			const notice = document.querySelector("#notice");
+
+			function loadForm(baseUrl, publicKey, theme, header, background) {
+				const origin = baseUrl.trim().replace(/\/$/, "");
+				const key = publicKey.trim();
+				if (!origin || !key) return;
+				const embedUrl = new URL(
+					`${origin}/embed/forms/public/${encodeURIComponent(key)}`,
+				);
+				embedUrl.searchParams.set("theme", theme);
+				embedUrl.searchParams.set("header", header);
+				embedUrl.searchParams.set("background", background);
+				frame.src = embedUrl.toString();
+				notice.textContent = `Loading form from ${origin}…`;
+				const url = new URL(window.location.href);
+				url.searchParams.set("base_url", origin);
+				url.searchParams.set("public_key", key);
+				url.searchParams.set("theme", theme);
+				url.searchParams.set("header", header);
+				url.searchParams.set("background", background);
+				window.history.replaceState(null, "", url);
+			}
+
+			controls.addEventListener("submit", (event) => {
+				event.preventDefault();
+				loadForm(
+					baseUrlInput.value,
+					publicKeyInput.value,
+					themeInput.value,
+					headerInput.value,
+					backgroundInput.value,
+				);
+			});
+
+			const params = new URLSearchParams(window.location.search);
+			const baseUrl = params.get("base_url");
+			const publicKey = params.get("public_key");
+			const theme = params.get("theme") || "light";
+			const header = params.get("header") || "true";
+			const background = params.get("background") || "solid";
+			if (baseUrl) baseUrlInput.value = baseUrl;
+			if (publicKey) publicKeyInput.value = publicKey;
+			themeInput.value = theme;
+			headerInput.value = header;
+			backgroundInput.value = background;
+			if (baseUrl && publicKey) {
+				loadForm(baseUrl, publicKey, theme, header, background);
+			} else {
+				notice.textContent =
+					"Enter the Bifrost URL and a public form key.";
+			}
+		</script>
+	</body>
+</html>

@@ -12,7 +12,9 @@ import { useFormContext } from "@/contexts/FormContext";
 import { executeFormStartup } from "@/hooks/useForms";
 import type { components } from "@/lib/v1";
 
-type Form = components["schemas"]["FormPublic"];
+type Form =
+	| components["schemas"]["FormPublic"]
+	| components["schemas"]["FormRuntimeDefinition"];
 
 interface UseLaunchWorkflowOptions {
 	form: Form;
@@ -27,8 +29,16 @@ export function useLaunchWorkflow({
 	form,
 	workflowParams = {},
 }: UseLaunchWorkflowOptions) {
-	const { context, setWorkflowResults, setIsLoadingLaunchWorkflow } =
-		useFormContext();
+	const {
+		context,
+		setWorkflowResults,
+		setStartupHandle,
+		setIsLoadingLaunchWorkflow,
+	} = useFormContext();
+	const hasStartup =
+		"has_startup" in form
+			? form.has_startup
+			: Boolean(form.launch_workflow_id);
 
 	// Memoize serialized objects for dependency comparison
 	const serializedQuery = useMemo(
@@ -42,7 +52,7 @@ export function useLaunchWorkflow({
 
 	useEffect(() => {
 		// Only execute if form has a launch workflow configured
-		if (!form.launch_workflow_id) {
+		if (!hasStartup) {
 			return;
 		}
 
@@ -50,10 +60,10 @@ export function useLaunchWorkflow({
 			try {
 				setIsLoadingLaunchWorkflow(true);
 
-				// Merge default launch params with provided params
-				// Using workflowParams from closure (serializedParams ensures correct deps)
+				// The server owns default parameters. The browser may send only the
+				// query names exposed by the runtime definition.
 				const inputData = {
-					...(form.default_launch_params || {}),
+					...context.query,
 					...workflowParams,
 				};
 
@@ -64,10 +74,12 @@ export function useLaunchWorkflow({
 				setWorkflowResults(
 					(response.result as Record<string, unknown>) || {},
 				);
+				setStartupHandle(response.startup_handle || null);
 			} catch (error) {
 				console.error("Failed to execute launch workflow:", error);
 				// Set empty results on error so form still works
 				setWorkflowResults({});
+				setStartupHandle(null);
 			} finally {
 				setIsLoadingLaunchWorkflow(false);
 			}
@@ -77,11 +89,11 @@ export function useLaunchWorkflow({
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [
 		form.id,
-		form.launch_workflow_id,
-		form.default_launch_params,
+		hasStartup,
 		serializedQuery,
 		serializedParams, // Serialized to track changes without object identity issues
 		setWorkflowResults,
+		setStartupHandle,
 		setIsLoadingLaunchWorkflow,
 	]);
 }

@@ -6,6 +6,8 @@ import uuid
 
 import pytest
 
+from src.core.security import decode_token
+
 
 def _compute_hmac(params: dict, secret: str) -> str:
     message = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
@@ -48,7 +50,9 @@ class TestFormEmbed:
         )
         assert r.status_code == 302
         location = r.headers["location"]
-        assert location.startswith(f"/execute/{form_id}#embed_token=")
+        assert location.startswith(
+            f"/embedded/forms/hmac/{form_id}#embed_token="
+        )
 
     def test_embed_form_invalid_hmac(self, e2e_client, form_with_secret):
         """Invalid HMAC should return 403."""
@@ -76,10 +80,17 @@ class TestFormEmbed:
         )
         assert r.status_code == 404
 
-    def test_embed_verified_params_in_token(self, e2e_client, form_with_secret):
-        """Verified params from HMAC should be accessible via the embed token."""
+    def test_embed_verified_context_and_sanitized_runtime(
+        self, e2e_client, form_with_secret
+    ):
+        """HMAC context is namespaced and only runtime data is exposed."""
         form_id = form_with_secret["form"]["id"]
-        params = {"agent_id": "42"}
+        params = {
+            "agent_id": "42",
+            "theme": "dark",
+            "header": "false",
+            "background": "transparent",
+        }
         hmac_sig = _compute_hmac(params, form_with_secret["secret"])
 
         # Get the embed token via the redirect
@@ -90,14 +101,182 @@ class TestFormEmbed:
         )
         assert r.status_code == 302
         location = r.headers["location"]
+        assert location.startswith(
+            f"/embedded/forms/hmac/{form_id}"
+            "?theme=dark&header=false&background=transparent#embed_token="
+        )
         embed_token = location.split("#embed_token=")[1]
 
-        # Use the embed token to call the form endpoint
+        payload = decode_token(embed_token, expected_type="access")
+        assert payload is not None
+        assert payload["embed_kind"] == "form"
+        assert payload["grant"] == "hmac"
+        assert payload["form_id"] == form_id
+        assert payload["verified_context"] == {"agent_id": "42"}
+        assert "verified_params" not in payload
+
         embed_headers = {"Authorization": f"Bearer {embed_token}"}
 
-        # Verify the form is accessible with embed token
-        r = e2e_client.get(f"/api/forms/{form_id}", headers=embed_headers)
+        r = e2e_client.get(f"/api/forms/{form_id}/runtime", headers=embed_headers)
         assert r.status_code == 200
+        runtime = r.json()
+        assert runtime["id"] == form_id
+        assert set(runtime) == {
+            "id",
+            "name",
+            "description",
+            "form_schema",
+            "allowed_query_params",
+            "has_startup",
+            "captcha_required",
+            "is_active",
+        }
+        assert runtime["captcha_required"] is False
+
+        # Every credential location accepted by middleware must also reach the
+        # same capability-bound principal in the authentication dependency.
+        import httpx
+
+        from tests.e2e.conftest import E2E_API_URL
+
+        with httpx.Client(
+            base_url=E2E_API_URL,
+            timeout=60.0,
+            cookies={"embed_token": embed_token},
+        ) as cookie_client:
+            cookie_runtime = cookie_client.get(f"/api/forms/{form_id}/runtime")
+        assert cookie_runtime.status_code == 200, cookie_runtime.text
+        assert cookie_runtime.json()["id"] == form_id
+
+    def test_startup_handle_is_authoritative_bound_and_consumed(
+        self, e2e_client, platform_admin, request
+    ):
+        from tests.e2e.conftest import write_and_register
+
+        launch = write_and_register(
+            e2e_client,
+            platform_admin.headers,
+            f"embed_launch_{uuid.uuid4().hex[:8]}.py",
+            (
+                "from bifrost import workflow\n\n"
+                "@workflow(name='embed_launch')\n"
+                "async def embed_launch():\n"
+                "    return {'trusted': 'server'}\n"
+            ),
+            "embed_launch",
+        )
+        submit = write_and_register(
+            e2e_client,
+            platform_admin.headers,
+            f"embed_submit_{uuid.uuid4().hex[:8]}.py",
+            (
+                "from bifrost import workflow\n\n"
+                "@workflow(name='embed_submit')\n"
+                "async def embed_submit(trusted: str = ''):\n"
+                "    return {'received': trusted}\n"
+            ),
+            "embed_submit",
+        )
+        secret = f"startup-{uuid.uuid4().hex}"
+        created = e2e_client.post(
+            "/api/forms",
+            headers=platform_admin.headers,
+            json={
+                "name": "Startup handle form",
+                "workflow_id": submit["id"],
+                "launch_workflow_id": launch["id"],
+                "form_schema": {
+                    "fields": [
+                        {"name": "trusted", "label": "Trusted", "type": "text"}
+                    ]
+                },
+            },
+        )
+        assert created.status_code == 201, created.text
+        form_id = created.json()["id"]
+
+        def cleanup_form() -> None:
+            e2e_client.delete(
+                f"/api/forms/{form_id}", headers=platform_admin.headers
+            )
+
+        request.addfinalizer(cleanup_form)
+        assert e2e_client.post(
+            f"/api/forms/{form_id}/embed-secrets",
+            headers=platform_admin.headers,
+            json={"name": "startup", "secret": secret},
+        ).status_code == 201
+
+        def mint_headers() -> dict[str, str]:
+            params = {"trusted": "signed"}
+            bootstrap = e2e_client.get(
+                f"/embed/forms/{form_id}",
+                params={**params, "hmac": _compute_hmac(params, secret)},
+                follow_redirects=False,
+            )
+            token = bootstrap.headers["location"].split("#embed_token=")[1]
+            return {"Authorization": f"Bearer {token}"}
+
+        first_headers = mint_headers()
+        startup = e2e_client.post(
+            f"/api/forms/{form_id}/startup", headers=first_headers, json={}
+        )
+        assert startup.status_code == 200, startup.text
+        startup_body = startup.json()
+        assert startup_body["result"] == {"trusted": "server"}
+        assert len(startup_body["startup_handle"]) >= 64
+        assert startup_body["expires_at"]
+
+        forged_echo = e2e_client.post(
+            f"/api/forms/{form_id}/submissions",
+            headers=first_headers,
+            json={
+                "form_data": {"trusted": "visitor"},
+                "startup_data": {"trusted": "forged"},
+                "startup_handle": startup_body["startup_handle"],
+                "submission_nonce": "nonce-startup-000001",
+            },
+        )
+        assert forged_echo.status_code == 422, forged_echo.text
+
+        wrong_session = e2e_client.post(
+            f"/api/forms/{form_id}/submissions",
+            headers=mint_headers(),
+            json={
+                "form_data": {"trusted": "visitor"},
+                "startup_handle": startup_body["startup_handle"],
+                "submission_nonce": "nonce-startup-000002",
+            },
+        )
+        assert wrong_session.status_code == 422, wrong_session.text
+
+        accepted = e2e_client.post(
+            f"/api/forms/{form_id}/submissions",
+            headers=first_headers,
+            json={
+                "form_data": {"trusted": "visitor"},
+                "startup_handle": startup_body["startup_handle"],
+                "submission_nonce": "nonce-startup-000003",
+            },
+        )
+        assert accepted.status_code == 200, accepted.text
+        accepted_body = accepted.json()
+        assert accepted_body["mode"] == "execution"
+        assert accepted_body["execution_id"]
+        assert "confirmation_markdown" not in accepted_body
+
+        own_execution = e2e_client.get(
+            f"/api/executions/{accepted_body['execution_id']}",
+            headers=first_headers,
+        )
+        assert own_execution.status_code == 200, own_execution.text
+        assert own_execution.json()["execution_id"] == accepted_body["execution_id"]
+
+        unrelated_execution = e2e_client.get(
+            f"/api/executions/{uuid.uuid4()}",
+            headers=first_headers,
+        )
+        assert unrelated_execution.status_code == 403, unrelated_execution.text
 
 
 def _mint_form_embed_token(e2e_client, platform_admin, *, organization_id=None):
@@ -220,8 +399,10 @@ class TestEmbedFormCrossTenantBinding:
         self, e2e_client, platform_admin, org1, victim_form
     ):
         headers = self._form_embed_headers(e2e_client, platform_admin, org1)
-        r = e2e_client.get(f"/api/forms/{victim_form['id']}", headers=headers)
-        assert r.status_code == 404, (
+        r = e2e_client.get(
+            f"/api/forms/{victim_form['id']}/runtime", headers=headers
+        )
+        assert r.status_code in (403, 404), (
             f"form-embed token must not read a different/cross-tenant form: "
             f"{r.status_code} {r.text}"
         )
@@ -231,7 +412,7 @@ class TestEmbedFormCrossTenantBinding:
     ):
         headers = self._form_embed_headers(e2e_client, platform_admin, org1)
         r = e2e_client.post(
-            f"/api/forms/{victim_form['id']}/execute",
+            f"/api/forms/{victim_form['id']}/submissions",
             headers=headers,
             json={"form_data": {}},
         )
@@ -279,8 +460,10 @@ class TestEmbedFormCrossTenantBinding:
             e2e_client, platform_admin, organization_id=org1["id"]
         )
         headers = {"Authorization": f"Bearer {token}"}
-        r = e2e_client.get(f"/api/forms/{victim_form['id']}", headers=headers)
-        assert r.status_code == 404, (
+        r = e2e_client.get(
+            f"/api/forms/{victim_form['id']}/runtime", headers=headers
+        )
+        assert r.status_code in (403, 404), (
             f"app-embed token (org1) must not read an org2 form: "
             f"{r.status_code} {r.text}"
         )
@@ -293,7 +476,7 @@ class TestEmbedFormCrossTenantBinding:
         )
         headers = {"Authorization": f"Bearer {token}"}
         r = e2e_client.post(
-            f"/api/forms/{victim_form['id']}/execute",
+            f"/api/forms/{victim_form['id']}/submissions",
             headers=headers,
             json={"form_data": {}},
         )
@@ -316,11 +499,11 @@ class TestEmbedFormCrossTenantBinding:
         )
         headers = {"Authorization": f"Bearer {token}"}
         try:
-            r = e2e_client.get(f"/api/forms/{form['id']}", headers=headers)
+            r = e2e_client.get(f"/api/forms/{form['id']}/runtime", headers=headers)
             assert r.status_code == 200, r.text
 
             r = e2e_client.post(
-                f"/api/forms/{form['id']}/execute",
+                f"/api/forms/{form['id']}/submissions",
                 headers=headers,
                 json={"form_data": {}},
             )
@@ -353,7 +536,7 @@ class TestEmbedFormCrossTenantBinding:
         form = r.json()
         try:
             headers = {"Authorization": f"Bearer {token}"}
-            r = e2e_client.get(f"/api/forms/{form['id']}", headers=headers)
+            r = e2e_client.get(f"/api/forms/{form['id']}/runtime", headers=headers)
             assert r.status_code == 200, (
                 f"app-embed token (org1) must read an org1 form: "
                 f"{r.status_code} {r.text}"
