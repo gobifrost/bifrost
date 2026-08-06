@@ -270,7 +270,8 @@ class TestTokenSeal:
         with _host_client() as host:
             _redeem(host, url)
             assert host.post("/app-session/token").status_code == 200
-            assert host.delete("/app-session").status_code == 204
+            response = host.delete("/app-session")
+            assert response.status_code == 204
             # The cookie value is cleared, and even replaying it is dead.
             assert host.post("/app-session/token").status_code == 401
 
