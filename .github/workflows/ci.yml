@@ -215,6 +215,16 @@ jobs:
           cache-from: type=gha,scope=test-client-dev
           cache-to: type=gha,scope=test-client-dev,mode=max
 
+      - name: Build Builder runner image (cached)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ./builder_runner/Dockerfile
+          load: true
+          tags: bifrost-test-builder-runner:latest
+          cache-from: type=gha,scope=test-builder-runner
+          cache-to: type=gha,scope=test-builder-runner,mode=max
+
       - name: Run unit tests
         env:
           BIFROST_SKIP_BUILD: "1"
@@ -279,6 +289,16 @@ jobs:
           tags: bifrost-test-client-dev:latest
           cache-from: type=gha,scope=test-client-dev
           cache-to: type=gha,scope=test-client-dev,mode=max
+
+      - name: Build Builder runner image (cached)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ./builder_runner/Dockerfile
+          load: true
+          tags: bifrost-test-builder-runner:latest
+          cache-from: type=gha,scope=test-builder-runner
+          cache-to: type=gha,scope=test-builder-runner,mode=max
 
       - name: Run E2E tests (shard ${{ matrix.shard }}/2)
         env:

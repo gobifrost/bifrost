@@ -240,6 +240,7 @@ services:
 
   # The only process that executes generated frontend source.
   builder-runner:
+    image: bifrost-test-builder-runner:latest
     build:
       context: .
       dockerfile: builder_runner/Dockerfile
