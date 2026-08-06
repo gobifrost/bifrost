@@ -314,8 +314,8 @@ services:
       api:
         condition: service_healthy
 
-  # Scheduler Service + isolated platform-job host. Every replica runs a small,
-  # configurable slot pool; a PostgreSQL lease elects one trigger leader.
+  # Scheduler Service + isolated platform-job host. Every replica runs a small
+  # job pool; a PostgreSQL lease elects one trigger leader.
   # Workflow/agent execution remains in worker containers.
   scheduler:
     # build:
@@ -332,7 +332,6 @@ services:
       # Message Queue & Cache
       BIFROST_RABBITMQ_URL: amqp://bifrost:${RABBITMQ_PASSWORD}@rabbitmq:5672/
       BIFROST_REDIS_URL: redis://redis:6379/0
-      BIFROST_SCHEDULER_JOB_SLOTS: ${SCHEDULER_JOB_SLOTS:-2}
       # API URL (for SDK client injection in workflows)
       BIFROST_API_URL: http://api:8000
       # S3 Storage (for scheduled jobs that need file access)

@@ -42,8 +42,8 @@ payload version, requester and resource scope, progress, result or structured
 error, retry policy, timestamps, and lease state.
 
 Every scheduler replica is a platform-job host; there is no separate
-platform-job container. Each replica runs a small configurable set of claim
-loops (`BIFROST_SCHEDULER_JOB_SLOTS`, default `2`). Each loop:
+platform-job container. Each replica runs two claim loops as an internal safety
+ceiling, not a deployment setting. Each loop:
 
 1. recovers expired leases from a stopped scheduler or runner;
 2. claims one available row with `FOR UPDATE SKIP LOCKED`;
@@ -61,13 +61,12 @@ durable lease expires and a later scheduler instance retries or fails the job
 according to policy.
 
 PostgreSQL row locking assigns each job to exactly one slot on one replica.
-Adding replicas adds both independent cgroups and execution capacity. Increasing
-slots adds concurrency inside an existing scheduler cgroup and should be done
-only when memory headroom supports it. The default two slots let a serialized
-Solution deploy wait for its credential-isolated app build while leaving one
-slot available to dispatch that child. If resource classes become necessary,
-evolve the common host and its policy contract; do not add per-feature worker
-containers.
+Adding replicas adds both independent cgroups and execution capacity. Two slots
+allow serialized Solution work to dispatch isolated child work while retaining
+capacity for other system jobs. This is deliberately an implementation detail:
+operators should provision scheduler resources and replicas, not tune an
+internal process count. If resource classes become necessary, evolve the common
+host and its policy contract; do not add per-feature worker containers.
 
 One replica also holds the fenced `scheduler-triggers` database lease. Only
 that trigger leader runs APScheduler. On-demand work is persisted directly to
@@ -109,7 +108,7 @@ Deployments therefore need a real container memory limit; without one, memory
 admission is unavailable.
 
 Size a scheduler replica for its host plus the heaviest safe combination of jobs
-its configured slots may admit. Establish a new job's initial policy from
+it may admit. Establish a new job's initial policy from
 representative data volume: record peak cgroup working set and wall-clock
 duration, include operational margin, and exercise low-memory deferral and
 timeout behavior in tests. These measurements inform policy and deployment
@@ -123,12 +122,11 @@ upper-bound signal rather than exact process-tree attribution. Add shared
 process-tree/CPU telemetry only when these representative samples prove
 insufficient.
 
-Start with two slots per replica. Scale replicas when queue wait time grows while
-all slots are occupied. Increase container memory when representative jobs are
-repeatedly deferred or approach the hard ratio; only then consider increasing
-slots on the same replica. Do not add Kubernetes-style resource classes until
-observed workloads show that one common scheduler size cannot safely serve the
-registered job types.
+Scale replicas when queue wait time grows while all slots are occupied. Increase
+container memory when representative jobs are repeatedly deferred or approach
+the hard ratio. Do not add Kubernetes-style resource classes until observed
+workloads show that one common scheduler size cannot safely serve the registered
+job types.
 
 `GET /api/platform/scheduler` and the Diagnostics → Scheduler tab expose leader
 health, online replicas and active claims, queue age, memory-admission waits,

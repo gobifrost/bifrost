@@ -6,7 +6,7 @@ Handles APScheduler for cron jobs, cleanup tasks, and OAuth token refresh.
 
 This container is responsible for:
 - Competing for the singleton trigger lease used by APScheduler
-- Running a configurable number of durable platform-job slots on every replica
+- Running a small durable platform-job pool on every replica
 
 Scheduler replicas are interchangeable. PostgreSQL lease fencing ensures only
 one replica runs scheduled triggers while durable job rows are claimed across
@@ -66,6 +66,7 @@ logger = logging.getLogger(__name__)
 
 LEADERSHIP_RETRY_SECONDS = 5.0
 LEADERSHIP_RENEW_SECONDS = 10.0
+PLATFORM_JOB_CONCURRENCY = 2
 
 
 class Scheduler:
@@ -77,8 +78,7 @@ class Scheduler:
     - Stuck execution cleanup
     - OAuth token refresh
 
-    Every replica also claims durable on-demand platform jobs from PostgreSQL
-    across its configured execution slots.
+    Every replica also claims durable on-demand platform jobs from PostgreSQL.
     """
 
     def __init__(
@@ -94,13 +94,7 @@ class Scheduler:
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._diagnostics_task: asyncio.Task[None] | None = None
         self._leadership_task: asyncio.Task[None] | None = None
-        raw_job_slots = os.environ.get("BIFROST_SCHEDULER_JOB_SLOTS", "2")
-        try:
-            self._job_slots = max(1, int(raw_job_slots))
-        except ValueError as exc:
-            raise ValueError(
-                f"BIFROST_SCHEDULER_JOB_SLOTS must be an integer, got {raw_job_slots!r}"
-            ) from exc
+        self._job_slots = PLATFORM_JOB_CONCURRENCY
         self._platform_job_tasks: list[asyncio.Task[None]] = []
 
     async def start(self) -> None:

@@ -319,7 +319,6 @@ services:
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_debug@rabbitmq:5672/
       BIFROST_REDIS_URL: redis://redis:6379/0
-      BIFROST_SCHEDULER_JOB_SLOTS: ${SCHEDULER_JOB_SLOTS:-2}
       BIFROST_S3_BUCKET: bifrost-local
       BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
       # Browser-reachable S3 origin: presigned URLs get rewritten to /s3/...

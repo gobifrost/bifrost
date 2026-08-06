@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from src.scheduler.main import Scheduler
+from src.scheduler.main import PLATFORM_JOB_CONCURRENCY, Scheduler
 
 
 class FakeLeadershipLease:
@@ -34,21 +34,10 @@ class FakeLeadershipLease:
         self.is_leader = False
 
 
-def test_scheduler_job_slots_are_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("BIFROST_SCHEDULER_JOB_SLOTS", "3")
-
+def test_scheduler_uses_internal_platform_job_concurrency() -> None:
     scheduler = Scheduler(leadership_lease=FakeLeadershipLease())  # type: ignore[arg-type]
 
-    assert scheduler._job_slots == 3
-
-
-def test_scheduler_job_slots_reject_invalid_values(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("BIFROST_SCHEDULER_JOB_SLOTS", "many")
-
-    with pytest.raises(ValueError, match="must be an integer"):
-        Scheduler(leadership_lease=FakeLeadershipLease())  # type: ignore[arg-type]
+    assert scheduler._job_slots == PLATFORM_JOB_CONCURRENCY == 2
 
 
 @pytest.mark.asyncio
