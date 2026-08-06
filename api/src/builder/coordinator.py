@@ -136,7 +136,7 @@ def _safe_dist_members(
 
 
 class BuilderCoordinator(BaseConsumer):
-    """Consumes queue kicks and claims exactly one durable job per kick."""
+    """Consumes central dispatches and claims each exact durable build job."""
 
     def __init__(self, settings: CoordinatorSettings) -> None:
         self.settings = settings
@@ -152,7 +152,9 @@ class BuilderCoordinator(BaseConsumer):
         }
 
     async def process_message(self, body: dict[str, Any]) -> None:
-        del body
+        job_id = body.get("job_id")
+        if not isinstance(job_id, str):
+            raise ValueError("builder dispatch requires job_id")
         async with httpx.AsyncClient(
             base_url=self.settings.internal_api_url,
             timeout=httpx.Timeout(30),
@@ -160,6 +162,7 @@ class BuilderCoordinator(BaseConsumer):
             response = await api.post(
                 "/api/internal/builder/claim",
                 headers=self._builder_headers,
+                params={"job_id": job_id},
             )
             response.raise_for_status()
             claimed = response.json()

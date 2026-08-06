@@ -5,14 +5,18 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { $api, apiClient } from "@/lib/api-client";
 import type { components } from "@/lib/v1";
-import type { FormSubmission, FormExecutionResponse } from "@/lib/client-types";
+import type { FormSubmission } from "@/lib/client-types";
 
 import { toast } from "sonner";
 
 type FormCreate = components["schemas"]["FormCreate"];
 type FormUpdate = components["schemas"]["FormUpdate"];
 type FormPublic = components["schemas"]["FormPublic"];
+type FormRuntimeDefinition = components["schemas"]["FormRuntimeDefinition"];
 type FormStartupResponse = components["schemas"]["FormStartupResponse"];
+type FormSubmissionResponse =
+	| components["schemas"]["FormConfirmationResponse"]
+	| components["schemas"]["FormExecutionResponse"];
 
 /** Helper to extract error message from API error response */
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -38,6 +42,19 @@ export async function getForm(formId: string): Promise<FormPublic> {
 	const { data, error } = await apiClient.GET("/api/forms/{form_id}", {
 		params: { path: { form_id: formId } },
 	});
+	if (error) throw new Error(getErrorMessage(error, "Failed to fetch form"));
+	return data!;
+}
+
+export async function getFormRuntime(
+	formId: string,
+): Promise<FormRuntimeDefinition> {
+	const { data, error } = await apiClient.GET(
+		"/api/forms/{form_id}/runtime",
+		{
+			params: { path: { form_id: formId } },
+		},
+	);
 	if (error) throw new Error(getErrorMessage(error, "Failed to fetch form"));
 	return data!;
 }
@@ -83,18 +100,18 @@ export async function deleteForm(formId: string): Promise<void> {
  */
 export async function submitForm(
 	submission: FormSubmission,
-): Promise<FormExecutionResponse> {
+): Promise<FormSubmissionResponse> {
 	const { data, error } = await apiClient.POST(
-		"/api/forms/{form_id}/execute",
+		"/api/forms/{form_id}/submissions",
 		{
 			params: { path: { form_id: submission.form_id } },
-			body: submission.form_data,
+			body: { form_data: submission.form_data, honeypot: "" },
 		},
 	);
 	if (error || !data) {
 		throw new Error(getErrorMessage(error, "Failed to submit form"));
 	}
-	return data as FormExecutionResponse;
+	return data as FormSubmissionResponse;
 }
 
 /**
@@ -129,7 +146,10 @@ export async function executeFormStartup(
  * - "global": show only global forms (org_id IS NULL)
  * - UUID string: show that org's forms + global forms
  */
-export function useForms(filterScope?: string | null, options?: { enabled?: boolean }) {
+export function useForms(
+	filterScope?: string | null,
+	options?: { enabled?: boolean },
+) {
 	// Build query params - scope is the new filter parameter
 	const queryParams: Record<string, string | undefined> = {};
 	if (filterScope === null) {
@@ -141,15 +161,22 @@ export function useForms(filterScope?: string | null, options?: { enabled?: bool
 	}
 	// undefined = don't send scope (show all)
 
-	return $api.useQuery("get", "/api/forms", {
-		params: {
-			// Type assertion needed until types are regenerated
-			query:
-				Object.keys(queryParams).length > 0 ? queryParams : undefined,
-		} as { query?: { scope?: string } },
-	}, {
-		enabled: options?.enabled,
-	});
+	return $api.useQuery(
+		"get",
+		"/api/forms",
+		{
+			params: {
+				// Type assertion needed until types are regenerated
+				query:
+					Object.keys(queryParams).length > 0
+						? queryParams
+						: undefined,
+			} as { query?: { scope?: string } },
+		},
+		{
+			enabled: options?.enabled,
+		},
+	);
 }
 
 /**
@@ -159,6 +186,15 @@ export function useForm(formId: string | undefined) {
 	return $api.useQuery(
 		"get",
 		"/api/forms/{form_id}",
+		{ params: { path: { form_id: formId ?? "" } } },
+		{ enabled: !!formId },
+	);
+}
+
+export function useFormRuntime(formId: string | undefined) {
+	return $api.useQuery(
+		"get",
+		"/api/forms/{form_id}/runtime",
 		{ params: { path: { form_id: formId ?? "" } } },
 		{ enabled: !!formId },
 	);
@@ -226,11 +262,14 @@ export function useDeleteForm() {
 		onSuccess: (_data, variables) => {
 			queryClient.invalidateQueries({ queryKey: ["get", "/api/forms"] });
 			const purged = variables?.params?.query?.purge;
-			toast.success(purged ? "Form permanently removed" : "Form deleted", {
-				description: purged
-					? "The form has been permanently removed from the database"
-					: "The form has been deactivated",
-			});
+			toast.success(
+				purged ? "Form permanently removed" : "Form deleted",
+				{
+					description: purged
+						? "The form has been permanently removed from the database"
+						: "The form has been deactivated",
+				},
+			);
 		},
 		onError: (error) => {
 			toast.error("Failed to delete form", {
@@ -244,11 +283,13 @@ export function useDeleteForm() {
  * Mutation hook to submit a form and execute workflow
  */
 export function useSubmitForm() {
-	return $api.useMutation("post", "/api/forms/{form_id}/execute", {
+	return $api.useMutation("post", "/api/forms/{form_id}/submissions", {
 		onSuccess: (responseData) => {
-			toast.success("Workflow execution started", {
-				description: `Execution ID: ${(responseData as FormExecutionResponse).execution_id}`,
-			});
+			if (responseData.mode === "execution") {
+				toast.success("Workflow execution started", {
+					description: `Execution ID: ${responseData.execution_id}`,
+				});
+			}
 		},
 		onError: (error) => {
 			toast.error("Failed to submit form", {

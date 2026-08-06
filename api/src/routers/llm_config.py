@@ -389,7 +389,11 @@ async def set_embedding_config(
         NotificationCreate,
         NotificationStatus,
     )
-    from src.core.pubsub import publish_embedding_reindex_request
+    from src.jobs.platform.embedding_reindex import (
+        EMBEDDING_REINDEX_DEFINITION,
+        EmbeddingReindexPayload,
+    )
+    from src.services.platform_jobs import enqueue_platform_job, publish_platform_job_update
     from src.models.orm import SystemConfig
     from src.services.embeddings.base import EmbeddingConfig as EmbeddingClientConfig
     from src.services.embeddings.openai_client import OpenAIEmbeddingClient
@@ -586,7 +590,24 @@ async def set_embedding_config(
                 initial_status=NotificationStatus.PENDING,
             )
             notification_id = notification.id
-            await publish_embedding_reindex_request(notification_id)
+            platform_job, _ = await enqueue_platform_job(
+                db,
+                EMBEDDING_REINDEX_DEFINITION,
+                EmbeddingReindexPayload(notification_id=notification_id),
+                dedupe_key=notification_id,
+                resource_lock_key="embedding.reindex",
+                priority=250,
+                organization_id=None,
+                requested_by_user_id=user.user_id,
+                requested_by_email=user.email,
+                requested_by_name=user.name or user.email or "Unknown",
+                resource_type="knowledge_store",
+                resource_id="embedding-index",
+                title="Re-embedding knowledge store",
+                action_url="/settings/llm",
+            )
+            await db.commit()
+            await publish_platform_job_update(platform_job)
             logger.info(
                 f"Embedding reindex triggered after save: notification_id={notification_id}, rows={row_count}"
             )
@@ -651,7 +672,10 @@ async def trigger_embedding_reindex(
     Requires platform admin access.
     """
     from sqlalchemy import select
-    from src.core.pubsub import publish_embedding_reindex_request
+    from src.jobs.platform.embedding_reindex import (
+        EMBEDDING_REINDEX_DEFINITION,
+        EmbeddingReindexPayload,
+    )
     from src.models.contracts.notifications import (
         NotificationCategory,
         NotificationCreate,
@@ -660,6 +684,7 @@ async def trigger_embedding_reindex(
     from src.models.orm import SystemConfig
     from src.services.embeddings.reindex import count_knowledge_rows
     from src.services.notification_service import get_notification_service
+    from src.services.platform_jobs import enqueue_platform_job, publish_platform_job_update
 
     # Confirm an embedding config exists — reindex against nothing is a no-op.
     config_result = await db.execute(
@@ -700,7 +725,24 @@ async def trigger_embedding_reindex(
         for_admins=False,
         initial_status=NotificationStatus.PENDING,
     )
-    await publish_embedding_reindex_request(notification.id)
+    platform_job, _ = await enqueue_platform_job(
+        db,
+        EMBEDDING_REINDEX_DEFINITION,
+        EmbeddingReindexPayload(notification_id=notification.id),
+        dedupe_key=notification.id,
+        resource_lock_key="embedding.reindex",
+        priority=250,
+        organization_id=None,
+        requested_by_user_id=user.user_id,
+        requested_by_email=user.email,
+        requested_by_name=user.name or user.email or "Unknown",
+        resource_type="knowledge_store",
+        resource_id="embedding-index",
+        title="Re-embedding knowledge store",
+        action_url="/settings/llm",
+    )
+    await db.commit()
+    await publish_platform_job_update(platform_job)
     logger.info(
         f"On-demand embedding reindex triggered by {user.email}: "
         f"notification_id={notification.id}, rows={row_count}"

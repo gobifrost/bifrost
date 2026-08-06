@@ -2022,6 +2022,7 @@ class TestInlineFormContent:
             id=form_id,
             name="Onboarding",
             description="Onboard a new client",
+            confirmation_markdown="## Submitted\n\nWe will be in touch.",
             workflow_id=wf_id,
             launch_workflow_id=launch_id,
             default_launch_params={"source": "marketing"},
@@ -2039,6 +2040,7 @@ class TestInlineFormContent:
 
         round_tripped = parsed.forms[form_id]
         assert round_tripped.description == "Onboard a new client"
+        assert round_tripped.confirmation_markdown == "## Submitted\n\nWe will be in touch."
         assert round_tripped.workflow_id == wf_id
         assert round_tripped.launch_workflow_id == launch_id
         assert round_tripped.default_launch_params == {"source": "marketing"}

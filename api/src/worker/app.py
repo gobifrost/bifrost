@@ -2,8 +2,8 @@
 Bifrost Worker - Background Worker Service
 
 Worker application entry point.
-Handles RabbitMQ message consumption for workflows, agent runs, package
-installation, and durable Solution deploy/install jobs.
+Handles RabbitMQ message consumption for workflows, agent runs, and package
+installation. Scheduler-owned platform jobs run in scheduler replicas.
 
 This container is responsible for:
 - Consuming workflow execution messages from RabbitMQ
@@ -25,7 +25,6 @@ from src.jobs.rabbitmq import rabbitmq
 from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
 from src.jobs.consumers.package_install import PackageInstallConsumer
 from src.jobs.consumers.agent_run import AgentRunConsumer
-from src.jobs.consumers.solution_deploy import SolutionDeployConsumer
 from src.jobs.summarize_worker import (
     SummarizeBackfillConsumer,
     SummarizeConsumer,
@@ -61,7 +60,6 @@ class Worker:
     Manages RabbitMQ consumers for:
     - Workflow execution (with Redis result push for sync requests)
     - Package installation
-    - Durable Solution deploy/install jobs
     """
 
     def __init__(self):
@@ -140,7 +138,6 @@ class Worker:
             SummarizeConsumer(),
             SummarizeBackfillConsumer(),
             TuneChatConsumer(),
-            SolutionDeployConsumer(),
         ]
 
         # Start each consumer

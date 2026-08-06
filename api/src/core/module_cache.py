@@ -116,7 +116,7 @@ async def set_module(path: str, content: str, content_hash: str) -> None:
     redis_conn = await redis._get_redis()
     await cast(Awaitable[int], redis_conn.sadd(MODULE_INDEX_KEY, path))
 
-    logger.debug(f"Cached module: {path}")
+    logger.debug(f"Cached module: {log_safe(path)}")
 
 
 async def invalidate_module(path: str) -> None:
@@ -137,7 +137,7 @@ async def invalidate_module(path: str) -> None:
     redis_conn = await redis._get_redis()
     await cast(Awaitable[int], redis_conn.srem(MODULE_INDEX_KEY, path))
 
-    logger.debug(f"Invalidated module cache: {path}")
+    logger.debug(f"Invalidated module cache: {log_safe(path)}")
 
 
 async def get_all_module_paths() -> set[str]:

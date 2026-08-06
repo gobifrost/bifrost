@@ -21,7 +21,9 @@ import {
 import type { components } from "@/lib/v1";
 import type { FormField } from "@/lib/client-types";
 
-type Form = components["schemas"]["FormPublic"];
+type Form =
+	| components["schemas"]["FormPublic"]
+	| components["schemas"]["FormRuntimeDefinition"];
 
 /**
  * Form context shape matching backend spec
@@ -41,6 +43,8 @@ interface FormContextProviderValue {
 	context: FormContextValue;
 	/** Update workflow results (called after launch workflow executes) */
 	setWorkflowResults: (results: Record<string, unknown>) => void;
+	startupHandle: string | null;
+	setStartupHandle: (handle: string | null) => void;
 	/** Update field value (called on user input) */
 	setFieldValue: (fieldName: string, value: unknown) => void;
 	/** Check if a field should be visible based on its visibility_expression */
@@ -128,6 +132,7 @@ export function FormContextProvider({
 }: FormContextProviderProps) {
 	const [isLoadingLaunchWorkflow, setIsLoadingLaunchWorkflow] =
 		useState(false);
+	const [startupHandle, setStartupHandle] = useState<string | null>(null);
 
 	// Store workflow and field values in state (mutable parts)
 	const [workflowResults, setWorkflowResultsState] = useState<
@@ -187,6 +192,8 @@ export function FormContextProvider({
 		() => ({
 			context,
 			setWorkflowResults,
+			startupHandle,
+			setStartupHandle,
 			setFieldValue,
 			isFieldVisible,
 			isLoadingLaunchWorkflow,
@@ -195,6 +202,7 @@ export function FormContextProvider({
 		[
 			context,
 			setWorkflowResults,
+			startupHandle,
 			setFieldValue,
 			isFieldVisible,
 			isLoadingLaunchWorkflow,

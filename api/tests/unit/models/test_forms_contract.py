@@ -18,9 +18,12 @@ from src.models.contracts.base import DataProviderInputMode
 from src.models.contracts.forms import (
     DataProviderInputConfig,
     Form,
-    FormExecuteRequest,
+    FormCreate,
+    FormSubmissionRequest,
     FormField,
+    FormUpdate,
 )
+from shared.form_runtime import DEFAULT_FORM_CONFIRMATION_MARKDOWN
 
 
 # Note: Models use snake_case (e.g., workflow_id, form_schema, is_global)
@@ -44,6 +47,22 @@ class TestCreateFormRequest:
 
         errors = exc_info.value.errors()
         assert any(e["loc"] == (missing_field,) and e["type"] == "missing" for e in errors)
+
+
+class TestFormConfirmationContract:
+    def test_create_defaults_to_standard_confirmation(self):
+        request = FormCreate(name="Test", form_schema={"fields": []})
+
+        assert request.confirmation_markdown == DEFAULT_FORM_CONFIRMATION_MARKDOWN
+
+    def test_update_accepts_markdown_at_limit(self):
+        request = FormUpdate(confirmation_markdown="x" * 20_000)
+
+        assert len(request.confirmation_markdown or "") == 20_000
+
+    def test_update_rejects_markdown_over_limit(self):
+        with pytest.raises(ValidationError):
+            FormUpdate(confirmation_markdown="x" * 20_001)
 
 
 class TestFormSchema:
@@ -221,7 +240,7 @@ class TestFormResponse:
 
 
 # ==========================================================================
-# FormExecuteRequest scheduling contract
+# FormSubmissionRequest scheduling contract
 # ==========================================================================
 
 
@@ -229,45 +248,45 @@ def _future(seconds: int = 60) -> datetime:
     return datetime.now(timezone.utc) + timedelta(seconds=seconds)
 
 
-class TestFormExecuteRequestScheduling:
+class TestFormSubmissionRequestScheduling:
     """Mirror of the WorkflowExecutionRequest scheduling contract."""
 
     def test_accepts_scheduled_at_alone(self):
-        req = FormExecuteRequest(scheduled_at=_future(120))
+        req = FormSubmissionRequest(scheduled_at=_future(120))
         assert req.scheduled_at is not None
         assert req.delay_seconds is None
 
     def test_accepts_delay_seconds_alone(self):
-        req = FormExecuteRequest(delay_seconds=60)
+        req = FormSubmissionRequest(delay_seconds=60)
         assert req.delay_seconds == 60
         assert req.scheduled_at is None
 
     def test_rejects_both_scheduling_fields(self):
         with pytest.raises(ValidationError, match="mutually exclusive"):
-            FormExecuteRequest(scheduled_at=_future(60), delay_seconds=60)
+            FormSubmissionRequest(scheduled_at=_future(60), delay_seconds=60)
 
     def test_rejects_naive_scheduled_at(self):
         with pytest.raises(ValidationError, match="timezone"):
-            FormExecuteRequest(
+            FormSubmissionRequest(
                 scheduled_at=datetime.now() + timedelta(minutes=5),  # naive
             )
 
     def test_rejects_past_scheduled_at(self):
         with pytest.raises(ValidationError, match="future"):
-            FormExecuteRequest(
+            FormSubmissionRequest(
                 scheduled_at=datetime.now(timezone.utc) - timedelta(seconds=1),
             )
 
     def test_rejects_scheduled_at_beyond_one_year(self):
         with pytest.raises(ValidationError, match="1 year"):
-            FormExecuteRequest(
+            FormSubmissionRequest(
                 scheduled_at=datetime.now(timezone.utc) + timedelta(days=366),
             )
 
     def test_rejects_delay_seconds_zero_or_negative(self):
         with pytest.raises(ValidationError):
-            FormExecuteRequest(delay_seconds=0)
+            FormSubmissionRequest(delay_seconds=0)
 
     def test_rejects_delay_seconds_beyond_one_year(self):
         with pytest.raises(ValidationError):
-            FormExecuteRequest(delay_seconds=31_536_001)
+            FormSubmissionRequest(delay_seconds=31_536_001)

@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import zipfile
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 
 from src.builder.coordinator import (
     CoordinatorSettings,
+    BuilderCoordinator,
     _safe_dist_members,
     assert_secretless_environment,
 )
@@ -36,6 +38,24 @@ def test_coordinator_rejects_data_credentials(monkeypatch) -> None:
     monkeypatch.setenv("BIFROST_DATABASE_URL", "postgresql://forbidden")
     with pytest.raises(RuntimeError, match="forbidden credentials"):
         assert_secretless_environment()
+
+
+@pytest.mark.asyncio
+async def test_coordinator_rejects_dispatch_without_exact_job_id() -> None:
+    coordinator = BuilderCoordinator(
+        CoordinatorSettings(
+            rabbitmq_url="amqp://queue",
+            builder_internal_secret="internal",
+            builder_runner_url="http://runner",
+            internal_api_url="http://api",
+        )
+    )
+    coordinator._run_job = AsyncMock()  # type: ignore[method-assign]
+
+    with pytest.raises(ValueError, match="requires job_id"):
+        await coordinator.process_message({"kick": True})
+
+    coordinator._run_job.assert_not_awaited()
 
 
 def _response_zip(path: Path, members: dict[str, bytes]) -> None:

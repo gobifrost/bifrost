@@ -160,6 +160,10 @@ alembic==1.18.4 \
     --hash=sha256:a5ed4adcf6d8a4cb575f3d759f071b03cd6e5c7618eb796cb52497be25bfe19a \
     --hash=sha256:cb6e1fd84b6174ab8dbb2329f86d631ba9559dd78df550b57804d607672cedbc
     # via bifrost-api (pyproject.toml)
+altcha==2.1.0 \
+    --hash=sha256:5d4d15d89f7833f0f32bb89a1dd650923d3cb113ee9f1178d8a69b2172d087ce \
+    --hash=sha256:843de4146e14c604ceca7e563eb245e0cfb96936323ecac2fd898fab6e034cd2
+    # via bifrost-api (pyproject.toml)
 annotated-doc==0.0.4 \
     --hash=sha256:571ac1dc6991c450b25a9c2d84a3705e2ae7a53467b5d111c24fa8baabbed320 \
     --hash=sha256:fbcda96e87e9c92ad167c2e53839e57503ecfda18804ea28102353485033faa4

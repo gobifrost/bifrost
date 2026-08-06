@@ -13,6 +13,8 @@ from uuid import UUID as UUID_type
 from sqlalchemy import select, update, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.log_safety import log_safe
+
 from .models import PendingDeactivationInfo, AvailableReplacementInfo
 
 if TYPE_CHECKING:
@@ -267,7 +269,7 @@ class DeactivationProtectionService:
             try:
                 workflow_uuid = UUID_type(old_id)
             except ValueError:
-                logger.warning(f"Invalid workflow ID in replacement: {old_id}")
+                logger.warning(f"Invalid workflow ID in replacement: {log_safe(old_id)}")
                 continue
 
             # Update the workflow's function_name
@@ -278,7 +280,10 @@ class DeactivationProtectionService:
                 .values(function_name=new_function_name)
             )
             await self.db.execute(stmt)
-            logger.info(f"Applied replacement: workflow {old_id} -> function {new_function_name}")
+            logger.info(
+                f"Applied replacement: workflow {log_safe(old_id)} -> "
+                f"function {log_safe(new_function_name)}"
+            )
 
     async def deactivate_workflows_by_id(
         self,
@@ -306,7 +311,9 @@ class DeactivationProtectionService:
             try:
                 uuids.append(UUID_type(wid))
             except ValueError:
-                logger.warning(f"Invalid workflow ID in deactivation list: {wid}")
+                logger.warning(
+                    f"Invalid workflow ID in deactivation list: {log_safe(wid)}"
+                )
                 continue
 
         if not uuids:
@@ -378,6 +385,9 @@ class DeactivationProtectionService:
         count = result.rowcount if result.rowcount else 0
 
         if count > 0:
-            logger.info(f"Deactivated {count} workflow(s) from {path} via force_deactivation")
+            logger.info(
+                f"Deactivated {count} workflow(s) from {log_safe(path)} "
+                f"via force_deactivation"
+            )
 
         return count

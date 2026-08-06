@@ -11,6 +11,7 @@ from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.log_safety import log_safe
 from src.services.sdk_reference_scanner import SDKReferenceScanner
 from src.services.notification_service import get_notification_service
 from src.models.contracts.notifications import (
@@ -83,7 +84,7 @@ class DiagnosticsService:
             category=NotificationCategory.SYSTEM,
         )
         if existing:
-            logger.debug(f"SDK notification already exists for {path}")
+            logger.debug(f"SDK notification already exists for {log_safe(path)}")
             return
 
         # Build description with first few issues
@@ -116,7 +117,10 @@ class DiagnosticsService:
             initial_status=NotificationStatus.AWAITING_ACTION,
         )
 
-        logger.info(f"Created SDK issues notification for {path}: {len(issues)} issues")
+        logger.info(
+            f"Created SDK issues notification for {log_safe(path)}: "
+            f"{len(issues)} issues"
+        )
 
     async def clear_sdk_issues_notification(self, path: str) -> None:
         """
@@ -140,7 +144,7 @@ class DiagnosticsService:
         )
         if existing:
             await service.dismiss_notification(existing.id, user_id="system")
-            logger.info(f"Cleared SDK issues notification for {path}")
+            logger.info(f"Cleared SDK issues notification for {log_safe(path)}")
 
     async def create_diagnostic_notification(
         self, path: str, diagnostics: list[FileDiagnosticInfo]
@@ -171,7 +175,9 @@ class DiagnosticsService:
             category=NotificationCategory.SYSTEM,
         )
         if existing:
-            logger.debug(f"Diagnostic notification already exists for {path}")
+            logger.debug(
+                f"Diagnostic notification already exists for {log_safe(path)}"
+            )
             return
 
         # Build description from first few errors
@@ -206,7 +212,10 @@ class DiagnosticsService:
             initial_status=NotificationStatus.AWAITING_ACTION,
         )
 
-        logger.info(f"Created diagnostic notification for {path}: {len(errors)} errors")
+        logger.info(
+            f"Created diagnostic notification for {log_safe(path)}: "
+            f"{len(errors)} errors"
+        )
 
     async def clear_diagnostic_notification(self, path: str) -> None:
         """
@@ -230,7 +239,7 @@ class DiagnosticsService:
         )
         if existing:
             await service.dismiss_notification(existing.id, user_id="system")
-            logger.info(f"Cleared diagnostic notification for {path}")
+            logger.info(f"Cleared diagnostic notification for {log_safe(path)}")
 
     async def scan_for_unresolved_refs(
         self,
@@ -266,7 +275,9 @@ class DiagnosticsService:
             category=NotificationCategory.SYSTEM,
         )
         if existing:
-            logger.debug(f"Unresolved refs notification already exists for {path}")
+            logger.debug(
+                f"Unresolved refs notification already exists for {log_safe(path)}"
+            )
             return
 
         # Build description with first few refs
@@ -292,7 +303,10 @@ class DiagnosticsService:
             initial_status=NotificationStatus.AWAITING_ACTION,
         )
 
-        logger.info(f"Created unresolved refs notification for {path}: {len(unresolved_refs)} refs")
+        logger.info(
+            f"Created unresolved refs notification for {log_safe(path)}: "
+            f"{len(unresolved_refs)} refs"
+        )
 
     async def clear_unresolved_refs_notification(self, path: str) -> None:
         """
@@ -316,4 +330,6 @@ class DiagnosticsService:
         )
         if existing:
             await service.dismiss_notification(existing.id, user_id="system")
-            logger.info(f"Cleared unresolved refs notification for {path}")
+            logger.info(
+                f"Cleared unresolved refs notification for {log_safe(path)}"
+            )

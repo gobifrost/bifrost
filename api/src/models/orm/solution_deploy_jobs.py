@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -43,26 +43,6 @@ class SolutionDeployJob(Base):
     )
     input_sha256: Mapped[str | None] = mapped_column(
         String(64), nullable=True, default=None
-    )
-    published_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, default=None
-    )
-    # A claim lease makes duplicate durable deliveries safe. Only the worker
-    # holding ``claim_token`` may update a running job to terminal.
-    claim_token: Mapped[UUID | None] = mapped_column(
-        PG_UUID(as_uuid=True), nullable=True, default=None
-    )
-    claimed_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, default=None
-    )
-    lease_expires_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, default=None
-    )
-    started_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True, default=None
-    )
-    attempt_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0
     )
     error: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     # On success: the per-entity upsert/delete counts the (now async) deploy

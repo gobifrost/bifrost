@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, RefreshCw, LayoutGrid, Table as TableIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -24,8 +24,10 @@ import { useOrganizations } from "@/hooks/useOrganizations";
 import { SearchBox } from "@/components/search/SearchBox";
 import { useSearch } from "@/hooks/useSearch";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
+import { FormShareDialog } from "@/components/forms/FormShareDialog";
 import { term, useTerminology } from "@/lib/terminology";
 import type { components } from "@/lib/v1";
+import { preloadRunFormPage } from "@/pages/run-form-route";
 
 type FormPublic = components["schemas"]["FormPublic"];
 type Organization = components["schemas"]["OrganizationPublic"];
@@ -41,6 +43,10 @@ export function Forms() {
 	const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
 	const [isDisableDialogOpen, setIsDisableDialogOpen] = useState(false);
 	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+	const [shareForm, setShareForm] = useState<{
+		id: string;
+		name: string;
+	} | null>(null);
 	const [selectedForm, setSelectedForm] = useState<{
 		id: string;
 		name: string;
@@ -56,6 +62,12 @@ export function Forms() {
 	} = useForms(isPlatformAdmin ? filterOrgId : undefined);
 	const deleteForm = useDeleteForm();
 	const updateForm = useUpdateForm();
+
+	useEffect(() => {
+		// Start the form runner chunk while the list is visible so Launch can
+		// navigate immediately instead of waiting for a large first-use import.
+		void preloadRunFormPage().catch(() => undefined);
+	}, []);
 
 	// Fetch organizations for the org name lookup (platform admins only)
 	const { data: organizations } = useOrganizations({
@@ -101,7 +113,11 @@ export function Forms() {
 		navigate(`/forms/${formId}/edit`);
 	};
 
-	const handleDelete = (formId: string, formName: string, isActive: boolean) => {
+	const handleDelete = (
+		formId: string,
+		formName: string,
+		isActive: boolean,
+	) => {
 		setSelectedForm({ id: formId, name: formName, isActive });
 		setIsDeleteDialogOpen(true);
 	};
@@ -266,8 +282,13 @@ export function Forms() {
 				isPlatformAdmin={isPlatformAdmin}
 				canManageForms={canManageForms}
 				getOrgName={getOrgName}
-				formValidation={formValidation as Map<string, FormValidationState>}
+				formValidation={
+					formValidation as Map<string, FormValidationState>
+				}
 				onLaunch={(form) => handleLaunch(form.id)}
+				onShare={(form) =>
+					setShareForm({ id: form.id, name: form.name })
+				}
 				onEdit={(form) => handleEdit(form.id)}
 				onDelete={(form) =>
 					handleDelete(form.id, form.name, form.is_active)
@@ -278,6 +299,15 @@ export function Forms() {
 				onCreateEmpty={handleCreate}
 				emptySearchActive={Boolean(searchTerm)}
 			/>
+
+			{shareForm ? (
+				<FormShareDialog
+					formId={shareForm.id}
+					formName={shareForm.name}
+					open
+					onOpenChange={(open) => !open && setShareForm(null)}
+				/>
+			) : null}
 
 			{/* Disable/Enable Confirmation Dialog */}
 			<AlertDialog

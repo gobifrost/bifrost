@@ -10,6 +10,9 @@ import { renderWithProviders, screen, within } from "@/test-utils";
 const mockUseForms = vi.fn();
 const mockUseDeleteForm = vi.fn();
 const mockUseUpdateForm = vi.fn();
+const mockPreloadRunFormPage = vi.fn(() =>
+	Promise.resolve({ default: vi.fn() }),
+);
 vi.mock("@/hooks/useForms", () => ({
 	useForms: () => mockUseForms(),
 	useDeleteForm: () => mockUseDeleteForm(),
@@ -29,6 +32,14 @@ vi.mock("@/components/search/SearchBox", () => ({ SearchBox: () => null }));
 vi.mock("@/components/forms/OrganizationSelect", () => ({
 	OrganizationSelect: () => null,
 }));
+vi.mock("@/components/forms/FormShareDialog", () => ({
+	FormShareDialog: ({ formName }: { formName: string }) => (
+		<div role="dialog">Share {formName}</div>
+	),
+}));
+vi.mock("@/pages/run-form-route", () => ({
+	preloadRunFormPage: () => mockPreloadRunFormPage(),
+}));
 
 function makeForm(overrides: Partial<Record<string, unknown>> = {}) {
 	return {
@@ -45,14 +56,21 @@ function makeForm(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 beforeEach(() => {
+	mockPreloadRunFormPage.mockClear();
 	mockUseAuth.mockReturnValue({ isPlatformAdmin: true });
 	mockUseForms.mockReturnValue({
 		data: [],
 		isLoading: false,
 		refetch: vi.fn(),
 	});
-	mockUseDeleteForm.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
-	mockUseUpdateForm.mockReturnValue({ mutateAsync: vi.fn(), isPending: false });
+	mockUseDeleteForm.mockReturnValue({
+		mutateAsync: vi.fn(),
+		isPending: false,
+	});
+	mockUseUpdateForm.mockReturnValue({
+		mutateAsync: vi.fn(),
+		isPending: false,
+	});
 });
 
 async function renderPage() {
@@ -61,6 +79,10 @@ async function renderPage() {
 }
 
 describe("Forms — solution-managed badge (grid view)", () => {
+	it("preloads the form runner so Launch does not wait on its route chunk", async () => {
+		await renderPage();
+		expect(mockPreloadRunFormPage).toHaveBeenCalledOnce();
+	});
 	it("shows the badge and hides Edit/Delete on a managed form", async () => {
 		mockUseForms.mockReturnValue({
 			data: [
@@ -74,15 +96,21 @@ describe("Forms — solution-managed badge (grid view)", () => {
 			isLoading: false,
 			refetch: vi.fn(),
 		});
-		await renderPage();
+		const { user } = await renderPage();
 		const badge = screen.getByTestId("solution-managed-badge");
 		expect(badge).toHaveAttribute("href", "/solutions/s1");
+		await user.click(
+			screen.getByRole("button", { name: "Managed Form actions" }),
+		);
 		expect(
-			screen.queryByRole("button", { name: /edit form/i }),
+			screen.queryByRole("menuitem", { name: "Edit Form" }),
 		).not.toBeInTheDocument();
 		expect(
-			screen.queryByRole("button", { name: /delete form/i }),
+			screen.queryByRole("menuitem", { name: "Delete Form" }),
 		).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("menuitem", { name: "Share Form" }),
+		).toBeInTheDocument();
 	});
 
 	it("shows Edit/Delete and no badge on a non-managed form", async () => {
@@ -91,16 +119,45 @@ describe("Forms — solution-managed badge (grid view)", () => {
 			isLoading: false,
 			refetch: vi.fn(),
 		});
-		await renderPage();
+		const { user } = await renderPage();
 		expect(
 			screen.queryByTestId("solution-managed-badge"),
 		).not.toBeInTheDocument();
+		await user.click(
+			screen.getByRole("button", { name: "Onboarding actions" }),
+		);
+		expect(screen.getByRole("menu")).toHaveClass("w-48");
+		for (const item of screen.getAllByRole("menuitem")) {
+			expect(item).toHaveClass("min-h-9", "whitespace-nowrap", "px-3");
+		}
 		expect(
-			screen.getByRole("button", { name: /edit form/i }),
+			screen.getByRole("menuitem", { name: "Edit Form" }),
 		).toBeInTheDocument();
 		expect(
-			screen.getByRole("button", { name: /delete form/i }),
+			screen.getByRole("menuitem", { name: "Delete Form" }),
 		).toBeInTheDocument();
+		expect(
+			screen.getByRole("menuitem", { name: "Share Form" }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("menuitem", { name: "Disable Form" }),
+		).toBeInTheDocument();
+	});
+
+	it("opens the shared Share dialog from a form card", async () => {
+		mockUseForms.mockReturnValue({
+			data: [makeForm()],
+			isLoading: false,
+			refetch: vi.fn(),
+		});
+		const { user } = await renderPage();
+		await user.click(
+			screen.getByRole("button", { name: "Onboarding actions" }),
+		);
+		await user.click(screen.getByRole("menuitem", { name: "Share Form" }));
+		expect(screen.getByRole("dialog")).toHaveTextContent(
+			"Share Onboarding",
+		);
 	});
 });
 
@@ -117,7 +174,7 @@ describe("Forms — solution-managed badge (table view)", () => {
 	}
 
 	it("shows the badge and hides Edit/Delete on a managed form row", async () => {
-		await renderTable([
+		const user = await renderTable([
 			makeForm({
 				id: "m",
 				name: "Managed Form",
@@ -129,25 +186,41 @@ describe("Forms — solution-managed badge (table view)", () => {
 		expect(
 			within(table).getByTestId("solution-managed-badge"),
 		).toHaveAttribute("href", "/solutions/s1");
+		await user.click(
+			within(table).getByRole("button", { name: "Managed Form actions" }),
+		);
 		expect(
-			within(table).queryByRole("button", { name: /edit form/i }),
+			screen.queryByRole("menuitem", { name: "Edit Form" }),
 		).not.toBeInTheDocument();
 		expect(
-			within(table).queryByRole("button", { name: /delete form/i }),
+			screen.queryByRole("menuitem", { name: "Delete Form" }),
 		).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("menuitem", { name: "Share Form" }),
+		).toBeInTheDocument();
 	});
 
 	it("shows Edit/Delete and no badge on a non-managed form row", async () => {
-		await renderTable([makeForm()]);
+		const user = await renderTable([makeForm()]);
 		const table = document.querySelector("table")!;
 		expect(
 			within(table).queryByTestId("solution-managed-badge"),
 		).not.toBeInTheDocument();
+		await user.click(
+			within(table).getByRole("button", { name: "Onboarding actions" }),
+		);
+		expect(screen.getByRole("menu")).toHaveClass("w-48");
+		for (const item of screen.getAllByRole("menuitem")) {
+			expect(item).toHaveClass("min-h-9", "whitespace-nowrap", "px-3");
+		}
 		expect(
-			within(table).getByRole("button", { name: /edit form/i }),
+			screen.getByRole("menuitem", { name: "Edit Form" }),
 		).toBeInTheDocument();
 		expect(
-			within(table).getByRole("button", { name: /delete form/i }),
+			screen.getByRole("menuitem", { name: "Delete Form" }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("menuitem", { name: "Share Form" }),
 		).toBeInTheDocument();
 	});
 });

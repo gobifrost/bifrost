@@ -15,8 +15,9 @@ from sqlalchemy import select
 from src.config import get_settings
 from src.core.database import get_db_context
 from src.core.redis_client import get_redis_client
-from src.jobs.rabbitmq import publish_message
 from src.models.orm.solution_build_jobs import SolutionBuildJob
+from src.models.orm.solutions import Solution
+from src.models.orm.users import User
 from src.services.builder.build_input import make_input_zip
 from src.services.builder.build_plane import (
     TOOLCHAIN_VERSION,
@@ -98,8 +99,9 @@ async def request_app_build(
             if reusable is not None:
                 return reusable
 
+            job_id = uuid4()
             job = SolutionBuildJob(
-                id=uuid4(),
+                id=job_id,
                 solution_id=solution_id,
                 app_id=app_id,
                 source_revision_id=source_revision_id,
@@ -115,7 +117,41 @@ async def request_app_build(
             if staged_sha != source_sha:
                 raise RuntimeError("staged build input hash mismatch")
 
-    await publish_message(BUILD_QUEUE, {"kick": True})
+            from src.jobs.platform.solution_build import (
+                SOLUTION_BUILD_DEFINITION,
+                SolutionBuildPayload,
+            )
+            from src.services.platform_jobs import enqueue_platform_job
+
+            solution = await db.get(Solution, solution_id)
+            requester = await db.get(User, requested_by) if requested_by else None
+            platform_job, _ = await enqueue_platform_job(
+                db,
+                SOLUTION_BUILD_DEFINITION,
+                SolutionBuildPayload(build_job_id=job_id),
+                dedupe_key=str(job_id),
+                resource_lock_key=f"application:{app_id}",
+                priority=300,
+                organization_id=solution.organization_id if solution else None,
+                requested_by_user_id=requested_by or "system",
+                requested_by_email=(
+                    requester.email if requester else "system@gobifrost.local"
+                ),
+                requested_by_name=(
+                    requester.name or requester.email
+                    if requester
+                    else "Bifrost Builder"
+                ),
+                resource_type="solution_build",
+                resource_id=str(job_id),
+                title="Building Solution application",
+                action_url=f"/solutions/{solution_id}",
+                job_id=job_id,
+            )
+
+    from src.services.platform_jobs import publish_platform_job_update
+
+    await publish_platform_job_update(platform_job)
     return job
 
 
@@ -183,4 +219,10 @@ async def cancel_build_job(job_id: UUID) -> SolutionBuildJob:
                 "1",
                 ex=get_settings().builder_build_timeout_s + 120,
             )
+        from src.models.orm.platform_jobs import PlatformJob
+        from src.services.platform_jobs import request_platform_job_cancel
+
+        platform_job = await db.get(PlatformJob, job_id)
+        if platform_job is not None:
+            await request_platform_job_cancel(db, platform_job)
         return job

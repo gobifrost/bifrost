@@ -18,6 +18,7 @@ from src.models.enums import AgentAccessLevel, MessageRole
 from src.models.orm.agents import Agent, Conversation, Message
 from src.models.orm.solution_builder import SolutionBuilderSession, SolutionBuilderTurn
 from src.models.orm.solutions import Solution
+from src.models.orm.users import User
 from src.services.agent_executor import AgentExecutor
 from src.services.builder.fs_tools import WorkspaceRoot
 from src.services.builder.revision_storage import SolutionRevisionStorage
@@ -54,6 +55,10 @@ async def enqueue_builder_turn_deploy(
     revision_id: UUID,
 ) -> None:
     """Stage an immutable revision and queue the durable preview deploy."""
+    solution = await db.get(Solution, solution_id)
+    if solution is None:
+        raise BuilderProjectMissing(f"Solution {solution_id} does not exist")
+    requester = await db.get(User, turn.requested_by) if turn.requested_by else None
     with tempfile.TemporaryDirectory(prefix="bifrost-builder-deploy-") as tmp:
         source_zip = Path(tmp) / "source.zip"
         copied = await SolutionRevisionStorage(solution_id).copy_to_path(
@@ -66,6 +71,16 @@ async def enqueue_builder_turn_deploy(
             db,
             kind="deploy",
             install_id=solution_id,
+            organization_id=solution.organization_id,
+            requested_by_user_id=turn.requested_by or "system",
+            requested_by_email=(
+                requester.email if requester else "system@gobifrost.local"
+            ),
+            requested_by_name=(
+                requester.name or requester.email
+                if requester
+                else "Bifrost Builder"
+            ),
             options={
                 "force": True,
                 "source_revision_id": str(revision_id),

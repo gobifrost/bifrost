@@ -1,6 +1,7 @@
 {
   "access_level": "role_based",
   "allowed_query_params": null,
+  "confirmation_markdown": "## Form submitted\n\nThank you!",
   "default_launch_params": null,
   "description": "parity test form",
   "form_schema": {

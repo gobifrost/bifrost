@@ -15,12 +15,15 @@ from pydantic import BaseModel, Field
 
 from bifrost.contracts.enums import FormAccessLevel
 
+DEFAULT_FORM_CONFIRMATION_MARKDOWN = "## Form submitted\n\nThank you!"
+
 
 class FormCreate(BaseModel):
     """Input for creating a form (CLI mirror)."""
 
     name: str
     description: str | None = None
+    confirmation_markdown: str = DEFAULT_FORM_CONFIRMATION_MARKDOWN
     workflow_id: str | None = None
     launch_workflow_id: str | None = None
     default_launch_params: dict | None = None
@@ -36,6 +39,7 @@ class FormUpdate(BaseModel):
 
     name: str | None = None
     description: str | None = None
+    confirmation_markdown: str | None = None
     workflow_id: str | None = None
     launch_workflow_id: str | None = None
     default_launch_params: dict | None = None

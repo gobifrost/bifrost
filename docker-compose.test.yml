@@ -146,6 +146,9 @@ services:
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
+      # The exhaustive E2E suite runs longer than the production default.
+      # Session-scoped fixture tokens must remain valid for the whole run.
+      BIFROST_ACCESS_TOKEN_EXPIRE_MINUTES: "120"
       # Builder app host. Generated Solution apps must be served from a browser
       # origin distinct from the control plane; without this the app host is
       # unavailable (503) by design, so the e2e suite could not exercise it.
@@ -377,8 +380,8 @@ services:
     profiles:
       - e2e  # Only start in E2E mode
 
-  # Scheduler (Test) - Only started for E2E tests
-  # Handles background jobs like GitHub sync via Redis pubsub
+  # Scheduler (Test) - Only started for E2E tests. Every replica is a durable
+  # platform-job runner; the trigger leader is elected in PostgreSQL.
   scheduler:
     image: bifrost-test-api-dev:latest
     build:
@@ -390,6 +393,7 @@ services:
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
       BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_test@rabbitmq:5672/
       BIFROST_REDIS_URL: redis://redis:6379/0
+      BIFROST_SCHEDULER_JOB_SLOTS: 2
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
       # Builder app host. Generated Solution apps must be served from a browser
@@ -426,6 +430,7 @@ services:
         condition: service_started
       api:
         condition: service_healthy
+    mem_limit: 1g
     # Entrypoint handles permissions; run as root so it can fix volume ownership
     user: root
     command: ["python", "-m", "src.scheduler.main"]
@@ -561,6 +566,11 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    networks:
+      default:
+        aliases:
+          - allowed-origin
+          - blocked-origin
     healthcheck:
       test: ["CMD-SHELL", "node -e \"fetch('http://localhost:80/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
       interval: 5s

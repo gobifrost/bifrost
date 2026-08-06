@@ -194,8 +194,9 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     #
     # RoleCreate/RoleUpdate gained additive scopes fields (2026-07-30).
     # Old CLIs omit them and retain empty-scope custom-role behavior.
-    # Fingerprint is refreshed after replaying both additive changes on v8.
-    "94bf28d5039d7dd17d747f2f66ff7ae254ef118a14b6652d2119d427acb3b316"
+    # Forms also gained optional confirmation_markdown (2026-08-04). All are
+    # additive; fingerprint refreshed after merging the contract surfaces.
+    "5eb5b0397422bcc4d4b4d89b570f50ade471d109b2bc53e1858d2e4247e2e94b"
 )
 
 

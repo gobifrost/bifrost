@@ -11,6 +11,8 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { motion, AnimatePresence } from "framer-motion";
 import { Card, CardContent } from "@/components/ui/card";
+import { FormConfirmation } from "@/components/forms/FormConfirmation";
+import { FormCaptcha } from "@/components/forms/FormCaptcha";
 import { JsxTemplateRenderer } from "@/components/ui/jsx-template-renderer";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,12 +33,16 @@ import type {
 	FormSchema,
 	DataProviderInputConfig,
 } from "@/lib/client-types";
+import { getEmbedTokenClaims } from "@/lib/auth-token";
+import { formRuntimeQueryParams } from "@/lib/form-embed-presentation";
 
-type Form = components["schemas"]["FormPublic"];
+type Form =
+	| components["schemas"]["FormPublic"]
+	| components["schemas"]["FormRuntimeDefinition"];
 import { useSubmitForm } from "@/hooks/useForms";
 
 import type { DataProviderOption } from "@/services/dataProviders";
-import { getDataProviderOptions } from "@/services/dataProviders";
+import { getFormFieldOptions } from "@/services/dataProviders";
 import { FormContextProvider, useFormContext } from "@/contexts/FormContext";
 import { useLaunchWorkflow } from "@/hooks/useLaunchWorkflow";
 import { FormContextPanel } from "@/components/forms/FormContextPanel";
@@ -46,6 +52,20 @@ import {
 	type Schedule,
 } from "@/components/execution/ScheduleControls";
 import { toast } from "sonner";
+
+function createSubmissionNonce(): string {
+	const browserCrypto = globalThis.crypto;
+	if (typeof browserCrypto?.randomUUID === "function") {
+		return browserCrypto.randomUUID();
+	}
+	if (typeof browserCrypto?.getRandomValues === "function") {
+		const bytes = browserCrypto.getRandomValues(new Uint8Array(24));
+		return Array.from(bytes, (byte) =>
+			byte.toString(16).padStart(2, "0"),
+		).join("");
+	}
+	return `form-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
 
 /**
  * Memo-safe checkbox bound to react-hook-form via `useWatch`. Using
@@ -84,7 +104,9 @@ function CheckboxField({
 				</Label>
 			</div>
 			{field.help_text && (
-				<p className="text-sm text-muted-foreground">{field.help_text}</p>
+				<p className="text-sm text-muted-foreground">
+					{field.help_text}
+				</p>
 			)}
 			{error && (
 				<p className="text-sm text-destructive">
@@ -105,6 +127,8 @@ interface FormRendererProps {
 	onExecutionStart?: (executionId: string) => void;
 	/** If true, don't navigate after submission (for embedded forms) */
 	preventNavigation?: boolean;
+	/** Whether deferred-execution controls are available. */
+	allowScheduling?: boolean;
 }
 
 // Helper function to convert DataProviderOption[] to ComboboxOption[]
@@ -129,6 +153,16 @@ function isFormSchema(schema: unknown): schema is FormSchema {
 	);
 }
 
+function hasDynamicOptions(field: FormField): boolean {
+	return (
+		field.has_dynamic_options === true || Boolean(field.data_provider_id)
+	);
+}
+
+function providerCacheKey(field: FormField): string {
+	return field.name;
+}
+
 /**
  * Inner component that uses FormContext
  * Separated to allow FormContextProvider to wrap it
@@ -139,11 +173,17 @@ function FormRendererInner({
 	onDevModeChange,
 	onExecutionStart,
 	preventNavigation,
+	allowScheduling = !preventNavigation,
 }: FormRendererProps) {
 	const navigate = useNavigate();
 	const submitForm = useSubmitForm();
-	const { context, isFieldVisible, setFieldValue, isLoadingLaunchWorkflow } =
-		useFormContext();
+	const {
+		context,
+		startupHandle,
+		isFieldVisible,
+		setFieldValue,
+		isLoadingLaunchWorkflow,
+	} = useFormContext();
 
 	// Execute launch workflow if configured
 	useLaunchWorkflow({ form });
@@ -179,6 +219,14 @@ function FormRendererInner({
 
 	// Track navigation state to keep button disabled through redirect
 	const [isNavigating, setIsNavigating] = useState(false);
+	const [confirmationMarkdown, setConfirmationMarkdown] = useState<
+		string | null
+	>(null);
+	const [honeypot, setHoneypot] = useState("");
+	const [captchaPayload, setCaptchaPayload] = useState<string | null>(null);
+	const [captchaResetSignal, setCaptchaResetSignal] = useState(0);
+	const captchaRequired =
+		"captcha_required" in form && form.captcha_required === true;
 
 	// Track which file fields are currently uploading
 	const [uploadingFields, setUploadingFields] = useState<Set<string>>(
@@ -191,7 +239,12 @@ function FormRendererInner({
 	// Ref for setValue so loadDataProviders can call it for auto_fill
 	// (loadDataProviders is defined before useForm, so we use a ref bridge)
 	const setValueRef = useRef<
-		((name: string, value: unknown, options?: { shouldValidate?: boolean }) => void) | null
+		| ((
+				name: string,
+				value: unknown,
+				options?: { shouldValidate?: boolean },
+		  ) => void)
+		| null
 	>(null);
 
 	// Helper to evaluate data provider inputs (T040, T055, T075 - All three modes)
@@ -285,19 +338,10 @@ function FormRendererInner({
 	// Accepts optional fieldOverrides to use fresh values before context has updated
 	const loadDataProviders = useCallback(
 		async (fieldOverrides?: Record<string, unknown>) => {
-			const selectFields = fields.filter(
-				(field: FormField) => field.data_provider_id,
-			);
+			const selectFields = fields.filter(hasDynamicOptions);
 
 			for (const field of selectFields) {
-				if (
-					!field.data_provider_id ||
-					typeof field.data_provider_id !== "string"
-				)
-					continue;
-
-				const providerId = field.data_provider_id as string;
-				const cacheKey = `${providerId}_${field.name}`;
+				const cacheKey = providerCacheKey(field);
 
 				// Evaluate inputs to check if all required fields are available
 				// Pass fieldOverrides to use fresh values
@@ -347,8 +391,9 @@ function FormRendererInner({
 						} as Record<string, string>,
 					}));
 
-					const options = await getDataProviderOptions(
-						providerId,
+					const options = await getFormFieldOptions(
+						form.id,
+						field.name,
 						inputs || undefined,
 					);
 
@@ -375,14 +420,13 @@ function FormRendererInner({
 							Object.entries(field.auto_fill).forEach(
 								([targetField, metadataKey]) => {
 									const value = metadata[metadataKey];
-									if (
-										value !== undefined &&
-										value !== null
-									) {
+									if (value !== undefined && value !== null) {
 										setValueRef.current?.(
 											targetField,
 											value,
-											{ shouldValidate: true },
+											{
+												shouldValidate: true,
+											},
 										);
 									}
 								},
@@ -407,7 +451,7 @@ function FormRendererInner({
 			}
 		},
 		// eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally omit dataProviderState.loading to prevent infinite loop
-		[fields, evaluateDataProviderInputs],
+		[fields, evaluateDataProviderInputs, form.id],
 	);
 
 	// Load data providers on mount and when fieldBlurTrigger changes
@@ -499,9 +543,8 @@ function FormRendererInner({
 			}
 
 			// Add validation for data provider fields with required inputs
-			if (field.data_provider_id && field.data_provider_inputs) {
-				const providerId = field.data_provider_id as string;
-				const cacheKey = `${providerId}_${field.name}`;
+			if (hasDynamicOptions(field) && field.data_provider_inputs) {
+				const cacheKey = providerCacheKey(field);
 
 				// Check if any inputs are required
 				const hasRequiredInputs = Object.values(
@@ -562,7 +605,10 @@ function FormRendererInner({
 			(acc: Record<string, unknown>, field: FormField) => {
 				if (field.type === "multi_select") {
 					// default_value is a comma-separated list of option values
-					if (typeof field.default_value === "string" && field.default_value.length > 0) {
+					if (
+						typeof field.default_value === "string" &&
+						field.default_value.length > 0
+					) {
 						acc[field.name] = field.default_value
 							.split(",")
 							.map((v) => v.trim())
@@ -615,7 +661,7 @@ function FormRendererInner({
 		if (changedFields.length > 0) {
 			const fieldsWithProviders = fields.filter(
 				(field: FormField) =>
-					field.data_provider_id && field.data_provider_inputs,
+					hasDynamicOptions(field) && field.data_provider_inputs,
 			);
 
 			const fieldsToClear: string[] = [];
@@ -631,10 +677,7 @@ function FormRendererInner({
 							if (
 								changedFields.includes(inputConfig.field_name)
 							) {
-								const providerId =
-									field.data_provider_id as string;
-								const cacheKey = `${providerId}_${field.name}`;
-								fieldsToClear.push(cacheKey);
+								fieldsToClear.push(providerCacheKey(field));
 							}
 						}
 					},
@@ -677,10 +720,18 @@ function FormRendererInner({
 				params: { path: { form_id: form.id } },
 				body: {
 					form_data: data,
-					startup_data: context.workflow,
+					startup_handle: startupHandle,
+					submission_nonce: createSubmissionNonce(),
+					honeypot,
+					captcha_payload: captchaPayload,
 					...(schedule ?? {}),
 				},
 			});
+
+			if (result.mode === "confirmation") {
+				setConfirmationMarkdown(result.confirmation_markdown);
+				return;
+			}
 
 			// Call callback if provided (for embedded forms)
 			if (onExecutionStart) {
@@ -715,6 +766,10 @@ function FormRendererInner({
 			}
 			// Don't reset isNavigating - component will unmount on navigation (or stay disabled in embedded mode)
 		} catch {
+			if (captchaRequired) {
+				setCaptchaPayload(null);
+				setCaptchaResetSignal((current) => current + 1);
+			}
 			setIsNavigating(false); // Only re-enable button on error
 		}
 	};
@@ -812,9 +867,8 @@ function FormRendererInner({
 	// Helper: apply auto_fill from a selected option's metadata to sibling fields
 	const applyAutoFill = useCallback(
 		(field: FormField, selectedValue: string) => {
-			if (!field.auto_fill || !field.data_provider_id) return;
-			const providerId = field.data_provider_id as string;
-			const cacheKey = `${providerId}_${field.name}`;
+			if (!field.auto_fill || !hasDynamicOptions(field)) return;
+			const cacheKey = providerCacheKey(field);
 			const options = dataProviderState.options[cacheKey];
 			if (!options) return;
 
@@ -842,10 +896,8 @@ function FormRendererInner({
 		(fieldName: string, field?: FormField) => {
 			// Invalidate cached callback when auto_fill options change so
 			// the closure always references the latest options array.
-			const providerId = field?.data_provider_id as string | undefined;
-			const cacheKey = providerId
-				? `${providerId}_${fieldName}`
-				: undefined;
+			const cacheKey =
+				field && hasDynamicOptions(field) ? fieldName : undefined;
 			const currentOptions = cacheKey
 				? dataProviderState.options[cacheKey]
 				: undefined;
@@ -865,12 +917,9 @@ function FormRendererInner({
 						applyAutoFill(field, value);
 					}
 				};
-				(
-					fieldValueChangeCallbacks.current as Record<
-						string,
-						unknown
-					>
-				)[`${fieldName}_cacheId`] = cacheId;
+				(fieldValueChangeCallbacks.current as Record<string, unknown>)[
+					`${fieldName}_cacheId`
+				] = cacheId;
 			}
 			return fieldValueChangeCallbacks.current[fieldName];
 		},
@@ -883,14 +932,8 @@ function FormRendererInner({
 		// If field has a data provider, render it as a single-select dropdown regardless
 		// of type — EXCEPT for multi_select, which has its own render case below that
 		// uses the same provider-loaded options but with a multi-select UI.
-		if (field.data_provider_id && field.type !== "multi_select") {
-			const providerId =
-				typeof field.data_provider_id === "string"
-					? field.data_provider_id
-					: undefined;
-			const cacheKey = providerId
-				? `${providerId}_${field.name}`
-				: undefined;
+		if (hasDynamicOptions(field) && field.type !== "multi_select") {
+			const cacheKey = providerCacheKey(field);
 			const options = cacheKey ? dataProviderState.options[cacheKey] : [];
 			const isLoadingOptions = cacheKey
 				? dataProviderState.loading[cacheKey]
@@ -915,7 +958,10 @@ function FormRendererInner({
 					providerError={providerError || undefined}
 					isEnabled={hasSuccessfullyLoaded}
 					value={(formValues[field.name] as string) || ""}
-					onValueChange={getFieldValueChangeCallback(field.name, field)}
+					onValueChange={getFieldValueChangeCallback(
+						field.name,
+						field,
+					)}
 				/>
 			);
 		}
@@ -960,13 +1006,8 @@ function FormRendererInner({
 				);
 
 			case "select": {
-				const providerId =
-					typeof field.data_provider_id === "string"
-						? field.data_provider_id
-						: undefined;
-				const cacheKey = providerId
-					? `${providerId}_${field.name}`
-					: undefined;
+				const dynamic = hasDynamicOptions(field);
+				const cacheKey = dynamic ? providerCacheKey(field) : undefined;
 				const staticOptions = (field.options || []) as Array<{
 					label: string;
 					value: string;
@@ -974,7 +1015,7 @@ function FormRendererInner({
 				const dynamicOptions = cacheKey
 					? dataProviderState.options[cacheKey]
 					: [];
-				const options = providerId ? dynamicOptions : staticOptions;
+				const options = dynamic ? dynamicOptions : staticOptions;
 				const isLoadingOptions = cacheKey
 					? dataProviderState.loading[cacheKey]
 					: false;
@@ -1011,7 +1052,7 @@ function FormRendererInner({
 							isLoading={!!isLoadingOptions}
 							disabled={
 								!!isLoadingOptions ||
-								(!!providerId && !hasSuccessfullyLoaded)
+								(dynamic && !hasSuccessfullyLoaded)
 							}
 						/>
 						{providerError && (
@@ -1034,13 +1075,8 @@ function FormRendererInner({
 			}
 
 			case "multi_select": {
-				const providerId =
-					typeof field.data_provider_id === "string"
-						? field.data_provider_id
-						: undefined;
-				const cacheKey = providerId
-					? `${providerId}_${field.name}`
-					: undefined;
+				const dynamic = hasDynamicOptions(field);
+				const cacheKey = dynamic ? providerCacheKey(field) : undefined;
 				const staticOptions = (field.options || []) as Array<{
 					label: string;
 					value: string;
@@ -1048,7 +1084,7 @@ function FormRendererInner({
 				const dynamicOptions = cacheKey
 					? toComboboxOptions(dataProviderState.options[cacheKey])
 					: [];
-				const options = providerId ? dynamicOptions : staticOptions;
+				const options = dynamic ? dynamicOptions : staticOptions;
 				const isLoadingOptions = cacheKey
 					? dataProviderState.loading[cacheKey]
 					: false;
@@ -1072,19 +1108,23 @@ function FormRendererInner({
 						</Label>
 						<MultiCombobox
 							id={field.name}
-							options={options && options.length > 0 ? options : []}
+							options={
+								options && options.length > 0 ? options : []
+							}
 							value={currentValue}
 							onValueChange={(next) =>
 								setValue(field.name, next, {
 									shouldValidate: true,
 								})
 							}
-							placeholder={field.placeholder || "Select options..."}
+							placeholder={
+								field.placeholder || "Select options..."
+							}
 							emptyText="No options available"
 							isLoading={!!isLoadingOptions}
 							disabled={
 								!!isLoadingOptions ||
-								(!!providerId && !hasSuccessfullyLoaded)
+								(dynamic && !hasSuccessfullyLoaded)
 							}
 						/>
 						{providerError && (
@@ -1112,9 +1152,7 @@ function FormRendererInner({
 					value: string;
 				}>;
 				const defaultVal = field.default_value as
-					| string
-					| null
-					| undefined;
+					string | null | undefined;
 				return (
 					<div className="space-y-2">
 						<Label>
@@ -1410,6 +1448,15 @@ function FormRendererInner({
 		</div>
 	);
 
+	if (confirmationMarkdown) {
+		return (
+			<FormConfirmation
+				formId={form.id}
+				markdown={confirmationMarkdown}
+			/>
+		);
+	}
+
 	if (showLoadingState) {
 		return (
 			<div className="flex justify-center">
@@ -1526,22 +1573,44 @@ function FormRendererInner({
 									</motion.div>
 								))}
 							</AnimatePresence>
-							<div className="pt-4">
-								<ScheduleControls
-									value={schedule}
-									onChange={setSchedule}
-									disabled={
-										submitForm.isPending ||
-										isNavigating ||
-										uploadingFields.size > 0
-									}
+							<input
+								type="text"
+								name="website"
+								value={honeypot}
+								onChange={(event) =>
+									setHoneypot(event.target.value)
+								}
+								tabIndex={-1}
+								autoComplete="off"
+								aria-hidden="true"
+								className="absolute -left-[10000px] h-px w-px overflow-hidden"
+							/>
+							{allowScheduling ? (
+								<div className="pt-4">
+									<ScheduleControls
+										value={schedule}
+										onChange={setSchedule}
+										disabled={
+											submitForm.isPending ||
+											isNavigating ||
+											uploadingFields.size > 0
+										}
+									/>
+								</div>
+							) : null}
+							{captchaRequired ? (
+								<FormCaptcha
+									key={`${form.id}:${captchaResetSignal}`}
+									formId={form.id}
+									onPayloadChange={setCaptchaPayload}
 								/>
-							</div>
+							) : null}
 							<div className="pt-4">
 								<Button
 									type="submit"
 									disabled={
 										!isValid ||
+										(captchaRequired && !captchaPayload) ||
 										submitForm.isPending ||
 										isNavigating ||
 										uploadingFields.size > 0
@@ -1587,17 +1656,16 @@ export function FormRenderer({
 	onDevModeChange,
 	onExecutionStart,
 	preventNavigation,
+	allowScheduling,
 }: FormRendererProps) {
 	const [searchParams] = useSearchParams();
+	const isEmbed = getEmbedTokenClaims()?.embed === true;
 
 	// Convert URLSearchParams to plain object
-	const queryParams = useMemo(() => {
-		const params: Record<string, string> = {};
-		searchParams.forEach((value, key) => {
-			params[key] = value;
-		});
-		return params;
-	}, [searchParams]);
+	const queryParams = useMemo(
+		() => formRuntimeQueryParams(searchParams, isEmbed),
+		[isEmbed, searchParams],
+	);
 
 	return (
 		<FormContextProvider form={form} queryParams={queryParams}>
@@ -1607,6 +1675,7 @@ export function FormRenderer({
 				onDevModeChange={onDevModeChange}
 				onExecutionStart={onExecutionStart}
 				preventNavigation={preventNavigation}
+				allowScheduling={allowScheduling}
 			/>
 		</FormContextProvider>
 	);

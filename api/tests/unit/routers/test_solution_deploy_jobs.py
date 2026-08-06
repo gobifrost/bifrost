@@ -1,79 +1,27 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 
-from src.jobs.consumers.solution_deploy import SolutionDeployConsumer
+from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
 from src.models.orm.solutions import Solution
 from src.services.solutions.deploy_jobs import (
     create_staged_deploy_job,
     execute_deploy_job,
-    recover_deploy_jobs,
 )
 
 
 @pytest.mark.asyncio
-async def test_recovery_requeues_expired_claim_and_keeps_terminal_jobs(db_session):
-    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+async def test_create_job_stages_encrypted_central_job(
+    db_session, tmp_path, monkeypatch
+):
     solution = Solution(slug="demo", name="Demo")
     db_session.add(solution)
     await db_session.flush()
-    queued = SolutionDeployJob(
-        install_id=solution.id,
-        status="queued",
-        created_at=now,
-        updated_at=now,
-    )
-    already_published = SolutionDeployJob(
-        install_id=solution.id,
-        status="queued",
-        published_at=now,
-        created_at=now,
-        updated_at=now,
-    )
-    stale = SolutionDeployJob(
-        install_id=solution.id,
-        status="running",
-        claim_token=None,
-        lease_expires_at=now - timedelta(seconds=1),
-        created_at=now,
-        updated_at=now,
-    )
-    live = SolutionDeployJob(
-        install_id=solution.id,
-        status="running",
-        lease_expires_at=now + timedelta(minutes=1),
-        created_at=now,
-        updated_at=now,
-    )
-    succeeded = SolutionDeployJob(
-        install_id=solution.id,
-        status="succeeded",
-        created_at=now,
-        updated_at=now,
-    )
-    db_session.add_all([queued, already_published, stale, live, succeeded])
-    await db_session.flush()
-
-    recovered = await recover_deploy_jobs(db_session, now=now)
-
-    assert set(recovered) == {queued.id, stale.id}
-    assert stale.status == "queued"
-    assert stale.lease_expires_at is None
-    assert stale.result == {"phase": "requeued after an interrupted worker"}
-    assert live.status == "running"
-    assert already_published.status == "queued"
-    assert succeeded.status == "succeeded"
-
-
-@pytest.mark.asyncio
-async def test_create_job_stages_before_persisting_and_publishes_only_id(
-    db_session, tmp_path, monkeypatch
-):
     input_path = tmp_path / "input.zip"
     input_path.write_bytes(b"validated")
     write_path = AsyncMock(return_value=("a" * 64, len(b"validated")))
@@ -83,39 +31,56 @@ async def test_create_job_stages_before_persisting_and_publishes_only_id(
         write_path,
     )
     monkeypatch.setattr(
-        "src.services.solutions.deploy_jobs.publish_message",
+        "src.services.platform_jobs.publish_platform_job_update",
         publish,
     )
 
     job = await create_staged_deploy_job(
         db_session,
-        kind="install",
-        install_id=None,
+        kind="deploy",
+        install_id=solution.id,
+        organization_id=None,
+        requested_by_user_id=uuid4(),
+        requested_by_email="admin@example.com",
+        requested_by_name="Admin",
         options={"password": "never-plaintext", "config_values": {"key": "secret"}},
         input_path=input_path,
     )
 
-    write_path.assert_awaited_once_with(input_path)
-    publish.assert_awaited_once_with(
-        "solution-deploys",
-        {"job_id": str(job.id)},
-    )
-    assert job.kind == "install"
+    central = await db_session.get(PlatformJob, job.id)
+    assert central is not None
+    assert central.job_type == "solution.deploy"
+    assert central.payload == {"protected": True}
+    assert central.encrypted_payload is not None
+    assert "never-plaintext" not in central.encrypted_payload
+    assert "secret" not in central.encrypted_payload
+    assert central.resource_lock_key == f"solution:{solution.id}"
     assert job.input_key == f"_solution_deploy_jobs/{job.id}/input.zip"
     assert job.input_sha256 == "a" * 64
-    assert job.published_at is not None
-    assert "never-plaintext" not in (job.encrypted_options or "")
-    assert "secret" not in (job.encrypted_options or "")
+    publish.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_terminal_job_is_not_executed_again(
+async def test_terminal_projection_is_not_executed_again(
     db_session,
     async_session_factory,
     monkeypatch,
 ):
+    lease_token = uuid4()
     job = SolutionDeployJob(status="succeeded", kind="deploy")
-    db_session.add(job)
+    central = PlatformJob(
+        id=job.id,
+        job_type="solution.deploy",
+        payload_version=1,
+        payload={"protected": True},
+        requested_by_user_id=str(uuid4()),
+        requested_by_email="admin@example.com",
+        requested_by_name="Admin",
+        title="Deploy",
+        status="running",
+        lease_token=lease_token,
+    )
+    db_session.add_all([job, central])
     await db_session.commit()
 
     @asynccontextmanager
@@ -138,23 +103,6 @@ async def test_terminal_job_is_not_executed_again(
         execute,
     )
 
-    await execute_deploy_job(job.id)
-
-    execute.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_consumer_rejects_payload_with_job_parameters(monkeypatch):
-    execute = AsyncMock()
-    monkeypatch.setattr(
-        "src.jobs.consumers.solution_deploy.execute_deploy_job",
-        execute,
-    )
-    consumer = SolutionDeployConsumer()
-
-    with pytest.raises(ValueError, match="only job_id"):
-        await consumer.process_message(
-            {"job_id": "8c416226-329d-4f0b-8980-8c004cf5ed3b", "force": True}
-        )
+    await execute_deploy_job(job.id, lease_token)
 
     execute.assert_not_awaited()

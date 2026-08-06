@@ -60,7 +60,9 @@ class PendingExecution(TypedDict):
     user_email: str
     form_id: str | None
     api_key_id: str | None  # Workflow ID whose API key triggered this (for audit trail)
-    startup: dict[str, Any] | None  # Launch workflow results (available via context.startup)
+    startup: Any | None  # Launch workflow results (available via context.startup)
+    form_inputs: dict[str, Any]
+    embed: dict[str, Any]
     sync: bool  # If True, worker pushes result to Redis for sync execution
     is_platform_admin: bool  # Whether the caller is a platform admin
     actor_jti: str | None  # Bound app-host session, if submitted by solution_app
@@ -107,7 +109,9 @@ class RedisClient:
         user_email: str,
         form_id: str | None = None,
         script_name: str | None = None,
-        startup: dict[str, Any] | None = None,
+        startup: Any | None = None,
+        form_inputs: dict[str, Any] | None = None,
+        embed: dict[str, Any] | None = None,
         api_key_id: str | None = None,
         sync: bool = False,
         is_platform_admin: bool = False,
@@ -149,6 +153,8 @@ class RedisClient:
             "form_id": form_id,
             "api_key_id": api_key_id,
             "startup": startup,
+            "form_inputs": form_inputs or {},
+            "embed": embed or {},
             "sync": sync,
             "is_platform_admin": is_platform_admin,
             "actor_jti": actor_jti,

@@ -58,6 +58,7 @@ class FormPublic(BaseModel):
     id: str
     name: str
     description: str | None
+    confirmation_markdown: str
     workflow_id: str | None
     launch_workflow_id: str | None
     default_launch_params: dict | None

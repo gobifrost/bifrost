@@ -85,5 +85,5 @@ Forms use layered access control:
 | `PUT` | `/api/forms/{form_id}` | Full form replacement |
 | `DELETE` | `/api/forms/{form_id}` | Delete form |
 | `POST` | `/api/forms/{form_id}/startup` | Run startup workflow |
-| `POST` | `/api/forms/{form_id}/execute` | Execute main workflow |
+| `POST` | `/api/forms/{form_id}/submissions` | Validate and submit the linked workflow |
 | `POST` | `/api/forms/{form_id}/upload` | Upload file for file fields |

@@ -2,8 +2,8 @@
  * Component tests for FormInfoDialog.
  *
  * Heavier form using react-hook-form + zod. We mock the hooks it depends on
- * (auth, workflows metadata, roles) and also the FormEmbedSection (network)
- * and the OrganizationSelect (which pulls orgs).
+ * (auth, workflows metadata, roles) and the OrganizationSelect (which pulls
+ * orgs).
  *
  * Covers:
  * - required validation: submit empty form surfaces field errors
@@ -52,11 +52,6 @@ vi.mock("@/components/forms/OrganizationSelect", () => ({
 	),
 }));
 
-// FormEmbedSection hits authFetch; stub to null so we only test the dialog.
-vi.mock("@/components/forms/FormEmbedSection", () => ({
-	FormEmbedSection: () => null,
-}));
-
 import { FormInfoDialog } from "./FormInfoDialog";
 
 beforeEach(() => {
@@ -99,7 +94,9 @@ describe("FormInfoDialog — validation", () => {
 
 		await user.click(screen.getByRole("button", { name: /^save$/i }));
 
-		expect(await screen.findByText(/name is required/i)).toBeInTheDocument();
+		expect(
+			await screen.findByText(/name is required/i),
+		).toBeInTheDocument();
 		expect(
 			screen.getByText(/linked workflow is required/i),
 		).toBeInTheDocument();
@@ -119,7 +116,9 @@ describe("FormInfoDialog — org picker visibility", () => {
 	it("does not render the Organization select for non-platform admins", () => {
 		renderDialog();
 
-		expect(screen.queryByLabelText(/organization/i)).not.toBeInTheDocument();
+		expect(
+			screen.queryByLabelText(/organization/i),
+		).not.toBeInTheDocument();
 	});
 
 	it("renders the Organization select for platform admins", () => {
@@ -131,5 +130,16 @@ describe("FormInfoDialog — org picker visibility", () => {
 		renderDialog();
 
 		expect(screen.getByLabelText(/organization/i)).toBeInTheDocument();
+	});
+});
+
+describe("FormInfoDialog — sharing ownership", () => {
+	it("leaves Confirmation Message and HMAC settings to Share", () => {
+		renderDialog();
+
+		expect(
+			screen.queryByText(/confirmation message/i),
+		).not.toBeInTheDocument();
+		expect(screen.queryByText(/hmac/i)).not.toBeInTheDocument();
 	});
 });

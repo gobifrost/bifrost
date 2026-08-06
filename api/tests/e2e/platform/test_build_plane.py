@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 import pytest
 
 from src.services.builder.build_requests import await_build_jobs, request_app_build
+from src.models.orm.platform_jobs import PlatformJob
 from src.services.builder.staged_artifacts import StagedBuildArtifactStorage
 from src.services.solutions.deploy import solution_entity_id
 from tests.e2e.platform.conftest import wait_for_deploy
@@ -133,6 +134,12 @@ export function mount(element: HTMLElement) {
             app_id,
             completed.output_manifest,
         )
+        async with async_session_factory() as db:
+            central = await db.get(PlatformJob, completed.id)
+            assert central is not None
+            assert central.job_type == "solution.build"
+            assert central.status == "succeeded"
+            assert central.result["build_job_id"] == str(completed.id)
     finally:
         e2e_client.delete(
             f"/api/solutions/{solution_id}",

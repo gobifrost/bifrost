@@ -141,11 +141,8 @@ def test_summarize_consumer_uses_prefetch_one():
 
 
 @pytest.mark.asyncio
-async def test_backfill_publishes_to_backfill_queue(async_session_factory):
-    """Regression guard: backfill must route to the dedicated backfill queue,
-    not the live ``agent-summarization`` queue that serves just-finished runs.
-    Publishing to the live queue causes a 2000-run bulk op to block live
-    traffic for the full drain duration."""
+async def test_backfill_endpoint_enqueues_central_platform_job(async_session_factory):
+    """The endpoint persists one central parent instead of publishing directly."""
     from unittest.mock import patch
     from uuid import uuid4
 
@@ -153,6 +150,7 @@ async def test_backfill_publishes_to_backfill_queue(async_session_factory):
     from src.models.contracts.agent_runs import BackfillSummariesRequest
     from src.models.orm.agent_runs import AgentRun
     from src.models.orm.agents import Agent
+    from src.models.orm.platform_jobs import PlatformJob
     from src.routers.agent_runs import backfill_summaries
 
     agent_id = uuid4()
@@ -209,10 +207,12 @@ async def test_backfill_publishes_to_backfill_queue(async_session_factory):
                 )
 
             assert result.queued == 1
-            assert pub.await_count == 1
-            call = pub.await_args_list[0]
-            assert call.args[0] == "agent-summarization-backfill"
-            assert call.args[1]["run_id"] == str(run_id)
+            pub.assert_not_awaited()
+            platform_job = await db.get(PlatformJob, result.job_id)
+            assert platform_job is not None
+            assert platform_job.job_type == "agent.summary_backfill"
+            assert platform_job.status in {"queued", "running", "waiting", "succeeded"}
+            assert platform_job.payload == {"protected": True}
     finally:
         async with async_session_factory() as db:
             await db.execute(
@@ -220,6 +220,37 @@ async def test_backfill_publishes_to_backfill_queue(async_session_factory):
             )
             await db.execute(Agent.__table__.delete().where(Agent.id == agent_id))
             await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_backfill_platform_job_fans_out_to_dedicated_queue():
+    """The central runner preserves the dedicated low-priority queue boundary."""
+    from src.jobs.platform.base import PlatformJobDeferred
+    from src.jobs.platform.summary_backfill import (
+        SummaryBackfillPayload,
+        run_summary_backfill,
+    )
+
+    run_id = uuid4()
+    backfill_job_id = uuid4()
+    context = AsyncMock()
+    with patch(
+        "src.jobs.rabbitmq.publish_message",
+        new=AsyncMock(),
+    ) as pub:
+        with pytest.raises(PlatformJobDeferred):
+            await run_summary_backfill(
+                context,
+                SummaryBackfillPayload(
+                    backfill_job_id=backfill_job_id,
+                    run_ids=[run_id],
+                ),
+            )
+
+    pub.assert_awaited_once_with(
+        "agent-summarization-backfill",
+        {"run_id": str(run_id), "backfill_job_id": str(backfill_job_id)},
+    )
 
 
 @pytest.mark.asyncio

@@ -20,6 +20,8 @@ class TestToPublicDict:
             public_url="https://bifrost.example.com",
             parameters={"ticket_id": 42},
             startup={"preloaded": True},
+            form_inputs={"ticket_id": "visitor"},
+            embed={"ticket_id": "signed"},
             roi=ROIContext(time_saved=15, value=100.0),
         )
         result = ctx.to_public_dict()
@@ -37,6 +39,8 @@ class TestToPublicDict:
         assert result["public_url"] == "https://bifrost.example.com"
         assert result["parameters"] == {"ticket_id": 42}
         assert result["startup"] == {"preloaded": True}
+        assert result["form_inputs"] == {"ticket_id": "visitor"}
+        assert result["embed"] == {"ticket_id": "signed"}
         assert result["roi"] == {"time_saved": 15, "value": 100.0}
 
     def test_excludes_private_fields(self):

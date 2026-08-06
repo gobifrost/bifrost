@@ -1,10 +1,8 @@
-"""Durable orchestration and execution for Solution deploy jobs.
+"""Projection and execution helpers for central Solution deploy jobs.
 
 The API validates input, stages it in object storage, persists an encrypted job
-document, and publishes only the job id. Workers claim rows with a lease and
-execute the same proven deploy/install functions used by the old in-process
-background tasks. All terminal transitions are claim-token guarded, making
-duplicate RabbitMQ delivery safe.
+document, and creates a scheduler-owned platform job with the same UUID. The
+legacy SolutionDeployJob row remains only as the existing polling projection.
 """
 
 from __future__ import annotations
@@ -15,12 +13,12 @@ import logging
 import tempfile
 import zipfile
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from bifrost.solution_jobs import (
@@ -29,7 +27,6 @@ from bifrost.solution_jobs import (
 )
 from src.core.database import get_db_context
 from src.core.security import decrypt_secret, encrypt_secret
-from src.jobs.rabbitmq import publish_message
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
 from src.models.orm.solutions import Solution
 from src.services.solutions.deploy import (
@@ -58,12 +55,9 @@ from src.services.solutions.zip_install import (
 
 logger = logging.getLogger(__name__)
 
-DEPLOY_QUEUE = "solution-deploys"
 TERMINAL_STATUSES = frozenset({"succeeded", "failed"})
 JOB_KINDS = frozenset({"deploy", "install", "install_from_repo"})
 DeployJobKind = Literal["deploy", "install", "install_from_repo"]
-CLAIM_LEASE = timedelta(seconds=DEPLOY_JOB_TIMEOUT_SECONDS + 60)
-_ACTIVE_CLAIM_POLL_SECONDS = 2.0
 
 
 @dataclass(frozen=True)
@@ -74,7 +68,7 @@ class ClaimedDeployJob:
     input_key: str | None
     input_sha256: str | None
     encrypted_options: str | None
-    claim_token: UUID
+    lease_token: UUID
 
 
 async def create_staged_deploy_job(
@@ -82,11 +76,15 @@ async def create_staged_deploy_job(
     *,
     kind: DeployJobKind,
     install_id: UUID | None,
+    organization_id: UUID | None,
+    requested_by_user_id: UUID | str,
+    requested_by_email: str,
+    requested_by_name: str,
     options: dict[str, Any],
     input_path: Path | None = None,
     input_bytes: bytes | None = None,
 ) -> SolutionDeployJob:
-    """Stage validated input, persist the job, then durably publish its id."""
+    """Stage input and atomically create its central job plus polling projection."""
     if kind not in JOB_KINDS:
         raise ValueError(f"unsupported Solution deploy job kind: {kind}")
     if (input_path is None) == (input_bytes is None):
@@ -113,6 +111,35 @@ async def create_staged_deploy_job(
     )
     db.add(job)
     try:
+        from src.jobs.platform.solution_deploy import (
+            SOLUTION_DEPLOY_DEFINITION,
+            SolutionDeployPayload,
+        )
+        from src.services.platform_jobs import enqueue_platform_job
+
+        platform_job, _ = await enqueue_platform_job(
+            db,
+            SOLUTION_DEPLOY_DEFINITION,
+            SolutionDeployPayload(
+                deploy_job_id=job_id,
+                kind=kind,
+                install_id=install_id,
+                input_sha256=digest,
+                options=options,
+            ),
+            dedupe_key=str(job_id),
+            resource_lock_key=f"solution:{install_id}" if install_id else None,
+            priority=500,
+            organization_id=organization_id,
+            requested_by_user_id=requested_by_user_id,
+            requested_by_email=requested_by_email,
+            requested_by_name=requested_by_name,
+            resource_type="solution_deploy",
+            resource_id=str(job_id),
+            title=f"Solution {kind.replace('_', ' ')}",
+            action_url=f"/solutions/{install_id}" if install_id else "/solutions",
+            job_id=job_id,
+        )
         await db.commit()
         await db.refresh(job)
     except Exception:
@@ -126,82 +153,27 @@ async def create_staged_deploy_job(
             )
         raise
 
-    # Publishing happens only after both S3 and PostgreSQL are durable. If the
-    # broker is unavailable, the queued row remains recoverable by the worker's
-    # startup/periodic recovery pass; publish_message already retries transient
-    # failures.
-    await publish_message(DEPLOY_QUEUE, {"job_id": str(job.id)})
-    job.published_at = datetime.now(timezone.utc)
-    await db.commit()
-    await db.refresh(job)
+    from src.services.platform_jobs import publish_platform_job_update
+
+    await publish_platform_job_update(platform_job)
     return job
-
-
-async def recover_deploy_jobs(
-    db: AsyncSession,
-    *,
-    now: datetime | None = None,
-) -> list[UUID]:
-    """Return all queued work and requeue only expired running claims."""
-    resolved_now = now or datetime.now(timezone.utc)
-    rows = (
-        await db.execute(
-            select(SolutionDeployJob)
-            .where(
-                or_(
-                    and_(
-                        SolutionDeployJob.status == "queued",
-                        SolutionDeployJob.published_at.is_(None),
-                    ),
-                    and_(
-                        SolutionDeployJob.status == "running",
-                        or_(
-                            SolutionDeployJob.lease_expires_at.is_(None),
-                            SolutionDeployJob.lease_expires_at <= resolved_now,
-                        ),
-                    ),
-                )
-            )
-            .with_for_update(skip_locked=True)
-        )
-    ).scalars().all()
-    ids: list[UUID] = []
-    for job in rows:
-        if job.status == "running":
-            job.status = "queued"
-            job.claim_token = None
-            job.claimed_at = None
-            job.lease_expires_at = None
-            job.published_at = None
-            job.result = {"phase": "requeued after an interrupted worker"}
-        ids.append(job.id)
-    return ids
-
-
-async def mark_deploy_job_published(job_id: UUID) -> None:
-    """Record a confirmed durable publish unless the job was already claimed."""
-    async with get_db_context() as db:
-        job = (
-            await db.execute(
-                select(SolutionDeployJob)
-                .where(
-                    SolutionDeployJob.id == job_id,
-                    SolutionDeployJob.status == "queued",
-                )
-                .with_for_update()
-            )
-        ).scalar_one_or_none()
-        if job is not None:
-            job.published_at = datetime.now(timezone.utc)
 
 
 async def _claim_deploy_job(
     job_id: UUID,
     *,
-    now: datetime | None = None,
+    lease_token: UUID,
 ) -> ClaimedDeployJob | None:
-    resolved_now = now or datetime.now(timezone.utc)
+    from src.models.orm.platform_jobs import PlatformJob
+
     async with get_db_context() as db:
+        platform_job = await db.get(PlatformJob, job_id)
+        if (
+            platform_job is None
+            or platform_job.status not in {"running", "cancel_requested"}
+            or platform_job.lease_token != lease_token
+        ):
+            return None
         job = (
             await db.execute(
                 select(SolutionDeployJob)
@@ -211,20 +183,8 @@ async def _claim_deploy_job(
         ).scalar_one_or_none()
         if job is None or job.status in TERMINAL_STATUSES:
             return None
-        if (
-            job.status == "running"
-            and job.lease_expires_at is not None
-            and job.lease_expires_at > resolved_now
-        ):
-            return None
 
-        token = uuid4()
         job.status = "running"
-        job.claim_token = token
-        job.claimed_at = resolved_now
-        job.started_at = resolved_now
-        job.lease_expires_at = resolved_now + CLAIM_LEASE
-        job.attempt_count += 1
         job.error = None
         job.result = {"phase": "loading staged input"}
         return ClaimedDeployJob(
@@ -234,57 +194,35 @@ async def _claim_deploy_job(
             input_key=job.input_key,
             input_sha256=job.input_sha256,
             encrypted_options=job.encrypted_options,
-            claim_token=token,
-        )
-
-
-async def _job_state(
-    job_id: UUID,
-) -> tuple[str | None, datetime | None]:
-    async with get_db_context() as db:
-        job = await db.get(SolutionDeployJob, job_id)
-        if job is None:
-            return None, None
-        return job.status, job.lease_expires_at
-
-
-async def _wait_for_claim(job_id: UUID) -> ClaimedDeployJob | None:
-    """Wait out another live claim instead of acknowledging its duplicate."""
-    while True:
-        claimed = await _claim_deploy_job(job_id)
-        if claimed is not None:
-            return claimed
-        status, lease_expires_at = await _job_state(job_id)
-        if status is None or status in TERMINAL_STATUSES:
-            return None
-        now = datetime.now(timezone.utc)
-        if lease_expires_at is None or lease_expires_at <= now:
-            continue
-        await asyncio.sleep(
-            min(
-                _ACTIVE_CLAIM_POLL_SECONDS,
-                max(0.05, (lease_expires_at - now).total_seconds()),
-            )
+            lease_token=lease_token,
         )
 
 
 async def _update_claimed_job(
     job_id: UUID,
-    claim_token: UUID,
+    lease_token: UUID,
     *,
     status: str | None = None,
     error: str | None = None,
     result: dict[str, Any] | None = None,
     install_id: UUID | None = None,
 ) -> bool:
+    from src.models.orm.platform_jobs import PlatformJob
+
     async with get_db_context() as db:
+        platform_job = await db.get(PlatformJob, job_id)
+        if (
+            platform_job is None
+            or platform_job.status not in {"running", "cancel_requested"}
+            or platform_job.lease_token != lease_token
+        ):
+            return False
         job = (
             await db.execute(
                 select(SolutionDeployJob)
                 .where(
                     SolutionDeployJob.id == job_id,
                     SolutionDeployJob.status == "running",
-                    SolutionDeployJob.claim_token == claim_token,
                 )
                 .with_for_update()
             )
@@ -297,15 +235,13 @@ async def _update_claimed_job(
         job.result = result
         if install_id is not None:
             job.install_id = install_id
-        if status in TERMINAL_STATUSES:
-            job.lease_expires_at = None
         return True
 
 
 async def _set_phase(claimed: ClaimedDeployJob, phase: str) -> None:
     await _update_claimed_job(
         claimed.id,
-        claimed.claim_token,
+        claimed.lease_token,
         result={"phase": phase},
     )
 
@@ -498,9 +434,9 @@ async def _run_claimed_job(
     raise ValueError(f"unsupported Solution deploy job kind: {claimed.kind}")
 
 
-async def execute_deploy_job(job_id: UUID) -> None:
-    """Claim and execute one job id; safe under duplicate delivery."""
-    claimed = await _wait_for_claim(job_id)
+async def execute_deploy_job(job_id: UUID, lease_token: UUID) -> None:
+    """Execute one projection while its central scheduler lease is current."""
+    claimed = await _claim_deploy_job(job_id, lease_token=lease_token)
     if claimed is None:
         return
 
@@ -524,7 +460,7 @@ async def execute_deploy_job(job_id: UUID) -> None:
             )
         terminal_written = await _update_claimed_job(
             claimed.id,
-            claimed.claim_token,
+            claimed.lease_token,
             status="succeeded",
             result=result,
             install_id=install_id,
@@ -534,14 +470,14 @@ async def execute_deploy_job(job_id: UUID) -> None:
             await _delete_orphan_install(claimed)
         terminal_written = await _update_claimed_job(
             claimed.id,
-            claimed.claim_token,
+            claimed.lease_token,
             status="failed",
             error=DEPLOY_JOB_TIMEOUT_ERROR,
         )
     except InactiveInstallExists as exc:
         terminal_written = await _update_claimed_job(
             claimed.id,
-            claimed.claim_token,
+            claimed.lease_token,
             status="failed",
             error=str(exc),
             result={
@@ -555,7 +491,7 @@ async def execute_deploy_job(job_id: UUID) -> None:
             await _delete_orphan_install(claimed)
         terminal_written = await _update_claimed_job(
             claimed.id,
-            claimed.claim_token,
+            claimed.lease_token,
             status="failed",
             error="A deploy is already in progress for this install; retry shortly.",
         )
@@ -570,7 +506,7 @@ async def execute_deploy_job(job_id: UUID) -> None:
             storage_error = f"Install cloned but deploy failed: {storage_error}"
         terminal_written = await _update_claimed_job(
             claimed.id,
-            claimed.claim_token,
+            claimed.lease_token,
             status="failed",
             error=storage_error,
         )
@@ -596,7 +532,7 @@ async def execute_deploy_job(job_id: UUID) -> None:
             error = f"Install cloned but deploy failed: {error}"
         terminal_written = await _update_claimed_job(
             claimed.id,
-            claimed.claim_token,
+            claimed.lease_token,
             status="failed",
             error=error,
         )
@@ -606,7 +542,7 @@ async def execute_deploy_job(job_id: UUID) -> None:
             await _delete_orphan_install(claimed)
         terminal_written = await _update_claimed_job(
             claimed.id,
-            claimed.claim_token,
+            claimed.lease_token,
             status="failed",
             error=(
                 "Install cloned but deploy failed unexpectedly; see server logs."

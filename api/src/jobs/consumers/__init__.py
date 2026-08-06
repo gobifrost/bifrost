@@ -2,11 +2,9 @@
 from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
 from src.jobs.consumers.package_install import PackageInstallConsumer
 from src.jobs.consumers.agent_run import AgentRunConsumer
-from src.jobs.consumers.solution_deploy import SolutionDeployConsumer
 
 __all__ = [
     "WorkflowExecutionConsumer",
     "PackageInstallConsumer",
     "AgentRunConsumer",
-    "SolutionDeployConsumer",
 ]

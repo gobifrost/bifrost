@@ -30,6 +30,13 @@ from src.core.auth import Context, CurrentSuperuser
 from src.core.log_safety import log_safe
 from src.models import OAuthProvider, OAuthToken
 from src.models.orm.integrations import IntegrationMapping
+from src.models.orm.platform_jobs import PlatformJob
+from src.models.contracts.platform_jobs import PlatformJobAccepted
+from src.jobs.platform.system_maintenance import (
+    OAUTH_REFRESH_DEFINITION,
+    OAuthRefreshPayload,
+)
+from src.services.platform_jobs import enqueue_platform_job, publish_platform_job_update
 from src.services.oauth_entity_id import extract_entity_id
 from src.services.oauth_provider import (
     append_query_params,
@@ -85,7 +92,7 @@ class RefreshJobRun(BaseModel):
     needs_refresh: int = 0
     total_connections: int = 0
     error: str | None = None
-    errors: list[str] = Field(default_factory=list)
+    errors: list[str | dict[str, Any]] = Field(default_factory=list)
 
 
 class RefreshJobStatusResponse(BaseModel):
@@ -93,15 +100,6 @@ class RefreshJobStatusResponse(BaseModel):
     enabled: bool = Field(default=True)
     last_run: RefreshJobRun | None = None
     next_run: datetime | None = None
-
-
-class RefreshAllResponse(BaseModel):
-    """Response for triggering refresh of all tokens."""
-    triggered: bool
-    message: str
-    connections_queued: int = 0
-    refreshed_successfully: int = 0
-    refresh_failed: int = 0
 
 
 # =============================================================================
@@ -914,41 +912,34 @@ async def get_refresh_job_status(
     ctx: Context,
     user: CurrentSuperuser,
 ) -> RefreshJobStatusResponse:
-    """Get refresh job status from stored job history."""
-    from src.models import SystemConfig
-
-    # Query for the last job status
-    query = select(SystemConfig).where(
-        SystemConfig.category == "oauth",
-        SystemConfig.key == "refresh_job_status",
-        SystemConfig.organization_id.is_(None),  # Global system config
-    )
-    result = await ctx.db.execute(query)
-    config = result.scalar_one_or_none()
-
-    if not config or not config.value_json:
+    """Get the latest durable OAuth refresh job."""
+    job = (
+        await ctx.db.execute(
+            select(PlatformJob)
+            .where(PlatformJob.job_type == OAUTH_REFRESH_DEFINITION.job_type)
+            .order_by(PlatformJob.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if job is None:
         return RefreshJobStatusResponse(
             enabled=True,
             last_run=None,
             next_run=None,
         )
-
-    job_data = config.value_json
-
-    # Build last_run from stored data
-    last_run = None
-    if job_data.get("start_time"):
-        last_run = RefreshJobRun(
-            status="completed" if not job_data.get("errors") else "completed_with_errors",
-            start_time=datetime.fromisoformat(job_data["start_time"]) if job_data.get("start_time") else None,
-            end_time=datetime.fromisoformat(job_data["end_time"]) if job_data.get("end_time") else None,
-            connections_checked=job_data.get("total_connections", 0),
-            refreshed_successfully=job_data.get("refreshed_successfully", 0),
-            refresh_failed=job_data.get("refresh_failed", 0),
-            needs_refresh=job_data.get("needs_refresh", 0),
-            total_connections=job_data.get("total_connections", 0),
-            errors=job_data.get("errors", []),
-        )
+    job_data = job.result or {}
+    last_run = RefreshJobRun(
+        status=job.status,
+        start_time=job.started_at,
+        end_time=job.completed_at,
+        connections_checked=job_data.get("total_connections", 0),
+        refreshed_successfully=job_data.get("refreshed_successfully", 0),
+        refresh_failed=job_data.get("refresh_failed", 0),
+        needs_refresh=job_data.get("needs_refresh", 0),
+        total_connections=job_data.get("total_connections", 0),
+        error=job.error_message,
+        errors=job_data.get("errors", []),
+    )
 
     return RefreshJobStatusResponse(
         enabled=True,
@@ -959,54 +950,37 @@ async def get_refresh_job_status(
 
 @router.post(
     "/refresh_all",
-    response_model=RefreshAllResponse,
+    response_model=PlatformJobAccepted,
     summary="Trigger refresh of all OAuth tokens",
     description="Manually trigger refresh of all OAuth tokens (Platform admin only)",
 )
 async def trigger_refresh_all(
     ctx: Context,
     user: CurrentSuperuser,
-) -> RefreshAllResponse:
-    """Trigger refresh of all OAuth tokens."""
-    from src.jobs.schedulers.oauth_token_refresh import run_refresh_job
-    from src.models import SystemConfig
+) -> PlatformJobAccepted:
+    """Queue a manual refresh of all OAuth tokens."""
 
     logger.info(f"User {ctx.user.email} manually triggering OAuth refresh job")
 
-    # Run the refresh job (manual trigger refreshes all connections)
-    results = await run_refresh_job(
-        trigger_type="manual",
-        trigger_user=ctx.user.email,
-        refresh_threshold_minutes=None,  # Refresh all, not just expiring
+    job, reused = await enqueue_platform_job(
+        ctx.db,
+        OAUTH_REFRESH_DEFINITION,
+        OAuthRefreshPayload(
+            trigger_type="manual",
+            refresh_threshold_minutes=None,
+        ),
+        dedupe_key="manual",
+        resource_lock_key=OAUTH_REFRESH_DEFINITION.job_type,
+        priority=1000,
+        organization_id=None,
+        requested_by_user_id=user.user_id,
+        requested_by_email=user.email,
+        requested_by_name=user.name or user.email or "Unknown",
+        resource_type="system",
+        resource_id=OAUTH_REFRESH_DEFINITION.job_type,
+        title="Refresh all OAuth tokens",
+        action_url="/diagnostics",
     )
-
-    # Store job status in SystemConfig for later retrieval
-    query = select(SystemConfig).where(
-        SystemConfig.category == "oauth",
-        SystemConfig.key == "refresh_job_status",
-        SystemConfig.organization_id.is_(None),
-    )
-    result = await ctx.db.execute(query)
-    config = result.scalar_one_or_none()
-
-    if config:
-        config.value_json = results
-        config.updated_at = datetime.now(timezone.utc)
-    else:
-        config = SystemConfig(
-            category="oauth",
-            key="refresh_job_status",
-            value_json=results,
-            organization_id=None,
-        )
-        ctx.db.add(config)
-
-    await ctx.db.flush()
-
-    return RefreshAllResponse(
-        triggered=True,
-        message=f"Refreshed {results['refreshed_successfully']} of {results['needs_refresh']} connections",
-        connections_queued=results["needs_refresh"],
-        refreshed_successfully=results["refreshed_successfully"],
-        refresh_failed=results["refresh_failed"],
-    )
+    await ctx.db.commit()
+    await publish_platform_job_update(job)
+    return PlatformJobAccepted(job_id=job.id, status=job.status, reused=reused)

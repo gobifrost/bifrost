@@ -20,7 +20,7 @@ from src.models.orm.solution_build_jobs import SolutionBuildJob
 from src.services.builder.build_plane import record_builder_heartbeat
 from src.services.builder.build_plane import cancel_key
 from src.services.builder.capabilities import mint_build_capability, require_build_capability
-from src.services.builder.claim import claim_next_build_job
+from src.services.builder.claim import claim_build_job
 from src.services.builder.staged_artifacts import (
     BuildArtifactIntegrityError,
     BuildOutputTooLarge,
@@ -61,11 +61,12 @@ async def heartbeat(
 
 @router.post("/claim")
 async def claim(
+    job_id: UUID,
     db: Db,
     key: Annotated[str | None, Header(alias="X-Bifrost-Builder-Key")] = None,
 ) -> dict[str, Any]:
     _require_internal_secret(key)
-    job = await claim_next_build_job(db)
+    job = await claim_build_job(db, job_id)
     if job is None:
         return {"job": None, "capability": None}
     if job.app_id is None:
@@ -195,6 +196,27 @@ async def update_status(
     job.output_manifest = manifest
     job.last_progress_at = datetime.now(timezone.utc)
     job.completed_at = datetime.now(timezone.utc)
+
+    await db.commit()
+    from src.services.platform_jobs import finish_deferred_platform_job
+
+    result = {
+        "build_job_id": str(job_id),
+        "output_manifest": manifest,
+        "log_excerpt": job.log_excerpt,
+    }
+    await finish_deferred_platform_job(
+        job_id,
+        status=(
+            "succeeded"
+            if body.status == "succeeded"
+            else "cancelled"
+            if body.status == "cancelled"
+            else "failed"
+        ),
+        result=result,
+        error_message=body.error if body.status not in {"succeeded", "cancelled"} else None,
+    )
 
     redis = await get_redis_client()._get_redis()
     await redis.publish(

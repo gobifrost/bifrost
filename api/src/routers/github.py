@@ -647,7 +647,7 @@ async def git_fetch(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
 
     job_id = (request.job_id if request and request.job_id else None) or str(uuid.uuid4())
-    await publish_git_operation(
+    job_id = await publish_git_operation(
         job_id=job_id,
         org_id=str(ctx.org_id) if ctx.org_id else "",
         user_id=str(user.user_id),
@@ -675,7 +675,7 @@ async def git_commit(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
 
     job_id = request.job_id or str(uuid.uuid4())
-    await publish_git_operation(
+    job_id = await publish_git_operation(
         job_id=job_id,
         org_id=str(ctx.org_id) if ctx.org_id else "",
         user_id=str(user.user_id),
@@ -705,7 +705,7 @@ async def git_sync(
 
     job_id = (request.job_id if request and request.job_id else None) or str(uuid.uuid4())
     confirm_deletes = request.confirm_deletes if request else False
-    await publish_git_operation(
+    job_id = await publish_git_operation(
         job_id=job_id,
         org_id=str(ctx.org_id) if ctx.org_id else "",
         user_id=str(user.user_id),
@@ -734,7 +734,7 @@ async def git_abort_merge(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
 
     job_id = (request.job_id if request and request.job_id else None) or str(uuid.uuid4())
-    await publish_git_operation(
+    job_id = await publish_git_operation(
         job_id=job_id,
         org_id=str(ctx.org_id) if ctx.org_id else "",
         user_id=str(user.user_id),
@@ -762,7 +762,7 @@ async def git_changes(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
 
     job_id = (request.job_id if request and request.job_id else None) or str(uuid.uuid4())
-    await publish_git_operation(
+    job_id = await publish_git_operation(
         job_id=job_id,
         org_id=str(ctx.org_id) if ctx.org_id else "",
         user_id=str(user.user_id),
@@ -790,7 +790,7 @@ async def git_resolve(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
 
     job_id = request.job_id or str(uuid.uuid4())
-    await publish_git_operation(
+    job_id = await publish_git_operation(
         job_id=job_id,
         org_id=str(ctx.org_id) if ctx.org_id else "",
         user_id=str(user.user_id),
@@ -819,7 +819,7 @@ async def git_diff(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
 
     job_id = request.job_id or str(uuid.uuid4())
-    await publish_git_operation(
+    job_id = await publish_git_operation(
         job_id=job_id,
         org_id=str(ctx.org_id) if ctx.org_id else "",
         user_id=str(user.user_id),
@@ -848,7 +848,7 @@ async def git_discard(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
 
     job_id = request.job_id or str(uuid.uuid4())
-    await publish_git_operation(
+    job_id = await publish_git_operation(
         job_id=job_id,
         org_id=str(ctx.org_id) if ctx.org_id else "",
         user_id=str(user.user_id),
@@ -857,6 +857,5 @@ async def git_discard(
         paths=request.paths,
     )
     return GitJobResponse(job_id=job_id)
-
 
 

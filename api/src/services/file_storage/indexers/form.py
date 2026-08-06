@@ -149,6 +149,9 @@ class FormIndexer:
             id=form_id,
             name=name,
             description=form_data.get("description"),
+            confirmation_markdown=form_data.get(
+                "confirmation_markdown", "## Form submitted\n\nThank you!"
+            ),
             workflow_id=workflow_id,
             launch_workflow_id=launch_workflow_id,
             default_launch_params=form_data.get("default_launch_params"),
@@ -162,6 +165,9 @@ class FormIndexer:
                 # Update definition fields from file
                 "name": name,
                 "description": form_data.get("description"),
+                "confirmation_markdown": form_data.get(
+                    "confirmation_markdown", "## Form submitted\n\nThank you!"
+                ),
                 "workflow_id": workflow_id,
                 "launch_workflow_id": launch_workflow_id,
                 "default_launch_params": form_data.get("default_launch_params"),

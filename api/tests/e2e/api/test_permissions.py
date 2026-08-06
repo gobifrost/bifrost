@@ -522,9 +522,9 @@ class TestOrgIsolation:
 
             # Org1 user tries to execute org2's form
             response = e2e_client.post(
-                f"/api/forms/{form_id}/execute",
+                f"/api/forms/{form_id}/submissions",
                 headers=org1_user.headers,
-                json={"inputs": {}},
+                json={"form_data": {}},
             )
             # Should get 403 or 404, not 200
             assert response.status_code in [403, 404], \

@@ -8,11 +8,13 @@ metadata:
     app.kubernetes.io/component: scheduler
     app.kubernetes.io/part-of: bifrost
 spec:
-  # IMPORTANT: Scheduler MUST be a singleton (exactly 1 replica)
-  # Running multiple schedulers will cause duplicate job executions
+  # Safe to scale: every replica executes platform jobs while PostgreSQL
+  # elects one APScheduler/pub-sub trigger leader.
   replicas: 1
   strategy:
-    type: Recreate  # Ensure only one instance runs at a time
+    # Keep Recreate so the first upgrade cannot overlap a pre-election
+    # scheduler pod with a new lease-aware pod. This does not prevent scaling.
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: bifrost-scheduler
@@ -32,6 +34,11 @@ spec:
                 name: bifrost-config
             - secretRef:
                 name: bifrost-secrets
+          env:
+            # One deploy may wait for an isolated app build. Two slots plus
+            # solution.deploy max_concurrency=1 preserve capacity for its child.
+            - name: BIFROST_SCHEDULER_JOB_SLOTS
+              value: "2"
           resources:
             requests:
               cpu: "50m"

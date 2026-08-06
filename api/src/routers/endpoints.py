@@ -155,7 +155,11 @@ async def execute_endpoint(
                 workflow_id=str(workflow.id),
                 file_path=workflow.path,
                 execution_mode=workflow.execution_mode or "sync",
-                timeout_seconds=workflow.timeout_seconds or 1800,
+                # NOT `or 1800` — 0 means "no timeout", and `or` would clobber
+                # it *and* persist the wrong value into the Redis cache below.
+                timeout_seconds=(
+                    workflow.timeout_seconds if workflow.timeout_seconds is not None else 1800
+                ),
                 allowed_methods=workflow.allowed_methods or ["POST"],
             )
 

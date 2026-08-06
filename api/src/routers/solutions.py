@@ -79,6 +79,11 @@ from src.models.orm.tables import Table
 from src.models.orm.users import Role, User, UserRole
 from src.models.orm.workflow_roles import WorkflowRole
 from src.models.orm.workflows import Workflow
+from src.jobs.platform.solution_export import (
+    SOLUTION_EXPORT_DEFINITION,
+    SolutionExportPayload,
+)
+from src.services.platform_jobs import enqueue_platform_job, publish_platform_job_update
 from src.services.solutions.export_jobs import (
     create_export_job,
     list_export_jobs,
@@ -525,8 +530,25 @@ async def create_solution_export_job(
             detail="Export job was not persisted",
         )
     row.notification_id = UUID(notification.id)
+    platform_job, _ = await enqueue_platform_job(
+        ctx.db,
+        SOLUTION_EXPORT_DEFINITION,
+        SolutionExportPayload(export_job_id=row.id),
+        dedupe_key=str(row.id),
+        resource_lock_key=f"solution:{solution_id}",
+        priority=100,
+        organization_id=sol.organization_id,
+        requested_by_user_id=user.user_id,
+        requested_by_email=user.email,
+        requested_by_name=user.name or user.email or "Unknown",
+        resource_type="solution_export",
+        resource_id=str(row.id),
+        title=f"Exporting {sol.name}",
+        action_url=f"/solutions/{solution_id}",
+    )
     await ctx.db.commit()
     await ctx.db.refresh(row)
+    await publish_platform_job_update(platform_job)
     return public_job(row)
 
 
@@ -1336,6 +1358,10 @@ async def deploy_solution(
             ctx.db,
             kind="deploy",
             install_id=solution_id,
+            organization_id=solution.organization_id,
+            requested_by_user_id=user.user_id,
+            requested_by_email=user.email,
+            requested_by_name=user.name or user.email or "Unknown",
             options={"force": force},
             input_path=zip_path,
         )
@@ -1816,6 +1842,10 @@ async def install_from_repo(
             ctx.db,
             kind="install_from_repo",
             install_id=solution.id,
+            organization_id=solution.organization_id,
+            requested_by_user_id=user.user_id,
+            requested_by_email=user.email,
+            requested_by_name=user.name or user.email or "Unknown",
             options={},
             input_bytes=archive,
         )
@@ -1945,6 +1975,10 @@ async def install_solution(
             ctx.db,
             kind="install",
             install_id=None,
+            organization_id=org_id,
+            requested_by_user_id=user.user_id,
+            requested_by_email=user.email,
+            requested_by_name=user.name or user.email or "Unknown",
             options={
                 "organization_id": str(org_id) if org_id is not None else None,
                 "config_values": values,

@@ -27,6 +27,7 @@ from src.models.orm import (
     Form,
     FormField,
     FormRole,
+    FormPublication,
     Agent,
     AgentTool,
     AgentDelegation,
@@ -58,6 +59,11 @@ from src.models.orm import (
     # Applications (App Builder)
     Application,
     PlatformJob,
+    SchedulerLease,
+    SchedulerReplica,
+    SchedulerTaskRun,
+    SchedulerTaskState,
+    SystemDiagnosticLog,
     AppRole,
 )
 
@@ -91,6 +97,7 @@ __all__ = [
     "Form",
     "FormField",
     "FormRole",
+    "FormPublication",
     "Agent",
     "AgentTool",
     "AgentDelegation",
@@ -122,6 +129,11 @@ __all__ = [
     # Applications (App Builder)
     "Application",
     "PlatformJob",
+    "SchedulerLease",
+    "SchedulerReplica",
+    "SchedulerTaskRun",
+    "SchedulerTaskState",
+    "SystemDiagnosticLog",
     "AppRole",
     # Enums
     "ExecutionStatus",

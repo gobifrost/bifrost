@@ -21,6 +21,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm.agent_runs import AgentRun
+from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
 
 
@@ -174,6 +175,14 @@ class TestBackfillSummaries:
         assert job.status == "running"
         assert job.agent_id == UUID(backfill_agent["id"])
         assert job.estimated_cost_usd >= Decimal("0")
+
+        platform_job = await db_session.get(PlatformJob, UUID(body["job_id"]))
+        assert platform_job is not None
+        assert platform_job.job_type == "agent.summary_backfill"
+        assert platform_job.status in {"queued", "running", "waiting", "succeeded"}
+        assert platform_job.payload == {"protected": True}
+        assert platform_job.encrypted_payload is not None
+        assert backfill_agent["id"] not in platform_job.encrypted_payload
 
         # The live worker may advance a queued run before this separate test
         # process observes it. The durable proof of the reset is that the

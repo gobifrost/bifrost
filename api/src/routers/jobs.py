@@ -9,10 +9,14 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from src.core.log_safety import log_safe
+from src.core.database import get_db
+from src.models.orm.platform_jobs import PlatformJob
+from sqlalchemy.ext.asyncio import AsyncSession
+from uuid import UUID
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +51,10 @@ class JobStatusResponse(BaseModel):
     summary="Get job status",
     description="Poll for job completion status. Returns 'pending' if job not yet complete.",
 )
-async def get_job_status(job_id: str) -> JobStatusResponse:
+async def get_job_status(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> JobStatusResponse:
     """
     Get the status of a job by ID.
 
@@ -58,6 +65,34 @@ async def get_job_status(job_id: str) -> JobStatusResponse:
     - E2E tests that can't use WebSockets
     - Fallback when WebSocket connection fails
     """
+    try:
+        platform_job_id = UUID(job_id)
+    except ValueError:
+        platform_job_id = None
+    if platform_job_id is not None:
+        platform_job = await db.get(PlatformJob, platform_job_id)
+        if platform_job is not None:
+            status_map = {
+                "queued": "pending",
+                "running": "running",
+                "cancel_requested": "running",
+                "succeeded": "success",
+                "failed": "failed",
+                "cancelled": "cancelled",
+            }
+            result = platform_job.result or {}
+            return JobStatusResponse(
+                status=status_map[platform_job.status],
+                message=platform_job.phase,
+                pulled=result.get("pulled", 0),
+                pushed=result.get("pushed", 0),
+                commit_sha=result.get("commit_sha"),
+                error=platform_job.error_message,
+                data=result,
+                preview=result.get("preview"),
+                conflicts=result.get("conflicts"),
+            )
+
     from src.core.redis_client import get_redis_client
 
     try:

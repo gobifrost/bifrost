@@ -5,7 +5,8 @@
  * options for form fields and other dynamic data sources.
  *
  * - Listing: Use GET /api/workflows?type=data_provider
- * - Execution: Use POST /api/workflows/execute (returns options in result field)
+ * - Other admin surfaces: Use POST /api/workflows/execute
+ * - Form runtime: Use the field-derived form options endpoint
  */
 
 import { $api, apiClient } from "@/lib/api-client";
@@ -37,12 +38,45 @@ export function useDataProviders() {
 /**
  * Standalone async function to get options from a data provider
  *
- * Uses the unified /execute endpoint which handles data providers specially,
- * returning the options list directly in the result field.
+ * Uses the field-derived form runtime endpoint; the browser never receives or
+ * sends the underlying provider workflow ID.
  *
- * @param providerId - Data provider UUID (workflow_id)
+ * @param formId - Runtime form UUID
+ * @param fieldName - Field whose persisted provider should run
  * @param inputs - Optional input parameters for the data provider
  */
+export async function getFormFieldOptions(
+	formId: string,
+	fieldName: string,
+	inputs?: Record<string, unknown>,
+): Promise<DataProviderOption[]> {
+	try {
+		const { data, error } = await apiClient.POST(
+			"/api/forms/{form_id}/fields/{field_name}/options",
+			{
+				params: { path: { form_id: formId, field_name: fieldName } },
+				body: { inputs: inputs || {} },
+			},
+		);
+
+		if (error || !data) {
+			console.error("Failed to invoke data provider:", error);
+			return [];
+		}
+
+		return data.options.map((opt) => ({
+			value: opt.value,
+			label: opt.label,
+			...(opt.description ? { description: opt.description } : {}),
+			...(opt.metadata ? { metadata: opt.metadata } : {}),
+		}));
+	} catch (error) {
+		console.error("Error invoking data provider:", error);
+		return [];
+	}
+}
+
+/** Execute a provider directly for authenticated non-form administration. */
 export async function getDataProviderOptions(
 	providerId: string,
 	inputs?: Record<string, unknown>,
@@ -52,38 +86,24 @@ export async function getDataProviderOptions(
 			body: {
 				workflow_id: providerId,
 				input_data: inputs || {},
-				transient: true, // Data providers are transient (no execution tracking)
+				transient: true,
 			},
 		});
-
-		if (error || !data || data.status !== "Success") {
-			console.error(
-				"Failed to invoke data provider:",
-				error || data?.error,
-			);
-			return [];
-		}
-
-		// Data provider returns list of options in the result field
+		if (error || !data || data.status !== "Success") return [];
 		const options = data.result as Array<{
 			value?: string;
 			label?: string;
 			description?: string;
 			metadata?: Record<string, unknown>;
 		}> | null;
-
-		if (!options || !Array.isArray(options)) {
-			return [];
-		}
-
-		return options.map((opt) => ({
-			value: String(opt.value ?? ""),
-			label: String(opt.label ?? opt.value ?? ""),
-			description: opt.description,
-			metadata: opt.metadata,
+		if (!Array.isArray(options)) return [];
+		return options.map((option) => ({
+			value: String(option.value ?? ""),
+			label: String(option.label ?? option.value ?? ""),
+			...(option.description ? { description: option.description } : {}),
+			...(option.metadata ? { metadata: option.metadata } : {}),
 		}));
-	} catch (error) {
-		console.error("Error invoking data provider:", error);
+	} catch {
 		return [];
 	}
 }

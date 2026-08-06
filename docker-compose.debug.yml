@@ -319,6 +319,7 @@ services:
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_debug@rabbitmq:5672/
       BIFROST_REDIS_URL: redis://redis:6379/0
+      BIFROST_SCHEDULER_JOB_SLOTS: ${SCHEDULER_JOB_SLOTS:-2}
       BIFROST_S3_BUCKET: bifrost-local
       BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
       # Browser-reachable S3 origin: presigned URLs get rewritten to /s3/...
@@ -346,6 +347,9 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
+    # Keep cgroup admission and Diagnostics representative in debug. Override
+    # upward when exercising a job with a larger declared headroom.
+    mem_limit: ${SCHEDULER_MEMORY_LIMIT:-1g}
     user: root
     command: >
       watchmedo auto-restart --directory=/app/src --directory=/app/shared
