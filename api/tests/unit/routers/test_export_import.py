@@ -312,6 +312,12 @@ class TestParseTargetOrg:
         assert override is None
         assert force_global is True
 
+    def test_global_string_returns_force_global(self):
+        """Global sentinel means force global scope over multipart forms."""
+        override, force_global = _parse_target_org("global")
+        assert override is None
+        assert force_global is True
+
     def test_uuid_string_returns_override(self):
         """UUID string returns the parsed UUID."""
         test_uuid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"

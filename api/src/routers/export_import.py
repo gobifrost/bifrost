@@ -147,14 +147,16 @@ def _parse_target_org(target_organization_id: str | None) -> tuple[UUID | None, 
 
     Returns (override_uuid, force_global):
     - None/absent → (None, False) — resolve from file
-    - "" → (None, True) — force global
+    - ""/"global" → (None, True) — force global
     - UUID string → (UUID, False) — use that org
     """
     if target_organization_id is None:
         return None, False
-    if target_organization_id == "":
+
+    target = target_organization_id.strip()
+    if target == "" or target.lower() == "global":
         return None, True
-    return UUID(target_organization_id), False
+    return UUID(target), False
 
 
 # ============================================================
