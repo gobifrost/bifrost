@@ -4,7 +4,7 @@ import altcha
 import pytest
 
 from src.core.security import decode_token
-from tests.e2e.conftest import write_and_register
+from tests.e2e.conftest import poll_until, write_and_register
 
 
 def _solve_public_captcha(e2e_client, form_id: str, headers: dict[str, str]) -> str:
@@ -234,6 +234,7 @@ async def e2e_public_form_submit(
         assert claims["embed_kind"] == "form"
         assert claims["grant"] == "public"
         assert claims["form_id"] == form_id
+        assert claims["name"] == "Public Form · Public form lifecycle"
         assert claims["capability_fingerprint"] == review["fingerprint"]
         headers = {"Authorization": f"Bearer {token}"}
 
@@ -328,6 +329,33 @@ async def e2e_public_form_submit(
             "status": "accepted",
             "confirmation_markdown": "## All set\n\nWe received it.",
         }
+
+        def find_history_execution():
+            response = e2e_client.get(
+                "/api/executions",
+                params={"workflowId": publishable_form["workflow_id"]},
+                headers=platform_admin.headers,
+            )
+            assert response.status_code == 200, response.text
+            return next(
+                (
+                    execution
+                    for execution in response.json()["executions"]
+                    if execution["form_id"] == form_id
+                ),
+                None,
+            )
+
+        history_execution = poll_until(
+            find_history_execution,
+            max_wait=30.0,
+            interval=0.2,
+        )
+        assert history_execution is not None
+        assert history_execution["executed_by_name"] == (
+            "Public Form · Public form lifecycle"
+        )
+
         duplicate = e2e_client.post(
             f"/api/forms/{form_id}/submissions",
             headers=headers,

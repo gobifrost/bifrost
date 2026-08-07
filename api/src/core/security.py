@@ -248,6 +248,7 @@ def create_embed_access_token(
     grant: Literal["hmac", "public"],
     resource_id: str,
     org_id: str | None,
+    display_name: str | None = None,
     verified_context: dict[str, str] | None = None,
     capability_fingerprint: str | None = None,
     expires_delta: timedelta = timedelta(hours=8),
@@ -270,6 +271,8 @@ def create_embed_access_token(
         "roles": ["EmbedUser"],
     }
     data[f"{embed_kind}_id"] = resource_id
+    if display_name is not None:
+        data["name"] = display_name
     if verified_context:
         data["verified_context"] = verified_context
         if embed_kind == "app":
