@@ -4,48 +4,125 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.authorization_scopes import SOLUTION_BUILD_JOBS_EXECUTE_SCOPE
-from src.core.security import decode_token
-from src.models.orm.solution_build_jobs import SolutionBuildJob
+from src.core.security import create_access_token, decode_token
+from src.models.orm.platform_jobs import PlatformJob
 from src.services.builder.capabilities import (
-    ACTOR_TYPE_BUILD_CAPABILITY,
-    mint_build_capability,
-    require_build_capability,
+    ACTOR_TYPE_SANDBOX_JOB,
+    SANDBOX_ARTIFACT_WRITE,
+    SANDBOX_INPUT_READ,
+    SANDBOX_JOB_OPERATIONS,
+    decode_sandbox_job_capability,
+    mint_sandbox_job_capability,
+    require_sandbox_job_capability,
 )
 
 
-def _job() -> SolutionBuildJob:
-    return SolutionBuildJob(
+def _job() -> PlatformJob:
+    return PlatformJob(
         id=uuid4(),
-        solution_id=uuid4(),
-        app_id=uuid4(),
-        requested_by=uuid4(),
-        source_sha256="a" * 64,
-        toolchain_version="test",
+        job_type="solution.build",
+        payload_version=1,
+        payload={"protected": True},
+        requested_by_user_id=str(uuid4()),
+        requested_by_email="builder@example.com",
+        requested_by_name="Builder",
+        title="Build app",
+        status="running",
+        attempt=2,
+        lease_token=uuid4(),
+        timeout_seconds=600,
     )
 
 
-@pytest.mark.asyncio
-async def test_build_capability_is_bound_to_one_job() -> None:
+def test_sandbox_capability_is_an_actor_contract_without_role_scopes() -> None:
     job = _job()
-    token = mint_build_capability(job)
+    token = mint_sandbox_job_capability(job)
     payload = decode_token(token, expected_type="access")
-    assert payload is not None
-    assert payload["actor_type"] == ACTOR_TYPE_BUILD_CAPABILITY
-    assert payload["job_id"] == str(job.id)
-    assert payload["scopes"] == [SOLUTION_BUILD_JOBS_EXECUTE_SCOPE]
 
-    accepted = await require_build_capability(job.id, f"Bearer {token}")
-    assert accepted["solution_id"] == str(job.solution_id)
+    assert payload is not None
+    assert payload["actor_type"] == ACTOR_TYPE_SANDBOX_JOB
+    assert payload["job_id"] == str(job.id)
+    assert payload["job_type"] == "solution.build"
+    assert payload["dispatch_attempt"] == 2
+    assert set(payload["operations"]) == SANDBOX_JOB_OPERATIONS["solution.build"]
+    assert "scopes" not in payload
+
+    accepted = decode_sandbox_job_capability(job.id, f"Bearer {token}")
+    assert accepted.dispatch_attempt == 2
+    accepted.require(SANDBOX_ARTIFACT_WRITE)
 
     with pytest.raises(HTTPException) as exc:
-        await require_build_capability(uuid4(), f"Bearer {token}")
+        decode_sandbox_job_capability(uuid4(), f"Bearer {token}")
+    assert exc.value.status_code == 403
+
+
+def test_sandbox_capability_can_be_attenuated_but_not_widened() -> None:
+    job = _job()
+    token = mint_sandbox_job_capability(job, operations={SANDBOX_INPUT_READ})
+    capability = decode_sandbox_job_capability(job.id, f"Bearer {token}")
+    assert capability.operations == {SANDBOX_INPUT_READ}
+
+    with pytest.raises(HTTPException):
+        capability.require(SANDBOX_ARTIFACT_WRITE)
+    with pytest.raises(ValueError, match="unsupported operations"):
+        mint_sandbox_job_capability(job, operations={"platform.admin"})
+
+
+@pytest.mark.asyncio
+async def test_sandbox_capability_is_fenced_by_current_attempt(
+    db_session: AsyncSession,
+) -> None:
+    job = _job()
+    db_session.add(job)
+    await db_session.flush()
+    token = mint_sandbox_job_capability(job)
+
+    accepted = await require_sandbox_job_capability(
+        job.id,
+        db_session,
+        f"Bearer {token}",
+    )
+    assert accepted.job_id == job.id
+
+    job.attempt += 1
+    await db_session.flush()
+    with pytest.raises(HTTPException) as exc:
+        await require_sandbox_job_capability(
+            job.id,
+            db_session,
+            f"Bearer {token}",
+        )
     assert exc.value.status_code == 403
 
 
 @pytest.mark.asyncio
-async def test_build_capability_rejects_missing_and_normal_tokens() -> None:
-    with pytest.raises(HTTPException) as exc:
-        await require_build_capability(uuid4(), None)
-    assert exc.value.status_code == 403
+async def test_sandbox_capability_rejects_terminal_or_normal_token(
+    db_session: AsyncSession,
+) -> None:
+    job = _job()
+    db_session.add(job)
+    await db_session.flush()
+    token = mint_sandbox_job_capability(job)
+    job.status = "succeeded"
+    await db_session.flush()
+
+    with pytest.raises(HTTPException):
+        await require_sandbox_job_capability(
+            job.id,
+            db_session,
+            f"Bearer {token}",
+        )
+
+    normal = create_access_token({"sub": str(uuid4()), "scopes": ["*"]})
+    with pytest.raises(HTTPException):
+        decode_sandbox_job_capability(job.id, f"Bearer {normal}")
+
+
+def test_capability_requires_a_current_leased_job() -> None:
+    job = _job()
+    job.status = "queued"
+    job.lease_token = None
+    with pytest.raises(ValueError, match="leased running job"):
+        mint_sandbox_job_capability(job)
