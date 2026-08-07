@@ -127,6 +127,7 @@ def main() -> None:
     try:
         server.serve_forever()
     except (KeyboardInterrupt, SystemExit):
+        # Signals and Ctrl+C are the expected clean shutdown paths.
         pass
     finally:
         git_daemon.terminate()

@@ -43,10 +43,8 @@ class TestBuildPlaneAvailability:
         assert await build_plane_available() is True
 
     async def test_heartbeat_expires(self) -> None:
-        from src.core.redis_client import get_redis_client
-
         await _clear_heartbeat()
-        redis = await get_redis_client()._get_redis()
+        redis = await redis_client.get_redis_client()._get_redis()
         # Set the real heartbeat key directly with a 1s TTL to observe expiry
         # without waiting on the production TTL.
         await redis.set(HEARTBEAT_KEY, "2026-01-01T00:00:00+00:00", ex=1)
