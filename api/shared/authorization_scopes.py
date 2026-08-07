@@ -15,7 +15,6 @@ from typing import Iterable
 PLATFORM_SUPERUSER_SCOPE = "platform.superuser"
 ORGANIZATION_IMPERSONATION_SCOPE = "organization.impersonation"
 SOLUTIONS_BUILD_SCOPE = "solutions.build"
-SOLUTION_BUILD_JOBS_EXECUTE_SCOPE = "solutions.jobs.execute"
 
 TABLE_DOCUMENTS_READ_SCOPE = "tables.documents.read"
 TABLE_DOCUMENTS_WRITE_SCOPE = "tables.documents.write"
@@ -97,17 +96,6 @@ AUTHORIZATION_SCOPE_CATALOG: tuple[AuthorizationScopeDefinition, ...] = (
         category="Solutions",
         is_privileged=True,
         assignable_to_custom_roles=True,
-    ),
-    AuthorizationScopeDefinition(
-        key=SOLUTION_BUILD_JOBS_EXECUTE_SCOPE,
-        display_name="Execute Solution build jobs",
-        description=(
-            "Allows a Bifrost build coordinator capability to transfer "
-            "artifacts and report progress for its one bound build job."
-        ),
-        category="Internal services",
-        is_privileged=True,
-        assignable_to_custom_roles=False,
     ),
     AuthorizationScopeDefinition(
         key=TABLE_DOCUMENTS_READ_SCOPE,
