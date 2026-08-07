@@ -88,8 +88,8 @@ four corrected-main artifacts absent from the backup, and no renames.
 
 | Wave | Scope | State |
 | --- | --- | --- |
-| 0 | Backup, recovery worktree, inventory, and migration/shared-file audits | in progress |
-| 1 | New forward schema plus Builder domain models/contracts | pending |
+| 0 | Backup, recovery worktree, inventory, and migration/shared-file audits | complete |
+| 1 | New forward schema plus Builder domain models/contracts | in progress |
 | 2 | Durable authoring workspace and shared REST/CLI/MCP capability layer | pending |
 | 3 | PlatformJob Builder handlers and Cloudflare/local sandbox providers | pending |
 | 4 | Agent Skills, full Solution authoring, preview runtime, and publication | pending |
