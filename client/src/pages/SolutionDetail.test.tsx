@@ -47,6 +47,12 @@ vi.mock("@/components/files/FilesExplorer", () => ({
 	},
 }));
 
+vi.mock("@/components/forms/FormShareDialog", () => ({
+	FormShareDialog: ({ formName }: { formName: string }) => (
+		<div role="dialog">Share {formName}</div>
+	),
+}));
+
 const mockGetSolutionEntities = vi.fn();
 const mockGetSolutionSetup = vi.fn();
 const mockUpdateSolution = vi.fn();
@@ -548,6 +554,31 @@ describe("SolutionDetail", () => {
 			await user.click(screen.getByRole("button", { name: /launch/i }));
 			expect(mockNavigate).toHaveBeenCalledWith(
 				"/execute/form-1?from=solution:sol-1",
+			);
+		});
+
+		it("opens sharing for a solution-managed form without exposing edit controls", async () => {
+			const { user } = await renderPage();
+			await screen.findByTestId("solution-detail");
+
+			await user.click(screen.getByTestId("tab-contents"));
+			await user.click(screen.getByTestId("chip-forms"));
+			await user.click(
+				screen.getByRole("button", { name: "Ticket Intake actions" }),
+			);
+
+			expect(
+				screen.getByRole("menuitem", { name: "Share Form" }),
+			).toBeInTheDocument();
+			expect(
+				screen.queryByRole("menuitem", { name: "Edit Form" }),
+			).not.toBeInTheDocument();
+
+			await user.click(
+				screen.getByRole("menuitem", { name: "Share Form" }),
+			);
+			expect(screen.getByRole("dialog")).toHaveTextContent(
+				"Share Ticket Intake",
 			);
 		});
 

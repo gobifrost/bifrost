@@ -1,8 +1,8 @@
 /**
  * Golden deployed-app runtime-scope contract (Chromium, real deploy).
  *
- * Deploys a Solution workspace zip (workflow + table + file location) with a
- * standalone_v2 app whose entry module uses ONLY the transport contract —
+ * Deploys a Solution workspace zip (workflow + form + table + file location)
+ * with a standalone_v2 app whose entry module uses ONLY the transport contract —
  * Authorization + X-Bifrost-App headers, a portable path::fn workflow ref,
  * no UUIDs, no body app_id — and asserts workflow, table, and file access
  * all resolve the install's own resources in a real browser.
@@ -11,7 +11,8 @@
  * data plane (workflows, tables, files) previously derived install scope its
  * own way, so deployed apps worked for UUID workflow refs but 404'd portable
  * refs. The contract is: auth derives ctx.solution_id from the transport;
- * every resolver reads the context. See
+ * every resolver reads the context. The same deployed install also proves that
+ * read-only forms expose their environment-owned Share dialog. See
  * api/src/repositories/README.md ("How the install id is DERIVED").
  */
 
@@ -21,12 +22,13 @@ const UNIQUE = `${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`;
 const SLUG = `runtime-contract-${UNIQUE}`;
 const APP_SLUG = `app-${SLUG}`;
 const TABLE_NAME = `runtime_items_${UNIQUE}`;
+const FORM_NAME = `Runtime Form ${UNIQUE}`;
 
 const WORKFLOW_PY = [
 	"from bifrost import tables, workflow",
 	"",
 	"@workflow",
-	"async def main():",
+	"async def main(email: str | None = None):",
 	`    await tables.upsert(${JSON.stringify(TABLE_NAME)}, id='probe-row', data={'k': 'v'})`,
 	"    return {'marker': 'golden'}",
 	"",
@@ -167,6 +169,7 @@ function workspaceZip(): Buffer {
 	const workflowId = crypto.randomUUID();
 	const tableId = crypto.randomUUID();
 	const appId = crypto.randomUUID();
+	const formId = crypto.randomUUID();
 	return buildZip([
 		{
 			path: "bifrost.solution.yaml",
@@ -209,6 +212,29 @@ function workspaceZip(): Buffer {
 			content: JSON.stringify({ locations: ["docs"] }),
 		},
 		{
+			path: ".bifrost/forms.yaml",
+			content: JSON.stringify({
+				forms: {
+					[formId]: {
+						id: formId,
+						name: FORM_NAME,
+						workflow_id: workflowId,
+						access_level: "authenticated",
+						form_schema: {
+							fields: [
+								{
+									name: "email",
+									label: "Email",
+									type: "email",
+									required: true,
+								},
+							],
+						},
+					},
+				},
+			}),
+		},
+		{
 			path: ".bifrost/apps.yaml",
 			content: JSON.stringify({
 				apps: {
@@ -247,7 +273,7 @@ test.describe("deployed solution runtime contract", () => {
 		createdSolutionId = null;
 	});
 
-	test("workflow/table/file resolve via the header contract in the browser", async ({
+	test("runtime resources resolve and solution forms expose sharing", async ({
 		page,
 		api,
 	}) => {
@@ -308,5 +334,24 @@ test.describe("deployed solution runtime contract", () => {
 		});
 		await expect(page.getByTestId("table-result")).toHaveText(/rows:[1-9]/);
 		await expect(page.getByTestId("file-result")).toHaveText("ok");
+
+		// Solution-managed forms remain read-only, but their environment-owned
+		// sharing controls are available directly from the Solution contents.
+		await page.goto(`/solutions/${sid}`);
+		await expect(page.getByTestId("solution-detail")).toBeVisible({
+			timeout: 15_000,
+		});
+		await page.getByTestId("tab-contents").click();
+		await page.getByTestId("chip-forms").click();
+		await page
+			.getByRole("button", { name: `${FORM_NAME} actions` })
+			.click();
+		await page.getByRole("menuitem", { name: "Share Form" }).click();
+		await expect(
+			page.getByRole("heading", { name: `Share ${FORM_NAME}` }),
+		).toBeVisible();
+		await expect(
+			page.getByRole("tab", { name: "Website Embed" }),
+		).toBeVisible();
 	});
 });
