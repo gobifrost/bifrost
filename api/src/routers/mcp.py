@@ -410,6 +410,11 @@ async def update_mcp_config(
         updated_by=current_user.email,
     )
 
+    # The dependency-level commit runs after the handler returns. Commit here so
+    # a client that immediately reads the configuration cannot observe the old
+    # value after receiving a successful update response.
+    await db.commit()
+
     # Invalidate cache so auth middleware picks up changes
     invalidate_mcp_config_cache()
 
@@ -444,6 +449,9 @@ async def delete_mcp_config(
 
     service = MCPConfigService(db)
     deleted = await service.delete_config()
+
+    # Preserve the same read-after-write guarantee as the update endpoint.
+    await db.commit()
 
     # Invalidate cache
     invalidate_mcp_config_cache()

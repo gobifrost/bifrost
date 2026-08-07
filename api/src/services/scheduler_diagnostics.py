@@ -22,6 +22,7 @@ from src.services.execution.memory_monitor import get_cgroup_memory
 logger = logging.getLogger(__name__)
 DIAGNOSTIC_RETENTION = timedelta(days=7)
 REPLICA_ONLINE_WINDOW = timedelta(seconds=30)
+REPLICA_STALE_RETENTION = REPLICA_ONLINE_WINDOW * 10
 
 
 def utcnow() -> datetime:
@@ -32,13 +33,14 @@ async def heartbeat_scheduler_replica(
     *, replica_id: str, hostname: str, pid: int, job_slots: int, started_at: datetime
 ) -> None:
     current, limit = get_cgroup_memory()
+    heartbeat_at = utcnow()
     values = {
         "id": replica_id,
         "hostname": hostname,
         "pid": pid,
         "job_slots": job_slots,
         "started_at": started_at,
-        "last_heartbeat_at": utcnow(),
+        "last_heartbeat_at": heartbeat_at,
         "memory_current_bytes": current if current >= 0 else None,
         "memory_limit_bytes": limit if limit > 0 else None,
     }
@@ -49,6 +51,12 @@ async def heartbeat_scheduler_replica(
             .on_conflict_do_update(
                 index_elements=[SchedulerReplica.id],
                 set_={key: value for key, value in values.items() if key != "id"},
+            )
+        )
+        await db.execute(
+            delete(SchedulerReplica).where(
+                SchedulerReplica.last_heartbeat_at
+                < heartbeat_at - REPLICA_STALE_RETENTION
             )
         )
 
@@ -211,7 +219,7 @@ async def cleanup_scheduler_diagnostics() -> int:
         )
         await db.execute(
             delete(SchedulerReplica).where(
-                SchedulerReplica.last_heartbeat_at < utcnow() - REPLICA_ONLINE_WINDOW * 10
+                SchedulerReplica.last_heartbeat_at < utcnow() - REPLICA_STALE_RETENTION
             )
         )
         return (logs.rowcount or 0) + (runs.rowcount or 0)

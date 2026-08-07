@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
-from sqlalchemy import select
+from uuid import UUID
+
+from fastapi import APIRouter, HTTPException, Query, status
+from sqlalchemy import or_, select
 
 from src.core.auth import Context, CurrentSuperuser
 from src.models.contracts.scheduler_diagnostics import (
@@ -11,6 +13,8 @@ from src.models.contracts.scheduler_diagnostics import (
     SchedulerDiagnosticsResponse,
     SchedulerLeaderStatus,
     SchedulerReplicaStatus,
+    SchedulerTaskHistoryResponse,
+    SchedulerTaskRunDetail,
     SchedulerTaskRunStatus,
     SchedulerTaskStatus,
     SystemDiagnosticLogPublic,
@@ -24,17 +28,48 @@ from src.models.orm.scheduler_diagnostics import (
 )
 from src.models.orm.scheduler_leases import SchedulerLease
 from src.scheduler.leadership import TRIGGER_LEASE_NAME
-from src.scheduler.registry import SCHEDULED_TASKS
-from src.services.scheduler_diagnostics import REPLICA_ONLINE_WINDOW, utcnow
+from src.scheduler.registry import SCHEDULED_TASKS, SCHEDULED_TASKS_BY_ID
+from src.services.scheduler_diagnostics import (
+    REPLICA_ONLINE_WINDOW,
+    REPLICA_STALE_RETENTION,
+    utcnow,
+)
 
 router = APIRouter(prefix="/api/platform/scheduler", tags=["Platform Scheduler"])
+
+
+def _run_status(
+    run: SchedulerTaskRun,
+    linked_jobs: dict[UUID, PlatformJob],
+) -> SchedulerTaskRunStatus:
+    linked_job = linked_jobs.get(run.platform_job_id)
+    return SchedulerTaskRunStatus(
+        id=run.id,
+        status=run.status,
+        leader_owner_id=run.leader_owner_id,
+        started_at=run.started_at,
+        completed_at=run.completed_at,
+        duration_ms=run.duration_ms,
+        summary=run.summary,
+        error_message=run.error_message,
+        platform_job_id=run.platform_job_id,
+        platform_job_status=linked_job.status if linked_job else None,
+        platform_job_memory_start_bytes=(
+            linked_job.memory_start_bytes if linked_job else None
+        ),
+        platform_job_memory_peak_bytes=(
+            linked_job.memory_peak_bytes if linked_job else None
+        ),
+        platform_job_memory_limit_bytes=(
+            linked_job.memory_limit_bytes if linked_job else None
+        ),
+    )
 
 
 @router.get("", response_model=SchedulerDiagnosticsResponse)
 async def get_scheduler_diagnostics(
     ctx: Context,
     user: CurrentSuperuser,
-    log_limit: int = Query(default=100, ge=1, le=500),
 ) -> SchedulerDiagnosticsResponse:
     now = utcnow()
     lease = await ctx.db.get(SchedulerLease, TRIGGER_LEASE_NAME)
@@ -47,7 +82,13 @@ async def get_scheduler_diagnostics(
     leader_owner = lease.owner_id if leader_healthy and lease else None
 
     replica_rows = (
-        await ctx.db.execute(select(SchedulerReplica).order_by(SchedulerReplica.id))
+        await ctx.db.execute(
+            select(SchedulerReplica)
+            .where(
+                SchedulerReplica.last_heartbeat_at >= now - REPLICA_STALE_RETENTION
+            )
+            .order_by(SchedulerReplica.id)
+        )
     ).scalars().all()
     active_rows = (
         await ctx.db.execute(
@@ -115,37 +156,7 @@ async def get_scheduler_diagnostics(
         run = run_rows.get(state.last_run_id) if state and state.last_run_id else None
         last_run = None
         if run is not None:
-            last_run = SchedulerTaskRunStatus(
-                id=run.id,
-                status=run.status,
-                leader_owner_id=run.leader_owner_id,
-                started_at=run.started_at,
-                completed_at=run.completed_at,
-                duration_ms=run.duration_ms,
-                summary=run.summary,
-                error_message=run.error_message,
-                platform_job_id=run.platform_job_id,
-                platform_job_status=(
-                    linked_jobs[run.platform_job_id].status
-                    if run.platform_job_id in linked_jobs
-                    else None
-                ),
-                platform_job_memory_start_bytes=(
-                    linked_jobs[run.platform_job_id].memory_start_bytes
-                    if run.platform_job_id in linked_jobs
-                    else None
-                ),
-                platform_job_memory_peak_bytes=(
-                    linked_jobs[run.platform_job_id].memory_peak_bytes
-                    if run.platform_job_id in linked_jobs
-                    else None
-                ),
-                platform_job_memory_limit_bytes=(
-                    linked_jobs[run.platform_job_id].memory_limit_bytes
-                    if run.platform_job_id in linked_jobs
-                    else None
-                ),
-            )
+            last_run = _run_status(run, linked_jobs)
         tasks.append(
             SchedulerTaskStatus(
                 task_id=definition.task_id,
@@ -189,27 +200,6 @@ async def get_scheduler_diagnostics(
         max_memory_utilization_percent=max(utilization) if utilization else None,
     )
 
-    log_rows = (
-        await ctx.db.execute(
-            select(SystemDiagnosticLog)
-            .order_by(SystemDiagnosticLog.created_at.desc())
-            .limit(log_limit)
-        )
-    ).scalars().all()
-    logs = [
-        SystemDiagnosticLogPublic(
-            id=row.id,
-            source=row.source,
-            level=row.level,
-            code=row.code,
-            message=row.message,
-            scheduler_run_id=row.scheduler_run_id,
-            platform_job_id=row.platform_job_id,
-            created_at=row.created_at,
-        )
-        for row in log_rows
-    ]
-
     return SchedulerDiagnosticsResponse(
         generated_at=now,
         leader=SchedulerLeaderStatus(
@@ -220,5 +210,107 @@ async def get_scheduler_diagnostics(
         capacity=capacity,
         replicas=replicas,
         tasks=tasks,
-        logs=logs,
+    )
+
+
+@router.get(
+    "/tasks/{task_id}/runs",
+    response_model=SchedulerTaskHistoryResponse,
+)
+async def get_scheduler_task_history(
+    task_id: str,
+    ctx: Context,
+    user: CurrentSuperuser,
+    limit: int = Query(default=10, ge=1, le=25),
+) -> SchedulerTaskHistoryResponse:
+    definition = SCHEDULED_TASKS_BY_ID.get(task_id)
+    if definition is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Scheduled task not found",
+        )
+
+    runs = (
+        await ctx.db.execute(
+            select(SchedulerTaskRun)
+            .where(SchedulerTaskRun.task_id == task_id)
+            .order_by(SchedulerTaskRun.started_at.desc())
+            .limit(limit)
+        )
+    ).scalars().all()
+    platform_job_ids = [run.platform_job_id for run in runs if run.platform_job_id]
+    linked_jobs = {}
+    if platform_job_ids:
+        linked_jobs = {
+            job.id: job
+            for job in (
+                await ctx.db.execute(
+                    select(PlatformJob).where(PlatformJob.id.in_(platform_job_ids))
+                )
+            ).scalars().all()
+        }
+
+    run_ids = [run.id for run in runs]
+    log_rows = []
+    if run_ids:
+        log_filter = SystemDiagnosticLog.scheduler_run_id.in_(run_ids)
+        if platform_job_ids:
+            log_filter = or_(
+                log_filter,
+                SystemDiagnosticLog.platform_job_id.in_(platform_job_ids),
+            )
+        log_rows = (
+            await ctx.db.execute(
+                select(SystemDiagnosticLog)
+                .where(log_filter)
+                .order_by(
+                    SystemDiagnosticLog.created_at.asc(),
+                    SystemDiagnosticLog.id.asc(),
+                )
+            )
+        ).scalars().all()
+
+    logs_by_run: dict[UUID, list[SystemDiagnosticLogPublic]] = {
+        run.id: [] for run in runs
+    }
+    run_ids_by_platform_job: dict[UUID, list[UUID]] = {}
+    for run in runs:
+        if run.platform_job_id:
+            run_ids_by_platform_job.setdefault(run.platform_job_id, []).append(run.id)
+    for row in log_rows:
+        target_run_ids = (
+            [row.scheduler_run_id]
+            if row.scheduler_run_id
+            else (
+                run_ids_by_platform_job.get(row.platform_job_id, [])
+                if row.platform_job_id
+                else []
+            )
+        )
+        for run_id in target_run_ids:
+            if run_id not in logs_by_run:
+                continue
+            logs_by_run[run_id].append(
+                SystemDiagnosticLogPublic(
+                    id=row.id,
+                    source=row.source,
+                    level=row.level,
+                    code=row.code,
+                    message=row.message,
+                    scheduler_run_id=row.scheduler_run_id,
+                    platform_job_id=row.platform_job_id,
+                    created_at=row.created_at,
+                )
+            )
+
+    return SchedulerTaskHistoryResponse(
+        task_id=task_id,
+        name=definition.name,
+        runs=[
+            SchedulerTaskRunDetail(
+                **_run_status(run, linked_jobs).model_dump(),
+                logs=logs_by_run[run.id],
+            )
+            for run in runs
+        ],
     )

@@ -992,6 +992,10 @@ async def update_table(
         )
 
     if "policies" in data.model_fields_set:
+        # Subscribers re-read policies when they receive this event. The update
+        # must be committed first or another database session can observe the old
+        # policy and incorrectly keep an unauthorized subscription alive.
+        await ctx.db.commit()
         await publish_policy_changed(str(table.id))
 
     return TablePublic.model_validate(table)

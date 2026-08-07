@@ -463,7 +463,8 @@ async def platform_job_worker_loop(
         try:
             await asyncio.wait_for(shutdown_event.wait(), timeout=idle_seconds)
         except TimeoutError:
-            pass
+            # The idle interval elapsed; the next loop iteration may claim work.
+            continue
 
 
 __all__ = [

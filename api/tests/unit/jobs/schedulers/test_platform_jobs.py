@@ -508,6 +508,6 @@ async def test_cancelling_worker_stops_active_child(
     task.cancel()
 
     with pytest.raises(asyncio.CancelledError):
-        await task
+        _ = await task
     terminate.assert_awaited_once()
     handle_loss.assert_awaited_once()

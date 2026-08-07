@@ -226,6 +226,20 @@ Use the shared platform-job service and scheduler tests for generic behavior;
 add feature tests only for the handler's business semantics and its caller
 surfaces.
 
+## Local scheduler validation
+
+With a worktree debug stack running, execute `./debug.sh fixtures` to seed and
+run deterministic scheduler workloads through the same trigger and platform-job
+paths used in production. The fixture service supplies local OAuth-token and Git
+endpoints, so this validation does not require a live OAuth account or remote
+repository.
+
+The command verifies OAuth refresh, webhook renewal, Solution update detection,
+file-index reconciliation, summary-backfill reconciliation, and Solution-build
+reconciliation, then leaves their runs and published logs available under
+Diagnostics → Scheduler. Fixture registration and seeding are rejected when the
+application environment is production.
+
 ## Canonical implementation map
 
 | Concern | Location |

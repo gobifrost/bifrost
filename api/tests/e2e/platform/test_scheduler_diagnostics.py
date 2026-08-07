@@ -69,7 +69,34 @@ class TestSchedulerDiagnostics:
         ):
             assert tasks[task_id]["execution_mode"] == "durable_job"
             assert tasks[task_id]["last_run"]["status"] == "enqueued"
-        assert body["logs"]
+        deadline = time.monotonic() + 20
+        history = {}
+        while time.monotonic() < deadline:
+            history_response = e2e_client.get(
+                "/api/platform/scheduler/tasks/oauth_token_refresh/runs?limit=5",
+                headers=platform_admin.headers,
+            )
+            assert history_response.status_code == 200, history_response.text
+            history = history_response.json()
+            if history["runs"] and {
+                "oauth_refresh_started",
+                "oauth_refresh_completed",
+            }.issubset({log["code"] for log in history["runs"][0]["logs"]}):
+                break
+            time.sleep(0.25)
+
+        assert history["name"] == "Refresh Expiring OAuth Tokens"
+        assert history["runs"]
+        assert {
+            "oauth_refresh_started",
+            "oauth_refresh_completed",
+        }.issubset({log["code"] for log in history["runs"][0]["logs"]})
+        assert history["runs"][0]["logs"]
+        log_order = [
+            (log["created_at"], log["id"])
+            for log in history["runs"][0]["logs"]
+        ]
+        assert log_order == sorted(log_order)
 
     def test_org_user_cannot_read_scheduler_diagnostics(self, e2e_client, org1_user):
         response = e2e_client.get(
@@ -77,3 +104,16 @@ class TestSchedulerDiagnostics:
             headers=org1_user.headers,
         )
         assert response.status_code == 403
+
+        history_response = e2e_client.get(
+            "/api/platform/scheduler/tasks/oauth_token_refresh/runs",
+            headers=org1_user.headers,
+        )
+        assert history_response.status_code == 403
+
+    def test_unknown_schedule_history_is_not_found(self, e2e_client, platform_admin):
+        response = e2e_client.get(
+            "/api/platform/scheduler/tasks/not-a-schedule/runs",
+            headers=platform_admin.headers,
+        )
+        assert response.status_code == 404

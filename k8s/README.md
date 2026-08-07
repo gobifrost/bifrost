@@ -246,9 +246,10 @@ kubectl scale deployment bifrost-worker -n bifrost --replicas=5
 
 ### Scheduler
 
-Every scheduler replica executes one durable platform job at a time. A fenced
-PostgreSQL lease elects exactly one replica to run Cron triggers and the legacy
-scheduler pub/sub listener.
+Every scheduler replica executes up to two durable platform jobs at a time. The
+two internal slots are a safety ceiling rather than a deployment setting. A
+fenced PostgreSQL lease elects exactly one replica to run Cron triggers and the
+legacy scheduler pub/sub listener.
 
 ```bash
 kubectl scale deployment bifrost-scheduler -n bifrost --replicas=3
@@ -260,9 +261,9 @@ cannot overlap the first lease-aware rollout; `Recreate` does not restrict the
 steady-state replica count. Scale back to one before rolling back to a release
 that predates scheduler leader election.
 
-Long-running legacy scheduler callbacks still add load to the elected leader
-until they migrate to platform jobs. Scale gradually and monitor memory-pressure
-deferrals and queue wait time.
+Long-running platform work runs through the shared durable queue on every
+replica; the elected leader retains only short trigger and housekeeping work.
+Scale gradually and monitor memory-pressure deferrals and queue wait time.
 
 ## Configuration Reference
 

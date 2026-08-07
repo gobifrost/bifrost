@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import pytest
 
+import src.core.redis_client as redis_client
 from src.services.builder.build_plane import (
     HEARTBEAT_KEY,
     build_plane_available,
@@ -21,17 +22,13 @@ from src.services.builder.build_plane import (
 
 @pytest.fixture(autouse=True)
 def _reset_redis_singleton():
-    import src.core.redis_client as rc
-
-    rc._redis_client = None
+    redis_client._redis_client = None
     yield
-    rc._redis_client = None
+    redis_client._redis_client = None
 
 
 async def _clear_heartbeat() -> None:
-    from src.core.redis_client import get_redis_client
-
-    redis = await get_redis_client()._get_redis()
+    redis = await redis_client.get_redis_client()._get_redis()
     await redis.delete(HEARTBEAT_KEY)
 
 

@@ -350,6 +350,7 @@
 | POST | `/api/platform-jobs/{job_id}/cancel` |
 | GET | `/api/platform/queue` |
 | GET | `/api/platform/scheduler` |
+| GET | `/api/platform/scheduler/tasks/{task_id}/runs` |
 | GET | `/api/platform/stuck-history` |
 | GET | `/api/platform/workers` |
 | GET | `/api/platform/workers/metrics` |

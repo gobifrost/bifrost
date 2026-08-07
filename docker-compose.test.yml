@@ -430,12 +430,30 @@ services:
         condition: service_started
       api:
         condition: service_healthy
+      scheduler-fixtures:
+        condition: service_healthy
     mem_limit: 1g
     # Entrypoint handles permissions; run as root so it can fix volume ownership
     user: root
     command: ["python", "-m", "src.scheduler.main"]
     profiles:
       - e2e  # Only start in E2E mode
+
+  scheduler-fixtures:
+    image: bifrost-test-api-dev:latest
+    build:
+      context: .
+      dockerfile: api/Dockerfile.dev
+    command: ["python", "/app/scripts/scheduler_fixture_server.py"]
+    volumes:
+      - ./api/scripts:/app/scripts:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    profiles:
+      - e2e
 
   # Test Runner - Executes pytest inside container with all dependencies
   test-runner:

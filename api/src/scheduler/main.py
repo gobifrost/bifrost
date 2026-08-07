@@ -532,7 +532,8 @@ class Scheduler:
         try:
             await asyncio.wait_for(self._shutdown_event.wait(), timeout=seconds)
         except TimeoutError:
-            pass
+            # The retry interval elapsed without a shutdown request.
+            return
 
     async def _leadership_loop(self) -> None:
         """Elect one trigger leader while every replica remains a job runner."""

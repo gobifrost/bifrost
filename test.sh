@@ -109,7 +109,8 @@ reset_state() {
 
     docker compose -f "$COMPOSE_FILE" start pgbouncer > /dev/null
     wait_for_service "$COMPOSE_FILE" pgbouncer pg_isready -h localhost -p 5432 -U bifrost
-    docker compose -f "$COMPOSE_FILE" --profile e2e start api worker scheduler > /dev/null
+    docker compose -f "$COMPOSE_FILE" --profile e2e start \
+        api worker scheduler scheduler-fixtures > /dev/null
     wait_for_api_ready "$COMPOSE_FILE"
 
     echo "State reset complete."

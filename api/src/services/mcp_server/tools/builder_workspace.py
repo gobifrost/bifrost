@@ -185,4 +185,3 @@ def register_tools(mcp: Any, get_context_fn: Any) -> None:
             descriptions[tool_id],
             get_context_fn,
         )
-

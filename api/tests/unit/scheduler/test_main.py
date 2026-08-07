@@ -119,7 +119,8 @@ async def test_background_task_exit_signals_replica_shutdown() -> None:
 
     task = asyncio.create_task(stop_unexpectedly())
     task.add_done_callback(scheduler._background_task_done)
-    await task
+    result = await task
+    assert result is None
     await asyncio.sleep(0)
 
     assert scheduler._shutdown_event.is_set()

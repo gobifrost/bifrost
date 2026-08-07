@@ -3877,6 +3877,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/platform/scheduler/tasks/{task_id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Scheduler Task History */
+        get: operations["get_scheduler_task_history_api_platform_scheduler_tasks__task_id__runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/oauth/connections/{connection_name}": {
         parameters: {
             query?: never;
@@ -22824,8 +22841,6 @@ export interface components {
             replicas: components["schemas"]["SchedulerReplicaStatus"][];
             /** Tasks */
             tasks: components["schemas"]["SchedulerTaskStatus"][];
-            /** Logs */
-            logs: components["schemas"]["SystemDiagnosticLogPublic"][];
         };
         /** SchedulerLeaderStatus */
         SchedulerLeaderStatus: {
@@ -22874,6 +22889,52 @@ export interface components {
              * @default 0
              */
             active_platform_jobs: number;
+        };
+        /** SchedulerTaskHistoryResponse */
+        SchedulerTaskHistoryResponse: {
+            /** Task Id */
+            task_id: string;
+            /** Name */
+            name: string;
+            /** Runs */
+            runs: components["schemas"]["SchedulerTaskRunDetail"][];
+        };
+        /** SchedulerTaskRunDetail */
+        SchedulerTaskRunDetail: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Status */
+            status: string;
+            /** Leader Owner Id */
+            leader_owner_id: string;
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Completed At */
+            completed_at?: string | null;
+            /** Duration Ms */
+            duration_ms?: number | null;
+            /** Summary */
+            summary?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            /** Platform Job Id */
+            platform_job_id?: string | null;
+            /** Platform Job Status */
+            platform_job_status?: string | null;
+            /** Platform Job Memory Start Bytes */
+            platform_job_memory_start_bytes?: number | null;
+            /** Platform Job Memory Peak Bytes */
+            platform_job_memory_peak_bytes?: number | null;
+            /** Platform Job Memory Limit Bytes */
+            platform_job_memory_limit_bytes?: number | null;
+            /** Logs */
+            logs: components["schemas"]["SystemDiagnosticLogPublic"][];
         };
         /** SchedulerTaskRunStatus */
         SchedulerTaskRunStatus: {
@@ -32946,9 +33007,7 @@ export interface operations {
     };
     get_scheduler_diagnostics_api_platform_scheduler_get: {
         parameters: {
-            query?: {
-                log_limit?: number;
-            };
+            query?: never;
             header?: never;
             path?: never;
             cookie?: never;
@@ -32962,6 +33021,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SchedulerDiagnosticsResponse"];
+                };
+            };
+        };
+    };
+    get_scheduler_task_history_api_platform_scheduler_tasks__task_id__runs_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                task_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SchedulerTaskHistoryResponse"];
                 };
             };
             /** @description Validation Error */

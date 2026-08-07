@@ -74,10 +74,19 @@ class SystemDiagnosticLogPublic(BaseModel):
     created_at: datetime
 
 
+class SchedulerTaskRunDetail(SchedulerTaskRunStatus):
+    logs: list[SystemDiagnosticLogPublic]
+
+
+class SchedulerTaskHistoryResponse(BaseModel):
+    task_id: str
+    name: str
+    runs: list[SchedulerTaskRunDetail]
+
+
 class SchedulerDiagnosticsResponse(BaseModel):
     generated_at: datetime
     leader: SchedulerLeaderStatus
     capacity: SchedulerCapacityStatus
     replicas: list[SchedulerReplicaStatus]
     tasks: list[SchedulerTaskStatus]
-    logs: list[SystemDiagnosticLogPublic]

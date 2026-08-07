@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import {
@@ -5,7 +6,6 @@ import {
 	AlertTriangle,
 	Clock3,
 	Cpu,
-	DatabaseZap,
 	HardDrive,
 	Loader2,
 	RefreshCw,
@@ -26,7 +26,9 @@ import {
 import {
 	getSchedulerDiagnostics,
 	type SchedulerDiagnosticsResponse,
+	type SchedulerTaskStatus,
 } from "@/services/schedulerDiagnostics";
+import { SchedulerRunDrawer } from "./SchedulerRunDrawer";
 
 function formatBytes(value: number | null | undefined) {
 	if (value == null) return "Not limited";
@@ -47,9 +49,43 @@ function relativeTime(value: string | null | undefined) {
 
 function statusVariant(status: string | undefined) {
 	if (status === "failed" || status === "cancelled") return "destructive" as const;
-	if (status === "running" || status === "enqueued") return "warning" as const;
+	if (["queued", "running", "enqueued", "waiting", "cancel_requested"].includes(status ?? "")) return "warning" as const;
 	if (status === "succeeded") return "secondary" as const;
 	return "outline" as const;
+}
+
+function statusClassName(status: string | undefined) {
+	if (status === "succeeded") {
+		return "border-green-500/30 bg-green-500/15 text-green-700 dark:text-green-400";
+	}
+	if (["queued", "running", "enqueued", "waiting", "cancel_requested"].includes(status ?? "")) {
+		return "border-amber-500/30 bg-amber-500/15 text-amber-700 dark:text-amber-400";
+	}
+	return undefined;
+}
+
+function formatStatus(status: string | undefined) {
+	if (!status) return "Not run";
+	return status
+		.split("_")
+		.map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+		.join(" ");
+}
+
+function containerMemoryChange(
+	startBytes: number | null | undefined,
+	peakBytes: number | null | undefined,
+) {
+	if (startBytes == null || peakBytes == null) return null;
+	return Math.max(0, peakBytes - startBytes);
+}
+
+function formatContainerMemoryChange(
+	startBytes: number | null | undefined,
+	peakBytes: number | null | undefined,
+) {
+	const change = containerMemoryChange(startBytes, peakBytes);
+	return change == null ? "—" : formatBytes(change);
 }
 
 export function schedulerRecommendations(data: SchedulerDiagnosticsResponse): string[] {
@@ -108,6 +144,7 @@ function StatCard({
 }
 
 export function SchedulerTab() {
+	const [selectedTask, setSelectedTask] = useState<SchedulerTaskStatus | null>(null);
 	const query = useQuery({
 		queryKey: ["scheduler-diagnostics"],
 		queryFn: ({ signal }) => getSchedulerDiagnostics({ signal }),
@@ -131,12 +168,16 @@ export function SchedulerTab() {
 	const memory = data.capacity.max_memory_utilization_percent;
 
 	return (
+		<>
 		<div className="max-w-[1100px] mx-auto space-y-6" data-testid="scheduler-diagnostics">
 			<div className="flex items-center justify-between gap-4">
 				<div>
 					<div className="flex items-center gap-2">
 						<h2 className="text-lg font-semibold">Scheduler</h2>
-						<Badge variant={data.leader.healthy ? "secondary" : "destructive"}>
+						<Badge
+							variant={data.leader.healthy ? "outline" : "destructive"}
+							className={data.leader.healthy ? "border-green-500/30 bg-green-500/15 text-green-700 dark:text-green-400" : undefined}
+						>
 							{data.leader.healthy ? "Leader healthy" : "No leader"}
 						</Badge>
 					</div>
@@ -174,8 +215,8 @@ export function SchedulerTab() {
 					<Table><TableHeader><TableRow><TableHead>Replica</TableHead><TableHead>Role</TableHead><TableHead>Status</TableHead><TableHead>Memory</TableHead><TableHead>Slots</TableHead><TableHead>Active jobs</TableHead></TableRow></TableHeader>
 						<TableBody>{data.replicas.map((replica) => <TableRow key={replica.id}>
 							<TableCell><div className="font-medium">{replica.hostname}</div><div className="max-w-[220px] truncate text-xs text-muted-foreground" title={replica.id}>{replica.id}</div></TableCell>
-							<TableCell><Badge variant={replica.is_leader ? "default" : "outline"}>{replica.is_leader ? "Trigger leader" : "Runner"}</Badge></TableCell>
-							<TableCell><Badge variant={replica.online ? "secondary" : "destructive"}>{replica.online ? "Online" : "Stale"}</Badge><div className="mt-1 text-xs text-muted-foreground">{relativeTime(replica.last_heartbeat_at)}</div></TableCell>
+							<TableCell><Badge variant="outline" className={replica.is_leader ? "border-violet-500/30 bg-violet-500/15 text-violet-700 dark:text-violet-400" : "border-blue-500/30 bg-blue-500/15 text-blue-700 dark:text-blue-400"}>{replica.is_leader ? "Trigger Leader" : "Job Runner"}</Badge></TableCell>
+							<TableCell><Badge variant={replica.online ? "outline" : "destructive"} className={replica.online ? "border-green-500/30 bg-green-500/15 text-green-700 dark:text-green-400" : undefined}>{replica.online ? "Online" : "Stale"}</Badge><div className="mt-1 text-xs text-muted-foreground">{relativeTime(replica.last_heartbeat_at)}</div></TableCell>
 							<TableCell>{formatBytes(replica.memory_current_bytes)} / {formatBytes(replica.memory_limit_bytes)}</TableCell>
 							<TableCell>{replica.active_platform_jobs} / {replica.job_slots}</TableCell>
 							<TableCell className="font-mono text-xs">{replica.active_platform_job_ids.length === 0 ? "Idle" : replica.active_platform_job_ids.map((jobId) => <div key={jobId}>{jobId}</div>)}</TableCell>
@@ -187,30 +228,40 @@ export function SchedulerTab() {
 			<Card>
 				<CardHeader><CardTitle className="text-base">System schedules</CardTitle></CardHeader>
 				<CardContent>
-					<Table><TableHeader><TableRow><TableHead>Event</TableHead><TableHead>Cadence</TableHead><TableHead>Execution</TableHead><TableHead>Next trigger</TableHead><TableHead>Last status</TableHead><TableHead>Duration</TableHead><TableHead>Job memory</TableHead></TableRow></TableHeader>
-						<TableBody>{data.tasks.map((task) => <TableRow key={task.task_id}>
+					<Table><TableHeader><TableRow><TableHead>Event</TableHead><TableHead>Cadence</TableHead><TableHead>Execution</TableHead><TableHead>Next trigger</TableHead><TableHead>Last status</TableHead><TableHead>Duration</TableHead><TableHead title="Change in the shared scheduler container working set while this job ran">Container change</TableHead></TableRow></TableHeader>
+						<TableBody>{data.tasks.map((task) => <TableRow
+							key={task.task_id}
+							className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+							tabIndex={0}
+							aria-label={`View recent runs for ${task.name}`}
+							onClick={() => setSelectedTask(task)}
+							onKeyDown={(event) => {
+								if (event.key === "Enter" || event.key === " ") {
+									event.preventDefault();
+									setSelectedTask(task);
+								}
+							}}
+						>
 							<TableCell><div className="font-medium">{task.name}</div><div className="text-xs text-muted-foreground">{task.task_id}</div></TableCell>
 							<TableCell>{task.schedule}</TableCell>
-							<TableCell><Badge variant="outline">{task.execution_mode === "durable_job" ? "Distributed job" : "Leader trigger"}</Badge></TableCell>
+							<TableCell><Badge variant="outline" className={task.execution_mode === "durable_job" ? "border-blue-500/30 bg-blue-500/15 text-blue-700 dark:text-blue-400" : "border-violet-500/30 bg-violet-500/15 text-violet-700 dark:text-violet-400"}>{task.execution_mode === "durable_job" ? "Distributed Job" : "Leader Trigger"}</Badge></TableCell>
 							<TableCell>{relativeTime(task.next_run_at)}</TableCell>
-							<TableCell><Badge variant={statusVariant(task.last_run?.platform_job_status ?? task.last_run?.status)}>{task.last_run?.platform_job_status ?? task.last_run?.status ?? "Not run"}</Badge>{task.last_run?.error_message && <div className="mt-1 max-w-[260px] truncate text-xs text-destructive" title={task.last_run.error_message}>{task.last_run.error_message}</div>}</TableCell>
+							<TableCell>
+								<Badge
+									variant={statusVariant(task.last_run?.platform_job_status ?? task.last_run?.status)}
+									className={statusClassName(task.last_run?.platform_job_status ?? task.last_run?.status)}
+								>
+									{formatStatus(task.last_run?.platform_job_status ?? task.last_run?.status)}
+								</Badge>
+								{task.last_run?.error_message && <div className="mt-1 max-w-[260px] truncate text-xs text-destructive" title={task.last_run.error_message}>{task.last_run.error_message}</div>}
+							</TableCell>
 							<TableCell>{task.last_run?.duration_ms == null ? "—" : `${task.last_run.duration_ms} ms`}</TableCell>
-							<TableCell>{task.last_run?.platform_job_memory_peak_bytes == null ? "—" : formatBytes(Math.max(0, task.last_run.platform_job_memory_peak_bytes - (task.last_run.platform_job_memory_start_bytes ?? 0)))}</TableCell>
+							<TableCell>{formatContainerMemoryChange(task.last_run?.platform_job_memory_start_bytes, task.last_run?.platform_job_memory_peak_bytes)}</TableCell>
 						</TableRow>)}</TableBody></Table>
 				</CardContent>
 			</Card>
-
-			<Card>
-				<CardHeader><CardTitle className="flex items-center gap-2 text-base"><DatabaseZap className="h-4 w-4" />Published system logs</CardTitle></CardHeader>
-				<CardContent className="space-y-2">
-					{data.logs.map((log) => <div key={log.id} className="grid gap-1 rounded-md border p-3 sm:grid-cols-[90px_150px_1fr] sm:items-start">
-						<div><Badge variant={log.level === "error" ? "destructive" : log.level === "warning" ? "warning" : "outline"}>{log.level}</Badge></div>
-						<div><div className="text-xs font-medium">{log.source}</div><div className="text-xs text-muted-foreground">{relativeTime(log.created_at)}</div></div>
-						<div><div className="text-sm">{log.message}</div><div className="mt-1 font-mono text-xs text-muted-foreground">{log.code}</div></div>
-					</div>)}
-					{data.logs.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No system logs have been published yet.</p>}
-				</CardContent>
-			</Card>
 		</div>
+		<SchedulerRunDrawer task={selectedTask} onClose={() => setSelectedTask(null)} />
+		</>
 	);
 }

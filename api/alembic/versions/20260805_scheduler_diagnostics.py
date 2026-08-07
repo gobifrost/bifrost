@@ -115,7 +115,7 @@ def upgrade() -> None:
         sa.Column(
             "platform_job_id",
             postgresql.UUID(as_uuid=True),
-            sa.ForeignKey("platform_jobs.id", ondelete="CASCADE"),
+            sa.ForeignKey("platform_jobs.id", ondelete="SET NULL"),
             nullable=True,
         ),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("NOW()")),

@@ -213,7 +213,6 @@ class TestTokenSeal:
         self, e2e_client, builder_alice, alice_app
     ):
         import base64
-        import json
 
         solution, app_id = alice_app
         url = _launch(e2e_client, builder_alice, solution["id"], app_id).json()[
@@ -364,7 +363,6 @@ class TestActorRuntime:
         alice_app_with_table,
     ):
         import base64
-        import json
 
         from src.models.enums import ExecutionStatus
         from src.models.orm.executions import Execution
