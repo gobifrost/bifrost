@@ -54,7 +54,7 @@ async def test_fresh_database_installs_reinstated_builder_schema(
     revision = (
         await db_session.execute(text("SELECT version_num FROM alembic_version"))
     ).scalar_one()
-    assert revision == "20260807_reinstate_builder"
+    assert revision == "20260807_platform_job_external"
 
     builder_tables = (
         await db_session.execute(
@@ -97,6 +97,11 @@ async def test_fresh_database_installs_reinstated_builder_schema(
             "encrypted_options",
             "input_key",
             "input_sha256",
+        },
+        "platform_jobs": {
+            "external_provider",
+            "external_run_id",
+            "external_started_at",
         },
     }
     for table_name, column_names in expected_columns.items():

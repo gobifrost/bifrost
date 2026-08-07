@@ -256,12 +256,19 @@ async def test_deferred_job_releases_lease_and_finishes_from_child_work(
         token,
         phase="Waiting for child work",
         result={"children": 2},
+        external_provider="cloudflare",
+        external_run_id="workflow-instance-1",
     )
     await db_session.refresh(job)
     assert job.status == "waiting"
     assert job.lease_token is None
     assert job.lease_owner is None
+    assert job.external_provider == "cloudflare"
+    assert job.external_run_id == "workflow-instance-1"
+    assert job.external_started_at is not None
     assert service.platform_job_to_public(job).can_cancel is True
+    assert service.platform_job_to_public(job).external_provider == "cloudflare"
+    assert service.platform_job_to_public(job).external_run_id == "workflow-instance-1"
 
     assert await service.update_deferred_platform_job_progress(
         job.id,
@@ -303,6 +310,28 @@ async def test_stale_runner_cannot_defer_job(
         job.id,
         uuid4(),
         phase="Stale child work",
+        external_provider="cloudflare",
+        external_run_id="stale-workflow",
     )
     await db_session.refresh(job)
     assert job.status == "running"
+    assert job.external_provider is None
+
+
+@pytest.mark.asyncio
+async def test_defer_requires_complete_external_identity(
+    db_session: AsyncSession,
+) -> None:
+    job = await _enqueue(db_session)
+    token = uuid4()
+    job.status = "running"
+    job.lease_token = token
+    await db_session.commit()
+
+    with pytest.raises(ValueError, match="external_provider and external_run_id"):
+        await service.defer_platform_job(
+            job.id,
+            token,
+            phase="Waiting for child work",
+            external_provider="cloudflare",
+        )

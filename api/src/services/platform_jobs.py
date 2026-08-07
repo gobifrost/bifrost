@@ -84,6 +84,9 @@ def platform_job_to_public(job: PlatformJob) -> PlatformJobPublic:
         memory_start_bytes=job.memory_start_bytes,
         memory_peak_bytes=job.memory_peak_bytes,
         memory_limit_bytes=job.memory_limit_bytes,
+        external_provider=job.external_provider,
+        external_run_id=job.external_run_id,
+        external_started_at=job.external_started_at,
         started_at=job.started_at,
         completed_at=job.completed_at,
         created_at=job.created_at,
@@ -356,8 +359,13 @@ async def defer_platform_job(
     *,
     phase: str,
     result: dict[str, Any] | None = None,
+    external_provider: str | None = None,
+    external_run_id: str | None = None,
+    external_started_at: datetime | None = None,
 ) -> bool:
     """Release a runner after durable child work has been dispatched."""
+    if (external_provider is None) != (external_run_id is None):
+        raise ValueError("external_provider and external_run_id must be provided together")
     async with get_db_context() as db:
         job = (
             await db.execute(
@@ -375,6 +383,10 @@ async def defer_platform_job(
         job.status = "waiting"
         job.phase = phase[:200]
         job.result = result
+        if external_provider is not None and external_run_id is not None:
+            job.external_provider = external_provider[:50]
+            job.external_run_id = external_run_id[:255]
+            job.external_started_at = external_started_at or _now()
         job.lease_owner = None
         job.lease_token = None
         job.heartbeat_at = None
