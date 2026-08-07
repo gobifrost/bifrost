@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+import os
+import socket
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -230,6 +232,53 @@ async def enqueue_platform_job(
     return job, False
 
 
+async def run_queued_platform_job_inline(job_id: UUID) -> bool:
+    """Claim and run one exact child job before a parent starts waiting.
+
+    This is the deadlock-safe path for a PlatformJob handler that synchronously
+    depends on another PlatformJob while the scheduler has only one local
+    process slot. The child still uses the canonical registry, lease fencing,
+    progress transport, and terminal state transitions.
+    """
+    from src.jobs.platform.registry import get_platform_job_definition
+    from src.services.execution.memory_monitor import get_cgroup_memory
+
+    async with get_db_context() as db:
+        job = (
+            await db.execute(
+                select(PlatformJob)
+                .where(PlatformJob.id == job_id, PlatformJob.status == "queued")
+                .with_for_update(skip_locked=True)
+            )
+        ).scalar_one_or_none()
+        if job is None:
+            return False
+        definition = get_platform_job_definition(job.job_type)
+        if definition is None:
+            return False
+        now = _now()
+        lease_token = uuid4()
+        job.status = "running"
+        job.phase = "Starting"
+        job.attempt += 1
+        job.started_at = job.started_at or now
+        job.lease_owner = f"inline:{socket.gethostname()}:{os.getpid()}"
+        job.lease_token = lease_token
+        job.heartbeat_at = now
+        job.lease_expires_at = now + timedelta(seconds=30)
+        current_memory, memory_limit = get_cgroup_memory()
+        job.memory_start_bytes = current_memory if current_memory >= 0 else None
+        job.memory_peak_bytes = current_memory if current_memory >= 0 else None
+        job.memory_limit_bytes = memory_limit if memory_limit > 0 else None
+        job.revision += 1
+        await db.commit()
+    await publish_platform_job_update(job)
+
+    from src.jobs.platform.runner import run_claimed_platform_job
+
+    return await run_claimed_platform_job(job_id, lease_token)
+
+
 async def ensure_platform_job_notification(
     db: AsyncSession,
     job: PlatformJob,
@@ -451,6 +500,87 @@ async def update_deferred_platform_job_progress(
         job.progress_current = current
         job.progress_total = total
         job.progress_percent = 100 * current / total if total else 100
+        job.revision += 1
+        await db.commit()
+    await publish_platform_job_update(job)
+    return True
+
+
+async def update_external_platform_job_progress(
+    job_id: UUID,
+    dispatch_attempt: int,
+    *,
+    phase: str,
+    current: int,
+    total: int | None,
+    percent: float | None,
+) -> bool:
+    """Record a callback update fenced by the external dispatch attempt."""
+    async with get_db_context() as db:
+        job = (
+            await db.execute(
+                select(PlatformJob)
+                .where(
+                    PlatformJob.id == job_id,
+                    PlatformJob.attempt == dispatch_attempt,
+                    PlatformJob.status.in_(("running", "waiting")),
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if job is None:
+            return False
+        job.phase = phase[:200]
+        job.progress_current = max(0, current)
+        job.progress_total = total
+        job.progress_percent = percent
+        job.revision += 1
+        await db.commit()
+    await publish_platform_job_update(job)
+    return True
+
+
+async def finish_external_platform_job(
+    job_id: UUID,
+    dispatch_attempt: int,
+    *,
+    status: str,
+    result: dict[str, Any] | None = None,
+    error_message: str | None = None,
+) -> bool:
+    """Finish a callback-driven job even if it won the local defer race."""
+    if status not in TERMINAL_PLATFORM_JOB_STATUSES:
+        raise ValueError(f"Invalid terminal platform-job status: {status}")
+    async with get_db_context() as db:
+        job = (
+            await db.execute(
+                select(PlatformJob)
+                .where(
+                    PlatformJob.id == job_id,
+                    PlatformJob.attempt == dispatch_attempt,
+                    PlatformJob.status.in_(("running", "waiting")),
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if job is None:
+            return False
+        job.status = status
+        job.phase = {
+            "succeeded": "Completed",
+            "failed": "Failed",
+            "cancelled": "Cancelled",
+        }[status]
+        if status == "succeeded":
+            job.progress_percent = 100
+        job.result = result
+        job.error_code = "external_job_failed" if error_message else None
+        job.error_message = error_message[:4000] if error_message else None
+        job.completed_at = _now()
+        job.lease_owner = None
+        job.lease_token = None
+        job.heartbeat_at = None
+        job.lease_expires_at = None
         job.revision += 1
         await db.commit()
     await publish_platform_job_update(job)

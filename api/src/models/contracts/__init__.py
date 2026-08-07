@@ -162,6 +162,8 @@ from src.models.contracts.scheduler_diagnostics import (
     SystemDiagnosticLogPublic,
 )
 from src.models.contracts.sandbox_runner import (
+    SandboxJobCancelled,
+    SandboxJobProgressUpdate,
     SandboxRunnerBlocker,
     SandboxRunnerCloudflareConfig,
     SandboxRunnerCloudflarePublic,
@@ -1084,6 +1086,18 @@ __all__ = [
     "SchedulerTaskRunStatus",
     "SchedulerTaskStatus",
     "SystemDiagnosticLogPublic",
+    # Sandboxed Builder runners
+    "SandboxJobCancelled",
+    "SandboxJobProgressUpdate",
+    "SandboxRunnerBlocker",
+    "SandboxRunnerCloudflareConfig",
+    "SandboxRunnerCloudflarePublic",
+    "SandboxRunnerConfigPublic",
+    "SandboxRunnerConfigSave",
+    "SandboxRunnerLocalConfig",
+    "SandboxRunnerLocalPublic",
+    "SandboxRunnerProvider",
+    "SandboxRunnerReadiness",
     # Platform Admin
     "PoolDetail",
     "PoolsListResponse",

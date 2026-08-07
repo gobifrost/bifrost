@@ -58,8 +58,6 @@ async def test_save_cloudflare_encrypts_and_masks_api_token(mock_session):
         SandboxRunnerConfigSave(
             provider="cloudflare",
             callback_base_url="https://bifrost.example.com/",
-            provisioned=True,
-            connected=True,
             enabled=True,
             cloudflare=SandboxRunnerCloudflareConfig(
                 account_id="acct_123",
@@ -84,7 +82,75 @@ async def test_save_cloudflare_encrypts_and_masks_api_token(mock_session):
 
     assert public.cloudflare is not None
     assert public.cloudflare.api_token_set is True
+    assert public.provisioned is False
+    assert public.connected is False
     assert not hasattr(public.cloudflare, "api_token")
+
+
+@pytest.mark.asyncio
+async def test_runtime_status_can_only_be_set_through_internal_service(mock_session):
+    row = _system_config(
+        {
+            "provider": "cloudflare",
+            "enabled": False,
+            "callback_base_url": "https://bifrost.example.com",
+            "provisioned": False,
+            "connected": False,
+            "cloudflare": {
+                "account_id": "acct_123",
+                "encrypted_api_token": "encrypted",
+                "script_name": DEFAULT_CLOUDFLARE_SCRIPT_NAME,
+                "workflow_name": DEFAULT_CLOUDFLARE_WORKFLOW_NAME,
+            },
+            "local": None,
+        }
+    )
+    _set_row(mock_session, row)
+
+    public = await SandboxRunnerConfigService(mock_session).set_runtime_status(
+        provisioned=True,
+        connected=True,
+        updated_by="admin@example.com",
+    )
+
+    assert row.value_json["provisioned"] is True
+    assert row.value_json["connected"] is True
+    assert row.updated_by == "admin@example.com"
+    assert public.provisioned is True
+    assert public.connected is True
+
+
+@pytest.mark.asyncio
+async def test_connection_change_resets_proven_runtime_status(mock_session):
+    row = _system_config(
+        {
+            "provider": "cloudflare",
+            "enabled": True,
+            "callback_base_url": "https://old.example.com",
+            "provisioned": True,
+            "connected": True,
+            "cloudflare": {
+                "account_id": "acct_123",
+                "encrypted_api_token": "encrypted",
+                "script_name": DEFAULT_CLOUDFLARE_SCRIPT_NAME,
+                "workflow_name": DEFAULT_CLOUDFLARE_WORKFLOW_NAME,
+            },
+            "local": None,
+        }
+    )
+    _set_row(mock_session, row)
+
+    public = await SandboxRunnerConfigService(mock_session).save_config(
+        SandboxRunnerConfigSave(
+            provider="cloudflare",
+            enabled=True,
+            callback_base_url="https://new.example.com",
+            cloudflare=SandboxRunnerCloudflareConfig(account_id="acct_123"),
+        )
+    )
+
+    assert public.provisioned is False
+    assert public.connected is False
 
 
 @pytest.mark.asyncio
@@ -194,7 +260,7 @@ async def test_local_config_generates_runner_secret_and_masks_it(mock_session):
     assert local["encrypted_runner_secret"]
     assert public.local is not None
     assert public.local.runner_secret_set is True
-    assert "runner_secret" not in public.model_dump_json()
+    assert "runner_secret" not in public.local.model_dump()
 
 
 @pytest.mark.asyncio
@@ -273,3 +339,37 @@ async def test_readiness_ready_when_all_checks_pass(mock_session):
     assert readiness.credentials_configured is True
     assert readiness.callback_configured is True
 
+
+@pytest.mark.asyncio
+async def test_dispatch_readiness_does_not_require_ai_but_requires_live_provider(
+    mock_session,
+):
+    service = SandboxRunnerConfigService(mock_session)
+    encrypted = service._build_cloudflare_payload(
+        SandboxRunnerConfigSave(
+            provider="cloudflare",
+            cloudflare=SandboxRunnerCloudflareConfig(api_token="private-token"),
+        ),
+        None,
+    )["encrypted_api_token"]
+    row = _system_config(
+        {
+            "provider": "cloudflare",
+            "enabled": True,
+            "callback_base_url": "https://bifrost.example.com",
+            "provisioned": True,
+            "connected": True,
+            "cloudflare": {
+                "account_id": "acct_123",
+                "encrypted_api_token": encrypted,
+                "script_name": DEFAULT_CLOUDFLARE_SCRIPT_NAME,
+                "workflow_name": DEFAULT_CLOUDFLARE_WORKFLOW_NAME,
+            },
+            "local": None,
+        }
+    )
+    _set_row(mock_session, row)
+
+    assert await service.is_dispatch_ready() is True
+    row.value_json["connected"] = False
+    assert await service.is_dispatch_ready() is False

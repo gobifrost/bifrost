@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -21,8 +22,16 @@ class SandboxRunnerCloudflareConfig(BaseModel):
 
     account_id: str | None = Field(default=None, min_length=1)
     api_token: str | None = Field(default=None, min_length=1)
-    script_name: str = Field(default=DEFAULT_CLOUDFLARE_SCRIPT_NAME, min_length=1, max_length=128)
-    workflow_name: str = Field(default=DEFAULT_CLOUDFLARE_WORKFLOW_NAME, min_length=1, max_length=128)
+    script_name: str = Field(
+        default=DEFAULT_CLOUDFLARE_SCRIPT_NAME,
+        min_length=1,
+        max_length=128,
+    )
+    workflow_name: str = Field(
+        default=DEFAULT_CLOUDFLARE_WORKFLOW_NAME,
+        min_length=1,
+        max_length=64,
+    )
 
     @field_validator("account_id", "api_token", "script_name", "workflow_name", mode="before")
     @classmethod
@@ -60,6 +69,11 @@ class SandboxRunnerLocalConfig(BaseModel):
             return trimmed or None
         return value
 
+    @field_validator("endpoint_url")
+    @classmethod
+    def _validate_endpoint_url(cls, value: str | None) -> str | None:
+        return _validate_http_url(value, "endpoint_url")
+
 
 class SandboxRunnerLocalPublic(BaseModel):
     """Local runner settings safe to return to browsers."""
@@ -74,8 +88,6 @@ class SandboxRunnerConfigSave(BaseModel):
     provider: SandboxRunnerProvider
     enabled: bool = False
     callback_base_url: str | None = Field(default=None, min_length=1)
-    provisioned: bool = False
-    connected: bool = False
     cloudflare: SandboxRunnerCloudflareConfig | None = None
     local: SandboxRunnerLocalConfig | None = None
 
@@ -86,6 +98,22 @@ class SandboxRunnerConfigSave(BaseModel):
             trimmed = value.strip().rstrip("/")
             return trimmed or None
         return value
+
+    @field_validator("callback_base_url")
+    @classmethod
+    def _validate_callback_url(cls, value: str | None) -> str | None:
+        return _validate_http_url(value, "callback_base_url")
+
+
+def _validate_http_url(value: str | None, field: str) -> str | None:
+    if value is None:
+        return None
+    parsed = urlsplit(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(f"{field} must be an absolute HTTP(S) URL")
+    if parsed.username or parsed.password or parsed.fragment:
+        raise ValueError(f"{field} cannot contain credentials or a fragment")
+    return value
 
 
 class SandboxRunnerConfigPublic(BaseModel):
@@ -136,3 +164,15 @@ class SandboxRunnerStoredConfig(BaseModel):
     cloudflare: dict[str, object] | None = None
     local: dict[str, object] | None = None
 
+
+class SandboxJobProgressUpdate(BaseModel):
+    """Bounded progress reported by one sandbox job attempt."""
+
+    phase: str = Field(min_length=1, max_length=200)
+    current: int = Field(default=0, ge=0)
+    total: int | None = Field(default=None, ge=0)
+    percent: float | None = Field(default=None, ge=0, le=100)
+
+
+class SandboxJobCancelled(BaseModel):
+    cancelled: bool

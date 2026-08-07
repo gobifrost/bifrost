@@ -156,7 +156,15 @@ async def require_sandbox_job_capability(
         job is None
         or job.job_type != capability.job_type
         or job.attempt != capability.dispatch_attempt
-        or job.status not in {"running", "waiting", "cancel_requested"}
+        or job.status
+        not in {
+            "running",
+            "waiting",
+            "cancel_requested",
+            "succeeded",
+            "failed",
+            "cancelled",
+        }
     ):
         raise _invalid_capability()
     return capability

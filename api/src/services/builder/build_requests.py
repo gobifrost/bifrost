@@ -14,7 +14,6 @@ from sqlalchemy import select
 
 from src.config import get_settings
 from src.core.database import get_db_context
-from src.core.redis_client import get_redis_client
 from src.models.orm.solution_build_jobs import SolutionBuildJob
 from src.models.orm.solutions import Solution
 from src.models.orm.users import User
@@ -22,12 +21,10 @@ from src.services.builder.build_input import make_input_zip
 from src.services.builder.build_plane import (
     TOOLCHAIN_VERSION,
     BuildPlaneUnavailable,
-    build_plane_available,
-    cancel_key,
 )
 from src.services.builder.staged_artifacts import StagedBuildArtifactStorage
+from src.services.sandbox_runner_config import SandboxRunnerConfigService
 
-BUILD_QUEUE = "solution-builds"
 TERMINAL_BUILD_STATUSES = {"succeeded", "failed", "cancelled", "timeout"}
 
 
@@ -60,8 +57,9 @@ async def request_app_build(
     This function owns a dedicated transaction. Build rows must become visible
     to the coordinator before any deploy transaction begins waiting for them.
     """
-    if not await build_plane_available():
-        raise BuildPlaneUnavailable("No builder coordinator is available")
+    async with get_db_context() as readiness_db:
+        if not await SandboxRunnerConfigService(readiness_db).is_dispatch_ready():
+            raise BuildPlaneUnavailable("The sandbox runner is not ready")
 
     with tempfile.TemporaryDirectory(prefix=f"bifrost-build-request-{app_id}-") as tmp:
         input_path = Path(tmp) / "input.zip"
@@ -149,9 +147,13 @@ async def request_app_build(
                 job_id=job_id,
             )
 
-    from src.services.platform_jobs import publish_platform_job_update
+    from src.services.platform_jobs import (
+        publish_platform_job_update,
+        run_queued_platform_job_inline,
+    )
 
     await publish_platform_job_update(platform_job)
+    await run_queued_platform_job_inline(platform_job.id)
     return job
 
 
@@ -204,25 +206,23 @@ async def await_build_jobs(
 
 
 async def cancel_build_job(job_id: UUID) -> SolutionBuildJob:
-    """Cancel queued work immediately or signal a running coordinator."""
+    """Cancel queued or externally running work and terminate its sandbox."""
+    platform_job = None
     async with get_db_context() as db:
         job = await db.get(SolutionBuildJob, job_id, with_for_update=True)
         if job is None:
             raise LookupError(job_id)
-        if job.status == "queued":
+        if job.status in {"queued", "running"}:
             job.status = "cancelled"
             job.completed_at = datetime.now(timezone.utc)
-        elif job.status == "running":
-            redis = await get_redis_client()._get_redis()
-            await redis.set(
-                cancel_key(job.id),
-                "1",
-                ex=get_settings().builder_build_timeout_s + 120,
-            )
         from src.models.orm.platform_jobs import PlatformJob
         from src.services.platform_jobs import request_platform_job_cancel
 
         platform_job = await db.get(PlatformJob, job_id)
         if platform_job is not None:
             await request_platform_job_cancel(db, platform_job)
-        return job
+    if platform_job is not None and platform_job.external_run_id:
+        from src.services.sandbox_runners import cancel_external_sandbox_run
+
+        await cancel_external_sandbox_run(platform_job)
+    return job

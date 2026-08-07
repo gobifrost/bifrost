@@ -120,6 +120,7 @@ async def test_websocket_event_matches_public_http_contract_and_hides_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     job = await _enqueue(db_session)
+    job.available_at = datetime.now(timezone.utc) + timedelta(minutes=1)
     await db_session.commit()
     broadcast = AsyncMock()
     monkeypatch.setattr(service.pubsub_manager, "broadcast", broadcast)
@@ -335,3 +336,77 @@ async def test_defer_requires_complete_external_identity(
             phase="Waiting for child work",
             external_provider="cloudflare",
         )
+
+
+@pytest.mark.asyncio
+async def test_inline_child_claim_uses_canonical_lease_and_runner(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = await _enqueue(db_session)
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def test_context() -> AsyncGenerator[AsyncSession, None]:
+        yield db_session
+
+    run_claimed = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "get_db_context", test_context)
+    monkeypatch.setattr(service, "publish_platform_job_update", AsyncMock())
+    monkeypatch.setattr(
+        "src.jobs.platform.runner.run_claimed_platform_job",
+        run_claimed,
+    )
+
+    assert await service.run_queued_platform_job_inline(job.id) is True
+    await db_session.refresh(job)
+    assert job.status == "running"
+    assert job.attempt == 1
+    assert job.lease_token is not None
+    assert job.lease_owner is not None and job.lease_owner.startswith("inline:")
+    run_claimed.assert_awaited_once_with(job.id, job.lease_token)
+
+
+@pytest.mark.asyncio
+async def test_external_completion_can_win_defer_race(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = await _enqueue(db_session)
+    job.status = "running"
+    job.attempt = 2
+    job.lease_token = uuid4()
+    job.lease_owner = "inline:test"
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def test_context() -> AsyncGenerator[AsyncSession, None]:
+        yield db_session
+
+    monkeypatch.setattr(service, "get_db_context", test_context)
+    monkeypatch.setattr(service, "publish_platform_job_update", AsyncMock())
+
+    assert await service.update_external_platform_job_progress(
+        job.id,
+        2,
+        phase="Uploading artifacts",
+        current=1,
+        total=2,
+        percent=50,
+    )
+    assert await service.finish_external_platform_job(
+        job.id,
+        2,
+        status="succeeded",
+        result={"artifact_count": 2},
+    )
+    await db_session.refresh(job)
+    assert job.status == "succeeded"
+    assert job.lease_token is None
+    assert job.result == {"artifact_count": 2}
+    assert not await service.finish_external_platform_job(
+        job.id,
+        1,
+        status="failed",
+        error_message="stale callback",
+    )

@@ -98,7 +98,7 @@ async def test_sandbox_capability_is_fenced_by_current_attempt(
 
 
 @pytest.mark.asyncio
-async def test_sandbox_capability_rejects_terminal_or_normal_token(
+async def test_sandbox_capability_allows_idempotent_terminal_callback_only_as_actor(
     db_session: AsyncSession,
 ) -> None:
     job = _job()
@@ -108,12 +108,12 @@ async def test_sandbox_capability_rejects_terminal_or_normal_token(
     job.status = "succeeded"
     await db_session.flush()
 
-    with pytest.raises(HTTPException):
-        await require_sandbox_job_capability(
-            job.id,
-            db_session,
-            f"Bearer {token}",
-        )
+    accepted = await require_sandbox_job_capability(
+        job.id,
+        db_session,
+        f"Bearer {token}",
+    )
+    assert accepted.dispatch_attempt == job.attempt
 
     normal = create_access_token({"sub": str(uuid4()), "scopes": ["*"]})
     with pytest.raises(HTTPException):

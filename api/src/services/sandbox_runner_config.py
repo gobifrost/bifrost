@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 import secrets
+from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
@@ -78,8 +78,8 @@ class SandboxRunnerConfigService:
             "provider": request.provider,
             "enabled": request.enabled,
             "callback_base_url": request.callback_base_url,
-            "provisioned": request.provisioned,
-            "connected": request.connected,
+            "provisioned": False,
+            "connected": False,
             "cloudflare": None,
             "local": None,
         }
@@ -91,6 +91,14 @@ class SandboxRunnerConfigService:
 
         if request.enabled and not request.callback_base_url:
             raise ValueError("callback_base_url is required to enable the sandbox runner")
+
+        if existing is not None and not self._connection_settings_changed(
+            request,
+            existing,
+            data,
+        ):
+            data["provisioned"] = existing.provisioned
+            data["connected"] = existing.connected
 
         if existing_row is None:
             existing_row = SystemConfig(
@@ -109,6 +117,29 @@ class SandboxRunnerConfigService:
             existing_row.updated_at = datetime.now(timezone.utc)
             existing_row.updated_by = updated_by
 
+        await self.session.flush()
+        return self._to_public(SandboxRunnerStoredConfig.model_validate(data))
+
+    async def set_runtime_status(
+        self,
+        *,
+        provisioned: bool,
+        connected: bool,
+        updated_by: str = "system",
+    ) -> SandboxRunnerConfigPublic:
+        """Persist status proven by control-plane provisioning and probes."""
+        if connected and not provisioned:
+            raise ValueError("A connected sandbox runner must be provisioned")
+        row = await self._get_row()
+        stored = self._parse_row(row)
+        if row is None or stored is None:
+            raise LookupError("Sandbox runner configuration does not exist")
+        data = stored.model_dump()
+        data["provisioned"] = provisioned
+        data["connected"] = connected
+        row.value_json = data
+        row.updated_at = datetime.now(timezone.utc)
+        row.updated_by = updated_by
         await self.session.flush()
         return self._to_public(SandboxRunnerStoredConfig.model_validate(data))
 
@@ -219,6 +250,18 @@ class SandboxRunnerConfigService:
             blockers=blockers,
         )
 
+    async def is_dispatch_ready(self) -> bool:
+        """Return whether non-AI sandbox work may be dispatched safely."""
+        stored = await self._get_stored_config()
+        return bool(
+            stored
+            and stored.enabled
+            and stored.callback_base_url
+            and stored.provisioned
+            and stored.connected
+            and self._credentials_configured(stored)
+        )
+
     async def _get_row(self) -> SystemConfig | None:
         result = await self.session.execute(
             select(SystemConfig).where(
@@ -243,7 +286,11 @@ class SandboxRunnerConfigService:
         existing: SandboxRunnerStoredConfig | None,
     ) -> dict[str, object]:
         cloudflare = request.cloudflare
-        existing_cloudflare = existing.cloudflare if existing and existing.provider == "cloudflare" else None
+        existing_cloudflare = (
+            existing.cloudflare
+            if existing and existing.provider == "cloudflare"
+            else None
+        )
         encrypted_token = None
         if cloudflare and cloudflare.api_token:
             encrypted_token = encrypt_secret(cloudflare.api_token)
@@ -271,7 +318,9 @@ class SandboxRunnerConfigService:
         existing: SandboxRunnerStoredConfig | None,
     ) -> dict[str, object]:
         local = request.local
-        existing_local = existing.local if existing and existing.provider == "local" else None
+        existing_local = (
+            existing.local if existing and existing.provider == "local" else None
+        )
         encrypted_secret = None
         if local and local.runner_secret:
             encrypted_secret = encrypt_secret(local.runner_secret)
@@ -321,7 +370,34 @@ class SandboxRunnerConfigService:
     def _credentials_configured(self, stored: SandboxRunnerStoredConfig) -> bool:
         if stored.provider == "cloudflare":
             cloudflare = stored.cloudflare or {}
-            return bool(cloudflare.get("encrypted_api_token"))
+            return bool(
+                cloudflare.get("account_id")
+                and cloudflare.get("encrypted_api_token")
+            )
         local = stored.local or {}
         return bool(local.get("endpoint_url") and local.get("encrypted_runner_secret"))
 
+    def _connection_settings_changed(
+        self,
+        request: SandboxRunnerConfigSave,
+        existing: SandboxRunnerStoredConfig,
+        new_data: dict[str, Any],
+    ) -> bool:
+        if existing.provider != request.provider:
+            return True
+        if existing.callback_base_url != request.callback_base_url:
+            return True
+        if request.provider == "cloudflare":
+            if request.cloudflare and request.cloudflare.api_token:
+                return True
+            old = existing.cloudflare or {}
+            new = new_data.get("cloudflare") or {}
+            return any(
+                old.get(key) != new.get(key)
+                for key in ("account_id", "script_name", "workflow_name")
+            )
+        if request.local and request.local.runner_secret:
+            return True
+        old = existing.local or {}
+        new = new_data.get("local") or {}
+        return old.get("endpoint_url") != new.get("endpoint_url")
