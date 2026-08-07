@@ -209,7 +209,7 @@ async def test_install_from_repo_rolls_back_on_deploy_failure(e2e_client, platfo
         platform_admin.headers,
     )
     assert resp.status_code == 409, resp.text
-    assert "deploy failed" in resp.text
+    assert "manifest invalid" in resp.text
 
     # The failed install must NOT have persisted: a later, VALID install of the
     # SAME slug succeeds instead of 409'ing — proving the job deleted the orphan.

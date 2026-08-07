@@ -56,8 +56,7 @@ from src.models.contracts.tables import (
 )
 from src.models.orm.custom_claims import CustomClaim as CustomClaimORM
 from src.models.orm.tables import Document, Table
-from src.services.solutions.guard import assert_not_solution_managed
-from src.services.solutions.access import is_private_solution_owner
+from src.services.solutions.guard import assert_entity_id_not_solution_managed
 from src.services.solution_scope import (
     resolve_solution_table_by_name,
     solution_context_id,
@@ -146,14 +145,6 @@ async def _check_action_or_403(
     of the deny. All current call sites either run this before any
     mutation or only after read-only operations.
     """
-    if await is_private_solution_owner(
-        db,
-        solution_id=table.solution_id,
-        actor_user_id=user.user_id,
-        is_external=user.is_external,
-    ):
-        return
-
     policies = await load_resolved_table_policies(table, db)
     await preresolve_for_policies(
         user,
@@ -591,7 +582,6 @@ async def get_table_or_404(
     repo = TableRepository(
         ctx.db,
         target_org_id,
-        user_id=ctx.user.user_id,
         is_superuser=ctx.user.is_superuser,
         is_external=ctx.user.is_external,
     )
@@ -917,14 +907,8 @@ async def get_table(
     user: CurrentSuperuser,
 ) -> TablePublic:
     """Get table metadata by UUID (platform admin only)."""
-    repo = TableRepository(
-        ctx.db,
-        ctx.org_id,
-        user_id=ctx.user.user_id,
-        is_superuser=True,
-        is_external=ctx.user.is_external,
-    )
-    table = await repo.get(id=table_id)
+    result = await ctx.db.execute(select(Table).where(Table.id == table_id))
+    table = result.scalar_one_or_none()
     if not table:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -949,21 +933,16 @@ async def update_table(
     Solution-managed tables are read-only here: deploy owns schema + policies.
     Row DATA (documents) stays editable — that's runtime state (criterion 7).
     """
-    repo = TableRepository(
-        ctx.db,
-        ctx.org_id,
-        user_id=ctx.user.user_id,
-        is_superuser=True,
-        is_external=ctx.user.is_external,
-    )
-    existing_table = await repo.get(id=table_id)
-    if existing_table is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Table '{table_id}' not found",
-        )
-    assert_not_solution_managed(existing_table)
+    await assert_entity_id_not_solution_managed(ctx.db, Table, table_id)
     if "policies" in data.model_fields_set:
+        existing_table = (
+            await ctx.db.execute(select(Table).where(Table.id == table_id))
+        ).scalar_one_or_none()
+        if existing_table is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Table '{table_id}' not found",
+            )
         try:
             await _validate_table_policy_claim_refs(
                 ctx.db,
@@ -977,6 +956,7 @@ async def update_table(
                 detail=str(e),
             )
 
+    repo = TableRepository(ctx.db, ctx.org_id, is_superuser=True)
     try:
         table = await repo.update_table(table_id, data)
     except ValueError as e:
@@ -992,9 +972,9 @@ async def update_table(
         )
 
     if "policies" in data.model_fields_set:
-        # Subscribers re-read policies when they receive this event. The update
-        # must be committed first or another database session can observe the old
-        # policy and incorrectly keep an unauthorized subscription alive.
+        # Subscribers re-read policies on a separate database connection when
+        # they receive this event.  Commit first so they cannot observe the old
+        # policy and incorrectly retain access under load.
         await ctx.db.commit()
         await publish_policy_changed(str(table.id))
 
@@ -1012,20 +992,8 @@ async def delete_table(
     user: CurrentSuperuser,
 ) -> None:
     """Delete a table and all its documents by ID (platform admin only)."""
-    repo = TableRepository(
-        ctx.db,
-        ctx.org_id,
-        user_id=ctx.user.user_id,
-        is_superuser=True,
-        is_external=ctx.user.is_external,
-    )
-    existing_table = await repo.get(id=table_id)
-    if existing_table is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Table '{table_id}' not found",
-        )
-    assert_not_solution_managed(existing_table)
+    await assert_entity_id_not_solution_managed(ctx.db, Table, table_id)
+    repo = TableRepository(ctx.db, ctx.org_id, is_superuser=True)
     success = await repo.delete_table(table_id)
 
     if not success:
@@ -1377,21 +1345,14 @@ async def batch_documents(
     table = await get_table_or_404(ctx, table_id, scope=scope)
     await _assert_solution_write_targets_owned_table(ctx, table)
     repo = DocumentRepository(ctx.db, table)
-    owner_bypass = await is_private_solution_owner(
-        ctx.db,
-        solution_id=table.solution_id,
-        actor_user_id=ctx.user.user_id,
-        is_external=ctx.user.is_external,
-    )
     policies = await load_resolved_table_policies(table, ctx.db)
-    if not owner_bypass:
-        await preresolve_for_policies(
-            ctx.user,
-            policies,
-            ctx.db,
-            table.organization_id,
-            table.solution_id,
-        )
+    await preresolve_for_policies(
+        ctx.user,
+        policies,
+        ctx.db,
+        table.organization_id,
+        table.solution_id,
+    )
 
     # Pre-resolve attribution per item up front so any forged-attribution
     # 403 surfaces before we do work and applies all-or-nothing across
@@ -1411,7 +1372,7 @@ async def batch_documents(
             existing = await repo.get(item.id)
             if existing is not None:
                 pre_existing[i] = existing
-                if not owner_bypass and not evaluate_action(
+                if not evaluate_action(
                     "update", policies, _row_from_doc(existing), ctx.user
                 ):
                     denied.append(i)
@@ -1422,9 +1383,7 @@ async def batch_documents(
             "created_by": item_created_by,
             "updated_by": item_updated_by,
         }
-        if not owner_bypass and not evaluate_action(
-            "create", policies, candidate_row, ctx.user
-        ):
+        if not evaluate_action("create", policies, candidate_row, ctx.user):
             denied.append(i)
 
     if denied:
@@ -1500,21 +1459,14 @@ async def batch_delete_documents(
     table = await get_table_or_404(ctx, table_id, scope=scope)
     await _assert_solution_write_targets_owned_table(ctx, table)
     repo = DocumentRepository(ctx.db, table)
-    owner_bypass = await is_private_solution_owner(
-        ctx.db,
-        solution_id=table.solution_id,
-        actor_user_id=ctx.user.user_id,
-        is_external=ctx.user.is_external,
-    )
     policies = await load_resolved_table_policies(table, ctx.db)
-    if not owner_bypass:
-        await preresolve_for_policies(
-            ctx.user,
-            policies,
-            ctx.db,
-            table.organization_id,
-            table.solution_id,
-        )
+    await preresolve_for_policies(
+        ctx.user,
+        policies,
+        ctx.db,
+        table.organization_id,
+        table.solution_id,
+    )
 
     # Pre-flight: load each existing row and check `delete` against policy.
     denied: list[int] = []
@@ -1526,7 +1478,7 @@ async def batch_delete_documents(
             # denial, just a no-op.
             continue
         existing_by_index[i] = existing
-        if not owner_bypass and not evaluate_action(
+        if not evaluate_action(
             "delete", policies, _row_from_doc(existing), ctx.user
         ):
             denied.append(i)

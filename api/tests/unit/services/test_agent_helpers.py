@@ -3,67 +3,15 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 from src.services.execution.agent_helpers import (
-    BUNDLE_PROMPT_CONTRACT,
     agent_delegation_slug,
     build_agent_system_prompt,
     find_delegated_agent,
-    is_agent_system_tool,
     resolve_agent_tools,
     AUTONOMOUS_MODE_SUFFIX,
 )
 
 
 class TestResolveAgentTools:
-    @pytest.mark.asyncio
-    @patch("src.services.mcp_server.server.get_system_tools")
-    async def test_bundle_implicitly_adds_asset_reader(self, mock_get_system_tools):
-        mock_get_system_tools.return_value = [
-            {
-                "id": "read_skill_asset",
-                "description": "Read a bundle file",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"path": {"type": "string"}},
-                    "required": ["path"],
-                },
-            }
-        ]
-        agent = MagicMock()
-        agent.id = uuid4()
-        agent.organization_id = None
-        agent.bundle_path = "agents/helper"
-        agent.tools = []
-        agent.system_tools = []
-        agent.knowledge_sources = []
-        agent.delegated_agents = []
-
-        tools, _ = await resolve_agent_tools(agent, MagicMock())
-
-        assert [tool.name for tool in tools] == ["read_skill_asset"]
-
-    @pytest.mark.asyncio
-    @patch("src.services.mcp_server.server.get_system_tools")
-    async def test_asset_reader_is_filtered_without_bundle(self, mock_get_system_tools):
-        mock_get_system_tools.return_value = [
-            {
-                "id": "read_skill_asset",
-                "description": "Read a bundle file",
-                "parameters": {"type": "object", "properties": {}},
-            }
-        ]
-        agent = MagicMock()
-        agent.id = uuid4()
-        agent.organization_id = None
-        agent.bundle_path = None
-        agent.tools = []
-        agent.system_tools = ["read_skill_asset"]
-        agent.knowledge_sources = []
-        agent.delegated_agents = []
-
-        tools, _ = await resolve_agent_tools(agent, MagicMock())
-
-        assert tools == []
-
     @pytest.mark.asyncio
     @patch("src.services.mcp_server.server.get_system_tools")
     async def test_returns_tool_definitions(self, mock_get_system_tools):
@@ -178,16 +126,6 @@ class TestResolveAgentTools:
 
 
 class TestBuildAgentSystemPrompt:
-    def test_bundle_appends_runtime_contract(self):
-        mock_agent = MagicMock()
-        mock_agent.system_prompt = "Follow the skill."
-        mock_agent.bundle_path = "agents/helper"
-
-        result = build_agent_system_prompt(mock_agent)
-
-        assert result == "Follow the skill." + BUNDLE_PROMPT_CONTRACT
-        assert "read_skill_asset" in result
-
     def test_uses_agent_system_prompt(self):
         """Uses the agent's configured system prompt."""
         mock_agent = MagicMock()
@@ -221,22 +159,6 @@ class TestBuildAgentSystemPrompt:
 
         result = build_agent_system_prompt(mock_agent, execution_context={"mode": "chat"})
         assert result == "Base prompt."
-
-
-class TestAgentSystemToolDispatch:
-    def test_bundle_reader_dispatches_only_with_bundle(self):
-        agent = MagicMock()
-        agent.bundle_path = "agents/helper"
-        agent.system_tools = []
-
-        assert is_agent_system_tool(agent, "read_skill_asset") is True
-
-    def test_manual_bundle_reader_entry_cannot_grant_dispatch(self):
-        agent = MagicMock()
-        agent.bundle_path = None
-        agent.system_tools = ["read_skill_asset"]
-
-        assert is_agent_system_tool(agent, "read_skill_asset") is False
 
 
 class TestAgentDelegationSlug:

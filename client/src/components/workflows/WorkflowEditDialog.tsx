@@ -62,7 +62,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { TagsInput } from "@/components/ui/tags-input";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { useResourceRoles } from "@/hooks/useRoles";
+import { useRoles } from "@/hooks/useRoles";
 import { useUpdateWorkflow } from "@/hooks/useWorkflows";
 import {
 	useWorkflowRoles,
@@ -121,7 +121,7 @@ export function WorkflowEditDialog({
 	onSuccess,
 	initialTab,
 }: WorkflowEditDialogProps) {
-	const { data: roles } = useResourceRoles();
+	const { data: roles } = useRoles();
 	const updateWorkflow = useUpdateWorkflow();
 	const assignRoles = useAssignRolesToWorkflow();
 	const removeRole = useRemoveRoleFromWorkflow();

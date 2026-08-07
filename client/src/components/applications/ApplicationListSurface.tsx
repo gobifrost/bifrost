@@ -6,7 +6,6 @@ import {
 	Globe,
 	Pencil,
 	PlayCircle,
-	Sparkles,
 	Trash2,
 } from "lucide-react";
 
@@ -44,8 +43,6 @@ export interface ApplicationListSurfaceProps {
 	onPreview?: (app: ApplicationListItem) => void;
 	onOpenSettings?: (app: ApplicationListItem) => void;
 	onOpenCode?: (app: ApplicationListItem) => void;
-	onEditInBuilder?: (app: ApplicationListItem) => void;
-	canEditInBuilder?: (app: ApplicationListItem) => boolean;
 	onDelete?: (app: ApplicationListItem) => void;
 	onCreateEmpty?: () => void;
 	emptySearchActive?: boolean;
@@ -70,8 +67,6 @@ export function ApplicationListSurface({
 	onPreview,
 	onOpenSettings,
 	onOpenCode,
-	onEditInBuilder,
-	canEditInBuilder,
 	onDelete,
 	onCreateEmpty,
 	emptySearchActive = false,
@@ -221,18 +216,6 @@ export function ApplicationListSurface({
 										{app.is_solution_managed && (
 											<SolutionManagedBadge solutionId={app.solution_id} />
 										)}
-										{onEditInBuilder &&
-											canEditInBuilder?.(app) && (
-												<Button
-													variant="ghost"
-													size="sm"
-													onClick={() => onEditInBuilder(app)}
-													title="Edit in Builder"
-													aria-label={`Edit ${app.name} in Builder`}
-												>
-													<Sparkles className="h-4 w-4" />
-												</Button>
-											)}
 										{canManageApps && !app.is_solution_managed && (
 											<>
 												{onOpenSettings && (
@@ -322,26 +305,7 @@ export function ApplicationListSurface({
 									</span>
 								</div>
 								{app.is_solution_managed ? (
-									<div className="flex shrink-0 items-center gap-1">
-										<SolutionManagedBadge solutionId={app.solution_id} />
-										{onEditInBuilder &&
-											canEditInBuilder?.(app) && (
-												<Button
-													type="button"
-													variant="ghost"
-													size="icon"
-													className="h-6 w-6"
-													onClick={(event) => {
-														event.stopPropagation();
-														onEditInBuilder(app);
-													}}
-													title="Edit in Builder"
-													aria-label={`Edit ${app.name} in Builder`}
-												>
-													<Sparkles className="h-3.5 w-3.5" />
-												</Button>
-											)}
-									</div>
+									<SolutionManagedBadge solutionId={app.solution_id} />
 								) : canManageApps ? (
 									<div className="flex shrink-0 gap-1">
 										{onOpenSettings && (

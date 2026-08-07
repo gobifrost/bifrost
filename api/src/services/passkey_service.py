@@ -568,14 +568,6 @@ class PasskeyService:
         )
         self.db.add(user)
         await self.db.flush()  # Get user.id
-        from src.services.user_provisioning import sync_platform_admin_role
-
-        await sync_platform_admin_role(
-            self.db,
-            user_id=user.id,
-            enabled=True,
-            assigned_by="system@internal.gobifrost.com",
-        )
 
         # Extract transports from credential response if available
         transports = []

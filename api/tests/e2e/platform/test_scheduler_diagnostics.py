@@ -58,7 +58,6 @@ class TestSchedulerDiagnostics:
             "worker_metrics_cleanup",
             "scheduler_diagnostics_cleanup",
             "summary_backfill_reconciliation",
-            "solution_build_reconciliation",
         }
         assert set(tasks) == expected
         for task_id in (

@@ -35,11 +35,6 @@ class Agent(Base):
     logo_data: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
     logo_content_type: Mapped[str | None] = mapped_column(String(50), default=None)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
-    # Relative root of this agent's portable Agent Skills bundle.  For
-    # solution-managed agents it resolves under SolutionStorage; otherwise it
-    # resolves under the _repo/ workspace.  The deprecated manifest ``path``
-    # field remains unrelated (that was the old per-agent YAML location).
-    bundle_path: Mapped[str | None] = mapped_column(String(1024), default=None)
     channels: Mapped[list] = mapped_column(JSONB, default=["chat"])
     access_level: Mapped[AgentAccessLevel] = mapped_column(
         SQLAlchemyEnum(

@@ -49,11 +49,6 @@ def _bundle() -> SolutionBundle:
             "workflows/main.py": "def run(sdk):\n    return 'ok'\n",
             "modules/helper.py": "X = 1\n",
         },
-        bundle_files={
-            "agents/helper/SKILL.md": b"# Helper\n",
-            "agents/helper/references/guide.md": b"Read this.",
-            "agents/helper/assets/icon.bin": b"\x00\x01",
-        },
         workflows=[
             {
                 "id": WF_ID,
@@ -91,12 +86,7 @@ def _bundle() -> SolutionBundle:
             }
         ],
         forms=[{"id": FORM_ID, "name": "Intake", "fields": [{"key": "email"}]}],
-        agents=[{
-            "id": AGENT_ID,
-            "name": "Helper",
-            "system_prompt": "be helpful",
-            "bundle_path": "agents/helper",
-        }],
+        agents=[{"id": AGENT_ID, "name": "Helper", "system_prompt": "be helpful"}],
         config_schemas=[
             {
                 "id": "API_KEY",
@@ -157,11 +147,6 @@ def test_export_round_trips_through_preview() -> None:
     assert result.forms[0]["fields"] == [{"key": "email"}]
     assert [a["id"] for a in result.agents] == [AGENT_ID]
     assert result.agents[0]["system_prompt"] == "be helpful"
-    assert result.agents[0]["bundle_path"] == "agents/helper"
-    with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        assert zf.read("agents/helper/SKILL.md") == b"# Helper\n"
-        assert zf.read("agents/helper/references/guide.md") == b"Read this."
-        assert zf.read("agents/helper/assets/icon.bin") == b"\x00\x01"
 
     assert [c["key"] for c in result.config_schemas] == ["API_KEY"]
     assert result.config_schemas[0]["required"] is True

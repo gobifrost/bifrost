@@ -51,7 +51,6 @@ class UserPrincipal:
     # from Organization.is_provider — see shared/external_access.py.
     is_provider_org: bool = False
     roles: list[str] = field(default_factory=list)
-    scopes: list[str] = field(default_factory=list)
     # Role identity used by table-policy `has_role` evaluator. Populated by
     # `get_execution_context` from the `user_roles` table; empty for token-only
     # principals (e.g. system accounts) and embed sessions.
@@ -85,21 +84,6 @@ class UserPrincipal:
     def has_any_role(self, *roles: str) -> bool:
         """Check if user has any of the specified roles."""
         return any(role in self.roles for role in roles)
-
-    def has_scope(self, scope: str) -> bool:
-        """Whether the principal has an authorization scope.
-
-        The stored superuser bit contributes the compatibility wildcard until
-        role-backed Platform Admin is the sole authority.
-        """
-
-        from shared.authorization_scopes import PLATFORM_SUPERUSER_SCOPE
-
-        return (
-            self.is_superuser
-            or PLATFORM_SUPERUSER_SCOPE in self.scopes
-            or scope in self.scopes
-        )
 
     def has_platform_admin_grant(self) -> bool:
         """True if a token superuser OR a holder of a platform-admin role.

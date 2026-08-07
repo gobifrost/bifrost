@@ -157,7 +157,6 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
                 Workflow.solution_id == solution_scope,
                 Workflow.is_active.is_(True),
             )
-            stmt = self._apply_solution_visibility(stmt)
             # The own-install match is already install-gated by solution_id;
             # org-gate it only for regular users. Superusers act cross-org
             # here exactly as resolve_solution_table_by_name does for tables:
@@ -209,7 +208,6 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
                 Workflow.is_active.is_(True),
                 Workflow.solution_id == solution_scope,
             )
-            own_stmt = self._apply_solution_visibility(own_stmt)
             if not self.is_superuser:
                 own_stmt = self._apply_cascade_scope(own_stmt)
             own_row = (await self.session.execute(own_stmt)).scalars().first()
@@ -331,7 +329,6 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
             .where(Workflow.type == "tool")
             .options(selectinload(Workflow.organization))
         )
-        stmt = self._apply_solution_visibility(stmt)
         if active_only:
             stmt = stmt.where(Workflow.is_active.is_(True))
 
@@ -439,13 +436,12 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
         Note: Returns workflows across all organizations (system-level access).
         Endpoint routing needs visibility of all endpoint-enabled workflows.
         """
-        stmt = (
+        result = await self.session.execute(
             select(Workflow)
             .where(Workflow.is_active.is_(True))
             .where(Workflow.endpoint_enabled.is_(True))
             .order_by(Workflow.name)
         )
-        result = await self.session.execute(self._apply_solution_visibility(stmt))
         return result.scalars().all()
 
     async def get_by_category(self, category: str) -> Sequence[Workflow]:
@@ -453,19 +449,20 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
 
         Note: Returns workflows across all organizations (system-level access).
         """
-        stmt = (
+        result = await self.session.execute(
             select(Workflow)
             .where(Workflow.is_active.is_(True))
             .where(Workflow.category == category)
             .order_by(Workflow.name)
         )
-        result = await self.session.execute(self._apply_solution_visibility(stmt))
         return result.scalars().all()
 
     async def count_active(self) -> int:
         """Count all active workflows."""
-        stmt = select(func.count(Workflow.id)).where(Workflow.is_active.is_(True))
-        result = await self.session.execute(self._apply_solution_visibility(stmt))
+        result = await self.session.execute(
+            select(func.count(Workflow.id))
+            .where(Workflow.is_active.is_(True))
+        )
         return result.scalar() or 0
 
     async def search(
@@ -526,13 +523,12 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
         Note: Returns workflow regardless of organization (system-level access).
         API key authentication bypasses org scoping by design.
         """
-        stmt = (
+        result = await self.session.execute(
             select(Workflow)
             .where(Workflow.api_key_hash == key_hash)
             .where(Workflow.api_key_enabled.is_(True))
             .where(Workflow.is_active.is_(True))
         )
-        result = await self.session.execute(self._apply_solution_visibility(stmt))
         return result.scalar_one_or_none()
 
     async def set_api_key(
@@ -588,13 +584,12 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
         Returns:
             Workflow if found, active, and endpoint-enabled; None otherwise
         """
-        stmt = (
+        result = await self.session.execute(
             select(Workflow)
             .where(Workflow.id == workflow_id)
             .where(Workflow.endpoint_enabled.is_(True))
             .where(Workflow.is_active.is_(True))
         )
-        result = await self.session.execute(self._apply_solution_visibility(stmt))
         return result.scalar_one_or_none()
 
     async def get_endpoint_workflow_by_name(self, name: str) -> Workflow | None:
@@ -614,13 +609,12 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
             ValueError: If multiple endpoint-enabled workflows have the same name
                         (includes file paths for debugging)
         """
-        stmt = (
+        result = await self.session.execute(
             select(Workflow)
             .where(Workflow.name == name)
             .where(Workflow.endpoint_enabled.is_(True))
             .where(Workflow.is_active.is_(True))
         )
-        result = await self.session.execute(self._apply_solution_visibility(stmt))
         workflows = list(result.scalars().all())
 
         if len(workflows) == 0:
@@ -660,7 +654,7 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
         if workflow_id:
             stmt = stmt.where(Workflow.id == workflow_id)
 
-        result = await self.session.execute(self._apply_solution_visibility(stmt))
+        result = await self.session.execute(stmt)
         workflow = result.scalar_one_or_none()
 
         if workflow:

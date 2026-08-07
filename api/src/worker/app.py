@@ -2,8 +2,7 @@
 Bifrost Worker - Background Worker Service
 
 Worker application entry point.
-Handles RabbitMQ message consumption for workflows, agent runs, and package
-installation. Scheduler-owned platform jobs run in scheduler replicas.
+Handles RabbitMQ message consumption for workflow execution and package installation.
 
 This container is responsible for:
 - Consuming workflow execution messages from RabbitMQ

@@ -122,9 +122,6 @@ services:
     environment:
       BIFROST_ENVIRONMENT: development
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
-      # Builder app host: generated Solution apps need a browser origin distinct
-      # from the control plane. Same API process, different port is sufficient.
-      BIFROST_APP_ORIGIN: ${BIFROST_APP_ORIGIN:-}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_REDIS_URL: redis://redis:6379/0
@@ -155,10 +152,6 @@ services:
       BIFROST_ENVIRONMENT: development
       BIFROST_DEBUG: "true"
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
-      # Builder app host: generated Solution apps need a browser origin distinct
-      # from the control plane. Same API process, different port is sufficient.
-      BIFROST_APP_ORIGIN: ${BIFROST_APP_ORIGIN:-}
-      BIFROST_BUILDER_INTERNAL_SECRET: bifrost-debug-builder-internal-secret
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_debug@rabbitmq:5672/
@@ -189,7 +182,6 @@ services:
       - ./api/bifrost:/app/bifrost:ro
       - ./api/alembic:/app/alembic:ro
       - ./api/alembic.ini:/app/alembic.ini:ro
-      - ./.claude/skills/bifrost-build:/app/.claude/skills/bifrost-build:ro
     depends_on:
       init:
         condition: service_completed_successfully
@@ -212,115 +204,6 @@ services:
       uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
       --reload-dir /app/src --reload-dir /app/shared
 
-  builder:
-    build:
-      context: .
-      dockerfile: api/Dockerfile.dev
-      args:
-        BIFROST_VERSION: ${BIFROST_VERSION:-debug}
-    environment:
-      BIFROST_ENVIRONMENT: development
-      BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_debug@rabbitmq:5672/
-      BIFROST_BUILDER_INTERNAL_SECRET: bifrost-debug-builder-internal-secret
-      BIFROST_BUILDER_RUNNER_URL: http://builder-runner:8300
-      BIFROST_INTERNAL_API_URL: http://api:8000
-      BIFROST_BUILDER_MAX_CONCURRENT_BUILDS: "1"
-    volumes:
-      - ./api/src:/app/src:ro
-      - ./api/shared:/app/shared:ro
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      api:
-        condition: service_healthy
-      builder-runner:
-        condition: service_healthy
-    user: "1000:1000"
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
-    command: ["python", "-m", "src.builder.main"]
-
-  builder-runner:
-    build:
-      context: .
-      dockerfile: builder_runner/Dockerfile
-    environment:
-      PORT: "8300"
-    user: "1000:1000"
-    read_only: true
-    tmpfs:
-      - /tmp:rw,exec,nosuid,nodev,size=1g
-    cap_drop: ["ALL"]
-    security_opt: ["no-new-privileges:true"]
-    mem_limit: 2g
-    cpus: 2
-    pids_limit: 512
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "python3",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8300/healthz', timeout=2)",
-        ]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-
-  app-host:
-    build:
-      context: .
-      dockerfile: api/Dockerfile.dev
-      args:
-        BIFROST_VERSION: ${BIFROST_VERSION:-debug}
-    environment:
-      BIFROST_ENVIRONMENT: development
-      BIFROST_DEBUG: "true"
-      BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
-      BIFROST_APP_ORIGIN: ${BIFROST_APP_ORIGIN:-}
-      BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_debug@pgbouncer:5432/bifrost
-      BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_debug@pgbouncer:5432/bifrost
-      BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_debug@rabbitmq:5672/
-      BIFROST_REDIS_URL: redis://redis:6379/0
-      BIFROST_S3_BUCKET: bifrost-local
-      BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
-      BIFROST_S3_PUBLIC_ENDPOINT_URL: /s3
-      BIFROST_S3_ACCESS_KEY: bifrost
-      BIFROST_S3_SECRET_KEY: bifrost_debug_key
-      BIFROST_S3_REGION: us-east-1
-      BIFROST_PUBLIC_URL: ${BIFROST_PUBLIC_URL:-}
-    volumes:
-      - ./api/src:/app/src:ro
-      - /app/src/services/app_compiler/node_modules
-      - /app/src/services/app_bundler/node_modules
-      - /app/src/services/sdk_package/node_modules
-      - /app/src/services/sdk_package/sdk_src
-      - ./api/shared:/app/shared:ro
-      - ./api/bifrost:/app/bifrost:ro
-      - ./api/alembic:/app/alembic:ro
-      - ./api/alembic.ini:/app/alembic.ini:ro
-    depends_on:
-      init:
-        condition: service_completed_successfully
-      pgbouncer:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      seaweedfs:
-        condition: service_started
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8100/health/ready"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 120s
-    user: root
-    command: >
-      uvicorn src.app_host:app --host 0.0.0.0 --port 8100 --reload
-      --reload-dir /app/src --reload-dir /app/shared
-
   scheduler:
     build:
       context: .
@@ -330,9 +213,6 @@ services:
     environment:
       BIFROST_ENVIRONMENT: development
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
-      # Builder app host: generated Solution apps need a browser origin distinct
-      # from the control plane. Same API process, different port is sufficient.
-      BIFROST_APP_ORIGIN: ${BIFROST_APP_ORIGIN:-}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_debug@rabbitmq:5672/
@@ -383,9 +263,6 @@ services:
     environment:
       BIFROST_ENVIRONMENT: development
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
-      # Builder app host: generated Solution apps need a browser origin distinct
-      # from the control plane. Same API process, different port is sufficient.
-      BIFROST_APP_ORIGIN: ${BIFROST_APP_ORIGIN:-}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_debug@rabbitmq:5672/

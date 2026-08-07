@@ -374,12 +374,8 @@ class TestAgentScalarAndMCPDeploy:
 
         await SolutionDeployer(db).deploy(SolutionBundle(
             solution=sol,
-            bundle_files={
-                "agents/a/SKILL.md": b"Canonical instructions v1",
-            },
             agents=[{
                 "id": aid, "name": "a", "system_prompt": "hi",
-                "bundle_path": "agents/a",
                 "max_iterations": 7, "max_token_budget": 12345,
                 "mcp_connection_ids": [str(conn_a.id)],
             }],
@@ -389,8 +385,6 @@ class TestAgentScalarAndMCPDeploy:
         agent = await db.get(Agent, agent_id)
         assert agent.max_iterations == 7
         assert agent.max_token_budget == 12345
-        assert agent.bundle_path == "agents/a"
-        assert agent.system_prompt == "Canonical instructions v1"
         granted = set((await db.execute(
             _select(AgentMCPConnection.connection_id).where(
                 AgentMCPConnection.agent_id == agent_id
@@ -402,12 +396,8 @@ class TestAgentScalarAndMCPDeploy:
         # not stuck/dropped.
         await SolutionDeployer(db).deploy(SolutionBundle(
             solution=sol,
-            bundle_files={
-                "agents/a-v2/SKILL.md": b"Canonical instructions v2",
-            },
             agents=[{
                 "id": aid, "name": "a", "system_prompt": "hi",
-                "bundle_path": "agents/a-v2",
                 "max_iterations": 3, "max_token_budget": 999,
                 "mcp_connection_ids": [str(conn_b.id)],
             }],
@@ -416,8 +406,6 @@ class TestAgentScalarAndMCPDeploy:
         await db.refresh(agent)
         assert agent.max_iterations == 3
         assert agent.max_token_budget == 999
-        assert agent.bundle_path == "agents/a-v2"
-        assert agent.system_prompt == "Canonical instructions v2"
         granted2 = set((await db.execute(
             _select(AgentMCPConnection.connection_id).where(
                 AgentMCPConnection.agent_id == agent_id

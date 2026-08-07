@@ -33,18 +33,6 @@ data:
 
   # Public URL
   BIFROST_PUBLIC_URL: "https://bifrost.example.com"
-  # Generated apps use the same hostname on a second externally routed port by
-  # default, avoiding another DNS record. Route external :8443 to app-host:8100.
-  # A sibling hostname remains an optional override for proxies that cannot
-  # expose the second port.
-  BIFROST_APP_ORIGIN: "https://bifrost.example.com:8443"
-
-  # Dedicated build plane.
-  BIFROST_INTERNAL_API_URL: "http://api:8000"
-  BIFROST_BUILDER_RUNNER_URL: "http://builder-runner:8300"
-  BIFROST_BUILDER_MAX_CONCURRENT_BUILDS: "1"
-  BIFROST_BUILDER_BUILD_TIMEOUT_S: "600"
-  BIFROST_BUILDER_OUTPUT_LIMIT_BYTES: "104857600"
 
   # glibc arena cap. Default is 8*nproc arenas, each caching up to ~64MB of
   # freed memory. On a 2-CPU pod with a 1GiB limit, the default can retain

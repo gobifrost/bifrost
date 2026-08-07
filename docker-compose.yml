@@ -189,8 +189,6 @@ services:
       BIFROST_DEFAULT_USER_PASSWORD: ${BIFROST_DEFAULT_USER_PASSWORD:-}
       # Public URL - Set this to your public address (https://bifrost.yourdomain.com)
       BIFROST_PUBLIC_URL: ${BIFROST_PUBLIC_URL:-}
-      BIFROST_APP_ORIGIN: ${BIFROST_APP_ORIGIN:-http://localhost:8100}
-      BIFROST_BUILDER_INTERNAL_SECRET: ${BIFROST_BUILDER_INTERNAL_SECRET:?BIFROST_BUILDER_INTERNAL_SECRET is required}
     # Note: API port 8000 not exposed - access via client proxy at http://localhost:3000
     # Debug port (5678) only exposed in docker-compose.dev.yml
     depends_on:
@@ -213,89 +211,6 @@ services:
     deploy:
       replicas: ${API_REPLICAS:-1}
     command: uvicorn src.main:app --host 0.0.0.0 --port 8000
-
-  # Trusted, credential-light coordinator. It can reach RabbitMQ, the API's
-  # capability endpoints, and the secretless runner; it receives no DB, S3,
-  # JWT-signing, or Kubernetes credentials.
-  builder:
-    image: ghcr.io/gobifrost/bifrost-api:latest
-    environment:
-      BIFROST_ENVIRONMENT: ${BIFROST_ENVIRONMENT:-production}
-      BIFROST_RABBITMQ_URL: amqp://bifrost:${RABBITMQ_PASSWORD}@rabbitmq:5672/
-      BIFROST_BUILDER_INTERNAL_SECRET: ${BIFROST_BUILDER_INTERNAL_SECRET:?BIFROST_BUILDER_INTERNAL_SECRET is required}
-      BIFROST_BUILDER_RUNNER_URL: http://builder-runner:8300
-      BIFROST_INTERNAL_API_URL: http://api:8000
-      BIFROST_BUILDER_MAX_CONCURRENT_BUILDS: ${BIFROST_BUILDER_MAX_CONCURRENT_BUILDS:-1}
-      BIFROST_BUILDER_BUILD_TIMEOUT_S: ${BIFROST_BUILDER_BUILD_TIMEOUT_S:-600}
-      BIFROST_BUILDER_OUTPUT_LIMIT_BYTES: ${BIFROST_BUILDER_OUTPUT_LIMIT_BYTES:-104857600}
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      api:
-        condition: service_healthy
-      builder-runner:
-        condition: service_healthy
-    user: "1000:1000"
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
-    command: python -m src.builder.main
-
-  # Fixed, offline toolchain. No platform credentials and no host port.
-  builder-runner:
-    image: ghcr.io/gobifrost/bifrost-builder-runner:latest
-    build:
-      context: .
-      dockerfile: builder_runner/Dockerfile
-    user: "1000:1000"
-    read_only: true
-    tmpfs:
-      - /tmp:rw,exec,nosuid,nodev,size=1g
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
-    healthcheck:
-      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8300/health', timeout=2)"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
-  # Separate browser origin for generated apps. This process exposes only the
-  # app-host launch/assets/runtime allowlist, never the control-plane router.
-  app-host:
-    image: ghcr.io/gobifrost/bifrost-api:latest
-    environment:
-      BIFROST_ENVIRONMENT: ${BIFROST_ENVIRONMENT:-production}
-      BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:?BIFROST_SECRET_KEY is required (32+ chars)}
-      BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost
-      BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:${POSTGRES_PASSWORD}@pgbouncer:5432/bifrost
-      BIFROST_RABBITMQ_URL: amqp://bifrost:${RABBITMQ_PASSWORD}@rabbitmq:5672/
-      BIFROST_REDIS_URL: redis://redis:6379/0
-      BIFROST_S3_BUCKET: ${BIFROST_S3_BUCKET:-bifrost-local}
-      BIFROST_S3_ENDPOINT_URL: ${BIFROST_S3_ENDPOINT_URL:-http://seaweedfs:8333}
-      BIFROST_S3_ACCESS_KEY: ${BIFROST_S3_ACCESS_KEY:-${SEAWEEDFS_ACCESS_KEY:-bifrost}}
-      BIFROST_S3_SECRET_KEY: ${BIFROST_S3_SECRET_KEY:-${SEAWEEDFS_SECRET_KEY}}
-      BIFROST_S3_REGION: ${BIFROST_S3_REGION:-us-east-1}
-      BIFROST_PUBLIC_URL: ${BIFROST_PUBLIC_URL:-}
-      BIFROST_APP_ORIGIN: ${BIFROST_APP_ORIGIN:-http://localhost:8100}
-    ports:
-      - "${BIFROST_APP_PORT:-8100}:8100"
-    depends_on:
-      init:
-        condition: service_completed_successfully
-      pgbouncer:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      seaweedfs:
-        condition: service_started
-    user: "1000:1000"
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8100/health/ready"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    command: uvicorn src.app_host:app --host 0.0.0.0 --port 8100
 
   # Frontend (Vite)
   client:

@@ -11,7 +11,6 @@ class RoleCreate(BaseModel):
     name: str = Field(max_length=100)
     description: str | None = Field(default=None)
     permissions: dict | None = Field(default=None)
-    scopes: list[str] = Field(default_factory=list)
 
 
 class RoleUpdate(BaseModel):
@@ -20,4 +19,3 @@ class RoleUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     permissions: dict | None = Field(default=None)
-    scopes: list[str] | None = Field(default=None)

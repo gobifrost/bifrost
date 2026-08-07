@@ -2,30 +2,11 @@
 
 from __future__ import annotations
 
-from pathlib import PurePosixPath
 from uuid import UUID
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field
 
 from bifrost.contracts.enums import AgentAccessLevel, AgentChannel
-
-
-def _validate_bundle_path(value: str | None) -> str | None:
-    if value is None:
-        return None
-    pure = PurePosixPath(value)
-    if (
-        not value
-        or len(value) > 1024
-        or "\x00" in value
-        or "\\" in value
-        or pure.is_absolute()
-        or not pure.parts
-        or ".." in pure.parts
-        or pure.as_posix() != value
-    ):
-        raise ValueError("bundle_path must be a canonical relative POSIX path")
-    return value
 
 
 class AgentCreate(BaseModel):
@@ -34,7 +15,6 @@ class AgentCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
     system_prompt: str = Field(min_length=1, max_length=50000)
-    bundle_path: str | None = Field(default=None, min_length=1, max_length=1024)
     channels: list[AgentChannel] = Field(default_factory=lambda: [AgentChannel.CHAT])
     access_level: AgentAccessLevel = Field(default=AgentAccessLevel.ROLE_BASED)
     organization_id: UUID | None = Field(default=None)
@@ -49,8 +29,6 @@ class AgentCreate(BaseModel):
     max_iterations: int | None = Field(default=None, ge=1, le=200)
     max_token_budget: int | None = Field(default=None, ge=1000, le=1000000)
 
-    _validate_bundle_path = field_validator("bundle_path")(_validate_bundle_path)
-
 
 class AgentUpdate(BaseModel):
     """Request model for updating an agent (CLI mirror)."""
@@ -58,7 +36,6 @@ class AgentUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
     system_prompt: str | None = Field(default=None, min_length=1, max_length=50000)
-    bundle_path: str | None = Field(default=None, min_length=1, max_length=1024)
     channels: list[AgentChannel] | None = None
     access_level: AgentAccessLevel | None = None
     organization_id: UUID | None = Field(default=None)
@@ -74,5 +51,3 @@ class AgentUpdate(BaseModel):
     llm_max_tokens: int | None = Field(default=None, ge=1, le=200000)
     max_iterations: int | None = Field(default=None, ge=1, le=200)
     max_token_budget: int | None = Field(default=None, ge=1000, le=1000000)
-
-    _validate_bundle_path = field_validator("bundle_path")(_validate_bundle_path)

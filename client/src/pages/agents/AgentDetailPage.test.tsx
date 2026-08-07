@@ -130,7 +130,6 @@ describe("AgentDetailPage — edit mode", () => {
 		expect(
 			screen.getByRole("heading", { name: /tier-1 triage/i }),
 		).toBeInTheDocument();
-		expect(screen.getByText("Agent Skill")).toBeInTheDocument();
 	});
 
 	it("renders the Overview tab by default", async () => {

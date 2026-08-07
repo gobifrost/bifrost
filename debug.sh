@@ -33,7 +33,6 @@ cd "$SCRIPT_DIR"
 source "$SCRIPT_DIR/scripts/lib/test_helpers.sh"
 
 COMPOSE_FILE="docker-compose.debug.yml"
-NETBIRD_COMPOSE_FILE="docker-compose.debug.netbird.yml"
 BIFROST_PROJECT_PREFIX="bifrost-debug"
 export BIFROST_PROJECT_PREFIX
 export COMPOSE_PROJECT_NAME
@@ -105,11 +104,7 @@ compute_netbird_hostname() {
     repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"
     local base
     base="$(basename "$repo_root")"
-    local safe_base
-    safe_base="$(sanitize_hostname "$base" | cut -c1-40)"
-    local worktree_hash
-    worktree_hash="$(printf '%s' "$repo_root" | sha256sum | cut -c1-8)"
-    sanitize_hostname "bifrost-debug-${safe_base}-${worktree_hash}"
+    sanitize_hostname "bifrost-debug-${base}"
 }
 
 # Pick a free TCP port deterministically per-worktree.
@@ -134,25 +129,6 @@ compute_client_port() {
     return 1
 }
 
-compute_app_port() {
-    local hash_int
-    hash_int=$(printf '%s-app' "$COMPOSE_PROJECT_NAME" | sha256sum | cut -c1-8)
-    local base=$((31000 + (0x${hash_int} % 9000)))
-    local port=$base
-    local tries=0
-    while [ $tries -lt 1000 ]; do
-        if ! is_port_in_use "$port"; then
-            printf '%d' "$port"
-            return 0
-        fi
-        port=$((port + 1))
-        if [ $port -ge 40000 ]; then port=31000; fi
-        tries=$((tries + 1))
-    done
-    echo "ERROR: could not find a free port in 31000-39999" >&2
-    return 1
-}
-
 is_port_in_use() {
     local port="$1"
     if ss -ltn "sport = :$port" 2>/dev/null | grep -q "LISTEN"; then
@@ -170,20 +146,9 @@ running_client_port() {
     docker port "$cid" 80/tcp 2>/dev/null | head -1 | awk -F: '{print $NF}'
 }
 
-running_app_port() {
-    local cid
-    cid=$(docker ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" --filter "label=com.docker.compose.service=app-host" 2>/dev/null | head -1)
-    [ -z "$cid" ] && return 1
-    docker port "$cid" 8100/tcp 2>/dev/null | head -1 | awk -F: '{print $NF}'
-}
-
 # Is the stack for this worktree currently running?
 stack_is_running() {
-    local running_containers
-    running_containers=$(docker ps -q \
-        --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
-        2>/dev/null)
-    [ -n "$running_containers" ]
+    docker ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" 2>/dev/null | grep -q .
 }
 
 print_header() {
@@ -223,27 +188,16 @@ cmd_up() {
     if [ "$mode" = "netbird" ]; then
         NETBIRD_HOSTNAME="${NETBIRD_HOSTNAME:-$(compute_netbird_hostname)}"
         export NETBIRD_HOSTNAME
-        export BIFROST_PUBLIC_URL="http://$NETBIRD_HOSTNAME"
-        export BIFROST_APP_ORIGIN="http://$NETBIRD_HOSTNAME:8100"
         echo "Mode:     netbird"
         echo "Hostname: $NETBIRD_HOSTNAME"
-        echo "App:      $BIFROST_APP_ORIGIN"
         # Mode A: no host port bound for client; netbird sidecar shares its
-        # network namespace and surfaces the stack on the Netbird mesh. The
-        # app-host overlay joins that namespace on port 8100, preserving the
-        # separate browser origin without another hostname.
-        docker compose -f "$COMPOSE_FILE" -f "$NETBIRD_COMPOSE_FILE" \
-            --profile netbird up -d --build
+        # network namespace and surfaces the stack on the Netbird mesh.
+        docker compose -f "$COMPOSE_FILE" --profile netbird up -d --build
     else
         DEBUG_CLIENT_PORT="$(compute_client_port)"
-        DEBUG_APP_PORT="$(compute_app_port)"
         export DEBUG_CLIENT_PORT
-        export DEBUG_APP_PORT
-        export BIFROST_PUBLIC_URL="http://localhost:$DEBUG_CLIENT_PORT"
-        export BIFROST_APP_ORIGIN="http://localhost:$DEBUG_APP_PORT"
         echo "Mode:     port"
         echo "Port:     $DEBUG_CLIENT_PORT"
-        echo "App:      $BIFROST_APP_ORIGIN"
         # Mode B: stack the port-binding overlay onto the base file.
         docker compose -f "$COMPOSE_FILE" -f docker-compose.debug.port.yml up -d --build
     fi
@@ -259,21 +213,6 @@ cmd_up() {
         if [ $i -eq 180 ]; then
             echo "ERROR: api did not become ready in 180s. Check logs:" >&2
             echo "  ./debug.sh logs api" >&2
-            return 1
-        fi
-        sleep 1
-    done
-    echo "Waiting for app host to be ready (up to 180s)..."
-    local app_cid
-    for ((i=1; i<=180; i++)); do
-        app_cid=$(docker ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" --filter "label=com.docker.compose.service=app-host" 2>/dev/null | head -1)
-        if [ -n "$app_cid" ] && docker exec "$app_cid" \
-            curl -sf -o /dev/null http://localhost:8100/health/ready 2>/dev/null; then
-            break
-        fi
-        if [ $i -eq 180 ]; then
-            echo "ERROR: app host did not become ready in 180s. Check logs:" >&2
-            echo "  ./debug.sh logs app-host" >&2
             return 1
         fi
         sleep 1
@@ -309,28 +248,19 @@ cmd_status() {
             | awk -F': ' '/^FQDN:/ {print $2; exit}' | tr -d '\r')
         if [ -n "$nb_fqdn" ]; then
             echo "Open:     http://$nb_fqdn"
-            echo "App:      http://$nb_fqdn:8100"
         else
             local nb_host
             nb_host=$(docker exec "$nb_cid" sh -c 'echo $NB_HOSTNAME' 2>/dev/null | tr -d '\r')
             echo "Open:     http://$nb_host  (peer still registering)"
-            echo "App:      http://$nb_host:8100  (peer still registering)"
         fi
     else
         local port
         port="$(running_client_port || echo "")"
-        local app_port
-        app_port="$(running_app_port || echo "")"
         echo "Mode:     port"
         if [ -n "$port" ]; then
             echo "Open:     http://localhost:$port"
         else
             echo "Open:     (client port not bound — see 'docker compose ps')"
-        fi
-        if [ -n "$app_port" ]; then
-            echo "App:      http://localhost:$app_port"
-        else
-            echo "App:      (app host port not bound — see 'docker compose ps')"
         fi
     fi
     print_login

@@ -62,7 +62,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Combobox } from "@/components/ui/combobox";
 import { term, useTerminology } from "@/lib/terminology";
-import { useResourceRoles } from "@/hooks/useRoles";
+import { useRoles } from "@/hooks/useRoles";
 import { useAuth } from "@/contexts/AuthContext";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import {
@@ -148,7 +148,7 @@ export function AppInfoDialog({
 		isEditing ? appSlug : undefined,
 	);
 
-	const { data: roles, isLoading: rolesLoading } = useResourceRoles();
+	const { data: roles, isLoading: rolesLoading } = useRoles();
 	const createApplication = useCreateApplication();
 	const updateApplication = useUpdateApplication();
 	const deleteApplication = useDeleteApplication();

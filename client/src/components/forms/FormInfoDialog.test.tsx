@@ -28,7 +28,7 @@ vi.mock("@/hooks/useWorkflows", () => ({
 
 const mockRoles = vi.fn();
 vi.mock("@/hooks/useRoles", () => ({
-	useResourceRoles: () => mockRoles(),
+	useRoles: () => mockRoles(),
 }));
 
 // OrganizationSelect pulls useOrganizations; stub the whole component to a

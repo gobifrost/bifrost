@@ -16,7 +16,6 @@ import pytest
 from src.models import Workflow
 from src.models.orm.solutions import Solution
 from src.repositories.org_scoped import OrgScopedRepository
-from src.repositories.workflows import WorkflowRepository
 
 pytestmark = pytest.mark.e2e
 
@@ -139,61 +138,3 @@ async def test_admin_slug_resolves_cross_org_without_multipleresults(db_session)
     repo_b = ApplicationRepository(db, org_id=org_b.id, user_id=None, is_superuser=True)
     got_b = await repo_b.get_by_slug_global(slug)
     assert got_b is not None and got_b.id == app_b.id
-
-
-async def test_private_solution_children_are_owner_only_even_for_admin(
-    db_session, seed_user
-):
-    """The parent gate precedes entity RBAC and the superuser bypass."""
-    db = db_session
-    sol = Solution(
-        id=uuid.uuid4(),
-        slug=f"private-{uuid.uuid4().hex[:8]}",
-        name="Private",
-        organization_id=None,
-        visibility="private",
-        owner_user_id=seed_user.id,
-    )
-    private_wf = _wf(
-        f"private_{uuid.uuid4().hex[:8]}",
-        org_id=None,
-        solution_id=sol.id,
-    )
-    private_wf.access_level = "role_based"
-    db.add_all([sol, private_wf])
-    await db.flush()
-
-    owner_repo = WorkflowRepository(
-        db,
-        org_id=None,
-        user_id=seed_user.id,
-        is_superuser=False,
-    )
-    assert await owner_repo.get(id=private_wf.id) is private_wf
-    assert private_wf.id in {row.id for row in await owner_repo.list()}
-
-    other_repo = WorkflowRepository(
-        db,
-        org_id=None,
-        user_id=uuid.uuid4(),
-        is_superuser=False,
-    )
-    assert await other_repo.get(id=private_wf.id) is None
-    assert private_wf.id not in {row.id for row in await other_repo.list()}
-
-    admin_repo = WorkflowRepository(
-        db,
-        org_id=None,
-        user_id=uuid.uuid4(),
-        is_superuser=True,
-    )
-    assert await admin_repo.get(id=private_wf.id) is None
-    assert private_wf.id not in {row.id for row in await admin_repo.list()}
-
-    external_owner_repo = WorkflowRepository(
-        db,
-        org_id=None,
-        user_id=seed_user.id,
-        is_external=True,
-    )
-    assert await external_owner_repo.get(id=private_wf.id) is None

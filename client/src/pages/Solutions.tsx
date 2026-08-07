@@ -48,7 +48,6 @@ import {
 } from "@/components/ui/data-table";
 import { SearchBox } from "@/components/search/SearchBox";
 import { EntityLogo } from "@/components/EntityLogo";
-import { NewWithAIButton } from "@/components/builder/NewWithAIButton";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import {
 	CreateEditSolution,
@@ -356,7 +355,6 @@ export function Solutions() {
 					</p>
 				</div>
 				<div className="flex flex-wrap gap-2">
-					<NewWithAIButton label="Build an app" />
 					<input
 						ref={fileInputRef}
 						type="file"

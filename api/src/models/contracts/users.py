@@ -6,15 +6,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    EmailStr,
-    Field,
-    field_serializer,
-    field_validator,
-    model_validator,
-)
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_serializer, model_validator
 
 if TYPE_CHECKING:
     pass
@@ -240,14 +232,6 @@ class RoleCreate(RoleBase):
     Roles are globally defined - org scoping happens at the entity level.
     """
     permissions: dict | None = Field(default=None)
-    scopes: list[str] = Field(default_factory=list)
-
-    @field_validator("scopes")
-    @classmethod
-    def validate_scopes(cls, scopes: list[str]) -> list[str]:
-        from shared.authorization_scopes import validate_role_scopes
-
-        return validate_role_scopes(scopes, custom_role=True)
 
 
 class RoleUpdate(BaseModel):
@@ -255,17 +239,6 @@ class RoleUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     permissions: dict | None = Field(default=None)
-    scopes: list[str] | None = Field(default=None)
-
-    @field_validator("scopes")
-    @classmethod
-    def validate_scopes(cls, scopes: list[str] | None) -> list[str] | None:
-        if scopes is None:
-            return None
-
-        from shared.authorization_scopes import validate_role_scopes
-
-        return validate_role_scopes(scopes, custom_role=True)
 
 
 class RolePublic(RoleBase):
@@ -276,11 +249,7 @@ class RolePublic(RoleBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    key: str | None = None
     permissions: dict = Field(default_factory=dict)
-    scopes: list[str] = Field(default_factory=list)
-    is_builtin: bool = False
-    assignable_to_resources: bool = True
     created_by: str
     created_at: datetime
     updated_at: datetime
@@ -295,17 +264,6 @@ class RolePublic(RoleBase):
     @field_serializer("created_at", "updated_at")
     def serialize_dt(self, dt: datetime | None) -> str | None:
         return dt.isoformat() if dt else None
-
-
-class AuthorizationScopePublic(BaseModel):
-    """Display metadata for one code-owned authorization scope."""
-
-    key: str
-    display_name: str
-    description: str
-    category: str
-    is_privileged: bool
-    assignable_to_custom_roles: bool
 
 
 class UserRole(BaseModel):

@@ -25,7 +25,6 @@ import {
 	MessageSquare,
 	Pause,
 	PlayCircle,
-	Sparkles,
 	Trash2,
 } from "lucide-react";
 
@@ -200,25 +199,16 @@ export function AgentDetailPage() {
 										: (agent?.name ?? "Unknown agent")}
 							</span>
 							{!isCreate && agent ? (
-								<>
+								isActive ? (
+									<span className={PILL_ACTIVE}>Active</span>
+								) : (
 									<Badge
-										variant="outline"
-										className="gap-1 text-[11px] font-medium text-primary"
+										variant="secondary"
+										className="text-[11px]"
 									>
-										<Sparkles className="h-3 w-3" />
-										Agent Skill
+										Paused
 									</Badge>
-									{isActive ? (
-										<span className={PILL_ACTIVE}>Active</span>
-									) : (
-										<Badge
-											variant="secondary"
-											className="text-[11px]"
-										>
-											Paused
-										</Badge>
-									)}
-								</>
+								)
 							) : null}
 						</h1>
 						{!isCreate && agent?.description ? (

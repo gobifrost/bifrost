@@ -22,11 +22,7 @@ test.describe("Roles detail", () => {
 	test.beforeAll(async ({ api }) => {
 		// Create a fresh role.
 		const r = await api.post("/api/roles", {
-			data: {
-				name: ROLE_NAME,
-				description: "e2e detail page",
-				scopes: ["solutions.build"],
-			},
+			data: { name: ROLE_NAME, description: "e2e detail page" },
 		});
 		expect(r.ok(), await r.text()).toBe(true);
 		roleId = (await r.json()).id;
@@ -53,43 +49,6 @@ test.describe("Roles detail", () => {
 	test.afterAll(async ({ api }) => {
 		if (userId) await api.delete(`/api/users/${userId}`);
 		if (roleId) await api.delete(`/api/roles/${roleId}`);
-	});
-
-	test("shows role scopes and protects built-in role definitions", async ({
-		page,
-	}) => {
-		await page.goto("/roles");
-		await expect(page.getByText(ROLE_NAME).first()).toBeVisible({
-			timeout: 10_000,
-		});
-
-		await page.getByRole("button", { name: `Edit ${ROLE_NAME}` }).click();
-		const customDialog = page.getByRole("dialog");
-		await expect(
-			customDialog.getByRole("checkbox", { name: "Build Solutions" }),
-		).toBeChecked();
-		await expect(
-			customDialog.getByRole("checkbox", {
-				name: "Full platform administration",
-			}),
-		).toBeDisabled();
-		await customDialog.getByRole("button", { name: "Cancel" }).click();
-
-		await page
-			.getByRole("button", { name: "View Platform Admin" })
-			.click();
-		const builtinDialog = page.getByRole("dialog");
-		await expect(
-			builtinDialog.getByRole("heading", { name: "Built-in Role" }),
-		).toBeVisible();
-		await expect(
-			builtinDialog.getByRole("checkbox", {
-				name: "Full platform administration",
-			}),
-		).toBeChecked();
-		await expect(
-			builtinDialog.getByRole("button", { name: "Update" }),
-		).toHaveCount(0);
 	});
 
 	test("card → users chip → drawer → assigned → unassign", async ({ page }) => {

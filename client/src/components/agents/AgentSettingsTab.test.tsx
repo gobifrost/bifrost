@@ -39,40 +39,13 @@ vi.mock("@/hooks/useTools", () => ({
 }));
 
 vi.mock("@/hooks/useRoles", () => ({
-	useResourceRoles: () => ({ data: [] }),
+	useRoles: () => ({ data: [] }),
 }));
 vi.mock("@/hooks/useKnowledge", () => ({
 	useKnowledgeNamespaces: () => ({ data: [] }),
 }));
 vi.mock("@/hooks/useLLMConfig", () => ({
 	useLLMModels: () => ({ models: [] }),
-}));
-vi.mock("@/components/agents/AgentSkillBundleManager", () => ({
-	AgentSkillBundleManager: ({ agentId }: { agentId?: string }) => (
-		<div data-testid="skill-bundle-manager">
-			{agentId ? "Bundle manager" : "Save before upload"}
-		</div>
-	),
-}));
-vi.mock("@/components/ui/markdown-editor-field", () => ({
-	MarkdownEditorField: ({
-		value,
-		onChange,
-		ariaLabel,
-		readOnly,
-	}: {
-		value: string;
-		onChange?: (value: string) => void;
-		ariaLabel: string;
-		readOnly?: boolean;
-	}) => (
-		<textarea
-			aria-label={ariaLabel}
-			value={value}
-			readOnly={readOnly}
-			onChange={(event) => onChange?.(event.target.value)}
-		/>
-	),
 }));
 
 beforeEach(() => {
@@ -129,20 +102,9 @@ describe("AgentSettingsTab — edit mode", () => {
 		}) as HTMLInputElement;
 		expect(nameInput.value).toBe("Tier-1 Triage");
 		const promptInput = screen.getByRole("textbox", {
-			name: /inline instructions/i,
+			name: /system prompt/i,
 		}) as HTMLTextAreaElement;
 		expect(promptInput.value).toBe("You are a triage bot.");
-	}, 10_000);
-
-	it("shows the full-width private selection instead of an empty trigger", async () => {
-		await renderTab({
-			mode: "edit",
-			agent: { ...existingAgent, access_level: "private" },
-		});
-
-		const trigger = screen.getByRole("combobox", { name: /access level/i });
-		expect(trigger).toHaveTextContent("Private");
-		expect(trigger).toHaveClass("w-full");
 	});
 
 	it("submits via update mutation on Save", async () => {
@@ -171,36 +133,6 @@ describe("AgentSettingsTab — edit mode", () => {
 		mockAuth.mockReturnValue({ isPlatformAdmin: true });
 		await renderTab({ mode: "edit", agent: existingAgent });
 		expect(screen.getByTestId("budget-card")).toBeInTheDocument();
-	});
-
-	it("uses the upload manager instead of exposing a raw bundle path", async () => {
-		mockAuth.mockReturnValue({ isPlatformAdmin: true });
-		await renderTab({
-			mode: "edit",
-			agent: { ...existingAgent, bundle_path: null },
-		});
-
-		expect(screen.getByTestId("skill-bundle-manager")).toBeInTheDocument();
-		expect(
-			screen.queryByRole("textbox", { name: /bundle path/i }),
-		).not.toBeInTheDocument();
-	});
-
-	it("does not expose editable instructions for a bundled agent", async () => {
-		await renderTab({
-			mode: "edit",
-			agent: {
-				...existingAgent,
-				bundle_path: "skills/tier-one",
-			},
-		});
-
-		expect(
-			screen.queryByRole("textbox", { name: /inline instructions/i }),
-		).not.toBeInTheDocument();
-		expect(
-			screen.getByText(/SKILL.md is the canonical instruction source/i),
-		).toBeInTheDocument();
 	});
 });
 
@@ -238,7 +170,7 @@ describe("AgentSettingsTab — create mode", () => {
 			"Sales Bot",
 		);
 		await user.type(
-			screen.getByRole("textbox", { name: /inline instructions/i }),
+			screen.getByRole("textbox", { name: /system prompt/i }),
 			"Be helpful.",
 		);
 		await user.click(

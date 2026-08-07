@@ -682,6 +682,8 @@ async def {workflow_name}():
     )
     workflow_id = result["id"]
 
+    # Global workflow - no organization_id set
+
     yield {
         "id": workflow_id,
         "name": workflow_name,

@@ -12,7 +12,6 @@ from src.jobs.platform.system_maintenance import (
 )
 from src.jobs.platform.solution_export import SOLUTION_EXPORT_DEFINITION
 from src.jobs.platform.solution_deploy import SOLUTION_DEPLOY_DEFINITION
-from src.jobs.platform.solution_build import SOLUTION_BUILD_DEFINITION
 from src.jobs.platform.embedding_reindex import EMBEDDING_REINDEX_DEFINITION
 from src.jobs.platform.reimport import WORKSPACE_REIMPORT_DEFINITION
 from src.jobs.platform.git_operation import GIT_OPERATION_DEFINITION
@@ -26,7 +25,6 @@ _DEFINITIONS = {
     FILE_INDEX_RECONCILIATION_DEFINITION.job_type: FILE_INDEX_RECONCILIATION_DEFINITION,
     SOLUTION_EXPORT_DEFINITION.job_type: SOLUTION_EXPORT_DEFINITION,
     SOLUTION_DEPLOY_DEFINITION.job_type: SOLUTION_DEPLOY_DEFINITION,
-    SOLUTION_BUILD_DEFINITION.job_type: SOLUTION_BUILD_DEFINITION,
     EMBEDDING_REINDEX_DEFINITION.job_type: EMBEDDING_REINDEX_DEFINITION,
     WORKSPACE_REIMPORT_DEFINITION.job_type: WORKSPACE_REIMPORT_DEFINITION,
     GIT_OPERATION_DEFINITION.job_type: GIT_OPERATION_DEFINITION,

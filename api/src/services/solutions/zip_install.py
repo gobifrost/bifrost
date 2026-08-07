@@ -350,11 +350,7 @@ def _build_bundle(solution: Solution, preview: PreviewResult, workspace: Path) -
     to be read here (it is not part of the parse-only preview shape)."""
     import base64
 
-    from bifrost.commands.solution import (
-        _LOGO_CONTENT_TYPES,
-        _collect_agent_bundle_files,
-        _collect_python_files,
-    )
+    from bifrost.commands.solution import _LOGO_CONTENT_TYPES, _collect_python_files
 
     logo_b64: str | None = None
     logo_content_type: str | None = None
@@ -368,7 +364,6 @@ def _build_bundle(solution: Solution, preview: PreviewResult, workspace: Path) -
     return SolutionBundle(
         solution=solution,
         python_files=_collect_python_files(workspace),
-        bundle_files=_collect_agent_bundle_files(workspace, preview.agents),
         workflows=preview.workflows,
         tables=preview.tables,
         apps=preview.apps,
@@ -751,7 +746,6 @@ async def deploy_zip_to_solution_path(
     zip_path: Path,
     *,
     force: bool = False,
-    promotion: bool = False,
 ) -> DeployResult:
     """Deploy an existing install from a workspace zip on disk."""
     with tempfile.TemporaryDirectory(prefix="bifrost-zip-deploy-") as tmp:
@@ -761,7 +755,6 @@ async def deploy_zip_to_solution_path(
             solution,
             Path(tmp),
             force=force,
-            promotion=promotion,
         )
 
 
@@ -771,7 +764,6 @@ async def _deploy_workspace_to_solution(
     workspace: Path,
     *,
     force: bool,
-    promotion: bool = False,
 ) -> DeployResult:
     preview = _parse_workspace(workspace)
     if not preview.slug or not preview.name:
@@ -789,11 +781,7 @@ async def _deploy_workspace_to_solution(
         )
         raise UnmetDependency(f"Solution has unmet dependencies: {items}")
 
-    return await SolutionDeployer(db).deploy(
-        bundle,
-        force=force,
-        promotion=promotion,
-    )
+    return await SolutionDeployer(db).deploy(bundle, force=force)
 
 
 async def _assert_no_unforced_collisions(

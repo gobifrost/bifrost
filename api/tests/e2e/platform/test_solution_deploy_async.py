@@ -1,15 +1,17 @@
 """End-to-end: solution deploy is async + observable.
 
-The deploy endpoint stages a durable input, enqueues a worker job, and returns a
-``deploy_job_id`` immediately; the operator polls
-``GET /api/solutions/deploy-jobs/{id}`` until the job reaches a terminal status.
-This decouples the (sometimes >100s) deploy from the HTTP request and survives
-API or worker restarts.
+The deploy endpoint enqueues a background job and returns a ``deploy_job_id``
+immediately; the operator polls ``GET /api/solutions/deploy-jobs/{id}`` until
+the job reaches a terminal status. This decouples the (sometimes >100s) deploy
+from the HTTP request, which previously timed out client-side while the server
+completed successfully (Task 7 bug).
 """
 from __future__ import annotations
 
 import time
 import uuid
+from datetime import datetime, timezone
+
 import pytest
 
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
@@ -137,13 +139,17 @@ def test_async_deploy_reports_failure(e2e_client, platform_admin):
 
 
 @pytest.mark.asyncio
-async def test_polling_preserves_recoverable_running_deploy_job(
+async def test_polling_does_not_mutate_deploy_job_state(
     e2e_client, platform_admin, db_session
 ):
+    """Status reads are projections; central lease recovery owns failure state."""
+    now = datetime.now(timezone.utc)
     job = SolutionDeployJob(
         install_id=None,
         status="running",
         result={"phase": "building app dist"},
+        created_at=now,
+        updated_at=now,
     )
     db_session.add(job)
     await db_session.commit()
@@ -156,3 +162,4 @@ async def test_polling_preserves_recoverable_running_deploy_job(
     body = response.json()
     assert body["status"] == "running"
     assert body["result"] == {"phase": "building app dist"}
+    assert body["error"] is None

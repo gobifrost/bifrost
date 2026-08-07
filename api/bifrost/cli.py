@@ -397,7 +397,7 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
                     print(" OK")
 
                     # Calculate expiry time
-                    expires_at = datetime.now(timezone.utc) + timedelta(seconds=poll_data.get("expires_in") or 1800)
+                    expires_at = datetime.now(timezone.utc) + timedelta(seconds=poll_data.get("expires_in", 1800))
 
                     # Step 5: Save credentials
                     credentials.save_credentials(
@@ -1034,8 +1034,6 @@ Examples:
         assert password is not None
         rc, data = asyncio.run(password_login_flow(api_url, email, password))
         if rc == 0 and data is not None:
-            # `expires_in` is present-but-null on the password-grant response,
-            # so dict.get's default never fires — coalesce explicitly.
             expires_at = datetime.now(timezone.utc) + timedelta(
                 seconds=data.get("expires_in") or 1800
             )

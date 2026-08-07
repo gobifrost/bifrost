@@ -76,7 +76,6 @@ class ExecutionRepository(BaseRepository[Execution]):
         is_local_execution: bool = False,
         execution_model: str | None = None,
         workflow_id: str | None = None,
-        execution_context: dict[str, Any] | None = None,
     ) -> Execution:
         """
         Create a new execution record.
@@ -136,7 +135,6 @@ class ExecutionRepository(BaseRepository[Execution]):
             existing.api_key_id = parsed_api_key_id
             existing.is_local_execution = is_local_execution
             existing.execution_model = execution_model
-            existing.execution_context = execution_context
             existing.started_at = datetime.now(timezone.utc)
             await self.session.flush()
             await self.session.refresh(existing)
@@ -159,7 +157,6 @@ class ExecutionRepository(BaseRepository[Execution]):
             api_key_id=parsed_api_key_id,
             is_local_execution=is_local_execution,
             execution_model=execution_model,
-            execution_context=execution_context,
             started_at=datetime.now(timezone.utc),
         )
 
@@ -669,7 +666,6 @@ async def create_execution(
     is_local_execution: bool = False,
     execution_model: str | None = None,
     workflow_id: str | None = None,
-    execution_context: dict[str, Any] | None = None,
     session: "AsyncSession | None" = None,
 ) -> None:
     """
@@ -701,7 +697,6 @@ async def create_execution(
             is_local_execution=is_local_execution,
             execution_model=execution_model,
             workflow_id=workflow_id,
-            execution_context=execution_context,
         )
 
     if session is not None:

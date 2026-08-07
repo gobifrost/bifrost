@@ -88,25 +88,6 @@ def test_build_sdk_tarball_cached_per_version(monkeypatch):
 
 
 @pytest.mark.e2e
-def test_build_sdk_tarball_is_deterministic_after_cache_clear(monkeypatch):
-    """The SDK tarball is embedded in content-addressed builder input zips.
-    Rebuilding it after a process restart must not change the gzip header."""
-    import src.services.sdk_package as sdkpkg
-
-    monkeypatch.setattr(sdkpkg, "_bundle", lambda _workdir: b"//stable bundle")
-    sdkpkg.build_sdk_tarball.cache_clear()
-    sdkpkg._built_bundle.cache_clear()
-    first = sdkpkg.build_sdk_tarball("v9.9.8")
-    sdkpkg.build_sdk_tarball.cache_clear()
-    sdkpkg._built_bundle.cache_clear()
-    second = sdkpkg.build_sdk_tarball("v9.9.8")
-    sdkpkg.build_sdk_tarball.cache_clear()
-    sdkpkg._built_bundle.cache_clear()
-
-    assert first == second
-
-
-@pytest.mark.e2e
 def test_build_sdk_tarball_shape_and_exports():
     if not _ensure_sdk_src():
         pytest.skip("SDK source not available (no image copy, no client tree)")

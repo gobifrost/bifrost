@@ -7,7 +7,7 @@ const mockRemoveRole = vi.fn();
 const mockWorkflowRolesRefetch = vi.fn();
 
 vi.mock("@/hooks/useRoles", () => ({
-	useResourceRoles: () => ({ data: [] }),
+	useRoles: () => ({ data: [] }),
 }));
 
 vi.mock("@/hooks/useWorkflows", () => ({

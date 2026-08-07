@@ -25,8 +25,6 @@ import {
 	BookOpen,
 	ServerCog,
 	Boxes,
-	FileCheck2,
-	Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
@@ -37,7 +35,6 @@ import {
 	useTerminology,
 	type ProductTermKey,
 } from "@/lib/terminology";
-import { useBuilderAccess } from "@/hooks/useBuilderAccess";
 
 interface NavItem {
 	title: string;
@@ -45,7 +42,6 @@ interface NavItem {
 	href: string;
 	icon: React.ElementType;
 	requiresPlatformAdmin?: boolean;
-	requiresBuilder?: boolean;
 	dividerBefore?: boolean;
 }
 
@@ -71,12 +67,6 @@ const navSections: NavSection[] = [
 	{
 		title: "Hub",
 		items: [
-			{
-				title: "Build",
-				href: "/build",
-				icon: Sparkles,
-				requiresBuilder: true,
-			},
 			{
 				title: "Chat",
 				href: "/chat",
@@ -201,12 +191,6 @@ const navSections: NavSection[] = [
 				requiresPlatformAdmin: true,
 			},
 			{
-				title: "Promotion review",
-				href: "/solution-promotions",
-				icon: FileCheck2,
-				requiresPlatformAdmin: true,
-			},
-			{
 				title: "Settings",
 				href: "/settings",
 				icon: SettingsIcon,
@@ -259,7 +243,6 @@ export function Sidebar({
 }: SidebarProps) {
 	const { isPlatformAdmin } = useAuth();
 	const terminology = useTerminology();
-	const { canBuild } = useBuilderAccess();
 
 	// Filter sections and items based on user permissions
 	const visibleSections = navSections
@@ -267,9 +250,7 @@ export function Sidebar({
 		.map((section) => ({
 			...section,
 			items: section.items.filter(
-				(item) =>
-					(!item.requiresPlatformAdmin || isPlatformAdmin) &&
-					(!item.requiresBuilder || canBuild),
+				(item) => !item.requiresPlatformAdmin || isPlatformAdmin,
 			),
 		}))
 		.filter((section) => section.items.length > 0); // Remove empty sections

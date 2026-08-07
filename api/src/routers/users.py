@@ -20,10 +20,6 @@ from src.core.org_filter import resolve_org_filter, OrgFilterType
 from src.services.audit import emit_audit
 from src.services.events import emit_event
 from src.services.user_invite_service import UserInviteService
-from src.services.user_provisioning import (
-    sync_platform_admin_role,
-    validate_platform_admin_removal,
-)
 from src.models import User as UserORM, UserRole as UserRoleORM, FormRole as FormRoleORM
 from src.models import (
     BulkUserFailure,
@@ -151,12 +147,6 @@ async def create_user(
 
     db.add(new_user)
     await db.flush()
-    await sync_platform_admin_role(
-        db,
-        user_id=new_user.id,
-        enabled=new_user.is_superuser,
-        assigned_by=user.email,
-    )
     await db.refresh(new_user)
 
     logger.info(f"Created user {new_user.email} (id: {new_user.id})")
@@ -503,28 +493,10 @@ async def update_user(
     if request.is_active is not None:
         db_user.is_active = request.is_active
     if request.is_superuser is not None:
-        if not request.is_superuser:
-            try:
-                await validate_platform_admin_removal(
-                    db,
-                    user_ids=[db_user.id],
-                    actor_user_id=user.user_id,
-                )
-            except ValueError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=str(exc),
-                ) from exc
         db_user.is_superuser = request.is_superuser
         if request.is_superuser:
             # Promoting to platform admin - move to provider org
             db_user.organization_id = PROVIDER_ORG_ID
-        await sync_platform_admin_role(
-            db,
-            user_id=db_user.id,
-            enabled=request.is_superuser,
-            assigned_by=user.email,
-        )
     if request.is_verified is not None:
         db_user.is_verified = request.is_verified
     if request.is_external is not None:

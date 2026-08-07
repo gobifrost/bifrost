@@ -66,12 +66,6 @@ _INLINE_ORG_RE = re.compile(
 # progress.
 ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
     ('routers/agents.py', 'MCPConnection.organization_id == agent_data.organization_id,', 'agents MCPConnection lookup; phase 6 migrates via MCPConnectionRepository'),
-    ('routers/solution_app_host.py', 'Solution.organization_id == session.organization_id,', 'app-session credential exact org binding; identity seal, not cascade'),
-    ('routers/solution_app_host.py', 'Application.organization_id == session.organization_id,', 'app-session credential exact org binding; identity seal, not cascade'),
-    ('routers/solution_app_runtime.py', 'Application.organization_id == principal.organization_id,', 'app-token exact org binding; identity seal, not cascade'),
-    ('routers/solution_app_websocket.py', 'Table.organization_id == principal.organization_id,', 'app-token exact org binding; identity seal, not cascade'),
-    ('routers/solution_app_websocket.py', 'Execution.organization_id == principal.organization_id,', 'app-token exact org binding; identity seal, not cascade'),
-    ('routers/solution_app_websocket.py', 'Workflow.organization_id == principal.organization_id,', 'app-token exact org binding; identity seal, not cascade'),
     # ApplicationRepository entries removed in phase 6 — repository relocated
     # from routers/applications.py to repositories/applications.py.
     ('routers/claims.py', 'Table.organization_id == org_id,', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),

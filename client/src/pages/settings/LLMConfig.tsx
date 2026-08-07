@@ -111,7 +111,6 @@ export function LLMConfig() {
 	const [defaultSystemPrompt, setDefaultSystemPrompt] = useState("");
 	const [summarizationModel, setSummarizationModel] = useState("");
 	const [tuningModel, setTuningModel] = useState("");
-	const [builderModel, setBuilderModel] = useState("");
 
 	// Models state (loaded dynamically after test)
 	const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
@@ -158,7 +157,6 @@ export function LLMConfig() {
 		setEndpoint(config.endpoint || DEFAULT_ENDPOINTS[p] || DEFAULT_ENDPOINTS.openai);
 		setSummarizationModel(config.summarization_model ?? "");
 		setTuningModel(config.tuning_model ?? "");
-		setBuilderModel(config.builder_model ?? "");
 	}
 
 	// Track if we've already fetched models for this config
@@ -290,7 +288,6 @@ export function LLMConfig() {
 					default_system_prompt: defaultSystemPrompt || null,
 					summarization_model: summarizationModel || null,
 					tuning_model: tuningModel || null,
-					builder_model: builderModel || null,
 				},
 			});
 
@@ -331,7 +328,6 @@ export function LLMConfig() {
 			setDefaultSystemPrompt("");
 			setSummarizationModel("");
 			setTuningModel("");
-			setBuilderModel("");
 			setTestResult(null);
 			setAvailableModels([]);
 			setModelsLoaded(false);
@@ -677,47 +673,6 @@ export function LLMConfig() {
 							<p className="text-xs text-muted-foreground">
 								Override the model used for agent tuning chat and
 								dry-runs. Uses the primary provider and API key.
-							</p>
-						</div>
-
-						{/* Solution Builder Model Override */}
-						<div className="space-y-2">
-							<Label htmlFor="builder-model">
-								Solution builder model (optional)
-							</Label>
-							{hasModels ? (
-								<Combobox
-									value={builderModel || "__default__"}
-									onValueChange={(value) =>
-										setBuilderModel(
-											value === "__default__" ? "" : value,
-										)
-									}
-									options={[
-										{
-											value: "__default__",
-											label: "Use platform default",
-										},
-										...availableModels.map((item) => ({
-											value: item.id,
-											label: item.display_name || item.id,
-										})),
-									]}
-									placeholder="Use platform default"
-									searchPlaceholder="Search builder models…"
-									emptyText="No models found."
-								/>
-							) : (
-								<Input
-									id="builder-model"
-									placeholder="Leave blank to use primary model"
-									value={builderModel}
-									onChange={(e) => setBuilderModel(e.target.value)}
-								/>
-							)}
-							<p className="text-xs text-muted-foreground">
-								Override the model used by the bundle-backed app
-								builder Agent. Uses the primary provider and API key.
 							</p>
 						</div>
 					</div>

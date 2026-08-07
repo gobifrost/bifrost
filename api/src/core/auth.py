@@ -15,7 +15,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from src.core.db_deps import DbSession
 from src.core.principal import UserPrincipal
-from src.core.security import decode_token, is_actor_token
+from src.core.security import decode_token
 from shared.role_cache import get_user_roles
 
 if TYPE_CHECKING:
@@ -130,17 +130,6 @@ async def get_current_user_optional(
     if payload is None:
         return None
 
-    # Default-deny non-user actors. A solution_app token reuses the launching
-    # user's sub/org_id/email, so without this it would authenticate as that
-    # user on every route. Actor-specific routes must not depend on this
-    # function; they read the claim themselves.
-    if is_actor_token(payload):
-        logger.warning(
-            "Rejected actor token (actor_type=%s) on user auth path",
-            payload.get("actor_type"),
-        )
-        return None
-
     # Extract user ID from token
     user_id_str = payload.get("sub")
     if not user_id_str:
@@ -193,7 +182,6 @@ async def get_current_user_optional(
         is_external=payload.get("is_external", False),
         is_provider_org=payload.get("is_provider_org", False),
         roles=payload.get("roles", []),
-        scopes=payload.get("scopes", []),
         embed=payload.get("embed", False),
         embed_kind=payload.get("embed_kind"),
         grant=payload.get("grant"),
@@ -269,7 +257,7 @@ async def get_current_superuser(
     user: Annotated[UserPrincipal, Depends(get_current_active_user)],
 ) -> UserPrincipal:
     """
-    Get the current principal with full platform-administration scope.
+    Get the current superuser (platform admin).
 
     Raises HTTPException if user is not a superuser.
 
@@ -282,9 +270,7 @@ async def get_current_superuser(
     Raises:
         HTTPException: If user is not a superuser
     """
-    from shared.authorization_scopes import PLATFORM_SUPERUSER_SCOPE
-
-    if not user.has_scope(PLATFORM_SUPERUSER_SCOPE):
+    if not user.is_superuser:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Superuser privileges required"
@@ -494,14 +480,6 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
     if payload is None:
         return None
 
-    # Default-deny non-user actors (see get_current_user_optional).
-    if is_actor_token(payload):
-        logger.warning(
-            "Rejected actor token (actor_type=%s) on WebSocket auth path",
-            payload.get("actor_type"),
-        )
-        return None
-
     user_id_str = payload.get("sub")
     if not user_id_str:
         return None
@@ -551,7 +529,6 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
         is_external=payload.get("is_external", False),
         is_provider_org=payload.get("is_provider_org", False),
         roles=payload.get("roles", []),
-        scopes=payload.get("scopes", []),
         embed=payload.get("embed", False),
         embed_kind=payload.get("embed_kind"),
         grant=payload.get("grant"),

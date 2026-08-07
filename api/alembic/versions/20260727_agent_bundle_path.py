@@ -1,14 +1,12 @@
-"""Add portable skill-bundle root to agents.
+"""Withdrawn builder agent bundle path schema revision.
 
-Revision ID: 20260727_agent_bundle_path
-Revises: 20260725_build_jobs
-Create Date: 2026-07-27
+The unfinished Solution Builder briefly shipped on main. Keep its revision ID in
+Alembic's graph so databases that observed it remain upgradeable. Fresh
+databases intentionally perform no work here; the forward compatibility
+revision removes deterministic seed data while leaving existing schema inert.
 """
 
 from collections.abc import Sequence
-
-import sqlalchemy as sa
-from alembic import op
 
 revision: str = "20260727_agent_bundle_path"
 down_revision: str | None = "20260725_build_jobs"
@@ -17,11 +15,8 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "agents",
-        sa.Column("bundle_path", sa.String(length=1024), nullable=True),
-    )
+    pass
 
 
 def downgrade() -> None:
-    op.drop_column("agents", "bundle_path")
+    pass
