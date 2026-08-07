@@ -75,7 +75,6 @@ from src.routers import (
     solutions_router,
     solution_builder_router,
     solution_promotions_router,
-    internal_builder_router,
     solution_app_launch_router,
     knowledge_sources_router,
     app_embed_secrets_router,
@@ -577,7 +576,6 @@ def create_app() -> FastAPI:
     app.include_router(solutions_router)
     app.include_router(solution_builder_router)
     app.include_router(solution_promotions_router)
-    app.include_router(internal_builder_router)
     # Control-plane half of the app host: mints launch URLs under the builder
     # prefix using normal user auth. The app-origin half registers last.
     app.include_router(solution_app_launch_router)

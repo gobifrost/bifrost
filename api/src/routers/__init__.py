@@ -47,7 +47,6 @@ from src.routers.claims import router as claims_router
 from src.routers.solutions import router as solutions_router
 from src.routers.solution_builder import router as solution_builder_router
 from src.routers.solution_promotions import router as solution_promotions_router
-from src.routers.internal_builder import router as internal_builder_router
 from src.routers.solution_app_host import router as solution_app_host_router
 from src.routers.solution_app_host import control_router as solution_app_launch_router
 from src.routers.knowledge_sources import router as knowledge_sources_router
@@ -128,7 +127,6 @@ __all__ = [
     "solutions_router",
     "solution_builder_router",
     "solution_promotions_router",
-    "internal_builder_router",
     "solution_app_host_router",
     "solution_app_launch_router",
     "knowledge_sources_router",
