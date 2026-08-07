@@ -604,6 +604,7 @@ async def publish_form(
 
     now = datetime.now(timezone.utc)
     publication = form.publication
+    publication_is_new = publication is None
     if publication is None:
         publication = FormPublicationORM(
             form_id=form.id,
@@ -617,7 +618,11 @@ async def publish_form(
             updated_at=now,
         )
         db.add(publication)
-        form.publication = publication
+        # The publication is environment-owned operational state, even when
+        # its parent form is managed by a Solution. Assigning the scalar
+        # relationship here marks the parent Form dirty and trips the
+        # solution-managed write guard during flush. Persist by foreign key,
+        # then reload the relationship without mutating the managed form.
     else:
         publication.allowed_origins = allowed_origins
         publication.approved_fingerprint = review.fingerprint
@@ -626,6 +631,8 @@ async def publish_form(
         publication.updated_at = now
 
     await db.flush()
+    if publication_is_new:
+        await db.refresh(form, attribute_names=["publication"])
     logger.info(
         "Public form publication enabled",
         extra={
