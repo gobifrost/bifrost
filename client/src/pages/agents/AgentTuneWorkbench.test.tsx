@@ -2,7 +2,8 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { Routes, Route } from "react-router-dom";
 import { useLocation } from "react-router-dom";
 
-import { renderWithProviders, screen, waitFor } from "@/test-utils";
+import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils";
+import { AgentTuneWorkbench } from "./AgentTuneWorkbench";
 
 const mockUseAgent = vi.fn();
 const mockUseAgentRuns = vi.fn();
@@ -83,7 +84,11 @@ function makeRun(id: string) {
 beforeEach(() => {
 	mockUseAgent.mockReturnValue({ data: baseAgent });
 	mockUseAgentRuns.mockReturnValue({
-		data: { items: [makeRun("a"), makeRun("b")], total: 2, next_cursor: null },
+		data: {
+			items: [makeRun("a"), makeRun("b")],
+			total: 2,
+			next_cursor: null,
+		},
 		isLoading: false,
 	});
 	mockUseAgentStats.mockReturnValue({ data: baseStats, isLoading: false });
@@ -92,8 +97,7 @@ beforeEach(() => {
 	mockApplyTuning.mockReset();
 });
 
-async function renderPage() {
-	const { AgentTuneWorkbench } = await import("./AgentTuneWorkbench");
+function renderPage() {
 	return renderWithProviders(
 		<Routes>
 			<Route path="/agents/:id/tune" element={<AgentTuneWorkbench />} />
@@ -180,9 +184,7 @@ describe("AgentTuneWorkbench — generate proposal", () => {
 	it("renders the editable textarea with the proposal after generate", async () => {
 		const { user } = await renderPage();
 		await user.click(screen.getByTestId("generate-proposal-button"));
-		const textarea = await screen.findByTestId(
-			"proposal-textarea",
-		);
+		const textarea = await screen.findByTestId("proposal-textarea");
 		expect(textarea).toHaveValue(sampleProposal.proposed_prompt);
 	});
 
@@ -200,8 +202,7 @@ describe("AgentTuneWorkbench — generate proposal", () => {
 		const textarea = (await screen.findByTestId(
 			"proposal-textarea",
 		)) as HTMLTextAreaElement;
-		await user.clear(textarea);
-		await user.type(textarea, "Brand new prompt.");
+		fireEvent.change(textarea, { target: { value: "Brand new prompt." } });
 		expect(textarea).toHaveValue("Brand new prompt.");
 		expect(screen.getByText(/brand new prompt\./i)).toBeInTheDocument();
 	});
@@ -257,8 +258,9 @@ describe("AgentTuneWorkbench — dry-run", () => {
 		const textarea = (await screen.findByTestId(
 			"proposal-textarea",
 		)) as HTMLTextAreaElement;
-		await user.clear(textarea);
-		await user.type(textarea, "Edited proposed prompt.");
+		fireEvent.change(textarea, {
+			target: { value: "Edited proposed prompt." },
+		});
 		await user.click(screen.getByTestId("dryrun-button"));
 		await waitFor(() => {
 			expect(mockTuningDryRun).toHaveBeenCalledWith(
@@ -304,9 +306,7 @@ describe("AgentTuneWorkbench — dry-run", () => {
 
 		await user.click(screen.getByTestId("dryrun-button"));
 		await waitFor(() => {
-			expect(
-				screen.queryByText(/still answers itself/i),
-			).toBeNull();
+			expect(screen.queryByText(/still answers itself/i)).toBeNull();
 			expect(
 				screen.getByText(/different outcome this time/i),
 			).toBeInTheDocument();
@@ -319,8 +319,7 @@ function LocationProbe() {
 	return <div data-testid="location">{loc.pathname}</div>;
 }
 
-async function renderPageWithProbe() {
-	const { AgentTuneWorkbench } = await import("./AgentTuneWorkbench");
+function renderPageWithProbe() {
 	return renderWithProviders(
 		<Routes>
 			<Route
@@ -332,10 +331,7 @@ async function renderPageWithProbe() {
 					</>
 				}
 			/>
-			<Route
-				path="/agents/:id"
-				element={<LocationProbe />}
-			/>
+			<Route path="/agents/:id" element={<LocationProbe />} />
 		</Routes>,
 		{ initialEntries: ["/agents/agent-1/tune"] },
 	);
@@ -361,8 +357,9 @@ describe("AgentTuneWorkbench — apply", () => {
 		const textarea = (await screen.findByTestId(
 			"proposal-textarea",
 		)) as HTMLTextAreaElement;
-		await user.clear(textarea);
-		await user.type(textarea, "Hand-edited final prompt.");
+		fireEvent.change(textarea, {
+			target: { value: "Hand-edited final prompt." },
+		});
 		await user.click(screen.getByTestId("apply-button"));
 
 		await waitFor(() => {

@@ -7,6 +7,7 @@ import uuid
 import pytest
 
 from src.core.security import decode_token
+from tests.e2e.conftest import poll_until
 
 
 def _compute_hmac(params: dict, secret: str) -> str:
@@ -265,10 +266,17 @@ class TestFormEmbed:
         assert accepted_body["execution_id"]
         assert "confirmation_markdown" not in accepted_body
 
-        own_execution = e2e_client.get(
-            f"/api/executions/{accepted_body['execution_id']}",
-            headers=first_headers,
-        )
+        def get_own_execution():
+            response = e2e_client.get(
+                f"/api/executions/{accepted_body['execution_id']}",
+                headers=first_headers,
+            )
+            if response.status_code == 404:
+                return None
+            return response
+
+        own_execution = poll_until(get_own_execution, max_wait=30.0, interval=0.2)
+        assert own_execution is not None, "Queued execution never became visible"
         assert own_execution.status_code == 200, own_execution.text
         assert own_execution.json()["execution_id"] == accepted_body["execution_id"]
 

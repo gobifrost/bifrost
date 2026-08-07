@@ -32,6 +32,7 @@ from src.repositories.forms import FormRepository
 from src.repositories.workflows import WorkflowRepository
 from src.models import Execution as ExecutionORM
 from src.models import Form as FormORM, FormField as FormFieldORM, FormRole as FormRoleORM
+from src.services.solutions.access import visible_solution_child_criterion
 from src.models import FormPublication as FormPublicationORM
 from src.services.solutions.guard import assert_not_solution_managed
 from src.models import Role as RoleORM
@@ -110,6 +111,17 @@ async def _limit_embed_action(http_request: Request, ctx, action: str) -> None:
         raise HTTPException(status_code=403, detail="Invalid form session")
     identifier = f"{ctx.user.jti}:{get_client_ip(http_request)}"
     await _FORM_EMBED_LIMITERS[action].check(f"form_embed_{action}", identifier)
+
+
+def _visible_form_query(ctx: Context, query):
+    """Apply the private parent gate before any form-specific authorization."""
+    return query.where(
+        visible_solution_child_criterion(
+            child_solution_id=FormORM.solution_id,
+            actor_user_id=ctx.user.user_id,
+            is_external=ctx.user.is_external,
+        )
+    )
 
 
 def _form_schema_to_fields(form_schema: dict, form_id: UUID) -> list[FormFieldORM]:
@@ -856,9 +868,12 @@ async def update_form(
     to JSON on-the-fly for git sync operations.
     """
     result = await db.execute(
-        select(FormORM)
-        .options(selectinload(FormORM.fields))
-        .where(FormORM.id == form_id)
+        _visible_form_query(
+            ctx,
+            select(FormORM)
+            .options(selectinload(FormORM.fields))
+            .where(FormORM.id == form_id),
+        )
     )
     form = result.scalar_one_or_none()
 
@@ -948,9 +963,12 @@ async def update_form(
 
     # Reload form with fields eager-loaded
     result = await db.execute(
-        select(FormORM)
-        .options(selectinload(FormORM.fields))
-        .where(FormORM.id == form_id)
+        _visible_form_query(
+            ctx,
+            select(FormORM)
+            .options(selectinload(FormORM.fields))
+            .where(FormORM.id == form_id),
+        )
     )
     form = result.scalar_one()
 
@@ -1007,8 +1025,10 @@ async def delete_form(
     With purge=true, permanently removes the form and its related records from the database.
     """
     result = await db.execute(
-        select(FormORM)
-        .where(FormORM.id == form_id)
+        _visible_form_query(
+            ctx,
+            select(FormORM).where(FormORM.id == form_id),
+        )
     )
     form = result.scalar_one_or_none()
 
@@ -1212,9 +1232,10 @@ async def submit_form(
 
     # Get the form
     result = await db.execute(
-        select(FormORM)
-        .options(selectinload(FormORM.fields))
-        .where(FormORM.id == form_id)
+        _visible_form_query(
+            ctx,
+            select(FormORM).where(FormORM.id == form_id),
+        ).options(selectinload(FormORM.fields))
     )
     form = result.scalar_one_or_none()
 
@@ -1585,9 +1606,10 @@ async def execute_startup_workflow(
 
     # Get the form
     result = await db.execute(
-        select(FormORM)
-        .options(selectinload(FormORM.fields))
-        .where(FormORM.id == form_id)
+        _visible_form_query(
+            ctx,
+            select(FormORM).where(FormORM.id == form_id),
+        ).options(selectinload(FormORM.fields))
     )
     form = result.scalar_one_or_none()
 
@@ -1885,9 +1907,12 @@ async def generate_upload_url(
 
     # Verify form exists and user has access
     result = await db.execute(
-        select(FormORM)
-        .options(selectinload(FormORM.fields))
-        .where(FormORM.id == form_id)
+        _visible_form_query(
+            ctx,
+            select(FormORM)
+            .options(selectinload(FormORM.fields))
+            .where(FormORM.id == form_id),
+        )
     )
     form = result.scalar_one_or_none()
 

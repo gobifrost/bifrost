@@ -65,6 +65,32 @@ class TestS3AfterCommit:
         await result.finalize_s3()
         assert "workflows/w1.py" in set(await storage.list(""))
 
+    async def test_deploy_preserves_agent_bundle_files(self, db_session) -> None:
+        db = db_session
+        sol = await _install(db)
+        storage = SolutionStorage(sol.id)
+
+        result = await SolutionDeployer(db).deploy(
+            SolutionBundle(
+                solution=sol,
+                bundle_files={
+                    "agents/helper/SKILL.md": b"# Helper\n",
+                    "agents/helper/scripts/example.py": b"raise SystemExit\n",
+                    "agents/helper/assets/icon.bin": b"\x00\x01",
+                },
+            )
+        )
+
+        assert await storage.list("agents/helper/") == []
+        await result.finalize_s3()
+
+        assert await storage.read("agents/helper/SKILL.md") == b"# Helper\n"
+        assert (
+            await storage.read("agents/helper/scripts/example.py")
+            == b"raise SystemExit\n"
+        )
+        assert await storage.read("agents/helper/assets/icon.bin") == b"\x00\x01"
+
     async def test_finalize_is_idempotent_callable(self, db_session) -> None:
         db = db_session
         sol = await _install(db)

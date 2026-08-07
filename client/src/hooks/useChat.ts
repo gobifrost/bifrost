@@ -25,6 +25,8 @@ export type MessagePublic = components["schemas"]["MessagePublic"];
 export type ChatRequest = components["schemas"]["ChatRequest"];
 export type ChatResponse = components["schemas"]["ChatResponse"];
 
+const MESSAGE_PAGE_SIZE = 100;
+
 /** Helper to extract error message from API error response */
 function getErrorMessage(error: unknown, fallback: string): string {
 	if (typeof error === "object" && error && "message" in error) {
@@ -176,11 +178,26 @@ export function useConversation(conversationId: string | undefined) {
 
 /** Hook to fetch messages for a conversation */
 export function useMessages(conversationId: string | undefined) {
-	return $api.useQuery(
+	return $api.useInfiniteQuery(
 		"get",
 		"/api/chat/conversations/{conversation_id}/messages",
-		{ params: { path: { conversation_id: conversationId ?? "" } } },
-		{ enabled: !!conversationId },
+		{
+			params: {
+				path: { conversation_id: conversationId ?? "" },
+				query: { limit: MESSAGE_PAGE_SIZE },
+			},
+		},
+		{
+			enabled: !!conversationId,
+			pageParamName: "before_sequence",
+			initialPageParam: Number.MAX_SAFE_INTEGER,
+			getNextPageParam: (lastPage) => {
+				if (lastPage.length < MESSAGE_PAGE_SIZE) return undefined;
+				return lastPage[0]?.sequence ?? undefined;
+			},
+			select: (result) =>
+				[...result.pages].reverse().flat() as MessagePublic[],
+		},
 	);
 }
 

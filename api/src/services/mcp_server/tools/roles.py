@@ -106,12 +106,18 @@ async def create_role(
     name: str,
     description: str | None = None,
     permissions: dict[str, Any] | None = None,
+    scopes: list[str] | None = None,
 ) -> ToolResult:
     """Create a role — thin wrapper over ``POST /api/roles``."""
     if not name:
         return error_result("name is required")
 
-    fields = {"name": name, "description": description, "permissions": permissions}
+    fields = {
+        "name": name,
+        "description": description,
+        "permissions": permissions,
+        "scopes": scopes,
+    }
     try:
         body = await _assemble_role_body(context, fields, is_update=False)
     except Exception as exc:
@@ -129,6 +135,7 @@ async def update_role(
     name: str | None = None,
     description: str | None = None,
     permissions: dict[str, Any] | None = None,
+    scopes: list[str] | None = None,
 ) -> ToolResult:
     """Update a role — thin wrapper over ``PATCH /api/roles/{uuid}``.
 
@@ -149,7 +156,12 @@ async def update_role(
                 f"could not resolve role {role_ref!r}", _ref_error_payload(exc)
             )
 
-    fields = {"name": name, "description": description, "permissions": permissions}
+    fields = {
+        "name": name,
+        "description": description,
+        "permissions": permissions,
+        "scopes": scopes,
+    }
     try:
         body = await _assemble_role_body(context, fields, is_update=True)
     except Exception as exc:

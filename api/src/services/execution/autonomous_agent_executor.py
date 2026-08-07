@@ -484,7 +484,9 @@ class AutonomousAgentExecutor:
             return await self._execute_delegation(tool_call, agent)
 
         # System tools
-        if tool_call.name in (agent.system_tools or []):
+        from src.services.execution.agent_helpers import is_agent_system_tool
+
+        if is_agent_system_tool(agent, tool_call.name):
             return await self._execute_system_tool(tool_call, agent)
 
         # External MCP tools — namespaced ``mcp__<connection_id>__<tool>``.
@@ -1037,6 +1039,12 @@ class AutonomousAgentExecutor:
                         and self._caller.get("name")
                         else agent.name
                     ),
+                    agent_bundle_path=agent.bundle_path,
+                    agent_skill_id=agent.id,
+                    agent_skill_in_repo=(
+                        agent.solution_id is None and agent.created_by == "file_sync"
+                    ),
+                    agent_solution_id=agent.solution_id,
                     session=db,
                 )
 

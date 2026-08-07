@@ -446,8 +446,8 @@ class SolutionDeletionSummary(BaseModel):
 
 
 class SolutionDeployEnqueued(BaseModel):
-    """Returned by ``POST /{id}/deploy`` — the deploy runs as a background job;
-    the caller polls ``GET /deploy-jobs/{deploy_job_id}`` for the result."""
+    """Returned by ``POST /{id}/deploy`` — a durable worker executes the job
+    and the caller polls ``GET /deploy-jobs/{deploy_job_id}`` for the result."""
 
     deploy_job_id: UUID
 

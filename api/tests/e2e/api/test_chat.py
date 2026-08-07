@@ -6,8 +6,12 @@ Requires LLM configuration to be set for message sending tests.
 """
 
 import logging
+from uuid import UUID
 
 import pytest
+
+from src.models.enums import MessageRole
+from src.models.orm import Message
 
 logger = logging.getLogger(__name__)
 
@@ -312,6 +316,46 @@ class TestMessages:
         data = response.json()
         assert isinstance(data, list)
         assert len(data) == 0
+
+    @pytest.mark.asyncio
+    async def test_get_messages_resumes_from_latest_and_pages_earlier(
+        self,
+        e2e_client,
+        platform_admin,
+        test_conversation,
+        db_session,
+    ):
+        """A resumed transcript starts with recent work and can page backward."""
+        conversation_id = UUID(test_conversation["id"])
+        db_session.add_all(
+            [
+                Message(
+                    conversation_id=conversation_id,
+                    role=MessageRole.USER,
+                    content=f"message {sequence}",
+                    sequence=sequence,
+                )
+                for sequence in range(1, 7)
+            ]
+        )
+        await db_session.commit()
+
+        latest = e2e_client.get(
+            f"/api/chat/conversations/{conversation_id}/messages?limit=3",
+            headers=platform_admin.headers,
+        )
+        assert latest.status_code == 200
+        assert [message["sequence"] for message in latest.json()] == [4, 5, 6]
+
+        earlier = e2e_client.get(
+            (
+                f"/api/chat/conversations/{conversation_id}/messages"
+                "?limit=3&before_sequence=4"
+            ),
+            headers=platform_admin.headers,
+        )
+        assert earlier.status_code == 200
+        assert [message["sequence"] for message in earlier.json()] == [1, 2, 3]
 
     def test_get_messages_from_nonexistent_conversation(
         self,

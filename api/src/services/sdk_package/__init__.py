@@ -15,6 +15,7 @@ the consuming app provides them so React stays a singleton).
 from __future__ import annotations
 
 import functools
+import gzip
 import hashlib
 import io
 import json
@@ -136,14 +137,20 @@ def build_sdk_tarball(version: str) -> bytes:
     }
 
     buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-        def _add(name: str, data: bytes) -> None:
-            info = tarfile.TarInfo(name=name)
-            info.size = len(data)
-            tar.addfile(info, fileobj=io.BytesIO(data))
+    # ``tarfile.open(mode="w:gz")`` writes the current time into the gzip
+    # header. That made otherwise-identical build inputs hash differently
+    # after an API restart, defeating build-job reuse. Write the gzip wrapper
+    # explicitly with a fixed mtime; TarInfo itself also defaults to mtime=0.
+    with gzip.GzipFile(fileobj=buffer, mode="wb", filename="", mtime=0) as gzip_file:
+        with tarfile.open(fileobj=gzip_file, mode="w") as tar:
 
-        # npm expects everything under a top-level "package/" dir.
-        _add("package/package.json", json.dumps(package_json, indent=2).encode())
-        _add("package/dist/index.mjs", bundle)
+            def _add(name: str, data: bytes) -> None:
+                info = tarfile.TarInfo(name=name)
+                info.size = len(data)
+                tar.addfile(info, fileobj=io.BytesIO(data))
+
+            # npm expects everything under a top-level "package/" dir.
+            _add("package/package.json", json.dumps(package_json, indent=2).encode())
+            _add("package/dist/index.mjs", bundle)
 
     return buffer.getvalue()

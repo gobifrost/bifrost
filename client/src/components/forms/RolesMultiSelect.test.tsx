@@ -32,7 +32,7 @@ const mockRoles = [
 ];
 
 vi.mock("@/hooks/useRoles", () => ({
-	useRoles: () => ({ data: mockRoles, isLoading: false }),
+	useResourceRoles: () => ({ data: mockRoles, isLoading: false }),
 }));
 
 import { RolesMultiSelect } from "./RolesMultiSelect";

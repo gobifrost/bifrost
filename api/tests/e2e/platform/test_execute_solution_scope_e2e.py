@@ -13,7 +13,15 @@ from src.services.solution_scope import derive_execution_solution_scope
 
 
 def _no_ctx() -> SimpleNamespace:
-    return SimpleNamespace(solution_id=None, app_id=None)
+    return SimpleNamespace(
+        solution_id=None,
+        app_id=None,
+        user=SimpleNamespace(
+            user_id=uuid4(),
+            is_platform_admin=True,
+            is_external=False,
+        ),
+    )
 
 
 async def _org(db):

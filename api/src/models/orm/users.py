@@ -105,9 +105,19 @@ class Role(Base):
     __tablename__ = "roles"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    key: Mapped[str | None] = mapped_column(String(100), unique=True, default=None)
     name: Mapped[str] = mapped_column(String(100))
     description: Mapped[str | None] = mapped_column(Text, default=None)
     permissions: Mapped[dict] = mapped_column(JSONB, default={}, server_default='{}')
+    scopes: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, nullable=False, server_default='[]'
+    )
+    is_builtin: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=text("false")
+    )
+    assignable_to_resources: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default=text("true")
+    )
     created_by: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")

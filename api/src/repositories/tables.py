@@ -27,7 +27,7 @@ class TableRepository(OrgScopedRepository[Table]):
         filter_type: OrgFilterType = OrgFilterType.ORG_PLUS_GLOBAL,
     ) -> list[Table]:
         """List tables with specified filter type."""
-        query = select(self.model)
+        query = self._apply_solution_visibility(select(self.model))
 
         if filter_type == OrgFilterType.ALL:
             pass
@@ -59,7 +59,7 @@ class TableRepository(OrgScopedRepository[Table]):
         separate partial unique indexes, so the _repo create-time duplicate
         check must only see the _repo namespace.
         """
-        query = select(self.model).where(
+        query = self._apply_solution_visibility(select(self.model)).where(
             self.model.name == name,
             self.model.organization_id == self.org_id,
         )
@@ -109,7 +109,9 @@ class TableRepository(OrgScopedRepository[Table]):
         data: TableUpdate,
     ) -> Table | None:
         """Update a table by ID."""
-        query = select(self.model).where(self.model.id == table_id)
+        query = self._apply_solution_visibility(select(self.model)).where(
+            self.model.id == table_id
+        )
         result = await self.session.execute(query)
         table = result.scalar_one_or_none()
         if not table:
@@ -136,7 +138,9 @@ class TableRepository(OrgScopedRepository[Table]):
 
     async def delete_table(self, table_id: UUID) -> bool:
         """Delete a table and all its documents by ID."""
-        query = select(self.model).where(self.model.id == table_id)
+        query = self._apply_solution_visibility(select(self.model)).where(
+            self.model.id == table_id
+        )
         result = await self.session.execute(query)
         table = result.scalar_one_or_none()
         if not table:

@@ -70,3 +70,15 @@ def test_update_tool_ids_fails_when_persisted_ids_differ(_patch_client) -> None:
     assert "tool_ids" in result.output
     assert "did not persist" in result.output
     assert fake.calls[0] == ("PUT", f"/api/agents/{agent_id}", {"tool_ids": [tool_id]})
+
+
+def test_create_and_update_expose_bundle_path_flag() -> None:
+    runner = CliRunner()
+
+    create = runner.invoke(agents_group, ["create", "--help"])
+    update = runner.invoke(agents_group, ["update", "--help"])
+
+    assert create.exit_code == 0
+    assert update.exit_code == 0
+    assert "--bundle-path" in create.output
+    assert "--bundle-path" in update.output

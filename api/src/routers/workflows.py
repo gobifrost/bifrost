@@ -70,6 +70,7 @@ from src.services.solutions.guard import (
     assert_entity_id_not_solution_managed,
     assert_not_solution_managed,
 )
+from src.services.solutions.access import visible_solution_child_criterion
 
 from src.core.auth import Context, CurrentActiveUser, CurrentSuperuser
 from src.core.db_deps import DbSession
@@ -80,6 +81,21 @@ from src.core.cache import get_cached_data_provider
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/workflows", tags=["Workflows"])
+
+
+def _visible_child_query(user, query, child_solution_id):
+    """Apply the private-Solution parent gate to a direct router query."""
+    return query.where(
+        visible_solution_child_criterion(
+            child_solution_id=child_solution_id,
+            actor_user_id=user.user_id,
+            is_external=user.is_external,
+        )
+    )
+
+
+def _visible_workflow_query(user, query):
+    return _visible_child_query(user, query, WorkflowORM.solution_id)
 
 
 # =============================================================================
@@ -399,7 +415,10 @@ async def list_workflows(
             )
 
         # Query active workflows from database
-        query = select(WorkflowORM).where(WorkflowORM.is_active.is_(True))
+        query = _visible_workflow_query(
+            user,
+            select(WorkflowORM).where(WorkflowORM.is_active.is_(True)),
+        )
 
         # Apply organization scope filter
         if filter_type == OrgFilterType.ALL:
@@ -541,6 +560,7 @@ async def get_workflow_usage_stats(
             .where(Form.is_active.is_(True))
             .order_by(Form.name)
         )
+        forms_query = _visible_child_query(user, forms_query, Form.solution_id)
         if org_filter:
             forms_query = forms_query.where(Form.organization_id == org_filter)
 
@@ -594,6 +614,7 @@ async def get_workflow_usage_stats(
             .group_by(Agent.id, Agent.name)
             .order_by(Agent.name)
         )
+        agents_query = _visible_child_query(user, agents_query, Agent.solution_id)
         if org_filter:
             agents_query = agents_query.where(Agent.organization_id == org_filter)
 
@@ -614,6 +635,11 @@ async def get_workflow_usage_stats(
         apps_base_query = (
             select(Application.id, Application.name, Application.slug, Application.repo_path)
             .order_by(Application.name)
+        )
+        apps_base_query = _visible_child_query(
+            user,
+            apps_base_query,
+            Application.solution_id,
         )
         if org_filter:
             apps_base_query = apps_base_query.where(Application.organization_id == org_filter)
@@ -931,6 +957,8 @@ async def execute_workflow(
         is_platform_admin=exec_is_admin,
         is_function_key=False,
         execution_id=str(uuid4()),
+        solution_id=str(solution_scope) if solution_scope is not None else None,
+        actor_jti=ctx.user.jti,
     )
 
     try:
@@ -1404,7 +1432,10 @@ async def update_workflow(
     try:
         # Find the workflow
         result = await db.execute(
-            select(WorkflowORM).where(WorkflowORM.id == workflow_id)
+            _visible_workflow_query(
+                user,
+                select(WorkflowORM).where(WorkflowORM.id == workflow_id),
+            )
         )
         workflow = result.scalar_one_or_none()
 
@@ -2010,7 +2041,10 @@ async def get_workflow_roles(
     """
     # Verify workflow exists
     result = await db.execute(
-        select(WorkflowORM.id).where(WorkflowORM.id == workflow_id)
+        _visible_workflow_query(
+            user,
+            select(WorkflowORM.id).where(WorkflowORM.id == workflow_id),
+        )
     )
     if not result.scalar_one_or_none():
         raise HTTPException(
@@ -2050,7 +2084,10 @@ async def assign_roles_to_workflow(
     """
     # Verify workflow exists
     result = await db.execute(
-        select(WorkflowORM.id).where(WorkflowORM.id == workflow_id)
+        _visible_workflow_query(
+            user,
+            select(WorkflowORM.id).where(WorkflowORM.id == workflow_id),
+        )
     )
     if not result.scalar_one_or_none():
         raise HTTPException(
@@ -2174,7 +2211,10 @@ async def delete_workflow(
 
     # 1. Find the workflow
     result = await db.execute(
-        select(WorkflowORM).where(WorkflowORM.id == workflow_id)
+        _visible_workflow_query(
+            user,
+            select(WorkflowORM).where(WorkflowORM.id == workflow_id),
+        )
     )
     workflow = result.scalar_one_or_none()
 

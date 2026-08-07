@@ -28,11 +28,13 @@ router = APIRouter(prefix="/api/tools", tags=["Tools"])
 # =============================================================================
 
 
-def get_system_tools() -> list[ToolInfo]:
+def get_system_tools(*, include_hidden: bool = False) -> list[ToolInfo]:
     """
     Get the list of system tools from the server module.
 
-    Tools are defined in each tool module's TOOLS list.
+    Tools are defined in each tool module's TOOLS list. Hidden capabilities
+    remain in the server registry for execution but are omitted from the normal
+    author-facing picker.
     """
     return [
         ToolInfo(
@@ -42,12 +44,15 @@ def get_system_tools() -> list[ToolInfo]:
             type="system",
         )
         for tool in get_system_tools_from_server()
+        if include_hidden or not tool.get("hidden", False)
     ]
 
 
-def get_system_tool_ids() -> list[str]:
+def get_system_tool_ids(*, include_hidden: bool = False) -> list[str]:
     """Get list of all system tool IDs."""
-    return [tool["id"] for tool in get_system_tools_from_server()]
+    return [
+        tool.id for tool in get_system_tools(include_hidden=include_hidden)
+    ]
 
 
 # =============================================================================

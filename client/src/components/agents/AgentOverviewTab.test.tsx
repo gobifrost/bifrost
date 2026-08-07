@@ -33,6 +33,12 @@ vi.mock("@/hooks/useAgents", () => ({
 	useAgent: (id: string | undefined) => mockUseAgent(id),
 }));
 
+vi.mock("@/components/agents/AgentSkillPanel", () => ({
+	AgentSkillPanel: ({ agentId }: { agentId: string }) => (
+		<div data-testid="agent-skill-panel">Agent Skill {agentId}</div>
+	),
+}));
+
 const baseStats = {
 	agent_id: "agent-1",
 	runs_7d: 42,
@@ -101,6 +107,9 @@ describe("AgentOverviewTab", () => {
 		await renderTab();
 		expect(screen.getByText("42")).toBeInTheDocument(); // runs
 		expect(screen.getByText("95%")).toBeInTheDocument(); // success rate
+		expect(screen.getByTestId("agent-skill-panel")).toHaveTextContent(
+			"agent-1",
+		);
 	});
 
 	it("renders the recent runs list", async () => {

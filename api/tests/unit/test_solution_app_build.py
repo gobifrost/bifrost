@@ -81,38 +81,48 @@ def test_materialize_vendors_bifrost_sdk(monkeypatch, tmp_path):
     from src.services.solutions import app_build as ab
 
     monkeypatch.setattr(ab, "build_sdk_tarball", lambda v: b"FAKE_TGZ", raising=False)
-    # patch the symbol the method imports locally
+    # patch the symbol build_input.materialize_build_input imports locally
     monkeypatch.setattr(sdkpkg, "build_sdk_tarball", lambda v: b"FAKE_TGZ")
 
     b = SolutionAppBuilder()
-    b._materialize(tmp_path, {"src/main.tsx": b"export {}"}, {"react": "^18"})
+    app_id = uuid.uuid4()
+    b._materialize(tmp_path, app_id, {"src/main.tsx": b"export {}"}, {"react": "18.2.0"})
 
     # tarball vendored
     assert (tmp_path / "bifrost-sdk.tgz").read_bytes() == b"FAKE_TGZ"
     # package.json carries app deps + the file: ref to the SDK
     pkg = json.loads((tmp_path / "package.json").read_text())
-    assert pkg["dependencies"]["react"] == "^18"
+    assert pkg["dependencies"]["react"] == "18.2.0"
     assert pkg["dependencies"]["bifrost"] == "file:./bifrost-sdk.tgz"
 
 
 @pytest.mark.e2e
 def test_materialize_merges_into_app_package_json(monkeypatch, tmp_path):
-    """If the app shipped its own package.json, the SDK ref is merged in, not
-    clobbered (the app keeps its scripts/deps)."""
+    """If the app shipped its own package.json (via src_files — the real
+    compile_dist calling convention; a fresh tempdir never has a package.json
+    already on disk), the SDK ref + app deps are merged in, but any `scripts`
+    block is stripped — the builder controls npm install/vite build
+    invocation, so an app-supplied script (postinstall, etc.) must never
+    survive into the materialized workspace."""
     import json
 
     monkeypatch.setattr(sdkpkg, "build_sdk_tarball", lambda v: b"FAKE_TGZ")
 
-    app_pkg = {"name": "my-app", "scripts": {"dev": "vite"},
-               "dependencies": {"lodash": "^4"}}
-    (tmp_path / "package.json").write_text(json.dumps(app_pkg))
+    app_pkg = {
+        "name": "my-app",
+        "scripts": {"dev": "vite"},
+        "dependencies": {"react": "^18.2.0"},
+    }
 
     b = SolutionAppBuilder()
-    b._materialize(tmp_path, {}, {})
+    app_id = uuid.uuid4()
+    b._materialize(
+        tmp_path, app_id, {"package.json": json.dumps(app_pkg).encode()}, {}
+    )
 
     pkg = json.loads((tmp_path / "package.json").read_text())
-    assert pkg["scripts"] == {"dev": "vite"}          # preserved
-    assert pkg["dependencies"]["lodash"] == "^4"       # preserved
+    assert "scripts" not in pkg                        # stripped for security
+    assert pkg["dependencies"]["react"] == "18.2.0"   # catalog-pinned
     assert pkg["dependencies"]["bifrost"] == "file:./bifrost-sdk.tgz"
 
 

@@ -124,6 +124,7 @@ export function ToolExecutionBadge({
 		result !== undefined ||
 		error !== undefined ||
 		(toolCall.arguments && Object.keys(toolCall.arguments).length > 0);
+	const isSkillActivity = toolCall.name === "read_skill_asset";
 
 	return (
 		<Popover open={isOpen} onOpenChange={setIsOpen}>
@@ -137,7 +138,9 @@ export function ToolExecutionBadge({
 					)}
 				>
 					<StatusIcon className={cn("h-3 w-3", config.className)} />
-					<span className="font-medium">{toolCall.name}</span>
+					<span className="font-medium">
+						{isSkillActivity ? "Skill · read asset" : toolCall.name}
+					</span>
 					{durationMs !== undefined && (
 						<span className="text-muted-foreground">
 							{formatDuration(durationMs)}

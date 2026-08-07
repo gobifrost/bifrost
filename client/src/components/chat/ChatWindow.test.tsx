@@ -21,7 +21,16 @@ import { renderWithProviders, screen, fireEvent } from "@/test-utils";
 const messagesRef: {
 	data: Array<Record<string, unknown>> | undefined;
 	isLoading: boolean;
-} = { data: [], isLoading: false };
+	hasNextPage: boolean;
+	isFetchingNextPage: boolean;
+	fetchNextPage: ReturnType<typeof vi.fn>;
+} = {
+	data: [],
+	isLoading: false,
+	hasNextPage: false,
+	isFetchingNextPage: false,
+	fetchNextPage: vi.fn(),
+};
 
 const streamRef = {
 	sendMessage: vi.fn(),
@@ -40,6 +49,9 @@ vi.mock("@/hooks/useChat", () => ({
 	useMessages: () => ({
 		data: messagesRef.data,
 		isLoading: messagesRef.isLoading,
+		hasNextPage: messagesRef.hasNextPage,
+		isFetchingNextPage: messagesRef.isFetchingNextPage,
+		fetchNextPage: messagesRef.fetchNextPage,
 	}),
 	useCreateConversation: () => createConversationRef,
 }));
@@ -67,19 +79,18 @@ vi.mock("@/stores/chatStore", () => ({
 
 const mockNavigate = vi.fn();
 vi.mock("react-router-dom", async () => {
-	const actual = await vi.importActual<typeof import("react-router-dom")>(
-		"react-router-dom",
-	);
+	const actual =
+		await vi.importActual<typeof import("react-router-dom")>(
+			"react-router-dom",
+		);
 	return { ...actual, useNavigate: () => mockNavigate };
 });
 
 // Child components we don't need to exercise — stub to simple markers.
 vi.mock("./ChatMessage", () => ({
-	ChatMessage: ({
-		message,
-	}: {
-		message: { content?: string | null };
-	}) => <div data-marker="chat-message">{message.content}</div>,
+	ChatMessage: ({ message }: { message: { content?: string | null } }) => (
+		<div data-marker="chat-message">{message.content}</div>
+	),
 }));
 
 vi.mock("./ChatInput", () => ({
@@ -140,6 +151,9 @@ import { ChatWindow } from "./ChatWindow";
 beforeEach(() => {
 	messagesRef.data = [];
 	messagesRef.isLoading = false;
+	messagesRef.hasNextPage = false;
+	messagesRef.isFetchingNextPage = false;
+	messagesRef.fetchNextPage = vi.fn().mockResolvedValue(undefined);
 	streamRef.sendMessage = vi.fn();
 	streamRef.isStreaming = false;
 	streamRef.pendingQuestion = null;
@@ -182,9 +196,9 @@ describe("ChatWindow — loading state", () => {
 		const { container } = renderWithProviders(
 			<ChatWindow conversationId="c-1" />,
 		);
-		expect(container.querySelectorAll(".animate-pulse").length).toBeGreaterThan(
-			0,
-		);
+		expect(
+			container.querySelectorAll(".animate-pulse").length,
+		).toBeGreaterThan(0);
 	});
 });
 
@@ -212,6 +226,27 @@ describe("ChatWindow — messages render & send", () => {
 		expect(screen.getByText("pong")).toBeInTheDocument();
 	});
 
+	it("offers to restore earlier persisted messages", async () => {
+		messagesRef.data = [
+			{
+				id: "m-101",
+				role: "assistant",
+				content: "Latest work",
+				created_at: "2026-04-20T00:01:41Z",
+			},
+		];
+		messagesRef.hasNextPage = true;
+
+		const { user } = renderWithProviders(
+			<ChatWindow conversationId="c-1" />,
+		);
+		await user.click(
+			screen.getByRole("button", { name: /load earlier messages/i }),
+		);
+
+		expect(messagesRef.fetchNextPage).toHaveBeenCalledOnce();
+	});
+
 	it("forwards a typed message to the stream's sendMessage", () => {
 		messagesRef.data = [
 			{
@@ -224,25 +259,54 @@ describe("ChatWindow — messages render & send", () => {
 
 		renderWithProviders(<ChatWindow conversationId="c-1" />);
 
-		const input = screen.getByLabelText(
-			/chat input/i,
-		) as HTMLInputElement;
+		const input = screen.getByLabelText(/chat input/i) as HTMLInputElement;
 		fireEvent.change(input, { target: { value: "hello" } });
 		fireEvent.keyDown(input, { key: "Enter" });
 
 		expect(streamRef.sendMessage).toHaveBeenCalledWith("hello");
 	});
 
+	it("uses a specialized message transport without sending to the chat stream", () => {
+		const onSend = vi.fn();
+		messagesRef.data = [
+			{
+				id: "m-1",
+				role: "assistant",
+				content: "What should I change?",
+				created_at: "2026-04-20T00:00:00Z",
+			},
+		];
+
+		renderWithProviders(
+			<ChatWindow
+				conversationId="c-1"
+				onSend={onSend}
+				inputPlaceholder="Describe the app change..."
+			/>,
+		);
+
+		const input = screen.getByLabelText(/chat input/i);
+		expect(input).toHaveAttribute(
+			"placeholder",
+			"Describe the app change...",
+		);
+		fireEvent.change(input, { target: { value: "Add a chart" } });
+		fireEvent.keyDown(input, { key: "Enter" });
+
+		expect(onSend).toHaveBeenCalledWith("Add a chart");
+		expect(streamRef.sendMessage).not.toHaveBeenCalled();
+	});
+
 	it("creates a conversation from the blank draft and sends the first message", () => {
-		createConversationRef.mutate.mockImplementation((_variables, options) => {
-			options?.onSuccess?.({ id: "new-conversation-id" });
-		});
+		createConversationRef.mutate.mockImplementation(
+			(_variables, options) => {
+				options?.onSuccess?.({ id: "new-conversation-id" });
+			},
+		);
 
 		renderWithProviders(<ChatWindow conversationId={undefined} />);
 
-		const input = screen.getByLabelText(
-			/chat input/i,
-		) as HTMLInputElement;
+		const input = screen.getByLabelText(/chat input/i) as HTMLInputElement;
 		fireEvent.change(input, { target: { value: "hello from draft" } });
 		fireEvent.keyDown(input, { key: "Enter" });
 

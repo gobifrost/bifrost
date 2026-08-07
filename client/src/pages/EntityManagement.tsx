@@ -21,7 +21,7 @@ import { useForms, useUpdateForm } from "@/hooks/useForms";
 import { useAgents, useUpdateAgent } from "@/hooks/useAgents";
 import { useApplications, useUpdateApplication } from "@/hooks/useApplications";
 import { useOrganizations } from "@/hooks/useOrganizations";
-import { useRoles } from "@/hooks/useRoles";
+import { useResourceRoles } from "@/hooks/useRoles";
 import {
 	useDependencyGraph,
 	type EntityType as DependencyEntityType,
@@ -103,7 +103,7 @@ export function EntityManagement() {
 		refetch: refetchApps,
 	} = useApplications();
 	const { data: organizations } = useOrganizations();
-	const { data: roles } = useRoles();
+	const { data: roles } = useResourceRoles();
 
 	// Fetch dependency graph when relationship filter is active
 	const {

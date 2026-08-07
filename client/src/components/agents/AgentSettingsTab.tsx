@@ -54,6 +54,7 @@ import {
 	FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { MarkdownEditorField } from "@/components/ui/markdown-editor-field";
 import { MultiCombobox } from "@/components/ui/multi-combobox";
 import {
 	Popover,
@@ -75,6 +76,7 @@ import {
 	CARD_SURFACE,
 	TYPE_LABEL_UPPERCASE,
 } from "@/components/agents/design-tokens";
+import { AgentSkillBundleManager } from "@/components/agents/AgentSkillBundleManager";
 
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -85,7 +87,7 @@ import {
 } from "@/hooks/useAgents";
 import { useKnowledgeNamespaces } from "@/hooks/useKnowledge";
 import { useLLMModels } from "@/hooks/useLLMConfig";
-import { useRoles } from "@/hooks/useRoles";
+import { useResourceRoles } from "@/hooks/useRoles";
 import { useToolsGrouped } from "@/hooks/useTools";
 import { $api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
@@ -104,6 +106,11 @@ const ACCESS_LEVELS: {
 	label: string;
 	description: string;
 }[] = [
+	{
+		value: "private",
+		label: "Private",
+		description: "Only you can access and edit this agent",
+	},
 	{
 		value: "authenticated",
 		label: "Everyone except external users",
@@ -125,8 +132,9 @@ const formSchema = z.object({
 	name: z.string().min(1, "Name is required").max(100),
 	description: z.string().max(500).optional(),
 	system_prompt: z.string().min(1, "System prompt is required"),
+	bundle_path: z.string().max(1024).nullable(),
 	channels: z.array(z.enum(["chat", "voice", "teams", "slack"])),
-	access_level: z.enum(["authenticated", "everyone", "role_based"]),
+	access_level: z.enum(["private", "authenticated", "everyone", "role_based"]),
 	organization_id: z.string().nullable(),
 	tool_ids: z.array(z.string()),
 	system_tools: z.array(z.string()),
@@ -185,10 +193,11 @@ export function AgentSettingsTab({
 	// Solution-managed agents are read-only on the platform (criterion 6):
 	// show the banner and block Save. Only meaningful in edit mode.
 	const isSolutionManaged = mode === "edit" && (agent?.is_solution_managed ?? false);
+	const isBundled = mode === "edit" && Boolean(agent?.bundle_path);
 
 	const { data: allAgents } = useAgents();
 	const { data: toolsGrouped } = useToolsGrouped({ include_inactive: true });
-	const { data: roles } = useRoles();
+	const { data: roles } = useResourceRoles();
 	const { models: availableModels } = useLLMModels();
 
 	const [toolsOpen, setToolsOpen] = useState(false);
@@ -213,8 +222,10 @@ export function AgentSettingsTab({
 				name: a.name ?? "",
 				description: a.description ?? "",
 				system_prompt: a.system_prompt ?? "",
+				bundle_path: a.bundle_path ?? null,
 				channels: ((a.channels as AgentChannel[]) ?? ["chat"]) as AgentChannel[],
 				access_level: (a.access_level ?? "role_based") as
+					| "private"
 					| "authenticated"
 					| "everyone"
 					| "role_based",
@@ -236,8 +247,9 @@ export function AgentSettingsTab({
 			name: "",
 			description: "",
 			system_prompt: "",
+			bundle_path: null,
 			channels: ["chat"],
-			access_level: "role_based",
+			access_level: isPlatformAdmin ? "role_based" : "private",
 			organization_id: defaultOrgId,
 			tool_ids: [],
 			system_tools: [],
@@ -251,7 +263,7 @@ export function AgentSettingsTab({
 			max_token_budget: null,
 			is_active: true,
 		};
-	}, [agent, defaultOrgId]);
+	}, [agent, defaultOrgId, isPlatformAdmin]);
 
 	const form = useForm<FormValues>({
 		resolver: zodResolver(formSchema),
@@ -334,7 +346,7 @@ export function AgentSettingsTab({
 		const body = {
 			name: values.name,
 			description: values.description || null,
-			system_prompt: values.system_prompt,
+			...(!isBundled ? { system_prompt: values.system_prompt } : {}),
 			channels: values.channels,
 			access_level: values.access_level as AgentAccessLevel,
 			organization_id: values.organization_id,
@@ -458,12 +470,17 @@ export function AgentSettingsTab({
 								>
 									<FormControl>
 										<SelectTrigger aria-label="Access level">
-											<SelectValue />
+											<SelectValue placeholder="Access level" />
 										</SelectTrigger>
 									</FormControl>
 									<SelectContent>
 										{ACCESS_LEVELS.map((lvl) => (
-											<SelectItem key={lvl.value} value={lvl.value}>
+											<SelectItem
+												key={lvl.value}
+												value={lvl.value}
+												textValue={lvl.label}
+												className="h-auto items-start py-2"
+											>
 												<div className="flex flex-col">
 													<span>{lvl.label}</span>
 													<span className="text-xs text-muted-foreground">
@@ -623,28 +640,50 @@ export function AgentSettingsTab({
 					/>
 				</FormSection>
 
-				{/* Behavior */}
-				<FormSection title="Behavior">
-					<FormField
-						control={form.control}
-						name="system_prompt"
-						render={({ field }) => (
-							<FormItem>
-								<FormLabel>System prompt</FormLabel>
-								<FormControl>
-									<Textarea
-										className="min-h-[200px] font-mono text-sm"
-										placeholder="You are a helpful assistant…"
-										{...field}
-									/>
-								</FormControl>
-								<FormDescription>
-									Instructions the agent follows on every run.
-								</FormDescription>
-								<FormMessage />
-							</FormItem>
-						)}
+				{/* Skill */}
+				<FormSection title="Skill">
+					<Alert>
+						<Info className="h-4 w-4" />
+						<AlertTitle>
+							{isBundled
+								? "SKILL.md is the canonical instruction source"
+								: "This agent exports as a portable Skill"}
+						</AlertTitle>
+						<AlertDescription>
+							{isBundled
+								? "Replace the bundle to change its instructions. Tool, knowledge, model, and access bindings remain Bifrost runtime configuration."
+								: "The instructions below become SKILL.md when exported. You can also attach a complete Skill bundle."}
+						</AlertDescription>
+					</Alert>
+					<AgentSkillBundleManager
+						agentId={mode === "edit" ? (agent?.id ?? undefined) : undefined}
+						isSolutionManaged={isSolutionManaged}
 					/>
+					{!isBundled ? (
+						<FormField
+							control={form.control}
+							name="system_prompt"
+							render={({ field }) => (
+								<FormItem>
+									<FormLabel>Inline instructions</FormLabel>
+									<FormControl>
+										<MarkdownEditorField
+											value={field.value}
+											onChange={field.onChange}
+											ariaLabel="Inline instructions"
+											placeholder="Describe the agent's role, behavior, boundaries, and expected output…"
+											readOnly={isSolutionManaged}
+										/>
+									</FormControl>
+									<FormDescription>
+										Markdown instructions used on every run and exported as
+										SKILL.md.
+									</FormDescription>
+									<FormMessage />
+								</FormItem>
+							)}
+						/>
+					) : null}
 					<FormField
 						control={form.control}
 						name="channels"

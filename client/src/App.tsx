@@ -49,6 +49,19 @@ const SolutionDetail = lazyWithReload(() =>
 		default: m.SolutionDetail,
 	})),
 );
+const SolutionBuilder = lazyWithReload(() =>
+	import("@/pages/SolutionBuilder").then((m) => ({
+		default: m.SolutionBuilder,
+	})),
+);
+const SolutionPromotions = lazyWithReload(() =>
+	import("@/pages/SolutionPromotions").then((m) => ({
+		default: m.SolutionPromotions,
+	})),
+);
+const Build = lazyWithReload(() =>
+	import("@/pages/Build").then((m) => ({ default: m.Build })),
+);
 const Users = lazyWithReload(() =>
 	import("@/pages/Users").then((m) => ({ default: m.Users })),
 );
@@ -476,6 +489,27 @@ function AppRoutes() {
 								</ProtectedRoute>
 							}
 						/>
+						<Route
+							path="solution-promotions"
+							element={
+								<ProtectedRoute requirePlatformAdmin>
+									<SolutionPromotions />
+								</ProtectedRoute>
+							}
+						/>
+						{/*
+						 * Builder is owner-scoped, not admin-scoped: the server
+						 * gates it on the solutions.build capability and 404s a
+						 * non-owner, so this route must not require platform admin.
+						 */}
+						<Route
+							path="solutions/:solutionId/builder"
+							element={
+								<ProtectedRoute>
+									<SolutionBuilder />
+								</ProtectedRoute>
+							}
+						/>
 
 						{/* Config - PlatformAdmin only */}
 						<Route
@@ -516,6 +550,14 @@ function AppRoutes() {
 						/>
 
 						{/* Applications List - OrgUser access (with sidebar) */}
+						<Route
+							path="build"
+							element={
+								<ProtectedRoute>
+									<Build />
+								</ProtectedRoute>
+							}
+						/>
 						<Route
 							path="apps"
 							element={

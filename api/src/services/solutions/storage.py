@@ -9,8 +9,10 @@ with the install's ``solution_id``. Callers pass relative paths
 Two installs of the same Solution definition (and the ad-hoc ``_repo/``
 workspace) therefore never collide — this is the storage half of the
 "self-contained worlds" guarantee (success-criteria §3.5/§3.6). Python source
-installs here and is *executed as source* by the virtual importer; React app
-``src/`` is NOT installed here (only built ``dist/`` goes to ``_apps/``).
+installs here and is *executed as source* by the virtual importer. Portable
+Agent Skills bundles also install here as read-only assets (including their
+``scripts/``); React app ``src/`` is NOT installed here (only built ``dist/``
+goes to ``_apps/``).
 """
 
 from __future__ import annotations

@@ -614,7 +614,8 @@ test.describe("Agent Detail — Runs Tab (admin)", () => {
 			data: {
 				name: `E2E Detail Test ${Date.now()}`,
 				description: "e2e",
-				system_prompt: "test",
+				system_prompt:
+					"## Service desk triage\n\nUse **clear steps** and explain the next action.",
 				channels: ["chat"],
 				access_level: "authenticated",
 			},
@@ -640,6 +641,30 @@ test.describe("Agent Detail — Runs Tab (admin)", () => {
 			await expect(
 				page.getByRole("tab", { name: /settings/i }),
 			).toBeVisible();
+
+			// Agent instructions use the shared TipTap Markdown edit/preview
+			// surface rather than a plain textarea.
+			await page.getByRole("tab", { name: /settings/i }).click();
+			const instructions = page.getByLabel("Inline instructions");
+			await expect(instructions).toContainText("Service desk triage");
+			await expect(
+				page.getByRole("radio", { name: "Edit markdown" }),
+			).toBeChecked();
+			await expect(page.getByRole("button", { name: "Undo" })).toBeVisible();
+			await page
+				.getByRole("radio", { name: "Preview markdown" })
+				.click();
+			await expect(
+				page.getByRole("radio", { name: "Preview markdown" }),
+			).toBeChecked();
+			await expect(
+				page.getByRole("button", { name: "Undo" }),
+			).toHaveCount(0);
+			await expect(instructions).toContainText("Service desk triage");
+			await page.screenshot({
+				path: "playwright-results/screenshots/agent-settings-markdown-preview.png",
+				fullPage: true,
+			});
 
 			// Click Runs tab
 			await page.getByRole("tab", { name: /runs/i }).click();
