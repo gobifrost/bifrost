@@ -16,7 +16,7 @@ afterEach(() => {
 			nativeScrollIntoView,
 		);
 	} else {
-		delete HTMLElement.prototype.scrollIntoView;
+		Reflect.deleteProperty(HTMLElement.prototype, "scrollIntoView");
 	}
 });
 
