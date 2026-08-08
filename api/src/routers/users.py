@@ -22,6 +22,7 @@ from src.services.events import emit_event
 from src.services.user_invite_service import UserInviteService
 from src.services.user_provisioning import (
     sync_platform_admin_role,
+    sync_platform_operator_role,
     validate_platform_admin_removal,
 )
 from src.models import User as UserORM, UserRole as UserRoleORM, FormRole as FormRoleORM
@@ -157,6 +158,13 @@ async def create_user(
         enabled=new_user.is_superuser,
         assigned_by=user.email,
     )
+    await sync_platform_operator_role(
+        db,
+        user_id=new_user.id,
+        organization_id=new_user.organization_id,
+        is_platform_admin=new_user.is_superuser,
+        assigned_by=user.email,
+    )
     await db.refresh(new_user)
 
     logger.info(f"Created user {new_user.email} (id: {new_user.id})")
@@ -256,6 +264,15 @@ async def bulk_update_users(
             u.is_active = bool(request.is_active)
             u.updated_at = datetime.now(timezone.utc)
             succeeded.append(uid)
+
+        if uid in succeeded:
+            await sync_platform_operator_role(
+                db,
+                user_id=uid,
+                organization_id=u.organization_id,
+                is_platform_admin=u.is_superuser,
+                assigned_by=actor.email,
+            )
 
     await db.flush()
     await emit_audit(
@@ -533,6 +550,14 @@ async def update_user(
         db_user.mfa_enabled = request.mfa_enabled
     if request.organization_id is not None:
         db_user.organization_id = request.organization_id
+
+    await sync_platform_operator_role(
+        db,
+        user_id=db_user.id,
+        organization_id=db_user.organization_id,
+        is_platform_admin=db_user.is_superuser,
+        assigned_by=user.email,
+    )
 
     db_user.updated_at = datetime.now(timezone.utc)
 

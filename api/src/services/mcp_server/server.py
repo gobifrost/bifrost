@@ -153,6 +153,10 @@ class MCPContext:
     # In-memory, root-scoped workspace supplied only by BuilderAgentTurnService.
     # HTTP MCP and every ordinary Agent execution leave it unset.
     builder_workspace: Any = None
+    # Derived at the authenticated boundary from role scopes; consumed by
+    # Builder-only support surfaces without reinterpreting role policy.
+    can_build: bool = False
+    can_support_builds: bool = False
 
     # Database session from executor context (None when running via MCP server)
     session: Any = None
@@ -197,13 +201,16 @@ def _get_context_from_token() -> MCPContext:
     if token is None:
         raise ToolError("Authentication required")
 
+    claims = token.claims
     return MCPContext(
-        user_id=token.claims.get("user_id", ""),
-        org_id=token.claims.get("org_id"),
-        is_platform_admin=token.claims.get("is_superuser", False),
-        is_external=token.claims.get("is_external", False),
-        user_email=token.claims.get("email", ""),
-        user_name=token.claims.get("name", ""),
+        user_id=claims.get("user_id", ""),
+        org_id=claims.get("org_id"),
+        is_platform_admin=claims.get("is_superuser", False),
+        is_external=claims.get("is_external", False),
+        user_email=claims.get("email", ""),
+        user_name=claims.get("name", ""),
+        can_build=_claims_can_build(claims),
+        can_support_builds=_claims_can_support_builds(claims),
     )
 
 
@@ -272,7 +279,40 @@ async def _get_runtime_context() -> MCPContext:
         agent_skill_id=agent_id if agent_bundle_path else None,
         agent_skill_in_repo=agent_skill_in_repo,
         agent_solution_id=agent_solution_id,
+        can_build=_claims_can_build(token.claims),
+        can_support_builds=_claims_can_support_builds(token.claims),
     )
+
+
+def _claims_principal(claims: dict[str, Any]):
+    from src.core.principal import UserPrincipal
+
+    user_id = claims.get("user_id") or "00000000-0000-0000-0000-000000000000"
+    return UserPrincipal(
+        user_id=UUID(str(user_id)),
+        email=claims.get("email", ""),
+        organization_id=(
+            UUID(str(claims["org_id"])) if claims.get("org_id") else None
+        ),
+        name=claims.get("name", ""),
+        is_superuser=claims.get("is_superuser", False),
+        is_external=claims.get("is_external", False),
+        roles=claims.get("roles", []),
+        scopes=claims.get("scopes", []),
+    )
+
+
+def _claims_can_build(claims: dict[str, Any]) -> bool:
+    from src.services.solutions.builder_authz import can_build
+
+    return can_build(_claims_principal(claims))
+
+
+def _claims_can_support_builds(claims: dict[str, Any]) -> bool:
+    """Evaluate Builder support capability from already-validated JWT claims."""
+    from src.services.solutions.builder_authz import can_support_builds
+
+    return can_support_builds(_claims_principal(claims))
 
 
 # =============================================================================

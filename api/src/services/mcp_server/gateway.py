@@ -35,6 +35,9 @@ from src.services.mcp_client.errors import (
 from src.services.mcp_server.config_service import MCPConfig, MCPConfigService
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from src.services.builder.mcp_harness import BuilderMCPHarness
     from src.services.mcp_server.server import MCPContext
 
 logger = logging.getLogger(__name__)
@@ -165,24 +168,96 @@ class MCPAgentGatewayService:
             is_external=self.context.is_external,
         )
 
+    def _builder_harness(self, session: AsyncSession) -> BuilderMCPHarness:
+        from src.services.builder.mcp_harness import BuilderMCPHarness
+
+        return BuilderMCPHarness(
+            session,
+            user_id=UUID(str(self.context.user_id)),
+            org_id=(
+                UUID(str(self.context.org_id))
+                if self.context.org_id is not None
+                else None
+            ),
+            is_platform_admin=self.context.is_platform_admin,
+            is_external=self.context.is_external,
+            user_email=self.context.user_email,
+            user_name=self.context.user_name,
+            can_build=self.context.can_build,
+            can_support_builds=self.context.can_support_builds,
+        )
+
+    @staticmethod
+    def _parse_builder_session_id(value: str) -> UUID:
+        try:
+            return UUID(value)
+        except (TypeError, ValueError) as exc:
+            raise GatewayError(
+                "INVALID_ARGUMENTS",
+                "builder_session_id must be a UUID.",
+                retryable=True,
+            ) from exc
+
+    async def _load_builder_agent(
+        self,
+        session: Any,
+        *,
+        builder_session_id: UUID,
+        agent_id: UUID | None = None,
+    ) -> Agent:
+        from src.services.builder.mcp_harness import BuilderMCPHarnessForbidden
+
+        try:
+            agent, _builder_session = await self._builder_harness(
+                session
+            ).load_authorized_agent(
+                builder_session_id=builder_session_id,
+                agent_id=agent_id,
+            )
+        except BuilderMCPHarnessForbidden as exc:
+            raise GatewayError(
+                "AGENT_NOT_FOUND_OR_FORBIDDEN",
+                str(exc),
+            ) from exc
+        return agent
+
     async def find_agents(
         self,
         *,
         query: str | None = None,
         limit: int = 10,
+        builder_session_id: str | None = None,
     ) -> dict[str, Any]:
         from src.core.database import get_db_context
 
         bounded_limit = min(max(limit, 1), MAX_AGENT_RESULTS)
         async with get_db_context() as db:
-            repo = self._agent_repo(db)
-            if self.context.is_platform_admin:
-                agents = await repo.list_all_in_scope(
-                    OrgFilterType.ALL,
-                    active_only=True,
-                )
+            if builder_session_id is not None:
+                agents = [
+                    await self._load_builder_agent(
+                        db,
+                        builder_session_id=self._parse_builder_session_id(
+                            builder_session_id
+                        ),
+                    )
+                ]
             else:
-                agents = await repo.list_agents(active_only=True)
+                repo = self._agent_repo(db)
+                if self.context.is_platform_admin:
+                    agents = await repo.list_all_in_scope(
+                        OrgFilterType.ALL,
+                        active_only=True,
+                    )
+                else:
+                    agents = await repo.list_agents(active_only=True)
+                from src.services.builder.scaffold import builder_agent_id
+
+                agents = [
+                    agent
+                    for agent in agents
+                    if agent.solution_id is None
+                    or agent.id != builder_agent_id(agent.solution_id)
+                ]
 
         scored = [
             (_agent_search_score(agent, query or ""), agent)
@@ -208,7 +283,12 @@ class MCPAgentGatewayService:
             "has_more": len(scored) > len(matches),
         }
 
-    async def get_agent_snapshot(self, agent_id: str) -> AgentToolSnapshot:
+    async def get_agent_snapshot(
+        self,
+        agent_id: str,
+        *,
+        builder_session_id: str | None = None,
+    ) -> AgentToolSnapshot:
         from src.core.database import get_db_context
 
         try:
@@ -220,13 +300,31 @@ class MCPAgentGatewayService:
             ) from exc
 
         async with get_db_context() as db:
-            repo = self._agent_repo(db)
-            agent = await repo.get_agent_with_access_check(parsed_agent_id)
+            if builder_session_id is not None:
+                agent = await self._load_builder_agent(
+                    db,
+                    builder_session_id=self._parse_builder_session_id(
+                        builder_session_id
+                    ),
+                    agent_id=parsed_agent_id,
+                )
+            else:
+                repo = self._agent_repo(db)
+                agent = await repo.get_agent_with_access_check(parsed_agent_id)
             if agent is None or not agent.is_active:
                 raise GatewayError(
                     "AGENT_NOT_FOUND_OR_FORBIDDEN",
                     "Agent not found or you do not have access.",
                 )
+            if builder_session_id is None and agent.solution_id is not None:
+                from src.services.builder.scaffold import builder_agent_id
+
+                if agent.id == builder_agent_id(agent.solution_id):
+                    raise GatewayError(
+                        "INVALID_ARGUMENTS",
+                        "Builder agents require builder_session_id.",
+                        retryable=True,
+                    )
 
             definitions, id_map = await resolve_agent_tools(
                 agent,
@@ -238,22 +336,47 @@ class MCPAgentGatewayService:
 
         return AgentToolSnapshot(agent=agent, tools=tools)
 
-    async def get_agent(self, agent_id: str) -> dict[str, Any]:
+    async def get_agent(
+        self,
+        agent_id: str,
+        *,
+        builder_session_id: str | None = None,
+    ) -> dict[str, Any]:
         """Return one live agent capability package."""
         from src.services.agent_skills import (
             get_agent_skill_markdown,
             list_agent_skill_files,
         )
 
-        snapshot = await self.get_agent_snapshot(agent_id)
-        instructions = await get_agent_skill_markdown(snapshot.agent)
+        snapshot = await self.get_agent_snapshot(
+            agent_id,
+            builder_session_id=builder_session_id,
+        )
+        builder_files: list[str] | None = None
+        if builder_session_id is not None:
+            from src.core.database import get_db_context
+
+            parsed_session_id = self._parse_builder_session_id(builder_session_id)
+            async with get_db_context() as db:
+                instructions, builder_files = await self._builder_harness(
+                    db
+                ).skill_package(
+                    agent=snapshot.agent,
+                    builder_session_id=parsed_session_id,
+                )
+        else:
+            instructions = await get_agent_skill_markdown(snapshot.agent)
         skill = None
         if snapshot.agent.bundle_path:
             skill = {
                 "bundle_path": snapshot.agent.bundle_path,
                 "files": [
                     "SKILL.md",
-                    *await list_agent_skill_files(snapshot.agent),
+                    *(
+                        builder_files
+                        if builder_files is not None
+                        else await list_agent_skill_files(snapshot.agent)
+                    ),
                 ],
                 "automatic_capabilities": ["read_skill_asset"],
             }
@@ -274,9 +397,14 @@ class MCPAgentGatewayService:
         self,
         agent_id: str,
         tool_ref: str,
+        *,
+        builder_session_id: str | None = None,
     ) -> dict[str, Any]:
         """Return the exact current schema for an agent-bound tool."""
-        snapshot = await self.get_agent_snapshot(agent_id)
+        snapshot = await self.get_agent_snapshot(
+            agent_id,
+            builder_session_id=builder_session_id,
+        )
         tool = self.find_tool(snapshot, tool_ref)
         return {
             "agent_id": str(snapshot.agent.id),
@@ -292,11 +420,21 @@ class MCPAgentGatewayService:
         agent_id: str,
         tool_ref: str,
         arguments: dict[str, Any],
+        *,
+        builder_session_id: str | None = None,
     ) -> dict[str, Any]:
         """Re-resolve, validate, and execute an agent-bound tool."""
-        snapshot = await self.get_agent_snapshot(agent_id)
+        snapshot = await self.get_agent_snapshot(
+            agent_id,
+            builder_session_id=builder_session_id,
+        )
         tool = self.find_tool(snapshot, tool_ref)
-        return await self.execute_tool(snapshot, tool, arguments)
+        return await self.execute_tool(
+            snapshot,
+            tool,
+            arguments,
+            builder_session_id=builder_session_id,
+        )
 
     def _resolve_gateway_tools(
         self,
@@ -457,12 +595,19 @@ class MCPAgentGatewayService:
         snapshot: AgentToolSnapshot,
         tool: ResolvedGatewayTool,
         arguments: dict[str, Any],
+        *,
+        builder_session_id: str | None = None,
     ) -> dict[str, Any]:
         started = time.monotonic()
 
         try:
             self.validate_arguments(tool, arguments)
-            result = await self._dispatch(snapshot.agent, tool, arguments)
+            result = await self._dispatch(
+                snapshot.agent,
+                tool,
+                arguments,
+                builder_session_id=builder_session_id,
+            )
         except GatewayError as exc:
             duration_ms = int((time.monotonic() - started) * 1000)
             exc.details.setdefault("agent_id", str(snapshot.agent.id))
@@ -523,7 +668,25 @@ class MCPAgentGatewayService:
         agent: Agent,
         tool: ResolvedGatewayTool,
         arguments: dict[str, Any],
+        *,
+        builder_session_id: str | None = None,
     ) -> Any:
+        if builder_session_id is not None:
+            return await self._dispatch_builder_workspace_tool(
+                agent,
+                tool,
+                arguments,
+                builder_session_id=builder_session_id,
+            )
+        from src.services.builder.mcp_harness import BUILDER_TOOL_IDS
+
+        if tool.definition.name in BUILDER_TOOL_IDS:
+            raise GatewayError(
+                "INVALID_ARGUMENTS",
+                "Builder workspace tools require builder_session_id.",
+                retryable=True,
+                details={"tool_name": tool.definition.name},
+            )
         if tool.source in {"system", "skill", "knowledge"}:
             return await self._dispatch_system_tool(agent, tool, arguments)
         if tool.source == "workflow":
@@ -536,6 +699,57 @@ class MCPAgentGatewayService:
             "TOOL_EXECUTION_FAILED",
             f"Unsupported tool source: {tool.source}",
         )
+
+    async def _dispatch_builder_workspace_tool(
+        self,
+        agent: Agent,
+        tool: ResolvedGatewayTool,
+        arguments: dict[str, Any],
+        *,
+        builder_session_id: str,
+    ) -> Any:
+        from src.core.database import get_db_context
+        from src.services.builder.mcp_harness import (
+            BUILDER_TOOL_IDS,
+            BuilderMCPHarnessError,
+            BuilderMCPHarnessForbidden,
+        )
+
+        if tool.definition.name not in BUILDER_TOOL_IDS:
+            raise GatewayError(
+                "INVALID_ARGUMENTS",
+                "builder_session_id can only be used with Builder workspace tools.",
+                retryable=True,
+                details={"tool_name": tool.definition.name},
+            )
+        try:
+            parsed_session_id = UUID(builder_session_id)
+        except (TypeError, ValueError) as exc:
+            raise GatewayError(
+                "INVALID_ARGUMENTS",
+                "builder_session_id must be a UUID.",
+                retryable=True,
+            ) from exc
+
+        try:
+            async with get_db_context() as db:
+                return await self._builder_harness(db).execute(
+                    agent=agent,
+                    tool_name=tool.definition.name,
+                    builder_session_id=parsed_session_id,
+                    arguments=arguments,
+                )
+        except BuilderMCPHarnessForbidden as exc:
+            raise GatewayError(
+                "AGENT_NOT_FOUND_OR_FORBIDDEN",
+                str(exc),
+            ) from exc
+        except BuilderMCPHarnessError as exc:
+            raise GatewayError(
+                "TOOL_EXECUTION_FAILED",
+                str(exc),
+                retryable=True,
+            ) from exc
 
     async def _dispatch_system_tool(
         self,

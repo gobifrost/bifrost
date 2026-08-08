@@ -67,6 +67,23 @@ def _resolved_tool(
     )
 
 
+def _builder_tool(name: str = "list_files") -> ResolvedGatewayTool:
+    return ResolvedGatewayTool(
+        tool_ref=str(uuid4()),
+        definition=ToolDefinition(
+            name=name,
+            description="Builder workspace tool",
+            parameters={
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        ),
+        source="system",
+        source_identity=f"system:{name}",
+    )
+
+
 def test_workflow_reference_is_stable_across_display_name_change():
     service = MCPAgentGatewayService(_context())
     agent = _agent()
@@ -262,6 +279,81 @@ async def test_execute_returns_auditable_envelope():
     assert result["source"] == "workflow"
     assert result["result"] == {"ticket": 42}
     assert isinstance(result["duration_ms"], int)
+
+
+@pytest.mark.asyncio
+async def test_builder_workspace_tool_requires_session_id():
+    service = MCPAgentGatewayService(_context())
+    agent = _agent()
+    tool = _builder_tool("list_files")
+    snapshot = AgentToolSnapshot(agent=agent, tools=[tool])
+
+    with pytest.raises(GatewayError) as exc_info:
+        await service.execute_tool(snapshot, tool, {})
+
+    assert exc_info.value.code == "INVALID_ARGUMENTS"
+    assert exc_info.value.details["tool_name"] == "list_files"
+
+
+@pytest.mark.asyncio
+async def test_builder_session_id_rejected_for_ordinary_tool():
+    service = MCPAgentGatewayService(_context())
+    agent = _agent()
+    tool = _resolved_tool()
+    snapshot = AgentToolSnapshot(agent=agent, tools=[tool])
+
+    with pytest.raises(GatewayError) as exc_info:
+        await service.execute_tool(
+            snapshot,
+            tool,
+            {"ticket_id": 42},
+            builder_session_id=str(uuid4()),
+        )
+
+    assert exc_info.value.code == "INVALID_ARGUMENTS"
+    assert "only be used with Builder workspace tools" in exc_info.value.message
+
+
+@pytest.mark.asyncio
+async def test_builder_session_id_routes_existing_builder_tool(monkeypatch):
+    service = MCPAgentGatewayService(_context())
+    agent = _agent()
+    session_id = uuid4()
+    tool = _builder_tool("list_files")
+
+    class _Context:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    harness = AsyncMock()
+    harness.execute = AsyncMock(return_value={"paths": []})
+    harness_class = MagicMock(return_value=harness)
+    monkeypatch.setattr(
+        "src.core.database.get_db_context",
+        lambda: _Context(),
+    )
+    monkeypatch.setattr(
+        "src.services.builder.mcp_harness.BuilderMCPHarness",
+        harness_class,
+    )
+
+    result = await service._dispatch(
+        agent,
+        tool,
+        {},
+        builder_session_id=str(session_id),
+    )
+
+    assert result == {"paths": []}
+    harness.execute.assert_awaited_once_with(
+        agent=agent,
+        tool_name="list_files",
+        builder_session_id=session_id,
+        arguments={},
+    )
 
 
 @pytest.mark.asyncio

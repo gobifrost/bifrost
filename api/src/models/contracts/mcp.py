@@ -140,6 +140,13 @@ class MCPGatewayExecuteRequest(BaseModel):
     """Arguments passed to an agent-bound tool."""
 
     arguments: dict[str, Any] = Field(default_factory=dict)
+    builder_session_id: str | None = Field(
+        default=None,
+        description=(
+            "Private Solution Builder session id. Required only when executing "
+            "the Builder agent's workspace tools through the progressive MCP gateway."
+        ),
+    )
 
 
 class MCPGatewayExecuteResponse(BaseModel):

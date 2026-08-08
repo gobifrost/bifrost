@@ -57,6 +57,7 @@ from src.models.orm.solution_file_location import SolutionFileLocation
 from src.models.orm.solutions import Solution
 from src.models.orm.solution_export_jobs import SolutionExportJob
 from src.models.orm.solution_builder import (
+    SolutionBuilderCollaborator,
     SolutionBuilderProject,
     SolutionBuilderSession,
     SolutionBuilderTurn,
@@ -89,6 +90,7 @@ __all__ = [
     "PendingCaptureORM",
     # Private Solution builder
     "SolutionBuildJob",
+    "SolutionBuilderCollaborator",
     "SolutionBuilderProject",
     "SolutionBuilderSession",
     "SolutionBuilderTurn",

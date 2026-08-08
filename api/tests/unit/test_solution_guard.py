@@ -258,6 +258,34 @@ class TestBuilderStateIsWritable:
         await db.delete(rev)
         await db.flush()  # must not raise
 
+    async def test_collaborator_grants_are_writable_and_deletable(
+        self, db_session
+    ) -> None:
+        from src.models.orm.solution_builder import SolutionBuilderCollaborator
+        from src.models.orm.users import User
+
+        db = db_session
+        sol = await self._private_solution(db)
+        user = User(
+            email=f"collaborator-{uuid.uuid4()}@example.com",
+            is_superuser=True,
+        )
+        db.add(user)
+        await db.flush()
+        grant = SolutionBuilderCollaborator(
+            solution_id=sol.id,
+            user_id=user.id,
+            access="view",
+        )
+        db.add(grant)
+        await db.flush()
+
+        grant.access = "edit"
+        await db.flush()  # must not raise
+
+        await db.delete(grant)
+        await db.flush()  # must not raise
+
     async def test_every_builder_model_is_exempt(self) -> None:
         """The carve-out must name every builder table.
 
@@ -267,6 +295,7 @@ class TestBuilderStateIsWritable:
         from src.services.solutions.guard import _OPERATIONAL_SOLUTION_ROW_NAMES
 
         for name in (
+            "SolutionBuilderCollaborator",
             "SolutionBuilderProject",
             "SolutionSourceRevision",
             "SolutionBuilderSession",

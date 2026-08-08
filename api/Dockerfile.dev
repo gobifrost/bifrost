@@ -117,6 +117,12 @@ COPY client/src/lib/app-sdk/index.v2.ts /app/src/services/sdk_package/sdk_src/in
 COPY client/src/lib/app-sdk/sdk-contract.json /app/src/services/sdk_package/sdk_src/sdk-contract.json
 RUN chmod -R a+rX /app/src/services/sdk_package
 
+# Canonical Agent Skill embedded into every new private Builder Solution.
+# Production copies the same bundle; keeping it image-baked makes the API,
+# debug stack, and E2E stack behave identically without a host-only fallback.
+COPY .claude/skills/bifrost-build/ /app/.claude/skills/bifrost-build/
+RUN chmod -R a+rX /app/.claude/skills/bifrost-build
+
 # Copy entrypoint script
 COPY api/entrypoint.sh /entrypoint.sh
 RUN chmod 755 /entrypoint.sh

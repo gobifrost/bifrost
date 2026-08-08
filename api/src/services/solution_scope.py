@@ -11,11 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.auth import ExecutionContext
 from src.core.org_filter import resolve_target_org
 from src.models.orm.applications import Application
+from src.models.orm.solution_builder import SolutionBuilderCollaborator
 from src.models.orm.solution_file_location import SolutionFileLocation
 from src.models.orm.solutions import Solution
 from src.models.orm.tables import Table
 from src.repositories.tables import TableRepository
 from src.services.solutions.access import SolutionAction, can_access_solution
+from src.services.solutions.builder_authz import can_support_builds
 
 
 @dataclass(frozen=True)
@@ -58,6 +60,12 @@ async def _accessible_solution_id(
     solution = await get_active_solution(db, solution_id)
     if solution is None:
         return None
+    collaborator_access = await db.scalar(
+        select(SolutionBuilderCollaborator.access).where(
+            SolutionBuilderCollaborator.solution_id == solution_id,
+            SolutionBuilderCollaborator.user_id == ctx.user.user_id,
+        )
+    )
     if not can_access_solution(
         action=SolutionAction.RUN,
         visibility=solution.visibility,
@@ -65,6 +73,8 @@ async def _accessible_solution_id(
         actor_user_id=ctx.user.user_id,
         is_platform_admin=ctx.user.is_platform_admin,
         is_external=ctx.user.is_external,
+        collaborator_access=collaborator_access,
+        can_support=can_support_builds(ctx.user),
     ):
         return None
     return solution_id

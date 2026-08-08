@@ -54,6 +54,7 @@ from src.services.solutions.access import (
     SolutionAction,
 )
 from src.services.solutions.app_build import SolutionAppBuilder
+from src.services.solutions.builder_authz import can_support_builds
 
 router = APIRouter(prefix="", tags=["solution-app-host"])
 
@@ -379,6 +380,7 @@ async def create_launch(
         actor_user_id=ctx.user.user_id,
         is_platform_admin=ctx.user.is_platform_admin,
         is_external=ctx.user.is_external,
+        can_support=can_support_builds(ctx.user),
     )
     if loaded is None or ctx.org_id is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")

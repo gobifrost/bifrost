@@ -10,7 +10,17 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, Text, text
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.models.orm.base import Base
@@ -68,6 +78,65 @@ class SolutionBuilderProject(Base):
     )
     promotion_requested_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
+        nullable=True,
+        default=None,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        server_default=text("NOW()"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        server_default=text("NOW()"),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class SolutionBuilderCollaborator(Base):
+    """An explicit user grant on one private Builder Solution.
+
+    Provider support access is role/scope driven and deliberately does not
+    create rows here. These rows represent people the Solution owner chose to
+    add to the working team, so they remain visible in the ordinary ``My work``
+    view and portable support staff do not clutter it.
+    """
+
+    __tablename__ = "solution_builder_collaborators"
+    __table_args__ = (
+        UniqueConstraint(
+            "solution_id",
+            "user_id",
+            name="uq_solution_builder_collaborator_user",
+        ),
+        Index("ix_solution_builder_collaborators_user", "user_id"),
+        CheckConstraint(
+            "access IN ('view', 'edit')",
+            name="ck_solution_builder_collaborators_access",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    solution_id: Mapped[UUID] = mapped_column(
+        ForeignKey("solutions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    access: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="edit",
+        server_default="edit",
+    )
+    invited_by: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
         default=None,
     )

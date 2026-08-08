@@ -1,20 +1,22 @@
 """REST endpoints for private builder Solutions.
 
 This is the first non-superuser Solution surface. ``/api/solutions`` stays
-administrator-only; these owner-scoped routes let a user holding the
-``solutions.build`` scope create and manage Solutions that are private to
-them (2026-07-25 private-solution-builder spec, Work Package 1).
+administrator-only; these routes let a user holding the ``solutions.build``
+scope create and collaborate on private Solutions (2026-07-25
+private-solution-builder spec, Work Package 1). Provider support access is
+available only through the deliberate Builder support view.
 
 Two gates apply to every route. The capability gate (``require_builder``) decides
 whether the caller may use the builder at all and answers 403 when it denies. The
 per-Solution gate is the central access service, and it answers **404** rather
-than 403 — a private Solution is invisible to everyone but its owner, including
-platform admins.
+than 403 when a caller has neither ownership, an explicit collaborator grant,
+nor provider support authority. Support authority never widens ordinary
+Solution catalogs.
 """
 
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -22,6 +24,9 @@ from fastapi.responses import StreamingResponse
 from src.core.auth import Context, ExecutionContext
 from src.models.contracts.solution_builder import (
     BuilderProjectDTO,
+    BuilderCollaboratorDTO,
+    BuilderCollaboratorsList,
+    BuilderCollaboratorUpsert,
     BuilderSessionDTO,
     BuilderSessionsList,
     BuilderTurnDTO,
@@ -50,6 +55,8 @@ from src.services.builder.agent_turns import (
 )
 from src.config import Settings, get_settings
 from src.services.builder.private_solutions import (
+    CollaboratorNotEligible,
+    CollaboratorNotFound,
     PrivateSolutionSlugTaken,
     create_builder_session,
     create_private_solution,
@@ -57,14 +64,18 @@ from src.services.builder.private_solutions import (
     iter_revision_chunks,
     list_builder_sessions,
     list_builder_turns,
+    list_collaborators,
     list_private_solutions,
     list_source_revisions,
     load_accessible_private_solution,
     load_revision_for_solution,
+    private_solution_dto_context,
+    remove_collaborator,
     request_promotion,
     revision_download_filename,
     session_to_dto,
     to_dto,
+    upsert_collaborator,
 )
 from src.services.builder.turns import (
     BuilderProjectMissing,
@@ -80,7 +91,7 @@ from src.services.builder.revision_inspection import (
     read_revision_file,
 )
 from src.services.solutions.access import SolutionAction
-from src.services.solutions.builder_authz import can_build
+from src.services.solutions.builder_authz import can_build, can_support_builds
 from src.services.sandbox_runner_config import get_builder_readiness
 
 router = APIRouter(prefix="/api/builder/solutions", tags=["builder"])
@@ -118,6 +129,7 @@ async def _load_or_404(
         actor_user_id=ctx.user.user_id,
         is_platform_admin=ctx.user.is_platform_admin,
         is_external=ctx.user.is_external,
+        can_support=can_support_builds(ctx.user),
     )
     if loaded is None:
         raise HTTPException(
@@ -162,21 +174,54 @@ async def create_solution(
     summary="List the caller's own private builder Solutions",
 )
 async def list_solutions(
-    ctx: BuilderContext, settings: SettingsDep
+    ctx: BuilderContext,
+    settings: SettingsDep,
+    view: Literal["mine", "all"] = Query(default="mine"),
+    organization_id: UUID | None = Query(default=None),
+    owner_user_id: UUID | None = Query(default=None),
+    search: str | None = Query(default=None, max_length=255),
 ) -> PrivateSolutionsList:
+    can_view_all = can_support_builds(ctx.user)
+    if view == "all" and not can_view_all:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="The organization.impersonation scope is required for the support view",
+        )
     rows = await list_private_solutions(
         ctx.db,
-        owner_user_id=ctx.user.user_id,
+        actor_user_id=ctx.user.user_id,
         is_external=ctx.user.is_external,
+        view=view,
+        can_support=can_view_all,
+        organization_id=organization_id,
+        owner_user_id=owner_user_id,
+        search=search,
     )
     items = [
-        to_dto(solution, project, app_origin=settings.app_origin)
-        for solution, project in rows
+        to_dto(
+            row.solution,
+            row.project,
+            app_origin=settings.app_origin,
+            owner_name=row.owner_name,
+            owner_email=row.owner_email,
+            organization_name=row.organization_name,
+            caller_access=(
+                "owner"
+                if row.solution.owner_user_id == ctx.user.user_id
+                else "collaborator"
+                if row.collaborator_access
+                else "support"
+            ),
+            collaborator_access=row.collaborator_access,
+        )
+        for row in rows
     ]
     ai_configured, readiness = await get_builder_readiness(ctx.db)
     return PrivateSolutionsList(
         solutions=items,
         total=len(items),
+        view=view,
+        can_view_all=can_view_all,
         ai_configured=ai_configured,
         builder_ready=readiness.ready,
         builder_blockers=readiness.blockers,
@@ -187,13 +232,99 @@ async def list_solutions(
 @router.get(
     "/{solution_id}",
     response_model=PrivateSolutionDTO,
-    summary="Get one private builder Solution (owner only)",
+    summary="Get one authorized private Builder Solution",
 )
 async def get_solution(
     solution_id: UUID, ctx: BuilderContext, settings: SettingsDep
 ) -> PrivateSolutionDTO:
     solution, project = await _load_or_404(ctx, solution_id, SolutionAction.VIEW)
-    return to_dto(solution, project, app_origin=settings.app_origin)
+    dto_context = await private_solution_dto_context(
+        ctx.db,
+        solution=solution,
+        actor_user_id=ctx.user.user_id,
+        can_support=can_support_builds(ctx.user),
+    )
+    return to_dto(
+        solution,
+        project,
+        app_origin=settings.app_origin,
+        owner_name=dto_context.owner_name,
+        owner_email=dto_context.owner_email,
+        organization_name=dto_context.organization_name,
+        caller_access=dto_context.caller_access,
+        collaborator_access=dto_context.collaborator_access,
+    )
+
+
+@router.get(
+    "/{solution_id}/collaborators",
+    response_model=BuilderCollaboratorsList,
+    summary="List explicit collaborators on a private Builder Solution",
+)
+async def get_collaborators(
+    solution_id: UUID,
+    ctx: BuilderContext,
+) -> BuilderCollaboratorsList:
+    await _load_or_404(ctx, solution_id, SolutionAction.VIEW)
+    collaborators = await list_collaborators(ctx.db, solution_id=solution_id)
+    return BuilderCollaboratorsList(
+        collaborators=collaborators,
+        total=len(collaborators),
+    )
+
+
+@router.put(
+    "/{solution_id}/collaborators",
+    response_model=BuilderCollaboratorDTO,
+    summary="Invite or update one Builder collaborator",
+)
+async def put_collaborator(
+    solution_id: UUID,
+    body: BuilderCollaboratorUpsert,
+    ctx: BuilderContext,
+) -> BuilderCollaboratorDTO:
+    solution, _project = await _load_or_404(
+        ctx,
+        solution_id,
+        SolutionAction.MANAGE,
+    )
+    try:
+        return await upsert_collaborator(
+            ctx.db,
+            solution=solution,
+            email=body.email,
+            access=body.access,
+            invited_by=ctx.user.user_id,
+        )
+    except CollaboratorNotEligible as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+
+@router.delete(
+    "/{solution_id}/collaborators/{collaborator_user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Remove one Builder collaborator",
+)
+async def delete_collaborator(
+    solution_id: UUID,
+    collaborator_user_id: UUID,
+    ctx: BuilderContext,
+) -> None:
+    await _load_or_404(ctx, solution_id, SolutionAction.MANAGE)
+    try:
+        await remove_collaborator(
+            ctx.db,
+            solution_id=solution_id,
+            collaborator_user_id=collaborator_user_id,
+        )
+    except CollaboratorNotFound as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Collaborator not found",
+        ) from exc
 
 
 @router.delete(
@@ -202,19 +333,19 @@ async def get_solution(
     summary="Delete a private builder Solution and everything it owns (owner only)",
 )
 async def delete_solution(solution_id: UUID, ctx: BuilderContext) -> None:
-    solution, _project = await _load_or_404(ctx, solution_id, SolutionAction.EDIT)
+    solution, _project = await _load_or_404(ctx, solution_id, SolutionAction.MANAGE)
     await delete_private_solution(ctx.db, solution)
 
 
 @router.post(
     "/{solution_id}/promotion-request",
     response_model=BuilderProjectDTO,
-    summary="Ask a platform administrator to promote this Solution (owner only)",
+    summary="Ask a platform administrator to promote this Solution",
 )
 async def create_promotion_request(
     solution_id: UUID, ctx: BuilderContext
 ) -> BuilderProjectDTO:
-    _solution, project = await _load_or_404(ctx, solution_id, SolutionAction.EDIT)
+    _solution, project = await _load_or_404(ctx, solution_id, SolutionAction.MANAGE)
     try:
         updated = await request_promotion(
             ctx.db,
@@ -233,7 +364,7 @@ async def create_promotion_request(
     "/{solution_id}/sessions",
     response_model=BuilderSessionDTO,
     status_code=status.HTTP_201_CREATED,
-    summary="Open a builder chat session against this Solution (owner only)",
+    summary="Open an attributable Builder chat session for this Solution",
 )
 async def create_session(
     solution_id: UUID, body: CreateSessionRequest, ctx: BuilderContext
@@ -255,9 +386,7 @@ async def create_session(
 )
 async def list_sessions(solution_id: UUID, ctx: BuilderContext) -> BuilderSessionsList:
     await _load_or_404(ctx, solution_id, SolutionAction.VIEW)
-    sessions = await list_builder_sessions(
-        ctx.db, solution_id=solution_id, user_id=ctx.user.user_id
-    )
+    sessions = await list_builder_sessions(ctx.db, solution_id=solution_id)
     items = [session_to_dto(session) for session in sessions]
     return BuilderSessionsList(sessions=items, total=len(items))
 
@@ -277,7 +406,7 @@ async def list_revisions(solution_id: UUID, ctx: BuilderContext) -> SourceRevisi
 
 @router.get(
     "/{solution_id}/revisions/{revision_id}/download",
-    summary="Download one source revision as a zip (owner only)",
+    summary="Download one authorized source revision as a zip",
 )
 async def download_revision(
     solution_id: UUID, revision_id: UUID, ctx: BuilderContext

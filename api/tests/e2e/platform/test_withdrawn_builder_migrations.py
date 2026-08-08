@@ -54,7 +54,7 @@ async def test_fresh_database_installs_reinstated_builder_schema(
     revision = (
         await db_session.execute(text("SELECT version_num FROM alembic_version"))
     ).scalar_one()
-    assert revision == "20260807_platform_job_external"
+    assert revision == "20260807_builder_collaboration"
 
     builder_tables = (
         await db_session.execute(
@@ -66,6 +66,7 @@ async def test_fresh_database_installs_reinstated_builder_schema(
                   AND table_name IN (
                       'solution_build_jobs',
                       'solution_builder_projects',
+                      'solution_builder_collaborators',
                       'solution_builder_sessions',
                       'solution_builder_turns',
                       'solution_source_revisions'
@@ -77,6 +78,7 @@ async def test_fresh_database_installs_reinstated_builder_schema(
     ).scalars().all()
     assert builder_tables == [
         "solution_build_jobs",
+        "solution_builder_collaborators",
         "solution_builder_projects",
         "solution_builder_sessions",
         "solution_builder_turns",

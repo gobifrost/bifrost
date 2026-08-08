@@ -17,7 +17,11 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.constants import PLATFORM_ADMIN_ROLE_ID, PROVIDER_ORG_ID
+from src.core.constants import (
+    PLATFORM_ADMIN_ROLE_ID,
+    PLATFORM_OPERATOR_ROLE_ID,
+    PROVIDER_ORG_ID,
+)
 from src.core.log_safety import log_safe
 from src.models import User
 from src.repositories.organizations import OrganizationRepository
@@ -116,6 +120,13 @@ async def ensure_user_provisioned(
             enabled=True,
             assigned_by="system@internal.gobifrost.com",
         )
+        await sync_platform_operator_role(
+            db,
+            user_id=user.id,
+            organization_id=user.organization_id,
+            is_platform_admin=True,
+            assigned_by="system@internal.gobifrost.com",
+        )
         await db.commit()
         await db.refresh(user)
 
@@ -153,6 +164,13 @@ async def ensure_user_provisioned(
         name=name or email.split("@")[0],
         is_superuser=False,
         organization_id=matched_org.id,
+    )
+    await sync_platform_operator_role(
+        db,
+        user_id=user.id,
+        organization_id=matched_org.id,
+        is_platform_admin=False,
+        assigned_by="system@internal.gobifrost.com",
     )
     await db.commit()
     await db.refresh(user)
@@ -206,6 +224,56 @@ async def sync_platform_admin_role(
         delete(UserRole).where(
             UserRole.user_id == user_id,
             UserRole.role_id == PLATFORM_ADMIN_ROLE_ID,
+        )
+    )
+    return True
+
+
+async def sync_platform_operator_role(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    organization_id: UUID | None,
+    is_platform_admin: bool,
+    assigned_by: str,
+) -> bool:
+    """Maintain the interim sticky operator assignment for provider staff.
+
+    The provider-organization bypass remains authoritative while route checks
+    migrate to scopes. This shadow role makes new and moved provider members
+    ready for that migration without removing their current behavior.
+    """
+
+    from sqlalchemy import delete, select
+
+    from src.models import UserRole
+
+    should_assign = organization_id == PROVIDER_ORG_ID and not is_platform_admin
+    assignment = (
+        await db.execute(
+            select(UserRole).where(
+                UserRole.user_id == user_id,
+                UserRole.role_id == PLATFORM_OPERATOR_ROLE_ID,
+            )
+        )
+    ).scalar_one_or_none()
+    if not should_assign:
+        if assignment is None:
+            return False
+        await db.execute(
+            delete(UserRole).where(
+                UserRole.user_id == user_id,
+                UserRole.role_id == PLATFORM_OPERATOR_ROLE_ID,
+            )
+        )
+        return True
+    if assignment is not None:
+        return False
+    db.add(
+        UserRole(
+            user_id=user_id,
+            role_id=PLATFORM_OPERATOR_ROLE_ID,
+            assigned_by=assigned_by,
         )
     )
     return True

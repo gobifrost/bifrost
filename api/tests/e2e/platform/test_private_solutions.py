@@ -1,10 +1,9 @@
 """E2E tests for the private builder Solution surface (/api/builder/solutions).
 
-This is the first non-superuser Solution surface, so the tests are written
-against the two invariants that make it safe: the ``solutions.build`` capability
-gate (403 when absent) and the private-access invariant — a private Solution is
-**invisible**, so a non-owner, including a platform admin, gets 404 rather than
-403 and never sees the row in a list.
+The tests cover the separate capability and resource gates: ``solutions.build``
+admits the feature, while ownership, explicit collaboration, or a deliberate
+provider support view admits one private Solution. Foreign private work never
+clutters the ordinary personal/admin catalogs.
 """
 
 import hashlib
@@ -153,19 +152,31 @@ class TestPrivateInvisibility:
             )
             _login_user(e2e_client, bob_user)
 
-    def test_platform_admin_does_not_see_it_here(
+    def test_platform_admin_uses_explicit_support_view(
         self, e2e_client, platform_admin, alice_solution
     ):
-        """Private installs stay out of the admin catalog on this surface."""
+        """Default stays personal; All is deliberate and detail is supportable."""
         listing = e2e_client.get(BUILDER_URL, headers=platform_admin.headers)
         assert listing.status_code == 200, listing.text
         assert listing.json()["is_platform_admin"] is True
         assert alice_solution["id"] not in {s["id"] for s in listing.json()["solutions"]}
 
+        support_listing = e2e_client.get(
+            f"{BUILDER_URL}?view=all",
+            headers=platform_admin.headers,
+        )
+        assert support_listing.status_code == 200, support_listing.text
+        assert support_listing.json()["view"] == "all"
+        assert support_listing.json()["can_view_all"] is True
+        assert alice_solution["id"] in {
+            s["id"] for s in support_listing.json()["solutions"]
+        }
+
         detail = e2e_client.get(
             f"{BUILDER_URL}/{alice_solution['id']}", headers=platform_admin.headers
         )
-        assert detail.status_code == 404, detail.text
+        assert detail.status_code == 200, detail.text
+        assert detail.json()["caller_access"] == "support"
 
     def test_platform_admin_standard_catalog_does_not_see_private_solution(
         self, e2e_client, platform_admin, alice_solution
@@ -188,6 +199,76 @@ class TestPrivateInvisibility:
             headers=platform_admin.headers,
         )
         assert entities.status_code == 404, entities.text
+
+
+@pytest.mark.e2e
+class TestPrivateCollaboration:
+
+    def test_owner_can_invite_editor_without_transferring_ownership(
+        self,
+        e2e_client,
+        platform_admin,
+        builder_role,
+        builder_alice,
+        bob_user,
+        alice_solution,
+    ):
+        grant = e2e_client.post(
+            f"/api/roles/{builder_role['id']}/users",
+            headers=platform_admin.headers,
+            json={"user_ids": [str(bob_user.user_id)]},
+        )
+        assert grant.status_code == 204, grant.text
+        invited = e2e_client.put(
+            f"{BUILDER_URL}/{alice_solution['id']}/collaborators",
+            headers=builder_alice.headers,
+            json={"email": bob_user.email, "access": "edit"},
+        )
+        assert invited.status_code == 200, invited.text
+        assert invited.json()["user_id"] == str(bob_user.user_id)
+
+        _login_user(e2e_client, bob_user)
+        try:
+            listing = e2e_client.get(BUILDER_URL, headers=bob_user.headers)
+            assert listing.status_code == 200, listing.text
+            row = next(
+                solution
+                for solution in listing.json()["solutions"]
+                if solution["id"] == alice_solution["id"]
+            )
+            assert row["caller_access"] == "collaborator"
+            assert row["collaborator_access"] == "edit"
+
+            detail = e2e_client.get(
+                f"{BUILDER_URL}/{alice_solution['id']}",
+                headers=bob_user.headers,
+            )
+            assert detail.status_code == 200, detail.text
+
+            session = e2e_client.post(
+                f"{BUILDER_URL}/{alice_solution['id']}/sessions",
+                headers=bob_user.headers,
+                json={"title": "Bob support session"},
+            )
+            assert session.status_code == 201, session.text
+
+            deleted = e2e_client.delete(
+                f"{BUILDER_URL}/{alice_solution['id']}",
+                headers=bob_user.headers,
+            )
+            assert deleted.status_code == 404, deleted.text
+        finally:
+            _login_user(e2e_client, builder_alice)
+            removed = e2e_client.delete(
+                f"{BUILDER_URL}/{alice_solution['id']}/collaborators/{bob_user.user_id}",
+                headers=builder_alice.headers,
+            )
+            assert removed.status_code == 204, removed.text
+            e2e_client.delete(
+                f"/api/roles/{builder_role['id']}/users/{bob_user.user_id}",
+                headers=platform_admin.headers,
+            )
+            _login_user(e2e_client, bob_user)
 
 
 @pytest.mark.e2e
@@ -441,6 +522,53 @@ class TestBuilderSessions:
         assert alice_session["solution_id"] == alice_solution["id"]
         assert alice_session["user_id"] == str(builder_alice.user_id)
         assert alice_session["conversation_id"]
+        assert alice_session["builder_agent_id"]
+
+    def test_session_exposes_the_same_builder_agent_to_external_harnesses(
+        self,
+        e2e_client,
+        builder_alice,
+        platform_admin,
+        alice_session,
+    ):
+        """The progressive MCP gateway reuses the native Builder Agent.
+
+        A session id is mandatory on every discovery/schema/execute step so
+        private Builder Agents never leak into the ordinary Agent catalog.
+        """
+        agent_id = alice_session["builder_agent_id"]
+        session_id = alice_session["id"]
+        endpoint = f"/api/mcp/gateway/agents/{agent_id}"
+
+        hidden = e2e_client.get(endpoint, headers=builder_alice.headers)
+        assert hidden.status_code == 422, hidden.text
+
+        loaded = e2e_client.get(
+            endpoint,
+            headers=builder_alice.headers,
+            params={"builder_session_id": session_id},
+        )
+        assert loaded.status_code == 200, loaded.text
+        package = loaded.json()
+        assert package["agent"]["instruction_source"] == "skill"
+        assert package["agent"]["skill"]["bundle_path"] == "skills/bifrost-build"
+        assert "SKILL.md" in package["agent"]["skill"]["files"]
+        tool_names = {tool["name"] for tool in package["tools"]}
+        assert {
+            "list_files",
+            "read_file",
+            "write_file",
+            "validate_solution",
+            "read_skill_asset",
+        } <= tool_names
+
+        support = e2e_client.get(
+            endpoint,
+            headers=platform_admin.headers,
+            params={"builder_session_id": session_id},
+        )
+        assert support.status_code == 200, support.text
+        assert support.json()["agent"]["id"] == agent_id
 
     def test_list_returns_sessions_newest_first(
         self, e2e_client, builder_alice, alice_solution, alice_session

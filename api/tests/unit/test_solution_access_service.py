@@ -5,7 +5,10 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest
+from sqlalchemy import select
 
+from src.models.orm.solution_builder import SolutionBuilderCollaborator
+from src.models.orm.solutions import Solution
 from src.services.solutions.access import (
     VISIBILITY_PRIVATE,
     VISIBILITY_SHARED,
@@ -25,7 +28,17 @@ CONTENT_ACTIONS = [
 ]
 
 
-def _decide(action, *, visibility, owner=OWNER, actor, admin=False, external=False):
+def _decide(
+    action,
+    *,
+    visibility,
+    owner=OWNER,
+    actor,
+    admin=False,
+    external=False,
+    collaborator=None,
+    support=False,
+):
     return can_access_solution(
         action=action,
         visibility=visibility,
@@ -33,6 +46,8 @@ def _decide(action, *, visibility, owner=OWNER, actor, admin=False, external=Fal
         actor_user_id=actor,
         is_platform_admin=admin,
         is_external=external,
+        collaborator_access=collaborator,
+        can_support=support,
     )
 
 
@@ -47,9 +62,55 @@ def test_private_other_user_denied(action):
 
 
 @pytest.mark.parametrize("action", CONTENT_ACTIONS)
-def test_private_platform_admin_denied_content_access(action):
-    """Admins do not see or run private content; their surface is promotion."""
-    assert not _decide(action, visibility=VISIBILITY_PRIVATE, actor=OTHER, admin=True)
+def test_private_platform_admin_allowed_deliberate_support_access(action):
+    assert _decide(action, visibility=VISIBILITY_PRIVATE, actor=OTHER, admin=True)
+
+
+@pytest.mark.parametrize("action", CONTENT_ACTIONS)
+def test_private_operator_allowed_deliberate_support_access(action):
+    assert _decide(action, visibility=VISIBILITY_PRIVATE, actor=OTHER, support=True)
+
+
+@pytest.mark.parametrize("action", CONTENT_ACTIONS)
+def test_private_editor_collaborator_can_work(action):
+    assert _decide(
+        action,
+        visibility=VISIBILITY_PRIVATE,
+        actor=OTHER,
+        collaborator="edit",
+    )
+
+
+def test_private_viewer_collaborator_is_read_only():
+    assert _decide(
+        SolutionAction.VIEW,
+        visibility=VISIBILITY_PRIVATE,
+        actor=OTHER,
+        collaborator="view",
+    )
+    for action in (SolutionAction.EDIT, SolutionAction.BUILD, SolutionAction.RUN):
+        assert not _decide(
+            action,
+            visibility=VISIBILITY_PRIVATE,
+            actor=OTHER,
+            collaborator="view",
+        )
+
+
+def test_only_owner_or_support_can_manage_private_solution():
+    assert _decide(SolutionAction.MANAGE, visibility=VISIBILITY_PRIVATE, actor=OWNER)
+    assert _decide(
+        SolutionAction.MANAGE,
+        visibility=VISIBILITY_PRIVATE,
+        actor=OTHER,
+        support=True,
+    )
+    assert not _decide(
+        SolutionAction.MANAGE,
+        visibility=VISIBILITY_PRIVATE,
+        actor=OTHER,
+        collaborator="edit",
+    )
 
 
 @pytest.mark.parametrize("action", CONTENT_ACTIONS)
@@ -65,10 +126,17 @@ def test_shared_defers_to_downstream_authz(action):
 
 
 def test_private_orphaned_owner_admits_nobody():
-    """Owner deleted (SET NULL): nobody gets content access until break-glass."""
+    """Owner deleted (SET NULL): only deliberate support can recover the build."""
     for action in CONTENT_ACTIONS:
         assert not _decide(
             action, visibility=VISIBILITY_PRIVATE, owner=None, actor=OWNER
+        )
+        assert _decide(
+            action,
+            visibility=VISIBILITY_PRIVATE,
+            owner=None,
+            actor=OTHER,
+            support=True,
         )
 
 
@@ -96,6 +164,25 @@ def test_list_criterion_hides_foreign_private_rows():
     crit = visible_solutions_criterion(actor_user_id=OWNER, is_external=False)
     sql = str(crit)
     assert "visibility" in sql and "owner_user_id" in sql
+    assert "solution_builder_collaborators" in sql
+
+
+def test_list_criterion_compiles_when_catalog_already_joins_collaborators():
+    """The EXISTS must keep its FROM when the catalog selects grant metadata."""
+    criterion = visible_solutions_criterion(
+        actor_user_id=OWNER,
+        is_external=False,
+    )
+    statement = (
+        select(Solution)
+        .outerjoin(
+            SolutionBuilderCollaborator,
+            SolutionBuilderCollaborator.solution_id == Solution.id,
+        )
+        .where(criterion)
+    )
+
+    assert "solution_builder_collaborators" in str(statement)
 
 
 def test_list_criterion_external_sees_only_shared():

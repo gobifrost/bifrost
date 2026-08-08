@@ -45,7 +45,12 @@ class PrivateSolutionDTO(BaseModel):
     name: str
     visibility: str
     owner_user_id: UUID | None = None
+    owner_name: str | None = None
+    owner_email: str | None = None
     organization_id: UUID | None = None
+    organization_name: str | None = None
+    caller_access: Literal["owner", "collaborator", "support"] = "owner"
+    collaborator_access: Literal["view", "edit"] | None = None
     app_origin: str | None = None
     status: str
     promotion_status: str
@@ -54,14 +59,41 @@ class PrivateSolutionDTO(BaseModel):
 
 
 class PrivateSolutionsList(BaseModel):
-    """List envelope for the caller's own private Solutions."""
+    """List envelope for personal/shared work or the explicit support view."""
 
     solutions: list[PrivateSolutionDTO]
     total: int
+    view: Literal["mine", "all"] = "mine"
+    can_view_all: bool = False
     ai_configured: bool
     builder_ready: bool
     builder_blockers: list[SandboxRunnerBlocker] = Field(default_factory=list)
     is_platform_admin: bool
+
+
+class BuilderCollaboratorUpsert(BaseModel):
+    """Invite or update one same-organization collaborator by email."""
+
+    email: str = Field(min_length=3, max_length=320)
+    access: Literal["view", "edit"] = "edit"
+
+
+class BuilderCollaboratorDTO(BaseModel):
+    """One explicit user grant on a private Builder Solution."""
+
+    id: UUID
+    user_id: UUID
+    name: str | None = None
+    email: str
+    access: Literal["view", "edit"]
+    invited_by: UUID | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class BuilderCollaboratorsList(BaseModel):
+    collaborators: list[BuilderCollaboratorDTO]
+    total: int
 
 
 class BuilderProjectDTO(BaseModel):
@@ -156,9 +188,9 @@ class PromotionResultDTO(BaseModel):
 class CreateSessionRequest(BaseModel):
     """Create-shape for a builder chat session.
 
-    Only the title is an input. The Solution comes from the path and the owner
-    from the caller, so a session can never be opened against somebody else's
-    Solution or on somebody else's behalf.
+    Only the title is an input. The Solution comes from the authorized path and
+    the session author from the caller, so each team member gets an attributable
+    conversation without being able to choose another user's identity.
     """
 
     title: str | None = Field(default=None, max_length=500)
@@ -177,6 +209,7 @@ class BuilderSessionDTO(BaseModel):
     solution_id: UUID
     conversation_id: UUID
     user_id: UUID
+    builder_agent_id: UUID
     created_at: datetime
     updated_at: datetime
 

@@ -9,15 +9,14 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import func, select, text, update
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.models.enums import AgentAccessLevel, MessageRole
-from src.models.orm.agents import Agent, Conversation, Message
+from src.models.enums import MessageRole
+from src.models.orm.agents import Conversation, Message
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solution_builder import (
     SolutionBuilderProject,
@@ -26,20 +25,14 @@ from src.models.orm.solution_builder import (
 )
 from src.models.orm.solutions import Solution
 from src.models.orm.users import User
+from src.services.builder.agent_identity import ensure_builder_agent
 from src.services.builder.revision_storage import SolutionRevisionStorage
-from src.services.builder.scaffold import (
-    BUILDER_AGENT_SYSTEM_TOOLS,
-    BUILDER_SKILL_BUNDLE_PATH,
-    _builder_skill_source,
-    builder_agent_id,
-)
 from src.services.builder.turns import (
     BuilderProjectMissing,
     BuilderTurnConflict,
     BuilderTurnService,
 )
 from src.services.builder.turn_artifacts import BuilderTurnArtifactStorage
-from src.services.llm_config_service import LLMConfigService
 from src.services.solutions.deploy_jobs import create_staged_deploy_job
 
 _SUMMARY_MAX_CHARS = 120
@@ -429,46 +422,8 @@ class BuilderAgentTurnService:
                 .options(selectinload(Conversation.user))
             )
         ).scalar_one()
-        user = conversation.user
-
-        prompt = (_builder_skill_source() / "SKILL.md").read_text(encoding="utf-8")
-        config = await LLMConfigService(self.db).get_config()
-        builder_model = (
-            config.builder_model.strip()
-            if config is not None
-            and isinstance(config.builder_model, str)
-            and config.builder_model.strip()
-            else config.model.strip()
-            if config is not None
-            and isinstance(config.model, str)
-            and config.model.strip()
-            else None
-        )
-        agent_id = builder_agent_id(solution_id)
-        existing = await self.db.get(Agent, agent_id)
-        values: dict[str, Any] = {
-            "name": f"{solution.name} Builder",
-            "description": "Private Solution authoring agent",
-            "system_prompt": prompt,
-            "bundle_path": BUILDER_SKILL_BUNDLE_PATH,
-            "channels": ["chat"],
-            "access_level": AgentAccessLevel.ROLE_BASED,
-            "organization_id": solution.organization_id,
-            "solution_id": solution_id,
-            "owner_user_id": session.user_id,
-            "is_active": True,
-            "knowledge_sources": [],
-            "system_tools": BUILDER_AGENT_SYSTEM_TOOLS,
-            "llm_model": builder_model,
-            "created_by": user.email,
-        }
-        if existing is None:
-            self.db.add(Agent(id=agent_id, **values))
-        else:
-            await self.db.execute(
-                update(Agent).where(Agent.id == agent_id).values(**values)
-            )
-        conversation.agent_id = agent_id
+        agent = await ensure_builder_agent(self.db, solution=solution)
+        conversation.agent_id = agent.id
         await self.db.commit()
 
         conversation = (

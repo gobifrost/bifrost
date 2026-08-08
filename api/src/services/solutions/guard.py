@@ -69,6 +69,7 @@ _OPERATIONAL_SOLUTION_ROW_NAMES = {
     # the deploy-owns-it rule does not apply. What the builder produces that IS
     # portable (the workspace source) lives in object storage and reaches the DB
     # only through the normal deploy path, which this guard still protects.
+    "SolutionBuilderCollaborator",
     "SolutionBuilderProject",
     "SolutionSourceRevision",
     "SolutionBuilderSession",

@@ -61,6 +61,7 @@ router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 
 def _gateway_service(current_user: CurrentActiveUser):
     """Create the canonical gateway service for an authenticated REST caller."""
+    from src.services.solutions.builder_authz import can_build, can_support_builds
     from src.services.mcp_server.gateway import MCPAgentGatewayService
     from src.services.mcp_server.server import MCPContext
 
@@ -72,6 +73,8 @@ def _gateway_service(current_user: CurrentActiveUser):
             is_external=current_user.is_external,
             user_email=current_user.email,
             user_name=current_user.name,
+            can_build=can_build(current_user),
+            can_support_builds=can_support_builds(current_user),
         )
     )
 
@@ -112,12 +115,14 @@ async def find_gateway_agents(
     db: DbSession,
     query: str | None = None,
     limit: int = Query(default=10, ge=1, le=20),
+    builder_session_id: str | None = None,
 ) -> dict:
     """Find accessible agents for progressive MCP discovery."""
     await _require_mcp_enabled(db)
     return await _gateway_service(current_user).find_agents(
         query=query,
         limit=limit,
+        builder_session_id=builder_session_id,
     )
 
 
@@ -129,11 +134,15 @@ async def get_gateway_agent(
     agent_id: str,
     current_user: CurrentActiveUser,
     db: DbSession,
+    builder_session_id: str | None = None,
 ) -> dict:
     """Load one accessible agent's live capability package."""
     await _require_mcp_enabled(db)
     try:
-        return await _gateway_service(current_user).get_agent(agent_id)
+        return await _gateway_service(current_user).get_agent(
+            agent_id,
+            builder_session_id=builder_session_id,
+        )
     except Exception as exc:
         _raise_gateway_http_error(exc)
 
@@ -147,6 +156,7 @@ async def get_gateway_tool_schema(
     tool_ref: str,
     current_user: CurrentActiveUser,
     db: DbSession,
+    builder_session_id: str | None = None,
 ) -> dict:
     """Load the current schema for an agent-bound tool."""
     await _require_mcp_enabled(db)
@@ -154,6 +164,7 @@ async def get_gateway_tool_schema(
         return await _gateway_service(current_user).get_tool_schema(
             agent_id,
             tool_ref,
+            builder_session_id=builder_session_id,
         )
     except Exception as exc:
         _raise_gateway_http_error(exc)
@@ -177,6 +188,7 @@ async def execute_gateway_tool(
             agent_id,
             tool_ref,
             request.arguments,
+            builder_session_id=request.builder_session_id,
         )
     except Exception as exc:
         _raise_gateway_http_error(exc)

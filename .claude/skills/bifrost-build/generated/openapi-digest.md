@@ -109,6 +109,9 @@
 | GET | `/api/builder/solutions/{solution_id}` |
 | POST | `/api/builder/solutions/{solution_id}/apps/{app_id}/launch` |
 | GET | `/api/builder/solutions/{solution_id}/build-jobs/{job_id}` |
+| GET | `/api/builder/solutions/{solution_id}/collaborators` |
+| PUT | `/api/builder/solutions/{solution_id}/collaborators` |
+| DELETE | `/api/builder/solutions/{solution_id}/collaborators/{collaborator_user_id}` |
 | GET | `/api/builder/solutions/{solution_id}/deploy-jobs/{job_id}` |
 | POST | `/api/builder/solutions/{solution_id}/promotion-request` |
 | GET | `/api/builder/solutions/{solution_id}/revisions` |

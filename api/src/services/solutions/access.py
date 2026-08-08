@@ -17,6 +17,7 @@ from uuid import UUID
 
 from sqlalchemy import ColumnElement, exists, or_, select
 
+from src.models.orm.solution_builder import SolutionBuilderCollaborator
 from src.models.orm.solutions import Solution
 
 VISIBILITY_PRIVATE = "private"
@@ -28,6 +29,7 @@ class SolutionAction(str, Enum):
     EDIT = "edit"
     BUILD = "build"
     RUN = "run"
+    MANAGE = "manage"
     PROMOTE = "promote"
 
 
@@ -39,6 +41,8 @@ def can_access_solution(
     actor_user_id: UUID | None,
     is_platform_admin: bool,
     is_external: bool,
+    collaborator_access: str | None = None,
+    can_support: bool = False,
 ) -> bool:
     """Decide whether the actor may perform ``action`` on a Solution.
 
@@ -47,9 +51,10 @@ def can_access_solution(
       may *request* promotion (a separate surface), never perform it.
     - Shared Solutions defer to the existing downstream authorization
       (superuser routes today, role/access-level checks at the entity layer).
-    - Private Solutions admit only their owner — including against platform
-      admins, whose access is limited to the promotion-review and break-glass
-      surfaces. External users are always denied.
+    - Private Solutions admit their owner, explicitly invited collaborators,
+      and provider support principals acting deliberately through Builder.
+      Support access never widens ordinary catalog queries. External users are
+      always denied.
     """
     if action is SolutionAction.PROMOTE:
         return (
@@ -61,7 +66,15 @@ def can_access_solution(
 
     if is_external:
         return False
-    return owner_user_id is not None and actor_user_id == owner_user_id
+    if owner_user_id is not None and actor_user_id == owner_user_id:
+        return True
+    if is_platform_admin or can_support:
+        return True
+    if action is SolutionAction.MANAGE:
+        return False
+    if collaborator_access == "edit":
+        return True
+    return collaborator_access == "view" and action is SolutionAction.VIEW
 
 
 def visible_solutions_criterion(
@@ -71,15 +84,24 @@ def visible_solutions_criterion(
 ) -> ColumnElement[bool]:
     """SQL predicate hiding other users' private Solutions from list queries.
 
-    Applies to every principal, platform admins included: private installs do
-    not appear in the ordinary administrator catalog (spec invariant). Shared
-    rows remain subject to the caller's existing scope filters.
+    Applies to every principal, platform admins included: support privilege is
+    intentionally absent here, so foreign private installs do not clutter
+    ordinary catalogs. The dedicated Builder ``All`` view is the explicit
+    support surface. Shared rows retain their existing scope filters.
     """
     if is_external or actor_user_id is None:
         return Solution.visibility == VISIBILITY_SHARED
     return or_(
         Solution.visibility == VISIBILITY_SHARED,
         Solution.owner_user_id == actor_user_id,
+        exists(
+            select(SolutionBuilderCollaborator.id)
+            .where(
+                SolutionBuilderCollaborator.solution_id == Solution.id,
+                SolutionBuilderCollaborator.user_id == actor_user_id,
+            )
+            .correlate(Solution)
+        ),
     )
 
 
