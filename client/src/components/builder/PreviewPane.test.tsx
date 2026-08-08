@@ -1,6 +1,6 @@
 /**
- * Tests for the builder preview pane — the unconfigured-app-origin empty state
- * (never a broken iframe), the stale badge, and the route/reload controls.
+ * Tests for the builder preview pane — deployment state, opaque sandbox,
+ * restoration animation, stale badge, and route/reload controls.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -14,7 +14,7 @@ function renderPane(props: Partial<Parameters<typeof PreviewPane>[0]> = {}) {
 	return renderWithProviders(
 		<PreviewPane
 			launchUrl={null}
-			state="unconfigured"
+			state="waiting"
 			route="/"
 			onRouteChange={onRouteChange}
 			onReload={onReload}
@@ -29,15 +29,12 @@ beforeEach(() => {
 	onReload.mockReset();
 });
 
-describe("when no app origin is configured", () => {
-	it("renders the unavailable state instead of an iframe", () => {
+describe("before the first successful deployment", () => {
+	it("renders the waiting state instead of an iframe", () => {
 		renderPane();
 
 		expect(screen.getByTestId("preview-unavailable")).toBeInTheDocument();
-		expect(screen.getByText(/preview unavailable/i)).toBeInTheDocument();
-		expect(
-			screen.getByText(/separate app host is not configured/i),
-		).toBeInTheDocument();
+		expect(screen.getByText(/preview is not deployed yet/i)).toBeInTheDocument();
 		expect(screen.queryByTestId("preview-frame")).not.toBeInTheDocument();
 	});
 
@@ -50,7 +47,7 @@ describe("when no app origin is configured", () => {
 	});
 });
 
-describe("when an app origin is configured", () => {
+describe("after deployment", () => {
 	it("frames the exact one-time launch URL returned by the backend", () => {
 		renderPane({
 			launchUrl: "https://apps.example.test/launch/one-time-code",
@@ -74,7 +71,9 @@ describe("when an app origin is configured", () => {
 			state: "ready",
 		});
 
-		expect(screen.getByTestId("preview-frame")).toHaveAttribute("sandbox");
+		const sandbox = screen.getByTestId("preview-frame").getAttribute("sandbox");
+		expect(sandbox).toBe("allow-scripts allow-forms");
+		expect(sandbox).not.toContain("allow-same-origin");
 	});
 
 	it("explains both secure-session restoration and document loading", async () => {

@@ -4,120 +4,38 @@
  * Wraps the `/api/builder/*` control plane: private Solutions, builder chat
  * sessions, source revisions, undo, and agent turns.
  *
- * The DTO interfaces below are declared locally because the builder routes are
- * still landing; they move to `components["schemas"][...]` once the OpenAPI
- * spec regenerates.
  */
 
 import { authFetch } from "@/lib/api-client";
+import type { components } from "@/lib/v1";
 
 export type SolutionVisibility = "private" | "shared";
-
-export interface BuilderSolution {
-	id: string;
-	slug: string;
-	name: string;
-	visibility: SolutionVisibility;
-	owner_user_id: string | null;
-	organization_id: string | null;
-	app_origin?: string | null;
-	status: string;
-	promotion_status: string | null;
-	created_at: string;
-	updated_at: string;
-}
-
-export interface BuilderProject {
-	solution_id: string;
-	current_revision_id: string | null;
-	deployed_revision_id: string | null;
-	promotion_status: string;
-	created_at: string;
-	updated_at: string;
-}
-
-export interface BuilderSession {
-	id: string;
-	solution_id: string;
-	conversation_id: string;
-	user_id: string;
-	created_at: string;
-}
-
-export interface BuilderRevision {
-	id: string;
-	parent_revision_id: string | null;
-	restored_from_revision_id: string | null;
-	source_sha256: string;
-	size_bytes: number;
-	summary: string | null;
-	created_at: string;
-	created_by: string | null;
-	is_current: boolean;
-	is_deployed: boolean;
-}
-
-export interface BuilderRevisionFile {
-	path: string;
-	size_bytes: number;
-	is_text: boolean;
-}
-
-export interface BuilderRevisionFileContent {
-	revision_id: string;
-	path: string;
-	size_bytes: number;
-	encoding: "utf-8" | "binary";
-	content: string | null;
-	truncated: boolean;
-}
-
-export interface BuilderRevisionDiffFile {
-	path: string;
-	status: "added" | "modified" | "deleted";
-	additions: number;
-	deletions: number;
-	is_binary: boolean;
-	diff: string | null;
-	truncated: boolean;
-}
-
-export interface BuilderRevisionDiff {
-	revision_id: string;
-	against_revision_id: string | null;
-	files: BuilderRevisionDiffFile[];
-	total: number;
-	additions: number;
-	deletions: number;
-}
+export type BuilderSolution = components["schemas"]["PrivateSolutionDTO"];
+export type BuilderProject = components["schemas"]["BuilderProjectDTO"];
+export type BuilderSession = components["schemas"]["BuilderSessionDTO"];
+export type BuilderRevision = components["schemas"]["SourceRevisionDTO"];
+export type BuilderRevisionFile = components["schemas"]["RevisionFileDTO"];
+export type BuilderRevisionFileContent =
+	components["schemas"]["RevisionFileContentDTO"];
+export type BuilderRevisionDiffFile =
+	components["schemas"]["RevisionDiffFileDTO"];
+export type BuilderRevisionDiff = components["schemas"]["RevisionDiffDTO"];
+export type BuilderCollaborator =
+	components["schemas"]["BuilderCollaboratorDTO"];
+export type BuilderBlocker = components["schemas"]["SandboxRunnerBlocker"];
 
 export type BuilderTurnStatus = "queued" | "running" | "succeeded" | "failed";
 
-export interface BuilderTurn {
-	id: string;
-	session_id: string;
-	status: BuilderTurnStatus;
-	error: string | null;
-	base_revision_id: string | null;
-	output_revision_id: string | null;
-	build_job_id: string | null;
-	deploy_job_id: string | null;
-	created_at: string;
-	started_at: string | null;
-	completed_at: string | null;
-}
-
-export interface BuilderTurnResult {
-	turn: BuilderTurn;
-	final_text: string;
-	tool_call_count: number;
-	revision_created: boolean;
-}
-
-export interface CreateBuilderSolutionRequest {
-	slug: string;
-	name: string;
-}
+export type BuilderTurn = Omit<
+	components["schemas"]["BuilderTurnDTO"],
+	"status"
+> & { status: BuilderTurnStatus };
+export type BuilderTurnResult = Omit<
+	components["schemas"]["RunTurnResponse"],
+	"turn"
+> & { turn: BuilderTurn };
+export type CreateBuilderSolutionRequest =
+	components["schemas"]["PrivateSolutionCreate"];
 
 export interface BuilderLaunch {
 	launch_url: string;
@@ -128,15 +46,18 @@ export interface BuilderDownload {
 	filename: string;
 }
 
-export interface BuilderSolutionsList {
-	solutions: BuilderSolution[];
-	total: number;
-	ai_configured: boolean;
-	is_platform_admin: boolean;
-}
+export type BuilderSolutionsList =
+	components["schemas"]["PrivateSolutionsList"];
 
 interface RequestOptions {
 	signal?: AbortSignal;
+}
+
+export interface BuilderSolutionFilters {
+	view?: "mine" | "all";
+	organizationId?: string | null;
+	ownerUserId?: string | null;
+	search?: string;
 }
 
 /**
@@ -207,13 +128,63 @@ function filenameFrom(response: Response, fallback: string): string {
 }
 
 export async function listBuilderSolutions(
-	options: RequestOptions = {},
+	options: RequestOptions & BuilderSolutionFilters = {},
 ): Promise<BuilderSolutionsList> {
+	const query = new URLSearchParams();
+	if (options.view) query.set("view", options.view);
+	if (options.organizationId) {
+		query.set("organization_id", options.organizationId);
+	}
+	if (options.ownerUserId) query.set("owner_user_id", options.ownerUserId);
+	if (options.search?.trim()) query.set("search", options.search.trim());
+	const suffix = query.size > 0 ? `?${query.toString()}` : "";
 	return requestJson<BuilderSolutionsList>(
-		BASE,
+		`${BASE}${suffix}`,
 		"Failed to list builder solutions",
 		{ signal: options.signal },
 	);
+}
+
+export async function listBuilderCollaborators(
+	solutionId: string,
+	options: RequestOptions = {},
+): Promise<BuilderCollaborator[]> {
+	const result = await requestJson<
+		components["schemas"]["BuilderCollaboratorsList"]
+	>(`${BASE}/${solutionId}/collaborators`, "Failed to load collaborators", {
+		signal: options.signal,
+	});
+	return result.collaborators;
+}
+
+export async function saveBuilderCollaborator(
+	solutionId: string,
+	request: components["schemas"]["BuilderCollaboratorUpsert"],
+	options: RequestOptions = {},
+): Promise<BuilderCollaborator> {
+	return requestJson<BuilderCollaborator>(
+		`${BASE}/${solutionId}/collaborators`,
+		"Failed to save collaborator",
+		{
+			method: "PUT",
+			body: JSON.stringify(request),
+			signal: options.signal,
+		},
+	);
+}
+
+export async function removeBuilderCollaborator(
+	solutionId: string,
+	userId: string,
+	options: RequestOptions = {},
+): Promise<void> {
+	const response = await authFetch(
+		`${BASE}/${solutionId}/collaborators/${userId}`,
+		{ method: "DELETE", signal: options.signal },
+	);
+	if (!response.ok) {
+		throw await errorFrom(response, "Failed to remove collaborator");
+	}
 }
 
 export async function createBuilderSolution(

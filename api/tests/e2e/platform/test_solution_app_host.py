@@ -1,7 +1,7 @@
 """E2E tests for the Solution app host (launch flow, session, artifact serving).
 
-The invariants under test are the ones that make a separate app origin worth
-having:
+The invariants under test make the same-origin opaque runtime a real security
+boundary without requiring another public host:
 
 * the launch code is single-use and never puts a token in a URL;
 * the app-host session cookie is bound to exactly one Solution and app, and a
@@ -26,10 +26,9 @@ from websockets.exceptions import ConnectionClosedError
 from src.services.solutions.app_build import SolutionAppBuilder
 from tests.e2e.fixtures.setup import _login_user
 
-E2E_APP_URL = os.getenv("TEST_APP_URL", "http://app-host:8100")
-E2E_APP_WS_URL = E2E_APP_URL.replace("http://", "ws://").replace(
-    "https://", "wss://"
-)
+E2E_APP_URL = os.getenv("TEST_APP_URL", "http://api:8000")
+E2E_APP_WS_URL = E2E_APP_URL.replace("http://", "ws://").replace("https://", "wss://")
+RUNTIME_PREFIX = "/api/builder-runtime"
 
 BUILDER_URL = "/api/builder/solutions"
 
@@ -101,6 +100,7 @@ def make_app(db_session, builder_alice):
             description="app host e2e",
             repo_path=f"apps/apphost-{suffix}",
             app_model="standalone_v2",
+            runtime_mode="isolated",
             organization_id=organization_id,
             solution_id=uuid.UUID(solution_id),
         )
@@ -126,6 +126,43 @@ async def alice_app(e2e_client, builder_alice, make_app):
     app_id = await make_app(solution["id"], builder_alice.organization_id)
     yield solution, app_id
     e2e_client.delete(f"{BUILDER_URL}/{solution['id']}", headers=builder_alice.headers)
+
+
+@pytest.fixture
+async def global_isolated_app(db_session):
+    """Seed a shared global app; its runtime data scope comes from the viewer."""
+    from src.models.orm.applications import Application
+    from src.models.orm.solutions import Solution
+
+    suffix = uuid.uuid4().hex[:8]
+    solution = Solution(
+        slug=f"global-apphost-{suffix}",
+        name="Global app host e2e",
+        organization_id=None,
+        visibility="shared",
+    )
+    db_session.add(solution)
+    await db_session.flush()
+    app = Application(
+        name=f"global-apphost-{suffix}",
+        slug=f"global-apphost-{suffix}",
+        description="global app host e2e",
+        repo_path=f"apps/global-apphost-{suffix}",
+        app_model="standalone_v2",
+        runtime_mode="isolated",
+        access_level="authenticated",
+        organization_id=None,
+        solution_id=solution.id,
+    )
+    db_session.add(app)
+    await db_session.commit()
+
+    builder = SolutionAppBuilder()
+    await builder.upload_dist(
+        app.id,
+        {"index.html": b"<!doctype html><div id=root></div>"},
+    )
+    return solution, app
 
 
 @pytest.fixture
@@ -161,12 +198,23 @@ def _host_client() -> httpx.Client:
 
 def _redeem(host: httpx.Client, launch_url: str) -> httpx.Response:
     code = launch_url.rsplit("/", 1)[-1]
-    return host.get(f"/launch/{code}")
+    return host.get(f"{RUNTIME_PREFIX}/launch/{code}")
+
+
+def _session_path(solution_id: str, app_id: str) -> str:
+    return f"{RUNTIME_PREFIX}/{solution_id}/apps/{app_id}/_bifrost/session-token"
+
+
+def _app_path(solution_id: str, app_id: str, path: str = "") -> str:
+    return f"{RUNTIME_PREFIX}/{solution_id}/apps/{app_id}/{path.lstrip('/')}"
+
+
+def _sdk_path(path: str) -> str:
+    return f"{RUNTIME_PREFIX}/_bifrost/{path.lstrip('/')}"
 
 
 @pytest.mark.e2e
 class TestLaunchFlow:
-
     def test_redeem_sets_cookie_and_redirects_to_id_path(
         self, e2e_client, builder_alice, alice_app
     ):
@@ -179,7 +227,7 @@ class TestLaunchFlow:
             resp = _redeem(host, launch.json()["launch_url"])
             assert resp.status_code == 302, resp.text
             assert resp.headers["location"] == (
-                f"/{solution['id']}/apps/{app_id}/reports"
+                f"{RUNTIME_PREFIX}/{solution['id']}/apps/{app_id}/reports"
             )
             assert "bifrost_app_session" in host.cookies
 
@@ -205,10 +253,26 @@ class TestLaunchFlow:
         # A JWT is three dot-separated segments; the launch code is opaque.
         assert url.count(".") == 0 or "eyJ" not in url
 
+    def test_global_isolated_app_uses_viewers_org_as_runtime_scope(
+        self, e2e_client, builder_alice, global_isolated_app
+    ):
+        solution, app = global_isolated_app
+        launch = e2e_client.post(
+            f"/api/applications/{app.id}/isolated-launch",
+            headers=builder_alice.headers,
+        )
+        assert launch.status_code == 200, launch.text
+
+        with _host_client() as host:
+            redeem = _redeem(host, launch.json()["launch_url"])
+            assert redeem.status_code == 302, redeem.text
+            token = host.post(_session_path(str(solution.id), str(app.id)))
+            assert token.status_code == 200, token.text
+            assert token.json()["organization_id"] == str(builder_alice.organization_id)
+
 
 @pytest.mark.e2e
 class TestTokenSeal:
-
     def test_minted_token_binds_the_right_solution_and_app(
         self, e2e_client, builder_alice, alice_app
     ):
@@ -220,7 +284,7 @@ class TestTokenSeal:
         ]
         with _host_client() as host:
             _redeem(host, url)
-            resp = host.post("/app-session/token")
+            resp = host.post(_session_path(solution["id"], app_id))
             assert resp.status_code == 200, resp.text
             token = resp.json()["access_token"]
 
@@ -242,7 +306,9 @@ class TestTokenSeal:
         ]
         with _host_client() as host:
             _redeem(host, url)
-            token = host.post("/app-session/token").json()["access_token"]
+            token = host.post(_session_path(solution["id"], app_id)).json()[
+                "access_token"
+            ]
 
         resp = e2e_client.get(
             "/api/tables", headers={"Authorization": f"Bearer {token}"}
@@ -256,7 +322,7 @@ class TestTokenSeal:
         solution, app_id = alice_app
         with _host_client() as host:
             resp = host.get(
-                f"/{solution['id']}/apps/{app_id}/index.html",
+                _app_path(solution["id"], app_id, "index.html"),
                 headers=builder_alice.headers,
             )
             assert resp.status_code == 401, resp.text
@@ -268,38 +334,40 @@ class TestTokenSeal:
         ]
         with _host_client() as host:
             _redeem(host, url)
-            assert host.post("/app-session/token").status_code == 200
-            response = host.delete("/app-session")
+            session_path = _session_path(solution["id"], app_id)
+            assert host.post(session_path).status_code == 200
+            response = host.delete(session_path)
             assert response.status_code == 204
             # The cookie value is cleared, and even replaying it is dead.
-            assert host.post("/app-session/token").status_code == 401
+            assert host.post(session_path).status_code == 401
 
 
 @pytest.mark.e2e
 class TestActorRuntime:
-
     def test_actor_can_crud_its_solution_table(
         self, e2e_client, builder_alice, alice_app_with_table
     ):
         solution, app_id, table_name = alice_app_with_table
-        launch_url = _launch(
-            e2e_client, builder_alice, solution["id"], app_id
-        ).json()["launch_url"]
+        launch_url = _launch(e2e_client, builder_alice, solution["id"], app_id).json()[
+            "launch_url"
+        ]
 
         with _host_client() as host:
             _redeem(host, launch_url)
-            token = host.post("/app-session/token").json()["access_token"]
+            token = host.post(_session_path(solution["id"], app_id)).json()[
+                "access_token"
+            ]
             headers = {"Authorization": f"Bearer {token}"}
 
             created = host.post(
-                f"/_bifrost/api/tables/{table_name}/documents",
+                _sdk_path(f"api/tables/{table_name}/documents"),
                 headers=headers,
                 json={"id": "one", "data": {"title": "Private note"}},
             )
             assert created.status_code == 201, created.text
 
             fetched = host.get(
-                f"/_bifrost/api/tables/{table_name}/documents/one",
+                _sdk_path(f"api/tables/{table_name}/documents/one"),
                 headers=headers,
             )
             assert fetched.status_code == 200, fetched.text
@@ -332,9 +400,11 @@ class TestActorRuntime:
             ).json()["launch_url"]
             with _host_client() as host:
                 _redeem(host, launch_url)
-                token = host.post("/app-session/token").json()["access_token"]
+                token = host.post(_session_path(solution_a["id"], app_a)).json()[
+                    "access_token"
+                ]
                 response = host.get(
-                    f"/_bifrost/api/tables/{sibling_table}/documents/missing",
+                    _sdk_path(f"api/tables/{sibling_table}/documents/missing"),
                     headers={"Authorization": f"Bearer {token}"},
                 )
                 assert response.status_code == 404, response.text
@@ -350,7 +420,7 @@ class TestActorRuntime:
         _, _, table_name = alice_app_with_table
         with _host_client() as host:
             response = host.get(
-                f"/_bifrost/api/tables/{table_name}/documents/missing",
+                _sdk_path(f"api/tables/{table_name}/documents/missing"),
                 headers=builder_alice.headers,
             )
         assert response.status_code == 401, response.text
@@ -369,15 +439,15 @@ class TestActorRuntime:
         from src.models.orm.workflows import Workflow
 
         solution, app_id, _ = alice_app_with_table
-        launch_url = _launch(
-            e2e_client, builder_alice, solution["id"], app_id
-        ).json()["launch_url"]
+        launch_url = _launch(e2e_client, builder_alice, solution["id"], app_id).json()[
+            "launch_url"
+        ]
         with _host_client() as host:
             _redeem(host, launch_url)
-            token = host.post("/app-session/token").json()["access_token"]
-            claims = json.loads(
-                base64.urlsafe_b64decode(token.split(".")[1] + "==")
-            )
+            token = host.post(_session_path(solution["id"], app_id)).json()[
+                "access_token"
+            ]
+            claims = json.loads(base64.urlsafe_b64decode(token.split(".")[1] + "=="))
 
             workflow = Workflow(
                 name=f"actor-workflow-{uuid.uuid4().hex[:8]}",
@@ -423,14 +493,14 @@ class TestActorRuntime:
 
             headers = {"Authorization": f"Bearer {token}"}
             own = host.get(
-                f"/_bifrost/api/executions/{own_execution.id}",
+                _sdk_path(f"api/executions/{own_execution.id}"),
                 headers=headers,
             )
             assert own.status_code == 200, own.text
             assert own.json()["result"] == {"ok": True}
 
             sibling = host.get(
-                f"/_bifrost/api/executions/{other_session_execution.id}",
+                _sdk_path(f"api/executions/{other_session_execution.id}"),
                 headers=headers,
             )
             assert sibling.status_code == 404, sibling.text
@@ -438,7 +508,6 @@ class TestActorRuntime:
 
 @pytest.mark.e2e
 class TestActorWebSocket:
-
     async def test_actor_subscribes_only_to_its_solution_table(
         self,
         e2e_client,
@@ -446,16 +515,18 @@ class TestActorWebSocket:
         alice_app_with_table,
     ):
         solution, app_id, table_name = alice_app_with_table
-        launch_url = _launch(
-            e2e_client, builder_alice, solution["id"], app_id
-        ).json()["launch_url"]
+        launch_url = _launch(e2e_client, builder_alice, solution["id"], app_id).json()[
+            "launch_url"
+        ]
         with _host_client() as host:
             _redeem(host, launch_url)
-            token = host.post("/app-session/token").json()["access_token"]
+            token = host.post(_session_path(solution["id"], app_id)).json()[
+                "access_token"
+            ]
             headers = {"Authorization": f"Bearer {token}"}
 
             async with connect(
-                f"{E2E_APP_WS_URL}/ws/connect?token={token}"
+                f"{E2E_APP_WS_URL}{RUNTIME_PREFIX}/ws/connect?token={token}"
             ) as websocket:
                 connected = json.loads(
                     await asyncio.wait_for(websocket.recv(), timeout=5)
@@ -477,7 +548,7 @@ class TestActorWebSocket:
                 assert subscribed["channel"].startswith("table:")
 
                 created = host.post(
-                    f"/_bifrost/api/tables/{table_name}/documents",
+                    _sdk_path(f"api/tables/{table_name}/documents"),
                     headers=headers,
                     json={
                         "id": f"ws-{uuid.uuid4().hex[:8]}",
@@ -485,9 +556,7 @@ class TestActorWebSocket:
                     },
                 )
                 assert created.status_code == 201, created.text
-                event = json.loads(
-                    await asyncio.wait_for(websocket.recv(), timeout=5)
-                )
+                event = json.loads(await asyncio.wait_for(websocket.recv(), timeout=5))
                 assert event["type"] == "document_change"
                 assert event["action"] == "insert"
                 assert event["row"]["title"] == "Live private note"
@@ -517,9 +586,11 @@ class TestActorWebSocket:
             ).json()["launch_url"]
             with _host_client() as host:
                 _redeem(host, launch_url)
-                token = host.post("/app-session/token").json()["access_token"]
+                token = host.post(_session_path(solution_a["id"], app_a)).json()[
+                    "access_token"
+                ]
             async with connect(
-                f"{E2E_APP_WS_URL}/ws/connect?token={token}"
+                f"{E2E_APP_WS_URL}{RUNTIME_PREFIX}/ws/connect?token={token}"
             ) as websocket:
                 await asyncio.wait_for(websocket.recv(), timeout=5)
                 await websocket.send(
@@ -530,9 +601,7 @@ class TestActorWebSocket:
                         }
                     )
                 )
-                denied = json.loads(
-                    await asyncio.wait_for(websocket.recv(), timeout=5)
-                )
+                denied = json.loads(await asyncio.wait_for(websocket.recv(), timeout=5))
                 assert denied == {
                     "type": "error",
                     "channel": f"table:{sibling.id}",
@@ -550,7 +619,7 @@ class TestActorWebSocket:
     ):
         try:
             async with connect(
-                f"{E2E_APP_WS_URL}/ws/connect?token={builder_alice.access_token}"
+                f"{E2E_APP_WS_URL}{RUNTIME_PREFIX}/ws/connect?token={builder_alice.access_token}"
             ) as websocket:
                 await asyncio.wait_for(websocket.recv(), timeout=5)
                 pytest.fail("normal user token reached the actor WebSocket")
@@ -561,23 +630,36 @@ class TestActorWebSocket:
 
 @pytest.mark.e2e
 class TestArtifactServing:
+    def test_opaque_origin_preflight_reaches_the_runtime_policy(self):
+        with _host_client() as host:
+            response = host.options(
+                _sdk_path("api/auth/me"),
+                headers={
+                    "Origin": "null",
+                    "Access-Control-Request-Method": "GET",
+                    "Access-Control-Request-Headers": "authorization",
+                },
+            )
+        assert response.status_code == 204, response.text
+        assert response.headers["access-control-allow-origin"] == "null"
+        assert response.headers["access-control-allow-credentials"] == "true"
+        assert "authorization" in response.headers["access-control-allow-headers"]
 
-    def test_index_carries_csp_and_no_store(
-        self, e2e_client, builder_alice, alice_app
-    ):
+    def test_index_carries_csp_and_no_store(self, e2e_client, builder_alice, alice_app):
         solution, app_id = alice_app
         url = _launch(e2e_client, builder_alice, solution["id"], app_id).json()[
             "launch_url"
         ]
         with _host_client() as host:
             _redeem(host, url)
-            resp = host.get(f"/{solution['id']}/apps/{app_id}/index.html")
+            resp = host.get(_app_path(solution["id"], app_id, "index.html"))
             assert resp.status_code == 200, resp.text
             csp = resp.headers["content-security-policy"]
             assert "default-src 'self'" in csp
             assert "object-src 'none'" in csp
             assert "base-uri 'none'" in csp
             assert "frame-ancestors" in csp
+            assert "sandbox allow-forms allow-scripts" in csp
             assert resp.headers["cache-control"] == "no-store"
             assert resp.headers["x-content-type-options"] == "nosniff"
 
@@ -590,11 +672,11 @@ class TestArtifactServing:
         ]
         with _host_client() as host:
             _redeem(host, url)
-            resp = host.get(f"/{solution['id']}/apps/{app_id}/assets/main-abc123.js")
+            resp = host.get(_app_path(solution["id"], app_id, "assets/main-abc123.js"))
             assert resp.status_code == 200, resp.text
             assert "immutable" in resp.headers["cache-control"]
             # A missing asset must 404 rather than silently become index.html.
-            missing = host.get(f"/{solution['id']}/apps/{app_id}/assets/nope.js")
+            missing = host.get(_app_path(solution["id"], app_id, "assets/nope.js"))
             assert missing.status_code == 404
 
     def test_traversal_cannot_escape_the_app_prefix(
@@ -607,7 +689,11 @@ class TestArtifactServing:
         with _host_client() as host:
             _redeem(host, url)
             resp = host.get(
-                f"/{solution['id']}/apps/{app_id}/../../other/dist/index.html"
+                _app_path(
+                    solution["id"],
+                    app_id,
+                    "../../other/dist/index.html",
+                )
             )
             # Either the router rejects it or the URL never matches this route;
             # what must never happen is serving another app's artifact.
@@ -620,7 +706,7 @@ class TestArtifactServing:
         ]
         with _host_client() as host:
             _redeem(host, url)
-            resp = host.get(f"/{solution['id']}/apps/{app_id}/reports/42")
+            resp = host.get(_app_path(solution["id"], app_id, "reports/42"))
             assert resp.status_code == 200, resp.text
             assert b"id=root" in resp.content
             assert resp.headers["cache-control"] == "no-store"
@@ -637,12 +723,24 @@ class TestArtifactServing:
             ]
             with _host_client() as host:
                 _redeem(host, url)
-                # Bound to A; asking for B is invisible, not forbidden.
-                resp = host.get(f"/{solution_b['id']}/apps/{app_b}/index.html")
-                assert resp.status_code == 404, resp.text
-                # Even the right Solution with the wrong app is 404.
-                mismatched = host.get(f"/{solution_a['id']}/apps/{app_b}/index.html")
-                assert mismatched.status_code == 404, mismatched.text
+                session_cookie = host.cookies["bifrost_app_session"]
+                # The browser does not send A's path-scoped cookie to B.
+                resp = host.get(_app_path(solution_b["id"], app_b, "index.html"))
+                assert resp.status_code == 401, resp.text
+                mismatched = host.get(_app_path(solution_a["id"], app_b, "index.html"))
+                assert mismatched.status_code == 401, mismatched.text
+
+            # Even a client that deliberately replays A's cookie outside its
+            # browser path scope learns nothing about B: the live binding is a
+            # 404 rather than an authorization oracle.
+            with _host_client() as replay:
+                replayed = replay.get(
+                    _app_path(solution_b["id"], app_b, "index.html"),
+                    headers={
+                        "Cookie": f"bifrost_app_session={session_cookie}",
+                    },
+                )
+                assert replayed.status_code == 404, replayed.text
         finally:
             e2e_client.delete(
                 f"{BUILDER_URL}/{solution_b['id']}", headers=builder_alice.headers

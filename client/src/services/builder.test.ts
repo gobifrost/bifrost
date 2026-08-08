@@ -372,9 +372,8 @@ describe("revisions and turns", () => {
 		mockAuthFetch.mockResolvedValue(
 			jsonResponse({
 				turn: turn({ id: "turn-8" }),
-				final_text: "Added a chart",
-				tool_call_count: 2,
-				revision_created: true,
+				job_id: "job-8",
+				status: "queued",
 			}),
 		);
 
@@ -394,7 +393,8 @@ describe("revisions and turns", () => {
 				signal: undefined,
 			},
 		);
-		expect(out.revision_created).toBe(true);
+		expect(out.job_id).toBe("job-8");
+		expect(out.status).toBe("queued");
 	});
 
 	it("mints an exact app-host launch URL for the requested route", async () => {

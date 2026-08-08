@@ -9,6 +9,7 @@ import {
 	Globe2,
 	Loader2,
 	ShieldCheck,
+	ShieldAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -101,6 +102,7 @@ function PromotionReviewWorkspace({ review }: { review: PromotionReview }) {
 		review.config_keys_requiring_reentry_for_global ?? [];
 	const unresolvedRoles = review.unresolved_roles ?? [];
 	const [target, setTarget] = useState<"company" | "global">("company");
+	const [runtimeMode, setRuntimeMode] = useState<"isolated" | "trusted">("isolated");
 	const [approveRoleCreation, setApproveRoleCreation] = useState(false);
 	const [approvedConnections, setApprovedConnections] = useState<string[]>([]);
 	const [allowGlobalRepoAccess, setAllowGlobalRepoAccess] = useState(false);
@@ -156,6 +158,7 @@ function PromotionReviewWorkspace({ review }: { review: PromotionReview }) {
 	function submitPromotion() {
 		promoteMutation.mutate({
 			target,
+			runtime_mode: runtimeMode,
 			approve_role_creation: approveRoleCreation,
 			approved_connection_names: approvedConnections,
 			allow_global_repo_access: allowGlobalRepoAccess,
@@ -315,6 +318,22 @@ function PromotionReviewWorkspace({ review }: { review: PromotionReview }) {
 							) : null}
 						</section>
 
+						<section className="border-b px-5 py-4">
+							<h3 className="mb-3 flex items-center gap-2 text-sm font-semibold">
+								<ShieldAlert className="h-4 w-4" /> Browser runtime
+							</h3>
+							<RadioGroup value={runtimeMode} onValueChange={(value) => setRuntimeMode(value as "isolated" | "trusted")} className="grid gap-2">
+								<label className={cn("flex cursor-pointer gap-3 rounded-lg p-3 ring-1 ring-foreground/10", runtimeMode === "isolated" && "bg-primary/10 ring-primary/30")}>
+									<RadioGroupItem value="isolated" className="mt-0.5" />
+									<span><span className="block text-sm font-medium">Isolated · recommended</span><span className="mt-0.5 block text-xs leading-5 text-muted-foreground">Keeps generated JavaScript in an opaque sandbox while preserving files, tables, and workflow SDK access through its scoped token.</span></span>
+								</label>
+								<label className={cn("flex cursor-pointer gap-3 rounded-lg p-3 ring-1 ring-foreground/10", runtimeMode === "trusted" && "bg-destructive/5 ring-destructive/30")}>
+									<RadioGroupItem value="trusted" className="mt-0.5" />
+									<span><span className="block text-sm font-medium">Trusted platform app</span><span className="mt-0.5 block text-xs leading-5 text-muted-foreground">Runs like an existing V2 app. Choose only after reviewing every dependency and source file.</span></span>
+								</label>
+							</RadioGroup>
+						</section>
+
 						{unresolvedRoles.length > 0 ? (
 							<section className="border-b px-5 py-4">
 								<label className="flex items-start gap-3">
@@ -437,7 +456,7 @@ function PromotionReviewWorkspace({ review }: { review: PromotionReview }) {
 						<AlertDialogDescription>
 							This replays pinned revision{" "}
 							{review.pinned_revision_id?.slice(0, 8)}, applies the reviewed
-							role and connection grants, and ends private-owner bypass.
+							role and connection grants, and ends private-owner bypass. The app will run in <strong>{runtimeMode}</strong> mode.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>

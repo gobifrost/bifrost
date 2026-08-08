@@ -33,10 +33,12 @@ import {
 	Send,
 	Sparkles,
 	Undo2,
+	Users,
 } from "lucide-react";
 import { ChatWindow } from "@/components/chat";
 import { BuilderChangesPanel } from "@/components/builder/BuilderChangesPanel";
 import { BuilderCodePanel } from "@/components/builder/BuilderCodePanel";
+import { BuilderShareDialog } from "@/components/builder/BuilderShareDialog";
 import {
 	PreviewPane,
 	type PreviewDevice,
@@ -153,6 +155,7 @@ export function SolutionBuilder() {
 		initialSessionId ?? restoredWorkbench.activeSessionId,
 	);
 	const [actionError, setActionError] = useState<string | null>(null);
+	const [shareOpen, setShareOpen] = useState(false);
 
 	const solutionQuery = useQuery({
 		queryKey: ["builder", "solution", id],
@@ -200,6 +203,16 @@ export function SolutionBuilder() {
 	const source = currentRevision(revisions);
 	const deployed = deployedRevision(revisions);
 	const solution = solutionQuery.data;
+	const canEdit = Boolean(
+		solution &&
+			(solution.caller_access === "owner" ||
+				solution.caller_access === "support" ||
+				solution.collaborator_access === "edit"),
+	);
+	const canManage = Boolean(
+		solution &&
+			(solution.caller_access === "owner" || solution.caller_access === "support"),
+	);
 	const builderApp = applicationsQuery.data?.applications.find(
 		(app) => app.solution_id === id,
 	);
@@ -208,9 +221,7 @@ export function SolutionBuilder() {
 		sessions.find((session) => session.id === initialSessionId) ??
 		sessions[0];
 
-	const canLaunchApp = Boolean(
-		solution?.app_origin && builderApp && deployed,
-	);
+	const canLaunchApp = Boolean(builderApp && deployed);
 	const resizeAgentPanel = useCallback(
 		(event: ReactPointerEvent<HTMLDivElement>) => {
 			const bounds = workbenchRef.current?.getBoundingClientRect();
@@ -331,21 +342,12 @@ export function SolutionBuilder() {
 		onError: (error: Error) => setActionError(error.message),
 	});
 
-	const openAppMutation = useMutation({
-		mutationFn: () => {
-			if (!builderApp) {
-				throw new Error("The app has not deployed yet");
-			}
-			return createBuilderAppLaunch(id, builderApp.id, previewRoute);
-		},
-		onSuccess: ({ launch_url }) => {
-			window.open(launch_url, "_blank", "noopener,noreferrer");
-		},
-		onError: (error: Error) => setActionError(error.message),
-	});
-
 	const handleBuilderMessage = useCallback(
 		(message: string) => {
+			if (!canEdit) {
+				setActionError("You have view-only access to this build");
+				return;
+			}
 			if (!selectedSession) {
 				setActionError(
 					"Start a builder session before sending a message",
@@ -357,7 +359,7 @@ export function SolutionBuilder() {
 				message,
 			});
 		},
-		[runTurnMutation, selectedSession],
+		[canEdit, runTurnMutation, selectedSession],
 	);
 
 	useEffect(() => {
@@ -414,6 +416,7 @@ export function SolutionBuilder() {
 	const displayedTurnStatus: BuilderTurnStatus | null =
 		runTurnMutation.isPending ? "running" : (turn?.status ?? null);
 	const promotionReady = Boolean(
+		canManage &&
 		source &&
 		deployed &&
 		source.id === deployed.id &&
@@ -428,10 +431,8 @@ export function SolutionBuilder() {
 				? "Update the preview to match Source"
 				: "Ready for review";
 	const previewState:
-		"unconfigured" | "waiting" | "loading" | "failed" | "ready" =
-		!solution?.app_origin
-			? "unconfigured"
-			: !builderApp || !deployed
+		"waiting" | "loading" | "failed" | "ready" =
+		!builderApp || !deployed
 				? "waiting"
 				: previewLaunchQuery.isError
 					? "failed"
@@ -482,6 +483,14 @@ export function SolutionBuilder() {
 	return (
 		<TooltipProvider>
 			<div className="flex h-full min-h-0 flex-col bg-background">
+				{solution ? (
+					<BuilderShareDialog
+						solutionId={solution.id}
+						solutionName={solution.name}
+						open={shareOpen}
+						onOpenChange={setShareOpen}
+					/>
+				) : null}
 				<header className="flex flex-wrap items-center gap-3 border-b px-3 py-2.5 sm:px-4">
 					<div className="min-w-0 flex-1">
 						<div className="flex min-w-0 items-center gap-2">
@@ -499,17 +508,46 @@ export function SolutionBuilder() {
 							) : null}
 						</div>
 						<p className="truncate text-xs text-muted-foreground">
-							Build / {solution?.slug}
+							{solution?.organization_name ?? "Build"} / {solution?.slug}
+							{solution?.caller_access !== "owner" && solution?.owner_name
+								? ` · Owned by ${solution.owner_name}`
+								: ""}
 						</p>
 					</div>
 
 					<div className="flex w-full items-center gap-1.5 overflow-x-auto sm:w-auto">
+						<Badge variant="secondary" className="h-7 shrink-0 gap-1.5">
+							{solution?.caller_access === "owner" ? (
+								<Lock className="h-3 w-3" />
+							) : (
+								<Users className="h-3 w-3" />
+							)}
+							{solution?.caller_access === "owner"
+								? "Owner"
+								: solution?.caller_access === "support"
+									? "Support"
+									: solution?.collaborator_access === "edit"
+										? "Can edit"
+										: "View only"}
+						</Badge>
+						{canManage ? (
+							<Button
+								variant="ghost"
+								size="sm"
+								className="h-9 sm:h-7"
+								onClick={() => setShareOpen(true)}
+							>
+								<Users className="h-4 w-4" />
+								<span className="hidden xl:inline">Share</span>
+							</Button>
+						) : null}
 						<Button
 							variant="ghost"
 							size="sm"
 							className="h-9 sm:h-7"
 							aria-label="Undo latest source change"
 							disabled={
+								!canEdit ||
 								!source?.parent_revision_id ||
 								!selectedSession ||
 								undoMutation.isPending
@@ -550,11 +588,18 @@ export function SolutionBuilder() {
 										size="sm"
 										className="h-9 sm:h-7"
 										aria-label="Open app"
-										disabled={
-											!canLaunchApp ||
-											openAppMutation.isPending
-										}
-										onClick={() => openAppMutation.mutate()}
+									disabled={
+										!canLaunchApp
+									}
+									onClick={() => {
+										if (!builderApp) return;
+										const route = previewRoute === "/" ? "" : previewRoute;
+										window.open(
+											`/apps/${builderApp.slug}${route}`,
+											"_blank",
+											"noopener,noreferrer",
+										);
+									}}
 									>
 										<ExternalLink className="h-4 w-4" />
 										<span className="hidden xl:inline">
@@ -565,9 +610,7 @@ export function SolutionBuilder() {
 							</TooltipTrigger>
 							{!canLaunchApp ? (
 								<TooltipContent>
-									{solution?.app_origin
-										? "The app needs a successful deploy first"
-										: "The separate app host is not configured"}
+									The app needs a successful deploy first
 								</TooltipContent>
 							) : null}
 						</Tooltip>
@@ -590,11 +633,12 @@ export function SolutionBuilder() {
 													? "Request promotion"
 													: promotionGuidance
 										}
-										disabled={
-											promotionRequested ||
-											!promotionReady ||
-											promotionMutation.isPending
-										}
+									disabled={
+										!canManage ||
+										promotionRequested ||
+										!promotionReady ||
+										promotionMutation.isPending
+									}
 										onClick={() =>
 											promotionMutation.mutate()
 										}
@@ -701,6 +745,11 @@ export function SolutionBuilder() {
 						{turn.error}
 					</p>
 				)}
+				{!canEdit && !actionError ? (
+					<p className="border-b bg-muted/35 px-4 py-2 text-xs text-muted-foreground">
+						You are reviewing this build. Conversation, source, and preview are available; only editors can make changes.
+					</p>
+				) : null}
 
 				<div className="grid grid-cols-4 border-b p-1 lg:hidden">
 					{(
@@ -766,7 +815,7 @@ export function SolutionBuilder() {
 							<Button
 								variant="ghost"
 								size="sm"
-								disabled={newSessionMutation.isPending}
+								disabled={!canEdit || newSessionMutation.isPending}
 								onClick={() => newSessionMutation.mutate()}
 							>
 								<MessageSquarePlus className="h-4 w-4" />
@@ -811,6 +860,7 @@ export function SolutionBuilder() {
 									agentName="App Builder"
 									onSend={handleBuilderMessage}
 									isSending={runTurnMutation.isPending}
+									inputDisabled={!canEdit}
 									inputPlaceholder="Describe what to build or change…"
 								/>
 							) : (
@@ -824,7 +874,7 @@ export function SolutionBuilder() {
 									</p>
 									<Button
 										size="sm"
-										disabled={newSessionMutation.isPending}
+									disabled={!canEdit || newSessionMutation.isPending}
 										onClick={() =>
 											newSessionMutation.mutate()
 										}
@@ -955,7 +1005,7 @@ export function SolutionBuilder() {
 									solutionId={id}
 									revisions={revisions}
 									isLoading={revisionsQuery.isLoading}
-									canUndo={Boolean(selectedSession)}
+									canUndo={canEdit && Boolean(selectedSession)}
 									undoingRevisionId={
 										undoMutation.isPending
 											? (undoMutation.variables ?? null)

@@ -30,7 +30,9 @@ class ApplicationBase(BaseModel):
         max_length=255,
         description="Application display name",
     )
-    description: str | None = Field(default=None, description="Optional application description")
+    description: str | None = Field(
+        default=None, description="Optional application description"
+    )
     icon: str | None = Field(
         default=None,
         max_length=50,
@@ -111,6 +113,7 @@ class ApplicationUpdate(BaseModel):
         default=None,
         description="Role IDs for role_based access (replaces existing roles)",
     )
+
     @field_validator("slug")
     @classmethod
     def validate_slug(cls, v: str | None) -> str | None:
@@ -151,9 +154,22 @@ class ApplicationPublic(ApplicationBase):
     is_published: bool
     has_unpublished_changes: bool
     access_level: str = Field(default="authenticated")
-    app_model: str = Field(default="inline_v1", description="Render model: inline_v1 (legacy inline) | standalone_v2")
-    is_solution_managed: bool = Field(default=False, description="True if managed by a deployed Solution (read-only on platform)")
-    solution_id: UUID | None = Field(default=None, description="UUID of the owning Solution install (null if not solution-managed)")
+    app_model: str = Field(
+        default="inline_v1",
+        description="Render model: inline_v1 (legacy inline) | standalone_v2",
+    )
+    runtime_mode: Literal["trusted", "isolated"] = Field(
+        default="trusted",
+        description="Server-authoritative browser runtime: trusted or isolated",
+    )
+    is_solution_managed: bool = Field(
+        default=False,
+        description="True if managed by a deployed Solution (read-only on platform)",
+    )
+    solution_id: UUID | None = Field(
+        default=None,
+        description="UUID of the owning Solution install (null if not solution-managed)",
+    )
     role_ids: list[UUID] = Field(default_factory=list)
     repo_path: str = Field(
         description="Workspace-relative path to the app's source directory. Mutated via POST /api/applications/{id}/replace."
@@ -173,6 +189,12 @@ class ApplicationListResponse(BaseModel):
 
     applications: list[ApplicationPublic]
     total: int
+
+
+class ApplicationLaunchResponse(BaseModel):
+    """One-time handoff into an isolated application document."""
+
+    launch_url: str
 
 
 # ==================== DEFINITION MODELS ====================
@@ -307,9 +329,13 @@ class AppFileListResponse(BaseModel):
 class SimpleFileResponse(BaseModel):
     """Single file response for S3-backed app files."""
 
-    path: str = Field(description="Relative file path within the app (e.g., 'pages/index.tsx')")
+    path: str = Field(
+        description="Relative file path within the app (e.g., 'pages/index.tsx')"
+    )
     source: str = Field(description="File source content")
-    compiled: str | None = Field(default=None, description="Pre-compiled JavaScript output")
+    compiled: str | None = Field(
+        default=None, description="Pre-compiled JavaScript output"
+    )
 
 
 class SimpleFileListResponse(BaseModel):
@@ -347,8 +373,14 @@ class AppRenderResponse(BaseModel):
 class EmbedSecretCreate(BaseModel):
     """Request to create an embed secret for an app."""
 
-    name: str = Field(..., max_length=255, description="Label for this secret (e.g., 'Halo Production')")
-    secret: str | None = Field(default=None, description="Shared secret. If omitted, one is auto-generated.")
+    name: str = Field(
+        ...,
+        max_length=255,
+        description="Label for this secret (e.g., 'Halo Production')",
+    )
+    secret: str | None = Field(
+        default=None, description="Shared secret. If omitted, one is auto-generated."
+    )
     hmac_scheme: EmbedHmacScheme = Field(
         default="shopify",
         description="HMAC signing scheme. 'shopify' signs all query params; 'halopsa' signs only agent_id.",
@@ -419,4 +451,6 @@ class ApplicationSwapSlugsRequest(BaseModel):
     """
 
     app_a: UUID = Field(description="First application id.")
-    app_b: UUID = Field(description="Second application id; its slug is exchanged with app_a's.")
+    app_b: UUID = Field(
+        description="Second application id; its slug is exchanged with app_a's."
+    )

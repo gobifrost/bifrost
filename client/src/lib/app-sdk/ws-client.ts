@@ -38,7 +38,15 @@ export function buildWsUrl(): string {
   const t = getBifrostTransport();
   const base = t.baseUrl ? new URL(t.baseUrl) : new URL(window.location.href);
   const proto = base.protocol === "https:" ? "wss:" : "ws:";
-  const url = new URL("/ws/connect", `${proto}//${base.host}`);
+  // The isolated runtime is mounted below a public subpath rather than on a
+  // separate origin. Its HTTP allowlist lives at <mount>/_bifrost while its
+  // sibling WebSocket route lives at <mount>/ws. Existing trusted/dev-server
+  // providers keep the historical host-root /ws route.
+  const actorSuffix = "/_bifrost";
+  const path = base.pathname.endsWith(actorSuffix)
+    ? `${base.pathname.slice(0, -actorSuffix.length)}/ws/connect`
+    : "/ws/connect";
+  const url = new URL(path, `${proto}//${base.host}`);
   if (t.token) url.searchParams.set("token", t.token);
   return url.toString();
 }

@@ -105,8 +105,9 @@ export function AgentSkillPanel({ agentId }: { agentId: string }) {
 						<span className={cn("ml-auto", TONE_MUTED)}>instructions</span>
 					</div>
 					{skill.bundle_path ? (
-						<div className="flex min-w-0 items-center gap-2 text-[13px]">
+						<div className="flex min-w-0 items-center gap-2 text-[13px]" title={skill.source === "solution" ? "Path relative to the Solution root" : "Root inside managed Agent Skill storage"}>
 							<FileCode2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+							<span className={TONE_MUTED}>{skill.source === "solution" ? "Solution path" : "Bundle root"}</span>
 							<code className={cn("truncate", TYPE_MONO)}>
 								{skill.bundle_path}
 							</code>

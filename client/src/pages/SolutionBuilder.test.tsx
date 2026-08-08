@@ -35,6 +35,7 @@ vi.mock("@/components/chat", () => ({
 	ChatWindow: (props: {
 		conversationId?: string;
 		onSend?: (message: string) => void;
+		inputDisabled?: boolean;
 	}) => {
 		mockChatWindow(props);
 		return (
@@ -102,9 +103,14 @@ function solution(overrides: Partial<BuilderSolution> = {}): BuilderSolution {
 		name: "Expense Tracker",
 		visibility: "private",
 		owner_user_id: "user-1",
+		owner_name: "Dev User",
+		owner_email: "dev@example.com",
 		organization_id: "org-1",
+		organization_name: "Example Customer",
+		caller_access: "owner",
+		collaborator_access: null,
 		status: "active",
-		promotion_status: null,
+		promotion_status: "none",
 		created_at: "2026-07-25T10:00:00Z",
 		updated_at: "2026-07-25T10:00:00Z",
 		...overrides,
@@ -242,6 +248,28 @@ describe("top bar", () => {
 		expect(screen.getByText("Private")).toBeInTheDocument();
 	});
 
+	it("makes shared viewer access explicit and disables every mutating control", async () => {
+		mockGetBuilderSolution.mockResolvedValue(
+			solution({
+				owner_user_id: "user-2",
+				owner_name: "Taylor Owner",
+				caller_access: "collaborator",
+				collaborator_access: "view",
+			}),
+		);
+
+		renderWithProviders(<SolutionBuilder />);
+
+		expect(await screen.findByText("View only")).toBeInTheDocument();
+		expect(screen.getByText(/owned by taylor owner/i)).toBeInTheDocument();
+		expect(screen.getByText(/you are reviewing this build/i)).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /new session/i })).toBeDisabled();
+		expect(screen.queryByRole("button", { name: /^share$/i })).not.toBeInTheDocument();
+		expect(mockChatWindow).toHaveBeenCalledWith(
+			expect.objectContaining({ inputDisabled: true }),
+		);
+	});
+
 	it("omits the Private badge for a shared solution", async () => {
 		mockGetBuilderSolution.mockResolvedValue(
 			solution({ visibility: "shared" }),
@@ -326,7 +354,7 @@ describe("top bar", () => {
 		).toBeDisabled();
 	});
 
-	it("disables Open app when no app origin is configured", async () => {
+	it("disables Open app before the first successful deployment", async () => {
 		renderWithProviders(<SolutionBuilder />);
 
 		expect(
@@ -334,13 +362,12 @@ describe("top bar", () => {
 		).toBeDisabled();
 	});
 
-	it("enables Open app and previews the configured origin", async () => {
-		mockGetBuilderSolution.mockResolvedValue(
-			solution({ app_origin: "https://apps.example.test" }),
-		);
+	it("enables Open app and restores an isolated preview", async () => {
 		mockUseApplications.mockReturnValue({
 			data: {
-				applications: [{ id: "app-1", solution_id: "sol-1" }],
+				applications: [
+					{ id: "app-1", slug: "expense-tracker", solution_id: "sol-1" },
+				],
 			},
 			isLoading: false,
 		});
@@ -362,24 +389,16 @@ describe("top bar", () => {
 		);
 	});
 
-	it("mints a fresh launch URL when opening the deployed app in a new tab", async () => {
+	it("opens the stable /apps URL in a new tab", async () => {
 		const open = vi.spyOn(window, "open").mockImplementation(() => null);
-		mockGetBuilderSolution.mockResolvedValue(
-			solution({ app_origin: "https://apps.example.test" }),
-		);
 		mockUseApplications.mockReturnValue({
 			data: {
-				applications: [{ id: "app-1", solution_id: "sol-1" }],
+				applications: [
+					{ id: "app-1", slug: "expense-tracker", solution_id: "sol-1" },
+				],
 			},
 			isLoading: false,
 		});
-		mockCreateBuilderAppLaunch
-			.mockResolvedValueOnce({
-				launch_url: "https://apps.example.test/launch/preview-code",
-			})
-			.mockResolvedValueOnce({
-				launch_url: "https://apps.example.test/launch/new-tab-code",
-			});
 		const { user } = renderWithProviders(<SolutionBuilder />);
 
 		await screen.findByTestId("preview-frame");
@@ -387,7 +406,7 @@ describe("top bar", () => {
 
 		await waitFor(() =>
 			expect(open).toHaveBeenCalledWith(
-				"https://apps.example.test/launch/new-tab-code",
+				"/apps/expense-tracker",
 				"_blank",
 				"noopener,noreferrer",
 			),
@@ -503,12 +522,11 @@ describe("chat sessions", () => {
 			previewDevice: "mobile",
 		});
 		mockListBuilderSessions.mockResolvedValue([SESSION, SECOND_SESSION]);
-		mockGetBuilderSolution.mockResolvedValue(
-			solution({ app_origin: "https://apps.example.test" }),
-		);
 		mockUseApplications.mockReturnValue({
 			data: {
-				applications: [{ id: "app-1", solution_id: "sol-1" }],
+				applications: [
+					{ id: "app-1", slug: "expense-tracker", solution_id: "sol-1" },
+				],
 			},
 			isLoading: false,
 		});

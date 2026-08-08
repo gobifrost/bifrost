@@ -30,7 +30,6 @@ from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.authorization_scopes import (
@@ -39,10 +38,8 @@ from shared.authorization_scopes import (
     validate_role_scopes,
 )
 from src.core.database import get_db
-from src.models.orm.applications import Application
-from src.models.orm.solutions import Solution
 from src.core.security import ACTOR_TYPE_SOLUTION_APP, decode_token
-from src.services.solutions.access import VISIBILITY_PRIVATE
+from src.services.solutions.app_runtime_access import load_runtime_viewer
 
 logger = logging.getLogger(__name__)
 
@@ -120,9 +117,7 @@ async def authenticate_solution_app_token(
         raise _UNAUTHENTICATED
 
     try:
-        scopes = frozenset(
-            validate_role_scopes(payload["scopes"], custom_role=False)
-        )
+        scopes = frozenset(validate_role_scopes(payload["scopes"], custom_role=False))
         if (
             PLATFORM_SUPERUSER_SCOPE in scopes
             or not scopes
@@ -138,35 +133,27 @@ async def authenticate_solution_app_token(
             scopes=scopes,
         )
     except (KeyError, TypeError, ValueError):
-        logger.warning("Solution app token is missing or malformed in its binding claims")
+        logger.warning(
+            "Solution app token is missing or malformed in its binding claims"
+        )
         raise _UNAUTHENTICATED from None
 
-    # Recompute ownership and app binding from live server state on every
-    # request. Promotion, owner deletion, app removal, or Solution deactivation
-    # therefore revokes a still-unexpired token immediately; no boolean claim
-    # supplied by generated code is trusted as an owner bypass.
-    authorized = (
-        await db.execute(
-            select(Solution.id)
-            .join(
-                Application,
-                Application.solution_id == Solution.id,
-            )
-            .where(
-                Solution.id == principal.solution_id,
-                Solution.visibility == VISIBILITY_PRIVATE,
-                Solution.status == "active",
-                Solution.owner_user_id == principal.actor_user_id,
-                Solution.organization_id == principal.organization_id,
-                Application.id == principal.app_id,
-                Application.organization_id == principal.organization_id,
-            )
-        )
-    ).scalar_one_or_none()
-    if authorized is None:
+    # Recompute the exact live binding on every request. Promotion/runtime-mode
+    # changes, collaborator removal, application access changes, user
+    # deactivation, or Solution deactivation revoke a still-unexpired token.
+    viewer = await load_runtime_viewer(
+        db,
+        user_id=principal.actor_user_id,
+        solution_id=principal.solution_id,
+        app_id=principal.app_id,
+        organization_id=principal.organization_id,
+    )
+    if viewer is None:
         raise _UNAUTHENTICATED
 
     return principal
 
 
-CurrentSolutionApp = Annotated[SolutionAppPrincipal, Depends(get_solution_app_principal)]
+CurrentSolutionApp = Annotated[
+    SolutionAppPrincipal, Depends(get_solution_app_principal)
+]

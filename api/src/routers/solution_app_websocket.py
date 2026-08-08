@@ -21,7 +21,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from shared.policies.evaluate import evaluate
 from src.core.app_actor import (
@@ -62,7 +62,10 @@ async def _resolve_table(
                 select(Table.id).where(
                     predicate,
                     Table.solution_id == principal.solution_id,
-                    Table.organization_id == principal.organization_id,
+                    or_(
+                        Table.organization_id == principal.organization_id,
+                        Table.organization_id.is_(None),
+                    ),
                 )
             )
         ).scalar_one_or_none()
@@ -87,7 +90,10 @@ async def _execution_allowed(
                     Execution.organization_id == principal.organization_id,
                     Execution.execution_context["actor_jti"].astext == principal.jti,
                     Workflow.solution_id == principal.solution_id,
-                    Workflow.organization_id == principal.organization_id,
+                    or_(
+                        Workflow.organization_id == principal.organization_id,
+                        Workflow.organization_id.is_(None),
+                    ),
                 )
             )
         ).scalar_one_or_none() is not None

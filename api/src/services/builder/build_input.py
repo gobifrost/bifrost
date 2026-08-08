@@ -28,7 +28,9 @@ from uuid import UUID
 
 from src.services.builder.scaffold import zip_workspace
 
-_CATALOG_PATH = Path(__file__).resolve().parents[3] / "shared" / "builder_package_catalog.json"
+_CATALOG_PATH = (
+    Path(__file__).resolve().parents[3] / "shared" / "builder_package_catalog.json"
+)
 
 # The app resolves `import ... from "bifrost"` against this local tarball —
 # same mechanism/name SolutionAppBuilder already vendors under.
@@ -102,12 +104,13 @@ def dist_base(app_id: UUID | str, solution_id: UUID | str | None = None) -> str:
     source of truth: baked into the Bifrost vite config here AND passed as
     ``vite build --base`` by the runner — the two must agree.
 
-    Builder-owned private apps use their isolated app-host path. The legacy
-    API dist path remains only for existing non-builder source builds while
-    callers migrate to the dedicated build plane.
+    Builder artifacts are path-independent so the same reviewed bytes can run
+    in an isolated preview or in the trusted runtime after promotion. The
+    isolated document server expands ``./`` entry URLs to its exact app path;
+    the trusted loader reads the same relative entry from the manifest.
     """
     if solution_id is not None:
-        return f"/{solution_id}/apps/{app_id}/"
+        return "./"
     return f"/api/applications/{app_id}/dist/"
 
 
@@ -169,7 +172,9 @@ class UnsupportedDependency(Exception):
 
     def __init__(self, offenders: dict[str, str]):
         self.offenders = dict(offenders)
-        detail = ", ".join(f"{name}@{version}" for name, version in sorted(offenders.items()))
+        detail = ", ".join(
+            f"{name}@{version}" for name, version in sorted(offenders.items())
+        )
         super().__init__(f"Unsupported build dependencies: {detail}")
 
 
@@ -278,23 +283,28 @@ def _source_target(dest_dir: Path, rel_path: str) -> Path:
 
 def _dependency_map(value: object) -> dict[str, str]:
     if not isinstance(value, dict):
-        raise UnsupportedDependency({"<package.json>": "dependencies must be an object"})
-    if any(not isinstance(name, str) or not isinstance(version, str) for name, version in value.items()):
-        raise UnsupportedDependency({"<package.json>": "dependency names and versions must be strings"})
+        raise UnsupportedDependency(
+            {"<package.json>": "dependencies must be an object"}
+        )
+    if any(
+        not isinstance(name, str) or not isinstance(version, str)
+        for name, version in value.items()
+    ):
+        raise UnsupportedDependency(
+            {"<package.json>": "dependency names and versions must be strings"}
+        )
     return value
 
 
 def _pinned_dependencies(dependencies: dict[str, str]) -> dict[str, str]:
     catalog = load_package_catalog()
     validate_dependencies(dependencies)
-    return {
-        name: catalog[name]
-        for name in dependencies
-        if name != "bifrost"
-    }
+    return {name: catalog[name] for name in dependencies if name != "bifrost"}
 
 
-def _build_package_json(src_files: dict[str, bytes], dependencies: dict[str, str]) -> bytes:
+def _build_package_json(
+    src_files: dict[str, bytes], dependencies: dict[str, str]
+) -> bytes:
     """Build the fixed-contract package.json.
 
     Both manifest dependencies and declarations inside the app's source
@@ -318,7 +328,9 @@ def _build_package_json(src_files: dict[str, bytes], dependencies: dict[str, str
     validate_dependencies({**merged_dependencies, **source_dev_dependencies})
 
     pkg = {
-        "name": loaded.get("name") if isinstance(loaded.get("name"), str) else "bifrost-app",
+        "name": loaded.get("name")
+        if isinstance(loaded.get("name"), str)
+        else "bifrost-app",
         "private": True,
         "type": "module",
         "dependencies": {
@@ -369,13 +381,17 @@ def materialize_build_input(
             {
                 "app_id": str(app_id),
                 "base": dist_base(app_id, solution_id),
-                **({"solution_id": str(solution_id)} if solution_id is not None else {}),
+                **(
+                    {"solution_id": str(solution_id)} if solution_id is not None else {}
+                ),
             },
             sort_keys=True,
         ),
         encoding="utf-8",
     )
-    (dest_dir / "package.json").write_bytes(_build_package_json(src_files, dependencies))
+    (dest_dir / "package.json").write_bytes(
+        _build_package_json(src_files, dependencies)
+    )
 
 
 def make_input_zip(

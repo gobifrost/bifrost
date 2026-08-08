@@ -1,9 +1,9 @@
 /**
  * Builder preview pane.
  *
- * Generated apps render on a separate app origin through a one-time launch
- * URL. The control plane never frames a guessed app-origin path: it shows an
- * explicit deployment/launch state until the backend returns a real URL.
+ * Generated apps render in an opaque sandbox through a one-time launch URL.
+ * The visible platform keeps its ordinary origin and /apps URL while the
+ * iframe receives only the attenuated Solution-app runtime.
  */
 
 import { useState, type FormEvent } from "react";
@@ -62,7 +62,7 @@ const DEVICES: {
 interface PreviewPaneProps {
 	/** One-time app-host launch URL minted for this exact Solution app. */
 	launchUrl: string | null;
-	state: "unconfigured" | "waiting" | "loading" | "failed" | "ready";
+	state: "waiting" | "loading" | "failed" | "ready";
 	errorMessage?: string | null;
 	route: string;
 	onRouteChange: (route: string) => void;
@@ -222,7 +222,7 @@ function PreviewDocument({
 					data-testid="preview-frame"
 					src={launchUrl}
 					className="h-full w-full border-0 bg-background"
-					sandbox="allow-scripts allow-forms allow-same-origin"
+					sandbox="allow-scripts allow-forms"
 					onLoad={() => setFrameReady(true)}
 				/>
 			</div>
@@ -250,7 +250,7 @@ export function PreviewPane({
 	device: controlledDevice,
 	onDeviceChange,
 }: PreviewPaneProps) {
-	const canRequestLaunch = state !== "unconfigured" && state !== "waiting";
+	const canRequestLaunch = state !== "waiting";
 	const [internalDevice, setInternalDevice] =
 		useState<PreviewDevice>("responsive");
 	const device = controlledDevice ?? internalDevice;
@@ -350,12 +350,10 @@ export function PreviewPane({
 								: "Preview unavailable"}
 						</p>
 						<p className="max-w-sm text-sm text-muted-foreground">
-							{state === "unconfigured"
-								? "The separate app host is not configured for this environment."
-								: state === "waiting"
+							{state === "waiting"
 									? "Your source is saved. The preview will appear after the first successful build and deploy."
 									: (errorMessage ??
-										"The app host could not create a preview session.")}
+										"Bifrost could not restore the secure preview session.")}
 						</p>
 					</div>
 				)}

@@ -8,8 +8,10 @@ import { GitHub } from "@/pages/settings/GitHub";
 import { LLMConfig } from "@/pages/settings/LLMConfig";
 import { MCP } from "@/pages/settings/MCP";
 import { Maintenance } from "@/pages/settings/Maintenance";
-import { Bot, Key, Palette, Plug, Shield, Wrench } from "lucide-react";
+import { BuilderSettings } from "@/pages/settings/Builder";
+import { Bot, Key, Palette, Plug, Shield, Sparkles, Wrench } from "lucide-react";
 import { Github } from "@/components/icons/GithubIcon";
+import { cn } from "@/lib/utils";
 
 export function Settings() {
 	const navigate = useNavigate();
@@ -30,7 +32,12 @@ export function Settings() {
 	}, [location.pathname, navigate]);
 
 	return (
-		<div className="flex h-full min-h-0 flex-col space-y-6 mx-auto max-w-3xl">
+		<div
+			className={cn(
+				"mx-auto flex h-full min-h-0 w-full flex-col space-y-6",
+				currentTab === "builder" ? "max-w-6xl" : "max-w-3xl",
+			)}
+		>
 			<div>
 				<h1 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
 					Settings
@@ -50,6 +57,10 @@ export function Settings() {
 						<TabsTrigger value="ai">
 							<Bot className="h-4 w-4 mr-1" />
 							AI
+						</TabsTrigger>
+						<TabsTrigger value="builder">
+							<Sparkles className="h-4 w-4 mr-1" />
+							Builder
 						</TabsTrigger>
 						<TabsTrigger value="mcp">
 							<Plug className="h-4 w-4 mr-1" />
@@ -80,6 +91,10 @@ export function Settings() {
 
 				<TabsContent value="ai" className="mt-6 flex-1 min-h-0 overflow-auto">
 					<LLMConfig />
+				</TabsContent>
+
+				<TabsContent value="builder" className="mt-6 flex-1 min-h-0 overflow-auto">
+					<BuilderSettings />
 				</TabsContent>
 
 				<TabsContent value="mcp" className="mt-6 flex-1 min-h-0 overflow-auto">

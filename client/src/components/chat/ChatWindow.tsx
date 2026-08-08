@@ -165,6 +165,7 @@ interface ChatWindowProps {
 	 */
 	onSend?: (message: string) => void;
 	isSending?: boolean;
+	inputDisabled?: boolean;
 	inputPlaceholder?: string;
 }
 
@@ -176,6 +177,7 @@ export function ChatWindow({
 	agentName,
 	onSend,
 	isSending = false,
+	inputDisabled = false,
 	inputPlaceholder,
 }: ChatWindowProps) {
 	const navigate = useNavigate();
@@ -391,7 +393,7 @@ export function ChatWindow({
 				</div>
 				<ChatInput
 					onSend={handleSendMessage}
-					disabled={createConversation.isPending || isSending}
+					disabled={createConversation.isPending || isSending || inputDisabled}
 					isLoading={isSending}
 					placeholder={inputPlaceholder ?? "Send a message..."}
 				/>
@@ -439,7 +441,7 @@ export function ChatWindow({
 				</div>
 				<ChatInput
 					onSend={handleSendMessage}
-					disabled={isSending}
+					disabled={isSending || inputDisabled}
 					isLoading={isSending}
 					placeholder={inputPlaceholder ?? "Send a message..."}
 				/>
@@ -583,6 +585,7 @@ export function ChatWindow({
 			<ChatInput
 				onSend={handleSendMessage}
 				isLoading={onSend ? isSending : isStreaming}
+				disabled={inputDisabled}
 				onStop={onSend ? undefined : stopStreaming}
 				placeholder={
 					inputPlaceholder ??

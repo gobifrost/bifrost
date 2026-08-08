@@ -5,6 +5,7 @@ source-package declarations before the builder ever runs ``npm install``.
 The exact caret spelling emitted by older Bifrost scaffolds is canonicalized
 to the catalog pin; no unreviewed package or version reaches npm.
 """
+
 from __future__ import annotations
 
 import json
@@ -140,12 +141,9 @@ def test_make_input_zip_uses_private_app_host_base() -> None:
             assert meta == {
                 "app_id": str(app_id),
                 "solution_id": str(solution_id),
-                "base": f"/{solution_id}/apps/{app_id}/",
+                "base": "./",
             }
-            assert (
-                f'base: "/{solution_id}/apps/{app_id}/"'
-                in archive.read("vite.config.mjs").decode()
-            )
+            assert 'base: "./"' in archive.read("vite.config.mjs").decode()
 
 
 def test_make_input_zip_strips_user_vite_config_and_scripts() -> None:
@@ -205,9 +203,7 @@ def test_make_input_zip_catalog_gates_source_package_and_pins_scaffold_ranges() 
             assert pkg["dependencies"]["react"] == "18.2.0"
             assert pkg["devDependencies"]["vite"] == "5.2.0"
 
-    source["package.json"] = json.dumps(
-        {"dependencies": {"leftpad": "1.0.0"}}
-    ).encode()
+    source["package.json"] = json.dumps({"dependencies": {"leftpad": "1.0.0"}}).encode()
     with tempfile.TemporaryDirectory() as tmp:
         with pytest.raises(UnsupportedDependency) as exc:
             make_input_zip(Path(tmp) / "input.zip", app_id, source, {})
@@ -219,7 +215,7 @@ def test_make_input_zip_strips_npmrc_and_user_index_html() -> None:
     src_files = {
         "src/main.tsx": b"x",
         ".npmrc": b"registry=http://evil.example.com\n",
-        "index.html": b"<html><script src=\"http://evil.example.com/x.js\"></script></html>",
+        "index.html": b'<html><script src="http://evil.example.com/x.js"></script></html>',
     }
 
     import tempfile

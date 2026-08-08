@@ -212,14 +212,21 @@ async def _retry_idempotent(
             if attempt < _FINALIZE_RETRIES:
                 logger.warning(
                     "Solution %s finalize step '%s' failed (attempt %d/%d): %s — retrying",
-                    sid, what, attempt, _FINALIZE_RETRIES, exc,
+                    sid,
+                    what,
+                    attempt,
+                    _FINALIZE_RETRIES,
+                    exc,
                 )
                 await asyncio.sleep(_FINALIZE_BACKOFF_S * attempt)
     logger.error(
         "Solution %s finalize step '%s' failed after %d attempts: %s. The deploy "
         "is committed; re-run it (or wait for the next sync) to heal — every step "
         "is full-replace and safe to repeat.",
-        sid, what, _FINALIZE_RETRIES, last,
+        sid,
+        what,
+        _FINALIZE_RETRIES,
+        last,
     )
     raise SolutionFinalizeIncomplete(str(sid)) from last
 
@@ -395,9 +402,7 @@ class SolutionDeployer:
             items = ", ".join(
                 f"{n.ref} ({n.detail})" if n.detail else n.ref for n in needs
             )
-            raise SolutionDeployConflict(
-                f"Solution has unmet dependencies: {items}"
-            )
+            raise SolutionDeployConflict(f"Solution has unmet dependencies: {items}")
 
         # ── Downgrade gate (Task 20) — before ANY writes ─────────────────────
         # An older bundle (both versions PEP 440-ordered) is refused unless
@@ -469,9 +474,7 @@ class SolutionDeployer:
         # for an installed solution — not only a captured one. The capture writer
         # (capture.py::_connection_entries) does this for the source install;
         # this mirrors it for every deploy/zip-install/CLI-deploy target.
-        await self._upsert_connection_declarations(
-            solution, bundle.connection_schemas
-        )
+        await self._upsert_connection_declarations(solution, bundle.connection_schemas)
         from src.services.solutions.file_locations import (
             reconcile_solution_file_locations,
         )
@@ -487,7 +490,11 @@ class SolutionDeployer:
         # double-insert. Uses the remapped bundle (install-unique ids).
         await self._upsert_file_policies(solution, rb.file_policies)
         (
-            wf_deleted, tbl_deleted, app_deleted, form_deleted, agent_deleted,
+            wf_deleted,
+            tbl_deleted,
+            app_deleted,
+            form_deleted,
+            agent_deleted,
             claim_deleted,
             stale_app_dist,
         ) = await self._reconcile_deletions(sid, rb)
@@ -521,21 +528,23 @@ class SolutionDeployer:
         # SolutionFinalizeIncomplete — and even then a later deploy/sync heals it.
         async def _finalize_s3() -> None:
             await _retry_idempotent(
-                "store source artifact", sid,
+                "store source artifact",
+                sid,
                 lambda: self._write_source_artifact(sid, source_artifact),
             )
             await _retry_idempotent(
-                "write python source", sid,
-                lambda: self._write_python(
-                    sid, {**rb.python_files, **rb.bundle_files}
-                ),
+                "write python source",
+                sid,
+                lambda: self._write_python(sid, {**rb.python_files, **rb.bundle_files}),
             )
             await _retry_idempotent(
-                "upload app dists", sid,
+                "upload app dists",
+                sid,
                 lambda: self._publish_app_outputs(app_outputs),
             )
             await _retry_idempotent(
-                "sweep stale dist", sid,
+                "sweep stale dist",
+                sid,
                 lambda: self._delete_stale_app_dist(stale_app_dist),
             )
             # ── Bundle file sidecars (O1: no mirror-delete) ───────────────────
@@ -546,7 +555,8 @@ class SolutionDeployer:
             # file (user may have modified it).
             if bundle.solution_files:
                 await _retry_idempotent(
-                    "write bundle file sidecars", sid,
+                    "write bundle file sidecars",
+                    sid,
                     lambda: self._write_bundle_files(
                         sid, bundle.solution_files, file_mode
                     ),
@@ -741,9 +751,7 @@ class SolutionDeployer:
         # path), not the id — the remap just keeps the PK install-unique.
         for mpolicy in file_policies:
             if mpolicy.get("id") is not None:
-                mpolicy["id"] = str(
-                    solution_entity_id(sid, UUID(str(mpolicy["id"])))
-                )
+                mpolicy["id"] = str(solution_entity_id(sid, UUID(str(mpolicy["id"]))))
 
         return SolutionBundle(
             solution=bundle.solution,
@@ -773,7 +781,10 @@ class SolutionDeployer:
         if not isinstance(schema, dict):
             return
         for field_def in schema.get("fields") or []:
-            if isinstance(field_def, dict) and field_def.get("data_provider_id") is not None:
+            if (
+                isinstance(field_def, dict)
+                and field_def.get("data_provider_id") is not None
+            ):
                 field_def["data_provider_id"] = _remap_ref(
                     field_def["data_provider_id"], id_map
                 )
@@ -869,14 +880,15 @@ class SolutionDeployer:
         now = datetime.now(timezone.utc)
         for role_id in dict.fromkeys(role_ids):  # dedupe, preserve order
             self.db.add(
-                junction(**{fk_col: entity_id, "role_id": role_id},
-                         assigned_by=assigned_by, assigned_at=now)
+                junction(
+                    **{fk_col: entity_id, "role_id": role_id},
+                    assigned_by=assigned_by,
+                    assigned_at=now,
+                )
             )
 
     @staticmethod
-    def _validate_access_level(
-        value: Any, enum_cls: type[Enum], entity: str
-    ) -> str:
+    def _validate_access_level(value: Any, enum_cls: type[Enum], entity: str) -> str:
         """Coerce a manifest access_level against its enum BEFORE the DB write.
 
         Writing an unknown value straight into the enum-backed column raises a raw
@@ -920,9 +932,7 @@ class SolutionDeployer:
         if self._policy.suppress_connection_resolution:
             connection_ids = []
         await self.db.execute(
-            delete(AgentMCPConnection).where(
-                AgentMCPConnection.agent_id == agent_id
-            )
+            delete(AgentMCPConnection).where(AgentMCPConnection.agent_id == agent_id)
         )
         now = datetime.now(timezone.utc)
         for connection_id in dict.fromkeys(connection_ids):  # dedupe, preserve order
@@ -994,7 +1004,9 @@ class SolutionDeployer:
             # owner) as a row so a real NULL owner is distinct from "absent".
             row = (
                 await self.db.execute(
-                    select(Workflow.id, Workflow.solution_id).where(Workflow.id == wf_id)
+                    select(Workflow.id, Workflow.solution_id).where(
+                        Workflow.id == wf_id
+                    )
                 )
             ).first()
             if row is not None:
@@ -1154,9 +1166,9 @@ class SolutionDeployer:
                 "solution_id": sid,
             }
 
-            await Upsert(
-                model=Table, id=tbl_id, values=values, match_on="id"
-            ).execute(self.db)
+            await Upsert(model=Table, id=tbl_id, values=values, match_on="id").execute(
+                self.db
+            )
 
             # Invalidate active websocket subscribers' policy cache when the
             # access policy actually changed (the REST PATCH path does this too;
@@ -1261,7 +1273,9 @@ class SolutionDeployer:
             # blocks here until the first commits, then sees the row. Released at
             # commit/rollback. (hashtext gives a stable bigint key per slug.)
             await self.db.execute(
-                text("SELECT pg_advisory_xact_lock(hashtext('bifrost:appslug:' || :s))"),
+                text(
+                    "SELECT pg_advisory_xact_lock(hashtext('bifrost:appslug:' || :s))"
+                ),
                 {"s": slug},
             )
             # Route-collision guard (Codex P2-f + R4): the per-install unique
@@ -1289,7 +1303,9 @@ class SolutionDeployer:
             # global install: no org filter → collide with any same-slug app.
             collision = (
                 await self.db.execute(
-                    select(Application.id, Application.solution_id).where(*collision_pred)
+                    select(Application.id, Application.solution_id).where(
+                        *collision_pred
+                    )
                 )
             ).first()
             if collision is not None:
@@ -1304,7 +1320,9 @@ class SolutionDeployer:
             # Build model-field dict; transport extra "repo_path" maps to model field "path".
             # _collect_apps (CLI zip path) emits neither "path" nor "repo_path" — fall
             # back to f"apps/{slug}" so to_orm_values can derive repo_path from it.
-            mapp_fields = {k: v for k, v in mapp.items() if k in ManifestApp.model_fields}
+            mapp_fields = {
+                k: v for k, v in mapp.items() if k in ManifestApp.model_fields
+            }
             if "path" not in mapp_fields:
                 mapp_fields["path"] = mapp.get("repo_path") or f"apps/{slug}"
             mapp_model = ManifestApp(**mapp_fields)
@@ -1314,7 +1332,16 @@ class SolutionDeployer:
                 # deploy overrides: org/solution/publish metadata stamped at deploy time.
                 "organization_id": solution.organization_id,
                 "solution_id": sid,
-                "published_snapshot": {"deployed_by": "solution", "app_model": app_model},
+                # Private Builder source always executes in the opaque runtime.
+                # Existing/shared Solution deploys preserve the trusted V2
+                # behavior unless promotion explicitly retains isolation.
+                "runtime_mode": (
+                    "isolated" if solution.visibility == "private" else "trusted"
+                ),
+                "published_snapshot": {
+                    "deployed_by": "solution",
+                    "app_model": app_model,
+                },
                 "published_at": now,
             }
             # App LOGO declared in the manifest (`logo:` path), carried by the
@@ -1338,19 +1365,21 @@ class SolutionDeployer:
 
             # Every Solution app is standalone_v2 (guarded above) and is built to
             # dist/, served from _apps/{id}/.
-            builds.append({
-                "app_id": app_id,
-                "src": mapp.get("src_files") or {},
-                # Non-text assets (png/fonts/public/) carried as base64 by the
-                # CLI/git collectors — decoded into the build input (P2-j/R4).
-                "bin": mapp.get("bin_files") or {},
-                # Prebuilt fast-path: UTF-8 dist text + non-UTF-8 dist binaries
-                # (base64). Kept separate so the binaries are base64-decoded, not
-                # UTF-8-encoded (which would corrupt them).
-                "dist": mapp.get("dist_files"),
-                "bin_dist": mapp.get("bin_dist_files"),
-                "dependencies": mapp.get("dependencies") or {},
-            })
+            builds.append(
+                {
+                    "app_id": app_id,
+                    "src": mapp.get("src_files") or {},
+                    # Non-text assets (png/fonts/public/) carried as base64 by the
+                    # CLI/git collectors — decoded into the build input (P2-j/R4).
+                    "bin": mapp.get("bin_files") or {},
+                    # Prebuilt fast-path: UTF-8 dist text + non-UTF-8 dist binaries
+                    # (base64). Kept separate so the binaries are base64-decoded, not
+                    # UTF-8-encoded (which would corrupt them).
+                    "dist": mapp.get("dist_files"),
+                    "bin_dist": mapp.get("bin_dist_files"),
+                    "dependencies": mapp.get("dependencies") or {},
+                }
+            )
         return builds
 
     async def _prepare_app_outputs(
@@ -1590,9 +1619,7 @@ class SolutionDeployer:
             try:
                 await indexer.index_agent(f"agents/{agent_id}.agent.yaml", content)
             except ValueError as exc:
-                raise SolutionDeployConflict(
-                    f"agent {agent_id}: {exc}"
-                ) from exc
+                raise SolutionDeployConflict(f"agent {agent_id}: {exc}") from exc
             # access_level is deploy-owned (manifest-declared); apply it here —
             # the indexer preserves it and the entity is read-only outside deploy
             # (Codex #14). org/solution scope is stamped alongside.
@@ -1680,7 +1707,11 @@ class SolutionDeployer:
         for entry in config_schemas:
             cid = UUID(entry["id"])
             await self._guard_owner(SolutionConfigSchema, cid, sid)
-            direct = ManifestSolutionConfigSchema(**entry).to_orm_values(Destination.INSTALL).direct
+            direct = (
+                ManifestSolutionConfigSchema(**entry)
+                .to_orm_values(Destination.INSTALL)
+                .direct
+            )
             values: dict[str, Any] = {"solution_id": sid, **direct}
             await Upsert(
                 model=SolutionConfigSchema, id=cid, values=values, match_on="id"
@@ -2006,13 +2037,15 @@ class SolutionDeployer:
                 )
             )
             await self.db.execute(
-                delete(WebhookSource).where(
-                    WebhookSource.event_source_id == source_id
-                )
+                delete(WebhookSource).where(WebhookSource.event_source_id == source_id)
             )
 
             # Source parent field dict from the model; install stamps org/solution/created_by.
-            _direct = ManifestEventSource.model_validate(mevent).to_orm_values(Destination.INSTALL).direct
+            _direct = (
+                ManifestEventSource.model_validate(mevent)
+                .to_orm_values(Destination.INSTALL)
+                .direct
+            )
             source_values: dict[str, Any] = {
                 **_direct,
                 "organization_id": solution.organization_id,
@@ -2038,7 +2071,9 @@ class SolutionDeployer:
                 )
 
             # Child config: schedule OR webhook, by source_type.
-            if mevent.get("source_type") == "schedule" and mevent.get("cron_expression"):
+            if mevent.get("source_type") == "schedule" and mevent.get(
+                "cron_expression"
+            ):
                 overlap = mevent.get("overlap_policy")
                 await self.db.execute(
                     insert(ScheduleSource).values(
@@ -2146,7 +2181,9 @@ class SolutionDeployer:
             await self._reconcile_one(Form, sid, {UUID(f["id"]) for f in bundle.forms})
         )
         agent_deleted = len(
-            await self._reconcile_one(Agent, sid, {UUID(a["id"]) for a in bundle.agents})
+            await self._reconcile_one(
+                Agent, sid, {UUID(a["id"]) for a in bundle.agents}
+            )
         )
         claim_deleted = len(
             await self._reconcile_one(
@@ -2175,7 +2212,11 @@ class SolutionDeployer:
         )
         _ = await self._reconcile_one(EventSource, sid, keep_events)
         return (
-            wf_deleted, tbl_deleted, len(stale_app_dist), form_deleted, agent_deleted,
+            wf_deleted,
+            tbl_deleted,
+            len(stale_app_dist),
+            form_deleted,
+            agent_deleted,
             claim_deleted,
             stale_app_dist,
         )

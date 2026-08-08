@@ -9,7 +9,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from uuid import UUID
 
-from sqlalchemy import func, or_, select, text
+from sqlalchemy import func, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -184,10 +184,13 @@ async def promotion_review(
     if build is not None and build.status != "succeeded":
         blockers.append("Pinned revision app build is not green")
 
-    unresolved_roles = sorted(
-        str(name)
-        for name in ((deploy.result or {}).get("roles_unresolved") or [])
-    ) if deploy is not None else []
+    unresolved_roles = (
+        sorted(
+            str(name) for name in ((deploy.result or {}).get("roles_unresolved") or [])
+        )
+        if deploy is not None
+        else []
+    )
     connection_names = sorted(
         (
             await db.execute(
@@ -195,7 +198,9 @@ async def promotion_review(
                     SolutionConnectionSchema.solution_id == solution_id
                 )
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
 
     prior_revision_id = (
@@ -312,16 +317,20 @@ async def promotion_review(
 
 async def list_promotion_reviews(db: AsyncSession) -> list[PromotionReviewDTO]:
     ids = (
-        await db.execute(
-            select(SolutionBuilderProject.solution_id)
-            .join(Solution, Solution.id == SolutionBuilderProject.solution_id)
-            .where(
-                Solution.visibility == "private",
-                SolutionBuilderProject.promotion_status == "requested",
+        (
+            await db.execute(
+                select(SolutionBuilderProject.solution_id)
+                .join(Solution, Solution.id == SolutionBuilderProject.solution_id)
+                .where(
+                    Solution.visibility == "private",
+                    SolutionBuilderProject.promotion_status == "requested",
+                )
+                .order_by(SolutionBuilderProject.promotion_requested_at.asc())
             )
-            .order_by(SolutionBuilderProject.promotion_requested_at.asc())
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [await promotion_review(db, solution_id) for solution_id in ids]
 
 
@@ -355,16 +364,17 @@ async def _assert_target_collisions(
         )
 
     app_slugs = (
-        await db.execute(
-            select(Application.slug).where(Application.solution_id == solution.id)
+        (
+            await db.execute(
+                select(Application.slug).where(Application.solution_id == solution.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     for slug in app_slugs:
         await db.execute(
-            text(
-                "SELECT pg_advisory_xact_lock("
-                "hashtext('bifrost:appslug:' || :s))"
-            ),
+            text("SELECT pg_advisory_xact_lock(hashtext('bifrost:appslug:' || :s))"),
             {"s": slug},
         )
         predicates = [
@@ -379,12 +389,12 @@ async def _assert_target_collisions(
                 )
             )
         collision = (
-            await db.execute(select(Application.id).where(*predicates))
-        ).scalars().first()
+            (await db.execute(select(Application.id).where(*predicates)))
+            .scalars()
+            .first()
+        )
         if collision is not None:
-            raise PromotionBlocked(
-                [f"App slug '{slug}' conflicts with a visible app"]
-            )
+            raise PromotionBlocked([f"App slug '{slug}' conflicts with a visible app"])
 
 
 async def _assign_role_users(
@@ -407,7 +417,9 @@ async def _assign_role_users(
                         UserRole.user_id.in_(user_ids),
                     )
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         )
         db.add_all(
             UserRole(
@@ -461,9 +473,7 @@ async def promote_private_solution(
                 )
             await _assert_target_collisions(db, solution, target_org)
 
-            with tempfile.TemporaryDirectory(
-                prefix="bifrost-promotion-replay-"
-            ) as tmp:
+            with tempfile.TemporaryDirectory(prefix="bifrost-promotion-replay-") as tmp:
                 source_path = Path(tmp) / "source.zip"
                 copied = await SolutionRevisionStorage(solution_id).copy_to_path(
                     review.pinned_revision_id,
@@ -492,6 +502,11 @@ async def promote_private_solution(
                     request.role_user_assignments,
                     assigned_by=admin_user_id,
                 )
+                await db.execute(
+                    update(Application)
+                    .where(Application.solution_id == solution_id)
+                    .values(runtime_mode=request.runtime_mode)
+                )
                 # Generated Python, schedules, events, and autonomous agents
                 # remain inactive because promotion replay keeps the runtime
                 # suppression arm enabled. Visibility is the final DB mutation.
@@ -509,6 +524,7 @@ async def promote_private_solution(
                         "roles_created": list(result.roles_created),
                         "approved_connections": request.approved_connection_names,
                         "global_repo_access": request.allow_global_repo_access,
+                        "runtime_mode": request.runtime_mode,
                     },
                 )
                 # The pinned bundle is already the deployed preview, so a

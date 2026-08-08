@@ -34,6 +34,7 @@ interface ComboboxProps {
 	isLoading?: boolean;
 	className?: string;
 	id?: string;
+	"aria-label"?: string;
 }
 
 export function Combobox({
@@ -47,6 +48,7 @@ export function Combobox({
 	isLoading = false,
 	className,
 	id,
+	"aria-label": ariaLabel,
 }: ComboboxProps) {
 	const [open, setOpen] = React.useState(false);
 
@@ -60,8 +62,9 @@ export function Combobox({
 					variant="outline"
 					role="combobox"
 					aria-expanded={open}
+					aria-label={ariaLabel}
 					className={cn(
-						"w-full justify-between font-normal",
+						"w-full min-w-0 justify-start overflow-hidden text-left font-normal",
 						className,
 					)}
 					disabled={disabled || isLoading}
@@ -77,7 +80,7 @@ export function Combobox({
 						<>
 							<span
 								className={cn(
-									"truncate",
+									"min-w-0 flex-1 truncate text-left",
 									!selectedOption && "text-muted-foreground",
 								)}
 							>
@@ -85,7 +88,7 @@ export function Combobox({
 									? selectedOption.label
 									: placeholder}
 							</span>
-							<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+							<ChevronsUpDown className="ml-auto h-4 w-4 shrink-0 opacity-50" />
 						</>
 					)}
 				</Button>
@@ -114,7 +117,7 @@ export function Combobox({
 										setOpen(false);
 									}}
 								>
-									<div className="flex flex-col flex-1">
+									<div className="min-w-0 flex-1 text-left">
 										<span className="font-medium">
 											{option.label}
 										</span>

@@ -40,7 +40,11 @@ describe("capability gating", () => {
 		mockListBuilderSolutions.mockResolvedValue({
 			solutions: [],
 			total: 0,
+			view: "mine",
+			can_view_all: false,
 			ai_configured: true,
+			builder_ready: true,
+			builder_blockers: [],
 			is_platform_admin: false,
 		});
 
@@ -77,7 +81,11 @@ describe("capability gating", () => {
 		mockListBuilderSolutions.mockResolvedValue({
 			solutions: [],
 			total: 0,
+			view: "mine",
+			can_view_all: false,
 			ai_configured: false,
+			builder_ready: false,
+			builder_blockers: [],
 			is_platform_admin: false,
 		});
 
@@ -91,7 +99,11 @@ describe("capability gating", () => {
 		mockListBuilderSolutions.mockResolvedValue({
 			solutions: [],
 			total: 0,
+			view: "mine",
+			can_view_all: true,
 			ai_configured: false,
+			builder_ready: false,
+			builder_blockers: [],
 			is_platform_admin: true,
 		});
 
@@ -106,7 +118,11 @@ describe("navigation", () => {
 		mockListBuilderSolutions.mockResolvedValue({
 			solutions: [],
 			total: 0,
+			view: "mine",
+			can_view_all: false,
 			ai_configured: true,
+			builder_ready: true,
+			builder_blockers: [],
 			is_platform_admin: false,
 		});
 

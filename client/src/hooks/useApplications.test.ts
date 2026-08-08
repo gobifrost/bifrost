@@ -9,7 +9,10 @@ vi.mock("@/lib/api-client", () => ({
 	},
 }));
 
-import { publishApplication } from "./useApplications";
+import {
+	createIsolatedApplicationLaunch,
+	publishApplication,
+} from "./useApplications";
 
 beforeEach(() => {
 	mockPost.mockReset();
@@ -46,5 +49,30 @@ describe("application publish enqueue", () => {
 		await expect(publishApplication("app-1")).rejects.toThrow(
 			"Application is managed by a Solution",
 		);
+	});
+});
+
+describe("isolated application launch", () => {
+	it("passes the visible app route to the one-time launch endpoint", async () => {
+		mockPost.mockResolvedValue({
+			data: { launch_url: "/api/builder-runtime/launch/once" },
+		});
+
+		const result = await createIsolatedApplicationLaunch(
+			"app-1",
+			"/reports?period=week#top",
+		);
+
+		expect(mockPost).toHaveBeenCalledWith(
+			"/api/applications/{app_id}/isolated-launch",
+			{
+				params: {
+					path: { app_id: "app-1" },
+					query: { path: "/reports?period=week#top" },
+				},
+				signal: undefined,
+			},
+		);
+		expect(result.launch_url).toContain("/api/builder-runtime/launch/");
 	});
 });

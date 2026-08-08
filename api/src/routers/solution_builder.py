@@ -53,7 +53,6 @@ from src.services.builder.agent_turns import (
     BuilderAgentTurnService,
     enqueue_builder_turn_deploy,
 )
-from src.config import Settings, get_settings
 from src.services.builder.private_solutions import (
     CollaboratorNotEligible,
     CollaboratorNotFound,
@@ -115,7 +114,6 @@ async def require_builder(ctx: Context) -> ExecutionContext:
 
 
 BuilderContext = Annotated[ExecutionContext, Depends(require_builder)]
-SettingsDep = Annotated[Settings, Depends(get_settings)]
 
 
 async def _load_or_404(
@@ -145,7 +143,7 @@ async def _load_or_404(
     summary="Create a private builder Solution owned by the caller",
 )
 async def create_solution(
-    body: PrivateSolutionCreate, ctx: BuilderContext, settings: SettingsDep
+    body: PrivateSolutionCreate, ctx: BuilderContext
 ) -> PrivateSolutionDTO:
     if ctx.org_id is None:
         raise HTTPException(
@@ -165,7 +163,7 @@ async def create_solution(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"You already have a private Solution with slug '{body.slug}'",
         ) from exc
-    return to_dto(solution, project, app_origin=settings.app_origin)
+    return to_dto(solution, project)
 
 
 @router.get(
@@ -175,7 +173,6 @@ async def create_solution(
 )
 async def list_solutions(
     ctx: BuilderContext,
-    settings: SettingsDep,
     view: Literal["mine", "all"] = Query(default="mine"),
     organization_id: UUID | None = Query(default=None),
     owner_user_id: UUID | None = Query(default=None),
@@ -201,7 +198,6 @@ async def list_solutions(
         to_dto(
             row.solution,
             row.project,
-            app_origin=settings.app_origin,
             owner_name=row.owner_name,
             owner_email=row.owner_email,
             organization_name=row.organization_name,
@@ -234,9 +230,7 @@ async def list_solutions(
     response_model=PrivateSolutionDTO,
     summary="Get one authorized private Builder Solution",
 )
-async def get_solution(
-    solution_id: UUID, ctx: BuilderContext, settings: SettingsDep
-) -> PrivateSolutionDTO:
+async def get_solution(solution_id: UUID, ctx: BuilderContext) -> PrivateSolutionDTO:
     solution, project = await _load_or_404(ctx, solution_id, SolutionAction.VIEW)
     dto_context = await private_solution_dto_context(
         ctx.db,
@@ -247,7 +241,6 @@ async def get_solution(
     return to_dto(
         solution,
         project,
-        app_origin=settings.app_origin,
         owner_name=dto_context.owner_name,
         owner_email=dto_context.owner_email,
         organization_name=dto_context.organization_name,
@@ -422,9 +415,7 @@ async def download_revision(
 
     filename = revision_download_filename(solution.slug, revision.id)
     return StreamingResponse(
-        iter_revision_chunks(
-            ctx.db, solution_id=solution_id, revision_id=revision.id
-        ),
+        iter_revision_chunks(ctx.db, solution_id=solution_id, revision_id=revision.id),
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
@@ -449,7 +440,9 @@ async def get_revision_files(
     try:
         return await list_revision_files(solution_id, revision_id)
     except RevisionArtifactMissing as exc:
-        raise HTTPException(status_code=404, detail="Revision source is missing") from exc
+        raise HTTPException(
+            status_code=404, detail="Revision source is missing"
+        ) from exc
     except WorkspaceViolation as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -474,7 +467,9 @@ async def get_revision_file(
     try:
         return await read_revision_file(solution_id, revision_id, path)
     except RevisionArtifactMissing as exc:
-        raise HTTPException(status_code=404, detail="Revision source is missing") from exc
+        raise HTTPException(
+            status_code=404, detail="Revision source is missing"
+        ) from exc
     except WorkspaceViolation as exc:
         detail = "File not found" if "file not found" in str(exc) else str(exc)
         raise HTTPException(status_code=404, detail=detail) from exc
@@ -507,7 +502,9 @@ async def get_revision_diff(
     try:
         return await diff_revisions(solution_id, revision_id, against)
     except RevisionArtifactMissing as exc:
-        raise HTTPException(status_code=404, detail="Revision source is missing") from exc
+        raise HTTPException(
+            status_code=404, detail="Revision source is missing"
+        ) from exc
     except WorkspaceViolation as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

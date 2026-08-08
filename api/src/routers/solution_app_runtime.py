@@ -64,8 +64,14 @@ _SDK_ROUTES: dict[tuple[str, str], str] = {
     ("POST", "/api/tables/{table_id}/documents/upsert"): TABLE_DOCUMENTS_WRITE_SCOPE,
     ("POST", "/api/tables/{table_id}/documents/batch"): TABLE_DOCUMENTS_WRITE_SCOPE,
     ("PATCH", "/api/tables/{table_id}/documents/{doc_id}"): TABLE_DOCUMENTS_WRITE_SCOPE,
-    ("DELETE", "/api/tables/{table_id}/documents/{doc_id}"): TABLE_DOCUMENTS_WRITE_SCOPE,
-    ("POST", "/api/tables/{table_id}/documents/batch-delete"): TABLE_DOCUMENTS_WRITE_SCOPE,
+    (
+        "DELETE",
+        "/api/tables/{table_id}/documents/{doc_id}",
+    ): TABLE_DOCUMENTS_WRITE_SCOPE,
+    (
+        "POST",
+        "/api/tables/{table_id}/documents/batch-delete",
+    ): TABLE_DOCUMENTS_WRITE_SCOPE,
     ("POST", "/api/tables/{table_id}/documents/query"): TABLE_DOCUMENTS_READ_SCOPE,
     ("GET", "/api/tables/{table_id}/documents/count"): TABLE_DOCUMENTS_READ_SCOPE,
     ("POST", "/api/files/read"): FILE_CONTENT_READ_SCOPE,
@@ -107,7 +113,11 @@ async def enforce_signed_url_scopes(
 
     try:
         body = await request.json()
-        items = body.get("requests") if request.url.path.endswith("/signed-urls") else [body]
+        items = (
+            body.get("requests")
+            if request.url.path.endswith("/signed-urls")
+            else [body]
+        )
         methods = {str(item.get("method", "PUT")).upper() for item in items}
     except (AttributeError, TypeError, ValueError):
         raise HTTPException(
@@ -151,8 +161,7 @@ def _mount_sdk_routes() -> None:
             dependencies.append(Depends(enforce_signed_url_scopes))
             route_scopes.remove(_DYNAMIC_FILE_SCOPE)
         dependencies.extend(
-            Depends(require_solution_app_scope(scope))
-            for scope in sorted(route_scopes)
+            Depends(require_solution_app_scope(scope)) for scope in sorted(route_scopes)
         )
         if route.path.startswith("/api/executions/"):
             dependencies.append(Depends(enforce_actor_execution_binding))
@@ -187,17 +196,17 @@ async def get_solution_app_user(
     principal: CurrentSolutionApp,
     db: Db,
 ) -> UserPrincipal:
-    """Rehydrate a normal-looking principal from the actor's live owner row.
+    """Rehydrate a normal-looking principal from the actor's live viewer row.
 
     This dependency is used only as an override inside the isolated app-host
     process.  It never accepts caller-supplied scope and never grants the
-    owner's platform-admin authority to generated code.
+    viewer's platform-admin authority to generated code.
     """
     user = await db.get(User, principal.actor_user_id)
     if user is None or not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="The Solution app owner is no longer active",
+            detail="The Solution app viewer is no longer active",
         )
 
     role_ids, role_names = await get_user_roles(user.id, db)
@@ -305,7 +314,6 @@ async def get_actor_application_logo(
             select(Application).where(
                 Application.id == principal.app_id,
                 Application.solution_id == principal.solution_id,
-                Application.organization_id == principal.organization_id,
             )
         )
     ).scalar_one_or_none()

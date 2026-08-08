@@ -102,7 +102,6 @@ def to_dto(
     solution: Solution,
     project: SolutionBuilderProject,
     *,
-    app_origin: str | None = None,
     owner_name: str | None = None,
     owner_email: str | None = None,
     organization_name: str | None = None,
@@ -122,7 +121,6 @@ def to_dto(
         organization_name=organization_name,
         caller_access=caller_access,
         collaborator_access=collaborator_access,
-        app_origin=app_origin,
         status=solution.status,
         promotion_status=project.promotion_status,
         created_at=solution.created_at,
@@ -310,7 +308,9 @@ async def load_accessible_private_solution(
                 SolutionBuilderProject.solution_id == Solution.id,
             )
             .where(Solution.id == solution_id)
-            .options(noload(Solution.connection_schema), noload(Solution.file_locations))
+            .options(
+                noload(Solution.connection_schema), noload(Solution.file_locations)
+            )
         )
     ).one_or_none()
     if row is None:
@@ -434,7 +434,9 @@ async def upsert_collaborator(
     if user is None or not user.is_active:
         raise CollaboratorNotEligible("No active user has that email address")
     if user.is_external:
-        raise CollaboratorNotEligible("External users cannot collaborate on Builder source")
+        raise CollaboratorNotEligible(
+            "External users cannot collaborate on Builder source"
+        )
     if user.organization_id != solution.organization_id:
         raise CollaboratorNotEligible(
             "Collaborators must belong to the Solution's organization"
@@ -649,7 +651,9 @@ def iter_revision_chunks(
     principle, so the download path never materializes one as a single bytes
     blob (spec security invariant 14: artifact APIs stream).
     """
-    key = f"{BUILDER_ROOT}/{solution_id}/revisions/{revision_id}/{REVISION_ARTIFACT_NAME}"
+    key = (
+        f"{BUILDER_ROOT}/{solution_id}/revisions/{revision_id}/{REVISION_ARTIFACT_NAME}"
+    )
     return FileStorageService(db).iter_raw_s3_chunks(key)
 
 

@@ -45,6 +45,7 @@ describe("Solution promotion service", () => {
 		});
 		const request = {
 			target: "company" as const,
+			runtime_mode: "isolated" as const,
 			approve_role_creation: true,
 			approved_connection_names: ["HaloPSA"],
 			allow_global_repo_access: false,

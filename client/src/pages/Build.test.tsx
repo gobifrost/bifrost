@@ -24,6 +24,7 @@ vi.mock("@/hooks/useBuilderAccess", () => ({
 
 const mockCreateBuilderSolution = vi.fn();
 const mockCreateBuilderSession = vi.fn();
+const mockListBuilderSolutions = vi.fn();
 vi.mock("@/services/builder", async () => {
 	const actual =
 		await vi.importActual<typeof import("@/services/builder")>(
@@ -35,8 +36,19 @@ vi.mock("@/services/builder", async () => {
 			mockCreateBuilderSolution(...args),
 		createBuilderSession: (...args: unknown[]) =>
 			mockCreateBuilderSession(...args),
+		listBuilderSolutions: (...args: unknown[]) =>
+			mockListBuilderSolutions(...args),
 	};
 });
+
+vi.mock("@/hooks/useUsers", () => ({
+	useUsersFiltered: () => ({ data: [], isLoading: false }),
+}));
+vi.mock("@/components/forms/OrganizationSelect", () => ({
+	OrganizationSelect: ({ onChange }: { onChange: (value: string) => void }) => (
+		<button type="button" onClick={() => onChange("org-2")}>All organizations</button>
+	),
+}));
 
 function solution(
 	overrides: Partial<BuilderSolution> = {},
@@ -47,10 +59,14 @@ function solution(
 		name: "Expense Tracker",
 		visibility: "private",
 		owner_user_id: "user-1",
+		owner_name: "Dev User",
+		owner_email: "dev@example.com",
 		organization_id: "org-1",
-		app_origin: null,
+		organization_name: "Example Customer",
+		caller_access: "owner",
+		collaborator_access: null,
 		status: "active",
-		promotion_status: null,
+		promotion_status: "none",
 		created_at: "2026-07-25T10:00:00Z",
 		updated_at: "2026-07-25T10:00:00Z",
 		...overrides,
@@ -65,11 +81,25 @@ beforeEach(() => {
 		return 1;
 	});
 	vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
-	mockAuth.mockReturnValue({ isPlatformAdmin: false });
+	mockAuth.mockReturnValue({ isPlatformAdmin: false, user: { id: "user-1" } });
+	mockListBuilderSolutions.mockResolvedValue({
+		solutions: [],
+		total: 0,
+		view: "all",
+		can_view_all: true,
+		ai_configured: true,
+		builder_ready: true,
+		builder_blockers: [],
+		is_platform_admin: true,
+	});
 	mockUseBuilderAccess.mockReturnValue({
 		aiConfigured: true,
 		canBuild: true,
 		hasPermission: true,
+		builderReady: true,
+		blockers: [],
+		canViewAll: false,
+		isPlatformAdmin: false,
 		isLoading: false,
 		solutions: [],
 	});
@@ -80,7 +110,7 @@ describe("Build home", () => {
 		renderWithProviders(<Build />);
 
 		expect(
-			screen.getByRole("heading", { name: /what do you want to build/i }),
+			screen.getByRole("heading", { name: /what should bifrost build/i }),
 		).toBeInTheDocument();
 		expect(screen.getByLabelText(/app name/i)).toBeInTheDocument();
 		expect(screen.getByLabelText(/describe your app/i)).toBeInTheDocument();
@@ -142,7 +172,7 @@ describe("Build home", () => {
 		);
 
 		expect(
-			await screen.findByText("Starting the builder"),
+			await screen.findByText("Starting the Builder Agent"),
 		).toBeInTheDocument();
 		expect(screen.queryByLabelText(/app name/i)).not.toBeInTheDocument();
 
@@ -157,6 +187,10 @@ describe("Build home", () => {
 			aiConfigured: true,
 			canBuild: true,
 			hasPermission: true,
+			builderReady: true,
+			blockers: [],
+			canViewAll: false,
+			isPlatformAdmin: false,
 			isLoading: false,
 			solutions: [
 				solution(),
@@ -172,13 +206,45 @@ describe("Build home", () => {
 
 		expect(screen.getByText("Expense Tracker")).toBeInTheDocument();
 		expect(screen.getByText("Service Board")).toBeInTheDocument();
-		const openButtons = screen.getAllByRole("button", {
-			name: /open builder/i,
-		});
+		const openButtons = screen.getAllByRole("button", { name: /^open$/i });
 		await user.click(openButtons[0]);
 
 		expect(mockNavigate).toHaveBeenCalledWith(
 			"/solutions/sol-2/builder",
+		);
+	});
+
+	it("keeps support-wide builds behind an explicit All customer work view", async () => {
+		mockUseBuilderAccess.mockReturnValue({
+			aiConfigured: true,
+			canBuild: true,
+			hasPermission: true,
+			builderReady: true,
+			blockers: [],
+			canViewAll: true,
+			isPlatformAdmin: true,
+			isLoading: false,
+			solutions: [solution()],
+		});
+		mockListBuilderSolutions.mockResolvedValue({
+			solutions: [solution({ id: "sol-customer", name: "Customer Inventory", owner_user_id: "user-2", owner_name: "Avery Admin", caller_access: "support" })],
+			total: 1,
+			view: "all",
+			can_view_all: true,
+			ai_configured: true,
+			builder_ready: true,
+			builder_blockers: [],
+			is_platform_admin: true,
+		});
+		const { user } = renderWithProviders(<Build />);
+
+		expect(screen.queryByText("Customer Inventory")).not.toBeInTheDocument();
+		await user.click(screen.getByRole("tab", { name: /all customer work/i }));
+
+		expect(await screen.findByText("Customer Inventory")).toBeInTheDocument();
+		expect(screen.getByText("Support access")).toBeInTheDocument();
+		expect(mockListBuilderSolutions).toHaveBeenCalledWith(
+			expect.objectContaining({ view: "all", signal: expect.any(AbortSignal) }),
 		);
 	});
 
@@ -187,6 +253,10 @@ describe("Build home", () => {
 			aiConfigured: false,
 			canBuild: false,
 			hasPermission: false,
+			builderReady: false,
+			blockers: [],
+			canViewAll: false,
+			isPlatformAdmin: false,
 			isLoading: false,
 			solutions: [],
 		});
@@ -202,21 +272,25 @@ describe("Build home", () => {
 	});
 
 	it("routes an admin to AI settings when no provider is configured", async () => {
-		mockAuth.mockReturnValue({ isPlatformAdmin: true });
+		mockAuth.mockReturnValue({ isPlatformAdmin: true, user: { id: "user-1" } });
 		mockUseBuilderAccess.mockReturnValue({
 			aiConfigured: false,
 			canBuild: true,
 			hasPermission: true,
+			builderReady: false,
+			blockers: [{ code: "ai_not_configured", message: "Connect AI", action: "Choose a provider and model." }],
+			canViewAll: true,
+			isPlatformAdmin: true,
 			isLoading: false,
 			solutions: [],
 		});
 		const { user } = renderWithProviders(<Build />);
 
 		expect(
-			screen.getByRole("heading", { name: /connect ai to start building/i }),
+			screen.getByRole("heading", { name: /finish connecting builder/i }),
 		).toBeInTheDocument();
-		await user.click(screen.getByRole("button", { name: /configure ai/i }));
-		expect(mockNavigate).toHaveBeenCalledWith("/settings/ai", {
+		await user.click(screen.getByRole("button", { name: /open builder setup/i }));
+		expect(mockNavigate).toHaveBeenCalledWith("/settings/builder", {
 			viewTransition: true,
 		});
 	});

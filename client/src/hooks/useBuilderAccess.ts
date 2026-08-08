@@ -11,6 +11,7 @@ import { useQuery } from "@tanstack/react-query";
 import {
 	BuilderApiError,
 	listBuilderSolutions,
+	type BuilderBlocker,
 	type BuilderSolution,
 } from "@/services/builder";
 
@@ -23,6 +24,14 @@ export interface BuilderAccess {
 	hasPermission: boolean;
 	/** Whether a usable platform AI provider is configured. */
 	aiConfigured: boolean;
+	/** Whether AI and the sandbox runner are fully connected and enabled. */
+	builderReady: boolean;
+	/** Actionable readiness failures shown only on administrator surfaces. */
+	blockers: BuilderBlocker[];
+	/** Whether this caller can deliberately open the support-wide catalog. */
+	canViewAll: boolean;
+	/** Server-derived admin fact used to keep setup visible while blocked. */
+	isPlatformAdmin: boolean;
 	/** True while the capability is still being probed — render nothing yet. */
 	isLoading: boolean;
 	/** The caller's private Solutions, empty when access is denied. */
@@ -42,11 +51,16 @@ export function useBuilderAccess(): BuilderAccess {
 
 	const hasPermission = !isLoading && !error;
 	const aiConfigured = data?.ai_configured ?? false;
+	const builderReady = data?.builder_ready ?? false;
+	const isPlatformAdmin = data?.is_platform_admin ?? false;
 	return {
-		canBuild:
-			hasPermission && (aiConfigured || (data?.is_platform_admin ?? false)),
+		canBuild: hasPermission && (builderReady || isPlatformAdmin),
 		hasPermission,
 		aiConfigured,
+		builderReady,
+		blockers: data?.builder_blockers ?? [],
+		canViewAll: data?.can_view_all ?? false,
+		isPlatformAdmin,
 		isLoading,
 		solutions: data?.solutions ?? [],
 	};

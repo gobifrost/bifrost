@@ -257,9 +257,19 @@ export function AgentSkillBundleManager({
 							: "Instructions are editable below and export as a portable SKILL.md."}
 					</p>
 					{skill.bundle_path ? (
-						<code className="mt-2 block truncate text-xs text-muted-foreground">
-							{skill.bundle_path}
-						</code>
+						<div className="mt-2 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+							<span className="shrink-0 font-medium text-foreground">
+								{skill.source === "solution" ? "Solution path" : "Bundle root"}
+							</span>
+							<code className="truncate">{skill.bundle_path}</code>
+						</div>
+					) : null}
+					{skill.bundle_path ? (
+						<p className="mt-1 text-[11px] leading-4 text-muted-foreground">
+							{skill.source === "solution"
+								? "Resolved from the Solution root and locked to its deployment lifecycle."
+								: "Stored in the Agent's managed Skill storage, outside the _repo workspace."}
+						</p>
 					) : null}
 				</div>
 				{hasBundle && !managed ? (

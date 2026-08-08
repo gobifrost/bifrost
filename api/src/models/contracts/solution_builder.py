@@ -51,7 +51,6 @@ class PrivateSolutionDTO(BaseModel):
     organization_name: str | None = None
     caller_access: Literal["owner", "collaborator", "support"] = "owner"
     collaborator_access: Literal["view", "edit"] | None = None
-    app_origin: str | None = None
     status: str
     promotion_status: str
     created_at: datetime
@@ -116,6 +115,7 @@ class PromotionTargetRequest(BaseModel):
     """Administrator approval of one pinned private-Solution revision."""
 
     target: Literal["company", "global"]
+    runtime_mode: Literal["isolated", "trusted"] = "isolated"
     approve_role_creation: bool = False
     approved_connection_names: list[str] = Field(default_factory=list)
     allow_global_repo_access: bool = False
@@ -158,14 +158,10 @@ class PromotionReviewDTO(BaseModel):
     deploy_job_id: UUID | None = None
     build_status: str | None = None
     deploy_status: str | None = None
-    entity_counts: PromotionEntityCounts = Field(
-        default_factory=PromotionEntityCounts
-    )
+    entity_counts: PromotionEntityCounts = Field(default_factory=PromotionEntityCounts)
     unresolved_roles: list[str] = Field(default_factory=list)
     connection_names: list[str] = Field(default_factory=list)
-    config_keys_requiring_reentry_for_global: list[str] = Field(
-        default_factory=list
-    )
+    config_keys_requiring_reentry_for_global: list[str] = Field(default_factory=list)
     global_repo_access: bool = False
     ready: bool = False
     blockers: list[str] = Field(default_factory=list)
