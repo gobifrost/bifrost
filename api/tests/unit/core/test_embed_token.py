@@ -56,6 +56,7 @@ class TestEmbedAccessToken:
             grant="public",
             resource_id=str(uuid4()),
             org_id=str(uuid4()),
+            display_name="Public Form · Contact us",
             verified_context={},
             capability_fingerprint=fingerprint,
         )
@@ -63,4 +64,5 @@ class TestEmbedAccessToken:
         payload = decode_token(token, expected_type="access")
         assert payload is not None
         assert payload["grant"] == "public"
+        assert payload["name"] == "Public Form · Contact us"
         assert payload["capability_fingerprint"] == fingerprint
