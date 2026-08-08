@@ -91,4 +91,6 @@ All via `./test.sh`. Never `pytest` or `npx vitest` / `npx playwright` directly 
 
 - Logs: `/tmp/bifrost-<project>/*.log` per service, per worktree.
 - JUnit XML: `/tmp/bifrost/test-results.xml`.
-- For flaky E2E: the answer is always state pollution from a prior test. Do not add retries. Run the failing test in isolation, then run it after a suspected neighbor, and find the dirty state the neighbor left behind.
+- For an intermittent E2E failure, do not assume the test is harmless or that state pollution is the only cause. Prior Bifrost flakes have exposed both leaked state and real product races. Capture the exposing order/load, run the test alone, then recreate the exposing condition and classify the cause from evidence.
+- Do not add retries, raise timeouts, skip the test, or rerun until green. After fixing a concrete cause, repetition is useful only to validate that fix under the previously failing condition.
+- If the E2E test is trying to prove many edge cases or implementation details, simplify it to the one stable integration or user contract and move the remaining assertions to unit/component tests. Delete obsolete or duplicate coverage when another named test preserves its only useful signal.
