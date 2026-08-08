@@ -360,19 +360,20 @@ class Settings(BaseSettings):
         default=6,
         description="Hours a staged (not-yet-deployed) build output is retained before cleanup"
     )
-    builder_internal_secret: str | None = Field(
+    builder_runner_image_repository: str = Field(
+        default="ghcr.io/gobifrost/bifrost-builder-runner",
+        description=(
+            "Public container image repository provisioned into the selected "
+            "sandbox provider"
+        ),
+    )
+    builder_runner_image_tag: str | None = Field(
         default=None,
-        description="Shared secret for coordinator claim/heartbeat routes; None disables those routes (503)"
+        description=(
+            "Optional runner image tag override; releases otherwise use the "
+            "running Bifrost version and development uses dev"
+        ),
     )
-    builder_runner_url: str | None = Field(
-        default=None,
-        description="URL of the build runner image (used only by the coordinator process)"
-    )
-    internal_api_url: str = Field(
-        default="http://api:8000",
-        description="API URL for internal service-to-service calls (used only by the coordinator process)"
-    )
-
     # ==========================================================================
     # Anthropic API (for Claude Agent SDK)
     # ==========================================================================

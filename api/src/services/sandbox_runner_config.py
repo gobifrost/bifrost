@@ -6,6 +6,7 @@ import secrets
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
+from urllib.parse import urlsplit
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -91,6 +92,15 @@ class SandboxRunnerConfigService:
 
         if request.enabled and not request.callback_base_url:
             raise ValueError("callback_base_url is required to enable the sandbox runner")
+        if (
+            request.provider == "cloudflare"
+            and request.callback_base_url
+            and urlsplit(request.callback_base_url).scheme != "https"
+        ):
+            raise ValueError(
+                "Cloudflare requires an HTTPS Bifrost callback URL; no extra "
+                "hostname or public port is required"
+            )
 
         if existing is not None and not self._connection_settings_changed(
             request,
@@ -339,7 +349,7 @@ class SandboxRunnerConfigService:
         if stored.provider == "cloudflare":
             cloudflare_data = stored.cloudflare or {}
             cloudflare = SandboxRunnerCloudflarePublic(
-                account_id=cloudflare_data.get("account_id") or None,
+                account_id=_optional_str(cloudflare_data.get("account_id")),
                 api_token_set=bool(cloudflare_data.get("encrypted_api_token")),
                 script_name=str(
                     cloudflare_data.get("script_name") or DEFAULT_CLOUDFLARE_SCRIPT_NAME
@@ -353,7 +363,7 @@ class SandboxRunnerConfigService:
         if stored.provider == "local":
             local_data = stored.local or {}
             local = SandboxRunnerLocalPublic(
-                endpoint_url=local_data.get("endpoint_url") or None,
+                endpoint_url=_optional_str(local_data.get("endpoint_url")),
                 runner_secret_set=bool(local_data.get("encrypted_runner_secret")),
             )
 
@@ -401,3 +411,29 @@ class SandboxRunnerConfigService:
         old = existing.local or {}
         new = new_data.get("local") or {}
         return old.get("endpoint_url") != new.get("endpoint_url")
+
+
+async def get_builder_readiness(
+    session: AsyncSession,
+) -> tuple[bool, SandboxRunnerReadiness]:
+    """Return canonical AI + sandbox readiness for every Builder surface."""
+    from src.services.llm_config_service import LLMConfigService
+
+    llm_config = await LLMConfigService(session).get_config()
+    ai_configured = bool(
+        llm_config
+        and llm_config.is_configured
+        and llm_config.api_key_set
+        and (llm_config.builder_model or llm_config.model)
+    )
+    readiness = await SandboxRunnerConfigService(session).get_readiness(
+        ai_configured=ai_configured
+    )
+    return ai_configured, readiness
+
+
+def _optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+__all__ = ["SandboxRunnerConfigService", "get_builder_readiness"]

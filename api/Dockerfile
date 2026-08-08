@@ -28,6 +28,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml requirements.lock ./
 RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
+# Cloudflare's current Wrangler requires Node 22. Build its sealed control-plane
+# bundle in a separate stage so Bifrost's existing Node 20 app toolchain stays
+# unchanged. The runtime invokes only this stage's version-pinned node binary.
+FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436 AS cloudflare_control_plane
+
+WORKDIR /assets
+COPY api/src/services/cloudflare_runner/package.json api/src/services/cloudflare_runner/package-lock.json ./
+RUN npm ci
+COPY api/src/services/cloudflare_runner/worker.mjs api/src/services/cloudflare_runner/runtime_helpers.mjs api/src/services/cloudflare_runner/runtime_helpers.test.mjs ./
+RUN npm test && rm runtime_helpers.test.mjs && npm run build && npm prune --omit=dev
+
 # =============================================================================
 # Stage 2: Runtime
 # =============================================================================
@@ -78,6 +89,11 @@ RUN cd /app/src/services/app_compiler && npm ci --omit=dev
 # Install app bundler Node.js dependencies (esbuild)
 COPY api/src/services/app_bundler/package.json api/src/services/app_bundler/package-lock.json* /app/src/services/app_bundler/
 RUN cd /app/src/services/app_bundler && npm ci --omit=dev
+
+# Cloudflare control-plane bundle. The scheduler invokes Wrangler only for an
+# admin-requested provisioning PlatformJob; ordinary builds never run it.
+COPY --from=cloudflare_control_plane /assets /app/src/services/cloudflare_runner
+COPY --from=cloudflare_control_plane /usr/local/bin/node /usr/local/bin/node22
 
 # SDK package builder (esbuild) + the v2 `bifrost` SDK source it bundles. The
 # SDK source of truth lives in client/src/lib/app-sdk; it is copied here so

@@ -63,6 +63,7 @@ from src.routers.jobs import router as jobs_router
 from src.routers.platform_jobs import router as platform_jobs_router
 from src.routers.scheduler_diagnostics import router as scheduler_diagnostics_router
 from src.routers.sandbox_jobs import router as sandbox_jobs_router
+from src.routers.sandbox_runner_admin import router as sandbox_runner_admin_router
 from src.routers.platform import (
     workers_router as platform_workers_router,
     queue_router as platform_queue_router,
@@ -144,6 +145,7 @@ __all__ = [
     "platform_jobs_router",
     "scheduler_diagnostics_router",
     "sandbox_jobs_router",
+    "sandbox_runner_admin_router",
     "platform_workers_router",
     "platform_queue_router",
     "platform_stuck_router",

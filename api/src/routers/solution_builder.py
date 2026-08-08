@@ -19,9 +19,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.auth import Context, ExecutionContext
-from src.models.contracts.sandbox_runner import SandboxRunnerReadiness
 from src.models.contracts.solution_builder import (
     BuilderProjectDTO,
     BuilderSessionDTO,
@@ -83,28 +81,11 @@ from src.services.builder.revision_inspection import (
 )
 from src.services.solutions.access import SolutionAction
 from src.services.solutions.builder_authz import can_build
-from src.services.llm_config_service import LLMConfigService
-from src.services.sandbox_runner_config import SandboxRunnerConfigService
+from src.services.sandbox_runner_config import get_builder_readiness
 
 router = APIRouter(prefix="/api/builder/solutions", tags=["builder"])
 
 NOT_FOUND_DETAIL = "Solution not found"
-
-
-async def _builder_readiness(
-    db: AsyncSession,
-) -> tuple[bool, SandboxRunnerReadiness]:
-    llm_config = await LLMConfigService(db).get_config()
-    ai_configured = bool(
-        llm_config
-        and llm_config.is_configured
-        and llm_config.api_key_set
-        and (llm_config.builder_model or llm_config.model)
-    )
-    readiness = await SandboxRunnerConfigService(db).get_readiness(
-        ai_configured=ai_configured
-    )
-    return ai_configured, readiness
 
 
 async def require_builder(ctx: Context) -> ExecutionContext:
@@ -192,7 +173,7 @@ async def list_solutions(
         to_dto(solution, project, app_origin=settings.app_origin)
         for solution, project in rows
     ]
-    ai_configured, readiness = await _builder_readiness(ctx.db)
+    ai_configured, readiness = await get_builder_readiness(ctx.db)
     return PrivateSolutionsList(
         solutions=items,
         total=len(items),
@@ -463,7 +444,7 @@ async def run_turn(
     PlatformJob notification transport.
     """
     await _load_or_404(ctx, solution_id, SolutionAction.EDIT)
-    _ai_configured, readiness = await _builder_readiness(ctx.db)
+    _ai_configured, readiness = await get_builder_readiness(ctx.db)
     if not readiness.ready:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,

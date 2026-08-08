@@ -162,6 +162,8 @@ services:
       - ./api/src:/app/src
       - /app/src/services/app_compiler/node_modules  # preserve npm deps from image
       - /app/src/services/app_bundler/node_modules  # preserve npm deps from image
+      - /app/src/services/cloudflare_runner/node_modules
+      - /app/src/services/cloudflare_runner/dist
       - /app/src/services/sdk_package/node_modules  # preserve npm deps from image
       - /app/src/services/sdk_package/sdk_src  # preserve image-baked SDK source (masked by :ro src mount)
       - ./api/shared:/app/shared:ro
@@ -235,6 +237,8 @@ services:
       - ./api/src:/app/src
       - /app/src/services/app_compiler/node_modules  # preserve npm deps from image
       - /app/src/services/app_bundler/node_modules  # preserve npm deps from image
+      - /app/src/services/cloudflare_runner/node_modules
+      - /app/src/services/cloudflare_runner/dist
       - /app/src/services/sdk_package/node_modules  # preserve npm deps from image
       - /app/src/services/sdk_package/sdk_src  # preserve image-baked SDK source (masked by :ro src mount)
       - ./api/shared:/app/shared:ro
@@ -284,6 +288,8 @@ services:
       - ./api/src:/app/src
       - /app/src/services/app_compiler/node_modules  # preserve npm deps from image
       - /app/src/services/app_bundler/node_modules  # preserve npm deps from image
+      - /app/src/services/cloudflare_runner/node_modules
+      - /app/src/services/cloudflare_runner/dist
       - /app/src/services/sdk_package/node_modules  # preserve npm deps from image
       - /app/src/services/sdk_package/sdk_src  # preserve image-baked SDK source (masked by :ro src mount)
       - ./api/shared:/app/shared:ro
@@ -370,6 +376,8 @@ services:
       - ./api/src:/app/src
       - /app/src/services/app_compiler/node_modules  # preserve npm deps from image
       - /app/src/services/app_bundler/node_modules  # preserve npm deps from image
+      - /app/src/services/cloudflare_runner/node_modules
+      - /app/src/services/cloudflare_runner/dist
       - /app/src/services/sdk_package/node_modules  # preserve npm deps from image
       - /app/src/services/sdk_package/sdk_src  # preserve image-baked SDK source (masked by :ro src mount)
       - ./api/shared:/app/shared:ro

@@ -403,6 +403,7 @@ async def test_external_completion_can_win_defer_race(
     job.attempt = 2
     job.lease_token = uuid4()
     job.lease_owner = "inline:test"
+    job.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=1)
     await db_session.commit()
 
     @asynccontextmanager

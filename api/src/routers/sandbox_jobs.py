@@ -68,6 +68,7 @@ from src.services.builder.llm_proxy import (
     BuilderLLMUnavailable,
     complete_builder_llm,
 )
+from src.services.execution.agent_helpers import build_agent_system_prompt
 
 router = APIRouter(
     prefix="/api/internal/sandbox/jobs",
@@ -187,7 +188,8 @@ async def get_turn_context(
         session_id=str(session.id),
         turn_id=str(turn.id),
         base_revision_id=str(turn.base_revision_id),
-        system_prompt=agent.system_prompt,
+        system_prompt=build_agent_system_prompt(agent),
+        bundle_path=agent.bundle_path,
         model=agent.llm_model,
         max_iterations=agent.max_iterations or 50,
         max_token_budget=agent.max_token_budget or 100_000,

@@ -181,6 +181,7 @@ from src.models.contracts.sandbox_runner import (
     SandboxRunnerLocalPublic,
     SandboxRunnerProvider,
     SandboxRunnerReadiness,
+    SandboxRunnerSetupState,
 )
 
 # Agents & Chat
@@ -1114,6 +1115,7 @@ __all__ = [
     "SandboxRunnerLocalPublic",
     "SandboxRunnerProvider",
     "SandboxRunnerReadiness",
+    "SandboxRunnerSetupState",
     # Platform Admin
     "PoolDetail",
     "PoolsListResponse",

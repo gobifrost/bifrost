@@ -151,6 +151,18 @@ class SandboxRunnerReadiness(BaseModel):
     blockers: list[SandboxRunnerBlocker] = Field(default_factory=list)
 
 
+class SandboxRunnerSetupState(BaseModel):
+    """Complete admin setup state without provider secrets."""
+
+    config: SandboxRunnerConfigPublic | None = None
+    readiness: SandboxRunnerReadiness
+    recommended_callback_base_url: str
+    runner_image: str
+    cloudflare_permissions: list[str] = Field(
+        default_factory=lambda: ["Workers Scripts Write"]
+    )
+
+
 class SandboxRunnerStoredConfig(BaseModel):
     """Internal encrypted-at-rest SystemConfig payload."""
 
@@ -196,6 +208,7 @@ class SandboxBuilderTurnContext(BaseModel):
     turn_id: str
     base_revision_id: str
     system_prompt: str
+    bundle_path: str | None = None
     model: str
     max_iterations: int = Field(ge=1, le=200)
     max_token_budget: int = Field(ge=1)

@@ -129,6 +129,8 @@ services:
       - ./api/src:/app/src:ro
       - /app/src/services/app_compiler/node_modules
       - /app/src/services/app_bundler/node_modules
+      - /app/src/services/cloudflare_runner/node_modules
+      - /app/src/services/cloudflare_runner/dist
       - /app/src/services/sdk_package/node_modules
       - /app/src/services/sdk_package/sdk_src
       - ./api/shared:/app/shared:ro
@@ -176,6 +178,8 @@ services:
       - ./api/src:/app/src:ro
       - /app/src/services/app_compiler/node_modules
       - /app/src/services/app_bundler/node_modules
+      - /app/src/services/cloudflare_runner/node_modules
+      - /app/src/services/cloudflare_runner/dist
       - /app/src/services/sdk_package/node_modules
       - /app/src/services/sdk_package/sdk_src
       - ./api/shared:/app/shared:ro
@@ -231,6 +235,8 @@ services:
       - ./api/src:/app/src:ro
       - /app/src/services/app_compiler/node_modules
       - /app/src/services/app_bundler/node_modules
+      - /app/src/services/cloudflare_runner/node_modules
+      - /app/src/services/cloudflare_runner/dist
       - /app/src/services/sdk_package/node_modules
       - /app/src/services/sdk_package/sdk_src
       - ./api/shared:/app/shared:ro

@@ -438,6 +438,10 @@ class BuilderAgentTurnService:
             if config is not None
             and isinstance(config.builder_model, str)
             and config.builder_model.strip()
+            else config.model.strip()
+            if config is not None
+            and isinstance(config.model, str)
+            and config.model.strip()
             else None
         )
         agent_id = builder_agent_id(solution_id)

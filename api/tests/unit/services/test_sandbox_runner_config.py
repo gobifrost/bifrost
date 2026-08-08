@@ -88,6 +88,25 @@ async def test_save_cloudflare_encrypts_and_masks_api_token(mock_session):
 
 
 @pytest.mark.asyncio
+async def test_cloudflare_refuses_insecure_callback_without_extra_host_requirement(
+    mock_session,
+):
+    _set_row(mock_session, None)
+
+    with pytest.raises(ValueError, match="HTTPS Bifrost callback URL"):
+        await SandboxRunnerConfigService(mock_session).save_config(
+            SandboxRunnerConfigSave(
+                provider="cloudflare",
+                callback_base_url="http://bifrost.example.com",
+                cloudflare=SandboxRunnerCloudflareConfig(
+                    account_id="acct_123",
+                    api_token="token",
+                ),
+            )
+        )
+
+
+@pytest.mark.asyncio
 async def test_runtime_status_can_only_be_set_through_internal_service(mock_session):
     row = _system_config(
         {
