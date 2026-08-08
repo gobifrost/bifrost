@@ -113,6 +113,55 @@ async def test_cloudflare_dispatch_uses_attempt_id_and_json_encoded_params():
         "timeout_seconds": 900,
     }
     assert "cf-secret" not in request.kwargs["json"]["params"]
+    assert job.external_provider == "cloudflare"
+    assert job.external_run_id == "workflow-run-123"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_terminates_run_accepted_during_cancellation():
+    job = _job(attempt=4)
+    job.status = "cancel_requested"
+    manager, client = _http_client(
+        {"success": True, "result": {"id": "workflow-run-cancelled"}}
+    )
+    config = {
+        "provider": "cloudflare",
+        "enabled": True,
+        "provisioned": True,
+        "connected": True,
+        "callback_base_url": "https://bifrost.example.com",
+        "cloudflare": {
+            "account_id": "account-123",
+            "workflow_name": "workflow",
+            "api_token": "token",
+        },
+    }
+    config_service = MagicMock()
+    config_service.get_decrypted_internal_config = AsyncMock(return_value=config)
+
+    with (
+        patch("src.services.sandbox_runners.get_db_context", _db_context(job)),
+        patch(
+            "src.services.sandbox_runners.SandboxRunnerConfigService",
+            return_value=config_service,
+        ),
+        patch(
+            "src.services.sandbox_runners.mint_sandbox_job_capability",
+            return_value="job-capability",
+        ),
+        patch("src.services.sandbox_runners.httpx.AsyncClient", return_value=manager),
+    ):
+        result = await dispatch_sandbox_platform_job(
+            job.id,
+            job.lease_token,
+            input_sha256="e" * 64,
+        )
+
+    assert result.cancelled is True
+    client.patch.assert_awaited_once()
+    assert client.patch.await_args.args[0].endswith(
+        "/workflows/workflow/instances/workflow-run-cancelled/status"
+    )
 
 
 @pytest.mark.asyncio

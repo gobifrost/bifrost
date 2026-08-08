@@ -32,6 +32,7 @@ import shutil
 import tempfile
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -83,6 +84,14 @@ class WorkspaceInvalid(BuilderTurnError):
     def __init__(self, errors: list[str]) -> None:
         self.errors = errors
         super().__init__("; ".join(errors))
+
+
+@dataclass(frozen=True)
+class ExternalTurnMaterialization:
+    """Validated source result prepared by an external Builder attempt."""
+
+    turn: SolutionBuilderTurn
+    revision_created: bool
 
 
 def _now() -> datetime:
@@ -237,6 +246,109 @@ class BuilderTurnService:
             summary=f"restored from revision {to_revision_id}",
             restored_from_revision_id=to_revision_id,
         )
+
+    async def materialize_external_output(
+        self,
+        solution_id: UUID,
+        *,
+        turn_id: UUID,
+        output_zip: Path,
+        summary: str | None,
+    ) -> ExternalTurnMaterialization:
+        """Validate and publish a sandbox turn's complete workspace archive.
+
+        The sandbox never writes revision storage directly. Its archive is
+        re-extracted under the same limits as an in-process turn, validated as
+        a Solution workspace, and deterministically repacked before it can
+        advance the project pointer.
+        """
+        try:
+            async with solution_write_lock(solution_id):
+                project = await self.db.get(SolutionBuilderProject, solution_id)
+                turn = await self.db.get(
+                    SolutionBuilderTurn,
+                    turn_id,
+                    with_for_update=True,
+                )
+                if project is None or turn is None:
+                    raise BuilderProjectMissing(
+                        f"Builder turn {turn_id} does not exist for Solution {solution_id}"
+                    )
+                session = await self.db.get(SolutionBuilderSession, turn.session_id)
+                if session is None or session.solution_id != solution_id:
+                    raise BuilderProjectMissing(
+                        f"Builder turn {turn_id} does not belong to Solution {solution_id}"
+                    )
+                if turn.status not in {"queued", "running"}:
+                    raise BuilderTurnConflict(
+                        f"Builder turn {turn_id} is already {turn.status}"
+                    )
+                if (
+                    turn.base_revision_id is None
+                    or project.current_revision_id != turn.base_revision_id
+                ):
+                    raise BuilderTurnConflict(
+                        "The Solution changed after this Builder turn started"
+                    )
+                base = await self.db.get(
+                    SolutionSourceRevision,
+                    turn.base_revision_id,
+                )
+                if base is None or base.solution_id != solution_id:
+                    raise BuilderProjectMissing(
+                        f"Base revision {turn.base_revision_id} is missing"
+                    )
+
+                revision_id = uuid4()
+                with _private_tempdir() as scratch:
+                    workspace_dir = scratch / _WORKSPACE_DIRNAME
+                    workspace_dir.mkdir(mode=0o700)
+                    safe_extract_zip(output_zip, workspace_dir, self.limits)
+                    errors = validate_workspace(workspace_dir)
+                    if errors:
+                        raise WorkspaceInvalid(errors)
+                    normalized_zip = scratch / _SOURCE_ZIP_NAME
+                    sha256 = zip_workspace(workspace_dir, normalized_zip)
+                    revision_created = sha256 != base.source_sha256
+                    if revision_created:
+                        size_bytes = normalized_zip.stat().st_size
+                        await self._storage(solution_id).write_from_path(
+                            revision_id,
+                            normalized_zip,
+                        )
+
+                output_revision_id = revision_id if revision_created else base.id
+                if revision_created:
+                    self.db.add(
+                        SolutionSourceRevision(
+                            id=revision_id,
+                            solution_id=solution_id,
+                            parent_revision_id=base.id,
+                            conversation_id=session.conversation_id,
+                            created_by=turn.requested_by,
+                            source_sha256=sha256,
+                            size_bytes=size_bytes,
+                            summary=summary,
+                        )
+                    )
+                    # These models intentionally expose UUID fields rather
+                    # than ORM relationships, so make the FK target durable in
+                    # this transaction before updating turn/project pointers.
+                    await self.db.flush()
+                    project.current_revision_id = revision_id
+                turn.output_revision_id = output_revision_id
+                turn.status = STATUS_SUCCEEDED
+                turn.error = None
+                turn.completed_at = _now()
+                await self.db.flush()
+                return ExternalTurnMaterialization(
+                    turn=turn,
+                    revision_created=revision_created,
+                )
+        except SolutionWriteLockHeld as exc:
+            raise BuilderTurnConflict(
+                f"another turn or deploy is already writing Solution {solution_id}"
+            ) from exc
 
     async def _run_exclusive(
         self,

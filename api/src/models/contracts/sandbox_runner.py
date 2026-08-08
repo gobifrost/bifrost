@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 SandboxRunnerProvider = Literal["cloudflare", "local"]
 
@@ -176,3 +176,93 @@ class SandboxJobProgressUpdate(BaseModel):
 
 class SandboxJobCancelled(BaseModel):
     cancelled: bool
+
+
+class SandboxBuilderMessage(BaseModel):
+    """One persisted conversation message restored into a Builder sandbox."""
+
+    role: Literal["user", "assistant", "system", "tool", "tool_call"]
+    content: str | None = None
+    tool_calls: list[dict[str, object]] | None = None
+    tool_call_id: str | None = None
+    tool_name: str | None = None
+
+
+class SandboxBuilderTurnContext(BaseModel):
+    """Provider-neutral Agent context for one isolated Builder turn."""
+
+    solution_id: str
+    session_id: str
+    turn_id: str
+    base_revision_id: str
+    system_prompt: str
+    model: str
+    max_iterations: int = Field(ge=1, le=200)
+    max_token_budget: int = Field(ge=1)
+    system_tools: list[str]
+    messages: list[SandboxBuilderMessage]
+
+
+class SandboxBuilderTurnCompletion(BaseModel):
+    """Terminal result reported by an isolated Builder harness."""
+
+    status: Literal["succeeded", "failed", "cancelled"]
+    output_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    final_text: str | None = Field(default=None, max_length=100_000)
+    error: str | None = Field(default=None, max_length=4_000)
+    tool_call_count: int = Field(default=0, ge=0, le=10_000)
+    model: str | None = Field(default=None, max_length=100)
+    token_count_input: int | None = Field(default=None, ge=0)
+    token_count_output: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_terminal_payload(self) -> "SandboxBuilderTurnCompletion":
+        if self.status == "succeeded":
+            if self.output_sha256 is None:
+                raise ValueError("A successful Builder turn requires output_sha256")
+            if self.final_text is None:
+                raise ValueError("A successful Builder turn requires final_text")
+        elif self.status == "failed" and not self.error:
+            raise ValueError("A failed Builder turn requires an error")
+        return self
+
+
+class SandboxLLMToolCall(BaseModel):
+    id: str = Field(min_length=1, max_length=255)
+    name: str = Field(min_length=1, max_length=255)
+    arguments: dict[str, object] = Field(default_factory=dict)
+
+
+class SandboxLLMMessage(BaseModel):
+    role: Literal["user", "assistant", "system", "tool"]
+    content: str | None = Field(default=None, max_length=200_000)
+    tool_calls: list[SandboxLLMToolCall] | None = Field(
+        default=None,
+        max_length=64,
+    )
+    tool_call_id: str | None = Field(default=None, max_length=255)
+    tool_name: str | None = Field(default=None, max_length=255)
+
+
+class SandboxLLMToolDefinition(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    description: str = Field(max_length=4_000)
+    parameters: dict[str, object]
+
+
+class SandboxLLMCompletionRequest(BaseModel):
+    messages: list[SandboxLLMMessage] = Field(min_length=1, max_length=500)
+    tools: list[SandboxLLMToolDefinition] | None = Field(
+        default=None,
+        max_length=64,
+    )
+    max_tokens: int = Field(default=16_384, ge=1, le=65_536)
+
+
+class SandboxLLMCompletionResponse(BaseModel):
+    content: str | None = None
+    tool_calls: list[SandboxLLMToolCall] | None = None
+    finish_reason: str | None = None
+    input_tokens: int
+    output_tokens: int
+    model: str

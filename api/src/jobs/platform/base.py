@@ -106,6 +106,7 @@ PlatformJobHandler = Callable[
     [PlatformJobContext, BaseModel],
     Awaitable[dict[str, Any] | None],
 ]
+PlatformJobCancellationHandler = Callable[[UUID], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -116,3 +117,4 @@ class PlatformJobDefinition:
     handler: PlatformJobHandler
     policy: PlatformJobPolicy
     encrypt_payload: bool = False
+    cancellation_handler: PlatformJobCancellationHandler | None = None

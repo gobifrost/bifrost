@@ -8,6 +8,7 @@ source) so builder history is never touched by install writers.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import UUID
@@ -91,6 +92,24 @@ class SolutionRevisionStorage:
                     while chunk := await body.read(_CHUNK_SIZE):
                         f.write(chunk)
             return True
+
+    async def iter_chunks(
+        self,
+        revision_id: UUID | str,
+    ) -> AsyncIterator[bytes]:
+        """Stream one immutable revision archive in bounded chunks."""
+        async with self._get_client() as client:
+            try:
+                response = await client.get_object(
+                    Bucket=self._bucket,
+                    Key=self._key(revision_id),
+                )
+            except client.exceptions.NoSuchKey as exc:
+                raise FileNotFoundError(str(revision_id)) from exc
+            body = response["Body"]
+            async with body:
+                while chunk := await body.read(_CHUNK_SIZE):
+                    yield chunk
 
     async def delete(self, revision_id: UUID | str) -> None:
         async with self._get_client() as client:

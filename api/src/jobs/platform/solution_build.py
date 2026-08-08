@@ -5,6 +5,7 @@ from uuid import UUID
 from pydantic import BaseModel
 
 from src.jobs.platform.base import (
+    PlatformJobCancelled,
     PlatformJobContext,
     PlatformJobDefinition,
     PlatformJobDeferred,
@@ -103,6 +104,9 @@ async def run_solution_build(
             str(exc),
             retryable=True,
         ) from exc
+    if dispatch.cancelled:
+        await _cancel_build_projection(payload.build_job_id)
+        raise PlatformJobCancelled
 
     async with get_db_context() as db:
         build_job = await db.get(
@@ -153,6 +157,34 @@ async def _fail_build_projection(build_job_id: UUID, message: str) -> None:
         await db.commit()
 
 
+async def _cancel_build_projection(build_job_id: UUID) -> None:
+    from datetime import datetime, timezone
+
+    from src.core.database import get_db_context
+    from src.models.orm.solution_build_jobs import SolutionBuildJob
+
+    async with get_db_context() as db:
+        build_job = await db.get(SolutionBuildJob, build_job_id, with_for_update=True)
+        if build_job is None or build_job.status not in {"queued", "running"}:
+            return
+        build_job.status = "cancelled"
+        build_job.completed_at = datetime.now(timezone.utc)
+        await db.commit()
+
+
+async def cancel_solution_build(job_id: UUID) -> None:
+    """Synchronize the build projection and terminate external work."""
+    from src.core.database import get_db_context
+    from src.models.orm.platform_jobs import PlatformJob
+    from src.services.sandbox_runners import cancel_external_sandbox_run
+
+    await _cancel_build_projection(job_id)
+    async with get_db_context() as db:
+        platform_job = await db.get(PlatformJob, job_id)
+    if platform_job is not None:
+        await cancel_external_sandbox_run(platform_job)
+
+
 SOLUTION_BUILD_DEFINITION = PlatformJobDefinition(
     job_type="solution.build",
     payload_version=1,
@@ -164,4 +196,5 @@ SOLUTION_BUILD_DEFINITION = PlatformJobDefinition(
         min_memory_headroom_mb=64,
         allow_running_cancellation=True,
     ),
+    cancellation_handler=cancel_solution_build,
 )

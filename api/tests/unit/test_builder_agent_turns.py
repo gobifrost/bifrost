@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import contextlib
-from collections.abc import AsyncIterator
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -10,23 +8,19 @@ import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.contracts.agents import ChatStreamChunk
-from src.models.orm.agents import Agent, Conversation
+from src.models.enums import MessageRole
+from src.models.orm.agents import Agent, Conversation, Message
+from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solution_builder import SolutionBuilderSession
 from src.models.orm.solutions import Solution
 from src.models.orm.users import User
-from src.services.builder import agent_turns as agent_turns_module
-from src.services.builder import turns as turns_module
-from src.services.builder.agent_turns import (
-    BuilderAgentTurnService,
-    BuilderModelUnavailable,
-)
+from src.services.builder.agent_turns import BuilderAgentTurnService
 from src.services.builder.scaffold import (
     BUILDER_AGENT_SYSTEM_TOOLS,
     BUILDER_SKILL_BUNDLE_PATH,
     builder_agent_id,
 )
-from src.services.builder.turns import BuilderTurnService
+from src.services.builder.turns import BuilderTurnConflict, BuilderTurnService
 
 
 class FakeRevisionStorage:
@@ -44,51 +38,23 @@ class FakeRevisionStorage:
         return True
 
 
-@contextlib.asynccontextmanager
-async def _null_lock(_solution_id: UUID) -> AsyncIterator[None]:
-    yield
-
-
-class FakeAgentExecutor:
-    fail = False
-    mutate = False
-    captured_agent: Agent | None = None
-
-    def __init__(self, _session_factory, *, builder_workspace=None) -> None:
-        self.workspace = builder_workspace
-
-    async def chat(self, agent, _conversation, _message, **_kwargs):
-        FakeAgentExecutor.captured_agent = agent
-        if self.mutate:
-            self.workspace.write_file("workflows/generated.py", b"value = 1\n")
-        if self.fail:
-            yield ChatStreamChunk(type="error", error="model unavailable")
-        else:
-            yield ChatStreamChunk(type="done", content="Done.")
-
-
 @pytest.fixture(autouse=True)
-def fake_infrastructure(
+def fake_revision_storage(
     monkeypatch: pytest.MonkeyPatch,
 ) -> dict[str, bytes]:
     blobs: dict[str, bytes] = {}
-    monkeypatch.setattr(turns_module, "solution_write_lock", _null_lock)
     monkeypatch.setattr(
         BuilderTurnService,
         "_storage",
         lambda self, solution_id: FakeRevisionStorage(blobs),
     )
-    monkeypatch.setattr(agent_turns_module, "AgentExecutor", FakeAgentExecutor)
-    FakeAgentExecutor.fail = False
-    FakeAgentExecutor.mutate = False
-    FakeAgentExecutor.captured_agent = None
     return blobs
 
 
 @pytest_asyncio.fixture
 async def builder_rows(
     db_session: AsyncSession,
-) -> tuple[Solution, SolutionBuilderSession]:
+) -> tuple[Solution, SolutionBuilderSession, User]:
     user = User(
         id=uuid4(),
         email=f"builder-{uuid4().hex[:8]}@example.com",
@@ -126,88 +92,85 @@ async def builder_rows(
         conversation_id=None,
         user_id=user.id,
     )
-    await db_session.flush()
-    return solution, session
+    await db_session.commit()
+    return solution, session, user
 
 
 @pytest.mark.asyncio
-async def test_builder_turn_uses_bundle_backed_platform_agent(
+async def test_enqueue_turn_persists_prompt_agent_and_encrypted_platform_job(
     db_session: AsyncSession,
-    builder_rows: tuple[Solution, SolutionBuilderSession],
+    builder_rows: tuple[Solution, SolutionBuilderSession, User],
 ) -> None:
-    solution, session = builder_rows
+    solution, session, user = builder_rows
 
-    outcome = await BuilderAgentTurnService(db_session).run_agent_turn(
+    queued = await BuilderAgentTurnService(db_session).enqueue_agent_turn(
         solution.id,
         session_id=session.id,
-        requested_by=session.user_id,
-        user_message="Explain the workspace.",
+        requested_by=user.id,
+        user_message="Add an expense dashboard.",
     )
 
-    assert outcome.final_text == "Done."
-    assert outcome.revision_created is False
+    assert queued.turn.status == "queued"
+    assert queued.turn.id == queued.platform_job.id
+    assert queued.platform_job.job_type == "solution.builder.turn"
+    assert queued.platform_job.payload == {"protected": True}
+    assert queued.platform_job.encrypted_payload is not None
+    assert queued.platform_job.resource_lock_key == f"solution:{solution.id}"
+
     agent = await db_session.get(Agent, builder_agent_id(solution.id))
     assert agent is not None
     assert agent.solution_id == solution.id
     assert agent.bundle_path == BUILDER_SKILL_BUNDLE_PATH
     assert agent.system_tools == BUILDER_AGENT_SYSTEM_TOOLS
     assert agent.system_prompt.startswith("---")
+
     conversation = await db_session.get(Conversation, session.conversation_id)
+    assert conversation is not None
     assert conversation.agent_id == agent.id
-    assert FakeAgentExecutor.captured_agent is agent
+    messages = (
+        (
+            await db_session.execute(
+                select(Message)
+                .where(Message.conversation_id == conversation.id)
+                .order_by(Message.sequence)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert [(message.role, message.content) for message in messages] == [
+        (MessageRole.USER, "Add an expense dashboard.")
+    ]
 
 
 @pytest.mark.asyncio
-async def test_changed_turn_queues_the_immutable_revision(
+async def test_enqueue_turn_refuses_a_second_active_turn(
     db_session: AsyncSession,
-    builder_rows: tuple[Solution, SolutionBuilderSession],
-    monkeypatch: pytest.MonkeyPatch,
+    builder_rows: tuple[Solution, SolutionBuilderSession, User],
 ) -> None:
-    solution, session = builder_rows
-    FakeAgentExecutor.mutate = True
-    queued: list[UUID] = []
-
-    async def _enqueue(_db, queued_solution_id, *, turn, revision_id):
-        assert queued_solution_id == solution.id
-        assert turn.output_revision_id == revision_id
-        queued.append(revision_id)
-
-    monkeypatch.setattr(
-        agent_turns_module,
-        "enqueue_builder_turn_deploy",
-        _enqueue,
-    )
-
-    outcome = await BuilderAgentTurnService(db_session).run_agent_turn(
+    solution, session, user = builder_rows
+    service = BuilderAgentTurnService(db_session)
+    await service.enqueue_agent_turn(
         solution.id,
         session_id=session.id,
-        requested_by=session.user_id,
-        user_message="Add code.",
+        requested_by=user.id,
+        user_message="First prompt",
     )
 
-    assert outcome.revision_created is True
-    assert queued == [outcome.turn.output_revision_id]
-
-
-@pytest.mark.asyncio
-async def test_executor_error_fails_closed(
-    db_session: AsyncSession,
-    builder_rows: tuple[Solution, SolutionBuilderSession],
-) -> None:
-    solution, session = builder_rows
-    FakeAgentExecutor.fail = True
-
-    with pytest.raises(BuilderModelUnavailable, match="model unavailable"):
-        await BuilderAgentTurnService(db_session).run_agent_turn(
+    with pytest.raises(BuilderTurnConflict, match="already active"):
+        await service.enqueue_agent_turn(
             solution.id,
             session_id=session.id,
-            requested_by=session.user_id,
-            user_message="Build.",
+            requested_by=user.id,
+            user_message="Second prompt",
         )
 
-    rows = (
+    jobs = (
         await db_session.execute(
-            select(Agent).where(Agent.solution_id == solution.id)
+            select(PlatformJob).where(
+                PlatformJob.job_type == "solution.builder.turn",
+                PlatformJob.resource_lock_key == f"solution:{solution.id}",
+            )
         )
     ).scalars().all()
-    assert len(rows) == 1
+    assert len(jobs) == 1

@@ -431,7 +431,8 @@ async def defer_platform_job(
             return False
         job.status = "waiting"
         job.phase = phase[:200]
-        job.result = result
+        if result is not None:
+            job.result = {**(job.result or {}), **result}
         if external_provider is not None and external_run_id is not None:
             job.external_provider = external_provider[:50]
             job.external_run_id = external_run_id[:255]
@@ -549,42 +550,77 @@ async def finish_external_platform_job(
     error_message: str | None = None,
 ) -> bool:
     """Finish a callback-driven job even if it won the local defer race."""
-    if status not in TERMINAL_PLATFORM_JOB_STATUSES:
-        raise ValueError(f"Invalid terminal platform-job status: {status}")
     async with get_db_context() as db:
-        job = (
-            await db.execute(
-                select(PlatformJob)
-                .where(
-                    PlatformJob.id == job_id,
-                    PlatformJob.attempt == dispatch_attempt,
-                    PlatformJob.status.in_(("running", "waiting")),
-                )
-                .with_for_update()
-            )
-        ).scalar_one_or_none()
+        job = await stage_external_platform_job_completion(
+            db,
+            job_id,
+            dispatch_attempt,
+            status=status,
+            result=result,
+            error_message=error_message,
+        )
         if job is None:
             return False
-        job.status = status
-        job.phase = {
-            "succeeded": "Completed",
-            "failed": "Failed",
-            "cancelled": "Cancelled",
-        }[status]
-        if status == "succeeded":
-            job.progress_percent = 100
-        job.result = result
-        job.error_code = "external_job_failed" if error_message else None
-        job.error_message = error_message[:4000] if error_message else None
-        job.completed_at = _now()
-        job.lease_owner = None
-        job.lease_token = None
-        job.heartbeat_at = None
-        job.lease_expires_at = None
-        job.revision += 1
         await db.commit()
     await publish_platform_job_update(job)
     return True
+
+
+async def stage_external_platform_job_completion(
+    db: AsyncSession,
+    job_id: UUID,
+    dispatch_attempt: int,
+    *,
+    status: str,
+    result: dict[str, Any] | None = None,
+    error_message: str | None = None,
+) -> PlatformJob | None:
+    """Fence and stage an external terminal transition in ``db``.
+
+    Callers that must publish other database state atomically with the job may
+    use this primitive, commit once, then broadcast the returned job. The
+    ordinary callback path remains :func:`finish_external_platform_job`.
+    """
+    if status not in TERMINAL_PLATFORM_JOB_STATUSES:
+        raise ValueError(f"Invalid terminal platform-job status: {status}")
+    source_statuses = (
+        ("running", "waiting", "cancel_requested")
+        if status == "cancelled"
+        else ("running", "waiting")
+    )
+    job = (
+        await db.execute(
+            select(PlatformJob)
+            .where(
+                PlatformJob.id == job_id,
+                PlatformJob.attempt == dispatch_attempt,
+                PlatformJob.status.in_(source_statuses),
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if job is None:
+        return None
+    job.status = status
+    job.phase = {
+        "succeeded": "Completed",
+        "failed": "Failed",
+        "cancelled": "Cancelled",
+    }[status]
+    if status == "succeeded":
+        job.progress_percent = 100
+    if result is not None:
+        job.result = {**(job.result or {}), **result}
+    job.error_code = "external_job_failed" if error_message else None
+    job.error_message = error_message[:4000] if error_message else None
+    job.completed_at = _now()
+    job.lease_owner = None
+    job.lease_token = None
+    job.heartbeat_at = None
+    job.lease_expires_at = None
+    job.revision += 1
+    await db.flush()
+    return job
 
 
 async def request_platform_job_cancel(
@@ -593,10 +629,10 @@ async def request_platform_job_cancel(
 ) -> tuple[PlatformJob, bool]:
     if job.status in TERMINAL_PLATFORM_JOB_STATUSES:
         return job, False
-    if job.status in ("running", "cancel_requested"):
-        from src.jobs.platform.registry import get_platform_job_definition
+    from src.jobs.platform.registry import get_platform_job_definition
 
-        definition = get_platform_job_definition(job.job_type)
+    definition = get_platform_job_definition(job.job_type)
+    if job.status in ("running", "cancel_requested"):
         if definition is None or not definition.policy.allow_running_cancellation:
             return job, False
     now = _now()
@@ -613,4 +649,13 @@ async def request_platform_job_cancel(
         job.revision += 1
     await db.commit()
     await publish_platform_job_update(job)
+    if accepted and definition is not None and definition.cancellation_handler is not None:
+        try:
+            await definition.cancellation_handler(job.id)
+        except Exception:  # noqa: BLE001 - the durable cancellation remains accepted
+            logger.warning(
+                "Platform-job cancellation handler failed",
+                extra={"platform_job_id": str(job.id), "job_type": job.job_type},
+                exc_info=True,
+            )
     return job, accepted

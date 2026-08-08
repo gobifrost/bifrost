@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import AsyncGenerator
@@ -215,6 +216,31 @@ async def test_cancel_is_idempotent(
     assert second is False
     assert job.status == "cancelled"
     assert job.completed_at is not None
+
+
+@pytest.mark.asyncio
+async def test_cancel_invokes_registered_projection_handler_once(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = await _enqueue(db_session)
+    handler = AsyncMock()
+    definition = replace(
+        APPLICATION_PUBLISH_DEFINITION,
+        cancellation_handler=handler,
+    )
+    monkeypatch.setattr(
+        "src.jobs.platform.registry.get_platform_job_definition",
+        lambda _job_type: definition,
+    )
+    monkeypatch.setattr(service, "publish_platform_job_update", AsyncMock())
+
+    job, first = await service.request_platform_job_cancel(db_session, job)
+    job, second = await service.request_platform_job_cancel(db_session, job)
+
+    assert first is True
+    assert second is False
+    handler.assert_awaited_once_with(job.id)
 
 
 @pytest.mark.asyncio

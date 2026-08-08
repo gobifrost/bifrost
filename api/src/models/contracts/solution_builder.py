@@ -15,6 +15,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from src.models.contracts.sandbox_runner import SandboxRunnerBlocker
+
 
 class PrivateSolutionCreate(BaseModel):
     """Create-shape for a private builder Solution.
@@ -57,6 +59,8 @@ class PrivateSolutionsList(BaseModel):
     solutions: list[PrivateSolutionDTO]
     total: int
     ai_configured: bool
+    builder_ready: bool
+    builder_blockers: list[SandboxRunnerBlocker] = Field(default_factory=list)
     is_platform_admin: bool
 
 
@@ -300,17 +304,11 @@ class RunTurnRequest(BaseModel):
 
 
 class RunTurnResponse(BaseModel):
-    """What one agent turn produced.
-
-    ``revision_created`` is False for a turn the model answered without
-    editing anything (a question, or an edit that produced identical bytes);
-    the preview is unchanged in that case.
-    """
+    """Accepted durable Builder turn returned without waiting for the model."""
 
     turn: BuilderTurnDTO
-    final_text: str
-    tool_call_count: int
-    revision_created: bool
+    job_id: UUID
+    status: Literal["queued"] = "queued"
 
 
 class BuildOutputEntry(BaseModel):

@@ -19,7 +19,9 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.auth import Context, ExecutionContext
+from src.models.contracts.sandbox_runner import SandboxRunnerReadiness
 from src.models.contracts.solution_builder import (
     BuilderProjectDTO,
     BuilderSessionDTO,
@@ -46,7 +48,6 @@ from src.models.orm.solution_deploy_jobs import SolutionDeployJob
 from src.models.orm.solutions import Solution
 from src.services.builder.agent_turns import (
     BuilderAgentTurnService,
-    BuilderModelUnavailable,
     enqueue_builder_turn_deploy,
 )
 from src.config import Settings, get_settings
@@ -83,10 +84,27 @@ from src.services.builder.revision_inspection import (
 from src.services.solutions.access import SolutionAction
 from src.services.solutions.builder_authz import can_build
 from src.services.llm_config_service import LLMConfigService
+from src.services.sandbox_runner_config import SandboxRunnerConfigService
 
 router = APIRouter(prefix="/api/builder/solutions", tags=["builder"])
 
 NOT_FOUND_DETAIL = "Solution not found"
+
+
+async def _builder_readiness(
+    db: AsyncSession,
+) -> tuple[bool, SandboxRunnerReadiness]:
+    llm_config = await LLMConfigService(db).get_config()
+    ai_configured = bool(
+        llm_config
+        and llm_config.is_configured
+        and llm_config.api_key_set
+        and (llm_config.builder_model or llm_config.model)
+    )
+    readiness = await SandboxRunnerConfigService(db).get_readiness(
+        ai_configured=ai_configured
+    )
+    return ai_configured, readiness
 
 
 async def require_builder(ctx: Context) -> ExecutionContext:
@@ -174,17 +192,13 @@ async def list_solutions(
         to_dto(solution, project, app_origin=settings.app_origin)
         for solution, project in rows
     ]
-    llm_config = await LLMConfigService(ctx.db).get_config()
-    ai_configured = bool(
-        llm_config
-        and llm_config.is_configured
-        and llm_config.api_key_set
-        and llm_config.model
-    )
+    ai_configured, readiness = await _builder_readiness(ctx.db)
     return PrivateSolutionsList(
         solutions=items,
         total=len(items),
         ai_configured=ai_configured,
+        builder_ready=readiness.ready,
+        builder_blockers=readiness.blockers,
         is_platform_admin=ctx.user.is_platform_admin,
     )
 
@@ -436,22 +450,34 @@ async def undo_to_revision(
 @router.post(
     "/{solution_id}/turns",
     response_model=RunTurnResponse,
-    summary="Run one builder agent turn against this Solution (owner only)",
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Queue one durable builder agent turn (owner only)",
 )
 async def run_turn(
     solution_id: UUID, body: RunTurnRequest, ctx: BuilderContext
 ) -> RunTurnResponse:
-    """Send a message to the builder agent and apply whatever it changes.
+    """Persist the message and queue an isolated Builder turn.
 
-    The turn holds the per-Solution write lock for its duration, so a second
-    concurrent turn is refused with 409 rather than queued. A model or tool
-    failure still records a failed turn row and leaves the current revision
-    pointer untouched.
+    The response returns as soon as the durable PlatformJob exists. Progress,
+    completion, and restored conversation state arrive through the shared
+    PlatformJob notification transport.
     """
     await _load_or_404(ctx, solution_id, SolutionAction.EDIT)
+    _ai_configured, readiness = await _builder_readiness(ctx.db)
+    if not readiness.ready:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={
+                "code": "builder_not_ready",
+                "message": "Builder has not been enabled by a platform administrator",
+                "blockers": [
+                    blocker.model_dump(mode="json") for blocker in readiness.blockers
+                ],
+            },
+        )
     service = BuilderAgentTurnService(ctx.db)
     try:
-        outcome = await service.run_agent_turn(
+        queued = await service.enqueue_agent_turn(
             solution_id,
             session_id=body.session_id,
             requested_by=ctx.user.user_id,
@@ -466,17 +492,9 @@ async def run_turn(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
         ) from exc
-    except BuilderModelUnavailable as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"The builder model is not available: {exc}",
-        ) from exc
-    await ctx.db.commit()
     return RunTurnResponse(
-        turn=BuilderTurnDTO.model_validate(outcome.turn),
-        final_text=outcome.final_text,
-        tool_call_count=outcome.tool_call_count,
-        revision_created=outcome.revision_created,
+        turn=BuilderTurnDTO.model_validate(queued.turn),
+        job_id=queued.platform_job.id,
     )
 
 

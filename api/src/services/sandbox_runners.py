@@ -51,6 +51,7 @@ class SandboxDispatchResult:
     provider: str
     external_run_id: str
     started_at: datetime
+    cancelled: bool = False
 
 
 def _required_string(value: object, field: str) -> str:
@@ -124,11 +125,59 @@ async def dispatch_sandbox_platform_job(
     else:
         raise SandboxRunnerUnavailable(f"Unsupported sandbox runner provider: {provider}")
 
+    started_at = datetime.now(timezone.utc)
+    cancelled = False
+    async with get_db_context() as db:
+        current = (
+            await db.execute(
+                select(PlatformJob)
+                .where(
+                    PlatformJob.id == job.id,
+                    PlatformJob.attempt == job.attempt,
+                    PlatformJob.lease_token == lease_token,
+                    PlatformJob.status.in_(("running", "cancel_requested")),
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if current is None:
+            cancelled = True
+        else:
+            current.external_provider = str(provider)[:50]
+            current.external_run_id = external_run_id[:255]
+            current.external_started_at = started_at
+            cancelled = current.status == "cancel_requested"
+            await db.commit()
+
+    if cancelled:
+        await _cancel_dispatched_run(config, str(provider), external_run_id, job.id)
+
     return SandboxDispatchResult(
-        provider=provider,
+        provider=str(provider),
         external_run_id=external_run_id,
-        started_at=datetime.now(timezone.utc),
+        started_at=started_at,
+        cancelled=cancelled,
     )
+
+
+async def _cancel_dispatched_run(
+    config: dict[str, Any],
+    provider: str,
+    run_id: str,
+    job_id: UUID,
+) -> None:
+    """Terminate a run accepted during a concurrent cancellation/fencing race."""
+    try:
+        if provider == "cloudflare":
+            await _cancel_cloudflare(config, run_id)
+        elif provider == "local":
+            await _cancel_local(config, run_id)
+    except (SandboxRunnerUnavailable, SandboxDispatchFailed):
+        logger.warning(
+            "Sandbox run accepted after cancellation could not be terminated",
+            extra={"platform_job_id": str(job_id), "external_run_id": run_id},
+            exc_info=True,
+        )
 
 
 async def _dispatch_cloudflare(

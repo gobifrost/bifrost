@@ -341,6 +341,102 @@ async def test_no_op_turn_adds_no_revision(
 
 
 @pytest.mark.asyncio
+async def test_external_output_is_revalidated_and_published_as_a_revision(
+    service: BuilderTurnService,
+    db_session: AsyncSession,
+    solution: Solution,
+    session_row: SolutionBuilderSession,
+    blobs: dict[str, bytes],
+    tmp_path: Path,
+):
+    base = await _seed_project(service, solution)
+    turn = SolutionBuilderTurn(
+        id=uuid4(),
+        session_id=session_row.id,
+        requested_by=session_row.user_id,
+        base_revision_id=base.id,
+        status="running",
+    )
+    db_session.add(turn)
+    await db_session.flush()
+
+    uploaded = tmp_path / "uploaded.zip"
+    source = tmp_path / "source"
+    source.mkdir()
+    base_zip = tmp_path / "base.zip"
+    base_zip.write_bytes(blobs[str(base.id)])
+    safe_extract_zip(base_zip, source, WorkspaceLimits())
+    (source / "workflows" / "generated.py").write_text("value = 1\n")
+    zip_workspace(source, uploaded)
+
+    materialized = await service.materialize_external_output(
+        solution.id,
+        turn_id=turn.id,
+        output_zip=uploaded,
+        summary="add generated workflow",
+    )
+
+    assert materialized.revision_created is True
+    assert materialized.turn.status == STATUS_SUCCEEDED
+    assert materialized.turn.output_revision_id not in {None, base.id}
+    revision = await db_session.get(
+        SolutionSourceRevision,
+        materialized.turn.output_revision_id,
+    )
+    assert revision is not None
+    assert revision.parent_revision_id == base.id
+    assert revision.summary == "add generated workflow"
+    project = await db_session.get(SolutionBuilderProject, solution.id)
+    assert project is not None
+    assert project.current_revision_id == revision.id
+
+
+@pytest.mark.asyncio
+async def test_external_output_cannot_overwrite_a_newer_project_revision(
+    service: BuilderTurnService,
+    db_session: AsyncSession,
+    solution: Solution,
+    session_row: SolutionBuilderSession,
+    blobs: dict[str, bytes],
+    tmp_path: Path,
+):
+    base = await _seed_project(service, solution)
+    turn = SolutionBuilderTurn(
+        id=uuid4(),
+        session_id=session_row.id,
+        requested_by=session_row.user_id,
+        base_revision_id=base.id,
+        status="running",
+    )
+    db_session.add(turn)
+    newer = SolutionSourceRevision(
+        id=uuid4(),
+        solution_id=solution.id,
+        parent_revision_id=base.id,
+        source_sha256="f" * 64,
+        size_bytes=1,
+    )
+    db_session.add(newer)
+    project = await db_session.get(SolutionBuilderProject, solution.id)
+    assert project is not None
+    project.current_revision_id = newer.id
+    await db_session.flush()
+
+    uploaded = tmp_path / "uploaded.zip"
+    uploaded.write_bytes(blobs[str(base.id)])
+    with pytest.raises(BuilderTurnConflict, match="changed after"):
+        await service.materialize_external_output(
+            solution.id,
+            turn_id=turn.id,
+            output_zip=uploaded,
+            summary="stale turn",
+        )
+
+    assert project.current_revision_id == newer.id
+    assert turn.output_revision_id is None
+
+
+@pytest.mark.asyncio
 async def test_failed_mutation_leaves_the_pointer_unchanged(
     service: BuilderTurnService,
     db_session: AsyncSession,

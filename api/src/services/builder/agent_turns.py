@@ -1,26 +1,31 @@
-"""Run private-Solution builder turns through the platform AgentExecutor."""
+"""Queue private-Solution Builder turns for isolated sandbox execution."""
 
 from __future__ import annotations
 
+import asyncio
+import hashlib
+import logging
 import tempfile
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.core.database import get_session_factory
-from src.core.principal import UserPrincipal
 from src.models.enums import AgentAccessLevel, MessageRole
 from src.models.orm.agents import Agent, Conversation, Message
-from src.models.orm.solution_builder import SolutionBuilderSession, SolutionBuilderTurn
+from src.models.orm.platform_jobs import PlatformJob
+from src.models.orm.solution_builder import (
+    SolutionBuilderProject,
+    SolutionBuilderSession,
+    SolutionBuilderTurn,
+)
 from src.models.orm.solutions import Solution
 from src.models.orm.users import User
-from src.services.agent_executor import AgentExecutor
-from src.services.builder.fs_tools import WorkspaceRoot
 from src.services.builder.revision_storage import SolutionRevisionStorage
 from src.services.builder.scaffold import (
     BUILDER_AGENT_SYSTEM_TOOLS,
@@ -28,22 +33,33 @@ from src.services.builder.scaffold import (
     _builder_skill_source,
     builder_agent_id,
 )
-from src.services.builder.turns import BuilderProjectMissing, BuilderTurnService
+from src.services.builder.turns import (
+    BuilderProjectMissing,
+    BuilderTurnConflict,
+    BuilderTurnService,
+)
+from src.services.builder.turn_artifacts import BuilderTurnArtifactStorage
 from src.services.llm_config_service import LLMConfigService
 from src.services.solutions.deploy_jobs import create_staged_deploy_job
 
 _SUMMARY_MAX_CHARS = 120
+logger = logging.getLogger(__name__)
 
 
-class BuilderModelUnavailable(RuntimeError):
-    """The configured builder Agent could not obtain a model response."""
+class BuilderTurnCompletionFenced(RuntimeError):
+    """An external callback no longer owns the active PlatformJob attempt."""
 
 
 @dataclass
-class AgentTurnOutcome:
+class QueuedAgentTurn:
     turn: SolutionBuilderTurn
-    final_text: str
-    tool_call_count: int
+    platform_job: PlatformJob
+
+
+@dataclass
+class CompletedAgentTurn:
+    turn: SolutionBuilderTurn
+    platform_job: PlatformJob
     revision_created: bool
 
 
@@ -115,77 +131,264 @@ class BuilderAgentTurnService:
         self.db = db
         self.turns = BuilderTurnService(db)
 
-    async def run_agent_turn(
+    async def enqueue_agent_turn(
         self,
         solution_id: UUID,
         *,
         session_id: UUID,
-        requested_by: UUID | None,
+        requested_by: UUID,
         user_message: str,
-    ) -> AgentTurnOutcome:
+    ) -> QueuedAgentTurn:
+        """Persist the prompt and enqueue one encrypted sandbox PlatformJob."""
         session = await self._load_session(solution_id, session_id)
-        agent, conversation, principal = await self._ensure_builder_agent(
+        conversation = await self._ensure_builder_agent(
             solution_id,
             session,
         )
-        before_tool_calls = await self._tool_call_count(conversation.id)
-
-        final_text: str | None = None
-
-        async def mutate(workspace: WorkspaceRoot) -> None:
-            nonlocal final_text
-            executor = AgentExecutor(
-                get_session_factory(),
-                builder_workspace=workspace,
-            )
-            error: str | None = None
-            async for chunk in executor.chat(
-                agent,
-                conversation,
-                user_message,
-                stream=False,
-                enable_routing=False,
-                user=principal,
-            ):
-                if chunk.type == "done":
-                    final_text = chunk.content or ""
-                elif chunk.type == "error":
-                    error = chunk.error or "builder Agent failed"
-            if error is not None:
-                raise BuilderModelUnavailable(error)
-            if final_text is None:
-                raise BuilderModelUnavailable(
-                    "builder Agent ended without a terminal response"
+        project = await self.db.get(SolutionBuilderProject, solution_id)
+        if project is None or project.current_revision_id is None:
+            raise BuilderProjectMissing(f"Solution {solution_id} has no current revision")
+        await self.db.execute(
+            text(
+                "SELECT pg_advisory_xact_lock("
+                "hashtext('bifrost:builder-turn:' || :solution_id))"
+            ),
+            {"solution_id": str(solution_id)},
+        )
+        active = (
+            await self.db.execute(
+                select(SolutionBuilderTurn.id)
+                .join(
+                    SolutionBuilderSession,
+                    SolutionBuilderSession.id == SolutionBuilderTurn.session_id,
                 )
+                .where(
+                    SolutionBuilderSession.solution_id == solution_id,
+                    SolutionBuilderTurn.status.in_(("queued", "running")),
+                )
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        if active is not None:
+            raise BuilderTurnConflict(
+                f"another Builder turn is already active for Solution {solution_id}"
+            )
 
-        turn = await self.turns.run_turn(
-            solution_id,
+        await self._append_message(
+            conversation,
+            role=MessageRole.USER,
+            content=user_message,
+        )
+        turn_id = uuid4()
+        turn = SolutionBuilderTurn(
+            id=turn_id,
             session_id=session_id,
             requested_by=requested_by,
-            mutate=mutate,
-            summary=_revision_summary(user_message),
+            base_revision_id=project.current_revision_id,
+            status="queued",
         )
-        if final_text is None:
-            raise BuilderProjectMissing(
-                f"builder turn {turn.id} completed without running the Agent"
+        self.db.add(turn)
+
+        from src.jobs.platform.solution_builder_turn import (
+            SOLUTION_BUILDER_TURN_DEFINITION,
+            SolutionBuilderTurnPayload,
+        )
+        from src.services.platform_jobs import enqueue_platform_job
+
+        solution = await self.db.get(Solution, solution_id)
+        requester = await self.db.get(User, requested_by)
+        if solution is None or requester is None:
+            raise BuilderProjectMissing("The Solution owner no longer exists")
+        platform_job, _ = await enqueue_platform_job(
+            self.db,
+            SOLUTION_BUILDER_TURN_DEFINITION,
+            SolutionBuilderTurnPayload(
+                solution_id=solution_id,
+                session_id=session_id,
+                turn_id=turn_id,
+                base_revision_id=project.current_revision_id,
+                message=user_message,
+            ),
+            dedupe_key=str(turn_id),
+            resource_lock_key=f"solution:{solution_id}",
+            priority=400,
+            organization_id=solution.organization_id,
+            requested_by_user_id=requested_by,
+            requested_by_email=requester.email,
+            requested_by_name=requester.name or requester.email,
+            resource_type="solution_builder_turn",
+            resource_id=str(turn_id),
+            title=f"Building {solution.name}",
+            action_url=f"/solutions/{solution_id}/builder",
+            job_id=turn_id,
+        )
+        await self.db.commit()
+
+        from src.services.platform_jobs import publish_platform_job_update
+
+        await publish_platform_job_update(platform_job)
+        return QueuedAgentTurn(turn=turn, platform_job=platform_job)
+
+    async def finalize_agent_turn(
+        self,
+        solution_id: UUID,
+        *,
+        turn_id: UUID,
+        dispatch_attempt: int,
+        output_sha256: str,
+        final_text: str,
+        tool_call_count: int,
+        model: str | None = None,
+        token_count_input: int | None = None,
+        token_count_output: int | None = None,
+    ) -> CompletedAgentTurn:
+        """Atomically accept one fenced sandbox result and restore chat state."""
+        artifact_storage = BuilderTurnArtifactStorage(turn_id, dispatch_attempt)
+        created_revision_id: UUID | None = None
+        try:
+            with tempfile.TemporaryDirectory(prefix="bifrost-builder-result-") as tmp:
+                output_path = Path(tmp) / "output.zip"
+                await artifact_storage.copy_to_path(output_path)
+                actual_sha256 = await asyncio.to_thread(_file_sha256, output_path)
+                if actual_sha256 != output_sha256:
+                    raise ValueError("Builder output archive digest does not match upload")
+
+                turn = await self.db.get(SolutionBuilderTurn, turn_id)
+                if turn is None:
+                    raise BuilderProjectMissing(f"Builder turn {turn_id} does not exist")
+                session = await self._load_session(solution_id, turn.session_id)
+                user_message = await self._latest_user_message(session.conversation_id)
+                materialized = await self.turns.materialize_external_output(
+                    solution_id,
+                    turn_id=turn_id,
+                    output_zip=output_path,
+                    summary=_revision_summary(user_message),
+                )
+                if materialized.revision_created:
+                    created_revision_id = materialized.turn.output_revision_id
+
+            conversation = await self.db.get(Conversation, session.conversation_id)
+            if conversation is None:
+                raise BuilderProjectMissing(
+                    f"Builder conversation {session.conversation_id} is missing"
+                )
+            await self._append_message(
+                conversation,
+                role=MessageRole.ASSISTANT,
+                content=final_text,
+                model=model,
+                token_count_input=token_count_input,
+                token_count_output=token_count_output,
             )
 
-        after_tool_calls = await self._tool_call_count(conversation.id)
-        revision_created = turn.output_revision_id != turn.base_revision_id
-        if revision_created and turn.output_revision_id is not None:
-            await enqueue_builder_turn_deploy(
+            from src.services.platform_jobs import (
+                publish_platform_job_update,
+                stage_external_platform_job_completion,
+            )
+
+            platform_job = await stage_external_platform_job_completion(
                 self.db,
-                solution_id,
-                turn=turn,
-                revision_id=turn.output_revision_id,
+                turn_id,
+                dispatch_attempt,
+                status="succeeded",
+                result={
+                    "turn_id": str(turn_id),
+                    "revision_id": str(materialized.turn.output_revision_id),
+                    "revision_created": materialized.revision_created,
+                    "tool_call_count": tool_call_count,
+                },
             )
+            if platform_job is None:
+                raise BuilderTurnCompletionFenced(
+                    "Builder turn completion was fenced out by a newer attempt"
+                )
 
-        return AgentTurnOutcome(
-            turn=turn,
-            final_text=final_text,
-            tool_call_count=max(0, after_tool_calls - before_tool_calls),
-            revision_created=revision_created,
+            if (
+                materialized.revision_created
+                and materialized.turn.output_revision_id is not None
+            ):
+                await enqueue_builder_turn_deploy(
+                    self.db,
+                    solution_id,
+                    turn=materialized.turn,
+                    revision_id=materialized.turn.output_revision_id,
+                )
+            else:
+                await self.db.commit()
+            await publish_platform_job_update(platform_job)
+            return CompletedAgentTurn(
+                turn=materialized.turn,
+                platform_job=platform_job,
+                revision_created=materialized.revision_created,
+            )
+        except Exception:
+            await self.db.rollback()
+            if created_revision_id is not None:
+                try:
+                    await SolutionRevisionStorage(solution_id).delete(created_revision_id)
+                except Exception:  # noqa: BLE001 - preserve the completion failure
+                    logger.warning(
+                        "Failed to delete an uncommitted Builder revision",
+                        extra={"revision_id": str(created_revision_id)},
+                        exc_info=True,
+                    )
+            raise
+        finally:
+            try:
+                await artifact_storage.delete()
+            except Exception:  # noqa: BLE001 - staged output cleanup is best effort
+                logger.warning(
+                    "Failed to delete staged Builder output",
+                    extra={"turn_id": str(turn_id)},
+                    exc_info=True,
+                )
+
+    async def finish_failed_agent_turn(
+        self,
+        *,
+        turn_id: UUID,
+        dispatch_attempt: int,
+        status: str,
+        error: str | None,
+    ) -> PlatformJob:
+        """Persist one failed/cancelled sandbox result under attempt fencing."""
+        if status not in {"failed", "cancelled"}:
+            raise ValueError(f"Unsupported Builder turn status: {status}")
+        turn = await self.db.get(SolutionBuilderTurn, turn_id, with_for_update=True)
+        if turn is None:
+            raise BuilderProjectMissing(f"Builder turn {turn_id} does not exist")
+
+        from src.services.platform_jobs import (
+            publish_platform_job_update,
+            stage_external_platform_job_completion,
         )
+
+        platform_job = await stage_external_platform_job_completion(
+            self.db,
+            turn_id,
+            dispatch_attempt,
+            status=status,
+            result={"turn_id": str(turn_id)},
+            error_message=error if status == "failed" else None,
+        )
+        if platform_job is None:
+            raise BuilderTurnCompletionFenced(
+                "Builder turn completion was fenced out by a newer attempt"
+            )
+        turn.status = status
+        turn.error = error[:4000] if error else None
+        turn.completed_at = datetime.now(timezone.utc)
+        await self.db.commit()
+        await publish_platform_job_update(platform_job)
+        try:
+            await BuilderTurnArtifactStorage(turn_id, dispatch_attempt).delete()
+        except Exception:  # noqa: BLE001 - terminal state is already durable
+            logger.warning(
+                "Failed to delete staged Builder output",
+                extra={"turn_id": str(turn_id)},
+                exc_info=True,
+            )
+        return platform_job
 
     async def _load_session(
         self,
@@ -199,11 +402,23 @@ class BuilderAgentTurnService:
             )
         return session
 
+    async def _latest_user_message(self, conversation_id: UUID) -> str:
+        content = await self.db.scalar(
+            select(Message.content)
+            .where(
+                Message.conversation_id == conversation_id,
+                Message.role == MessageRole.USER,
+            )
+            .order_by(Message.sequence.desc())
+            .limit(1)
+        )
+        return content or "builder turn"
+
     async def _ensure_builder_agent(
         self,
         solution_id: UUID,
         session: SolutionBuilderSession,
-    ) -> tuple[Agent, Conversation, UserPrincipal]:
+    ) -> Conversation:
         solution = await self.db.get(Solution, solution_id)
         if solution is None:
             raise BuilderProjectMissing(f"Solution {solution_id} does not exist")
@@ -252,16 +467,6 @@ class BuilderAgentTurnService:
         conversation.agent_id = agent_id
         await self.db.commit()
 
-        agent = (
-            await self.db.execute(
-                select(Agent)
-                .where(Agent.id == agent_id)
-                .options(
-                    selectinload(Agent.tools),
-                    selectinload(Agent.delegated_agents),
-                )
-            )
-        ).scalar_one()
         conversation = (
             await self.db.execute(
                 select(Conversation)
@@ -269,23 +474,49 @@ class BuilderAgentTurnService:
                 .options(selectinload(Conversation.user))
             )
         ).scalar_one()
-        principal = UserPrincipal(
-            user_id=user.id,
-            email=user.email,
-            name=user.name or "",
-            organization_id=user.organization_id,
-            is_superuser=user.is_superuser,
-            is_external=user.is_external,
-        )
-        return agent, conversation, principal
+        return conversation
 
-    async def _tool_call_count(self, conversation_id: UUID) -> int:
-        value = await self.db.scalar(
-            select(func.count())
-            .select_from(Message)
-            .where(
-                Message.conversation_id == conversation_id,
-                Message.role == MessageRole.TOOL_CALL,
+    async def _append_message(
+        self,
+        conversation: Conversation,
+        *,
+        role: MessageRole,
+        content: str,
+        model: str | None = None,
+        token_count_input: int | None = None,
+        token_count_output: int | None = None,
+    ) -> Message:
+        await self.db.execute(
+            text(
+                "SELECT pg_advisory_xact_lock("
+                "hashtext('bifrost:conversation:' || :conversation_id))"
+            ),
+            {"conversation_id": str(conversation.id)},
+        )
+        max_sequence = await self.db.scalar(
+            select(func.coalesce(func.max(Message.sequence), 0)).where(
+                Message.conversation_id == conversation.id
             )
         )
-        return int(value or 0)
+        message = Message(
+            id=uuid4(),
+            conversation_id=conversation.id,
+            role=role,
+            content=content,
+            sequence=int(max_sequence or 0) + 1,
+            model=model,
+            token_count_input=token_count_input,
+            token_count_output=token_count_output,
+        )
+        self.db.add(message)
+        conversation.updated_at = datetime.now(timezone.utc)
+        await self.db.flush()
+        return message
+
+
+def _file_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        while chunk := handle.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
