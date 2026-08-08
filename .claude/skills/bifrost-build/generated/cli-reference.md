@@ -14,11 +14,15 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  create  Create a new agent.
-  delete  Soft-delete an agent.
-  get     Get a single agent by UUID or name.
-  list    List all agents.
-  update  Update an agent.
+  create          Create a new agent.
+  delete          Soft-delete an agent.
+  download-skill  Download an Agent as a portable .zip Skill archive.
+  get             Get a single agent by UUID or name.
+  get-skill       Inspect an Agent's canonical SKILL.md projection and...
+  list            List all agents.
+  remove-skill    Detach a bundle while preserving its instruction body...
+  update          Update an agent.
+  upload-skill    Validate and attach a .skill or .zip archive to an Agent.
 ```
 
 ### `agents create`
@@ -83,12 +87,37 @@ Options:
   --help  Show this message and exit.
 ```
 
+### `agents download-skill`
+
+```
+Usage: agents download-skill [OPTIONS] REF OUTPUT
+
+  Download an Agent as a portable .zip Skill archive.
+
+Options:
+  --force  Replace OUTPUT if it already exists.
+  --json   Emit JSON instead of human-readable output.
+  --help   Show this message and exit.
+```
+
 ### `agents get`
 
 ```
 Usage: agents get [OPTIONS] REF
 
   Get a single agent by UUID or name.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `agents get-skill`
+
+```
+Usage: agents get-skill [OPTIONS] REF
+
+  Inspect an Agent's canonical SKILL.md projection and file catalog.
 
 Options:
   --json  Emit JSON instead of human-readable output.
@@ -103,6 +132,19 @@ Usage: agents list [OPTIONS]
   List all agents.
 
 Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `agents remove-skill`
+
+```
+Usage: agents remove-skill [OPTIONS] REF
+
+  Detach a bundle while preserving its instruction body inline.
+
+Options:
+  --yes   Detach without an interactive confirmation.
   --json  Emit JSON instead of human-readable output.
   --help  Show this message and exit.
 ```
@@ -155,6 +197,18 @@ Options:
                                   --scope are synonyms.)
   --json                          Emit JSON instead of human-readable output.
   --help                          Show this message and exit.
+```
+
+### `agents upload-skill`
+
+```
+Usage: agents upload-skill [OPTIONS] REF ARCHIVE
+
+  Validate and attach a .skill or .zip archive to an Agent.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
 ```
 
 ## `apps`
@@ -1666,6 +1720,7 @@ Options:
   --description TEXT  description
   --permissions TEXT  permissions as JSON literal or @path to a YAML/JSON
                       file.
+  --scopes TEXT       scopes (repeat for multiple).
   --json              Emit JSON instead of human-readable output.
   --help              Show this message and exit.
 ```
@@ -1723,6 +1778,7 @@ Options:
   --description TEXT  description
   --permissions TEXT  permissions as JSON literal or @path to a YAML/JSON
                       file.
+  --scopes TEXT       scopes (repeat for multiple).
   --json              Emit JSON instead of human-readable output.
   --help              Show this message and exit.
 ```

@@ -1,5 +1,6 @@
 """Unit tests for the unscoped MCP agent gateway."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -36,6 +37,9 @@ def _agent() -> MagicMock:
     agent.knowledge_sources = ["runbooks"]
     agent.delegated_agents = []
     agent.organization_id = uuid4()
+    agent.bundle_path = None
+    agent.solution_id = None
+    agent.created_by = "admin@example.com"
     return agent
 
 
@@ -124,6 +128,66 @@ def test_live_config_filters_underlying_tools_by_name_or_source_id():
     assert [tool.definition.name for tool in tools] == ["lookup_ticket"]
 
 
+def test_skill_asset_is_classified_as_an_agent_bound_capability():
+    service = MCPAgentGatewayService(_context())
+    agent = _agent()
+    agent.bundle_path = "skills/operations"
+
+    tools = service._resolve_gateway_tools(
+        agent,
+        [
+            ToolDefinition(
+                name="read_skill_asset",
+                description="Read Skill asset",
+                parameters={
+                    "type": "object",
+                    "properties": {"path": {"type": "string"}},
+                    "required": ["path"],
+                },
+            )
+        ],
+        {},
+        MCPConfig(),
+    )
+
+    assert len(tools) == 1
+    assert tools[0].source == "skill"
+    assert tools[0].source_identity == "skill:read_skill_asset"
+
+
+@pytest.mark.asyncio
+async def test_get_agent_returns_canonical_skill_instructions_and_file_catalog():
+    service = MCPAgentGatewayService(_context())
+    agent = _agent()
+    agent.bundle_path = "skills/operations"
+    snapshot = AgentToolSnapshot(agent=agent, tools=[])
+
+    with (
+        patch.object(
+            service,
+            "get_agent_snapshot",
+            new=AsyncMock(return_value=snapshot),
+        ),
+        patch(
+            "src.services.agent_skills.get_agent_skill_markdown",
+            new=AsyncMock(return_value="---\nname: operations\n---\n\nDo the work."),
+        ),
+        patch(
+            "src.services.agent_skills.list_agent_skill_files",
+            new=AsyncMock(return_value=["references/runbook.md"]),
+        ),
+    ):
+        result = await service.get_agent(str(agent.id))
+
+    assert result["agent"]["instruction_source"] == "skill"
+    assert result["agent"]["instructions"].endswith("Do the work.")
+    assert result["agent"]["skill"] == {
+        "bundle_path": "skills/operations",
+        "files": ["SKILL.md", "references/runbook.md"],
+        "automatic_capabilities": ["read_skill_asset"],
+    }
+
+
 def test_validation_error_is_model_repairable():
     tool = _resolved_tool()
 
@@ -198,3 +262,45 @@ async def test_execute_returns_auditable_envelope():
     assert result["source"] == "workflow"
     assert result["result"] == {"ticket": 42}
     assert isinstance(result["duration_ms"], int)
+
+
+@pytest.mark.asyncio
+async def test_skill_dispatch_carries_the_exact_agent_storage_scope():
+    service = MCPAgentGatewayService(_context())
+    agent = _agent()
+    agent.bundle_path = "skills/operations"
+    skill_tool = ResolvedGatewayTool(
+        tool_ref=str(uuid4()),
+        definition=ToolDefinition(
+            name="read_skill_asset",
+            description="Read Skill asset",
+            parameters={"type": "object"},
+        ),
+        source="skill",
+        source_identity="skill:read_skill_asset",
+    )
+    captured = {}
+
+    async def read_asset(context, **arguments):
+        captured["context"] = context
+        captured["arguments"] = arguments
+        return SimpleNamespace(
+            content=[],
+            structured_content={"path": arguments["path"], "content": "guide"},
+        )
+
+    with patch(
+        "src.services.mcp_server.server.get_system_tool_function",
+        return_value=read_asset,
+    ):
+        await service._dispatch_system_tool(
+            agent,
+            skill_tool,
+            {"path": "references/guide.md"},
+        )
+
+    context = captured["context"]
+    assert context.agent_bundle_path == "skills/operations"
+    assert context.agent_skill_id == agent.id
+    assert context.agent_solution_id is None
+    assert context.agent_skill_in_repo is False

@@ -67,8 +67,11 @@ DTO_EXCLUDES: dict[str, set[str]] = {
     "FilePolicyCreate": set(_ORG_TARGET_EXCLUDE),
     "FormCreate": set(_ORG_TARGET_EXCLUDE),
     "FormUpdate": set(_ORG_TARGET_EXCLUDE),
-    "AgentCreate": set(_ORG_TARGET_EXCLUDE),
-    "AgentUpdate": set(_ORG_TARGET_EXCLUDE),
+    # Agent Skill bundle roots are never bound as raw paths through generic
+    # mutation commands. Solutions supply root-relative bundle_path values;
+    # ad-hoc Agents use the validated upload/remove endpoints.
+    "AgentCreate": set(_ORG_TARGET_EXCLUDE) | {"bundle_path"},
+    "AgentUpdate": set(_ORG_TARGET_EXCLUDE) | {"bundle_path"},
     # Organizations: ``domain`` is auto-provisioning policy; ``settings`` is a
     # UI-managed JSON blob; ``is_provider`` is immutable post-create.
     "OrganizationCreate": {"domain", "settings", "is_provider"},

@@ -44,6 +44,7 @@ MAX_AGENT_RESULTS = 20
 
 GatewayToolSource = Literal[
     "system",
+    "skill",
     "knowledge",
     "workflow",
     "delegation",
@@ -239,13 +240,31 @@ class MCPAgentGatewayService:
 
     async def get_agent(self, agent_id: str) -> dict[str, Any]:
         """Return one live agent capability package."""
+        from src.services.agent_skills import (
+            get_agent_skill_markdown,
+            list_agent_skill_files,
+        )
+
         snapshot = await self.get_agent_snapshot(agent_id)
+        instructions = await get_agent_skill_markdown(snapshot.agent)
+        skill = None
+        if snapshot.agent.bundle_path:
+            skill = {
+                "bundle_path": snapshot.agent.bundle_path,
+                "files": [
+                    "SKILL.md",
+                    *await list_agent_skill_files(snapshot.agent),
+                ],
+                "automatic_capabilities": ["read_skill_asset"],
+            }
         return {
             "agent": {
                 "id": str(snapshot.agent.id),
                 "name": snapshot.agent.name,
                 "description": snapshot.agent.description,
-                "instructions": snapshot.agent.system_prompt,
+                "instructions": instructions,
+                "instruction_source": "skill" if skill else "inline",
+                "skill": skill,
             },
             "tools": [tool.compact() for tool in snapshot.tools],
             "tool_count": len(snapshot.tools),
@@ -298,6 +317,12 @@ class MCPAgentGatewayService:
                 source = "external_mcp"
                 source_id, remote_tool_name = mcp_route
                 source_identity = f"external_mcp:{source_id}:{remote_tool_name}"
+            elif (
+                definition.name == "read_skill_asset"
+                and agent.bundle_path
+            ):
+                source = "skill"
+                source_identity = f"skill:{definition.name}"
             elif definition.name == "search_knowledge":
                 source = "knowledge"
                 source_identity = f"knowledge:{definition.name}"
@@ -499,7 +524,7 @@ class MCPAgentGatewayService:
         tool: ResolvedGatewayTool,
         arguments: dict[str, Any],
     ) -> Any:
-        if tool.source in {"system", "knowledge"}:
+        if tool.source in {"system", "skill", "knowledge"}:
             return await self._dispatch_system_tool(agent, tool, arguments)
         if tool.source == "workflow":
             return await self._dispatch_workflow(tool, arguments)
@@ -539,6 +564,12 @@ class MCPAgentGatewayService:
             user_email=self.context.user_email,
             user_name=self.context.user_name,
             accessible_namespaces=list(agent.knowledge_sources or []),
+            agent_bundle_path=agent.bundle_path,
+            agent_solution_id=agent.solution_id,
+            agent_skill_in_repo=(
+                agent.bundle_path is not None and agent.created_by == "file_sync"
+            ),
+            agent_skill_id=agent.id if agent.bundle_path else None,
         )
         result = await func(context, **arguments)
         structured = getattr(result, "structured_content", None)

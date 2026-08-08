@@ -220,7 +220,6 @@ async def create_agent(
     context: Any,
     name: str,
     system_prompt: str,
-    bundle_path: str | None = None,
     description: str | None = None,
     channels: list[str] | None = None,
     tool_ids: list[str] | None = None,
@@ -238,7 +237,6 @@ async def create_agent(
         context: MCP context with user permissions
         name: Agent name (1-255 chars)
         system_prompt: System prompt that defines the agent's behavior
-        bundle_path: Relative path to the agent's portable skill-bundle root
         description: Optional description of what the agent does
         channels: Communication channels (default: ['chat'])
         tool_ids: List of workflow IDs to assign as tools
@@ -268,16 +266,6 @@ async def create_agent(
         return error_result("name must be 255 characters or less")
     if len(system_prompt) > 50000:
         return error_result("system_prompt must be 50000 characters or less")
-    if bundle_path is not None and not context.is_platform_admin:
-        return error_result("Only platform administrators can bind agent skill bundles")
-    if bundle_path is not None:
-        from src.models.contracts.agents import validate_agent_bundle_path
-
-        try:
-            bundle_path = validate_agent_bundle_path(bundle_path)
-        except ValueError as exc:
-            return error_result(str(exc))
-
     # Validate scope parameter
     if scope not in ("global", "organization"):
         return error_result("scope must be 'global' or 'organization'")
@@ -319,7 +307,7 @@ async def create_agent(
                 name=name,
                 description=description,
                 system_prompt=system_prompt,
-                bundle_path=bundle_path,
+                bundle_path=None,
                 channels=channels,
                 access_level=AgentAccessLevel.ROLE_BASED,
                 organization_id=effective_org_id,
@@ -419,7 +407,6 @@ async def update_agent(
     name: str | None = None,
     description: str | None = None,
     system_prompt: str | None = None,
-    bundle_path: str | None = None,
     channels: list[str] | None = None,
     is_active: bool | None = None,
     tool_ids: list[str] | None = None,
@@ -437,7 +424,6 @@ async def update_agent(
         name: New agent name
         description: New description
         system_prompt: New system prompt
-        bundle_path: New relative skill-bundle root
         channels: New communication channels
         is_active: Enable/disable the agent
         tool_ids: New list of workflow IDs (replaces existing)
@@ -463,16 +449,6 @@ async def update_agent(
         uuid_id = UUID(agent_id)
     except ValueError:
         return error_result(f"'{agent_id}' is not a valid UUID")
-    if bundle_path is not None and not context.is_platform_admin:
-        return error_result("Only platform administrators can bind agent skill bundles")
-    if bundle_path is not None:
-        from src.models.contracts.agents import validate_agent_bundle_path
-
-        try:
-            bundle_path = validate_agent_bundle_path(bundle_path)
-        except ValueError as exc:
-            return error_result(str(exc))
-
     # Validate channels if provided
     valid_channels = {"chat", "voice", "teams", "slack"}
     if channels:
@@ -510,6 +486,12 @@ async def update_agent(
             if is_solution_managed(agent):
                 return error_result(SOLUTION_MANAGED_MESSAGE)
 
+            if agent.bundle_path and system_prompt is not None:
+                return error_result(
+                    "Bundled Agent instructions come from SKILL.md; replace or "
+                    "remove the bundle through the Agent Skill API"
+                )
+
             # Check access for non-admins
             if not context.is_platform_admin:
                 if agent.organization_id:
@@ -537,10 +519,6 @@ async def update_agent(
                     return error_result("system_prompt must be 50000 characters or less")
                 agent.system_prompt = system_prompt
                 updates_made.append("system_prompt")
-
-            if bundle_path is not None:
-                agent.bundle_path = bundle_path or None
-                updates_made.append("bundle_path")
 
             if channels is not None:
                 agent.channels = channels

@@ -52,7 +52,7 @@ async def bifrost_find_agents(
 
 
 async def bifrost_get_agent(context: Any, agent_id: str) -> ToolResult:
-    """Get one accessible agent's live instructions and compact tool catalog."""
+    """Get live instructions, Skill metadata, and a compact tool catalog."""
     status_code, data = await call_rest(
         context,
         "GET",
@@ -110,8 +110,9 @@ TOOLS = [
     (
         "bifrost_get_agent",
         "Get Bifrost Agent",
-        "Load one accessible agent's current instructions and compact tool catalog. "
-        "Tool schemas are intentionally omitted; inspect the selected tool next.",
+        "Load one accessible agent's current instructions, portable Skill metadata, "
+        "and compact tool catalog. Tool schemas are intentionally omitted; inspect "
+        "the selected tool next.",
     ),
     (
         "bifrost_get_tool_schema",
