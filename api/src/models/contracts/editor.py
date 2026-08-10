@@ -209,12 +209,50 @@ class FileContentResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class FileStatResponse(BaseModel):
+    """Response with file metadata for conflict-safe CLI workflows."""
+    path: str = Field(..., description="Relative path from /home/repo")
+    exists: bool = Field(..., description="True if the file exists")
+    version: str | None = Field(
+        default=None,
+        description="Opaque content version for guarded writes and deletes",
+    )
+    size: int | None = Field(default=None, description="File size in bytes")
+    last_modified: str | None = Field(default=None, description="Last modified timestamp (ISO 8601)")
+    updated_by: str | None = Field(default=None, description="User who last updated the file")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class FileConflictResponse(BaseModel):
     """Response when file write encounters a conflict"""
-    reason: Literal["content_changed", "path_not_found", "workflows_would_deactivate"] = Field(
+    reason: Literal[
+        "content_changed",
+        "file_exists",
+        "file_missing",
+        "path_not_found",
+        "version_conflict",
+        "workflows_would_deactivate",
+    ] = Field(
         ..., description="Type of conflict"
     )
     message: str = Field(..., description="Human-readable conflict description")
+    current_etag: str | None = Field(
+        default=None,
+        description="Current ETag when the conflict is caused by a stale precondition",
+    )
+    current_last_modified: str | None = Field(
+        default=None,
+        description="Current modified timestamp when the conflict is caused by a stale precondition",
+    )
+    current_updated_by: str | None = Field(
+        default=None,
+        description="Current last editor when the conflict is caused by a stale precondition",
+    )
+    current_version: str | None = Field(
+        default=None,
+        description="Current opaque version when a guarded CLI mutation conflicts",
+    )
     # Fields for workflows_would_deactivate conflicts
     pending_deactivations: list[PendingDeactivation] | None = Field(
         default=None,

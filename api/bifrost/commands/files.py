@@ -7,7 +7,8 @@ matching ``/api/files/*`` HTTP endpoint.
 Verbs:
 
 * ``bifrost files read <path> [--location LOC] [--solution SLUG|ID]``
-* ``bifrost files write <path> (--content S | --from-file F | -) [--location LOC] [--solution SLUG|ID]``
+* ``bifrost files stat <path> [--location LOC] [--solution SLUG|ID]``
+* ``bifrost files write <path> (--content S | --from-file F | -) [--create-only | --expected-version VERSION]``
 * ``bifrost files list [directory] [--location LOC] [--solution SLUG|ID]``
 * ``bifrost files delete <path> [--location LOC]`` -> SDK ``files.delete``
 * ``bifrost files exists <path> [--location LOC]`` -> SDK ``files.exists``;
@@ -19,9 +20,8 @@ The ``--solution`` flag targets the install scope for a solution install (by
 slug or UUID).  It passes ``?solution=<install_id>`` to the API so the server
 resolves the correct install-scoped storage prefix.
 
-There is no ``stat`` verb -- the SDK only surfaces ``exists``. There is no
-``mode`` flag -- workers always run in cloud mode; local mode is for the
-laptop CLI where the user controls cwd directly.
+There is no ``mode`` flag -- workers always run in cloud mode; local mode is
+for the laptop CLI where the user controls cwd directly.
 """
 
 from __future__ import annotations
@@ -42,24 +42,24 @@ from .base import entity_group, output_result, pass_resolver, run_async
 
 _FILES_GROUP_HELP = """Read, write, list, search files and manage file policies.
 
-Without --solution, commands target the global _repo workspace file scope
+Without --solution, commands target the instance _repo source file scope
 (location "workspace" by default). With --solution <slug|id>, read/write/list
 target that Solution install's runtime file scope and default the location to
 "solutions". Solution source files are deployed from the local workspace with
 `bifrost solution deploy`; `bifrost files --solution ...` is for runtime/user
 file bytes after install, not for editing deploy-owned source.
 
-`bifrost files write` writes one explicit file through the Files API. It does
-not walk a local tree, apply the sync ignore rules, compare server state, or
-trigger the push/sync TUI. Use `bifrost push`/`sync`/`watch` when local disk is
-the source of truth for _repo source files; use `files write` for one-off API
-writes, scripts, or Solution runtime file data.
+`bifrost files` is the direct authoring surface for instance _repo text source
+and managed runtime/user files. For an existing file, record its version with
+`files stat`, read it, then write with `--expected-version`. For a new path,
+use `--create-only`. A conflict never overwrites the remote file.
 
 \b
 Examples:
-  bifrost files list workflows/              # global _repo files
-  bifrost files write notes.txt --content hi # one direct API write
-  bifrost files read apps/desk/pages/App.tsx # global _repo file
+  bifrost files list workflows/              # instance _repo files
+  bifrost files write notes.txt --content hi --create-only
+  bifrost files stat workflows/contact.py --json
+  bifrost files read apps/desk/pages/App.tsx # instance _repo file
   bifrost files list --solution desk         # Solution runtime files
   bifrost files read notes/today.txt --solution desk
 """
@@ -182,6 +182,40 @@ async def read_cmd(
     click.echo(content, nl=False)
 
 
+@files_group.command("stat")
+@click.argument("path")
+@click.option("--location", default="workspace", help=_LOCATION_HELP)
+@click.option("--solution", "solution_ref", default=None, help=_SOLUTION_HELP)
+@click.pass_context
+@pass_resolver
+@run_async
+async def stat_cmd(
+    ctx: click.Context,
+    path: str,
+    location: str,
+    solution_ref: str | None,
+    *,
+    client: BifrostClient,
+    resolver,  # noqa: ARG001
+) -> None:
+    """Show existence, version, size, and last-edit metadata without content."""
+    if solution_ref is not None and location == "workspace":
+        location = "solutions"
+    query = ""
+    if solution_ref is not None:
+        install_id = await _resolve_solution_install_id(client, solution_ref)
+        query = f"?solution={install_id}"
+    response = await client.post(
+        f"/api/files/stat{query}",
+        json={"path": path, "location": location, "mode": "cloud"},
+    )
+    response.raise_for_status()
+    result = response.json()
+    output_result(result, ctx=ctx)
+    if not result["exists"]:
+        sys.exit(1)
+
+
 @files_group.command("write")
 @click.argument("path")
 @click.argument("source", required=False)
@@ -195,6 +229,17 @@ async def read_cmd(
 )
 @click.option("--location", default="workspace", help=_LOCATION_HELP)
 @click.option("--solution", "solution_ref", default=None, help=_SOLUTION_HELP)
+@click.option(
+    "--expected-version",
+    default=None,
+    help="Write only if the remote file still has this version from `files stat`.",
+)
+@click.option(
+    "--create-only",
+    is_flag=True,
+    default=False,
+    help="Create a new file; fail if the path already exists.",
+)
 @click.pass_context
 @pass_resolver
 @run_async
@@ -206,6 +251,8 @@ async def write_cmd(
     from_file: str | None,
     location: str,
     solution_ref: str | None,
+    expected_version: str | None,
+    create_only: bool,
     *,
     client: BifrostClient,
     resolver,  # noqa: ARG001
@@ -213,8 +260,13 @@ async def write_cmd(
     """Write to a workspace file. Source: --content, --from-file, or `-` for stdin.
 
     Text files only. Pass --content "" to truncate an existing file.
-    Pass ``--solution`` to target a solution install's file scope.
+    Use --create-only for a new path or --expected-version for a guarded
+    replacement. Pass ``--solution`` to target a solution install's file scope.
     """
+    if create_only and expected_version is not None:
+        raise click.UsageError(
+            "--create-only and --expected-version cannot be combined."
+        )
     sources = [s for s in (content_flag, from_file, source) if s is not None]
     if len(sources) != 1:
         raise click.UsageError(
@@ -236,18 +288,23 @@ async def write_cmd(
 
     if solution_ref is not None and location == "workspace":
         location = "solutions"
+    query = ""
     if solution_ref is not None:
         install_id = await _resolve_solution_install_id(client, solution_ref)
-        resp = await client.post(
-            f"/api/files/write?solution={install_id}",
-            json={"path": path, "content": content, "location": location, "mode": "cloud", "binary": False},
-        )
-        if resp.status_code not in (200, 204):
-            raise click.ClickException(
-                f"write failed ({resp.status_code}): {resp.text[:200]}"
-            )
-    else:
-        await files_sdk.write(path, content, location=location)
+        query = f"?solution={install_id}"
+    response = await client.post(
+        f"/api/files/write{query}",
+        json={
+            "path": path,
+            "content": content,
+            "location": location,
+            "mode": "cloud",
+            "binary": False,
+            "expected_version": expected_version,
+            "create_only": create_only,
+        },
+    )
+    response.raise_for_status()
 
 
 @files_group.command("list")
@@ -291,6 +348,11 @@ async def list_cmd(
 @files_group.command("delete")
 @click.argument("path")
 @click.option("--location", default="workspace", help=_LOCATION_HELP)
+@click.option(
+    "--expected-version",
+    default=None,
+    help="Delete only if the remote file still has this version from `files stat`.",
+)
 @click.pass_context
 @pass_resolver
 @run_async
@@ -298,12 +360,22 @@ async def delete_cmd(
     ctx: click.Context,
     path: str,
     location: str,
+    expected_version: str | None,
     *,
-    client: BifrostClient,  # noqa: ARG001
+    client: BifrostClient,
     resolver,  # noqa: ARG001
 ) -> None:
-    """Delete a workspace file."""
-    await files_sdk.delete(path, location=location)
+    """Delete a workspace file, optionally guarded by its current version."""
+    response = await client.post(
+        "/api/files/delete",
+        json={
+            "path": path,
+            "location": location,
+            "mode": "cloud",
+            "expected_version": expected_version,
+        },
+    )
+    response.raise_for_status()
 
 
 @files_group.command("exists")

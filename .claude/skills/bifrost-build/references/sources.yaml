@@ -1,112 +1,125 @@
-# Reference freshness manifest
-#
-# Each entry maps a curated reference file to the source globs it documents
-# and the git sha it was last verified against.
-#
-# The generated/* appendices are CI-enforced (see generate.py).
-# These curated files are verified manually; `test_skill_reference_freshness`
-# warns (never fails) when a source glob has commits newer than verified_at_sha.
-#
-# To re-verify: read the changed sources, fix the prose, then bump verified_at_sha.
+# Curated reference freshness manifest.
+# Generated appendices are owned by api/scripts/skill-truth/generate.py.
+# Re-read changed source globs before advancing verified_at_sha.
 
 references:
-  - file: references/apps.md
+  - file: references/app-quality.md
+    source_globs:
+      - api/bifrost/commands/solution.py
+      - api/src/services/app_bundler/*
+      - client/src/lib/app-sdk/provider.tsx
+      - client/src/lib/app-sdk/bifrost-header.tsx
+    verified_at_sha: 3b29c703c87059b382aad7c90b41c9054d3c719e
+
+  - file: references/apps-v1.md
     source_globs:
       - api/bifrost/commands/apps.py
+      - api/bifrost/platform_names.py
+      - client/src/lib/app-code-runtime.ts
+    verified_at_sha: 3b29c703c87059b382aad7c90b41c9054d3c719e
+
+  - file: references/apps-v2.md
+    source_globs:
+      - api/bifrost/commands/solution.py
+      - api/bifrost/manifest.py
       - client/src/lib/app-sdk/*.ts
       - client/src/lib/app-sdk/*.tsx
-      - api/bifrost/manifest.py
-    verified_at_sha: 236d0f4753b4b14cfc05c42dccbe9db26b411a77
+    verified_at_sha: 3b29c703c87059b382aad7c90b41c9054d3c719e
 
   - file: references/entities.md
     source_globs:
       - api/bifrost/commands/*.py
-    verified_at_sha: 5b6c5cc0
+      - api/bifrost/manifest.py
+      - api/src/models/contracts/cli.py
+    verified_at_sha: 3b29c703c87059b382aad7c90b41c9054d3c719e
 
-  - file: references/import-patterns.md
+  - file: references/files.md
     source_globs:
-      - api/bifrost/platform_names.py
-      - client/src/lib/app-code-runtime.ts
-    verified_at_sha: 4af03ca230cae84f99cfad2bbbb027d3b66e1370
+      - api/bifrost/commands/files.py
+      - api/bifrost/files.py
+      - api/bifrost/manifest.py
+      - api/src/routers/files.py
+      - api/src/services/solution_files.py
+      - client/src/lib/app-sdk/files.ts
+      - client/src/lib/app-sdk/use-files.ts
+    verified_at_sha: 3b29c703c87059b382aad7c90b41c9054d3c719e
 
   - file: references/mcp-mode.md
     source_globs:
       - api/src/services/mcp_server/tools/*.py
-    verified_at_sha: 4af03ca230cae84f99cfad2bbbb027d3b66e1370
+    verified_at_sha: 3b29c703c87059b382aad7c90b41c9054d3c719e
 
   - file: references/platform-api.md
     source_globs:
-      - client/src/lib/app-sdk/*.ts
       - api/bifrost/platform_names.py
-    verified_at_sha: 4af03ca230cae84f99cfad2bbbb027d3b66e1370
+      - client/src/lib/app-code-runtime.ts
+      - client/src/lib/app-sdk/*.ts
+      - client/src/lib/app-sdk/*.tsx
+    verified_at_sha: 3b29c703c87059b382aad7c90b41c9054d3c719e
 
   - file: references/python-sdk.md
     source_globs:
       - api/bifrost/*.py
-    verified_at_sha: e757b85df16aae69cceb91aca6c12f4eaab71b97
+    verified_at_sha: 3b29c703c87059b382aad7c90b41c9054d3c719e
 
-  - file: references/repo.md
+  - file: references/repository.md
     source_globs:
       - api/bifrost/cli.py
-      - api/bifrost/commands/*.py
-    verified_at_sha: 0b7959fd
-
-  - file: references/rest-api.md
-    source_globs:
-      - api/src/routers/*.py
-    verified_at_sha: 4af03ca230cae84f99cfad2bbbb027d3b66e1370
-
-  - file: references/solutions.md
-    source_globs:
-      - api/bifrost/solution_descriptor.py
-      - api/bifrost/commands/solution.py
+      - api/bifrost/commands/apps.py
       - api/bifrost/commands/files.py
-      - api/bifrost/manifest.py
-      - api/src/models/contracts/solutions.py
-      - api/src/services/solution_files.py
-      - api/src/services/solutions/*.py
-    verified_at_sha: ea2714bd66c640d1b7b3bf1a21ccbd7dcb462773
+      - api/bifrost/commands/workflows.py
+      - api/src/routers/files.py
+    verified_at_sha: 3b29c703c87059b382aad7c90b41c9054d3c719e
 
   - file: references/solution-resource-access.md
     source_globs:
       - api/bifrost/config.py
+      - api/bifrost/files.py
       - api/bifrost/integrations.py
       - api/bifrost/solution_descriptor.py
       - api/bifrost/solution_dev/proxy.py
       - api/bifrost/tables.py
       - api/src/core/auth.py
       - api/src/repositories/workflows.py
-      - api/src/routers/cli.py
       - api/src/routers/files.py
-      - api/src/routers/forms.py
       - api/src/routers/tables.py
       - api/src/routers/workflows.py
       - api/src/services/solution_scope.py
-      - client/src/lib/app-sdk/*.ts
-      - client/src/lib/app-sdk/*.tsx
-    verified_at_sha: ea2714bd66c640d1b7b3bf1a21ccbd7dcb462773
+    verified_at_sha: 3b29c703c87059b382aad7c90b41c9054d3c719e
+
+  - file: references/solutions.md
+    source_globs:
+      - api/bifrost/commands/solution.py
+      - api/bifrost/manifest.py
+      - api/bifrost/solution_binding.py
+      - api/bifrost/solution_descriptor.py
+      - api/src/models/contracts/solutions.py
+      - api/src/services/solution_files.py
+      - api/src/services/solutions/*.py
+    verified_at_sha: 3b29c703c87059b382aad7c90b41c9054d3c719e
 
   - file: references/tables.md
     source_globs:
       - api/bifrost/tables.py
+      - api/src/routers/tables.py
       - client/src/lib/app-sdk/tables.ts
       - client/src/lib/app-sdk/use-table.ts
-      - api/src/routers/tables.py
-    verified_at_sha: e757b85df16aae69cceb91aca6c12f4eaab71b97
+    verified_at_sha: 3b29c703c87059b382aad7c90b41c9054d3c719e
 
   - file: references/web-sdk-v2.md
     source_globs:
       - client/src/lib/app-sdk/index.v2.ts
-      - client/src/lib/app-sdk/use-workflow*.ts
-      - client/src/lib/app-sdk/files.ts
-      - client/src/lib/app-sdk/use-files.ts
       - client/src/lib/app-sdk/provider.tsx
-      - client/src/lib/app-sdk/bifrost-header.tsx
-    verified_at_sha: 236d0f4753b4b14cfc05c42dccbe9db26b411a77
+      - client/src/lib/app-sdk/use-files.ts
+      - client/src/lib/app-sdk/use-table.ts
+      - client/src/lib/app-sdk/use-workflow*.ts
+    verified_at_sha: 3b29c703c87059b382aad7c90b41c9054d3c719e
 
-  - file: references/workflows-python.md
+  - file: references/workflows.md
     source_globs:
-      - api/bifrost/decorators.py
-      - api/bifrost/commands/workflows.py
       - api/bifrost/commands/requirements.py
-    verified_at_sha: 42e04a10b751778c9f628dc040afa6eb9cdab863
+      - api/bifrost/commands/solution.py
+      - api/bifrost/commands/workflows.py
+      - api/bifrost/decorators.py
+      - api/bifrost/manifest.py
+    verified_at_sha: 3b29c703c87059b382aad7c90b41c9054d3c719e

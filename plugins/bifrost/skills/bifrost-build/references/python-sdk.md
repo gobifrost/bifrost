@@ -1,307 +1,135 @@
-# Python SDK Reference
+# Python SDK Decisions
 
-Inside a running Bifrost workflow, the SDK is available via top-level imports from the `bifrost` package. Each module is a singleton scoped to the current execution context (org, user, etc.).
+Inside a running workflow, import scoped SDK singletons from `bifrost`. Use this file to choose the right namespace and avoid return-shape/security traps. Read `../generated/python-sdk-signatures.md` before writing an unfamiliar call.
 
-For exact signatures, see `generated/python-sdk-signatures.md`. This file describes what each module is for and when to use it.
+## Data and files
 
----
+### `tables`
 
-## tables
-
-Read, write, and query JSON document rows in Bifrost tables.
+Use for JSON-document table data. Returned `DocumentData` and `DocumentList` are models, not dictionaries:
 
 ```python
 from bifrost import tables
 
-# Insert a row -> returns a DocumentData
-doc = await tables.insert("clients", {"name": "Acme", "status": "active"})
+created = await tables.insert("clients", {"name": "Acme"})
+result = await tables.query("clients", where={"name": "Acme"})
 
-# DocumentData is a model: read it by ATTRIBUTE, never by subscript.
-# doc.id (str), doc.data (dict), doc.created_at / updated_at / created_by (str|None).
-client_id = doc.id
-name = doc.data.get("name")          # the row fields live under .data
-
-# Query with a filter -> returns a DocumentList
-results = await tables.query("clients", where={"status": "active"}, limit=50)
-for row in results.documents:        # .documents is the list; .total the count
-    print(row.id, row.data.get("name"))
-
-# Get a single row by id
-row = await tables.get("clients", doc_id=doc.id)
-
-# Update a row
-await tables.update("clients", doc.id, {"status": "churned"})
-
-# Upsert (update-or-insert) by id
-await tables.upsert("clients", id="known-uuid", data={"name": "Acme"})
-
-# Delete a row
-await tables.delete_document("clients", doc.id)
+client_id = created.id
+names = [row.data.get("name") for row in result.documents]
 ```
 
-**`DocumentData` / `DocumentList` use attribute access, not subscript** — `doc["id"]` raises `'DocumentData' object is not subscriptable`. Use `doc.id`, `doc.data` (the dict of row fields), and `results.documents` / `results.total` for queries.
+Use attribute access. In Python, `tables.delete()` deletes a table; use `delete_document()` for a row. Read `tables.md` before mutations.
 
-The `scope` parameter on most calls targets a specific org (pass an org UUID); omit to use the workflow's own execution org. See `references/tables.md` for the full table data model, filter DSL, and policy rules.
+### `files`
 
----
-
-## integrations
-
-Read integration config and per-org mappings (OAuth credentials, API keys, etc.).
-
-```python
-from bifrost import integrations
-
-# Get the integration config for the calling org's mapping
-data = await integrations.get("halopsa")
-# data.config: dict of config key→value
-# data.oauth: OAuthCredentials | None (attribute access — e.g. data.oauth.access_token)
-
-# Get or create a per-entity mapping (e.g. sub-tenant)
-mapping = await integrations.get_mapping("halopsa", entity_id="tenant-123")
-await integrations.upsert_mapping("halopsa", scope=org_id, entity_id="tenant-123",
-                                   entity_name="Acme", config={"api_key": "..."})
-```
-
-Use `integrations.get(name, scope=org_id)` to resolve config in a specific org's context. When `scope` is `None`, the cascade resolves the calling org's mapping.
-
----
-
-## config
-
-Read and write key-value configuration entries.
-
-```python
-from bifrost import config
-
-# Get a config value (returns default if not set)
-api_url = await config.get("halopsa_api_url", default="https://default.example.com")
-
-# Set a value (optionally secret/encrypted)
-await config.set("api_url", "https://api.example.com")
-await config.set("api_key", "s3cr3t", is_secret=True)
-
-# List all configs in scope
-entries = await config.list()
-
-# Delete a config
-await config.delete("api_url")
-```
-
-The `scope` parameter on each call targets a specific org or None for global.
-
----
-
-## files
-
-Read and write files in the workspace object store (S3 / SeaweedFS).
+Use for managed text/binary data and signed transfers:
 
 ```python
 from bifrost import files
 
-# Read a workspace file
-content = await files.read("reports/template.html")
-
-# Write a file
-await files.write("reports/output.pdf", pdf_bytes_as_str)
-await files.write_bytes("reports/output.pdf", pdf_bytes)
-
-# Check existence
-exists = await files.exists("reports/output.pdf")
-
-# List files in a directory
-listing = await files.list("reports/")
-
-# Generate a pre-signed URL (for uploads or downloads)
-url_info = await files.get_signed_url("uploads/file.csv", method="PUT")
+await files.write("reports/status.txt", "ready", location="documents")
+content = await files.read("reports/status.txt", location="documents")
 ```
 
-The `location` parameter selects the storage area (`"workspace"` for the workspace repo, `"uploads"` for user uploads). `mode` is `"cloud"` (default) for the remote store.
+Choose an explicit declared location for Solution runtime files. Read `files.md` for source/runtime and fallback boundaries.
 
----
+## Environment and integrations
 
-## agents
+### `config`
 
-Run a Bifrost AI agent from a workflow.
+Use for environment config values and secrets. `get()` follows the execution's org/global resolution. `set()` and `delete()` mutate shared instance state, including from a Solution workflow; they are not private install storage.
 
 ```python
-from bifrost import agents
+from bifrost import config
 
-result = await agents.run("support-agent", input={"question": "How do I reset my password?"})
-# result is a dict (structured) or str (text) depending on the agent's output
+endpoint = await config.get("service_url", default="https://example.invalid")
 ```
 
-`timeout` defaults to 1800 seconds.
+Never return secret values to an app or include them in logs.
 
----
+### `integrations`
 
-## forms
+Use `integrations.get()` to resolve an Integration's org mapping, config, and OAuth credentials server-side. OAuth is a model with attribute access, not a dictionary.
 
-Read form metadata from a workflow.
+Use mapping mutation only for an intentional environment-management workflow. Preserve existing OAuth state unless replacement is required and authorized.
 
-```python
-from bifrost import forms
+## Orchestration
 
-form = await forms.get(form_id="uuid-here")
-all_forms = await forms.list()
-```
+### `workflows`
 
----
-
-## workflows
-
-Execute other registered workflows and query executions from within a workflow.
+Execute another registered workflow by portable ref and receive an execution ID:
 
 ```python
 from bifrost import workflows
 
-# Execute another workflow (async — returns execution_id)
-execution_id = await workflows.execute("notifications/send.py::send_email",
-                                        input_data={"to": "user@example.com"})
-
-# Schedule for later
-execution_id = await workflows.execute("reports/daily.py::run",
-                                        delay_seconds=3600)
-
-# Get an execution record
-execution = await workflows.get(execution_id)
-
-# Cancel a scheduled execution
-await workflows.cancel(execution_id)
-
-# List executions
-history = await workflows.list()
+execution_id = await workflows.execute(
+    "functions/notify.py::send",
+    input_data={"recipient": "user@example.com"},
+)
 ```
 
----
+Use delayed execution for scheduling, then query/cancel through the same namespace. A nested loose workflow resolved by an open Solution executes in its own loose context; it does not inherit Solution ownership.
 
-## executions
+### `executions`
 
-Inspect the current or other executions.
+Use to inspect the current execution's logs or query other execution records. Avoid polling loops inside a workflow; schedule/compose work through the workflow APIs.
 
-```python
-from bifrost import executions
+### `events`
 
-# Get the current execution's logs
-logs = await executions.get_current_logs()
-
-# Get a specific execution
-ex = await executions.get(execution_id)
-
-# List executions with filters
-recent = await executions.list(workflow_name="onboard_user", status="Success", limit=10)
-```
-
----
-
-## knowledge
-
-Semantic knowledge store — embed and retrieve text chunks.
-
-```python
-from bifrost import knowledge
-
-# Store content
-key = await knowledge.store("Acme Corp is a mid-market company in the logistics space.",
-                             namespace="clients", key="acme-profile")
-
-# Semantic search
-results = await knowledge.search("logistics companies", namespace="clients", limit=5)
-# results: list of KnowledgeDocument with .content, .key, .score, .metadata
-
-# Delete a document
-await knowledge.delete("acme-profile", namespace="clients")
-```
-
----
-
-## organizations
-
-Manage organizations from a privileged workflow.
-
-```python
-from bifrost import organizations
-
-orgs = await organizations.list()
-org = await organizations.get(org_id)
-new_org = await organizations.create(name="Acme", domain="acme.example.com")
-await organizations.update(org_id, updates={"name": "Acme Corp"})
-await organizations.delete(org_id)
-```
-
----
-
-## roles
-
-Manage roles and their assignments.
-
-```python
-from bifrost import roles
-
-role = await roles.create(name="Support Manager")
-await roles.assign_users(role.id, user_ids=["user-uuid"])
-await roles.assign_forms(role.id, form_ids=["form-uuid"])
-```
-
----
-
-## users
-
-Manage users from a privileged workflow.
-
-```python
-from bifrost import users
-
-user = await users.get(user_id)
-all_users = await users.list(org_id=org_id)
-new_user = await users.create(email="user@example.com", name="Jane Doe", org_id=org_id)
-```
-
----
-
-## ai
-
-Call the configured LLM provider from a workflow.
-
-```python
-from bifrost import ai
-
-# Text completion
-response = await ai.complete(prompt="Summarize this text: ...", max_tokens=200)
-# response.content: str
-
-# Structured output (pass a Pydantic model class)
-class Report(BaseModel):
-    title: str
-    summary: str
-
-report = await ai.complete(prompt="Write a report about...", response_format=Report)
-# report is a Report instance
-
-# Streaming
-async for chunk in ai.stream(prompt="Write a long document..."):
-    print(chunk.content, end="")
-
-# With knowledge retrieval
-result = await ai.complete(prompt="What is our policy on X?",
-                            knowledge=["policy-namespace"])
-```
-
----
-
-## events
-
-Emit topic events that trigger subscribed workflows.
+Emit a topic for subscribed workflows/agents:
 
 ```python
 from bifrost import events
 
-result = await events.emit("acme.deal_won", {"amount": 50000, "deal_id": "d-123"})
-# result: {"event_id": "...", "subscribers_notified": 2}
+result = await events.emit("acme.deal_won", {"deal_id": "d-123"})
 ```
 
-When a workflow is triggered by a topic event, `context.event` is populated:
-- `context.event.type` — the topic string
-- `context.event.data` — payload dict
-- `context.event.organization_id` — org stamped at emit time
-- `context.event.received_at` — ISO-8601 timestamp
+Treat event payloads as a versioned contract. Topic-triggered execution context carries the event type, data, organization, and receipt time.
+
+## AI surfaces
+
+### `agents`
+
+Use `agents.run()` when workflow orchestration needs a configured Bifrost agent. The result may be structured data or text according to the agent contract. Set bounded timeouts and do not recursively delegate without a stopping condition.
+
+### `ai`
+
+Use the configured model provider for completion, structured output, or streaming. Prefer structured output for machine-consumed results and validate it before side effects.
+
+```python
+from bifrost import ai
+
+response = await ai.complete(
+    prompt="Summarize the incident in three bullets.",
+    max_tokens=250,
+)
+summary = response.content
+```
+
+Do not put secrets or unnecessary personal data into prompts. Treat model output as untrusted input before invoking tools or writing records.
+
+### `knowledge`
+
+Store and semantically search namespaced content. Choose stable keys/namespaces, attach useful metadata, and define deletion/update behavior so re-indexing does not create silent duplicates.
+
+## Platform metadata and administration
+
+### `forms`
+
+Read form metadata when workflow behavior depends on the form definition. Do not use it as a substitute for validated workflow parameters.
+
+### `organizations`, `roles`, and `users`
+
+These privileged namespaces manage tenant and identity state. Resolve the target, inspect dependencies/membership, and require explicit authorization before mutations. Organization deletion and broad role reassignment deserve separate impact review.
+
+## Scope rules
+
+- Omit explicit scope to use the current execution context.
+- Pass an organization scope only when the SDK method supports it and the caller is authorized.
+- Solution context is carried automatically for tables, files, and workflow resolution.
+- `global_repo_access` changes fallback for modules, workflows, tables, and files—not configs, integrations, or knowledge.
+- SDK access never bypasses policies, roles, org boundaries, or external-user restrictions.
+
+## Verification
+
+Check the generated signature before every unfamiliar call. Test return shapes, missing resources, access denial, downstream failure, timeout, and empty results. Keep platform-administration and secret mutations visible in the plan and final handoff.

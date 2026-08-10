@@ -136,6 +136,74 @@ def test_files_write_then_read_roundtrip(engine_creds) -> None:
 
 
 @pytest.mark.e2e
+def test_files_guarded_writes_reject_stale_versions(engine_creds) -> None:
+    """A second writer cannot silently overwrite a file changed after read."""
+    path = f"e2e/{uuid.uuid4().hex}.txt"
+
+    try:
+        created = _run_bifrost(
+            ["files", "write", path, "--content", "base", "--create-only"]
+        )
+        assert created.returncode == 0, created.stderr
+
+        duplicate = _run_bifrost(
+            ["files", "write", path, "--content", "duplicate", "--create-only"]
+        )
+        assert duplicate.returncode == 4, duplicate.stderr
+        assert "already exists" in duplicate.stderr.lower()
+
+        stat = _run_bifrost(["files", "stat", path, "--json"])
+        assert stat.returncode == 0, stat.stderr
+        base_version = json.loads(stat.stdout)["version"]
+        assert base_version.startswith("sha256:")
+
+        writer_two = _run_bifrost(
+            [
+                "files",
+                "write",
+                path,
+                "--content",
+                "writer-two",
+                "--expected-version",
+                base_version,
+            ]
+        )
+        assert writer_two.returncode == 0, writer_two.stderr
+
+        stale = _run_bifrost(
+            [
+                "files",
+                "write",
+                path,
+                "--content",
+                "stale-writer-one",
+                "--expected-version",
+                base_version,
+                "--json",
+            ]
+        )
+        assert stale.returncode == 4, stale.stderr
+        conflict = json.loads(stale.stderr)
+        assert conflict["error"] == "file_conflict"
+        assert conflict["reason"] == "version_conflict"
+        assert conflict["current_version"] != base_version
+
+        read = _run_bifrost(["files", "read", path])
+        assert read.returncode == 0, read.stderr
+        assert read.stdout == "writer-two"
+
+        stale_delete = _run_bifrost(
+            ["files", "delete", path, "--expected-version", base_version]
+        )
+        assert stale_delete.returncode == 4, stale_delete.stderr
+        still_there = _run_bifrost(["files", "read", path])
+        assert still_there.returncode == 0
+        assert still_there.stdout == "writer-two"
+    finally:
+        _run_bifrost(["files", "delete", path])
+
+
+@pytest.mark.e2e
 def test_files_exists_exit_codes(engine_creds) -> None:
     """``exists`` returns 0 for present, 1 for absent."""
     path = f"e2e/{uuid.uuid4().hex}.txt"

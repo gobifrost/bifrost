@@ -200,6 +200,7 @@
 | POST | `/api/files/search` |
 | POST | `/api/files/signed-url` |
 | POST | `/api/files/signed-urls` |
+| POST | `/api/files/stat` |
 | POST | `/api/files/structure` |
 | POST | `/api/files/watch` |
 | GET | `/api/files/watchers` |

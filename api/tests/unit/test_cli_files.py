@@ -26,19 +26,29 @@ def _fake_response(body: dict, *, status: int = 200) -> httpx.Response:
     return httpx.Response(status, json=body, request=_DUMMY_REQUEST)
 
 
-def _make_mock_client(captured: dict, body_by_path: dict[str, dict]) -> mock.AsyncMock:
+def _make_mock_client(
+    captured: dict,
+    body_by_path: dict[str, dict | httpx.Response],
+) -> mock.AsyncMock:
     """Return a mock BifrostClient that records calls and replies per path."""
 
     async def capturing_post(path, json=None):  # type: ignore[no-untyped-def]
         captured.setdefault("calls", []).append({"path": path, "body": json})
-        return _fake_response(body_by_path.get(path, {}))
+        body = body_by_path.get(path, {})
+        if isinstance(body, httpx.Response):
+            return body
+        return _fake_response(body)
 
     client = mock.AsyncMock()
     client.post = capturing_post
     return client
 
 
-def _invoke(args: list[str], captured: dict, body_by_path: dict[str, dict]):
+def _invoke(
+    args: list[str],
+    captured: dict,
+    body_by_path: dict[str, dict | httpx.Response],
+):
     client = _make_mock_client(captured, body_by_path)
     with mock.patch("bifrost.client.BifrostClient.get_instance", return_value=client):
         runner = CliRunner()
@@ -79,6 +89,27 @@ class TestRead:
         )
         assert result.exit_code == 0, result.output
         assert captured["calls"][0]["body"]["location"] == "reports"
+
+
+class TestStat:
+    def test_reports_version_without_printing_content(self) -> None:
+        captured: dict = {}
+        result = _invoke(
+            ["stat", "workflows/contact.py", "--json"],
+            captured,
+            {
+                "/api/files/stat": {
+                    "path": "workflows/contact.py",
+                    "exists": True,
+                    "version": "sha256:abc123",
+                    "size": 13,
+                }
+            },
+        )
+        assert result.exit_code == 0, result.output
+        assert '"path": "workflows/contact.py"' in result.output
+        assert '"version": "sha256:abc123"' in result.output
+        assert "secret source" not in result.output
 
 
 class TestWrite:
@@ -128,6 +159,91 @@ class TestWrite:
         assert result.exit_code != 0
         assert "exactly one" in result.output.lower()
 
+    def test_passes_expected_version(self) -> None:
+        captured: dict = {}
+        result = _invoke(
+            [
+                "write",
+                "out.txt",
+                "--content",
+                "next",
+                "--expected-version",
+                "sha256:base",
+            ],
+            captured,
+            {"/api/files/write": {}},
+        )
+        assert result.exit_code == 0, result.output
+        body = captured["calls"][0]["body"]
+        assert body["expected_version"] == "sha256:base"
+        assert body["create_only"] is False
+
+    def test_passes_create_only(self) -> None:
+        captured: dict = {}
+        result = _invoke(
+            ["write", "out.txt", "--content", "new", "--create-only"],
+            captured,
+            {"/api/files/write": {}},
+        )
+        assert result.exit_code == 0, result.output
+        body = captured["calls"][0]["body"]
+        assert body["create_only"] is True
+        assert body["expected_version"] is None
+
+    def test_rejects_two_concurrency_guards(self) -> None:
+        captured: dict = {}
+        result = _invoke(
+            [
+                "write",
+                "out.txt",
+                "--content",
+                "new",
+                "--create-only",
+                "--expected-version",
+                "sha256:base",
+            ],
+            captured,
+            {},
+        )
+        assert result.exit_code != 0
+        assert "cannot be combined" in result.output
+        assert "calls" not in captured
+
+    def test_version_conflict_is_machine_readable_and_exit_four(self) -> None:
+        request = httpx.Request("POST", "https://bifrost.test/api/files/write")
+        conflict = httpx.Response(
+            409,
+            json={
+                "detail": {
+                    "reason": "version_conflict",
+                    "path": "out.txt",
+                    "expected_version": "sha256:base",
+                    "current_version": "sha256:other",
+                    "message": "File changed after it was read.",
+                }
+            },
+            request=request,
+        )
+        captured: dict = {}
+        result = _invoke(
+            [
+                "write",
+                "out.txt",
+                "--content",
+                "next",
+                "--expected-version",
+                "sha256:base",
+                "--json",
+            ],
+            captured,
+            {"/api/files/write": conflict},
+        )
+        assert result.exit_code == 4
+        payload = __import__("json").loads(result.stderr)
+        assert payload["error"] == "file_conflict"
+        assert payload["reason"] == "version_conflict"
+        assert payload["current_version"] == "sha256:other"
+
 
 class TestList:
     def test_list_default_directory(self) -> None:
@@ -162,6 +278,16 @@ class TestDelete:
         assert result.exit_code == 0, result.output
         body = captured["calls"][0]["body"]
         assert body["path"] == "old.txt"
+
+    def test_passes_expected_version(self) -> None:
+        captured: dict = {}
+        result = _invoke(
+            ["delete", "old.txt", "--expected-version", "sha256:base"],
+            captured,
+            {"/api/files/delete": {}},
+        )
+        assert result.exit_code == 0, result.output
+        assert captured["calls"][0]["body"]["expected_version"] == "sha256:base"
 
 
 class TestExists:
