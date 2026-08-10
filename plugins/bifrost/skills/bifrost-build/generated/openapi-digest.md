@@ -421,6 +421,7 @@
 | PUT | `/api/settings/ai/pricing/{pricing_id}` |
 | GET | `/api/settings/oauth` |
 | PUT | `/api/settings/oauth/google` |
+| PUT | `/api/settings/oauth/login-preference` |
 | PUT | `/api/settings/oauth/microsoft` |
 | PUT | `/api/settings/oauth/oidc` |
 | DELETE | `/api/settings/oauth/{provider}` |
