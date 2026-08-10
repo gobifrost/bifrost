@@ -16,6 +16,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import {
 	Dialog,
 	DialogContent,
@@ -44,6 +52,7 @@ import {
 } from "lucide-react";
 import {
 	useOAuthConfigs,
+	useUpdateOAuthLoginPreference,
 	useUpdateMicrosoftConfig,
 	useUpdateGoogleConfig,
 	useUpdateOIDCConfig,
@@ -389,6 +398,10 @@ export function OAuth() {
 		client_secret: "",
 		display_name: "SSO",
 	});
+	const [loginPreferenceDraft, setLoginPreferenceDraft] = useState<{
+		auto_redirect_to_sso: boolean;
+		default_sso_provider: OAuthProvider | null;
+	} | null>(null);
 
 	// Load configurations
 	const { data: configData, isLoading, refetch } = useOAuthConfigs();
@@ -397,6 +410,7 @@ export function OAuth() {
 	const updateMicrosoft = useUpdateMicrosoftConfig();
 	const updateGoogle = useUpdateGoogleConfig();
 	const updateOIDC = useUpdateOIDCConfig();
+	const updateLoginPreference = useUpdateOAuthLoginPreference();
 	const deleteConfig = useDeleteOAuthConfig();
 	const testConfig = useTestOAuthConfig();
 
@@ -413,9 +427,128 @@ export function OAuth() {
 	const microsoftConfig = providers.find((p) => p.provider === "microsoft");
 	const googleConfig = providers.find((p) => p.provider === "google");
 	const oidcConfig = providers.find((p) => p.provider === "oidc");
+	const configuredProviders = providers.filter((provider) => provider.configured);
+	const autoRedirectToSso =
+		loginPreferenceDraft?.auto_redirect_to_sso ??
+		configData?.login_preference.auto_redirect_to_sso ??
+		false;
+	const defaultSsoProvider = loginPreferenceDraft
+		? loginPreferenceDraft.default_sso_provider
+		: (configData?.login_preference.default_sso_provider ?? null);
+
+	const saveLoginPreference = async () => {
+		try {
+			await updateLoginPreference.mutateAsync({
+				body: {
+					auto_redirect_to_sso: autoRedirectToSso,
+					default_sso_provider: defaultSsoProvider ?? null,
+				},
+			});
+			await refetch();
+			setLoginPreferenceDraft(null);
+			toast.success("Preferred sign-in updated");
+		} catch (error) {
+			toast.error("Failed to update preferred sign-in", {
+				description:
+					error instanceof Error ? error.message : "Unknown error",
+			});
+		}
+	};
 
 	return (
 		<div className="space-y-6">
+			<Card>
+				<CardHeader>
+					<CardTitle>Preferred sign-in</CardTitle>
+					<CardDescription>
+						Optionally send users to one configured provider before
+						showing the full sign-in screen. Going Back or cancelling
+						shows all available sign-in options.
+					</CardDescription>
+				</CardHeader>
+				<CardContent className="space-y-5">
+					<div className="flex items-center justify-between gap-6">
+						<div className="space-y-0.5">
+							<Label htmlFor="preferred-sso-redirect" className="text-base">
+								Prefer SSO on login
+							</Label>
+							<p className="text-sm text-muted-foreground">
+								Try the selected provider once before presenting the
+								standard login screen.
+							</p>
+						</div>
+						<Switch
+							id="preferred-sso-redirect"
+							checked={autoRedirectToSso}
+							disabled={configuredProviders.length === 0}
+							onCheckedChange={(checked) => {
+								setLoginPreferenceDraft({
+									auto_redirect_to_sso: checked,
+									default_sso_provider:
+										defaultSsoProvider ??
+										(checked
+											? configuredProviders[0]?.provider ?? null
+											: null),
+								});
+							}}
+						/>
+					</div>
+
+					<div className="space-y-2">
+						<Label htmlFor="preferred-sso-provider">
+							Preferred provider
+						</Label>
+						<Select
+							value={defaultSsoProvider ?? ""}
+							onValueChange={(value: OAuthProvider) =>
+								setLoginPreferenceDraft({
+									auto_redirect_to_sso: autoRedirectToSso,
+									default_sso_provider: value,
+								})
+							}
+							disabled={configuredProviders.length === 0}
+						>
+							<SelectTrigger id="preferred-sso-provider">
+								<SelectValue placeholder="Select a configured provider" />
+							</SelectTrigger>
+							<SelectContent>
+								{configuredProviders.map((provider) => (
+									<SelectItem
+										key={provider.provider}
+										value={provider.provider}
+									>
+										{provider.provider === "microsoft"
+											? "Microsoft Entra ID"
+											: provider.provider === "google"
+												? "Google"
+												: provider.display_name || "OIDC Provider"}
+									</SelectItem>
+								))}
+							</SelectContent>
+						</Select>
+						{configuredProviders.length === 0 && (
+							<p className="text-sm text-muted-foreground">
+								Configure a provider below before enabling preferred
+								sign-in.
+							</p>
+						)}
+					</div>
+
+					<Button
+						onClick={saveLoginPreference}
+						disabled={
+							updateLoginPreference.isPending ||
+							(autoRedirectToSso && !defaultSsoProvider)
+						}
+					>
+						{updateLoginPreference.isPending && (
+							<Loader2 className="h-4 w-4 mr-2 animate-spin" />
+						)}
+						Save preference
+					</Button>
+				</CardContent>
+			</Card>
+
 			{/* Microsoft */}
 			<ProviderCard
 				provider="microsoft"

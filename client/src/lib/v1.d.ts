@@ -6646,6 +6646,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/settings/oauth/login-preference": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Configure preferred SSO redirect
+         * @description Choose whether login should first redirect to a configured SSO provider
+         */
+        put: operations["set_oauth_login_preference_api_settings_oauth_login_preference_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/settings/oauth/{provider}": {
         parameters: {
             query?: never;
@@ -11267,6 +11287,13 @@ export interface components {
             mfa_required_for_password: boolean;
             /** Oauth Providers */
             oauth_providers: components["schemas"]["src__models__contracts__auth__OAuthProviderInfo"][];
+            /**
+             * Auto Redirect To Sso
+             * @default false
+             */
+            auto_redirect_to_sso: boolean;
+            /** Default Sso Provider */
+            default_sso_provider?: ("microsoft" | "google" | "oidc") | null;
         };
         /**
          * AuthorizeResponse
@@ -18946,6 +18973,8 @@ export interface components {
              * @description OAuth callback URL to configure in each provider
              */
             callback_url: string;
+            /** @description Preferred SSO behavior before the full login screen */
+            login_preference: components["schemas"]["OAuthLoginPreference"];
         };
         /**
          * OAuthConfigResponse
@@ -19289,6 +19318,23 @@ export interface components {
             authorization_url: string;
             /** State */
             state: string;
+        };
+        /**
+         * OAuthLoginPreference
+         * @description Preferred SSO behavior before the full login screen is shown.
+         */
+        OAuthLoginPreference: {
+            /**
+             * Auto Redirect To Sso
+             * @description Whether login should first redirect to the preferred SSO provider
+             * @default false
+             */
+            auto_redirect_to_sso: boolean;
+            /**
+             * Default Sso Provider
+             * @description Configured SSO provider used for the preferred redirect
+             */
+            default_sso_provider?: ("microsoft" | "google" | "oidc") | null;
         };
         /**
          * OAuthProviderConfigResponse
@@ -36876,6 +36922,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OAuthConfigListResponse"];
+                };
+            };
+        };
+    };
+    set_oauth_login_preference_api_settings_oauth_login_preference_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OAuthLoginPreference"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthLoginPreference"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

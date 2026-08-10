@@ -17,13 +17,18 @@ from src.models.contracts.oauth_config import (
     GoogleOAuthConfigRequest,
     MicrosoftOAuthConfigRequest,
     OAuthConfigListResponse,
+    OAuthLoginPreference,
     OAuthConfigTestRequest,
     OAuthConfigTestResponse,
     OAuthProviderConfigResponse,
     OAuthSSOProvider,
     OIDCConfigRequest,
 )
-from src.services.oauth_config_service import OAuthConfigService
+from src.services.oauth_config_service import (
+    OAuthConfigService,
+    OAuthLoginPreferenceError,
+    OAuthProviderPreferenceConflict,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,12 +63,43 @@ async def list_oauth_configs(
     """
     service = OAuthConfigService(db)
     providers = await service.get_all_provider_configs()
+    login_preference = await service.get_login_preference()
     callback_url = _get_callback_url(request)
 
     return OAuthConfigListResponse(
         providers=providers,
         callback_url=callback_url,
+        login_preference=login_preference,
     )
+
+
+@router.put(
+    "/login-preference",
+    response_model=OAuthLoginPreference,
+    summary="Configure preferred SSO redirect",
+    description="Choose whether login should first redirect to a configured SSO provider",
+)
+async def set_oauth_login_preference(
+    preference: OAuthLoginPreference,
+    ctx: Context,
+    user: CurrentSuperuser,
+    db: AsyncSession = Depends(get_db),
+) -> OAuthLoginPreference:
+    """Update the platform-wide preferred SSO behavior."""
+    service = OAuthConfigService(db)
+    try:
+        result = await service.set_login_preference(
+            preference,
+            updated_by=user.email,
+        )
+    except OAuthLoginPreferenceError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
+    await db.commit()
+    return result
 
 
 @router.get(
@@ -244,7 +280,16 @@ async def delete_oauth_config(
 ) -> None:
     """Delete all configuration for a specific OAuth provider."""
     service = OAuthConfigService(db)
-    deleted = await service.delete_provider_config(provider)
+    try:
+        deleted = await service.delete_provider_config(
+            provider,
+            updated_by=user.email,
+        )
+    except OAuthProviderPreferenceConflict as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
     await db.commit()
 
     if not deleted:

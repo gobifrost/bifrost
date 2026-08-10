@@ -1311,6 +1311,7 @@ async def get_auth_status(db: DbSession = None) -> AuthStatusResponse:
     # Get available OAuth providers from database config
     oauth_config_service = OAuthConfigService(db)
     available_providers = await oauth_config_service.get_available_providers()
+    login_preference = await oauth_config_service.get_login_preference()
 
     # Get OIDC display name if configured
     oidc_display_name = "SSO"
@@ -1340,6 +1341,8 @@ async def get_auth_status(db: DbSession = None) -> AuthStatusResponse:
         password_login_enabled=True,  # Always enabled for now
         mfa_required_for_password=settings.mfa_enabled,
         oauth_providers=oauth_providers,
+        auto_redirect_to_sso=login_preference.auto_redirect_to_sso,
+        default_sso_provider=login_preference.default_sso_provider,
     )
 
 

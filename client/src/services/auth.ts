@@ -20,6 +20,13 @@ export type TOTPVerifyResponse = components["schemas"]["MFAVerifyResponse"];
 export type RecoveryCodesCount =
 	components["schemas"]["RecoveryCodesCountResponse"];
 
+export const PREFERRED_SSO_REDIRECT_ATTEMPTED_KEY =
+	"preferred_sso_redirect_attempted";
+
+export function clearPreferredSsoRedirectAttempt(): void {
+	sessionStorage.removeItem(PREFERRED_SSO_REDIRECT_ATTEMPTED_KEY);
+}
+
 // =============================================================================
 // Auth Status
 // =============================================================================
