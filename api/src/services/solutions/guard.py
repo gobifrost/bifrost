@@ -62,18 +62,6 @@ _OPERATIONAL_SOLUTION_ROW_NAMES = {
     # Job bookkeeping belongs to the platform scheduler/API, not the deploy-owned
     # portable entity surface protected by this guard.
     "SolutionExportJob",
-    # Builder state (2026-07-25 private-solution-builder spec). These rows carry
-    # solution_id but are authoring bookkeeping — revision lineage, chat sessions,
-    # turn status, build results — written by the builder as the user works. The
-    # deployer never authors them, and they hold no portable entity content, so
-    # the deploy-owns-it rule does not apply. What the builder produces that IS
-    # portable (the workspace source) lives in object storage and reaches the DB
-    # only through the normal deploy path, which this guard still protects.
-    "SolutionBuilderProject",
-    "SolutionSourceRevision",
-    "SolutionBuilderSession",
-    "SolutionBuilderTurn",
-    "SolutionBuildJob",
 }
 
 _WORKFLOW_RUNTIME_KEY_FIELDS = {

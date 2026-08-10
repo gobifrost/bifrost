@@ -143,17 +143,6 @@ class MCPContext:
     # Knowledge namespaces accessible to this user (from agent.knowledge_sources)
     accessible_namespaces: list[str] = field(default_factory=list)
 
-    # Execution-scoped Agent Skills bundle. These are populated by trusted
-    # AgentExecutor paths and by authorized agent-scoped MCP requests.
-    # Unscoped MCP contexts leave them unset, so read_skill_asset fails closed.
-    agent_bundle_path: str | None = None
-    agent_skill_id: UUID | str | None = None
-    agent_skill_in_repo: bool = False
-    agent_solution_id: UUID | str | None = None
-    # In-memory, root-scoped workspace supplied only by BuilderAgentTurnService.
-    # HTTP MCP and every ordinary Agent execution leave it unset.
-    builder_workspace: Any = None
-
     # Database session from executor context (None when running via MCP server)
     session: Any = None
 
@@ -165,10 +154,6 @@ class MCPContext:
             self.user_id = UUID(self.user_id)
         if isinstance(self.org_id, str) and self.org_id:
             self.org_id = UUID(self.org_id)
-        if isinstance(self.agent_solution_id, str) and self.agent_solution_id:
-            self.agent_solution_id = UUID(self.agent_solution_id)
-        if isinstance(self.agent_skill_id, str) and self.agent_skill_id:
-            self.agent_skill_id = UUID(self.agent_skill_id)
 
 
 # =============================================================================
@@ -237,9 +222,6 @@ async def _get_runtime_context() -> MCPContext:
     agent_id = _get_agent_id_from_scope()
 
     accessible_namespaces: list[str] = []
-    agent_bundle_path: str | None = None
-    agent_skill_in_repo = False
-    agent_solution_id: UUID | None = None
     if agent_id is not None:
         try:
             async with get_db_context() as db:
@@ -254,11 +236,8 @@ async def _get_runtime_context() -> MCPContext:
                 )
                 if agent_result is not None:
                     accessible_namespaces = list(agent_result.accessible_namespaces)
-                    agent_bundle_path = agent_result.bundle_path
-                    agent_skill_in_repo = agent_result.bundle_in_repo
-                    agent_solution_id = agent_result.solution_id
         except Exception as e:
-            logger.warning(f"Failed to resolve agent-scoped MCP context: {e}")
+            logger.warning(f"Failed to resolve accessible namespaces: {e}")
 
     return MCPContext(
         user_id=token.claims.get("user_id", ""),
@@ -268,10 +247,6 @@ async def _get_runtime_context() -> MCPContext:
         user_email=token.claims.get("email", ""),
         user_name=token.claims.get("name", ""),
         accessible_namespaces=accessible_namespaces,
-        agent_bundle_path=agent_bundle_path,
-        agent_skill_id=agent_id if agent_bundle_path else None,
-        agent_skill_in_repo=agent_skill_in_repo,
-        agent_solution_id=agent_solution_id,
     )
 
 
@@ -462,7 +437,6 @@ def get_system_tools() -> list[dict[str, Any]]:
     tools = []
     for module in TOOL_MODULES:
         if hasattr(module, "TOOLS"):
-            hidden_tool_ids = getattr(module, "HIDDEN_TOOL_IDS", frozenset())
             # Build a mapping of tool_id -> function for this module
             tool_funcs: dict[str, Any] = {}
             for attr_name in dir(module):
@@ -507,7 +481,6 @@ def get_system_tools() -> list[dict[str, Any]]:
                     "name": name,
                     "description": description,
                     "parameters": parameters,
-                    "hidden": tool_id in hidden_tool_ids,
                 })
     return tools
 

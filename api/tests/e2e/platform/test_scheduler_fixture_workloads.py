@@ -24,7 +24,6 @@ def test_scheduler_fixture_suite_executes_real_work_through_central_runner():
         "solution_update_found": True,
         "file_index_repaired": True,
         "summary_parent_reconciled": True,
-        "build_parent_reconciled": True,
     }
     assert set(result["platform_jobs"]) == {
         "oauth",

@@ -10,15 +10,6 @@ vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => ({ isPlatformAdmin: true }),
 }));
 
-const mockUseBuilderAccess = vi.fn(() => ({
-	canBuild: true,
-	isLoading: false,
-	solutions: [],
-}));
-vi.mock("@/hooks/useBuilderAccess", () => ({
-	useBuilderAccess: () => mockUseBuilderAccess(),
-}));
-
 vi.mock("@/components/branding/Logo", () => ({
 	Logo: () => <div aria-label="Logo" />,
 }));
@@ -53,30 +44,5 @@ describe("Sidebar terminology", () => {
 			"href",
 			"/forms",
 		);
-		expect(screen.getByRole("link", { name: "Build" })).toHaveAttribute(
-			"href",
-			"/build",
-		);
-		expect(
-			screen.getByRole("link", { name: "Promotion review" }),
-		).toHaveAttribute("href", "/solution-promotions");
-	});
-
-	it("hides Build when the capability probe fails closed", () => {
-		mockUseBuilderAccess.mockReturnValue({
-			canBuild: false,
-			isLoading: false,
-			solutions: [],
-		});
-
-		renderWithProviders(
-			<Sidebar
-				isMobileMenuOpen={false}
-				setIsMobileMenuOpen={vi.fn()}
-				isCollapsed={false}
-			/>,
-		);
-
-		expect(screen.queryByRole("link", { name: "Build" })).not.toBeInTheDocument();
 	});
 });

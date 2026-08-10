@@ -32,7 +32,6 @@ from src.repositories.forms import FormRepository
 from src.repositories.workflows import WorkflowRepository
 from src.models import Execution as ExecutionORM
 from src.models import Form as FormORM, FormField as FormFieldORM, FormRole as FormRoleORM
-from src.services.solutions.access import visible_solution_child_criterion
 from src.models import FormPublication as FormPublicationORM
 from src.services.solutions.guard import assert_not_solution_managed
 from src.models import Role as RoleORM
@@ -111,17 +110,6 @@ async def _limit_embed_action(http_request: Request, ctx, action: str) -> None:
         raise HTTPException(status_code=403, detail="Invalid form session")
     identifier = f"{ctx.user.jti}:{get_client_ip(http_request)}"
     await _FORM_EMBED_LIMITERS[action].check(f"form_embed_{action}", identifier)
-
-
-def _visible_form_query(ctx: Context, query):
-    """Apply the private parent gate before any form-specific authorization."""
-    return query.where(
-        visible_solution_child_criterion(
-            child_solution_id=FormORM.solution_id,
-            actor_user_id=ctx.user.user_id,
-            is_external=ctx.user.is_external,
-        )
-    )
 
 
 def _form_schema_to_fields(form_schema: dict, form_id: UUID) -> list[FormFieldORM]:
@@ -616,6 +604,7 @@ async def publish_form(
 
     now = datetime.now(timezone.utc)
     publication = form.publication
+    publication_is_new = publication is None
     if publication is None:
         publication = FormPublicationORM(
             form_id=form.id,
@@ -629,7 +618,11 @@ async def publish_form(
             updated_at=now,
         )
         db.add(publication)
-        form.publication = publication
+        # The publication is environment-owned operational state, even when
+        # its parent form is managed by a Solution. Assigning the scalar
+        # relationship here marks the parent Form dirty and trips the
+        # solution-managed write guard during flush. Persist by foreign key,
+        # then reload the relationship without mutating the managed form.
     else:
         publication.allowed_origins = allowed_origins
         publication.approved_fingerprint = review.fingerprint
@@ -638,6 +631,8 @@ async def publish_form(
         publication.updated_at = now
 
     await db.flush()
+    if publication_is_new:
+        await db.refresh(form, attribute_names=["publication"])
     logger.info(
         "Public form publication enabled",
         extra={
@@ -868,12 +863,9 @@ async def update_form(
     to JSON on-the-fly for git sync operations.
     """
     result = await db.execute(
-        _visible_form_query(
-            ctx,
-            select(FormORM)
-            .options(selectinload(FormORM.fields))
-            .where(FormORM.id == form_id),
-        )
+        select(FormORM)
+        .options(selectinload(FormORM.fields))
+        .where(FormORM.id == form_id)
     )
     form = result.scalar_one_or_none()
 
@@ -963,12 +955,9 @@ async def update_form(
 
     # Reload form with fields eager-loaded
     result = await db.execute(
-        _visible_form_query(
-            ctx,
-            select(FormORM)
-            .options(selectinload(FormORM.fields))
-            .where(FormORM.id == form_id),
-        )
+        select(FormORM)
+        .options(selectinload(FormORM.fields))
+        .where(FormORM.id == form_id)
     )
     form = result.scalar_one()
 
@@ -1025,10 +1014,8 @@ async def delete_form(
     With purge=true, permanently removes the form and its related records from the database.
     """
     result = await db.execute(
-        _visible_form_query(
-            ctx,
-            select(FormORM).where(FormORM.id == form_id),
-        )
+        select(FormORM)
+        .where(FormORM.id == form_id)
     )
     form = result.scalar_one_or_none()
 
@@ -1232,10 +1219,9 @@ async def submit_form(
 
     # Get the form
     result = await db.execute(
-        _visible_form_query(
-            ctx,
-            select(FormORM).where(FormORM.id == form_id),
-        ).options(selectinload(FormORM.fields))
+        select(FormORM)
+        .options(selectinload(FormORM.fields))
+        .where(FormORM.id == form_id)
     )
     form = result.scalar_one_or_none()
 
@@ -1606,10 +1592,9 @@ async def execute_startup_workflow(
 
     # Get the form
     result = await db.execute(
-        _visible_form_query(
-            ctx,
-            select(FormORM).where(FormORM.id == form_id),
-        ).options(selectinload(FormORM.fields))
+        select(FormORM)
+        .options(selectinload(FormORM.fields))
+        .where(FormORM.id == form_id)
     )
     form = result.scalar_one_or_none()
 
@@ -1907,12 +1892,9 @@ async def generate_upload_url(
 
     # Verify form exists and user has access
     result = await db.execute(
-        _visible_form_query(
-            ctx,
-            select(FormORM)
-            .options(selectinload(FormORM.fields))
-            .where(FormORM.id == form_id),
-        )
+        select(FormORM)
+        .options(selectinload(FormORM.fields))
+        .where(FormORM.id == form_id)
     )
     form = result.scalar_one_or_none()
 

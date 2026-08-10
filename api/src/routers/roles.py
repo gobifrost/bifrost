@@ -11,10 +11,9 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import delete, func, select, update
+from sqlalchemy import func, select, delete
 
 from src.core.auth import CurrentSuperuser
-from src.core.constants import PLATFORM_ADMIN_ROLE_ID, PROVIDER_ORG_ID
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.services.solutions.guard import (
@@ -22,7 +21,6 @@ from src.services.solutions.guard import (
     assert_role_not_bound_to_solution_managed,
 )
 from src.services.audit import emit_audit
-from src.services.user_provisioning import validate_platform_admin_removal
 from src.models import (
     Role as RoleORM,
     UserRole as UserRoleORM,
@@ -49,7 +47,6 @@ from src.models import (
     RoleKnowledgeResponse,
     RoleKnowledgeEntry,
     RoleConsumerCounts,
-    AuthorizationScopePublic,
     AssignUsersToRoleRequest,
     AssignFormsToRoleRequest,
     AssignAgentsToRoleRequest,
@@ -91,38 +88,6 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/roles", tags=["Roles"])
-
-
-def _assert_role_mutable(role: RoleORM) -> None:
-    """Reject public mutation of a Bifrost-managed role definition."""
-
-    if role.is_builtin:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Built-in roles are managed by Bifrost and cannot be modified",
-        )
-
-
-async def _assert_role_assignable_to_resources(
-    db: DbSession, role_id: UUID
-) -> RoleORM:
-    """Reject capability-only roles at resource-assignment boundaries."""
-
-    role = await db.get(RoleORM, role_id)
-    if role is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Role not found",
-        )
-    if not role.assignable_to_resources:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                "This built-in role grants platform capabilities and cannot be "
-                "assigned to resources"
-            ),
-        )
-    return role
 
 
 @router.get(
@@ -173,32 +138,6 @@ async def list_roles(
     return out
 
 
-@router.get(
-    "/scopes",
-    response_model=list[AuthorizationScopePublic],
-    summary="List authorization scopes",
-    description="Get the code-owned authorization-scope catalog (Platform admin only)",
-)
-async def list_authorization_scopes(
-    _user: CurrentSuperuser,
-) -> list[AuthorizationScopePublic]:
-    """Return the scope catalog used by role-management surfaces."""
-
-    from shared.authorization_scopes import AUTHORIZATION_SCOPE_CATALOG
-
-    return [
-        AuthorizationScopePublic(
-            key=scope.key,
-            display_name=scope.display_name,
-            description=scope.description,
-            category=scope.category,
-            is_privileged=scope.is_privileged,
-            assignable_to_custom_roles=scope.assignable_to_custom_roles,
-        )
-        for scope in AUTHORIZATION_SCOPE_CATALOG
-    ]
-
-
 @router.post(
     "",
     response_model=RolePublic,
@@ -218,7 +157,6 @@ async def create_role(
         name=request.name,
         description=request.description,
         permissions=request.permissions or {},
-        scopes=request.scopes,
         created_by=user.email,
         created_at=now,
         updated_at=now,
@@ -289,16 +227,12 @@ async def update_role(
             detail="Role not found",
         )
 
-    _assert_role_mutable(role)
-
     if request.name is not None:
         role.name = request.name
     if request.description is not None:
         role.description = request.description
     if request.permissions is not None:
         role.permissions = request.permissions
-    if request.scopes is not None:
-        role.scopes = request.scopes
 
     role.updated_at = datetime.now(timezone.utc)
 
@@ -365,8 +299,6 @@ async def delete_role(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Role not found",
         )
-
-    _assert_role_mutable(role)
 
     # A role assigned to a solution-managed entity has deploy-owned bindings;
     # deleting it would cascade-strip them outside deploy (Codex R4). Refuse.
@@ -465,11 +397,6 @@ async def assign_users_to_role(
             assigned_at=now,
         )
         db.add(user_role)
-        if role_id == PLATFORM_ADMIN_ROLE_ID:
-            target_user = await db.get(UserORM, user_uuid)
-            if target_user is not None:
-                target_user.is_superuser = True
-                target_user.organization_id = PROVIDER_ORG_ID
         affected_user_ids.append(user_uuid)
 
     await db.flush()
@@ -516,19 +443,6 @@ async def remove_user_from_role(
                 detail="User not found",
             )
 
-    if role_id == PLATFORM_ADMIN_ROLE_ID:
-        try:
-            await validate_platform_admin_removal(
-                db,
-                user_ids=[user_uuid],
-                actor_user_id=user.user_id,
-            )
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=str(exc),
-            ) from exc
-
     result = await db.execute(
         delete(UserRoleORM).where(
             UserRoleORM.user_id == user_uuid,
@@ -541,11 +455,6 @@ async def remove_user_from_role(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User-role assignment not found",
         )
-
-    if role_id == PLATFORM_ADMIN_ROLE_ID:
-        target_user = await db.get(UserORM, user_uuid)
-        if target_user is not None:
-            target_user.is_superuser = False
 
     logger.info(f"Removed user {log_safe(user_id)} from role {log_safe(role_id)}")
 
@@ -602,7 +511,6 @@ async def assign_forms_to_role(
     db: DbSession,
 ) -> None:
     """Assign forms to a role."""
-    await _assert_role_assignable_to_resources(db, role_id)
     now = datetime.now(timezone.utc)
 
     for form_id_str in request.form_ids:
@@ -715,7 +623,6 @@ async def assign_agents_to_role(
     db: DbSession,
 ) -> None:
     """Assign agents to a role."""
-    await _assert_role_assignable_to_resources(db, role_id)
     now = datetime.now(timezone.utc)
 
     for agent_id_str in request.agent_ids:
@@ -825,31 +732,12 @@ async def bulk_unassign_users(
     if not uuids:
         return
 
-    if role_id == PLATFORM_ADMIN_ROLE_ID:
-        try:
-            await validate_platform_admin_removal(
-                db,
-                user_ids=uuids,
-                actor_user_id=user.user_id,
-            )
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=str(exc),
-            ) from exc
-
     await db.execute(
         delete(UserRoleORM).where(
             UserRoleORM.role_id == role_id,
             UserRoleORM.user_id.in_(uuids),
         )
     )
-    if role_id == PLATFORM_ADMIN_ROLE_ID:
-        await db.execute(
-            update(UserORM)
-            .where(UserORM.id.in_(uuids))
-            .values(is_superuser=False)
-        )
     await db.flush()
     logger.info(f"Bulk unassigned {len(uuids)} users from role {log_safe(role_id)}")
 
@@ -969,7 +857,6 @@ async def assign_apps_to_role(
     user: CurrentSuperuser,
     db: DbSession,
 ) -> None:
-    await _assert_role_assignable_to_resources(db, role_id)
     now = datetime.now(timezone.utc)
     for app_id_str in request.app_ids:
         app_uuid = UUID(app_id_str)
@@ -1072,7 +959,6 @@ async def assign_workflows_to_role(
     user: CurrentSuperuser,
     db: DbSession,
 ) -> None:
-    await _assert_role_assignable_to_resources(db, role_id)
     now = datetime.now(timezone.utc)
     for wf_id_str in request.workflow_ids:
         wf_uuid = UUID(wf_id_str)
@@ -1184,7 +1070,6 @@ async def assign_knowledge_to_role(
     user: CurrentSuperuser,
     db: DbSession,
 ) -> None:
-    await _assert_role_assignable_to_resources(db, role_id)
     now = datetime.now(timezone.utc)
     for entry in request.entries:
         existing = await db.execute(

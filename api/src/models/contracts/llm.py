@@ -19,7 +19,6 @@ class LLMConfigResponse(BaseModel):
     default_system_prompt: str | None = None
     summarization_model: str | None = None
     tuning_model: str | None = None
-    builder_model: str | None = None
     is_configured: bool = True
     api_key_set: bool = False
 
@@ -61,10 +60,6 @@ class LLMConfigRequest(BaseModel):
     tuning_model: str | None = Field(
         default=None,
         description="Model override for tuning chat + dry-run. Falls back to primary model if unset.",
-    )
-    builder_model: str | None = Field(
-        default=None,
-        description="Model override for the Solution builder Agent. Falls back to primary model if unset.",
     )
 
 
@@ -228,4 +223,3 @@ class EmbeddingConfigSaveResponse(BaseModel):
         default=None,
         description="Rows that would be re-embedded if confirmed.",
     )
-

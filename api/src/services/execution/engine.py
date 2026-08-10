@@ -116,7 +116,6 @@ class ExecutionRequest:
     # so the SDK can scope name lookups (tables/configs) to the install's OWN
     # entity — own-first, then _repo/. None for plain _repo/ executions.
     solution_id: str | None = None
-    actor_jti: str | None = None
 
 
 @dataclass
@@ -299,7 +298,6 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         roi=roi,
         event=request.event,
         solution_id=request.solution_id,  # install scope for SDK name lookups
-        actor_jti=request.actor_jti,
     )
 
     # Set bifrost SDK context if available

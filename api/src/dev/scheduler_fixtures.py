@@ -16,7 +16,6 @@ from sqlalchemy import delete, select
 from src.config import get_settings
 from src.core.database import get_db_context
 from src.core.security import decrypt_secret, encrypt_secret
-from src.jobs.platform.solution_build import reconcile_solution_build_jobs
 from src.jobs.platform.summary_backfill import reconcile_summary_backfill_jobs
 from src.jobs.platform.system_maintenance import (
     enqueue_automatic_file_index_reconciliation,
@@ -29,7 +28,6 @@ from src.models.orm.events import EventSource, WebhookSource
 from src.models.orm.file_index import FileIndex
 from src.models.orm.oauth import OAuthProvider, OAuthToken
 from src.models.orm.platform_jobs import PlatformJob
-from src.models.orm.solution_build_jobs import SolutionBuildJob
 from src.models.orm.solutions import Solution
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
 from src.models.orm.users import User
@@ -48,7 +46,6 @@ EVENT_SOURCE_ID = uuid5(NAMESPACE_URL, FIXTURE_NAMESPACE + "event-source")
 WEBHOOK_SOURCE_ID = uuid5(NAMESPACE_URL, FIXTURE_NAMESPACE + "webhook-source")
 SOLUTION_ID = uuid5(NAMESPACE_URL, FIXTURE_NAMESPACE + "solution")
 SUMMARY_JOB_ID = uuid5(NAMESPACE_URL, FIXTURE_NAMESPACE + "summary-job")
-BUILD_JOB_ID = uuid5(NAMESPACE_URL, FIXTURE_NAMESPACE + "build-job")
 FILE_PATH = "diagnostics/scheduler-fixture.txt"
 FIXTURE_OWNER = "scheduler-fixture-runner"
 TERMINAL_STATUSES = {"succeeded", "failed", "cancelled"}
@@ -104,14 +101,7 @@ async def seed_scheduler_fixtures() -> UUID:
         await db.execute(
             delete(SummaryBackfillJob).where(SummaryBackfillJob.id == SUMMARY_JOB_ID)
         )
-        await db.execute(
-            delete(SolutionBuildJob).where(SolutionBuildJob.id == BUILD_JOB_ID)
-        )
-        await db.execute(
-            delete(PlatformJob).where(
-                PlatformJob.id.in_((SUMMARY_JOB_ID, BUILD_JOB_ID))
-            )
-        )
+        await db.execute(delete(PlatformJob).where(PlatformJob.id == SUMMARY_JOB_ID))
         await db.execute(delete(OAuthToken).where(OAuthToken.id == OAUTH_TOKEN_ID))
         await db.execute(
             delete(OAuthProvider).where(OAuthProvider.id == OAUTH_PROVIDER_ID)
@@ -162,7 +152,6 @@ async def seed_scheduler_fixtures() -> UUID:
                 slug="scheduler-update-fixture",
                 name="Scheduler Update Fixture",
                 version="1.0.0",
-                visibility="shared",
                 git_connected=True,
                 git_repo_url="git://scheduler-fixtures:9418/solution-update.git",
                 git_ref="main",
@@ -190,13 +179,6 @@ async def seed_scheduler_fixtures() -> UUID:
                 completed_at=now,
             )
         )
-        db.add(
-            _platform_parent(
-                BUILD_JOB_ID,
-                "solution.build",
-                "Reconcile fixture Solution build",
-            )
-        )
         # These rows are referenced by explicit foreign keys below. Flush the
         # independent fixture graph first because the child models intentionally
         # do not declare ORM relationships to their orchestration parents.
@@ -212,21 +194,6 @@ async def seed_scheduler_fixtures() -> UUID:
                 expires_at=now - timedelta(minutes=1),
                 scopes=["fixture.read"],
                 status="completed",
-            )
-        )
-        db.add(
-            SolutionBuildJob(
-                id=BUILD_JOB_ID,
-                solution_id=SOLUTION_ID,
-                requested_by=user_id,
-                source_sha256="f" * 64,
-                toolchain_version="scheduler-fixture-v1",
-                status="succeeded",
-                log_excerpt="Fixture build completed without an external runner.",
-                output_manifest=[
-                    {"path": "dist/index.js", "sha256": "a" * 64, "size": 42}
-                ],
-                completed_at=now,
             )
         )
         await db.commit()
@@ -333,17 +300,12 @@ async def run_scheduler_fixture_suite() -> dict[str, object]:
     await _record_reconcile(
         "summary_backfill_reconciliation", reconcile_summary_backfill_jobs
     )
-    await _record_reconcile(
-        "solution_build_reconciliation", reconcile_solution_build_jobs
-    )
-
     async with get_db_context() as db:
         token = await db.get(OAuthToken, OAUTH_TOKEN_ID)
         webhook = await db.get(WebhookSource, WEBHOOK_SOURCE_ID)
         solution = await db.get(Solution, SOLUTION_ID)
         indexed = await db.get(FileIndex, FILE_PATH)
         summary_parent = await db.get(PlatformJob, SUMMARY_JOB_ID)
-        build_parent = await db.get(PlatformJob, BUILD_JOB_ID)
         missing_records = [
             name
             for name, record in (
@@ -352,7 +314,6 @@ async def run_scheduler_fixture_suite() -> dict[str, object]:
                 ("Solution", solution),
                 ("file index", indexed),
                 ("summary parent", summary_parent),
-                ("build parent", build_parent),
             )
             if record is None
         ]
@@ -365,7 +326,6 @@ async def run_scheduler_fixture_suite() -> dict[str, object]:
         assert solution is not None
         assert indexed is not None
         assert summary_parent is not None
-        assert build_parent is not None
         access_token = decrypt_secret(token.encrypted_access_token.decode())
         checks = {
             "oauth_refreshed": access_token == "scheduler-fixture-access-refreshed",
@@ -374,7 +334,6 @@ async def run_scheduler_fixture_suite() -> dict[str, object]:
             "file_index_repaired": indexed.content is not None
             and "deliberately starts outside" in indexed.content,
             "summary_parent_reconciled": summary_parent.status == "succeeded",
-            "build_parent_reconciled": build_parent.status == "succeeded",
         }
     if not all(checks.values()):
         raise RuntimeError(f"Scheduler fixture verification failed: {checks}")

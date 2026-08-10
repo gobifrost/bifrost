@@ -52,7 +52,6 @@ def make_agent(
     agent.access_level = access_level
     agent.owner_user_id = owner_user_id
     agent.organization_id = organization_id
-    agent.solution_id = None
     agent.is_active = is_active
     agent.description = "Test"
     agent.system_prompt = "Test prompt"
@@ -91,7 +90,6 @@ class TestPrivateAgentAccessLevel:
         repo.org_id = uuid4()
         repo.user_id = user_id
         repo.is_superuser = False
-        repo.is_external = False
         repo.model = Agent
         repo.role_table = AgentRole
         repo.role_entity_id_column = "agent_id"
@@ -114,7 +112,6 @@ class TestPrivateAgentAccessLevel:
         repo.org_id = uuid4()
         repo.user_id = other_user_id
         repo.is_superuser = False
-        repo.is_external = False
         repo.model = Agent
         repo.role_table = AgentRole
         repo.role_entity_id_column = "agent_id"
@@ -138,7 +135,6 @@ class TestPrivateAgentAccessLevel:
         repo.org_id = uuid4()
         repo.user_id = uuid4()
         repo.is_superuser = True
-        repo.is_external = False
         repo.model = Agent
         repo.role_table = AgentRole
         repo.role_entity_id_column = "agent_id"

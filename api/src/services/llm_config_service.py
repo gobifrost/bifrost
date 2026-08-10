@@ -40,7 +40,6 @@ class LLMProviderConfig:
     default_system_prompt: str | None = None  # Default system prompt for agentless chat
     summarization_model: str | None = None  # Override for post-run summarization
     tuning_model: str | None = None  # Override for tuning chat + dry-run
-    builder_model: str | None = None  # Override for the Solution builder Agent
     is_configured: bool = False
     api_key_set: bool = False  # Indicates if API key is configured (never return actual key)
 
@@ -119,7 +118,6 @@ class LLMConfigService:
             default_system_prompt=config_data.get("default_system_prompt"),
             summarization_model=config_data.get("summarization_model"),
             tuning_model=config_data.get("tuning_model"),
-            builder_model=config_data.get("builder_model"),
             is_configured=True,
             api_key_set=bool(config_data.get("encrypted_api_key")),
         )
@@ -134,7 +132,6 @@ class LLMConfigService:
         default_system_prompt: str | None = None,
         summarization_model: str | None = None,
         tuning_model: str | None = None,
-        builder_model: str | None = None,
         updated_by: str = "system",
     ) -> None:
         """
@@ -150,8 +147,6 @@ class LLMConfigService:
             summarization_model: Optional override for summarization calls.
                 ``None`` means use the primary model.
             tuning_model: Optional override for tuning chat + dry-run calls.
-                ``None`` means use the primary model.
-            builder_model: Optional override for the Solution builder Agent.
                 ``None`` means use the primary model.
             updated_by: Email/ID of user making the change
         """
@@ -184,7 +179,6 @@ class LLMConfigService:
             "default_system_prompt": default_system_prompt,
             "summarization_model": summarization_model,
             "tuning_model": tuning_model,
-            "builder_model": builder_model,
         }
 
         if existing:

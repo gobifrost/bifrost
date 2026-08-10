@@ -200,6 +200,7 @@ async def embed_public_form(request: Request, public_key: str = Path(...)):
             if publication.form.organization_id
             else None
         ),
+        display_name=f"Public Form · {publication.form.name}",
         verified_context={},
         capability_fingerprint=fingerprint,
         expires_delta=timedelta(minutes=30),

@@ -176,34 +176,6 @@ describe("FormShareDialog", () => {
 		);
 		expect(screen.getByText("Shown")).toBeInTheDocument();
 		expect(screen.getByText("Solid")).toBeInTheDocument();
-	});
-
-	it("updates embed appearance and opens the disable confirmation", async () => {
-		mockAuthFetch
-			.mockResolvedValueOnce(
-				jsonResponse({
-					...unpublished,
-					status: "published",
-					public_key: "public-key",
-					approved_fingerprint: "sha256:reviewed",
-					iframe_path: "/embed/forms/public/public-key",
-				}),
-			)
-			.mockResolvedValueOnce(jsonResponse(review))
-			.mockResolvedValueOnce(jsonResponse(form));
-
-		const { user } = renderWithProviders(
-			<FormShareDialog
-				formId="form-1"
-				formName="Customer intake"
-				open
-				onOpenChange={vi.fn()}
-			/>,
-		);
-
-		await screen.findByLabelText("Private form link");
-		await user.click(screen.getByRole("tab", { name: "Website Embed" }));
-		const embedCode = await screen.findByLabelText("Embed Code");
 
 		await user.click(screen.getByRole("combobox", { name: "Theme" }));
 		await user.click(screen.getByRole("option", { name: "Dark" }));

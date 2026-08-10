@@ -41,7 +41,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { ChevronsUpDown, X } from "lucide-react";
 import { useWorkflowsMetadata } from "@/hooks/useWorkflows";
-import { useResourceRoles } from "@/hooks/useRoles";
+import { useRoles } from "@/hooks/useRoles";
 import { useAuth } from "@/contexts/AuthContext";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import type { components } from "@/lib/v1";
@@ -89,7 +89,7 @@ export function FormInfoDialog({
 			isLoading: boolean;
 		};
 
-	const { data: roles, isLoading: rolesLoading } = useResourceRoles();
+	const { data: roles, isLoading: rolesLoading } = useRoles();
 
 	const defaultOrgId = isPlatformAdmin
 		? null

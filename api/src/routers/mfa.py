@@ -24,7 +24,7 @@ from src.core.security import (
     verify_password,
 )
 from src.services.mfa_service import MFAService
-from src.services.user_provisioning import get_user_roles, get_user_scopes
+from src.services.user_provisioning import get_user_roles
 from shared.external_access import (
     resolve_external_claim,
     resolve_provider_org_claim,
@@ -236,7 +236,6 @@ async def verify_mfa(
         "is_provider_org": await resolve_provider_org_claim(db, user),
         "org_id": str(user.organization_id) if user.organization_id else None,
         "roles": roles,
-        "scopes": await get_user_scopes(db, user.id),
     }
 
     access_token = create_access_token(data=token_data)

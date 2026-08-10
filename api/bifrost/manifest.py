@@ -92,17 +92,13 @@ class ManifestRole(EntityCodec, BaseModel):
     """Role entry in manifest."""
     id: str = Field(**classify(FieldClass.IDENTITY))
     name: str = Field(**classify(FieldClass.CONTENT, match_key=True))
-    scopes: list[str] | None = Field(default=None, **classify(FieldClass.CONTENT))
 
     @classmethod
     def from_row(cls, role) -> "ManifestRole":
-        return cls(id=str(role.id), name=role.name, scopes=list(role.scopes or []))
+        return cls(id=str(role.id), name=role.name)
 
     def to_orm_values(self, dest: Destination) -> ImportFields:
-        values: dict = {"id": self.id, "name": self.name}
-        if self.scopes is not None:
-            values["scopes"] = self.scopes
-        return ImportFields(direct=values)
+        return ImportFields(direct={"id": self.id, "name": self.name})
 
 
 class ManifestWorkflow(EntityCodec, BaseModel):
@@ -338,9 +334,8 @@ class ManifestAgent(EntityCodec, BaseModel):
 
     Import is INDEXER-ONLY (to_orm_values returns only indexer_content):
     - indexer_content: id, name (always), + description/system_prompt/channels/
-      bundle_path/tool_ids/delegated_agent_ids/knowledge_sources/system_tools/
-      mcp_connection_ids/llm_model/llm_max_tokens (non-empty lists only,
-      drop-none scalars) — fed to AgentIndexer.
+      tool_ids/delegated_agent_ids/knowledge_sources/system_tools/mcp_connection_ids/
+      llm_model/llm_max_tokens (non-empty lists only, drop-none scalars) — fed to AgentIndexer.
     The importers resolve id/name/system_prompt on the metadata row and re-stamp
     access_level/max_iterations/max_token_budget (+ the max_run_timeout transport
     extra) directly AFTER the indexer; that direct-set + re-stamp is
@@ -370,14 +365,6 @@ class ManifestAgent(EntityCodec, BaseModel):
     # -- Portable content (inline) --
     description: str | None = Field(default=None, description="Agent description", **classify(FieldClass.CONTENT, import_owner="indexer"))
     system_prompt: str | None = Field(default=None, description="LLM system prompt", **classify(FieldClass.CONTENT, import_owner="direct"))
-    bundle_path: str | None = Field(
-        default=None,
-        description=(
-            "Relative path to this Agent Skills bundle root. This is distinct "
-            "from the deprecated per-agent YAML path."
-        ),
-        **classify(FieldClass.CONTENT, import_owner="indexer"),
-    )
     channels: list[str] = Field(default_factory=list, description="Channels the agent runs on (chat, email, …)", **classify(FieldClass.CONTENT, import_owner="indexer"))
     tool_ids: list[str] = Field(default_factory=list, description="Workflow UUIDs exposed as tools", **classify(FieldClass.REFERENCE, import_owner="indexer"))
     delegated_agent_ids: list[str] = Field(default_factory=list, description="Agent UUIDs this agent can delegate to", **classify(FieldClass.REFERENCE, import_owner="indexer"))
@@ -427,7 +414,6 @@ class ManifestAgent(EntityCodec, BaseModel):
             access_level=agent.access_level.value if agent.access_level else "role_based",
             description=agent.description,
             system_prompt=agent.system_prompt,
-            bundle_path=getattr(agent, "bundle_path", None),
             channels=list(agent.channels) if agent.channels else [],
             # Junction ids arrive as UUIDs from solution capture (_junction_ids)
             # and as strings from the git-sync generator — coerce so both callers
@@ -462,8 +448,6 @@ class ManifestAgent(EntityCodec, BaseModel):
             indexer["description"] = self.description
         if self.system_prompt is not None:
             indexer["system_prompt"] = self.system_prompt
-        if self.bundle_path is not None:
-            indexer["bundle_path"] = self.bundle_path
         if self.channels:
             indexer["channels"] = list(self.channels)
         if self.tool_ids:

@@ -15,7 +15,6 @@ from src.models.orm.solution_file_location import SolutionFileLocation
 from src.models.orm.solutions import Solution
 from src.models.orm.tables import Table
 from src.repositories.tables import TableRepository
-from src.services.solutions.access import SolutionAction, can_access_solution
 
 
 @dataclass(frozen=True)
@@ -45,29 +44,6 @@ async def get_active_solution(db: AsyncSession, solution_id: UUID) -> Solution |
     if solution is None or solution.status != "active":
         return None
     return solution
-
-
-async def _accessible_solution_id(
-    db: AsyncSession,
-    ctx: ExecutionContext,
-    solution_id: UUID | None,
-) -> UUID | None:
-    """Return the active parent only when this principal may run it."""
-    if solution_id is None:
-        return None
-    solution = await get_active_solution(db, solution_id)
-    if solution is None:
-        return None
-    if not can_access_solution(
-        action=SolutionAction.RUN,
-        visibility=solution.visibility,
-        owner_user_id=solution.owner_user_id,
-        actor_user_id=ctx.user.user_id,
-        is_platform_admin=ctx.user.is_platform_admin,
-        is_external=ctx.user.is_external,
-    ):
-        return None
-    return solution_id
 
 
 async def solution_allows_global(db: AsyncSession, solution_id: UUID) -> bool:
@@ -115,7 +91,7 @@ async def solution_context_id(
     """
     ctx_scope = parse_ctx_solution_id(ctx)
     if ctx_scope is not None:
-        return await _accessible_solution_id(db, ctx, ctx_scope)
+        return ctx_scope
 
     if not ctx.app_id:
         return None
@@ -124,12 +100,11 @@ async def solution_context_id(
     except ValueError:
         return None
 
-    candidate = (
+    return (
         await db.execute(
             select(Application.solution_id).where(Application.id == app_uuid)
         )
     ).scalar_one_or_none()
-    return await _accessible_solution_id(db, ctx, candidate)
 
 
 async def derive_execution_solution_scope(
@@ -161,7 +136,7 @@ async def derive_execution_solution_scope(
         return ctx_scope
     if solution_id:
         try:
-            return await _accessible_solution_id(db, ctx, UUID(solution_id))
+            return UUID(solution_id)
         except ValueError:
             return None
     if form_id:
@@ -169,21 +144,19 @@ async def derive_execution_solution_scope(
             form_uuid = UUID(form_id)
         except ValueError:
             return None
-        candidate = (
+        return (
             await db.execute(select(Form.solution_id).where(Form.id == form_uuid))
         ).scalar_one_or_none()
-        return await _accessible_solution_id(db, ctx, candidate)
     if app_id:
         try:
             app_uuid = UUID(app_id)
         except ValueError:
             return None
-        candidate = (
+        return (
             await db.execute(
                 select(Application.solution_id).where(Application.id == app_uuid)
             )
         ).scalar_one_or_none()
-        return await _accessible_solution_id(db, ctx, candidate)
     return None
 
 

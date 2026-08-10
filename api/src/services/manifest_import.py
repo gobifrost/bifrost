@@ -25,7 +25,6 @@ from bifrost.manifest import (
     Manifest,
     read_manifest_from_dir,
 )
-from src.core.constants import PLATFORM_ADMIN_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID
 
 logger = logging.getLogger(__name__)
 
@@ -34,22 +33,6 @@ def _load_file_policy_model() -> Any:
     from src.models.orm.file_metadata import FilePolicy
 
     return FilePolicy
-
-
-_CAPABILITY_ONLY_ROLE_IDS = {PLATFORM_ADMIN_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID}
-
-
-def _manifest_resource_role_ids(values: list[str]) -> set[UUID]:
-    """Parse resource-role references and reject capability-only built-ins."""
-
-    role_ids = {UUID(value) for value in values}
-    invalid = role_ids & _CAPABILITY_ONLY_ROLE_IDS
-    if invalid:
-        raise ValueError(
-            "Capability-only built-in roles cannot be assigned to resources: "
-            + ", ".join(sorted(str(role_id) for role_id in invalid))
-        )
-    return role_ids
 
 
 # =============================================================================
@@ -281,7 +264,6 @@ def _agent_has_inline_content(magent) -> bool:
         bool(getattr(magent, attr, None))
         for attr in (
             "description",
-            "bundle_path",
             "channels",
             "tool_ids",
             "delegated_agent_ids",
@@ -466,9 +448,7 @@ class ManifestResolver:
             cache["org_by_name"][row[1]] = row[0]
 
         # Roles: {id} set + {name: id} dict
-        role_result = await self.db.execute(
-            select(Role.id, Role.name).where(Role.is_builtin.is_(False))
-        )
+        role_result = await self.db.execute(select(Role.id, Role.name))
         cache["role_ids"] = set()
         cache["role_by_name"] = {}
         for row in role_result.all():
@@ -1125,28 +1105,22 @@ class ManifestResolver:
         ID-first, name-fallback upsert strategy using prefetch cache.
         Returns ops list without executing.
         """
+        from uuid import UUID
+
         from bifrost.manifest_codec import Destination
-        from shared.authorization_scopes import validate_role_scopes
 
         from src.models.orm.users import Role
         from src.services.sync_ops import SyncOp, Upsert  # noqa: F401
 
         role_id = UUID(mrole.id)
-        if role_id in _CAPABILITY_ONLY_ROLE_IDS:
-            raise ValueError("Built-in roles cannot be managed by a manifest")
         fields = mrole.to_orm_values(Destination.GIT_SYNC).direct
-        role_values = {"name": fields["name"]}
-        if "scopes" in fields:
-            role_values["scopes"] = validate_role_scopes(
-                fields["scopes"], custom_role=True
-            )
 
         # 1. Try by ID first (handles renames)
         if role_id in cache["role_ids"]:
             return [Upsert(
                 model=Role,
                 id=role_id,
-                values=role_values,
+                values={"name": fields["name"]},
                 match_on="id",
             )]
 
@@ -1156,7 +1130,7 @@ class ManifestResolver:
             return [Upsert(
                 model=Role,
                 id=role_id,
-                values={"id": role_id, **role_values},
+                values={"id": role_id, "name": fields["name"]},
                 match_on="name",
             )]
 
@@ -1164,7 +1138,7 @@ class ManifestResolver:
         return [Upsert(
             model=Role,
             id=role_id,
-            values={**role_values, "created_by": "git-sync"},
+            values={"name": fields["name"], "created_by": "git-sync"},
             match_on="id",
         )]
 
@@ -1177,10 +1151,12 @@ class ManifestResolver:
             junction_model: The ORM model for the junction table (e.g. WorkflowRole)
             entity_fk_name: The FK column name on the junction table (e.g. 'workflow_id')
         """
+        from uuid import UUID
+
         from sqlalchemy import delete as sa_delete
         from sqlalchemy.dialects.postgresql import insert
 
-        desired_role_ids = _manifest_resource_role_ids(manifest_roles)
+        desired_role_ids = {UUID(r) for r in manifest_roles}
 
         # Get current assignments
         entity_fk_col = getattr(junction_model, entity_fk_name)
@@ -1262,7 +1238,7 @@ class ManifestResolver:
         # a present-empty list reliably means "no roles" (B3). `is not None` guards a
         # hypothetical roles-less model; SyncRoles({}) deletes all rows.
         if getattr(mwf, "roles", None) is not None:
-            role_ids = _manifest_resource_role_ids(mwf.roles)
+            role_ids = {UUID(r) for r in mwf.roles}
             ops.append(SyncRoles(
                 junction_model=WorkflowRole,
                 entity_fk="workflow_id",
@@ -1732,12 +1708,7 @@ class ManifestResolver:
 
         # Delete roles not in manifest (only when manifest has roles)
         if present_role_uuids:
-            await _bulk_delete(
-                Role,
-                [Role.is_builtin.is_(False)],
-                present_role_uuids,
-                "roles",
-            )
+            await _bulk_delete(Role, [], present_role_uuids, "roles")
 
         return entity_changes
 
@@ -2168,7 +2139,7 @@ class ManifestResolver:
 
         # Role sync op — fire on present-empty too, to clear bindings (B3; see _resolve_workflow).
         if getattr(mapp, "roles", None) is not None:
-            role_ids = _manifest_resource_role_ids(mapp.roles)
+            role_ids = {UUID(r) for r in mapp.roles}
             ops.append(SyncRoles(
                 junction_model=AppRole,
                 entity_fk="app_id",
@@ -2977,7 +2948,7 @@ class ManifestResolver:
         # Role sync op (FormRole.assigned_by is NOT NULL — pass via extra_fields).
         # Fire on present-empty too, to clear bindings (B3; see _resolve_workflow).
         if getattr(mform, "roles", None) is not None:
-            role_ids = _manifest_resource_role_ids(mform.roles)
+            role_ids = {UUID(r) for r in mform.roles}
             ops.append(SyncRoles(
                 junction_model=FormRole,
                 entity_fk="form_id",
@@ -3011,7 +2982,6 @@ class ManifestResolver:
             agent_values: dict = {
                 "name": data.get("name", ""),
                 "system_prompt": data.get("system_prompt", ""),
-                "bundle_path": data.get("bundle_path"),
                 "is_active": True,
                 "created_by": "git-sync",
                 "organization_id": org_id,
@@ -3030,7 +3000,7 @@ class ManifestResolver:
         # Role sync op (AgentRole.assigned_by is NOT NULL — pass via extra_fields).
         # Fire on present-empty too, to clear bindings (B3; see _resolve_workflow).
         if getattr(magent, "roles", None) is not None:
-            role_ids = _manifest_resource_role_ids(magent.roles)
+            role_ids = {UUID(r) for r in magent.roles}
             ops.append(SyncRoles(
                 junction_model=AgentRole,
                 entity_fk="agent_id",

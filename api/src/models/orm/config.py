@@ -56,13 +56,6 @@ class Config(Base):
     config_schema_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("integration_config_schema.id", ondelete="CASCADE"), default=None
     )
-    # Private-Solution-owned value (2026-07-25 private-solution-builder spec,
-    # "Config value scoping"). Non-NULL rows are resolved by exact solution_id
-    # match only — never through the org/global cascade. NULL preserves all
-    # existing org/global behavior.
-    solution_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("solutions.id", ondelete="CASCADE"), default=None
-    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")
     )
@@ -80,13 +73,6 @@ class Config(Base):
     __table_args__ = (
         Index("ix_configs_integration_org_key", "integration_id", "organization_id", "key", unique=True),
         Index("ix_configs_schema_id", "config_schema_id"),
-        Index(
-            "ix_configs_solution_key_unique",
-            "solution_id",
-            "key",
-            unique=True,
-            postgresql_where=text("solution_id IS NOT NULL"),
-        ),
     )
 
 

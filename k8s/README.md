@@ -122,47 +122,6 @@ kubectl logs -n bifrost -l app.kubernetes.io/name=bifrost-worker -f
 
 The manifests don't include an Ingress. Choose your preferred method:
 
-### Generated-app origin (Builder preview)
-
-Builder-generated apps must use a browser origin distinct from the control
-plane. The default does **not** require another domain or DNS record: expose a
-second TLS port on the same hostname and route it to the `app-host` service.
-
-```text
-Control plane: https://bifrost.example.com
-App host:      https://bifrost.example.com:8443
-                                    │
-                                    └── app-host:8100 inside the cluster
-```
-
-Set both values in `k8s/configmap.yaml`:
-
-```yaml
-BIFROST_PUBLIC_URL: "https://bifrost.example.com"
-BIFROST_APP_ORIGIN: "https://bifrost.example.com:8443"
-```
-
-Configure the external load balancer, Gateway, or reverse proxy to terminate
-TLS on port `8443` with the same certificate and forward HTTP to
-`app-host:8100`. The hostname and certificate stay unchanged; only the port is
-new.
-
-If the deployment's proxy cannot expose a second external TLS port, use a
-sibling hostname such as `https://apps.bifrost.example.com` and route that
-hostname to `app-host:8100`. That is the compatibility path, not the default.
-Builder fails closed when the configured origin is unavailable; never proxy
-generated apps through the control-plane origin.
-
-For local Kubernetes development, forward both services:
-
-```bash
-kubectl port-forward -n bifrost svc/client 3000:80
-kubectl port-forward -n bifrost svc/app-host 8100:8100
-```
-
-Then use `http://localhost:3000` and `http://localhost:8100`. Docker Compose and
-`debug.sh` configure the equivalent two localhost/Netbird ports automatically.
-
 ### Option A: Ingress Controller (nginx-ingress)
 
 ```yaml

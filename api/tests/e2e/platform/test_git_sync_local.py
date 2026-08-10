@@ -1453,7 +1453,6 @@ class TestRoundTrip:
             id=agent_id,
             name="Round Trip Agent",
             system_prompt="Test agent for round trip",
-            bundle_path="agents/round-trip-agent",
             channels=["chat"],
             is_active=True,
             created_by="file_sync",
@@ -1471,16 +1470,6 @@ class TestRoundTrip:
             "workflows/git_sync_test_rt_agent_tool.py",
             SAMPLE_WORKFLOW_PY,
         )
-        write_entity_to_repo(
-            sync_service._persistent_dir,
-            "agents/round-trip-agent/SKILL.md",
-            "# Round Trip Agent\n",
-        )
-        write_entity_to_repo(
-            sync_service._persistent_dir,
-            "agents/round-trip-agent/references/guide.md",
-            "Portable reference material.\n",
-        )
         await write_manifest_to_repo(db_session, sync_service._persistent_dir)
 
         # Commit + push
@@ -1496,10 +1485,6 @@ class TestRoundTrip:
         manifest_text = agents_manifest.read_text()
         assert str(agent_id) in manifest_text, "Manifest should contain agent UUID"
         assert str(wf_id) in manifest_text, "Manifest should contain tool UUID"
-        assert "bundle_path: agents/round-trip-agent" in manifest_text
-        assert (
-            verify_path / "agents" / "round-trip-agent" / "SKILL.md"
-        ).read_text() == "# Round Trip Agent\n"
 
         # Pull back
         result = await sync_service.desktop_sync(confirm_deletes=True)
@@ -1509,7 +1494,6 @@ class TestRoundTrip:
         await db_session.refresh(agent)
         assert agent.name == "Round Trip Agent"
         assert agent.channels == ["chat"]
-        assert agent.bundle_path == "agents/round-trip-agent"
 
         tools = (await db_session.execute(
             select(AgentTool).where(AgentTool.agent_id == agent_id)

@@ -176,25 +176,6 @@ def decode_token(token: str, expected_type: str | None = None) -> dict[str, Any]
         return None
 
 
-# Marker claim identifying a non-user actor. Solution-app tokens carry
-# actor_type="solution_app" while reusing the launching user's sub/org_id/email,
-# so nothing else distinguishes them from that user's own token. It lives here
-# rather than in src.services.builder.app_session because app_session imports
-# create_access_token from this module.
-ACTOR_TYPE_SOLUTION_APP = "solution_app"
-
-
-def is_actor_token(payload: dict[str, Any]) -> bool:
-    """True if the payload carries an actor_type claim.
-
-    Default-deny at every principal-building path: a token with ANY actor_type
-    is not a user token and must not authenticate a normal route. Routes built
-    for a specific actor (the Solution app host) opt in by checking the claim
-    themselves instead of going through the user dependencies.
-    """
-    return payload.get("actor_type") is not None
-
-
 def create_mfa_token(user_id: str, purpose: str = "mfa_verify") -> str:
     """
     Create a short-lived token for MFA verification step.
@@ -267,6 +248,7 @@ def create_embed_access_token(
     grant: Literal["hmac", "public"],
     resource_id: str,
     org_id: str | None,
+    display_name: str | None = None,
     verified_context: dict[str, str] | None = None,
     capability_fingerprint: str | None = None,
     expires_delta: timedelta = timedelta(hours=8),
@@ -289,6 +271,8 @@ def create_embed_access_token(
         "roles": ["EmbedUser"],
     }
     data[f"{embed_kind}_id"] = resource_id
+    if display_name is not None:
+        data["name"] = display_name
     if verified_context:
         data["verified_context"] = verified_context
         if embed_kind == "app":

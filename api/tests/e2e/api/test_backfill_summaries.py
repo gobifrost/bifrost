@@ -135,7 +135,7 @@ class TestBackfillSummaries:
         ).scalars().all()
         assert len(jobs) == 0
 
-    async def test_real_run_creates_job_and_resets_runs_for_processing(
+    async def test_real_run_creates_job_and_flips_runs_to_pending(
         self,
         e2e_client,
         platform_admin,
@@ -143,10 +143,8 @@ class TestBackfillSummaries:
         mixed_runs,
         db_session: AsyncSession,
     ):
-        # Queue-routing assertion lives in the unit test
-        # ``test_backfill_publishes_to_backfill_queue`` — the e2e client runs
-        # the API in a separate process, so a host-side patch on
-        # ``publish_message`` never fires. Here we verify the DB side-effects.
+        # The durable parent publishes child messages from the scheduler. Here
+        # we verify the endpoint's orchestration and persistence side-effects.
         res = e2e_client.post(
             "/api/agent-runs/backfill-summaries",
             json={
@@ -184,16 +182,14 @@ class TestBackfillSummaries:
         assert platform_job.encrypted_payload is not None
         assert backfill_agent["id"] not in platform_job.encrypted_payload
 
-        # The live worker may advance a queued run before this separate test
-        # process observes it. The durable proof of the reset is that the
-        # previous failure marker has been cleared; exact in-flight status is
-        # intentionally not asserted.
+        # All previously-failed runs should now be pending (and summary_error cleared).
         for r in mixed_runs:
             await db_session.refresh(r)
         targeted = [
             r for r in mixed_runs if r.summary_status != "completed"
         ]
-        assert all(r.summary_error != "prior failure" for r in targeted)
+        assert all(r.summary_status == "pending" for r in targeted)
+        assert all(r.summary_error is None for r in targeted)
         # The completed run should remain untouched.
         untouched = next(r for r in mixed_runs if r.asked == "asked")
         assert untouched.summary_status == "completed"

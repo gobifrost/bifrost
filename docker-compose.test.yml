@@ -146,15 +146,9 @@ services:
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
-      # The exhaustive E2E suite runs longer than the production default.
-      # Session-scoped fixture tokens must remain valid for the whole run.
+      # The full E2E suite intentionally reuses session-scoped users. Keep its
+      # access tokens valid for the longest supported local/CI run.
       BIFROST_ACCESS_TOKEN_EXPIRE_MINUTES: "120"
-      # Builder app host. Generated Solution apps must be served from a browser
-      # origin distinct from the control plane; without this the app host is
-      # unavailable (503) by design, so the e2e suite could not exercise it.
-      # Same API process, different origin — that is all isolation requires.
-      BIFROST_APP_ORIGIN: http://localhost:8100
-      BIFROST_BUILDER_INTERNAL_SECRET: test-builder-internal-secret
       # S3-compatible object storage
       BIFROST_S3_BUCKET: bifrost-test
       BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
@@ -174,7 +168,6 @@ services:
       - ./api/bifrost:/app/bifrost:ro
       - ./api/alembic:/app/alembic:ro
       - ./api/alembic.ini:/app/alembic.ini:ro
-      - ./.claude/skills/bifrost-build:/app/.claude/skills/bifrost-build:ro
       - test-mounts:/mounts  # File storage for uploads, branding, etc.
       # Share ONLY the fixture subdir the test-runner stages file:// git repos
       # in, so install/preview-repo can clone them server-side. Do NOT bind the
@@ -208,119 +201,6 @@ services:
     user: root
     command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
-  # Credential-light coordinator: RabbitMQ + internal API only, never DB/S3/JWT.
-  builder:
-    image: bifrost-test-api-dev:latest
-    build:
-      context: .
-      dockerfile: api/Dockerfile.dev
-    environment:
-      BIFROST_ENVIRONMENT: testing
-      BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_test@rabbitmq:5672/
-      BIFROST_BUILDER_INTERNAL_SECRET: test-builder-internal-secret
-      BIFROST_BUILDER_RUNNER_URL: http://builder-runner:8300
-      BIFROST_INTERNAL_API_URL: http://api:8000
-      BIFROST_BUILDER_MAX_CONCURRENT_BUILDS: "1"
-    volumes:
-      - ./api/src:/app/src:ro
-      - ./api/shared:/app/shared:ro
-    depends_on:
-      rabbitmq:
-        condition: service_healthy
-      api:
-        condition: service_healthy
-      builder-runner:
-        condition: service_healthy
-    user: "1000:1000"
-    security_opt: ["no-new-privileges:true"]
-    cap_drop: ["ALL"]
-    command: ["python", "-m", "src.builder.main"]
-    profiles:
-      - e2e
-
-  # The only process that executes generated frontend source.
-  builder-runner:
-    image: bifrost-test-builder-runner:latest
-    build:
-      context: .
-      dockerfile: builder_runner/Dockerfile
-    environment:
-      PORT: "8300"
-    user: "1000:1000"
-    read_only: true
-    tmpfs:
-      - /tmp:rw,exec,nosuid,nodev,size=1g
-    cap_drop: ["ALL"]
-    security_opt: ["no-new-privileges:true"]
-    mem_limit: 2g
-    cpus: 2
-    pids_limit: 512
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "python3",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://localhost:8300/healthz', timeout=2)",
-        ]
-      interval: 5s
-      timeout: 5s
-      retries: 20
-    profiles:
-      - e2e
-
-  # App Host (Test) - serves generated Solution apps on a separate origin
-  app-host:
-    image: bifrost-test-api-dev:latest
-    build:
-      context: .
-      dockerfile: api/Dockerfile.dev
-    environment:
-      BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
-      BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
-      BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_test@rabbitmq:5672/
-      BIFROST_REDIS_URL: redis://redis:6379/0
-      BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
-      BIFROST_ENVIRONMENT: testing
-      BIFROST_APP_ORIGIN: http://localhost:8100
-      BIFROST_PUBLIC_URL: http://api:8000
-      BIFROST_S3_BUCKET: bifrost-test
-      BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
-      BIFROST_S3_ACCESS_KEY: bifrost
-      BIFROST_S3_SECRET_KEY: bifrost_test_key
-      BIFROST_S3_REGION: us-east-1
-    volumes:
-      - ./api/src:/app/src
-      - /app/src/services/app_compiler/node_modules  # preserve npm deps from image
-      - /app/src/services/app_bundler/node_modules  # preserve npm deps from image
-      - /app/src/services/sdk_package/node_modules  # preserve npm deps from image
-      - /app/src/services/sdk_package/sdk_src  # preserve image-baked SDK source (masked by :ro src mount)
-      - ./api/shared:/app/shared:ro
-      - ./api/bifrost:/app/bifrost:ro
-      - ./api/alembic:/app/alembic:ro
-      - ./api/alembic.ini:/app/alembic.ini:ro
-      - test-mounts:/mounts
-      - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
-    depends_on:
-      pgbouncer:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      seaweedfs:
-        condition: service_started
-      init:
-        condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8100/health/ready"]
-      interval: 5s
-      timeout: 10s
-      retries: 10
-      start_period: 180s
-    user: root
-    command: ["uvicorn", "src.app_host:app", "--host", "0.0.0.0", "--port", "8100"]
-
   # Background Worker (Test) - Only started for E2E tests
   # Note: Discovery service has been removed - workflow/form extraction
   # now happens at write time in FileStorageService
@@ -337,11 +217,6 @@ services:
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
-      # Builder app host. Generated Solution apps must be served from a browser
-      # origin distinct from the control plane; without this the app host is
-      # unavailable (503) by design, so the e2e suite could not exercise it.
-      # Same API process, different origin — that is all isolation requires.
-      BIFROST_APP_ORIGIN: http://localhost:8100
       # S3-compatible object storage
       BIFROST_S3_BUCKET: bifrost-test
       BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
@@ -396,11 +271,6 @@ services:
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
-      # Builder app host. Generated Solution apps must be served from a browser
-      # origin distinct from the control plane; without this the app host is
-      # unavailable (503) by design, so the e2e suite could not exercise it.
-      # Same API process, different origin — that is all isolation requires.
-      BIFROST_APP_ORIGIN: http://localhost:8100
       # S3-compatible object storage
       BIFROST_S3_BUCKET: bifrost-test
       BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
@@ -478,7 +348,6 @@ services:
       BIFROST_S3_REGION: us-east-1
       # For E2E tests, point to the API container
       TEST_API_URL: http://api:8000
-      TEST_APP_URL: http://app-host:8100
       PYTHONPATH: /app
       # Coverage data stored on shared volume for cross-phase accumulation
       COVERAGE_FILE: /coverage/.coverage
@@ -513,8 +382,6 @@ services:
       - ./api/pyproject.toml:/app/pyproject.toml:ro
       - ./api/pyrightconfig.json:/app/pyrightconfig.json:ro
       - ./api/Dockerfile.dev:/app/api/Dockerfile.dev:ro
-      - ./.claude/skills/bifrost-build:/app/.claude/skills/bifrost-build:ro
-      - ./builder_runner:/builder_runner:ro
       - ./test.sh:/app/test.sh:ro
       - ./docker-compose.test.yml:/app/docker-compose.test.yml:ro  # Read-only —
                                       # the harness guard in

@@ -65,7 +65,6 @@ class PendingExecution(TypedDict):
     embed: dict[str, Any]
     sync: bool  # If True, worker pushes result to Redis for sync execution
     is_platform_admin: bool  # Whether the caller is a platform admin
-    actor_jti: str | None  # Bound app-host session, if submitted by solution_app
     event: dict[str, Any] | None  # EventContext fields if event-triggered; None otherwise
     created_at: str  # ISO format
     cancelled: bool
@@ -116,7 +115,6 @@ class RedisClient:
         sync: bool = False,
         is_platform_admin: bool = False,
         event: dict[str, Any] | None = None,
-        actor_jti: str | None = None,
     ) -> None:
         """
         Store pending execution in Redis.
@@ -157,7 +155,6 @@ class RedisClient:
             "embed": embed or {},
             "sync": sync,
             "is_platform_admin": is_platform_admin,
-            "actor_jti": actor_jti,
             "event": event,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "cancelled": False,

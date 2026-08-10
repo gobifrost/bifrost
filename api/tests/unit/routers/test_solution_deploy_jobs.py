@@ -6,103 +6,81 @@ from uuid import uuid4
 
 import pytest
 
-from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
+from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solutions import Solution
-from src.services.solutions.deploy_jobs import (
-    create_staged_deploy_job,
-    execute_deploy_job,
+from src.routers.solutions import (
+    _enqueue_solution_deploy_job,
+    _run_deploy_job,
 )
 
 
 @pytest.mark.asyncio
-async def test_create_job_stages_encrypted_central_job(
-    db_session, tmp_path, monkeypatch
+async def test_deploy_job_is_staged_as_encrypted_central_job(
+    db_session,
+    tmp_path,
+    monkeypatch,
 ):
-    solution = Solution(slug="demo", name="Demo")
-    db_session.add(solution)
+    sol = Solution(slug="demo", name="Demo")
+    db_session.add(sol)
     await db_session.flush()
-    input_path = tmp_path / "input.zip"
-    input_path.write_bytes(b"validated")
-    write_path = AsyncMock(return_value=("a" * 64, len(b"validated")))
-    publish = AsyncMock()
+    path = tmp_path / "deploy.zip"
+    path.write_bytes(b"validated")
     monkeypatch.setattr(
-        "src.services.solutions.deploy_jobs.SolutionDeployJobStorage.write_path",
-        write_path,
+        "src.routers.solutions.SolutionDeployJobStorage.write_path",
+        AsyncMock(return_value=("a" * 64, len(b"validated"))),
     )
     monkeypatch.setattr(
-        "src.services.platform_jobs.publish_platform_job_update",
-        publish,
+        "src.routers.solutions.publish_platform_job_update", AsyncMock()
     )
 
-    job = await create_staged_deploy_job(
+    projection = await _enqueue_solution_deploy_job(
         db_session,
         kind="deploy",
-        install_id=solution.id,
+        install_id=sol.id,
         organization_id=None,
+        options={"force": True, "password": "not-plaintext"},
         requested_by_user_id=uuid4(),
         requested_by_email="admin@example.com",
         requested_by_name="Admin",
-        options={"password": "never-plaintext", "config_values": {"key": "secret"}},
-        input_path=input_path,
+        input_path=path,
     )
-
-    central = await db_session.get(PlatformJob, job.id)
+    central = await db_session.get(PlatformJob, projection.id)
     assert central is not None
+    assert central.id == projection.id
     assert central.job_type == "solution.deploy"
     assert central.payload == {"protected": True}
     assert central.encrypted_payload is not None
-    assert "never-plaintext" not in central.encrypted_payload
-    assert "secret" not in central.encrypted_payload
-    assert central.resource_lock_key == f"solution:{solution.id}"
-    assert job.input_key == f"_solution_deploy_jobs/{job.id}/input.zip"
-    assert job.input_sha256 == "a" * 64
-    publish.assert_awaited_once()
+    assert "not-plaintext" not in central.encrypted_payload
+    assert central.resource_lock_key == f"solution:{sol.id}"
 
 
 @pytest.mark.asyncio
-async def test_terminal_projection_is_not_executed_again(
-    db_session,
-    async_session_factory,
-    monkeypatch,
+async def test_run_deploy_job_does_not_start_after_job_is_terminal(
+    tmp_path, monkeypatch
 ):
-    lease_token = uuid4()
-    job = SolutionDeployJob(status="succeeded", kind="deploy")
-    central = PlatformJob(
-        id=job.id,
-        job_type="solution.deploy",
-        payload_version=1,
-        payload={"protected": True},
-        requested_by_user_id=str(uuid4()),
-        requested_by_email="admin@example.com",
-        requested_by_name="Admin",
-        title="Deploy",
-        status="running",
-        lease_token=lease_token,
-    )
-    db_session.add_all([job, central])
-    await db_session.commit()
+    job = SolutionDeployJob(id=uuid4(), install_id=None, status="failed")
+
+    class FakeDB:
+        async def get(self, model, row_id):  # noqa: ANN001, ANN201
+            assert model is SolutionDeployJob
+            assert row_id == job.id
+            return job
 
     @asynccontextmanager
-    async def test_db_context():
-        async with async_session_factory() as db:
-            try:
-                yield db
-                await db.commit()
-            except Exception:
-                await db.rollback()
-                raise
+    async def fake_db_context():
+        yield FakeDB()
 
-    monkeypatch.setattr(
-        "src.services.solutions.deploy_jobs.get_db_context",
-        test_db_context,
-    )
-    execute = AsyncMock()
-    monkeypatch.setattr(
-        "src.services.solutions.deploy_jobs._run_claimed_job",
-        execute,
-    )
+    from src.core import database
+    from src.services.solutions import zip_install
 
-    await execute_deploy_job(job.id, lease_token)
+    deploy = AsyncMock()
+    monkeypatch.setattr(database, "get_db_context", fake_db_context)
+    monkeypatch.setattr(zip_install, "deploy_zip_to_solution_path", deploy)
+    zip_path = tmp_path / "deploy.zip"
+    zip_path.write_bytes(b"not used")
 
-    execute.assert_not_awaited()
+    await _run_deploy_job(job.id, uuid4(), zip_path, force=False)
+
+    deploy.assert_not_awaited()
+    assert not zip_path.exists()

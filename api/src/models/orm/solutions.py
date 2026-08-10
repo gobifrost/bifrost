@@ -43,37 +43,25 @@ class Solution(Base):
 
     __tablename__ = "solutions"
 
-    # A SHARED Solution installs AT MOST ONCE per scope (one org, or global). Two
+    # A Solution installs AT MOST ONCE per scope (one org, or global). Two
     # installs of the same slug in one org would let a v2 app's path::fn workflow
     # ref resolve a sibling install's workflow (Codex #8 P1); the constraint makes
     # that state unreachable. organization_id is nullable and NULLs don't compare
     # equal in a plain unique index, so global installs need a slug-only partial
-    # index of their own. PRIVATE Solutions are instead unique per (owner, slug)
-    # so two users in one org can each own a private install of the same slug;
-    # promotion re-checks the target shared index atomically. Mirrors migrations
-    # 20260605_solution_unique_scope and 20260725_solution_private_visibility.
+    # index of their own. Mirrors migration 20260605_solution_unique_scope.
     __table_args__ = (
         Index(
             "ix_solutions_slug_org_unique",
             "slug",
             "organization_id",
             unique=True,
-            postgresql_where=text(
-                "organization_id IS NOT NULL AND visibility = 'shared'"
-            ),
+            postgresql_where=text("organization_id IS NOT NULL"),
         ),
         Index(
             "ix_solutions_slug_global_unique",
             "slug",
             unique=True,
-            postgresql_where=text("organization_id IS NULL AND visibility = 'shared'"),
-        ),
-        Index(
-            "ix_solutions_owner_slug_private_unique",
-            "owner_user_id",
-            "slug",
-            unique=True,
-            postgresql_where=text("visibility = 'private'"),
+            postgresql_where=text("organization_id IS NULL"),
         ),
     )
 
@@ -97,23 +85,6 @@ class Solution(Base):
     # resources and are not governed by this flag.
     global_repo_access: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
-    )
-
-    # Private-builder ownership (2026-07-25 private-solution-builder spec).
-    # visibility="private" means only the owner may see or use the install;
-    # "shared" means the ordinary org/global scope model applies. Builder-created
-    # Solutions require an owner and start private; the requirement is enforced
-    # in the access service, not a DB CHECK, so an owner-user deletion (SET NULL)
-    # leaves an orphaned private install for admin break-glass cleanup rather
-    # than failing the user delete or cascading away the Solution.
-    owner_user_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("users.id", ondelete="SET NULL"),
-        nullable=True,
-        default=None,
-        index=True,
-    )
-    visibility: Mapped[str] = mapped_column(
-        String(16), nullable=False, default="shared", server_default="shared"
     )
 
     # Version bookkeeping (Task 20). ``version`` is the deployed bundle's

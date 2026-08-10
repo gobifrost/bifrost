@@ -8,7 +8,6 @@ background jobs from RabbitMQ queues.
 import asyncio
 import json
 import logging
-import os
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -58,22 +57,19 @@ class RabbitMQConnection:
 
     async def _init_pools(self) -> None:
         """Initialize connection and channel pools."""
-        rabbitmq_url = os.environ.get("BIFROST_RABBITMQ_URL")
-        if rabbitmq_url is None:
-            rabbitmq_url = get_settings().rabbitmq_url
+        settings = get_settings()
 
         async def get_connection() -> AbstractRobustConnection:
-            return await aio_pika.connect_robust(rabbitmq_url)
+            return await aio_pika.connect_robust(settings.rabbitmq_url)
 
         async def get_channel() -> AbstractRobustChannel:
             assert self._connection_pool is not None
             async with self._connection_pool.acquire() as connection:
                 return await connection.channel()
 
-        # Each consumer holds a connection, so pool size must be >= the number
-        # of consumers. Keep headroom for publishers invoked by consumers
-        # (notably durable deploy recovery).
-        self._connection_pool = Pool(get_connection, max_size=10)
+        # Each consumer holds a connection, so pool size must be >= number of consumers
+        # 5 consumers (workflow, package-install, agent-run, summarize, tune-chat) + 2 headroom
+        self._connection_pool = Pool(get_connection, max_size=7)
         self._channel_pool = Pool(get_channel, max_size=10)
 
         logger.info("RabbitMQ connection pools initialized")

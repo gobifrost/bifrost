@@ -73,10 +73,6 @@ from src.routers import (
     tables_router,
     claims_router,
     solutions_router,
-    solution_builder_router,
-    solution_promotions_router,
-    internal_builder_router,
-    solution_app_launch_router,
     knowledge_sources_router,
     app_embed_secrets_router,
     applications_router,
@@ -575,12 +571,6 @@ def create_app() -> FastAPI:
     app.include_router(tables_router)
     app.include_router(claims_router)
     app.include_router(solutions_router)
-    app.include_router(solution_builder_router)
-    app.include_router(solution_promotions_router)
-    app.include_router(internal_builder_router)
-    # Control-plane half of the app host: mints launch URLs under the builder
-    # prefix using normal user auth. The app-origin half registers last.
-    app.include_router(solution_app_launch_router)
     app.include_router(knowledge_sources_router)
     app.include_router(app_embed_secrets_router)
     app.include_router(applications_router)
@@ -600,6 +590,7 @@ def create_app() -> FastAPI:
     app.include_router(mcp_oauth_callback_router)
     app.include_router(sdk_modules_router)
     app.include_router(policy_rules_router)
+
     # Mount MCP OAuth routes at root level (required by RFC 8414/9728)
     # These must be registered BEFORE the FastMCP ASGI mount
     try:

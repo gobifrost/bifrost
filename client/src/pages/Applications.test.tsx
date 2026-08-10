@@ -7,15 +7,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen, within } from "@/test-utils";
 
-const mockNavigate = vi.fn();
-vi.mock("react-router-dom", async () => {
-	const actual =
-		await vi.importActual<typeof import("react-router-dom")>(
-			"react-router-dom",
-		);
-	return { ...actual, useNavigate: () => mockNavigate };
-});
-
 const mockUseApplications = vi.fn();
 const mockUseDeleteApplication = vi.fn();
 vi.mock("@/hooks/useApplications", () => ({
@@ -30,11 +21,6 @@ vi.mock("@/contexts/AuthContext", () => ({
 
 vi.mock("@/hooks/useOrganizations", () => ({
 	useOrganizations: () => ({ data: [] }),
-}));
-
-const mockUseBuilderAccess = vi.fn();
-vi.mock("@/hooks/useBuilderAccess", () => ({
-	useBuilderAccess: () => mockUseBuilderAccess(),
 }));
 
 // Heavy children that aren't relevant to the badge behaviour.
@@ -65,13 +51,7 @@ function makeApp(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 beforeEach(() => {
-	mockNavigate.mockReset();
 	mockUseAuth.mockReturnValue({ isPlatformAdmin: true });
-	mockUseBuilderAccess.mockReturnValue({
-		canBuild: true,
-		isLoading: false,
-		solutions: [],
-	});
 	mockUseDeleteApplication.mockReturnValue({
 		mutateAsync: vi.fn(),
 		isPending: false,
@@ -161,37 +141,6 @@ describe("Applications — solution-managed badge (grid view)", () => {
 		expect(
 			screen.getByRole("button", { name: /code editor/i }),
 		).toBeInTheDocument();
-	});
-
-	it("opens a builder-owned managed app with its existing history", async () => {
-		mockUseBuilderAccess.mockReturnValue({
-			canBuild: true,
-			isLoading: false,
-			solutions: [{ id: "s1" }],
-		});
-		mockUseApplications.mockReturnValue({
-			data: {
-				applications: [
-					makeApp({
-						id: "m",
-						name: "Managed App",
-						is_solution_managed: true,
-						solution_id: "s1",
-					}),
-				],
-			},
-			isLoading: false,
-			refetch: vi.fn(),
-		});
-		const { user } = await renderPage();
-
-		await user.click(
-			screen.getByRole("button", {
-				name: /edit managed app in builder/i,
-			}),
-		);
-
-		expect(mockNavigate).toHaveBeenCalledWith("/solutions/s1/builder");
 	});
 });
 

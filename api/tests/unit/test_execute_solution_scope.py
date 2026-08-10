@@ -16,29 +16,7 @@ from src.services.solution_scope import (
 
 def _no_ctx() -> SimpleNamespace:
     """A request context with no install scope (plain platform caller)."""
-    return _ctx()
-
-
-def _principal() -> SimpleNamespace:
-    return SimpleNamespace(
-        user_id=uuid4(),
-        is_platform_admin=False,
-        is_superuser=False,
-        is_provider_org=False,
-        is_external=False,
-    )
-
-
-def _ctx(
-    *,
-    solution_id: str | None = None,
-    app_id: str | None = None,
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        solution_id=solution_id,
-        app_id=app_id,
-        user=_principal(),
-    )
+    return SimpleNamespace(solution_id=None, app_id=None)
 
 
 class TestParseCtxSolutionId:
@@ -69,8 +47,7 @@ async def _sol(db, org_id):
 class TestDeriveSolutionScope:
     async def test_explicit_solution_id_wins(self, db_session):
         db = db_session
-        org = (await _org(db)).id
-        sid = (await _sol(db, org)).id
+        sid = uuid4()
         got = await derive_execution_solution_scope(
             db, _no_ctx(), solution_id=str(sid), form_id=None, app_id=None
         )
@@ -133,11 +110,10 @@ class TestDeriveSolutionScope:
     async def test_ctx_solution_id_is_primary_scope(self, db_session):
         # The auth layer already validated ?solution= / X-Bifrost-App and put the
         # install id on the context — that's the authoritative runtime scope.
-        org = (await _org(db_session)).id
-        sid = (await _sol(db_session, org)).id
+        sid = uuid4()
         got = await derive_execution_solution_scope(
             db_session,
-            _ctx(solution_id=str(sid)),
+            SimpleNamespace(solution_id=str(sid), app_id=None),
             solution_id=None,
             form_id=None,
             app_id=None,
@@ -145,12 +121,10 @@ class TestDeriveSolutionScope:
         assert got == sid
 
     async def test_ctx_solution_id_wins_over_body_fields(self, db_session):
-        org = (await _org(db_session)).id
-        ctx_sid = (await _sol(db_session, org)).id
-        body_sid = (await _sol(db_session, org)).id
+        ctx_sid, body_sid = uuid4(), uuid4()
         got = await derive_execution_solution_scope(
             db_session,
-            _ctx(solution_id=str(ctx_sid)),
+            SimpleNamespace(solution_id=str(ctx_sid), app_id=None),
             solution_id=str(body_sid),
             form_id=None,
             app_id=None,
@@ -158,11 +132,10 @@ class TestDeriveSolutionScope:
         assert got == ctx_sid
 
     async def test_invalid_ctx_solution_id_falls_through_to_body(self, db_session):
-        org = (await _org(db_session)).id
-        sid = (await _sol(db_session, org)).id
+        sid = uuid4()
         got = await derive_execution_solution_scope(
             db_session,
-            _ctx(solution_id="not-a-uuid"),
+            SimpleNamespace(solution_id="not-a-uuid", app_id=None),
             solution_id=str(sid),
             form_id=None,
             app_id=None,
@@ -180,7 +153,7 @@ class TestDeriveSolutionScope:
         await db.flush()
         got = await derive_execution_solution_scope(
             db,
-            _ctx(app_id=str(app.id)),
+            SimpleNamespace(solution_id=None, app_id=str(app.id)),
             solution_id=None,
             form_id=None,
             app_id=None,

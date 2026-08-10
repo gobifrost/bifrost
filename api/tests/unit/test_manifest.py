@@ -2078,7 +2078,6 @@ class TestInlineAgentContent:
             name="Triage",
             description="Triage incoming tickets",
             system_prompt="You are a triage agent. Classify tickets.",
-            bundle_path="agents/triage",
             channels=["chat", "email"],
             tool_ids=[tool_id],
             delegated_agent_ids=[delegate_id],
@@ -2096,7 +2095,6 @@ class TestInlineAgentContent:
         rt = parsed.agents[agent_id]
         assert rt.description == "Triage incoming tickets"
         assert rt.system_prompt == "You are a triage agent. Classify tickets."
-        assert rt.bundle_path == "agents/triage"
         assert rt.channels == ["chat", "email"]
         assert rt.tool_ids == [tool_id]
         assert rt.delegated_agent_ids == [delegate_id]

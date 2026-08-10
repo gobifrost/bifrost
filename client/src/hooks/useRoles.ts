@@ -16,18 +16,6 @@ export function useRoles() {
 	return $api.useQuery("get", "/api/roles", {});
 }
 
-export function useResourceRoles() {
-	const query = useRoles();
-	return {
-		...query,
-		data: query.data?.filter((role) => role.assignable_to_resources),
-	};
-}
-
-export function useAuthorizationScopes() {
-	return $api.useQuery("get", "/api/roles/scopes", {});
-}
-
 export function useCreateRole() {
 	const queryClient = useQueryClient();
 

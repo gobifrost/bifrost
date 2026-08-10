@@ -272,14 +272,10 @@ async def get_messages(
     if before_sequence is not None:
         stmt = stmt.where(Message.sequence < before_sequence)
 
-    # Fetch the newest page, then return that page in chronological order.
-    # ``before_sequence`` is an older-history cursor used by the transcript UI.
-    # The previous ascending LIMIT returned the oldest 100 messages forever,
-    # making a resumed long conversation appear to have lost its recent work.
-    stmt = stmt.order_by(Message.sequence.desc()).limit(limit)
+    stmt = stmt.order_by(Message.sequence.asc()).limit(limit)
 
     result = await db.execute(stmt)
-    messages = list(reversed(result.scalars().all()))
+    messages = result.scalars().all()
 
     return [
         MessagePublic(

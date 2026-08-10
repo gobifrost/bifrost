@@ -28,7 +28,9 @@ or cosmetic changes do NOT bump it. The tripwire in
 # v8: Application publish is async: POST /api/applications/{id}/publish returns
 #     202 + PlatformJobAccepted (was 200 + ApplicationPublic); callers poll the
 #     standardized PlatformJobPublic contract (2026-07-28)
-CONTRACT_VERSION: int = 8
+# v9: PlatformJobStatus gained the waiting state used by durable parent jobs;
+#     stale CLIs cannot parse that enum value and must upgrade (2026-08-07)
+CONTRACT_VERSION: int = 9
 
 
 def get_contract_version() -> int:

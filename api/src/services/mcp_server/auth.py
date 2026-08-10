@@ -32,7 +32,6 @@ from shared.external_access import (
     resolve_external_claim,
     resolve_provider_org_claim,
 )
-from src.services.user_provisioning import get_user_scopes
 
 logger = logging.getLogger(__name__)
 
@@ -434,7 +433,6 @@ class BifrostAuthProvider:
                     "is_external": await resolve_external_claim(db, user),
                     "is_provider_org": await resolve_provider_org_claim(db, user),
                     "org_id": str(user.organization_id) if user.organization_id else None,
-                    "scopes": await get_user_scopes(db, user.id),
                     "type": "access",
                 }
                 access_token = create_access_token(data=token_data)
@@ -490,7 +488,6 @@ class BifrostAuthProvider:
                     "is_external": await resolve_external_claim(db, user),
                     "is_provider_org": await resolve_provider_org_claim(db, user),
                     "org_id": str(user.organization_id) if user.organization_id else None,
-                    "scopes": await get_user_scopes(db, user.id),
                     "type": "access",
                 }
                 access_token = create_access_token(data=token_data)
@@ -602,22 +599,13 @@ class BifrostAuthProvider:
         Returns:
             AccessToken if valid, None otherwise
         """
-        from src.core.security import decode_token, is_actor_token
+        from src.core.security import decode_token
 
         logger.info(f"MCP auth: verify_token called with token prefix: {token[:20]}...")
 
         payload = decode_token(token, expected_type="access")
         if payload is None:
             logger.info("MCP auth: decode_token returned None (invalid/expired JWT)")
-            return None
-
-        # Default-deny non-user actors: MCP builds its own principal claims from
-        # the payload, so a solution_app token would act as the launching user.
-        if is_actor_token(payload):
-            logger.warning(
-                "MCP auth: rejected actor token (actor_type=%s)",
-                payload.get("actor_type"),
-            )
             return None
 
         logger.info(f"MCP auth: Token decoded for user {payload.get('email')}, checking access...")

@@ -50,7 +50,6 @@ from src.services.platform_jobs import (
     ensure_platform_job_notification,
     publish_platform_job_update,
 )
-from src.services.solutions.access import visible_solution_child_criterion
 from src.services.solutions.guard import assert_entity_id_not_solution_managed
 from src.core.exceptions import AccessDeniedError
 from shared.svg_sanitizer import SvgSanitizationError, sanitize_svg
@@ -167,14 +166,7 @@ async def get_application_or_404(
         # both keeps embed rendering working under is_external=True (OPEN-D)
         # and stops an embed token browsing other apps' metadata.
         result = await ctx.db.execute(
-            select(Application).where(
-                Application.slug == slug,
-                visible_solution_child_criterion(
-                    child_solution_id=Application.solution_id,
-                    actor_user_id=ctx.user.user_id,
-                    is_external=ctx.user.is_external,
-                ),
-            )
+            select(Application).where(Application.slug == slug)
         )
         app = next(
             (
@@ -238,18 +230,7 @@ async def get_application_by_id_or_404(
         # Embed pre-auth: bound to the token's app_id only (see the slug
         # helper above — OPEN-D).
         if ctx.user.app_id == str(app_id):
-            app = (
-                await ctx.db.execute(
-                    select(Application).where(
-                        Application.id == app_id,
-                        visible_solution_child_criterion(
-                            child_solution_id=Application.solution_id,
-                            actor_user_id=ctx.user.user_id,
-                            is_external=ctx.user.is_external,
-                        ),
-                    )
-                )
-            ).scalar_one_or_none()
+            app = await ctx.db.get(Application, app_id)
             if app is not None:
                 return app
         raise HTTPException(
@@ -1055,16 +1036,7 @@ async def get_application_logo(
     # whom the role-scoped metadata lookup 404s. Only the logo bytes + type are
     # returned, nothing else about the app.
     application = (
-        await ctx.db.execute(
-            select(Application).where(
-                Application.id == app_id,
-                visible_solution_child_criterion(
-                    child_solution_id=Application.solution_id,
-                    actor_user_id=ctx.user.user_id,
-                    is_external=ctx.user.is_external,
-                ),
-            )
-        )
+        await ctx.db.execute(select(Application).where(Application.id == app_id))
     ).scalar_one_or_none()
     if application is None or not application.logo_data:
         raise HTTPException(

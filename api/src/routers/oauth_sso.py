@@ -28,11 +28,7 @@ from src.core.auth import CurrentActiveUser, get_current_user_from_db
 from src.core.db_deps import DbSession
 from src.core.security import create_access_token, create_refresh_token, generate_csrf_token
 from src.services.oauth_sso import OAuthError, OAuthService
-from src.services.user_provisioning import (
-    ensure_user_provisioned,
-    get_user_roles,
-    get_user_scopes,
-)
+from src.services.user_provisioning import ensure_user_provisioned, get_user_roles
 from shared.external_access import (
     resolve_external_claim,
     resolve_provider_org_claim,
@@ -415,7 +411,6 @@ async def oauth_callback(
         "is_provider_org": await resolve_provider_org_claim(db, user),
         "org_id": str(user.organization_id) if user.organization_id else None,
         "roles": roles,
-        "scopes": await get_user_scopes(db, user.id),
         "oauth_provider": callback_data.provider,  # Mark as OAuth login
     }
 

@@ -48,9 +48,7 @@ class FormRepository(OrgScopedRepository[FormORM]):
             List of Form ORM objects with fields eager-loaded
         """
         # Build base query with cascade scoping
-        query = self._apply_solution_visibility(
-            select(self.model).options(selectinload(self.model.fields))
-        )
+        query = select(self.model).options(selectinload(self.model.fields))
         query = self._apply_cascade_scope(query)
 
         if active_only:
@@ -93,9 +91,7 @@ class FormRepository(OrgScopedRepository[FormORM]):
         Returns:
             List of Form ORM objects with fields eager-loaded
         """
-        query = self._apply_solution_visibility(
-            select(self.model).options(selectinload(self.model.fields))
-        )
+        query = select(self.model).options(selectinload(self.model.fields))
 
         # Apply org filtering based on filter type
         if filter_type == OrgFilterType.ALL:
@@ -136,12 +132,11 @@ class FormRepository(OrgScopedRepository[FormORM]):
         Returns:
             Form ORM object or None if not found
         """
-        query = self._apply_solution_visibility(
+        result = await self.session.execute(
             select(self.model)
             .options(selectinload(self.model.fields))
             .where(self.model.id == form_id)
         )
-        result = await self.session.execute(query)
         return result.scalar_one_or_none()
 
     async def get_form_with_access_check(self, form_id: UUID) -> FormORM | None:
@@ -162,7 +157,6 @@ class FormRepository(OrgScopedRepository[FormORM]):
             .options(selectinload(self.model.fields))
             .where(self.model.id == form_id)
         )
-        query = self._apply_solution_visibility(query)
 
         # Apply cascade scoping: prioritize org-specific, then global
         if self.org_id is not None:

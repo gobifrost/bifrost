@@ -140,37 +140,31 @@ class TestLLMConfigurationCRUD:
         assert data["is_configured"] is True
         assert data["api_key_set"] is True
 
-    @pytest.mark.asyncio
-    async def test_update_config_overwrites(
+    def test_update_config_overwrites(
         self,
         e2e_client,
         platform_admin,
         llm_test_anthropic_key,
         llm_config_cleanup,
-        db_session,
     ):
         """Test that setting config again overwrites the previous config."""
         if not llm_test_anthropic_key:
             pytest.skip("ANTHROPIC_API_TEST_KEY not configured")
 
-        # Seed the existing row directly. Other tests cover the live provider
-        # gate; this test needs one external call, for the update under test,
-        # rather than becoming flaky on two consecutive provider validations.
-        from src.services.llm_config_service import LLMConfigService
-
-        service = LLMConfigService(db_session)
-        await service.save_config(
-            provider="anthropic",
-            model="claude-haiku-4-5-20251001",
-            api_key=llm_test_anthropic_key,
-            max_tokens=1024,
-            updated_by=platform_admin.email,
+        # Set initial config
+        response = e2e_client.post(
+            "/api/admin/llm/config",
+            json={
+                "provider": "anthropic",
+                "model": "claude-haiku-4-5-20251001",
+                "api_key": llm_test_anthropic_key,
+                "max_tokens": 1024,
+            },
+            headers=platform_admin.headers,
         )
-        await db_session.commit()
+        assert response.status_code == 200, response.text
 
-        # Update a stable setting while keeping the already-validated model.
-        # The purpose of this test is overwrite semantics, not availability of
-        # a second provider model (which changes independently of Bifrost).
+        # Update with different settings
         response = e2e_client.post(
             "/api/admin/llm/config",
             json={
@@ -181,7 +175,7 @@ class TestLLMConfigurationCRUD:
             },
             headers=platform_admin.headers,
         )
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
 
         # Verify updated values
         response = e2e_client.get(

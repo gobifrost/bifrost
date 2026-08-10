@@ -185,11 +185,7 @@ async def test_role_git_sync_parity(db_session):
     await db_session.commit()
 
     try:
-        expected = {
-            "id": str(role.id),
-            "name": "rt_role_parity",
-            "scopes": [],
-        }
+        expected = {"id": str(role.id), "name": "rt_role_parity"}
         produced = ManifestRole.from_row(role).view(Destination.GIT_SYNC)
         assert_parity(produced, expected, label="role git_sync")
     finally:
@@ -1326,7 +1322,6 @@ async def test_agent_git_sync_parity(db_session):
         name="rt_agent_golden",
         description="parity test agent",
         system_prompt="You are a helpful assistant.",
-        bundle_path="agents/rt-agent",
         channels=["chat"],
         knowledge_sources=["kb1"],
         system_tools=["execute_workflow"],
@@ -1458,7 +1453,6 @@ async def test_agent_install_parity(db_session):
         name="rt_agent_install_golden",
         description="install parity agent",
         system_prompt="Install test system prompt.",
-        bundle_path="agents/rt-agent-install",
         channels=["chat", "email"],
         knowledge_sources=[],
         system_tools=["execute_workflow"],

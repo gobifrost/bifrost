@@ -1,10 +1,15 @@
 """E2E coverage for public form publication approval and lifecycle."""
 
+import uuid
+from uuid import UUID
+
 import altcha
 import pytest
 
 from src.core.security import decode_token
-from tests.e2e.conftest import write_and_register
+from src.services.solutions.deploy import solution_entity_id
+from tests.e2e.conftest import poll_until, write_and_register
+from tests.e2e.platform.conftest import deploy_solution
 
 
 def _solve_public_captcha(e2e_client, form_id: str, headers: dict[str, str]) -> str:
@@ -205,6 +210,91 @@ async def e2e_public_form_submit(
         assert final_state.json()["status"] == "unpublished"
         assert final_state.json()["iframe_path"] is None
 
+    def test_first_publication_of_solution_managed_form(
+        self, e2e_client, platform_admin
+    ):
+        headers = platform_admin.headers
+        suffix = uuid.uuid4().hex[:8]
+        solution = e2e_client.post(
+            "/api/solutions",
+            headers=headers,
+            json={
+                "slug": f"public-form-{suffix}",
+                "name": f"Public Form {suffix}",
+                "organization_id": None,
+            },
+        )
+        assert solution.status_code in (200, 201), solution.text
+        solution_id = solution.json()["id"]
+
+        workflow_id = uuid.uuid4()
+        form_id = uuid.uuid4()
+        deployed = deploy_solution(
+            e2e_client,
+            solution_id,
+            headers,
+            {
+                "python_files": {
+                    "workflows/public_form.py": (
+                        "from bifrost import workflow\n\n"
+                        "@workflow\n"
+                        "async def public_form(email: str | None = None):\n"
+                        "    return {'received': bool(email)}\n"
+                    )
+                },
+                "workflows": [
+                    {
+                        "id": str(workflow_id),
+                        "name": f"public_form_{suffix}",
+                        "function_name": "public_form",
+                        "path": "workflows/public_form.py",
+                        "type": "workflow",
+                    }
+                ],
+                "forms": [
+                    {
+                        "id": str(form_id),
+                        "name": f"Public Form {suffix}",
+                        "workflow_id": str(workflow_id),
+                        "access_level": "authenticated",
+                        "form_schema": {
+                            "fields": [
+                                {
+                                    "name": "email",
+                                    "label": "Email",
+                                    "type": "email",
+                                    "required": True,
+                                }
+                            ]
+                        },
+                    }
+                ],
+            },
+        )
+        assert deployed.status_code in (200, 201), deployed.text
+
+        managed_form_id = solution_entity_id(UUID(solution_id), form_id)
+        review_response = e2e_client.get(
+            f"/api/forms/{managed_form_id}/publication-review",
+            headers=headers,
+        )
+        assert review_response.status_code == 200, review_response.text
+        review = review_response.json()
+        assert review["blockers"] == []
+
+        published = e2e_client.put(
+            f"/api/forms/{managed_form_id}/publication",
+            headers=headers,
+            json={
+                "reviewed_fingerprint": review["fingerprint"],
+                "allowed_origins": ["https://example.com"],
+            },
+        )
+        assert published.status_code == 200, published.text
+        body = published.json()
+        assert body["status"] == "published"
+        assert body["iframe_path"].endswith(body["public_key"])
+
     def test_public_session_is_exact_form_confirmation_only_and_revocable(
         self, e2e_client, platform_admin, publishable_form
     ):
@@ -234,6 +324,7 @@ async def e2e_public_form_submit(
         assert claims["embed_kind"] == "form"
         assert claims["grant"] == "public"
         assert claims["form_id"] == form_id
+        assert claims["name"] == "Public Form · Public form lifecycle"
         assert claims["capability_fingerprint"] == review["fingerprint"]
         headers = {"Authorization": f"Bearer {token}"}
 
@@ -328,6 +419,33 @@ async def e2e_public_form_submit(
             "status": "accepted",
             "confirmation_markdown": "## All set\n\nWe received it.",
         }
+
+        def find_history_execution():
+            response = e2e_client.get(
+                "/api/executions",
+                params={"workflowId": publishable_form["workflow_id"]},
+                headers=platform_admin.headers,
+            )
+            assert response.status_code == 200, response.text
+            return next(
+                (
+                    execution
+                    for execution in response.json()["executions"]
+                    if execution["form_id"] == form_id
+                ),
+                None,
+            )
+
+        history_execution = poll_until(
+            find_history_execution,
+            max_wait=30.0,
+            interval=0.2,
+        )
+        assert history_execution is not None
+        assert history_execution["executed_by_name"] == (
+            "Public Form · Public form lifecycle"
+        )
+
         duplicate = e2e_client.post(
             f"/api/forms/{form_id}/submissions",
             headers=headers,

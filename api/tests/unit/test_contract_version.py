@@ -189,8 +189,8 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # of ApplicationPublic, and the CLI polls PlatformJobPublic for durable
     # progress/result/error (2026-07-28). CONTRACT_VERSION bumped to 8.
     #
-    # AgentCreate/AgentUpdate gained optional bundle_path (2026-07-27).
-    # ADDITIVE: old CLIs omit it and retain inline-only Agent behavior.
+    # Forms gained optional confirmation_markdown (2026-08-04). ADDITIVE: old
+    # clients omit it and continue receiving the prior default confirmation.
     #
     # RoleCreate/RoleUpdate gained additive scopes fields (2026-07-30).
     # Old CLIs omit them and retain empty-scope custom-role behavior.
@@ -200,7 +200,11 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # CLI/SDK file write and delete requests gained optional guarded-mutation
     # fields (2026-08-08). ADDITIVE: old clients omit them and retain the prior
     # unconditional behavior; new clients can reject stale writes and deletes.
-    "0171b86b2a7fc24a38f0faab1f26a8cb546190eb6640ea3744326e6d30501c35"
+    #
+    # PlatformJobStatus gained `waiting` for durable parent jobs (2026-08-07).
+    # CONTRACT_VERSION bumped to 9 because an older CLI cannot parse the new
+    # enum value while polling PlatformJobPublic.
+    "12c65f3865127c0dbbdbb4237943169bf6a1fb79ad566b68ef1a45a1fbfc1854"
 )
 
 

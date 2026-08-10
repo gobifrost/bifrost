@@ -337,16 +337,6 @@ class FilePolicyService:
         user: Any,
         solution_id: UUID | None = None,
     ) -> bool:
-        from src.services.solutions.access import is_private_solution_owner
-
-        if await is_private_solution_owner(
-            self.db,
-            solution_id=solution_id,
-            actor_user_id=user.user_id,
-            is_external=getattr(user, "is_external", False),
-        ):
-            return True
-
         if not self._principal_matches_org(user, organization_id):
             return False
 

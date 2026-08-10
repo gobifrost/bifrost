@@ -27,10 +27,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import AccessDeniedError
 from src.models import Base, UserRole
-from src.services.solutions.access import (
-    is_private_solution_owner,
-    visible_solution_child_criterion,
-)
 
 ModelT = TypeVar("ModelT", bound=Base)
 
@@ -204,7 +200,7 @@ class OrgScopedRepository(Generic[ModelT]):
             entity = await repo.get(name="my-entity")
         """
         # Build base query with filters
-        query = self._apply_solution_visibility(select(self.model))
+        query = select(self.model)
         for key, value in filters.items():
             column = getattr(self.model, key, None)
             if column is not None:
@@ -348,8 +344,8 @@ class OrgScopedRepository(Generic[ModelT]):
 
     def _apply_cascade_scope(
         self,
-        query: Select[Any],
-    ) -> Select[Any]:
+        query: Select[tuple[ModelT]],
+    ) -> Select[tuple[ModelT]]:
         """
         Apply cascade scoping to a query.
 
@@ -365,7 +361,6 @@ class OrgScopedRepository(Generic[ModelT]):
         ``include_solution_managed``), and the path-ref resolver prefers the
         solution row over a shared _repo/ row.
         """
-        query = self._apply_solution_visibility(query)
         if self.org_id is not None:
             query = query.where(
                 or_(
@@ -376,27 +371,6 @@ class OrgScopedRepository(Generic[ModelT]):
         else:
             query = query.where(_org_is_null(self.model))
         return query
-
-    def _apply_solution_visibility(
-        self,
-        query: Select[Any],
-    ) -> Select[Any]:
-        """Hide children of inaccessible private Solutions in SQL.
-
-        Shared Solution entities retain ordinary org/role behavior. Private
-        children are visible only to the exact non-external owner, including
-        in administrator catalog queries.
-        """
-        if not _model_has_solution_id(self.model):
-            return query
-
-        return query.where(
-            visible_solution_child_criterion(
-                child_solution_id=self.model.solution_id,  # type: ignore[attr-defined]
-                actor_user_id=self.user_id,
-                is_external=self.is_external,
-            )
-        )
 
     def _has_role_table(self) -> bool:
         """Check if this repository has role-based access control configured."""
@@ -420,10 +394,7 @@ class OrgScopedRepository(Generic[ModelT]):
         4. access_level="everyone": any user in scope, including externals.
         5. access_level="role_based": check role membership
         """
-        if await self._is_private_solution_owner(entity):
-            return True
-
-        # Superusers bypass role checks (private parents were already filtered)
+        # Superusers bypass role checks
         if self.is_superuser:
             return True
 
@@ -462,14 +433,6 @@ class OrgScopedRepository(Generic[ModelT]):
 
         # Unknown access level - deny
         return False
-
-    async def _is_private_solution_owner(self, entity: ModelT) -> bool:
-        return await is_private_solution_owner(
-            self.session,
-            solution_id=getattr(entity, "solution_id", None),
-            actor_user_id=self.user_id,
-            is_external=self.is_external,
-        )
 
     def _authenticated_tier_grants(self, entity: ModelT) -> bool:
         """Whether the 'authenticated' access tier grants to this principal.

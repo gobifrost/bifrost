@@ -16,11 +16,3 @@ SYSTEM_USER_EMAIL = "system@internal.gobifrost.com"
 # Created by migration: 20260107_022300_add_provider_org.py
 # All platform admins belong to this org. Cannot be deleted.
 PROVIDER_ORG_ID = UUID("00000000-0000-0000-0000-000000000002")
-
-# Bifrost-managed authorization roles. Authorization uses stable keys and
-# scopes; deterministic UUIDs keep migrations and compatibility backfills
-# idempotent across environments.
-PLATFORM_ADMIN_ROLE_ID = UUID("00000000-0000-0000-0000-000000000003")
-PLATFORM_OPERATOR_ROLE_ID = UUID("00000000-0000-0000-0000-000000000004")
-PLATFORM_ADMIN_ROLE_KEY = "platform_admin"
-PLATFORM_OPERATOR_ROLE_KEY = "platform_operator"
