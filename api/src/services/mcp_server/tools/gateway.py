@@ -42,15 +42,16 @@ async def bifrost_find_agents(
     builder_session_id: str | None = None,
 ) -> ToolResult:
     """Find live Bifrost agents relevant to a task."""
+    params: dict[str, Any] = {"limit": limit}
+    if query is not None:
+        params["query"] = query
+    if builder_session_id is not None:
+        params["builder_session_id"] = builder_session_id
     status_code, data = await call_rest(
         context,
         "GET",
         "/api/mcp/gateway/agents",
-        params={
-            "query": query,
-            "limit": limit,
-            "builder_session_id": builder_session_id,
-        },
+        params=params,
     )
     if status_code != 200 or not isinstance(data, dict):
         return _rest_error("Agent search", status_code, data)
@@ -66,11 +67,16 @@ async def bifrost_get_agent(
     builder_session_id: str | None = None,
 ) -> ToolResult:
     """Get live instructions, Skill metadata, and a compact tool catalog."""
+    params = (
+        {"builder_session_id": builder_session_id}
+        if builder_session_id is not None
+        else None
+    )
     status_code, data = await call_rest(
         context,
         "GET",
         f"/api/mcp/gateway/agents/{agent_id}",
-        params={"builder_session_id": builder_session_id},
+        params=params,
     )
     if status_code != 200 or not isinstance(data, dict):
         return _rest_error("Agent lookup", status_code, data)
@@ -84,11 +90,16 @@ async def bifrost_get_tool_schema(
     builder_session_id: str | None = None,
 ) -> ToolResult:
     """Get the exact live input schema for one tool returned by get-agent."""
+    params = (
+        {"builder_session_id": builder_session_id}
+        if builder_session_id is not None
+        else None
+    )
     status_code, data = await call_rest(
         context,
         "GET",
         f"/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}",
-        params={"builder_session_id": builder_session_id},
+        params=params,
     )
     if status_code != 200 or not isinstance(data, dict):
         return _rest_error("Tool schema lookup", status_code, data)

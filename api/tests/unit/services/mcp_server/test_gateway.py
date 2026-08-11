@@ -16,6 +16,7 @@ from src.services.mcp_server.gateway import (
     ResolvedGatewayTool,
 )
 from src.services.mcp_server.server import MCPContext
+from src.services.mcp_server.tools.gateway import bifrost_find_agents
 
 
 def _context() -> MCPContext:
@@ -82,6 +83,39 @@ def _builder_tool(name: str = "list_files") -> ResolvedGatewayTool:
         source="system",
         source_identity=f"system:{name}",
     )
+
+
+@pytest.mark.asyncio
+async def test_gateway_tool_omits_absent_builder_session_query_parameter():
+    call_rest = AsyncMock(
+        return_value=(
+            200,
+            {
+                "query": None,
+                "agents": [],
+                "count": 0,
+                "total_matches": 0,
+                "has_more": False,
+            },
+        )
+    )
+    with patch(
+        "src.services.mcp_server.tools.gateway.call_rest",
+        call_rest,
+    ):
+        await bifrost_find_agents(_context())
+        await bifrost_find_agents(
+            _context(),
+            query="builder",
+            builder_session_id="session-id",
+        )
+
+    assert call_rest.await_args_list[0].kwargs["params"] == {"limit": 10}
+    assert call_rest.await_args_list[1].kwargs["params"] == {
+        "limit": 10,
+        "query": "builder",
+        "builder_session_id": "session-id",
+    }
 
 
 def test_workflow_reference_is_stable_across_display_name_change():

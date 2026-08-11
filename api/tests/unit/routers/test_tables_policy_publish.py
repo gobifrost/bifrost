@@ -1,9 +1,9 @@
-from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
 from src.core.auth import ExecutionContext
+from src.core.principal import UserPrincipal
 from src.models.contracts.policies import TablePolicies
 from src.models.contracts.tables import TableUpdate
 from src.models.orm.tables import Table
@@ -36,13 +36,14 @@ async def test_policy_update_commits_before_notifying_subscribers(
 
     monkeypatch.setattr(db_session, "commit", tracked_commit)
     monkeypatch.setattr(tables, "publish_policy_changed", tracked_publish)
-    monkeypatch.setattr(
-        tables,
-        "assert_entity_id_not_solution_managed",
-        AsyncMock(),
-    )
 
-    ctx = ExecutionContext(user=None, org_id=None, db=db_session)  # type: ignore[arg-type]
+    user = UserPrincipal(
+        user_id=uuid4(),
+        email="admin@example.com",
+        organization_id=None,
+        is_superuser=True,
+    )
+    ctx = ExecutionContext(user=user, org_id=None, db=db_session)
     await tables.update_table(
         table.id,
         TableUpdate(policies=TablePolicies(policies=[])),

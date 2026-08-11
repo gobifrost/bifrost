@@ -2,7 +2,8 @@
 
 **Compared source:** `1696d8693632c21c34be9469e0cbdf5502d0fee9`
 
-**Compared target:** working tree of `codex/code-builder-recovery-20260807`
+**Compared target:** post-`d277f0368` working tree of
+`codex/code-builder-recovery-20260807`, including the final preservation fixes
 
 **Updated:** 2026-08-10
 
@@ -17,6 +18,8 @@ authorization, manifest, scheduler, application-runtime, or Solution deploy
 integration reliably.
 
 Result: **76 backup paths = 35 exact + 31 evolved + 10 intentionally omitted.**
+The comparison was rerun after integrating current `origin/main`; the result
+remained 35/31/10.
 
 ## Intentionally omitted paths
 
@@ -148,10 +151,11 @@ through these later migrations:
 - `20260810_builder_releases.py`
 - `20260810_builder_global_workspace.py`
 
-## Closure condition
+## Closure
 
-This inventory is complete only when the final branch has been reconciled with
-current `origin/main`, the comparison is rerun with the same 35/31/10 paths or
-an explained successor count, the complete Builder/shared scheduler matrix is
-green, and the final handoff reports the known aggregate-quota, Cloudflare
-billing, favorites/comments/presence, and simultaneous-edit limitations.
+This inventory is closed. The branch is reconciled with current `origin/main`,
+the final comparison confirms 35 exact, 31 evolved, and 10 intentionally
+omitted paths, and the complete scoped Builder/shared-scheduler matrix is
+green. The final handoff must continue to report the known aggregate-quota,
+Cloudflare billing, favorites/comments/presence, and simultaneous-edit
+limitations.

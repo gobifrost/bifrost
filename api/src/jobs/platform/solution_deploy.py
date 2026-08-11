@@ -32,16 +32,25 @@ async def run_solution_deploy(
 
     await context.report("Loading staged Solution input", percent=2)
     await execute_deploy_job(payload.deploy_job_id, context.lease_token)
+    failure: PlatformJobFailure | None = None
+    result: dict[str, Any] = {}
     async with get_db_context() as db:
         projection = await db.get(SolutionDeployJob, payload.deploy_job_id)
         if projection is None:
             raise PlatformJobFailure("deploy_job_missing", "Deploy job is missing.")
         if projection.status != "succeeded":
-            raise PlatformJobFailure(
+            failure = PlatformJobFailure(
                 "solution_deploy_failed",
                 projection.error or "Solution deploy failed.",
             )
-        result = projection.result or {}
+        else:
+            result = projection.result or {}
+    # execute_deploy_job may have detached and removed a failed repo install.
+    # Leave the database context normally before projecting that failure onto
+    # the PlatformJob so its cleanup transaction can never be rolled back by
+    # this adapter's exception path.
+    if failure is not None:
+        raise failure
     await context.report("Solution deploy complete", percent=100)
     await context.log(
         "info",

@@ -15,6 +15,11 @@ and canonical PlatformJob system. It is a release candidate on an isolated
 integration branch, not a merged or public feature. The original `code-builder`
 branch remains untouched and is backed up remotely.
 
+Current `origin/main` at `0a78b311f0fc5f6bfcc7f85fc4e785945f26eee2`
+was deliberately integrated in merge commit `d277f0368`. Corrected shared
+scheduler, Solution deploy, table-policy publication, diagnostics, and
+debug/test behavior remain canonical.
+
 The current design removes the first implementation's dedicated coordinator,
 permanent runner, public app-host port, alternate origin, and DNS requirement.
 The existing scheduler coordinates durable work; Cloudflare starts a sandbox
@@ -22,8 +27,9 @@ container only while a job runs; the existing API mounts the narrow generated
 app runtime internally. A hoster can enable Builder without adding a Bifrost
 container or exposing another port.
 
-Final current-main reconciliation, complete matrix execution, exact backup
-inventory, and explicit merge approval are still required.
+Current-main reconciliation, the complete scoped matrix, and the exact backup
+inventory are closed. Customer acceptance and explicit push/merge approval are
+still required.
 
 ## User experience now implemented
 
@@ -241,18 +247,26 @@ deployment.
 - True simultaneous source co-editing is not supported.
 - The local runner is an explicit hoster responsibility and is not an automatic
   outage fallback for Cloudflare.
-- Final testing, current-main merge reconciliation, backup inventory closure,
-  and explicit approval remain release blockers.
+- Customer acceptance and explicit push/merge approval remain release
+  blockers.
 
 ## Verification state
 
-Green checkpoints on the integration branch currently include API Pyright and
-Ruff, Global Workspace validate/apply/rollback E2E, separate-release promotion
-E2E, focused Builder/component suites, and five Builder administrator
-Playwright scenarios across desktop/mobile.
+Final post-integration evidence on the isolated branch includes:
 
-The final evidence set must still be rerun after the deliberate current-main
-merge: complete Builder/shared-scheduler backend matrix, runner Python and
-JavaScript suites, generated contracts, client Vitest and Playwright,
-deployment rendering, adversarial delivery QA, and the exact behavior/file
-inventory against `1696d8693`.
+- API Pyright and Ruff; generated OpenAPI/Skill truth and contract tripwires;
+- 423 focused Builder/shared-scheduler backend unit tests and 126 live E2E
+  tests, plus the 14-test form-embed conflict-preservation check;
+- 41 Python runner tests, two OpenCode JavaScript tests, and one Cloudflare
+  runtime-helper test;
+- 178 focused client tests across 22 files, TypeScript, lint with one unchanged
+  React Hook Form compiler warning, and five no-retry Playwright passes with
+  desktop/mobile screenshots inspected;
+- production, development, and test/sandbox Compose rendering plus Kubernetes
+  rendering with no permanent Builder container; and
+- an exact post-integration inventory of 76 backup paths: 35 exact, 31
+  deliberately evolved, and 10 intentionally omitted with replacements.
+
+The repository-wide backend, Vitest, and Playwright suites were not rerun; the
+bounded Builder and affected shared-scheduler surfaces were selected under the
+repository's scoped-verification policy.

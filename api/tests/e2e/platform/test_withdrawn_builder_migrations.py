@@ -54,7 +54,7 @@ async def test_fresh_database_installs_reinstated_builder_schema(
     revision = (
         await db_session.execute(text("SELECT version_num FROM alembic_version"))
     ).scalar_one()
-    assert revision == "20260807_builder_collaboration"
+    assert revision == "20260810_builder_global"
 
     builder_tables = (
         await db_session.execute(

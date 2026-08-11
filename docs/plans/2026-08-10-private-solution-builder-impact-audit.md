@@ -9,8 +9,9 @@
 
 The audit found one multi-tenant release blocker and six P2 product/test gaps.
 All seven are now remediated in the recovery working tree and have focused
-automated evidence. The remaining release gates are current-main integration,
-the final exact backup inventory, and the complete post-integration matrix.
+automated evidence. Current-main integration, the final exact backup inventory,
+and the complete post-integration matrix are now closed. Customer acceptance
+and explicit push/merge approval remain.
 
 | Rank | Finding | Disposition |
 | --- | --- | --- |
@@ -199,11 +200,11 @@ the existing usage report.
 6. Classified and resolved the event-delivery harness signal.
 7. Proved the real build plane through durable Local-provider provisioning,
    authenticated dispatch, compilation, callbacks, artifact staging, and live
-   deployment. Final post-`origin/main` verification remains.
+   deployment, then completed the post-`origin/main` verification matrix and
+   exact backup inventory.
 
 ## Release gate
 
-Do not publish or merge the reconstructed Builder into `main` until the P1 and
-P2 repair sequence is complete, the backup inventory is rerun against the final
-integration commit, and the required verification matrix is green. Customer
-acceptance remains outstanding.
+The P1/P2 repair sequence, final backup inventory, and required scoped
+verification matrix are complete. Do not publish or merge the reconstructed
+Builder into `main` until customer acceptance and explicit approval.

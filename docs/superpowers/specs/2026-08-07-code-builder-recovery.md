@@ -4,6 +4,10 @@
 
 **Corrected-main starting point:** `ae0833d402bfccb5b4d634c9ed6f711db705fbb2`
 
+**Current main integrated:** `0a78b311f0fc5f6bfcc7f85fc4e785945f26eee2`
+
+**Integration merge:** `d277f0368`
+
 **Builder source of truth:** `1696d8693632c21c34be9469e0cbdf5502d0fee9`
 
 **Remote immutable backup:** `backup/code-builder-1696d8693-20260807`
@@ -114,27 +118,37 @@ well as file-by-file.
 | 5 | Collaboration, RBAC, My work/All customer work, support filters | complete; favorites/comments/presence deferred |
 | 6 | Admin readiness, AI metering, hard turn limits, provider health | complete for turn-level controls; aggregate quotas and Cloudflare billing deferred |
 | 7 | Restored Builder UI, Global Workspace, live responsive UX review | complete |
-| 8 | Final inventory, current-main reconciliation, complete verification, approval handoff | in progress |
+| 8 | Final inventory, current-main reconciliation, complete verification, approval handoff | complete; awaiting customer acceptance and explicit push/merge approval |
 
-## Required final verification
+## Final verification completed
 
-Before push or merge approval:
+The pre-push recovery gate is closed:
 
-- reconcile current `origin/main` deliberately, keeping corrected shared
-  scheduler/debug behavior and regenerating contracts as necessary;
-- account for every file/behavior difference against `1696d8693`;
-- run API Pyright and Ruff;
-- run Builder, PlatformJob, scheduler diagnostics, migration, Solution deploy,
-  and table-policy regression matrices;
-- run runner Python and OpenCode/Cloudflare JavaScript suites;
-- run focused and broad client Vitest plus Builder Playwright at desktop/mobile;
-- render supported Compose/Kubernetes configuration where applicable;
-- run adversarial delivery QA and report any known limitation;
-- do not push or merge until this ledger is closed and approval is explicit.
+- current `origin/main` was integrated deliberately while retaining corrected
+  shared scheduler, Solution deploy, table-policy, diagnostics, and debug/test
+  behavior;
+- all 76 Builder-named backup paths are accounted for as 35 exact, 31 evolved,
+  and 10 intentionally omitted with replacements;
+- API Pyright and Ruff passed;
+- 423 focused backend unit tests and 126 live E2E tests passed across Builder,
+  PlatformJob, scheduler diagnostics, migrations, Solution deploy, MCP, CLI,
+  RBAC/scopes, table-policy, and runtime boundaries;
+- the canonical runner passed 41 Python tests, two OpenCode JavaScript tests,
+  and one Cloudflare runtime-helper test;
+- the client passed 178 focused tests across 22 files, TypeScript, lint with one
+  unchanged React Hook Form compiler warning, and five no-retry Playwright
+  passes with desktop/mobile screenshots inspected;
+- generated OpenAPI/Skill truth and contract tripwires passed; and
+- production, development, and test/sandbox Compose plus Kubernetes rendered
+  successfully with no permanent Builder container.
+
+The repository-wide backend, Vitest, and Playwright suites were not rerun; the
+bounded affected surfaces above follow the repository's scoped-verification
+policy. Push and merge still require explicit approval.
 
 ## Evidence recorded on this branch
 
-Current green checkpoints before the final `main` reconciliation include:
+Final evidence after current-`main` reconciliation includes:
 
 - API quality: Pyright `0 errors`; Ruff passed;
 - focused Global Workspace unit/E2E path, including validation, apply, and
@@ -142,7 +156,7 @@ Current green checkpoints before the final `main` reconciliation include:
 - separate-release promotion E2E;
 - focused Builder frontend suite, including turn restoration, progress,
   cancellation, and percentage-based hard-limit meters;
-- Builder administrator Playwright: five desktop/mobile scenarios passed,
+- Builder administrator Playwright: five no-retry desktop/mobile passes,
   including setup guidance, private creation, Global Workspace, and responsive
   workbench panes;
 - canonical runner Python suite: 41 tests passed;
@@ -150,7 +164,14 @@ Current green checkpoints before the final `main` reconciliation include:
   dispatch, fixed-toolchain compilation, callback artifacts, and live deploy
   passed end to end. The Local runner service used by this test is an opt-in
   test profile only; production Compose and Kubernetes gain no permanent
-  Builder container.
+  Builder container;
+- complete focused backend unit matrix: 423 passed;
+- complete live Builder/shared-scheduler E2E matrix: 126 passed, with the
+  14-test form-embed preservation check also green after conflict resolution;
+- focused client matrix: 178 passed across 22 files;
+- OpenCode JavaScript: two passed; Cloudflare runtime helper: one passed;
+- exact backup inventory: 35 exact, 31 evolved, 10 intentionally omitted; and
+- supported Compose and Kubernetes configuration rendered successfully.
 
-These checkpoints are not the final release claim. The complete post-merge
-matrix and exact inventory remain the active Wave 8 gate.
+Automated recovery verification is complete. Customer acceptance and explicit
+push/merge approval remain outstanding.
