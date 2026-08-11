@@ -198,3 +198,166 @@ class TestBeforeFlushBackstop:
         await db.flush()  # must not raise
         row = await db.get(Workflow, solution_entity_id(sol.id, uuid.UUID(wf_id)))
         assert row is not None and row.solution_id == sol.id
+
+
+class TestBuilderStateIsWritable:
+    """Builder bookkeeping rows carry solution_id but are NOT deploy-owned.
+
+    Revision lineage, chat sessions, turn status, and build results are written
+    by the builder as the user works. If the backstop treated them as portable
+    entity content, every builder mutation would 500 (this is exactly how the
+    promotion-request endpoint first failed). Portable content the builder
+    produces still reaches the DB only through deploy, which stays guarded.
+    """
+
+    async def _private_solution(self, db):
+        from src.models.orm.solutions import Solution
+
+        sol = Solution(
+            id=uuid.uuid4(),
+            slug=f"bld-{uuid.uuid4().hex[:8]}",
+            name="Builder",
+            organization_id=None,
+            visibility="private",
+        )
+        db.add(sol)
+        await db.flush()
+        return sol
+
+    async def test_project_promotion_status_is_writable(self, db_session) -> None:
+        from src.models.orm.solution_builder import SolutionBuilderProject
+
+        db = db_session
+        sol = await self._private_solution(db)
+        project = SolutionBuilderProject(solution_id=sol.id)
+        db.add(project)
+        await db.flush()
+
+        project.promotion_status = "requested"
+        await db.flush()  # must not raise
+        assert project.promotion_status == "requested"
+
+    async def test_revision_rows_are_writable_and_deletable(self, db_session) -> None:
+        from src.models.orm.solution_builder import SolutionSourceRevision
+
+        db = db_session
+        sol = await self._private_solution(db)
+        rev = SolutionSourceRevision(
+            id=uuid.uuid4(),
+            solution_id=sol.id,
+            source_sha256="0" * 64,
+            size_bytes=1,
+            summary="initial",
+        )
+        db.add(rev)
+        await db.flush()
+
+        rev.summary = "edited"
+        await db.flush()  # must not raise
+
+        await db.delete(rev)
+        await db.flush()  # must not raise
+
+    async def test_global_workspace_apply_history_is_writable(
+        self, db_session
+    ) -> None:
+        from src.models.orm.solution_builder import (
+            SolutionGlobalWorkspaceApply,
+            SolutionSourceRevision,
+        )
+
+        db = db_session
+        sol = await self._private_solution(db)
+        from_revision = SolutionSourceRevision(
+            id=uuid.uuid4(),
+            solution_id=sol.id,
+            source_sha256="0" * 64,
+            size_bytes=1,
+            summary="before",
+        )
+        to_revision = SolutionSourceRevision(
+            id=uuid.uuid4(),
+            solution_id=sol.id,
+            source_sha256="1" * 64,
+            size_bytes=1,
+            summary="after",
+        )
+        db.add_all([from_revision, to_revision])
+        await db.flush()
+        apply = SolutionGlobalWorkspaceApply(
+            solution_id=sol.id,
+            from_revision_id=from_revision.id,
+            to_revision_id=to_revision.id,
+        )
+        db.add(apply)
+        await db.flush()
+
+        apply.state = "rolled_back"
+        apply.rolled_back_at = datetime.now(timezone.utc)
+        await db.flush()  # must not raise
+
+    async def test_collaborator_grants_are_writable_and_deletable(
+        self, db_session
+    ) -> None:
+        from src.models.orm.solution_builder import SolutionBuilderCollaborator
+        from src.models.orm.users import User
+
+        db = db_session
+        sol = await self._private_solution(db)
+        user = User(
+            email=f"collaborator-{uuid.uuid4()}@example.com",
+            is_superuser=True,
+        )
+        db.add(user)
+        await db.flush()
+        grant = SolutionBuilderCollaborator(
+            solution_id=sol.id,
+            user_id=user.id,
+            access="view",
+        )
+        db.add(grant)
+        await db.flush()
+
+        grant.access = "edit"
+        await db.flush()  # must not raise
+
+        await db.delete(grant)
+        await db.flush()  # must not raise
+
+    async def test_every_builder_model_is_exempt(self) -> None:
+        """The carve-out must name every builder table.
+
+        A model added later that carries solution_id but is missing here fails
+        only at runtime, as a 500 on whichever endpoint touches it first.
+        """
+        from src.services.solutions.guard import _OPERATIONAL_SOLUTION_ROW_NAMES
+
+        for name in (
+            "SolutionBuilderCollaborator",
+            "SolutionBuilderProject",
+            "SolutionGlobalWorkspaceApply",
+            "SolutionSourceRevision",
+            "SolutionBuilderSession",
+            "SolutionBuilderTurn",
+            "SolutionBuildJob",
+        ):
+            assert name in _OPERATIONAL_SOLUTION_ROW_NAMES
+
+    async def test_portable_entities_are_still_guarded(self, db_session) -> None:
+        """The carve-out must not have widened into real entity content."""
+        from src.models.orm.workflows import Workflow
+        from src.services.solutions.guard import SolutionManagedWriteError
+
+        db = db_session
+        sol = await self._private_solution(db)
+        wf = Workflow(
+            id=uuid.uuid4(), name="pw", function_name="run", path="workflows/pw.py",
+            type="workflow", organization_id=None, solution_id=sol.id,
+        )
+        db.add(wf)
+        await db.flush()
+
+        wf.display_name = "hijack"
+        with pytest.raises(SolutionManagedWriteError):
+            await db.flush()
+        await db.rollback()

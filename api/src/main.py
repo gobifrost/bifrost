@@ -11,7 +11,7 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.exc import IntegrityError, NoResultFound, OperationalError
 
@@ -47,6 +47,8 @@ from src.routers import (
     jobs_router,
     platform_jobs_router,
     scheduler_diagnostics_router,
+    sandbox_jobs_router,
+    sandbox_runner_admin_router,
     oauth_connections_router,
     endpoints_router,
     cli_router,
@@ -73,6 +75,9 @@ from src.routers import (
     tables_router,
     claims_router,
     solutions_router,
+    solution_builder_router,
+    solution_promotions_router,
+    solution_app_launch_router,
     knowledge_sources_router,
     app_embed_secrets_router,
     applications_router,
@@ -97,8 +102,7 @@ from src.routers import (
 
 # Configure logging
 logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 )
 
 # Suppress noisy third-party loggers
@@ -134,6 +138,7 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Register entity change hooks for real-time manifest sync
     from src.core.entity_change_hook import register_entity_change_hooks
+
     register_entity_change_hooks()
 
     # Register dynamic workflow endpoints for OpenAPI documentation
@@ -180,6 +185,7 @@ def _get_mcp_asgi_app():
     if _mcp_asgi_app is None:
         try:
             from src.routers.mcp import get_mcp_asgi_app
+
             _mcp_asgi_app = get_mcp_asgi_app()
         except Exception as e:
             logger.warning(f"Could not create MCP ASGI app: {e}")
@@ -197,7 +203,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Combine both lifespans - app first, then MCP
     async with app_lifespan(app):
-        if mcp_app and hasattr(mcp_app, 'lifespan'):
+        if mcp_app and hasattr(mcp_app, "lifespan"):
             async with mcp_app.lifespan(app):
                 yield
         else:
@@ -261,7 +267,6 @@ async def create_default_user() -> None:
         user.mfa_enabled = False
         await db.commit()
         logger.info(f"Created default admin user: {user.email} (id: {user.id})")
-
 
 
 def create_app() -> FastAPI:
@@ -352,9 +357,7 @@ def create_app() -> FastAPI:
         )
 
     @app.exception_handler(NoResultFound)
-    async def no_result_handler(
-        request: Request, exc: NoResultFound
-    ) -> JSONResponse:
+    async def no_result_handler(request: Request, exc: NoResultFound) -> JSONResponse:
         """Query returned no results → 404."""
         return JSONResponse(
             status_code=404,
@@ -365,9 +368,7 @@ def create_app() -> FastAPI:
         )
 
     @app.exception_handler(ValueError)
-    async def value_error_handler(
-        request: Request, exc: ValueError
-    ) -> JSONResponse:
+    async def value_error_handler(request: Request, exc: ValueError) -> JSONResponse:
         """ValueError from validation → 422."""
         return JSONResponse(
             status_code=422,
@@ -430,6 +431,7 @@ def create_app() -> FastAPI:
     # These routes are on FastAPI directly, not the MCP ASGI app which has its own CORS.
     # Without this, browser-based MCP clients (e.g. MCP Inspector) can't read discovery responses.
     from starlette.middleware.cors import CORSMiddleware
+
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -447,7 +449,11 @@ def create_app() -> FastAPI:
     app.add_middleware(EmbedScopeMiddleware)
 
     # Set request-scoped ContextVars for user attribution and session tracking
-    from src.core.request_context import RequestUser, set_request_user, set_request_session_id
+    from src.core.request_context import (
+        RequestUser,
+        set_request_user,
+        set_request_session_id,
+    )
     from src.core.rate_limit import get_client_ip
     from src.services.audit_context import ActorContext, set_actor, clear_actor
 
@@ -465,6 +471,7 @@ def create_app() -> FastAPI:
         try:
             from uuid import UUID as _UUID
             from src.core.security import decode_token
+
             token = None
             auth_header = request.headers.get("authorization", "")
             if auth_header.startswith("Bearer "):
@@ -519,6 +526,42 @@ def create_app() -> FastAPI:
             clear_actor(actor_token)
         return response
 
+    @app.middleware("http")
+    async def opaque_runtime_cors(request: Request, call_next):
+        """Complete opaque-runtime CORS before the broad OAuth middleware.
+
+        The parent CORS layer otherwise answers an ``Origin: null`` preflight
+        with ``*``, which credentialed sandbox fetches correctly reject. This
+        outer middleware admits only opaque documents and overwrites the broad
+        header on runtime responses.
+        """
+
+        if not request.url.path.startswith("/api/builder-runtime/"):
+            return await call_next(request)
+        origin = request.headers.get("origin")
+        if request.method == "OPTIONS":
+            if origin != "null":
+                return Response(status_code=403)
+            return Response(
+                status_code=204,
+                headers={
+                    "Access-Control-Allow-Origin": "null",
+                    "Access-Control-Allow-Credentials": "true",
+                    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+                    "Access-Control-Allow-Headers": request.headers.get(
+                        "access-control-request-headers",
+                        "Authorization, Content-Type, X-Bifrost-App",
+                    ),
+                    "Vary": "Origin",
+                },
+            )
+        response = await call_next(request)
+        if origin == "null":
+            response.headers["Access-Control-Allow-Origin"] = "null"
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Vary"] = "Origin"
+        return response
+
     # Register routers
     app.include_router(health_router)
     app.include_router(version_router)
@@ -545,6 +588,8 @@ def create_app() -> FastAPI:
     app.include_router(jobs_router)
     app.include_router(platform_jobs_router)
     app.include_router(scheduler_diagnostics_router)
+    app.include_router(sandbox_jobs_router)
+    app.include_router(sandbox_runner_admin_router)
     app.include_router(oauth_connections_router)
     app.include_router(endpoints_router)
     app.include_router(cli_router)
@@ -571,6 +616,11 @@ def create_app() -> FastAPI:
     app.include_router(tables_router)
     app.include_router(claims_router)
     app.include_router(solutions_router)
+    app.include_router(solution_builder_router)
+    app.include_router(solution_promotions_router)
+    # Control-plane half of the isolated runtime: mints one-time launch URLs
+    # under normal user authorization.
+    app.include_router(solution_app_launch_router)
     app.include_router(knowledge_sources_router)
     app.include_router(app_embed_secrets_router)
     app.include_router(applications_router)
@@ -591,10 +641,21 @@ def create_app() -> FastAPI:
     app.include_router(sdk_modules_router)
     app.include_router(policy_rules_router)
 
+    # Generated code runs inside this narrow sub-application in an opaque CSP
+    # sandbox. It reuses the API process and public Bifrost origin, so hosters
+    # need no extra port, DNS record, reverse-proxy route, or container.
+    from src.app_host import create_app as create_solution_app_runtime
+
+    app.mount(
+        "/api/builder-runtime",
+        create_solution_app_runtime(),
+        name="isolated-app-runtime",
+    )
     # Mount MCP OAuth routes at root level (required by RFC 8414/9728)
     # These must be registered BEFORE the FastMCP ASGI mount
     try:
         from src.services.mcp_server.auth import create_bifrost_auth_provider
+
         auth_provider = create_bifrost_auth_provider()
         for route in auth_provider.get_routes():
             app.add_api_route(

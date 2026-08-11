@@ -194,7 +194,7 @@ def _deploy_install_with_app(e2e_client, headers, marker: str, org_id: str | Non
         e2e_client, headers, slug=slug, global_repo_access=False, org_id=org_id
     )
     app_id = str(uuid.uuid4())
-    # Deploy is ASYNC (BackgroundTasks) — fire-and-forget would race the
+    # Deploy is async (durable worker queue) — fire-and-forget would race the
     # background job, so the immediately-following execute can 404 on a
     # workflow whose row hasn't committed yet (flaky under load). Use the
     # deploy_solution helper that blocks until the deploy job is terminal.

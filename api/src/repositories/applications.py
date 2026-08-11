@@ -90,7 +90,7 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         Returns:
             List of Application ORM objects
         """
-        query = select(self.model)
+        query = self._apply_solution_visibility(select(self.model))
 
         # Apply org filtering based on filter type
         if filter_type == OrgFilterType.ALL:
@@ -129,7 +129,9 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         rows = list(
             (
                 await self.session.execute(
-                    select(self.model).where(self.model.slug == slug)
+                    self._apply_solution_visibility(select(self.model)).where(
+                        self.model.slug == slug
+                    )
                 )
             ).scalars().all()
         )

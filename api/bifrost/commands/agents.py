@@ -9,6 +9,10 @@ parity follow-up:
 * ``bifrost agents update <ref>`` → ``PUT /api/agents/{uuid}``
   (the audit correction — the server exposes PUT, not PATCH, on this route).
 * ``bifrost agents delete <ref>`` → ``DELETE /api/agents/{uuid}``
+* ``bifrost agents get-skill <ref>`` → inspect the portable Skill projection
+* ``bifrost agents upload-skill <ref> <archive>`` → validated bundle upload
+* ``bifrost agents download-skill <ref> <output>`` → portable bundle download
+* ``bifrost agents remove-skill <ref>`` → detach an uploaded bundle
 
 Flags are generated from :class:`AgentCreate` / :class:`AgentUpdate` via
 :func:`build_cli_flags`. Three agent-specific behaviours layer on top of the
@@ -296,6 +300,112 @@ async def delete_agent(
     response = await client.delete(f"/api/agents/{agent_uuid}")
     response.raise_for_status()
     output_result({"deleted": agent_uuid}, ctx=ctx)
+
+
+@agents_group.command("get-skill")
+@click.argument("ref")
+@click.pass_context
+@pass_resolver
+@run_async
+async def get_agent_skill(
+    ctx: click.Context,
+    ref: str,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+) -> None:
+    """Inspect an Agent's canonical SKILL.md projection and file catalog."""
+    agent_uuid = await resolver.resolve("agent", ref)
+    response = await client.get(f"/api/agents/{agent_uuid}/skill")
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
+
+
+@agents_group.command("upload-skill")
+@click.argument("ref")
+@click.argument(
+    "archive",
+    type=click.Path(exists=True, dir_okay=False, readable=True, path_type=Path),
+)
+@click.pass_context
+@pass_resolver
+@run_async
+async def upload_agent_skill(
+    ctx: click.Context,
+    ref: str,
+    archive: Path,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+) -> None:
+    """Validate and attach a .skill or .zip archive to an Agent."""
+    if archive.suffix.lower() not in {".skill", ".zip"}:
+        raise click.BadParameter("archive must end in .skill or .zip", param_hint="archive")
+    agent_uuid = await resolver.resolve("agent", ref)
+    response = await client.put(
+        f"/api/agents/{agent_uuid}/skill/bundle",
+        files={"file": (archive.name, archive.read_bytes(), "application/zip")},
+        timeout=120,
+    )
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
+
+
+@agents_group.command("download-skill")
+@click.argument("ref")
+@click.argument("output", type=click.Path(dir_okay=False, path_type=Path))
+@click.option("--force", is_flag=True, help="Replace OUTPUT if it already exists.")
+@click.pass_context
+@pass_resolver
+@run_async
+async def download_agent_skill(
+    ctx: click.Context,
+    ref: str,
+    output: Path,
+    force: bool,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+) -> None:
+    """Download an Agent as a portable .zip Skill archive."""
+    if output.exists() and not force:
+        raise click.ClickException(
+            f"{output} already exists; pass --force to replace it"
+        )
+    agent_uuid = await resolver.resolve("agent", ref)
+    response = await client.get(f"/api/agents/{agent_uuid}/skill/download")
+    response.raise_for_status()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_bytes(response.content)
+    output_result(
+        {"agent_id": agent_uuid, "output": str(output), "bytes": len(response.content)},
+        ctx=ctx,
+    )
+
+
+@agents_group.command("remove-skill")
+@click.argument("ref")
+@click.option("--yes", is_flag=True, help="Detach without an interactive confirmation.")
+@click.pass_context
+@pass_resolver
+@run_async
+async def remove_agent_skill(
+    ctx: click.Context,
+    ref: str,
+    yes: bool,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+) -> None:
+    """Detach a bundle while preserving its instruction body inline."""
+    agent_uuid = await resolver.resolve("agent", ref)
+    if not yes and not click.confirm(
+        "Remove companion files and preserve SKILL.md instructions inline?"
+    ):
+        raise click.Abort()
+    response = await client.delete(f"/api/agents/{agent_uuid}/skill/bundle")
+    response.raise_for_status()
+    output_result({"agent_id": agent_uuid, "bundle_removed": True}, ctx=ctx)
 
 
 __all__ = ["agents_group"]

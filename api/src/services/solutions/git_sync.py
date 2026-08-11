@@ -114,6 +114,7 @@ def read_workspace_bundle(solution: Solution, workspace: Path) -> SolutionBundle
     # (apps: criteria 12/13; config schemas were wiped on every sync until
     # this collected them).
     from bifrost.commands.solution import (
+        _collect_agent_bundle_files,
         _collect_apps,
         _collect_claims,
         _collect_config_schemas,
@@ -132,6 +133,7 @@ def read_workspace_bundle(solution: Solution, workspace: Path) -> SolutionBundle
     return SolutionBundle(
         solution=solution,
         python_files=_collect_python_files(workspace),
+        bundle_files=_collect_agent_bundle_files(workspace, agents),
         workflows=workflows,
         tables=tables,
         apps=apps,

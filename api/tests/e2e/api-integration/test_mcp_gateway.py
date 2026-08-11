@@ -63,7 +63,9 @@ def _call_gateway(token: str, name: str, arguments: dict) -> dict:
         "tools/call",
         {"name": name, "arguments": arguments},
     )
-    return payload["result"]["structuredContent"]
+    result = payload["result"]
+    assert "structuredContent" in result, payload
+    return result["structuredContent"]
 
 
 @pytest.mark.e2e
@@ -184,7 +186,10 @@ class TestMCPAgentGateway:
             "bifrost_get_agent",
             {"agent_id": self.agent_id},
         )
-        assert loaded["agent"]["instructions"] == self.prompt
+        assert loaded["agent"]["instruction_source"] == "inline"
+        assert loaded["agent"]["skill"] is None
+        assert loaded["agent"]["instructions"].startswith("---\n")
+        assert loaded["agent"]["instructions"].endswith(f"{self.prompt}\n")
         workflow_tool = next(
             tool for tool in loaded["tools"] if tool["source"] == "workflow"
         )
@@ -242,7 +247,9 @@ class TestMCPAgentGateway:
             "bifrost_get_agent",
             {"agent_id": self.agent_id},
         )
-        assert refreshed["agent"]["instructions"] == updated_prompt
+        assert refreshed["agent"]["instructions"].endswith(
+            f"{updated_prompt}\n"
+        )
 
         revoke_response = requests.put(
             f"{TEST_API_URL}/api/agents/{self.agent_id}",

@@ -72,6 +72,12 @@ EXECUTION MODE: You are running autonomously — there is no human in this conve
 - If you lack information, state what you could not determine and why, then provide the best result possible with available data.
 - If a tool call fails, attempt reasonable alternatives before reporting failure."""
 
+BUNDLE_PROMPT_CONTRACT = """
+
+---
+You are backed by a skill bundle. Follow SKILL.md naturally.
+When it references a relative file, use read_skill_asset."""
+
 
 def agent_delegation_slug(name: str) -> str:
     """Generate the tool name slug for a delegated agent."""
@@ -86,6 +92,23 @@ def find_delegated_agent(agent: Agent, tool_name: str) -> Agent | None:
     return None
 
 
+def _bundle_path(agent: Agent) -> str | None:
+    """Return a real configured bundle path (MagicMock-safe for unit callers)."""
+    value = getattr(agent, "bundle_path", None)
+    return value if isinstance(value, str) and value else None
+
+
+def is_agent_system_tool(agent: Agent, tool_name: str) -> bool:
+    """Whether ``tool_name`` may dispatch through the system-tool executor."""
+    from src.services.mcp_server.tools.skill_assets import READ_SKILL_ASSET_TOOL_ID
+
+    if tool_name == READ_SKILL_ASSET_TOOL_ID:
+        return bool(_bundle_path(agent))
+    if tool_name in (agent.system_tools or []):
+        return True
+    return False
+
+
 def build_agent_system_prompt(
     agent: Agent,
     *,
@@ -97,6 +120,8 @@ def build_agent_system_prompt(
     telling the LLM to produce conclusive output (no follow-up questions).
     """
     prompt = agent.system_prompt
+    if _bundle_path(agent):
+        prompt += BUNDLE_PROMPT_CONTRACT
 
     if execution_context and execution_context.get("mode") == "autonomous":
         prompt += AUTONOMOUS_MODE_SUFFIX
@@ -134,7 +159,20 @@ async def resolve_agent_tools(
     seen_names: dict[str, str] = {}
 
     # 1. System tools first (they always win conflicts)
-    system_tool_ids = list(agent.system_tools or [])
+    from src.services.mcp_server.tools.skill_assets import READ_SKILL_ASSET_TOOL_ID
+
+    # read_skill_asset is bundle-derived, never author-selected. Filter a stale
+    # or manually-written system_tools entry before applying the implicit gate.
+    system_tool_ids = [
+        tool_id
+        for tool_id in (agent.system_tools or [])
+        if tool_id != READ_SKILL_ASSET_TOOL_ID
+    ]
+
+    # Bundle access is an execution-scoped invisible capability, not an
+    # author-selected system tool. It is injected exactly when a bundle exists.
+    if _bundle_path(agent):
+        system_tool_ids.append(READ_SKILL_ASSET_TOOL_ID)
 
     # Auto-add search_knowledge when agent has knowledge sources
     if agent.knowledge_sources and "search_knowledge" not in system_tool_ids:

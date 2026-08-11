@@ -43,7 +43,10 @@ describe("TiptapEditor", () => {
 			<TiptapEditor
 				content="# Hello"
 				readOnly
-				ariaLabel="Confirmation Message editor"
+				id="instructions"
+				ariaLabel="Agent instructions"
+				ariaDescribedBy="instructions-help"
+				ariaInvalid
 			/>,
 		);
 
@@ -52,7 +55,10 @@ describe("TiptapEditor", () => {
 				editorProps: expect.objectContaining({
 					attributes: expect.objectContaining({
 						class: expect.stringContaining("tiptap-editor"),
-						"aria-label": "Confirmation Message editor",
+						id: "instructions",
+						"aria-label": "Agent instructions",
+						"aria-describedby": "instructions-help",
+						"aria-invalid": "true",
 					}),
 				}),
 			}),

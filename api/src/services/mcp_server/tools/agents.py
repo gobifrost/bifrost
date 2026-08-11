@@ -191,6 +191,7 @@ async def get_agent(
                 "name": agent.name,
                 "description": agent.description,
                 "system_prompt": agent.system_prompt,
+                "bundle_path": agent.bundle_path,
                 "channels": agent.channels,
                 "access_level": agent.access_level.value if agent.access_level else "role_based",
                 "organization_id": str(agent.organization_id) if agent.organization_id else None,
@@ -265,7 +266,6 @@ async def create_agent(
         return error_result("name must be 255 characters or less")
     if len(system_prompt) > 50000:
         return error_result("system_prompt must be 50000 characters or less")
-
     # Validate scope parameter
     if scope not in ("global", "organization"):
         return error_result("scope must be 'global' or 'organization'")
@@ -307,6 +307,7 @@ async def create_agent(
                 name=name,
                 description=description,
                 system_prompt=system_prompt,
+                bundle_path=None,
                 channels=channels,
                 access_level=AgentAccessLevel.ROLE_BASED,
                 organization_id=effective_org_id,
@@ -448,7 +449,6 @@ async def update_agent(
         uuid_id = UUID(agent_id)
     except ValueError:
         return error_result(f"'{agent_id}' is not a valid UUID")
-
     # Validate channels if provided
     valid_channels = {"chat", "voice", "teams", "slack"}
     if channels:
@@ -485,6 +485,12 @@ async def update_agent(
 
             if is_solution_managed(agent):
                 return error_result(SOLUTION_MANAGED_MESSAGE)
+
+            if agent.bundle_path and system_prompt is not None:
+                return error_result(
+                    "Bundled Agent instructions come from SKILL.md; replace or "
+                    "remove the bundle through the Agent Skill API"
+                )
 
             # Check access for non-admins
             if not context.is_platform_admin:

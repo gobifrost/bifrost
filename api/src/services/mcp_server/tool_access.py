@@ -18,6 +18,7 @@ from src.models.enums import AgentAccessLevel
 from src.models.orm.agents import Agent
 from src.routers.tools import get_system_tools
 from src.services.mcp_server.config_service import MCPConfig, MCPConfigService
+from src.services.solutions.access import visible_solution_child_criterion
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,9 @@ class AgentScopedToolResult:
 
     tools: list[ToolInfo]
     accessible_namespaces: list[str]
+    bundle_path: str | None = None
+    bundle_in_repo: bool = False
+    solution_id: UUID | None = None
 
 
 class MCPToolAccessService:
@@ -53,7 +57,9 @@ class MCPToolAccessService:
     """
 
     # Map system tool IDs to their metadata from get_system_tools()
-    _SYSTEM_TOOL_MAP: dict[str, ToolInfo] = {tool.id: tool for tool in get_system_tools()}
+    _SYSTEM_TOOL_MAP: dict[str, ToolInfo] = {
+        tool.id: tool for tool in get_system_tools(include_hidden=True)
+    }
 
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -94,6 +100,7 @@ class MCPToolAccessService:
             is_superuser=is_superuser,
             is_external=is_external,
             org_id=org_id,
+            user_id=user_id,
         )
 
         # Step 2: Collect tools from accessible agents, enforcing per-workflow
@@ -109,7 +116,11 @@ class MCPToolAccessService:
             # Add system tools from agent.system_tools, plus search_knowledge
             # auto-injected when the agent has knowledge_sources. Mirrors the
             # native chat path in agent_helpers.py so MCP listing matches.
-            for system_tool_id in self._effective_system_tool_ids(agent):
+            # Unscoped MCP is a union across agents and therefore has no single
+            # safe bundle root. Bundle reads are available only on /mcp/{agent}.
+            for system_tool_id in self._effective_system_tool_ids(
+                agent, include_bundle=False
+            ):
                 if system_tool_id in seen_tool_ids:
                     continue
                 seen_tool_ids.add(system_tool_id)
@@ -181,6 +192,13 @@ class MCPToolAccessService:
             )
             .where(Agent.id == str(agent_id))
             .where(Agent.is_active.is_(True))
+            .where(
+                visible_solution_child_criterion(
+                    child_solution_id=Agent.solution_id,
+                    actor_user_id=self._as_uuid(user_id),
+                    is_external=is_external,
+                )
+            )
         )
 
         if not is_superuser:
@@ -210,7 +228,9 @@ class MCPToolAccessService:
         # Collect tools from this agent
         tools: list[ToolInfo] = []
 
-        for system_tool_id in self._effective_system_tool_ids(agent):
+        for system_tool_id in self._effective_system_tool_ids(
+            agent, include_bundle=True
+        ):
             if system_tool_id in self._SYSTEM_TOOL_MAP:
                 tools.append(self._SYSTEM_TOOL_MAP[system_tool_id])
             else:
@@ -247,6 +267,11 @@ class MCPToolAccessService:
         return AgentScopedToolResult(
             tools=tools,
             accessible_namespaces=namespaces,
+            bundle_path=agent.bundle_path,
+            bundle_in_repo=(
+                agent.solution_id is None and agent.created_by == "file_sync"
+            ),
+            solution_id=agent.solution_id,
         )
 
     def _build_workflow_repo(
@@ -324,7 +349,11 @@ class MCPToolAccessService:
         return infos
 
     @staticmethod
-    def _effective_system_tool_ids(agent: Agent) -> list[str]:
+    def _effective_system_tool_ids(
+        agent: Agent,
+        *,
+        include_bundle: bool,
+    ) -> list[str]:
         """Return ``agent.system_tools`` with ``search_knowledge`` auto-appended
         when the agent has knowledge sources.
 
@@ -332,7 +361,18 @@ class MCPToolAccessService:
         ``api/src/services/execution/agent_helpers.py`` so that MCP listing
         and the agent executor agree on what an agent's tools are.
         """
-        ids = list(agent.system_tools or [])
+        from src.services.mcp_server.tools.skill_assets import (
+            READ_SKILL_ASSET_TOOL_ID,
+        )
+
+        ids = [
+            tool_id
+            for tool_id in (agent.system_tools or [])
+            if tool_id != READ_SKILL_ASSET_TOOL_ID
+        ]
+        bundle_path = getattr(agent, "bundle_path", None)
+        if include_bundle and isinstance(bundle_path, str) and bundle_path:
+            ids.append(READ_SKILL_ASSET_TOOL_ID)
         if agent.knowledge_sources and "search_knowledge" not in ids:
             ids.append("search_knowledge")
         return ids
@@ -367,6 +407,7 @@ class MCPToolAccessService:
         is_superuser: bool,
         is_external: bool = False,
         org_id: UUID | str | None = None,
+        user_id: UUID | str | None = None,
     ) -> list[Agent]:
         """
         Get agents accessible to the user based on access_level and roles.
@@ -390,6 +431,13 @@ class MCPToolAccessService:
                 selectinload(Agent.roles),
             )
             .where(Agent.is_active.is_(True))
+            .where(
+                visible_solution_child_criterion(
+                    child_solution_id=Agent.solution_id,
+                    actor_user_id=self._as_uuid(user_id),
+                    is_external=is_external,
+                )
+            )
         )
 
         if not is_superuser:
@@ -439,6 +487,18 @@ class MCPToolAccessService:
             # as MCP requires authentication
 
         return accessible_agents
+
+    @staticmethod
+    def _as_uuid(value: UUID | str | None) -> UUID | None:
+        """Normalize an optional token claim for SQL ownership predicates."""
+        if value is None or isinstance(value, UUID):
+            return value
+        try:
+            return UUID(value)
+        except ValueError:
+            # A malformed/missing principal cannot satisfy private ownership;
+            # the central criterion still admits shared parents and loose rows.
+            return None
 
     def _apply_config_filters(
         self,

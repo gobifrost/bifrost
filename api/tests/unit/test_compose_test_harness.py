@@ -129,6 +129,14 @@ def test_test_sh_advertises_dockerized_api_quality_lane():
     assert "sh /app/scripts/quality_api.sh" in script
 
 
+def test_unit_lane_does_not_require_the_sandbox_runner_image():
+    """The cached unit job must not try to start an image it does not build."""
+    script = _find_repo_file("test.sh").read_text()
+    assert 'cmd_unit() { run_pytest tests/ --ignore=tests/e2e/' in script
+    assert '--ignore=tests/e2e/|--ignore=tests/e2e) ignores_e2e=true' in script
+    assert '[ "$includes_all_tests" = true ] && [ "$ignores_e2e" = false ]' in script
+
+
 def test_api_quality_script_runs_pyright_without_ci_venv_config():
     script = _find_repo_file("api/scripts/quality_api.sh").read_text()
     assert 'config.pop("venvPath", None)' in script

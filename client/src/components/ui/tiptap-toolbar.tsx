@@ -36,6 +36,8 @@ export function TiptapToolbar({ editor }: TiptapToolbarProps) {
 				type="button"
 				variant="ghost"
 				size="sm"
+				aria-label="Undo"
+				title="Undo"
 				onClick={() => editor.chain().focus().undo().run()}
 				disabled={!editor.can().undo()}
 			>
@@ -45,6 +47,8 @@ export function TiptapToolbar({ editor }: TiptapToolbarProps) {
 				type="button"
 				variant="ghost"
 				size="sm"
+				aria-label="Redo"
+				title="Redo"
 				onClick={() => editor.chain().focus().redo().run()}
 				disabled={!editor.can().redo()}
 			>
@@ -56,6 +60,8 @@ export function TiptapToolbar({ editor }: TiptapToolbarProps) {
 			{/* Headings */}
 			<Toggle
 				size="sm"
+				aria-label="Heading 2"
+				title="Heading 2"
 				pressed={editor.isActive("heading", { level: 2 })}
 				onPressedChange={() =>
 					editor.chain().focus().toggleHeading({ level: 2 }).run()
@@ -65,6 +71,8 @@ export function TiptapToolbar({ editor }: TiptapToolbarProps) {
 			</Toggle>
 			<Toggle
 				size="sm"
+				aria-label="Heading 3"
+				title="Heading 3"
 				pressed={editor.isActive("heading", { level: 3 })}
 				onPressedChange={() =>
 					editor.chain().focus().toggleHeading({ level: 3 }).run()
@@ -78,6 +86,8 @@ export function TiptapToolbar({ editor }: TiptapToolbarProps) {
 			{/* Text formatting */}
 			<Toggle
 				size="sm"
+				aria-label="Bold"
+				title="Bold"
 				pressed={editor.isActive("bold")}
 				onPressedChange={() => editor.chain().focus().toggleBold().run()}
 			>
@@ -85,6 +95,8 @@ export function TiptapToolbar({ editor }: TiptapToolbarProps) {
 			</Toggle>
 			<Toggle
 				size="sm"
+				aria-label="Italic"
+				title="Italic"
 				pressed={editor.isActive("italic")}
 				onPressedChange={() =>
 					editor.chain().focus().toggleItalic().run()
@@ -94,6 +106,8 @@ export function TiptapToolbar({ editor }: TiptapToolbarProps) {
 			</Toggle>
 			<Toggle
 				size="sm"
+				aria-label="Strikethrough"
+				title="Strikethrough"
 				pressed={editor.isActive("strike")}
 				onPressedChange={() =>
 					editor.chain().focus().toggleStrike().run()
@@ -103,6 +117,8 @@ export function TiptapToolbar({ editor }: TiptapToolbarProps) {
 			</Toggle>
 			<Toggle
 				size="sm"
+				aria-label="Inline code"
+				title="Inline code"
 				pressed={editor.isActive("code")}
 				onPressedChange={() => editor.chain().focus().toggleCode().run()}
 			>
@@ -114,6 +130,8 @@ export function TiptapToolbar({ editor }: TiptapToolbarProps) {
 			{/* Link */}
 			<Toggle
 				size="sm"
+				aria-label="Link"
+				title="Link"
 				pressed={editor.isActive("link")}
 				onPressedChange={handleLinkClick}
 			>
@@ -125,6 +143,8 @@ export function TiptapToolbar({ editor }: TiptapToolbarProps) {
 			{/* Lists */}
 			<Toggle
 				size="sm"
+				aria-label="Bulleted list"
+				title="Bulleted list"
 				pressed={editor.isActive("bulletList")}
 				onPressedChange={() =>
 					editor.chain().focus().toggleBulletList().run()
@@ -134,6 +154,8 @@ export function TiptapToolbar({ editor }: TiptapToolbarProps) {
 			</Toggle>
 			<Toggle
 				size="sm"
+				aria-label="Numbered list"
+				title="Numbered list"
 				pressed={editor.isActive("orderedList")}
 				onPressedChange={() =>
 					editor.chain().focus().toggleOrderedList().run()
@@ -147,6 +169,8 @@ export function TiptapToolbar({ editor }: TiptapToolbarProps) {
 			{/* Block formatting */}
 			<Toggle
 				size="sm"
+				aria-label="Block quote"
+				title="Block quote"
 				pressed={editor.isActive("blockquote")}
 				onPressedChange={() =>
 					editor.chain().focus().toggleBlockquote().run()

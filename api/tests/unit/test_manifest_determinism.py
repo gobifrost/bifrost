@@ -67,6 +67,7 @@ def _mock_agent(agent_id=AGENT_ID, name="det_agent"):
     # Inline content fields
     agent.description = None
     agent.system_prompt = None
+    agent.bundle_path = None
     agent.channels = []
     agent.knowledge_sources = []
     agent.system_tools = []

@@ -513,6 +513,10 @@ class WorkflowExecutionConsumer(BaseConsumer):
                     status=ExecutionStatus.CANCELLED,
                     execution_model="process",
                     workflow_id=workflow_id,
+                    execution_context={
+                        "actor_jti": pending.get("actor_jti"),
+                        "solution_id": None,
+                    },
                 )
                 await update_execution(
                     execution_id=execution_id,
@@ -609,6 +613,10 @@ class WorkflowExecutionConsumer(BaseConsumer):
                         status=ExecutionStatus.FAILED,
                         execution_model="process",
                         workflow_id=workflow_id,
+                        execution_context={
+                            "actor_jti": pending.get("actor_jti"),
+                            "solution_id": None,
+                        },
                     )
                     await update_execution(
                         execution_id=execution_id,
@@ -661,6 +669,10 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 status=ExecutionStatus.RUNNING,
                 execution_model="process",
                 workflow_id=workflow_id,
+                execution_context={
+                    "actor_jti": pending.get("actor_jti"),
+                    "solution_id": solution_id,
+                },
             )
             await publish_execution_update(execution_id, "Running")
             await publish_history_update(
@@ -730,6 +742,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 "content_hash": content_hash,  # Pinned hash at dispatch time
                 "event": event_data,  # EventContext dict (None if not event-triggered)
                 "solution_id": solution_id,  # Install id if solution-managed (else None)
+                "actor_jti": pending.get("actor_jti"),
                 "solution_global_repo_access": solution_global_repo_access,
                 # Pre-minted engine token: child writes directly to credentials file,
                 # no SECRET_KEY required in child env.

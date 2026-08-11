@@ -328,6 +328,47 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
+    # Builder Build Plane (server-side app compilation coordinator)
+    # ==========================================================================
+    builder_max_concurrent_builds: int = Field(
+        default=1,
+        description="Max concurrent build jobs the coordinator will run at once"
+    )
+    builder_build_timeout_s: int = Field(
+        default=600,
+        description="Max seconds a single build job may run before being killed"
+    )
+    builder_log_limit_bytes: int = Field(
+        default=1_048_576,
+        description="Max bytes of build log output retained per build job"
+    )
+    builder_output_limit_bytes: int = Field(
+        default=104_857_600,
+        description="Max bytes of build output (compiled app dist) accepted per build job"
+    )
+    builder_harness_state_limit_bytes: int = Field(
+        default=52_428_800,
+        description="Max bytes accepted for one persisted Builder harness state archive",
+    )
+    builder_staged_retention_hours: int = Field(
+        default=6,
+        description="Hours a staged (not-yet-deployed) build output is retained before cleanup"
+    )
+    builder_runner_image_repository: str = Field(
+        default="ghcr.io/gobifrost/bifrost-build",
+        description=(
+            "Public container image repository provisioned into the selected "
+            "sandbox provider"
+        ),
+    )
+    builder_runner_image_tag: str | None = Field(
+        default=None,
+        description=(
+            "Optional runner image tag override; releases otherwise use the "
+            "running Bifrost version and development uses dev"
+        ),
+    )
+    # ==========================================================================
     # Anthropic API (for Claude Agent SDK)
     # ==========================================================================
     anthropic_api_key: str | None = Field(

@@ -145,6 +145,16 @@ describe("ToolExecutionCard — status transitions", () => {
 		// Running view shows streamed log lines.
 		expect(screen.getByText("progress...")).toBeInTheDocument();
 	});
+
+	it("identifies skill asset reads in the execution timeline", () => {
+		renderWithProviders(
+			<ToolExecutionCard
+				toolCall={makeToolCall({ name: "read_skill_asset" })}
+				executionId={undefined}
+			/>,
+		);
+		expect(screen.getByText("Skill · read asset")).toBeInTheDocument();
+	});
 });
 
 describe("ToolExecutionCard — result expansion", () => {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import AsyncGenerator
@@ -120,6 +121,7 @@ async def test_websocket_event_matches_public_http_contract_and_hides_payload(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     job = await _enqueue(db_session)
+    job.available_at = datetime.now(timezone.utc) + timedelta(minutes=1)
     await db_session.commit()
     broadcast = AsyncMock()
     monkeypatch.setattr(service.pubsub_manager, "broadcast", broadcast)
@@ -217,6 +219,31 @@ async def test_cancel_is_idempotent(
 
 
 @pytest.mark.asyncio
+async def test_cancel_invokes_registered_projection_handler_once(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = await _enqueue(db_session)
+    handler = AsyncMock()
+    definition = replace(
+        APPLICATION_PUBLISH_DEFINITION,
+        cancellation_handler=handler,
+    )
+    monkeypatch.setattr(
+        "src.jobs.platform.registry.get_platform_job_definition",
+        lambda _job_type: definition,
+    )
+    monkeypatch.setattr(service, "publish_platform_job_update", AsyncMock())
+
+    job, first = await service.request_platform_job_cancel(db_session, job)
+    job, second = await service.request_platform_job_cancel(db_session, job)
+
+    assert first is True
+    assert second is False
+    handler.assert_awaited_once_with(job.id)
+
+
+@pytest.mark.asyncio
 async def test_non_interruptible_handler_rejects_running_cancel(
     db_session: AsyncSession,
 ) -> None:
@@ -256,12 +283,19 @@ async def test_deferred_job_releases_lease_and_finishes_from_child_work(
         token,
         phase="Waiting for child work",
         result={"children": 2},
+        external_provider="cloudflare",
+        external_run_id="workflow-instance-1",
     )
     await db_session.refresh(job)
     assert job.status == "waiting"
     assert job.lease_token is None
     assert job.lease_owner is None
+    assert job.external_provider == "cloudflare"
+    assert job.external_run_id == "workflow-instance-1"
+    assert job.external_started_at is not None
     assert service.platform_job_to_public(job).can_cancel is True
+    assert service.platform_job_to_public(job).external_provider == "cloudflare"
+    assert service.platform_job_to_public(job).external_run_id == "workflow-instance-1"
 
     assert await service.update_deferred_platform_job_progress(
         job.id,
@@ -303,6 +337,141 @@ async def test_stale_runner_cannot_defer_job(
         job.id,
         uuid4(),
         phase="Stale child work",
+        external_provider="cloudflare",
+        external_run_id="stale-workflow",
     )
     await db_session.refresh(job)
     assert job.status == "running"
+    assert job.external_provider is None
+
+
+@pytest.mark.asyncio
+async def test_defer_requires_complete_external_identity(
+    db_session: AsyncSession,
+) -> None:
+    job = await _enqueue(db_session)
+    token = uuid4()
+    job.status = "running"
+    job.lease_token = token
+    await db_session.commit()
+
+    with pytest.raises(ValueError, match="external_provider and external_run_id"):
+        await service.defer_platform_job(
+            job.id,
+            token,
+            phase="Waiting for child work",
+            external_provider="cloudflare",
+        )
+
+
+@pytest.mark.asyncio
+async def test_inline_child_claim_uses_canonical_lease_and_runner(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = await _enqueue(db_session)
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def test_context() -> AsyncGenerator[AsyncSession, None]:
+        yield db_session
+
+    run_claimed = AsyncMock(return_value=True)
+    monkeypatch.setattr(service, "get_db_context", test_context)
+    monkeypatch.setattr(service, "publish_platform_job_update", AsyncMock())
+    monkeypatch.setattr(
+        "src.jobs.platform.runner.run_claimed_platform_job",
+        run_claimed,
+    )
+
+    assert await service.run_queued_platform_job_inline(job.id) is True
+    await db_session.refresh(job)
+    assert job.status == "running"
+    assert job.attempt == 1
+    assert job.lease_token is not None
+    assert job.lease_owner is not None and job.lease_owner.startswith("inline:")
+    run_claimed.assert_awaited_once_with(job.id, job.lease_token)
+
+
+@pytest.mark.asyncio
+async def test_external_completion_can_win_defer_race(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = await _enqueue(db_session)
+    job.status = "running"
+    job.attempt = 2
+    job.lease_token = uuid4()
+    job.lease_owner = "inline:test"
+    job.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=1)
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def test_context() -> AsyncGenerator[AsyncSession, None]:
+        yield db_session
+
+    monkeypatch.setattr(service, "get_db_context", test_context)
+    monkeypatch.setattr(service, "publish_platform_job_update", AsyncMock())
+
+    assert await service.update_external_platform_job_progress(
+        job.id,
+        2,
+        phase="Uploading artifacts",
+        current=1,
+        total=2,
+        percent=50,
+    )
+    assert await service.finish_external_platform_job(
+        job.id,
+        2,
+        status="succeeded",
+        result={"artifact_count": 2},
+    )
+    await db_session.refresh(job)
+    assert job.status == "succeeded"
+    assert job.lease_token is None
+    assert job.result == {"artifact_count": 2}
+    assert not await service.finish_external_platform_job(
+        job.id,
+        1,
+        status="failed",
+        error_message="stale callback",
+    )
+
+
+@pytest.mark.asyncio
+async def test_transient_external_completion_requeues_the_fenced_attempt(
+    db_session: AsyncSession,
+) -> None:
+    job = await _enqueue(db_session)
+    job.status = "waiting"
+    job.attempt = 1
+    job.max_attempts = 2
+    job.external_provider = "cloudflare"
+    job.external_run_id = "run-1"
+    job.external_started_at = datetime.now(timezone.utc)
+    await db_session.commit()
+
+    retried = await service.stage_external_platform_job_retry(
+        db_session,
+        job.id,
+        1,
+        error_message="Durable Object reset because its code was updated.",
+    )
+    assert retried is not None
+    await db_session.commit()
+    await db_session.refresh(job)
+
+    assert job.status == "queued"
+    assert job.phase == "Retrying external runner"
+    assert job.attempt == 1
+    assert job.error_retryable is True
+    assert job.external_provider is None
+    assert job.external_run_id is None
+    assert job.available_at > datetime.now(timezone.utc)
+    assert await service.stage_external_platform_job_retry(
+        db_session,
+        job.id,
+        1,
+        error_message="stale callback",
+    ) is None

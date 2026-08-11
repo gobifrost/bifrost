@@ -12,7 +12,16 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Index, JSON, LargeBinary, String, Text, text
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Index,
+    JSON,
+    LargeBinary,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.enums import AppAccessLevel
@@ -56,7 +65,9 @@ class Application(Base):
     )
 
     # Publish history
-    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
 
     # Published snapshot: {path: content_hash} mapping from file_index
     # NULL = never published, empty dict = published with no files
@@ -66,7 +77,9 @@ class Application(Base):
 
     # Access control (follows same pattern as forms)
     access_level: Mapped[str] = mapped_column(
-        String(20), default=AppAccessLevel.AUTHENTICATED, server_default="'authenticated'"
+        String(20),
+        default=AppAccessLevel.AUTHENTICATED,
+        server_default="'authenticated'",
     )
 
     # Render model: 'inline_v1' (legacy — app renders inline inside the platform
@@ -76,6 +89,13 @@ class Application(Base):
         String(20), default="inline_v1", server_default="inline_v1"
     )
 
+    # Browser execution boundary. Existing V1/V2 applications are trusted and
+    # keep their current runtime. Builder-authored apps are isolated behind the
+    # opaque Solution runtime until an administrator explicitly trusts them.
+    runtime_mode: Mapped[str] = mapped_column(
+        String(16), default="trusted", server_default="trusted"
+    )
+
     # Metadata
     description: Mapped[str | None] = mapped_column(Text, default=None)
     dependencies: Mapped[dict | None] = mapped_column(JSON, default=None, nullable=True)
@@ -83,7 +103,9 @@ class Application(Base):
     logo_data: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
     logo_content_type: Mapped[str | None] = mapped_column(String(50), default=None)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=text("NOW()"),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -101,7 +123,10 @@ class Application(Base):
         "AppRole", cascade="all, delete-orphan", passive_deletes=True
     )
     embed_secrets: Mapped[list["AppEmbedSecret"]] = relationship(
-        "AppEmbedSecret", back_populates="application", cascade="all, delete-orphan", passive_deletes=True
+        "AppEmbedSecret",
+        back_populates="application",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )
 
     __table_args__ = (

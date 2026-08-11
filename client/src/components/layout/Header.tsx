@@ -135,14 +135,15 @@ export function Header({
 					<Search className="h-4 w-4" />
 				</Button>
 
-				{/* Shell Button (Platform Admin only) */}
+				{/* Global Workspace code editor (Platform Admin only) */}
 				{isPlatformAdmin && (
 					<Button
 						variant="ghost"
 						size="icon"
 						className="mr-1 sm:mr-2"
 						onClick={() => openEditor()}
-						title="Shell (Cmd+/)"
+						aria-label="Open Global Workspace code editor"
+						title="Global Workspace code editor (Cmd+/)"
 					>
 						<Terminal className="h-4 w-4" />
 					</Button>

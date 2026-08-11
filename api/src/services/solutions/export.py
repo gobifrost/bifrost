@@ -112,6 +112,11 @@ def build_workspace_zip(bundle: "SolutionBundle", *, password: str | None = None
         for rel, content in sorted(bundle.python_files.items()):
             put(rel, content)
 
+        # Portable Agent Skills companion files (including inert scripts and
+        # binary assets) live beside normal Solution source.
+        for rel, content in sorted(bundle.bundle_files.items()):
+            put(rel, content)
+
         # ── Entity manifests (.bifrost/*.yaml, keyed by manifest id) ────────
         if bundle.workflows:
             put(

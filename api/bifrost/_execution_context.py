@@ -111,6 +111,9 @@ class ExecutionContext:
     # The SDK appends it to name lookups (tables/configs) so they resolve the
     # install's OWN entity first, then _repo/. None for plain _repo/ executions.
     solution_id: str | None = field(default=None)
+    # App-host actor session that submitted this execution. Normal user,
+    # scheduler, API-key, and engine executions leave this unset.
+    actor_jti: str | None = field(default=None)
 
     # ==================== PLATFORM ====================
     # Public URL for constructing external links (e.g., workflow URLs, execution URLs)
@@ -242,6 +245,8 @@ class ExecutionContext:
             "execution_id": self.execution_id,
             "workflow_name": self.workflow_name,
             "is_agent": self.is_agent,
+            "solution_id": self.solution_id,
+            "actor_jti": self.actor_jti,
             "public_url": self.public_url,
             "parameters": self.parameters,
             "startup": self.startup,

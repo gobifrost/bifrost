@@ -143,6 +143,21 @@ class MCPContext:
     # Knowledge namespaces accessible to this user (from agent.knowledge_sources)
     accessible_namespaces: list[str] = field(default_factory=list)
 
+    # Execution-scoped Agent Skills bundle. These are populated by trusted
+    # AgentExecutor paths and by authorized agent-scoped MCP requests.
+    # Unscoped MCP contexts leave them unset, so read_skill_asset fails closed.
+    agent_bundle_path: str | None = None
+    agent_skill_id: UUID | str | None = None
+    agent_skill_in_repo: bool = False
+    agent_solution_id: UUID | str | None = None
+    # In-memory, root-scoped workspace supplied only by BuilderAgentTurnService.
+    # HTTP MCP and every ordinary Agent execution leave it unset.
+    builder_workspace: Any = None
+    # Derived at the authenticated boundary from role scopes; consumed by
+    # Builder-only support surfaces without reinterpreting role policy.
+    can_build: bool = False
+    can_support_builds: bool = False
+
     # Database session from executor context (None when running via MCP server)
     session: Any = None
 
@@ -154,6 +169,10 @@ class MCPContext:
             self.user_id = UUID(self.user_id)
         if isinstance(self.org_id, str) and self.org_id:
             self.org_id = UUID(self.org_id)
+        if isinstance(self.agent_solution_id, str) and self.agent_solution_id:
+            self.agent_solution_id = UUID(self.agent_solution_id)
+        if isinstance(self.agent_skill_id, str) and self.agent_skill_id:
+            self.agent_skill_id = UUID(self.agent_skill_id)
 
 
 # =============================================================================
@@ -182,13 +201,16 @@ def _get_context_from_token() -> MCPContext:
     if token is None:
         raise ToolError("Authentication required")
 
+    claims = token.claims
     return MCPContext(
-        user_id=token.claims.get("user_id", ""),
-        org_id=token.claims.get("org_id"),
-        is_platform_admin=token.claims.get("is_superuser", False),
-        is_external=token.claims.get("is_external", False),
-        user_email=token.claims.get("email", ""),
-        user_name=token.claims.get("name", ""),
+        user_id=claims.get("user_id", ""),
+        org_id=claims.get("org_id"),
+        is_platform_admin=claims.get("is_superuser", False),
+        is_external=claims.get("is_external", False),
+        user_email=claims.get("email", ""),
+        user_name=claims.get("name", ""),
+        can_build=_claims_can_build(claims),
+        can_support_builds=_claims_can_support_builds(claims),
     )
 
 
@@ -222,6 +244,9 @@ async def _get_runtime_context() -> MCPContext:
     agent_id = _get_agent_id_from_scope()
 
     accessible_namespaces: list[str] = []
+    agent_bundle_path: str | None = None
+    agent_skill_in_repo = False
+    agent_solution_id: UUID | None = None
     if agent_id is not None:
         try:
             async with get_db_context() as db:
@@ -236,8 +261,11 @@ async def _get_runtime_context() -> MCPContext:
                 )
                 if agent_result is not None:
                     accessible_namespaces = list(agent_result.accessible_namespaces)
+                    agent_bundle_path = agent_result.bundle_path
+                    agent_skill_in_repo = agent_result.bundle_in_repo
+                    agent_solution_id = agent_result.solution_id
         except Exception as e:
-            logger.warning(f"Failed to resolve accessible namespaces: {e}")
+            logger.warning(f"Failed to resolve agent-scoped MCP context: {e}")
 
     return MCPContext(
         user_id=token.claims.get("user_id", ""),
@@ -247,7 +275,44 @@ async def _get_runtime_context() -> MCPContext:
         user_email=token.claims.get("email", ""),
         user_name=token.claims.get("name", ""),
         accessible_namespaces=accessible_namespaces,
+        agent_bundle_path=agent_bundle_path,
+        agent_skill_id=agent_id if agent_bundle_path else None,
+        agent_skill_in_repo=agent_skill_in_repo,
+        agent_solution_id=agent_solution_id,
+        can_build=_claims_can_build(token.claims),
+        can_support_builds=_claims_can_support_builds(token.claims),
     )
+
+
+def _claims_principal(claims: dict[str, Any]):
+    from src.core.principal import UserPrincipal
+
+    user_id = claims.get("user_id") or "00000000-0000-0000-0000-000000000000"
+    return UserPrincipal(
+        user_id=UUID(str(user_id)),
+        email=claims.get("email", ""),
+        organization_id=(
+            UUID(str(claims["org_id"])) if claims.get("org_id") else None
+        ),
+        name=claims.get("name", ""),
+        is_superuser=claims.get("is_superuser", False),
+        is_external=claims.get("is_external", False),
+        roles=claims.get("roles", []),
+        scopes=claims.get("scopes", []),
+    )
+
+
+def _claims_can_build(claims: dict[str, Any]) -> bool:
+    from src.services.solutions.builder_authz import can_build
+
+    return can_build(_claims_principal(claims))
+
+
+def _claims_can_support_builds(claims: dict[str, Any]) -> bool:
+    """Evaluate Builder support capability from already-validated JWT claims."""
+    from src.services.solutions.builder_authz import can_support_builds
+
+    return can_support_builds(_claims_principal(claims))
 
 
 # =============================================================================
@@ -437,6 +502,7 @@ def get_system_tools() -> list[dict[str, Any]]:
     tools = []
     for module in TOOL_MODULES:
         if hasattr(module, "TOOLS"):
+            hidden_tool_ids = getattr(module, "HIDDEN_TOOL_IDS", frozenset())
             # Build a mapping of tool_id -> function for this module
             tool_funcs: dict[str, Any] = {}
             for attr_name in dir(module):
@@ -481,6 +547,7 @@ def get_system_tools() -> list[dict[str, Any]]:
                     "name": name,
                     "description": description,
                     "parameters": parameters,
+                    "hidden": tool_id in hidden_tool_ids,
                 })
     return tools
 

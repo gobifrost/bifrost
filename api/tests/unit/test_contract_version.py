@@ -189,13 +189,17 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # of ApplicationPublic, and the CLI polls PlatformJobPublic for durable
     # progress/result/error (2026-07-28). CONTRACT_VERSION bumped to 8.
     #
-    # Forms gained optional confirmation_markdown (2026-08-04). ADDITIVE: old
-    # clients omit it and continue receiving the prior default confirmation.
+    # AgentCreate/AgentUpdate gained optional bundle_path (2026-07-27).
+    # ADDITIVE: old CLIs omit it and retain inline-only Agent behavior.
     #
     # RoleCreate/RoleUpdate gained additive scopes fields (2026-07-30).
     # Old CLIs omit them and retain empty-scope custom-role behavior.
     # Forms also gained optional confirmation_markdown (2026-08-04). All are
     # additive; fingerprint refreshed after merging the contract surfaces.
+    #
+    # MCPGatewayAgentDetail gained additive instruction_source + skill metadata
+    # so external harnesses can discover portable Agent Skill files (2026-08-07).
+    # Existing clients may ignore both optional response fields.
     #
     # CLI/SDK file write and delete requests gained optional guarded-mutation
     # fields (2026-08-08). ADDITIVE: old clients omit them and retain the prior
@@ -204,7 +208,7 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # PlatformJobStatus gained `waiting` for durable parent jobs (2026-08-07).
     # CONTRACT_VERSION bumped to 9 because an older CLI cannot parse the new
     # enum value while polling PlatformJobPublic.
-    "12c65f3865127c0dbbdbb4237943169bf6a1fb79ad566b68ef1a45a1fbfc1854"
+    "05fde29ec5350655827bd99a423583ef9bee26101fcd841e4dd61a48f9d492ce"
 )
 
 

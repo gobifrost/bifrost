@@ -258,8 +258,10 @@ async def refresh_connection_access_token(
 
         data = response.json()
         access_token = str(data["access_token"])
+        # Present-but-null on some grant responses, so dict.get's default
+        # never fires — coalesce explicitly or timedelta raises on None.
         expires_at = datetime.now(timezone.utc) + timedelta(
-            seconds=data.get("expires_in", 1800)
+            seconds=data.get("expires_in") or 1800
         )
         new_refresh_token = str(data["refresh_token"])
         saved = save_refreshed_credentials(
@@ -453,7 +455,7 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
                     print(" OK")
 
                     # Calculate expiry time
-                    expires_at = datetime.now(timezone.utc) + timedelta(seconds=poll_data.get("expires_in", 1800))
+                    expires_at = datetime.now(timezone.utc) + timedelta(seconds=poll_data.get("expires_in") or 1800)
 
                     # Step 5: Save credentials
                     save_credentials(

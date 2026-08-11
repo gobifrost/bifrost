@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Awaitable, Callable
 from uuid import UUID
 
@@ -42,10 +43,21 @@ class PlatformJobCancelled(Exception):
 class PlatformJobDeferred(Exception):
     """Release the runner while external child work completes the job."""
 
-    def __init__(self, phase: str, result: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        phase: str,
+        result: dict[str, Any] | None = None,
+        *,
+        external_provider: str | None = None,
+        external_run_id: str | None = None,
+        external_started_at: datetime | None = None,
+    ) -> None:
         super().__init__(phase)
         self.phase = phase
         self.result = result
+        self.external_provider = external_provider
+        self.external_run_id = external_run_id
+        self.external_started_at = external_started_at
 
 
 @dataclass(frozen=True)
@@ -94,6 +106,7 @@ PlatformJobHandler = Callable[
     [PlatformJobContext, BaseModel],
     Awaitable[dict[str, Any] | None],
 ]
+PlatformJobCancellationHandler = Callable[[UUID], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -104,3 +117,4 @@ class PlatformJobDefinition:
     handler: PlatformJobHandler
     policy: PlatformJobPolicy
     encrypt_payload: bool = False
+    cancellation_handler: PlatformJobCancellationHandler | None = None

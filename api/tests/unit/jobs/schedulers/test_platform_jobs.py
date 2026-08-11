@@ -252,6 +252,35 @@ async def test_resource_lock_serializes_matching_jobs(db_session: AsyncSession) 
 
 
 @pytest.mark.asyncio
+async def test_waiting_job_keeps_resource_lock_occupied(
+    db_session: AsyncSession,
+) -> None:
+    first = await _queued_job(db_session)
+    first.status = "waiting"
+    first.resource_lock_key = "solution:waiting"
+    first.external_provider = "cloudflare"
+    first.external_run_id = "workflow-1"
+    second_id = uuid4()
+    await enqueue_platform_job(
+        db_session,
+        APPLICATION_PUBLISH_DEFINITION,
+        ApplicationPublishPayload(application_id=second_id),
+        dedupe_key=str(second_id),
+        resource_lock_key="solution:waiting",
+        organization_id=None,
+        requested_by_user_id=uuid4(),
+        requested_by_email="dev@example.com",
+        requested_by_name="Dev",
+        resource_type="application",
+        resource_id=str(second_id),
+        title="Second",
+        action_url=None,
+    )
+
+    assert await scheduler.claim_platform_job() is None
+
+
+@pytest.mark.asyncio
 async def test_blocked_jobs_do_not_starve_runnable_job_beyond_first_twenty(
     db_session: AsyncSession,
 ) -> None:
@@ -328,6 +357,39 @@ async def test_type_concurrency_limit_is_enforced(
     monkeypatch.setattr(scheduler, "get_platform_job_definition", lambda _type: limited)
 
     assert await scheduler.claim_platform_job() is not None
+    assert await scheduler.claim_platform_job() is None
+
+
+@pytest.mark.asyncio
+async def test_waiting_job_counts_against_type_concurrency_limit(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = await _queued_job(db_session)
+    job.status = "waiting"
+    job.external_provider = "cloudflare"
+    job.external_run_id = "workflow-1"
+    second_id = uuid4()
+    await enqueue_platform_job(
+        db_session,
+        APPLICATION_PUBLISH_DEFINITION,
+        ApplicationPublishPayload(application_id=second_id),
+        dedupe_key=str(second_id),
+        organization_id=None,
+        requested_by_user_id=uuid4(),
+        requested_by_email="dev@example.com",
+        requested_by_name="Dev",
+        resource_type="application",
+        resource_id=str(second_id),
+        title="Second",
+        action_url=None,
+    )
+    limited = replace(
+        APPLICATION_PUBLISH_DEFINITION,
+        policy=replace(APPLICATION_PUBLISH_DEFINITION.policy, max_concurrency=1),
+    )
+    monkeypatch.setattr(scheduler, "get_platform_job_definition", lambda _type: limited)
+
     assert await scheduler.claim_platform_job() is None
 
 

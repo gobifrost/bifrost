@@ -96,6 +96,9 @@ async def run_claimed_platform_job(job_id: UUID, lease_token: UUID) -> bool:
             lease_token,
             phase=exc.phase,
             result=exc.result,
+            external_provider=exc.external_provider,
+            external_run_id=exc.external_run_id,
+            external_started_at=exc.external_started_at,
         )
     except PlatformJobFailure as exc:
         return await finish_platform_job(

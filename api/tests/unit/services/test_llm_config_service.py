@@ -58,6 +58,7 @@ def sample_config_data(fernet_instance):
         "encrypted_api_key": encrypted_key,
         "endpoint": None,
         "max_tokens": 4096,
+        "builder_model": "claude-opus-4-6",
     }
 
 
@@ -112,6 +113,7 @@ class TestLLMConfigService:
         assert isinstance(result, LLMProviderConfig)
         assert result.provider == "anthropic"
         assert result.model == "claude-sonnet-4-20250514"
+        assert result.builder_model == "claude-opus-4-6"
         assert result.is_configured is True
         assert result.api_key_set is True
         # API key should NOT be returned
@@ -133,6 +135,7 @@ class TestLLMConfigService:
                 provider="openai",
                 model="gpt-4o",
                 api_key="sk-test-key",
+                builder_model="gpt-5.2-codex",
                 updated_by="test@example.com",
             )
 
@@ -146,6 +149,7 @@ class TestLLMConfigService:
         assert added_config.key == LLM_CONFIG_KEY
         assert added_config.value_json["provider"] == "openai"
         assert added_config.value_json["model"] == "gpt-4o"
+        assert added_config.value_json["builder_model"] == "gpt-5.2-codex"
         assert "encrypted_api_key" in added_config.value_json
         assert added_config.organization_id is None
 

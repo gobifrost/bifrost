@@ -1,16 +1,4 @@
-"""Orchestration row for an async, observable solution deploy.
-
-Created when an admin calls ``POST /api/solutions/{id}/deploy``. The endpoint
-enqueues the (sometimes >100s) deploy as an in-process background task and
-returns the ``deploy_job_id`` immediately; the task flips the row ``queued`` →
-``running`` → ``succeeded`` / ``failed`` (capturing the error). API startup
-marks stale queued/running jobs failed so pollers never wait forever after a
-restart. The CLI polls ``GET /api/solutions/deploy-jobs/{id}`` until a terminal
-status.
-
-This decouples deploy from the HTTP request so the CLI no longer hits an httpx
-``ReadTimeout`` while the server completes successfully (Task 7 bug).
-"""
+"""Durable orchestration row for an async, observable Solution deploy job."""
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
@@ -39,6 +27,22 @@ class SolutionDeployJob(Base):
     )
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="queued"
+    )
+    # ``deploy`` (existing install), ``install`` (uploaded zip), or
+    # ``install_from_repo`` (validated checkout archived at enqueue time).
+    kind: Mapped[str] = mapped_column(String(32), nullable=False, default="deploy")
+    # Entire options document is encrypted because install options may contain
+    # config values and an export password. Queue messages carry only ``id``.
+    encrypted_options: Mapped[str | None] = mapped_column(
+        Text, nullable=True, default=None
+    )
+    # Input is staged in S3 before the row becomes visible. The digest is
+    # rechecked after the worker downloads it.
+    input_key: Mapped[str | None] = mapped_column(
+        Text, nullable=True, default=None
+    )
+    input_sha256: Mapped[str | None] = mapped_column(
+        String(64), nullable=True, default=None
     )
     error: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     # On success: the per-entity upsert/delete counts the (now async) deploy

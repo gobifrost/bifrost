@@ -15,9 +15,10 @@ File operations are handled through the app_files router.
 import base64
 import logging
 import re
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -32,6 +33,7 @@ from src.models.contracts.applications import (
     ApplicationDefinition,
     ApplicationDraftSave,
     ApplicationListResponse,
+    ApplicationLaunchResponse,
     ApplicationPublic,
     ApplicationPublishRequest,
     ApplicationReplaceRequest,
@@ -45,11 +47,15 @@ from src.jobs.platform.application_publish import (
 )
 from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.models.orm.applications import Application
+from src.models.orm.solutions import Solution
+from src.core.cache.redis_client import get_shared_redis
+from src.services.builder.app_session import AppLaunchService
 from src.services.platform_jobs import (
     enqueue_platform_job,
     ensure_platform_job_notification,
     publish_platform_job_update,
 )
+from src.services.solutions.access import visible_solution_child_criterion
 from src.services.solutions.guard import assert_entity_id_not_solution_managed
 from src.core.exceptions import AccessDeniedError
 from shared.svg_sanitizer import SvgSanitizationError, sanitize_svg
@@ -57,6 +63,16 @@ from shared.svg_sanitizer import SvgSanitizationError, sanitize_svg
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/applications", tags=["Applications"])
+
+
+async def get_application_launch_service() -> AppLaunchService:
+    return AppLaunchService(await get_shared_redis())
+
+
+ApplicationLaunchService = Annotated[
+    AppLaunchService,
+    Depends(get_application_launch_service),
+]
 
 
 class AppValidationIssue(BaseModel):
@@ -134,6 +150,7 @@ async def application_to_public(
         has_unpublished_changes=application.has_unpublished_changes,
         access_level=application.access_level,
         app_model=application.app_model,
+        runtime_mode=application.runtime_mode,
         role_ids=role_ids,
         repo_path=application.repo_path,
         logo=_logo_data_url(application.logo_data, application.logo_content_type),
@@ -166,14 +183,17 @@ async def get_application_or_404(
         # both keeps embed rendering working under is_external=True (OPEN-D)
         # and stops an embed token browsing other apps' metadata.
         result = await ctx.db.execute(
-            select(Application).where(Application.slug == slug)
+            select(Application).where(
+                Application.slug == slug,
+                visible_solution_child_criterion(
+                    child_solution_id=Application.solution_id,
+                    actor_user_id=ctx.user.user_id,
+                    is_external=ctx.user.is_external,
+                ),
+            )
         )
         app = next(
-            (
-                a
-                for a in result.scalars().all()
-                if ctx.user.app_id == str(a.id)
-            ),
+            (a for a in result.scalars().all() if ctx.user.app_id == str(a.id)),
             None,
         )
         if app is not None:
@@ -230,7 +250,18 @@ async def get_application_by_id_or_404(
         # Embed pre-auth: bound to the token's app_id only (see the slug
         # helper above — OPEN-D).
         if ctx.user.app_id == str(app_id):
-            app = await ctx.db.get(Application, app_id)
+            app = (
+                await ctx.db.execute(
+                    select(Application).where(
+                        Application.id == app_id,
+                        visible_solution_child_criterion(
+                            child_solution_id=Application.solution_id,
+                            actor_user_id=ctx.user.user_id,
+                            is_external=ctx.user.is_external,
+                        ),
+                    )
+                )
+            ).scalar_one_or_none()
             if app is not None:
                 return app
         raise HTTPException(
@@ -369,6 +400,51 @@ async def get_application(
     )
     application = await get_application_or_404(ctx, slug)
     return await application_to_public(application, repo)
+
+
+@router.post(
+    "/{app_id}/isolated-launch",
+    response_model=ApplicationLaunchResponse,
+    summary="Create a one-time launch for an isolated application",
+)
+async def create_isolated_application_launch(
+    app_id: UUID,
+    ctx: Context,
+    launches: ApplicationLaunchService,
+    path: str = Query(default="/"),
+) -> ApplicationLaunchResponse:
+    """Hand an authorized platform user into the app's opaque runtime."""
+
+    application = await get_application_by_id_or_404(ctx, app_id)
+    if application.runtime_mode != "isolated" or application.solution_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This application does not use the isolated runtime",
+        )
+    solution = await ctx.db.get(Solution, application.solution_id)
+    if solution is None or solution.status != "active":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    runtime_org_id = application.organization_id or ctx.org_id
+    if (
+        runtime_org_id is None
+        or solution.organization_id != application.organization_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This application needs a consistent organization runtime scope",
+        )
+
+    launch_path = path if path.startswith("/") else f"/{path}"
+    code = await launches.create_launch_code(
+        user_id=ctx.user.user_id,
+        solution_id=solution.id,
+        app_id=application.id,
+        organization_id=runtime_org_id,
+        path=launch_path,
+    )
+    return ApplicationLaunchResponse(
+        launch_url=f"/api/builder-runtime/launch/{code}",
+    )
 
 
 @router.patch(
@@ -746,18 +822,22 @@ async def validate_application(
         index_path = f"{prefix}pages/index.tsx"
 
         if layout_path not in files:
-            errors.append(AppValidationIssue(
-                severity="error",
-                file="_layout.tsx",
-                message="Missing required _layout.tsx file",
-            ))
+            errors.append(
+                AppValidationIssue(
+                    severity="error",
+                    file="_layout.tsx",
+                    message="Missing required _layout.tsx file",
+                )
+            )
 
         if index_path not in files:
-            warnings.append(AppValidationIssue(
-                severity="warning",
-                file="pages/index.tsx",
-                message="Missing pages/index.tsx (home page)",
-            ))
+            warnings.append(
+                AppValidationIssue(
+                    severity="warning",
+                    file="pages/index.tsx",
+                    message="Missing pages/index.tsx (home page)",
+                )
+            )
 
     # Get declared dependencies and track referenced ones
     declared_deps = app.dependencies or {}
@@ -766,16 +846,20 @@ async def validate_application(
     # Collect all compilable TSX/TS files
     compilable_files = []
     for full_path, content in files.items():
-        rel_path = full_path[len(prefix):]
+        rel_path = full_path[len(prefix) :]
         if rel_path.endswith(".tsx") or rel_path.endswith(".ts"):
-            compilable_files.append({"path": rel_path, "source": content, "full_path": full_path})
+            compilable_files.append(
+                {"path": rel_path, "source": content, "full_path": full_path}
+            )
 
     # Compile all files via the server-side compiler
     if compilable_files:
         from src.services.app_compiler import AppCompilerService
 
         compiler = AppCompilerService()
-        compile_inputs = [{"path": f["path"], "source": f["source"]} for f in compilable_files]
+        compile_inputs = [
+            {"path": f["path"], "source": f["source"]} for f in compilable_files
+        ]
         compile_results = await compiler.compile_batch(compile_inputs)
 
         for comp_file, comp_result in zip(compilable_files, compile_results):
@@ -784,44 +868,52 @@ async def validate_application(
 
             # Report compilation errors
             if not comp_result.success:
-                errors.append(AppValidationIssue(
-                    severity="error",
-                    file=rel_path,
-                    message=f"Compilation failed: {comp_result.error}",
-                ))
+                errors.append(
+                    AppValidationIssue(
+                        severity="error",
+                        file=rel_path,
+                        message=f"Compilation failed: {comp_result.error}",
+                    )
+                )
 
             # Check for missing default export in pages and components
             if comp_result.success and comp_result.default_export is None:
                 if rel_path.startswith("pages/") or rel_path.startswith("components/"):
-                    errors.append(AppValidationIssue(
-                        severity="error",
-                        file=rel_path,
-                        message="Missing default export. Pages and components must have a default export (e.g., export default function MyComponent() { ... })",
-                    ))
+                    errors.append(
+                        AppValidationIssue(
+                            severity="error",
+                            file=rel_path,
+                            message="Missing default export. Pages and components must have a default export (e.g., export default function MyComponent() { ... })",
+                        )
+                    )
 
             # Check _layout.tsx uses <Outlet /> not {children} (v1-only convention)
             if not is_v2 and rel_path == "_layout.tsx":
                 if "{children}" in content and "Outlet" not in content:
-                    errors.append(AppValidationIssue(
-                        severity="error",
-                        file=rel_path,
-                        message="Layout uses {children} but should use <Outlet /> for page routing. Replace {children} with <Outlet />.",
-                    ))
+                    errors.append(
+                        AppValidationIssue(
+                            severity="error",
+                            file=rel_path,
+                            message="Layout uses {children} but should use <Outlet /> for page routing. Replace {children} with <Outlet />.",
+                        )
+                    )
 
             # Check for forbidden patterns
             forbidden = [
-                (r'\brequire\s*\(', "require() is not allowed"),
-                (r'\bmodule\.exports\b', "module.exports is not allowed"),
+                (r"\brequire\s*\(", "require() is not allowed"),
+                (r"\bmodule\.exports\b", "module.exports is not allowed"),
             ]
             for pattern, msg in forbidden:
                 for i, line in enumerate(content.split("\n"), 1):
                     if re.search(pattern, line) and not line.strip().startswith("//"):
-                        errors.append(AppValidationIssue(
-                            severity="error",
-                            file=rel_path,
-                            message=msg,
-                            line=i,
-                        ))
+                        errors.append(
+                            AppValidationIssue(
+                                severity="error",
+                                file=rel_path,
+                                message=msg,
+                                line=i,
+                            )
+                        )
 
             referenced_deps |= extract_external_deps(content)
 
@@ -836,11 +928,13 @@ async def validate_application(
                 try:
                     wf_uuid = UUID(wf_ref)
                 except ValueError:
-                    errors.append(AppValidationIssue(
-                        severity="error",
-                        file=rel_path,
-                        message=f"Workflow reference '{wf_ref}' is not a valid UUID. Use workflow IDs, not names.",
-                    ))
+                    errors.append(
+                        AppValidationIssue(
+                            severity="error",
+                            file=rel_path,
+                            message=f"Workflow reference '{wf_ref}' is not a valid UUID. Use workflow IDs, not names.",
+                        )
+                    )
                     continue
 
                 # Check workflow exists
@@ -851,11 +945,13 @@ async def validate_application(
                     )
                 )
                 if not wf_result.scalar_one_or_none():
-                    errors.append(AppValidationIssue(
-                        severity="error",
-                        file=rel_path,
-                        message=f"Workflow '{wf_ref}' not found or inactive",
-                    ))
+                    errors.append(
+                        AppValidationIssue(
+                            severity="error",
+                            file=rel_path,
+                            message=f"Workflow '{wf_ref}' not found or inactive",
+                        )
+                    )
 
     # Check for missing/unused dependencies. Host-provided modules
     # (DEFAULT_EXTERNALS — react, lucide-react, sonner, etc.) are
@@ -867,18 +963,22 @@ async def validate_application(
     user_referenced = referenced_deps - host_provided
     for dep in user_referenced:
         if dep not in declared_deps:
-            errors.append(AppValidationIssue(
-                severity="error",
-                file="dependencies",
-                message=f"Missing dependency: '{dep}' is imported but not declared in app dependencies",
-            ))
+            errors.append(
+                AppValidationIssue(
+                    severity="error",
+                    file="dependencies",
+                    message=f"Missing dependency: '{dep}' is imported but not declared in app dependencies",
+                )
+            )
     for dep in declared_deps:
         if dep not in user_referenced:
-            warnings.append(AppValidationIssue(
-                severity="warning",
-                file="dependencies",
-                message=f"Unused dependency: '{dep}' is declared but not imported by any file",
-            ))
+            warnings.append(
+                AppValidationIssue(
+                    severity="warning",
+                    file="dependencies",
+                    message=f"Unused dependency: '{dep}' is declared but not imported by any file",
+                )
+            )
 
     return AppValidationResponse(
         valid=len(errors) == 0,
@@ -901,7 +1001,9 @@ async def export_application(
     app_id: UUID,
     ctx: Context,
     user: CurrentUser,
-    version_id: UUID | None = Query(default=None, description="Version UUID to export (defaults to draft)"),
+    version_id: UUID | None = Query(
+        default=None, description="Version UUID to export (defaults to draft)"
+    ),
 ) -> ApplicationPublic:
     """
     Export full application to JSON for GitHub sync/portability.
@@ -959,7 +1061,9 @@ async def rollback_application(
         await repo.rollback_to_version(application, data.version_id)
         await ctx.db.flush()
         await ctx.db.refresh(application)
-        logger.info(f"Rolled back application {log_safe(app_id)} to version {log_safe(data.version_id)}")
+        logger.info(
+            f"Rolled back application {log_safe(app_id)} to version {log_safe(data.version_id)}"
+        )
         return await application_to_public(application, repo)
     except ValueError as e:
         raise HTTPException(
@@ -1036,7 +1140,16 @@ async def get_application_logo(
     # whom the role-scoped metadata lookup 404s. Only the logo bytes + type are
     # returned, nothing else about the app.
     application = (
-        await ctx.db.execute(select(Application).where(Application.id == app_id))
+        await ctx.db.execute(
+            select(Application).where(
+                Application.id == app_id,
+                visible_solution_child_criterion(
+                    child_solution_id=Application.solution_id,
+                    actor_user_id=ctx.user.user_id,
+                    is_external=ctx.user.is_external,
+                ),
+            )
+        )
     ).scalar_one_or_none()
     if application is None or not application.logo_data:
         raise HTTPException(

@@ -57,6 +57,10 @@ CSRF_EXEMPT_PREFIXES = (
     "/api/hooks/",  # Webhook receiver - called by external services, no auth
     "/api/endpoints/",  # API key auth - called with X-Bifrost-Key header
     "/embed/",  # Embed entry points - HMAC-verified, no cookie auth
+    # The opaque app runtime uses its own path-scoped HttpOnly session cookie
+    # and an Origin:null-only CORS boundary. The platform access cookie can be
+    # attached by the browser but is neither read nor accepted by this sub-app.
+    "/api/builder-runtime/",
 )
 
 

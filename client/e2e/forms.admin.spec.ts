@@ -50,13 +50,11 @@ test.describe("Form Listing", () => {
 			"table tbody tr, [data-testid='form-card'], [data-testid='form-row']",
 		);
 
-		const hasforms = await formContent.count().catch(() => 0);
-		const hasEmptyState = await page
-			.getByText(/no forms|create your first/i)
-			.isVisible()
-			.catch(() => false);
-
-		expect(hasforms > 0 || hasEmptyState).toBe(true);
+		await expect(
+			formContent
+				.first()
+				.or(page.getByText(/no forms|create your first/i).first()),
+		).toBeVisible();
 	});
 });
 
@@ -161,14 +159,10 @@ test.describe("Form Editing", () => {
 			.or(page.locator("[data-testid='edit-form']"))
 			.first();
 
-		// Either we have edit buttons or no forms
-		const hasButton = await editButton.isVisible().catch(() => false);
-		const hasEmptyState = await page
-			.getByText(/no forms/i)
-			.isVisible()
-			.catch(() => false);
-
-		expect(hasButton || hasEmptyState).toBe(true);
+		// Either we have edit buttons or no forms, once the query settles.
+		await expect(
+			editButton.or(page.getByText(/no forms/i).first()),
+		).toBeVisible();
 	});
 });
 

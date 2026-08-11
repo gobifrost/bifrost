@@ -36,10 +36,7 @@ def _reset_redis_singleton():
 
 @pytest.fixture(autouse=True)
 def _stub_app_build(monkeypatch):
-    """No real vite — compile to a stub dist (sync) + capture uploads.
-
-    The deployer compiles dists pre-commit (compile_dist, sync) and uploads them
-    post-commit (upload_dist), so both seams are stubbed."""
+    """Capture prebuilt-dist uploads without invoking external tooling."""
     from src.services.solutions import app_build
 
     uploaded: dict[str, dict] = {}
@@ -353,31 +350,39 @@ class TestAppSlugRouteCollision:
 
     async def test_binary_assets_reach_the_builder_decoded(self, db_session, monkeypatch):
         """bin_files (base64) in the bundle are decoded to bytes and merged into
-        the builder's src_files, so a v2 app's PNG/fonts actually build (P2-j/R4)."""
+        the build request's src_files, so a v2 app's PNG/fonts actually build."""
         import base64
-
-        from src.services.solutions import app_build
+        from types import SimpleNamespace
 
         captured: dict = {}
+        build_job_id = uuid.uuid4()
 
-        def _capture_compile(self, app_id, src_files, dependencies, prebuilt_dist=None):
+        async def _capture_request(*, src_files, **kwargs):
             captured["src_files"] = src_files
-            return {"index.html": b"<html></html>"}
+            return SimpleNamespace(id=build_job_id)
 
-        async def _noop_upload(self, app_id, dist):
-            return None
+        async def _complete_builds(jobs):
+            assert [job.id for job in jobs] == [build_job_id]
+            return [
+                SimpleNamespace(
+                    id=build_job_id,
+                    output_manifest=[{"path": "index.html", "sha256": "0" * 64, "size": 0}],
+                )
+            ]
 
-        async def _noop_delete(self, app_id):
-            return None
-
-        monkeypatch.setattr(app_build.SolutionAppBuilder, "compile_dist", _capture_compile)
-        monkeypatch.setattr(app_build.SolutionAppBuilder, "upload_dist", _noop_upload, raising=False)
-        monkeypatch.setattr(app_build.SolutionAppBuilder, "delete_dist", _noop_delete, raising=False)
+        monkeypatch.setattr(
+            "src.services.builder.build_requests.request_app_build",
+            _capture_request,
+        )
+        monkeypatch.setattr(
+            "src.services.builder.build_requests.await_build_jobs",
+            _complete_builds,
+        )
 
         db = db_session
         sol = await self._install(db)
         png = b"\x89PNG\x00data"
-        result = await SolutionDeployer(db).deploy(SolutionBundle(
+        await SolutionDeployer(db).deploy(SolutionBundle(
             solution=sol,
             apps=[{
                 "id": str(uuid.uuid4()), "slug": f"dash-{uuid.uuid4().hex[:6]}",
@@ -388,8 +393,7 @@ class TestAppSlugRouteCollision:
             }],
         ))
         await db.flush()
-        await result.finalize_s3()
-        # The decoded PNG bytes reached the builder (at compile time, pre-commit).
+        # The decoded bytes reached the durable build-plane request.
         assert captured["src_files"]["logo.png"] == png
         assert captured["src_files"]["src/main.tsx"] == b"import './logo.png'"
 
@@ -530,21 +534,40 @@ class TestDeployTransactionalS3:
         assert wrote_python["n"] == 0, "python source was written despite a failed deploy"
 
     async def test_build_failure_rolls_back_and_uploads_nothing(self, db_session, monkeypatch):
-        """A vite/npm BUILD error must raise from deploy() (pre-commit), so the
-        caller never commits and uploads nothing — DB never ends up ahead of S3
-        (Codex R4 atomicity). The compile runs before commit; if it throws, the
-        deploy is abandoned with no upload and no DeployResult to finalize."""
+        """A build-plane failure raises before deploy writes or uploads output."""
+        from types import SimpleNamespace
+
+        from src.services.builder.build_requests import BuildFailed
         from src.services.solutions import app_build
 
         uploaded = {"n": 0}
+        build_job_id = uuid.uuid4()
 
-        def _compile_boom(self, *a, **k):
-            raise RuntimeError("vite build failed: missing import './nope.png'")
+        async def _request_build(**kwargs):
+            return SimpleNamespace(id=build_job_id)
+
+        async def _fail_builds(jobs):
+            assert [job.id for job in jobs] == [build_job_id]
+            raise BuildFailed(
+                SimpleNamespace(
+                    id=build_job_id,
+                    status="failed",
+                    log_excerpt="missing import './nope.png'",
+                    error="vite build failed: missing import './nope.png'",
+                )
+            )
 
         async def _count_upload(self, *a, **k):
             uploaded["n"] += 1
 
-        monkeypatch.setattr(app_build.SolutionAppBuilder, "compile_dist", _compile_boom)
+        monkeypatch.setattr(
+            "src.services.builder.build_requests.request_app_build",
+            _request_build,
+        )
+        monkeypatch.setattr(
+            "src.services.builder.build_requests.await_build_jobs",
+            _fail_builds,
+        )
         monkeypatch.setattr(app_build.SolutionAppBuilder, "upload_dist", _count_upload, raising=False)
 
         db = db_session
@@ -553,7 +576,7 @@ class TestDeployTransactionalS3:
         await db.flush()
         app_id = str(uuid.uuid4())
 
-        with pytest.raises(RuntimeError, match="vite build failed"):
+        with pytest.raises(BuildFailed, match="vite build failed"):
             await SolutionDeployer(db).deploy(SolutionBundle(
                 solution=sol,
                 apps=[{

@@ -27,7 +27,7 @@ import {
 	PopoverContent,
 	PopoverTrigger,
 } from "@/components/ui/popover";
-import { useRoles } from "@/hooks/useRoles";
+import { useResourceRoles } from "@/hooks/useRoles";
 
 export interface RolesMultiSelectProps {
 	/** Currently selected role ids. */
@@ -49,7 +49,7 @@ export function RolesMultiSelect({
 	contentClassName,
 }: RolesMultiSelectProps) {
 	const [open, setOpen] = useState(false);
-	const { data: roles, isLoading } = useRoles();
+	const { data: roles, isLoading } = useResourceRoles();
 
 	const selectedSet = useMemo(() => new Set(value), [value]);
 

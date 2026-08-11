@@ -34,4 +34,14 @@ describe("buildWsUrl", () => {
     });
     expect(buildWsUrl()).toBe("ws://localhost:8000/ws/connect?token=t2");
   });
+
+  it("keeps an isolated runtime websocket under its public mount path", () => {
+    restore = setBifrostTransport({
+      baseUrl: "https://bifrost.example/api/builder-runtime/_bifrost",
+      token: "actor-token",
+    });
+    expect(buildWsUrl()).toBe(
+      "wss://bifrost.example/api/builder-runtime/ws/connect?token=actor-token",
+    );
+  });
 });

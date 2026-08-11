@@ -38,6 +38,17 @@ vi.mock("./MentionPicker", () => ({
 import { ChatInput } from "./ChatInput";
 
 describe("ChatInput — send behavior", () => {
+	it("uses a provider-neutral accuracy notice", () => {
+		renderWithProviders(<ChatInput onSend={vi.fn()} />);
+
+		expect(
+			screen.getByText(
+				"AI-generated responses can be inaccurate. Review important changes.",
+			),
+		).toBeInTheDocument();
+		expect(screen.queryByText(/Claude is AI/i)).not.toBeInTheDocument();
+	});
+
 	it("Send button is disabled when the textarea is empty", () => {
 		renderWithProviders(<ChatInput onSend={vi.fn()} />);
 		// Enabled send button is the only non-Coming-soon non-disabled button.

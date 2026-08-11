@@ -10,31 +10,24 @@ from src.jobs.platform.solution_deploy import (
     run_solution_deploy,
 )
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
-from src.models.orm.solutions import Solution
 
 
 @pytest.mark.asyncio
-async def test_failed_repo_install_cleanup_commits_before_job_failure(monkeypatch):
+async def test_failed_projection_commits_before_platform_job_failure(monkeypatch):
     deploy_job_id = uuid4()
     install_id = uuid4()
+    lease_token = uuid4()
     projection = SolutionDeployJob(
         id=deploy_job_id,
         install_id=install_id,
         status="failed",
         error="manifest invalid",
     )
-    orphan = Solution(id=install_id, slug="failed-install", name="Failed install")
 
     class FakeDB:
-        def __init__(self) -> None:
-            self.flush = AsyncMock()
-            self.delete = AsyncMock()
-
         async def get(self, model, row_id):  # noqa: ANN001, ANN201
             if model is SolutionDeployJob and row_id == deploy_job_id:
                 return projection
-            if model is Solution and row_id == install_id:
-                return orphan
             return None
 
     db = FakeDB()
@@ -46,19 +39,16 @@ async def test_failed_repo_install_cleanup_commits_before_job_failure(monkeypatc
         yield db
         transaction_committed = True
 
-    context = AsyncMock()
+    execute = AsyncMock()
     monkeypatch.setattr(
-        "src.jobs.platform.solution_deploy.SolutionDeployJobStorage.copy_to_path",
-        AsyncMock(return_value=1),
-    )
-    monkeypatch.setattr(
-        "src.jobs.platform.solution_deploy.SolutionDeployJobStorage.delete",
-        AsyncMock(),
+        "src.services.solutions.deploy_jobs.execute_deploy_job",
+        execute,
     )
     monkeypatch.setattr(
         "src.jobs.platform.solution_deploy.get_db_context", fake_db_context
     )
-    monkeypatch.setattr("src.routers.solutions._run_deploy_job", AsyncMock())
+    context = AsyncMock()
+    context.lease_token = lease_token
 
     with pytest.raises(PlatformJobFailure, match="manifest invalid"):
         await run_solution_deploy(
@@ -73,6 +63,4 @@ async def test_failed_repo_install_cleanup_commits_before_job_failure(monkeypatc
         )
 
     assert transaction_committed is True
-    assert projection.install_id is None
-    db.flush.assert_awaited_once()
-    db.delete.assert_awaited_once_with(orphan)
+    execute.assert_awaited_once_with(deploy_job_id, lease_token)

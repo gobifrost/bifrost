@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Literal, cast
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
@@ -245,8 +245,13 @@ async def get_messages(
     conversation_id: UUID,
     db: DbSession,
     user: CurrentActiveUser,
-    limit: int = 100,
-    before_sequence: int | None = None,
+    limit: int = Query(default=100, ge=1, le=200),
+    before_sequence: int | None = Query(
+        default=None,
+        ge=1,
+        le=2_147_483_647,
+        description="Return messages older than this PostgreSQL INTEGER sequence",
+    ),
 ) -> list[MessagePublic]:
     """Get messages in a conversation."""
     # Verify conversation belongs to user
@@ -272,10 +277,14 @@ async def get_messages(
     if before_sequence is not None:
         stmt = stmt.where(Message.sequence < before_sequence)
 
-    stmt = stmt.order_by(Message.sequence.asc()).limit(limit)
+    # Fetch the newest page, then return that page in chronological order.
+    # ``before_sequence`` is an older-history cursor used by the transcript UI.
+    # The previous ascending LIMIT returned the oldest 100 messages forever,
+    # making a resumed long conversation appear to have lost its recent work.
+    stmt = stmt.order_by(Message.sequence.desc()).limit(limit)
 
     result = await db.execute(stmt)
-    messages = result.scalars().all()
+    messages = list(reversed(result.scalars().all()))
 
     return [
         MessagePublic(

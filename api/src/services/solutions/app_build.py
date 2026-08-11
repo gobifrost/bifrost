@@ -14,7 +14,6 @@ This is the ONE canonical build path: git-connected installs always build here
 
 from __future__ import annotations
 
-import json
 import logging
 import subprocess
 import tempfile
@@ -77,7 +76,7 @@ class SolutionAppBuilder:
             return prebuilt_dist
         with tempfile.TemporaryDirectory(prefix=f"bifrost-appbuild-{app_id}-") as tmp:
             workdir = Path(tmp)
-            self._materialize(workdir, src_files, dependencies)
+            self._materialize(workdir, app_id, src_files, dependencies)
             try:
                 # base must match the serving route so emitted asset URLs resolve
                 # under /api/applications/{id}/dist/ rather than the site root.
@@ -123,37 +122,20 @@ class SolutionAppBuilder:
     _SDK_TARBALL = "bifrost-sdk.tgz"
 
     def _materialize(
-        self, workdir: Path, src_files: dict[str, bytes], dependencies: dict[str, str]
+        self,
+        workdir: Path,
+        app_id: UUID | str,
+        src_files: dict[str, bytes],
+        dependencies: dict[str, str],
     ) -> None:
         """Lay out the app sources + a package.json carrying its npm deps, and
         vendor the local ``bifrost`` SDK tarball so ``import from "bifrost"``
-        resolves during the build."""
-        from shared.version import get_version
-        from src.services.sdk_package import build_sdk_tarball
+        resolves during the build. Thin call into
+        ``build_input.materialize_build_input`` — see that module for the
+        actual layout/sanitization logic."""
+        from src.services.builder.build_input import materialize_build_input
 
-        for rel, content in src_files.items():
-            dest = workdir / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(content)
-
-        # Drop the instance's bifrost SDK tarball next to the app.
-        (workdir / self._SDK_TARBALL).write_bytes(build_sdk_tarball(get_version()))
-
-        # Build package.json: app deps + a file: ref to the SDK tarball. If the
-        # app already shipped a package.json (its own deps/scripts), merge the
-        # SDK ref into its dependencies rather than clobbering it.
-        deps = {**(dependencies or {}), "bifrost": f"file:./{self._SDK_TARBALL}"}
-        pkg = workdir / "package.json"
-        if pkg.exists():
-            existing = json.loads(pkg.read_text())
-            existing.setdefault("dependencies", {})
-            existing["dependencies"] = {**existing["dependencies"], **deps}
-            pkg.write_text(json.dumps(existing, indent=2))
-        else:
-            pkg.write_text(json.dumps(
-                {"name": "bifrost-app", "private": True, "dependencies": deps},
-                indent=2,
-            ))
+        materialize_build_input(workdir, app_id, src_files, dependencies or {})
 
     def _run_vite_build(self, workdir: Path, base: str = "/") -> dict[str, bytes]:
         """Install declared deps, run ``vite build`` in ``workdir``, and return

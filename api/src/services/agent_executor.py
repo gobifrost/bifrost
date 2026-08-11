@@ -118,10 +118,16 @@ class AgentExecutor:
     5. Final response
     """
 
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]):
+    def __init__(
+        self,
+        session_factory: async_sessionmaker[AsyncSession],
+        *,
+        builder_workspace: Any | None = None,
+    ):
         self._session_factory = session_factory
         self._tool_workflow_id_map: dict[str, UUID] = {}  # normalized tool name → workflow UUID
         self._knowledge_search_budget = KnowledgeSearchBudget()
+        self._builder_workspace = builder_workspace
 
     @asynccontextmanager
     async def _db(self):
@@ -1308,7 +1314,9 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
             )
 
         # Check if this is a system tool call
-        if agent and tool_call.name in (agent.system_tools or []):
+        from src.services.execution.agent_helpers import is_agent_system_tool
+
+        if agent and is_agent_system_tool(agent, tool_call.name):
             return await self._execute_system_tool(tool_call, agent, conversation)
 
         # External MCP tools — namespaced ``mcp__<connection_id>__<tool>``.
@@ -1820,6 +1828,13 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                 is_platform_admin=user.is_superuser if user else False,
                 user_email=user.email if user else "",
                 user_name=user.name if user else "",
+                agent_bundle_path=agent.bundle_path,
+                agent_skill_id=agent.id,
+                agent_skill_in_repo=(
+                    agent.solution_id is None and agent.created_by == "file_sync"
+                ),
+                agent_solution_id=agent.solution_id,
+                builder_workspace=self._builder_workspace,
                 session=None,
             )
 

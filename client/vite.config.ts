@@ -230,6 +230,12 @@ export default defineConfig({
 		host: "0.0.0.0",
 		port: 3000,
 		strictPort: true, // Fail if port is already in use
+		// The mounted isolated-app runtime handles its own narrow `Origin: null`
+		// CORS policy. Vite's general dev CORS middleware otherwise answers the
+		// opaque iframe's OPTIONS request before the /api proxy reaches FastAPI.
+		// Control-plane requests are same-origin, so Vite does not need to add a
+		// second CORS policy in development.
+		cors: false,
 		// Allow all hosts in development (ngrok, tunnels, etc.)
 		allowedHosts: true,
 		hmr: {

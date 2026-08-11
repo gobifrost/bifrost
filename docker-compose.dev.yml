@@ -55,6 +55,8 @@ services:
       - ./api/src:/app/src:ro
       - /app/src/services/app_compiler/node_modules  # preserve npm deps from image
       - /app/src/services/app_bundler/node_modules  # preserve npm deps from image
+      - /app/src/services/cloudflare_runner/node_modules
+      - /app/src/services/cloudflare_runner/dist
       - ./api/shared:/app/shared:ro
       - ./api/scripts:/app/scripts:ro
       - ./api/alembic:/app/alembic:ro
@@ -85,6 +87,8 @@ services:
       - ./api/src:/app/src:ro
       - /app/src/services/app_compiler/node_modules  # preserve npm deps from image
       - /app/src/services/app_bundler/node_modules  # preserve npm deps from image
+      - /app/src/services/cloudflare_runner/node_modules
+      - /app/src/services/cloudflare_runner/dist
       - ./api/shared:/app/shared:ro
       - ./api/bifrost:/app/bifrost:ro
       - ./api/alembic:/app/alembic:ro
@@ -116,6 +120,8 @@ services:
       - ./api/src:/app/src:ro
       - /app/src/services/app_compiler/node_modules  # preserve npm deps from image
       - /app/src/services/app_bundler/node_modules  # preserve npm deps from image
+      - /app/src/services/cloudflare_runner/node_modules
+      - /app/src/services/cloudflare_runner/dist
       - ./api/shared:/app/shared:ro
       - ./api/bifrost:/app/bifrost:ro
     command: >
@@ -143,6 +149,8 @@ services:
       - ./api/src:/app/src:ro
       - /app/src/services/app_compiler/node_modules  # preserve npm deps from image
       - /app/src/services/app_bundler/node_modules  # preserve npm deps from image
+      - /app/src/services/cloudflare_runner/node_modules
+      - /app/src/services/cloudflare_runner/dist
       - ./api/shared:/app/shared:ro
       - ./api/bifrost:/app/bifrost:ro
     command: >

@@ -20,7 +20,11 @@ Bifrost exposes live agent capability packages. For each task:
    references or arguments.
 4. Call bifrost_execute_tool with the agent id, tool reference, and arguments.
 If validation fails, correct the arguments using the returned live schema.
-Do not call a tool that was not returned for the selected agent."""
+Do not call a tool that was not returned for the selected agent.
+For a private Solution Builder task, use the Builder session id supplied by the
+user or Builder UI and pass builder_session_id to every gateway call. The
+session selects the private Builder Agent and authorizes its current Skill and
+workspace without creating a separate MCP tool family."""
 
 
 def _rest_error(action: str, status_code: int, body: Any) -> ToolResult:
@@ -35,13 +39,19 @@ async def bifrost_find_agents(
     context: Any,
     query: str | None = None,
     limit: int = 10,
+    builder_session_id: str | None = None,
 ) -> ToolResult:
     """Find live Bifrost agents relevant to a task."""
+    params: dict[str, Any] = {"limit": limit}
+    if query is not None:
+        params["query"] = query
+    if builder_session_id is not None:
+        params["builder_session_id"] = builder_session_id
     status_code, data = await call_rest(
         context,
         "GET",
         "/api/mcp/gateway/agents",
-        params={"query": query, "limit": limit},
+        params=params,
     )
     if status_code != 200 or not isinstance(data, dict):
         return _rest_error("Agent search", status_code, data)
@@ -51,12 +61,22 @@ async def bifrost_find_agents(
     )
 
 
-async def bifrost_get_agent(context: Any, agent_id: str) -> ToolResult:
-    """Get one accessible agent's live instructions and compact tool catalog."""
+async def bifrost_get_agent(
+    context: Any,
+    agent_id: str,
+    builder_session_id: str | None = None,
+) -> ToolResult:
+    """Get live instructions, Skill metadata, and a compact tool catalog."""
+    params = (
+        {"builder_session_id": builder_session_id}
+        if builder_session_id is not None
+        else None
+    )
     status_code, data = await call_rest(
         context,
         "GET",
         f"/api/mcp/gateway/agents/{agent_id}",
+        params=params,
     )
     if status_code != 200 or not isinstance(data, dict):
         return _rest_error("Agent lookup", status_code, data)
@@ -67,12 +87,19 @@ async def bifrost_get_tool_schema(
     context: Any,
     agent_id: str,
     tool_ref: str,
+    builder_session_id: str | None = None,
 ) -> ToolResult:
     """Get the exact live input schema for one tool returned by get-agent."""
+    params = (
+        {"builder_session_id": builder_session_id}
+        if builder_session_id is not None
+        else None
+    )
     status_code, data = await call_rest(
         context,
         "GET",
         f"/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}",
+        params=params,
     )
     if status_code != 200 or not isinstance(data, dict):
         return _rest_error("Tool schema lookup", status_code, data)
@@ -84,13 +111,17 @@ async def bifrost_execute_tool(
     agent_id: str,
     tool_ref: str,
     arguments: dict[str, Any],
+    builder_session_id: str | None = None,
 ) -> ToolResult:
     """Validate and execute one live tool through its selected agent."""
     status_code, data = await call_rest(
         context,
         "POST",
         f"/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute",
-        json_body={"arguments": arguments},
+        json_body={
+            "arguments": arguments,
+            "builder_session_id": builder_session_id,
+        },
     )
     if status_code != 200 or not isinstance(data, dict):
         return _rest_error("Tool execution", status_code, data)
@@ -110,8 +141,9 @@ TOOLS = [
     (
         "bifrost_get_agent",
         "Get Bifrost Agent",
-        "Load one accessible agent's current instructions and compact tool catalog. "
-        "Tool schemas are intentionally omitted; inspect the selected tool next.",
+        "Load one accessible agent's current instructions, portable Skill metadata, "
+        "and compact tool catalog. Tool schemas are intentionally omitted; inspect "
+        "the selected tool next.",
     ),
     (
         "bifrost_get_tool_schema",

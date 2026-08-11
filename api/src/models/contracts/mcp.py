@@ -5,7 +5,7 @@ Pydantic models for MCP configuration API requests and responses.
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -90,10 +90,22 @@ class MCPGatewayFindAgentsResponse(BaseModel):
     has_more: bool
 
 
+class MCPGatewayAgentSkill(BaseModel):
+    """Portable Agent Skill bundle exposed through progressive discovery."""
+
+    bundle_path: str
+    files: list[str]
+    automatic_capabilities: list[str] = Field(
+        default_factory=lambda: ["read_skill_asset"]
+    )
+
+
 class MCPGatewayAgentDetail(MCPGatewayAgentSummary):
     """Live task instructions for a selected agent."""
 
     instructions: str | None = None
+    instruction_source: Literal["inline", "skill"] = "inline"
+    skill: MCPGatewayAgentSkill | None = None
 
 
 class MCPGatewayToolSummary(BaseModel):
@@ -128,6 +140,13 @@ class MCPGatewayExecuteRequest(BaseModel):
     """Arguments passed to an agent-bound tool."""
 
     arguments: dict[str, Any] = Field(default_factory=dict)
+    builder_session_id: str | None = Field(
+        default=None,
+        description=(
+            "Private Solution Builder session id. Required only when executing "
+            "the Builder agent's workspace tools through the progressive MCP gateway."
+        ),
+    )
 
 
 class MCPGatewayExecuteResponse(BaseModel):

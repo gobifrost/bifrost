@@ -52,9 +52,7 @@ REPOSITORIES_DIR = API_ROOT / "repositories"
 # string literals are NOT excluded by the regex — we lean on the allow-list
 # to handle those. (A python-ast-aware approach would be cleaner but the
 # allow-list approach keeps the test cheap and the violation set visible.)
-_INLINE_ORG_RE = re.compile(
-    r"\b\w+\.organization_id\s*(?:==|\.is_\s*\(|\.in_\s*\()"
-)
+_INLINE_ORG_RE = re.compile(r"\b\w+\.organization_id\s*(?:==|\.is_\s*\(|\.in_\s*\()")
 
 # Lines that are exempt from the no-inline rule. Keyed by content, not
 # line number — line numbers are too fragile under any refactor that
@@ -65,80 +63,349 @@ _INLINE_ORG_RE = re.compile(
 # be rare and obvious in code review. Removing an entry signals migration
 # progress.
 ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
-    ('routers/agents.py', 'MCPConnection.organization_id == agent_data.organization_id,', 'agents MCPConnection lookup; phase 6 migrates via MCPConnectionRepository'),
+    (
+        "routers/agents.py",
+        "MCPConnection.organization_id == agent_data.organization_id,",
+        "agents MCPConnection lookup; phase 6 migrates via MCPConnectionRepository",
+    ),
+    (
+        "routers/solution_app_websocket.py",
+        "Table.organization_id == principal.organization_id,",
+        "app-token exact org binding; identity seal, not cascade",
+    ),
+    (
+        "routers/solution_app_websocket.py",
+        "Table.organization_id.is_(None),",
+        "global Solution table bound by exact signed solution id",
+    ),
+    (
+        "routers/solution_app_websocket.py",
+        "Execution.organization_id == principal.organization_id,",
+        "app-token exact org binding; identity seal, not cascade",
+    ),
+    (
+        "routers/solution_app_websocket.py",
+        "Workflow.organization_id == principal.organization_id,",
+        "app-token exact org binding; identity seal, not cascade",
+    ),
+    (
+        "routers/solution_app_websocket.py",
+        "Workflow.organization_id.is_(None),",
+        "global Solution workflow bound by exact signed solution id",
+    ),
     # ApplicationRepository entries removed in phase 6 — repository relocated
     # from routers/applications.py to repositories/applications.py.
-    ('routers/claims.py', 'Table.organization_id == org_id,', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
-    ('routers/claims.py', 'ClaimORM.organization_id == org_id,', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
-    ('routers/claims.py', 'Table.organization_id == org_id, Table.access.is_not(None)', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
-    ('routers/claims.py', 'stmt = stmt.where(ClaimORM.organization_id == filter_org)', 'claims inline lookups; phase 6 migrates via CustomClaimRepository'),
-    ('routers/tables.py', 'stmt = select(CustomClaimORM.name).where(CustomClaimORM.organization_id == organization_id)', 'tables custom claim cross-ref; phase 6 migrates'),
-    ('routers/cli.py', 'ConfigModel.organization_id == org_uuid,', 'cli config inline; phase 5 migrates'),
-    ('routers/cli.py', 'Table.organization_id == org_uuid,', 'cli_create_table exact-scope uniqueness check (NOT cascade)'),
+    (
+        "routers/claims.py",
+        "Table.organization_id == org_id,",
+        "claims inline lookups; phase 6 migrates via CustomClaimRepository",
+    ),
+    (
+        "routers/claims.py",
+        "ClaimORM.organization_id == org_id,",
+        "claims inline lookups; phase 6 migrates via CustomClaimRepository",
+    ),
+    (
+        "routers/claims.py",
+        "Table.organization_id == org_id, Table.access.is_not(None)",
+        "claims inline lookups; phase 6 migrates via CustomClaimRepository",
+    ),
+    (
+        "routers/claims.py",
+        "stmt = stmt.where(ClaimORM.organization_id == filter_org)",
+        "claims inline lookups; phase 6 migrates via CustomClaimRepository",
+    ),
+    (
+        "routers/tables.py",
+        "stmt = select(CustomClaimORM.name).where(CustomClaimORM.organization_id == organization_id)",
+        "tables custom claim cross-ref; phase 6 migrates",
+    ),
+    (
+        "routers/cli.py",
+        "ConfigModel.organization_id == org_uuid,",
+        "cli config inline; phase 5 migrates",
+    ),
+    (
+        "routers/cli.py",
+        "Table.organization_id == org_uuid,",
+        "cli_create_table exact-scope uniqueness check (NOT cascade)",
+    ),
     # cli_list_tables migrated to TableRepository.list() in phase 6.
-    ('routers/executions.py', 'query = query.where(ExecutionModel.organization_id == org_id)', 'Execution identity-entity filter (permanent)'),
-    ('routers/export_import.py', 'Config.organization_id == mapping.organization_id', 'manifest sync inline; phase 8 follow-up'),
-    ('routers/export_import.py', 'else Config.organization_id.is_(None),', 'manifest sync inline; phase 8 follow-up'),
-    ('routers/export_import.py', 'Config.organization_id.is_(None),', 'manifest sync inline; phase 8 follow-up'),
-    ('routers/export_import.py', 'existing_query = existing_query.where(KnowledgeStore.organization_id == org_id)', 'manifest sync inline; phase 8 follow-up'),
-    ('routers/export_import.py', 'existing_query = existing_query.where(KnowledgeStore.organization_id.is_(None))', 'manifest sync inline; phase 8 follow-up'),
-    ('routers/export_import.py', 'existing_query = existing_query.where(Table.organization_id == org_id)', 'manifest sync inline; phase 8 follow-up'),
-    ('routers/export_import.py', 'existing_query = existing_query.where(Table.organization_id.is_(None))', 'manifest sync inline; phase 8 follow-up'),
-    ('routers/export_import.py', 'existing_query = existing_query.where(Config.organization_id == org_id)', 'manifest sync inline; phase 8 follow-up'),
-    ('routers/export_import.py', 'existing_query = existing_query.where(Config.organization_id.is_(None))', 'manifest sync inline; phase 8 follow-up'),
-    ('routers/export_import.py', 'mapping_query = mapping_query.where(IntegrationMapping.organization_id == org_id)', 'manifest sync inline; phase 8 follow-up'),
-    ('routers/export_import.py', 'mapping_query = mapping_query.where(IntegrationMapping.organization_id.is_(None))', 'manifest sync inline; phase 8 follow-up'),
-    ('routers/integrations.py', 'IntegrationMapping.organization_id == org_id,', 'integration mapping inline; phase 6 migrates'),
-    ('routers/integrations.py', 'ConfigModel.organization_id.is_(None),', 'integration config inline; phase 5 migrates'),
-    ('routers/integrations.py', 'ConfigModel.organization_id == organization_id,', 'integration config inline; phase 5 migrates'),
-    ('routers/integrations.py', 'ConfigModel.organization_id == org_id,', 'integration config inline; phase 5 migrates'),
-    ('routers/knowledge_sources.py', 'KnowledgeNamespaceRole.organization_id == org_id,', 'knowledge sources inline cascade; phase 6 migrates'),
+    (
+        "routers/executions.py",
+        "query = query.where(ExecutionModel.organization_id == org_id)",
+        "Execution identity-entity filter (permanent)",
+    ),
+    (
+        "routers/export_import.py",
+        "Config.organization_id == mapping.organization_id",
+        "manifest sync inline; phase 8 follow-up",
+    ),
+    (
+        "routers/export_import.py",
+        "else Config.organization_id.is_(None),",
+        "manifest sync inline; phase 8 follow-up",
+    ),
+    (
+        "routers/export_import.py",
+        "Config.organization_id.is_(None),",
+        "manifest sync inline; phase 8 follow-up",
+    ),
+    (
+        "routers/export_import.py",
+        "existing_query = existing_query.where(KnowledgeStore.organization_id == org_id)",
+        "manifest sync inline; phase 8 follow-up",
+    ),
+    (
+        "routers/export_import.py",
+        "existing_query = existing_query.where(KnowledgeStore.organization_id.is_(None))",
+        "manifest sync inline; phase 8 follow-up",
+    ),
+    (
+        "routers/export_import.py",
+        "existing_query = existing_query.where(Table.organization_id == org_id)",
+        "manifest sync inline; phase 8 follow-up",
+    ),
+    (
+        "routers/export_import.py",
+        "existing_query = existing_query.where(Table.organization_id.is_(None))",
+        "manifest sync inline; phase 8 follow-up",
+    ),
+    (
+        "routers/export_import.py",
+        "existing_query = existing_query.where(Config.organization_id == org_id)",
+        "manifest sync inline; phase 8 follow-up",
+    ),
+    (
+        "routers/export_import.py",
+        "existing_query = existing_query.where(Config.organization_id.is_(None))",
+        "manifest sync inline; phase 8 follow-up",
+    ),
+    (
+        "routers/export_import.py",
+        "mapping_query = mapping_query.where(IntegrationMapping.organization_id == org_id)",
+        "manifest sync inline; phase 8 follow-up",
+    ),
+    (
+        "routers/export_import.py",
+        "mapping_query = mapping_query.where(IntegrationMapping.organization_id.is_(None))",
+        "manifest sync inline; phase 8 follow-up",
+    ),
+    (
+        "routers/integrations.py",
+        "IntegrationMapping.organization_id == org_id,",
+        "integration mapping inline; phase 6 migrates",
+    ),
+    (
+        "routers/integrations.py",
+        "ConfigModel.organization_id.is_(None),",
+        "integration config inline; phase 5 migrates",
+    ),
+    (
+        "routers/integrations.py",
+        "ConfigModel.organization_id == organization_id,",
+        "integration config inline; phase 5 migrates",
+    ),
+    (
+        "routers/integrations.py",
+        "ConfigModel.organization_id == org_id,",
+        "integration config inline; phase 5 migrates",
+    ),
+    (
+        "routers/knowledge_sources.py",
+        "KnowledgeNamespaceRole.organization_id == org_id,",
+        "knowledge sources inline cascade; phase 6 migrates",
+    ),
     # The KnowledgeStore document-list inline cascades were removed (EXT-1
     # NEW-J) — list_all_documents / list_documents now route through
     # org_filter_clause. The single-document update/conflict lookups moved
     # into KnowledgeRepository (replace_chunked / find_document_id /
     # delete_document); this entry now covers only the BULK scope-update
     # conflict check.
-    ('routers/knowledge_sources.py', 'KnowledgeStore.organization_id == target_org_id,', 'bulk scope-update conflict check; phase 6 migrates'),
-    ('routers/llm_config.py', 'SystemConfig.organization_id.is_(None),', 'SystemConfig admin lookup; pre-repo pattern (permanent)'),
-    ('routers/mcp_connections.py', 'query = query.where(MCPConnection.organization_id == scope_org)', 'MCP connection org filter; phase 6 migrates'),
-    ('routers/metrics.py', 'query = query.where(ExecutionMetricsDaily.organization_id == org_uuid)', 'ExecutionMetricsDaily identity-entity filter (permanent)'),
-    ('routers/metrics.py', 'query = query.where(ExecutionMetricsDaily.organization_id.is_(None))', 'ExecutionMetricsDaily identity-entity filter (permanent)'),
-    ('routers/metrics.py', '.join(Organization, ExecutionMetricsDaily.organization_id == Organization.id)', 'ExecutionMetricsDaily identity-entity filter (permanent)'),
-    ('routers/metrics.py', '.where(ExecutionMetricsDaily.organization_id.is_(None))', 'ExecutionMetricsDaily identity-entity filter (permanent)'),
+    (
+        "routers/knowledge_sources.py",
+        "KnowledgeStore.organization_id == target_org_id,",
+        "bulk scope-update conflict check; phase 6 migrates",
+    ),
+    (
+        "routers/llm_config.py",
+        "SystemConfig.organization_id.is_(None),",
+        "SystemConfig admin lookup; pre-repo pattern (permanent)",
+    ),
+    (
+        "routers/mcp_connections.py",
+        "query = query.where(MCPConnection.organization_id == scope_org)",
+        "MCP connection org filter; phase 6 migrates",
+    ),
+    (
+        "routers/metrics.py",
+        "query = query.where(ExecutionMetricsDaily.organization_id == org_uuid)",
+        "ExecutionMetricsDaily identity-entity filter (permanent)",
+    ),
+    (
+        "routers/metrics.py",
+        "query = query.where(ExecutionMetricsDaily.organization_id.is_(None))",
+        "ExecutionMetricsDaily identity-entity filter (permanent)",
+    ),
+    (
+        "routers/metrics.py",
+        ".join(Organization, ExecutionMetricsDaily.organization_id == Organization.id)",
+        "ExecutionMetricsDaily identity-entity filter (permanent)",
+    ),
+    (
+        "routers/metrics.py",
+        ".where(ExecutionMetricsDaily.organization_id.is_(None))",
+        "ExecutionMetricsDaily identity-entity filter (permanent)",
+    ),
     # OAuthConnectionRepository deleted in the resumed phase 4/scope-cleanup pass.
     # All 5 OAuthProvider/Token inline-cascade entries in oauth_connections.py
     # disappeared with the class. The new OAuthProviderRepository in
     # api/src/repositories/oauth.py is the canonical class.
-    ('routers/roi_reports.py', 'query = query.where(ExecutionMetricsDaily.organization_id.is_(None))', 'identity-entity scope filter (permanent)'),
-    ('routers/roi_reports.py', 'query = query.where(ExecutionMetricsDaily.organization_id == org_uuid)', 'identity-entity scope filter (permanent)'),
-    ('routers/roi_reports.py', 'query = query.where(WorkflowROIDaily.organization_id.is_(None))', 'identity-entity scope filter (permanent)'),
-    ('routers/roi_reports.py', 'query = query.where(WorkflowROIDaily.organization_id == org_uuid)', 'identity-entity scope filter (permanent)'),
-    ('routers/roi_reports.py', '.join(Organization, ExecutionMetricsDaily.organization_id == Organization.id)', 'identity-entity scope filter (permanent)'),
-    ('routers/roles.py', 'KnowledgeNamespaceRoleORM.organization_id == entry.organization_id,', 'KnowledgeNamespaceRole identity-entity filter (permanent)'),
-    ('routers/solutions.py', 'set_keys_q = select(Config.key).where(Config.organization_id == sol.organization_id)', 'entities endpoint: install-scoped config-key existence read for value_set status (NOT cascade)'),
-    ('routers/solutions.py', 'set_keys_q = select(Config.key).where(Config.organization_id.is_(None))', 'entities endpoint: global-scope config-key existence read for value_set status (NOT cascade)'),
-    ('routers/solutions.py', 'return model.organization_id.is_(None)  # type: ignore[attr-defined]', 'capture candidates: exact install-scope filter for loose entities (NOT cascade)'),
-    ('routers/solutions.py', 'return model.organization_id == org_id  # type: ignore[attr-defined]', 'capture candidates: exact install-scope filter for loose entities (NOT cascade)'),
-    ('routers/usage_reports.py', 'base_conditions.append(AIUsage.organization_id == filter_org_id)', 'identity-entity scope filter (permanent)'),
-    ('routers/usage_reports.py', 'exec_conditions.append(Execution.organization_id == filter_org_id)', 'identity-entity scope filter (permanent)'),
-    ('routers/usage_reports.py', 'workflow_query = workflow_query.where(AIUsage.organization_id == filter_org_id)', 'identity-entity scope filter (permanent)'),
-    ('routers/usage_reports.py', 'conv_query = conv_query.where(AIUsage.organization_id == filter_org_id)', 'identity-entity scope filter (permanent)'),
-    ('routers/usage_reports.py', 'agent_query = agent_query.where(AIUsage.organization_id == filter_org_id)', 'identity-entity scope filter (permanent)'),
-    ('routers/usage_reports.py', '.join(Organization, AIUsage.organization_id == Organization.id)', 'identity-entity scope filter (permanent)'),
-    ('routers/usage_reports.py', 'Organization, KnowledgeStorageDaily.organization_id == Organization.id', 'identity-entity scope filter (permanent)'),
-    ('routers/usage_reports.py', 'KnowledgeStorageDaily.organization_id == filter_org_id', 'identity-entity scope filter (permanent)'),
-    ('routers/users.py', 'query = query.where(UserORM.organization_id.is_(None))', 'User identity-entity filter (permanent)'),
-    ('routers/users.py', 'query = query.where(UserORM.organization_id == filter_org)', 'User identity-entity filter (permanent)'),
-    ('routers/websocket.py', '(TableOrm.organization_id == user.organization_id)', 'websocket table subscription filter; phase 6 migrates'),
-    ('routers/websocket.py', '| TableOrm.organization_id.is_(None)', 'websocket table subscription filter; phase 6 migrates'),
-    ('routers/workflows.py', 'query = query.where(WorkflowORM.organization_id.is_(None))', 'workflows inline cascade; phase 6 migrates'),
-    ('routers/workflows.py', 'query = query.where(WorkflowORM.organization_id == filter_org)', 'workflows inline cascade; phase 6 migrates'),
-    ('routers/workflows.py', 'WorkflowORM.organization_id == filter_org,', 'workflows inline cascade; phase 6 migrates'),
-    ('routers/workflows.py', 'WorkflowORM.organization_id.is_(None),', 'workflows inline cascade; phase 6 migrates'),
-    ('routers/workflows.py', 'forms_query = forms_query.where(Form.organization_id == org_filter)', 'workflows inline cascade; phase 6 migrates'),
-    ('routers/workflows.py', 'agents_query = agents_query.where(Agent.organization_id == org_filter)', 'workflows inline cascade; phase 6 migrates'),
-    ('routers/workflows.py', 'apps_base_query = apps_base_query.where(Application.organization_id == org_filter)', 'workflows inline cascade; phase 6 migrates'),
+    (
+        "routers/roi_reports.py",
+        "query = query.where(ExecutionMetricsDaily.organization_id.is_(None))",
+        "identity-entity scope filter (permanent)",
+    ),
+    (
+        "routers/roi_reports.py",
+        "query = query.where(ExecutionMetricsDaily.organization_id == org_uuid)",
+        "identity-entity scope filter (permanent)",
+    ),
+    (
+        "routers/roi_reports.py",
+        "query = query.where(WorkflowROIDaily.organization_id.is_(None))",
+        "identity-entity scope filter (permanent)",
+    ),
+    (
+        "routers/roi_reports.py",
+        "query = query.where(WorkflowROIDaily.organization_id == org_uuid)",
+        "identity-entity scope filter (permanent)",
+    ),
+    (
+        "routers/roi_reports.py",
+        ".join(Organization, ExecutionMetricsDaily.organization_id == Organization.id)",
+        "identity-entity scope filter (permanent)",
+    ),
+    (
+        "routers/roles.py",
+        "KnowledgeNamespaceRoleORM.organization_id == entry.organization_id,",
+        "KnowledgeNamespaceRole identity-entity filter (permanent)",
+    ),
+    (
+        "routers/solutions.py",
+        "set_keys_q = select(Config.key).where(Config.organization_id == sol.organization_id)",
+        "entities endpoint: install-scoped config-key existence read for value_set status (NOT cascade)",
+    ),
+    (
+        "routers/solutions.py",
+        "set_keys_q = select(Config.key).where(Config.organization_id.is_(None))",
+        "entities endpoint: global-scope config-key existence read for value_set status (NOT cascade)",
+    ),
+    (
+        "routers/solutions.py",
+        "return model.organization_id.is_(None)  # type: ignore[attr-defined]",
+        "capture candidates: exact install-scope filter for loose entities (NOT cascade)",
+    ),
+    (
+        "routers/solutions.py",
+        "return model.organization_id == org_id  # type: ignore[attr-defined]",
+        "capture candidates: exact install-scope filter for loose entities (NOT cascade)",
+    ),
+    (
+        "routers/usage_reports.py",
+        "base_conditions.append(AIUsage.organization_id == filter_org_id)",
+        "identity-entity scope filter (permanent)",
+    ),
+    (
+        "routers/usage_reports.py",
+        "exec_conditions.append(Execution.organization_id == filter_org_id)",
+        "identity-entity scope filter (permanent)",
+    ),
+    (
+        "routers/usage_reports.py",
+        "workflow_query = workflow_query.where(AIUsage.organization_id == filter_org_id)",
+        "identity-entity scope filter (permanent)",
+    ),
+    (
+        "routers/usage_reports.py",
+        "conv_query = conv_query.where(AIUsage.organization_id == filter_org_id)",
+        "identity-entity scope filter (permanent)",
+    ),
+    (
+        "routers/usage_reports.py",
+        "agent_query = agent_query.where(AIUsage.organization_id == filter_org_id)",
+        "identity-entity scope filter (permanent)",
+    ),
+    (
+        "routers/usage_reports.py",
+        ".join(Organization, AIUsage.organization_id == Organization.id)",
+        "identity-entity scope filter (permanent)",
+    ),
+    (
+        "routers/usage_reports.py",
+        "Organization, KnowledgeStorageDaily.organization_id == Organization.id",
+        "identity-entity scope filter (permanent)",
+    ),
+    (
+        "routers/usage_reports.py",
+        "KnowledgeStorageDaily.organization_id == filter_org_id",
+        "identity-entity scope filter (permanent)",
+    ),
+    (
+        "routers/users.py",
+        "query = query.where(UserORM.organization_id.is_(None))",
+        "User identity-entity filter (permanent)",
+    ),
+    (
+        "routers/users.py",
+        "query = query.where(UserORM.organization_id == filter_org)",
+        "User identity-entity filter (permanent)",
+    ),
+    (
+        "routers/websocket.py",
+        "(TableOrm.organization_id == user.organization_id)",
+        "websocket table subscription filter; phase 6 migrates",
+    ),
+    (
+        "routers/websocket.py",
+        "| TableOrm.organization_id.is_(None)",
+        "websocket table subscription filter; phase 6 migrates",
+    ),
+    (
+        "routers/workflows.py",
+        "query = query.where(WorkflowORM.organization_id.is_(None))",
+        "workflows inline cascade; phase 6 migrates",
+    ),
+    (
+        "routers/workflows.py",
+        "query = query.where(WorkflowORM.organization_id == filter_org)",
+        "workflows inline cascade; phase 6 migrates",
+    ),
+    (
+        "routers/workflows.py",
+        "WorkflowORM.organization_id == filter_org,",
+        "workflows inline cascade; phase 6 migrates",
+    ),
+    (
+        "routers/workflows.py",
+        "WorkflowORM.organization_id.is_(None),",
+        "workflows inline cascade; phase 6 migrates",
+    ),
+    (
+        "routers/workflows.py",
+        "forms_query = forms_query.where(Form.organization_id == org_filter)",
+        "workflows inline cascade; phase 6 migrates",
+    ),
+    (
+        "routers/workflows.py",
+        "agents_query = agents_query.where(Agent.organization_id == org_filter)",
+        "workflows inline cascade; phase 6 migrates",
+    ),
+    (
+        "routers/workflows.py",
+        "apps_base_query = apps_base_query.where(Application.organization_id == org_filter)",
+        "workflows inline cascade; phase 6 migrates",
+    ),
 }
 
 
@@ -263,13 +530,13 @@ IDENTITY_MODELS: set[str] = {
 # subclass. The phase-4-onward migrations create the repos that aren't here
 # yet; until they exist, those models are allow-listed.
 EXECUTION_RESOLUTION_MODELS_WITHOUT_REPO_YET: set[str] = {
-    "OAuthProvider",     # Phase 4: OAuthProviderRepository
-    "OAuthToken",        # Phase 4: OAuthTokenRepository
-    "SystemConfig",      # Future: SystemConfigRepository (post-phase-5)
-    "EventSource",       # Future: EventSourceRepository (post-phase-6)
-    "CustomClaim",       # Future: CustomClaimRepository (post-phase-6)
-    "MCPConnection",     # Existing MCPConnectionRepository but check confirms
-    "MCPServer",         # Existing MCPServerRepository but check confirms
+    "OAuthProvider",  # Phase 4: OAuthProviderRepository
+    "OAuthToken",  # Phase 4: OAuthTokenRepository
+    "SystemConfig",  # Future: SystemConfigRepository (post-phase-5)
+    "EventSource",  # Future: EventSourceRepository (post-phase-6)
+    "CustomClaim",  # Future: CustomClaimRepository (post-phase-6)
+    "MCPConnection",  # Existing MCPConnectionRepository but check confirms
+    "MCPServer",  # Existing MCPServerRepository but check confirms
 }
 
 
@@ -288,15 +555,16 @@ def _models_with_org_id() -> dict[str, Path]:
                 continue
             # Must be a Base subclass (any base named "Base")
             is_base_subclass = any(
-                isinstance(b, ast.Name) and b.id == "Base"
-                for b in node.bases
+                isinstance(b, ast.Name) and b.id == "Base" for b in node.bases
             )
             if not is_base_subclass:
                 continue
 
             for stmt in node.body:
                 # Looking for `organization_id: Mapped[...] = mapped_column(...)`.
-                if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+                if isinstance(stmt, ast.AnnAssign) and isinstance(
+                    stmt.target, ast.Name
+                ):
                     if stmt.target.id == "organization_id":
                         found[node.name] = py_file
                         break
@@ -370,12 +638,12 @@ class TestOrgScopedModelsHaveRepository:
                 continue
             if model_name in EXECUTION_RESOLUTION_MODELS_WITHOUT_REPO_YET:
                 continue
-            unclassified.append((model_name, file_path.relative_to(API_ROOT).as_posix()))
+            unclassified.append(
+                (model_name, file_path.relative_to(API_ROOT).as_posix())
+            )
 
         if unclassified:
-            details = "\n".join(
-                f"  {model} in {file}" for model, file in unclassified
-            )
+            details = "\n".join(f"  {model} in {file}" for model, file in unclassified)
             pytest.fail(
                 "ORM models with organization_id that are not classified.\n"
                 "Either:\n"
@@ -437,7 +705,9 @@ EXEMPT_SDK_HANDLERS: dict[str, str] = {
 RESOLVER_CALL_NAMES = {"resolve_effective_scope", "_resolve_sdk_org_id"}
 
 
-def _handler_names_taking_scope(tree: ast.AST) -> dict[str, ast.AsyncFunctionDef | ast.FunctionDef]:
+def _handler_names_taking_scope(
+    tree: ast.AST,
+) -> dict[str, ast.AsyncFunctionDef | ast.FunctionDef]:
     """Find every router-decorated async handler that takes a ``scope`` arg
     (either directly in the function signature or via a Pydantic ``request``
     body that declares ``scope`` — the latter is the common pattern in
@@ -474,7 +744,9 @@ def _handler_uses_request_scope(node: ast.AsyncFunctionDef | ast.FunctionDef) ->
     return False
 
 
-def _handler_signature_takes_scope(node: ast.AsyncFunctionDef | ast.FunctionDef) -> bool:
+def _handler_signature_takes_scope(
+    node: ast.AsyncFunctionDef | ast.FunctionDef,
+) -> bool:
     """Return True if ``scope`` appears as a direct function parameter."""
     args = node.args
     for a in (*args.args, *args.kwonlyargs, *(args.posonlyargs or [])):
@@ -509,7 +781,9 @@ def _models_with_scope_field() -> set[str]:
             for stmt in node.body:
                 # ``scope: str | None = Field(...)`` is an AnnAssign with
                 # target.id == "scope". That's all we need.
-                if isinstance(stmt, ast.AnnAssign) and isinstance(stmt.target, ast.Name):
+                if isinstance(stmt, ast.AnnAssign) and isinstance(
+                    stmt.target, ast.Name
+                ):
                     if stmt.target.id == "scope":
                         models.add(node.name)
                         break

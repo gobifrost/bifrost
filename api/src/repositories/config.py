@@ -58,6 +58,7 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
                 Integration.is_deleted.is_(False),
             ),
         )
+        query = self._apply_solution_visibility(query)
 
         if filter_type == OrgFilterType.ALL:
             pass
