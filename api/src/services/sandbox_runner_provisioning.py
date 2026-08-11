@@ -208,11 +208,15 @@ async def _deploy_cloudflare_worker(
         "compatibility_date": "2026-08-01",
         "compatibility_flags": ["nodejs_compat"],
         "workers_dev": False,
+        "observability": {"enabled": True},
         "containers": [
             {
                 "class_name": "Sandbox",
                 "image": configured_runner_image(),
-                "instance_type": "lite",
+                # The OpenCode sandbox image unpacks beyond the lite tier's
+                # 2 GB disk. Basic is the smallest Cloudflare tier that can
+                # boot the managed Builder image (4 GB disk, 1 GiB memory).
+                "instance_type": "basic",
                 "max_instances": 20,
             }
         ],
@@ -240,7 +244,8 @@ async def _deploy_cloudflare_worker(
             "deploy",
             "--config",
             str(config_path),
-            "--non-interactive",
+            "--containers-rollout",
+            "immediate",
             cwd=str(_CLOUDFLARE_PROJECT),
             env=env,
             stdout=asyncio.subprocess.PIPE,
@@ -266,7 +271,9 @@ async def _start_cloudflare_probe(
     api_token: str,
     workflow_name: str,
 ) -> str:
-    probe_id = f"bifrost-probe-{uuid4()}"
+    # The Sandbox SDK caps sandbox IDs at 63 characters. Keep the Workflow
+    # instance ID short enough that the Worker can safely reuse or prefix it.
+    probe_id = f"bifrost-probe-{uuid4().hex}"
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             response = await client.post(
@@ -275,10 +282,7 @@ async def _start_cloudflare_probe(
                 headers={"Authorization": f"Bearer {api_token}"},
                 json={
                     "instance_id": probe_id,
-                    "params": json.dumps(
-                        {"mode": "probe", "probe_id": probe_id},
-                        separators=(",", ":"),
-                    ),
+                    "params": {"mode": "probe", "probe_id": probe_id},
                 },
             )
             response.raise_for_status()

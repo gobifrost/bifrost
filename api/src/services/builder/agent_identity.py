@@ -9,9 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.enums import AgentAccessLevel
 from src.models.orm.agents import Agent
+from src.models.orm.solution_builder import SolutionBuilderProject
 from src.models.orm.solutions import Solution
 from src.models.orm.users import User
 from src.services.builder.scaffold import (
+    BUILDER_AGENT_MAX_ITERATIONS,
+    BUILDER_AGENT_MAX_TOKEN_BUDGET,
     BUILDER_AGENT_SYSTEM_TOOLS,
     BUILDER_SKILL_BUNDLE_PATH,
     _builder_skill_source,
@@ -50,13 +53,34 @@ async def ensure_builder_agent(
         else None
     )
     agent_id = builder_agent_id(solution.id)
+    project = await db.get(SolutionBuilderProject, solution.id)
+    is_global_workspace = project is not None and project.target_kind == "global_repo"
+    global_prompt = """You are the Bifrost Global Workspace coding agent.
+
+Work only through the bounded workspace tools. The workspace is an immutable
+proposal copied from the live global _repo. Never modify, add, or delete files
+under .bifrost; those manifests are read-only evidence and entity mutations
+belong in Bifrost APIs, MCP tools, the CLI, or Solution lifecycle. Make focused,
+reviewable source changes. Do not claim that a change is live: a platform
+administrator must inspect the diff, validate it, and explicitly apply it.
+"""
     values: dict[str, Any] = {
-        "name": f"{solution.name} Builder",
-        "description": "Private Solution authoring agent",
-        "system_prompt": (_builder_skill_source() / "SKILL.md").read_text(
-            encoding="utf-8"
+        "name": (
+            "Global Workspace Builder"
+            if is_global_workspace
+            else f"{solution.name} Builder"
         ),
-        "bundle_path": BUILDER_SKILL_BUNDLE_PATH,
+        "description": (
+            "Administrator global workspace proposal agent"
+            if is_global_workspace
+            else "Private Solution authoring agent"
+        ),
+        "system_prompt": (
+            global_prompt
+            if is_global_workspace
+            else (_builder_skill_source() / "SKILL.md").read_text(encoding="utf-8")
+        ),
+        "bundle_path": None if is_global_workspace else BUILDER_SKILL_BUNDLE_PATH,
         "channels": ["chat"],
         "access_level": AgentAccessLevel.ROLE_BASED,
         "organization_id": solution.organization_id,
@@ -64,8 +88,18 @@ async def ensure_builder_agent(
         "owner_user_id": solution.owner_user_id,
         "is_active": True,
         "knowledge_sources": [],
-        "system_tools": BUILDER_AGENT_SYSTEM_TOOLS,
+        "system_tools": (
+            [
+                tool
+                for tool in BUILDER_AGENT_SYSTEM_TOOLS
+                if tool != "validate_solution"
+            ]
+            if is_global_workspace
+            else BUILDER_AGENT_SYSTEM_TOOLS
+        ),
         "llm_model": builder_model,
+        "max_iterations": BUILDER_AGENT_MAX_ITERATIONS,
+        "max_token_budget": BUILDER_AGENT_MAX_TOKEN_BUDGET,
         "created_by": owner.email if owner else "system@gobifrost.local",
     }
     agent = await db.get(Agent, agent_id)

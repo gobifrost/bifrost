@@ -30,6 +30,18 @@ class SolutionBuilderProject(Base):
     """Per-Solution builder pointers: latest source and last deployed preview."""
 
     __tablename__ = "solution_builder_projects"
+    __table_args__ = (
+        Index(
+            "ix_solution_builder_projects_global_target_unique",
+            "target_kind",
+            unique=True,
+            postgresql_where=text("target_kind = 'global_repo'"),
+        ),
+        CheckConstraint(
+            "target_kind IN ('solution', 'global_repo')",
+            name="ck_solution_builder_projects_target_kind",
+        ),
+    )
 
     solution_id: Mapped[UUID] = mapped_column(
         ForeignKey("solutions.id", ondelete="CASCADE"),
@@ -80,6 +92,12 @@ class SolutionBuilderProject(Base):
         DateTime(timezone=True),
         nullable=True,
         default=None,
+    )
+    target_kind: Mapped[str] = mapped_column(
+        String(24),
+        nullable=False,
+        default="solution",
+        server_default="solution",
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -152,6 +170,153 @@ class SolutionBuilderCollaborator(Base):
         default=lambda: datetime.now(timezone.utc),
         server_default=text("NOW()"),
         onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class SolutionBuilderRelease(Base):
+    """A shared install published from one private Builder source project.
+
+    The source Solution remains private and owns revisions, sessions, and
+    previews. This row records the stable shared install for one target scope so
+    later approvals update that release without converting or discarding the
+    source workbench.
+    """
+
+    __tablename__ = "solution_builder_releases"
+    __table_args__ = (
+        Index(
+            "ix_solution_builder_releases_source_org_unique",
+            "source_solution_id",
+            "target_organization_id",
+            unique=True,
+            postgresql_where=text("target_organization_id IS NOT NULL"),
+        ),
+        Index(
+            "ix_solution_builder_releases_source_global_unique",
+            "source_solution_id",
+            unique=True,
+            postgresql_where=text("target_organization_id IS NULL"),
+        ),
+        CheckConstraint(
+            "source_solution_id <> published_solution_id",
+            name="ck_solution_builder_releases_distinct_solutions",
+        ),
+        CheckConstraint(
+            "runtime_mode IN ('isolated', 'trusted')",
+            name="ck_solution_builder_releases_runtime_mode",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    source_solution_id: Mapped[UUID] = mapped_column(
+        ForeignKey("solutions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    published_solution_id: Mapped[UUID] = mapped_column(
+        ForeignKey("solutions.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    target_organization_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"),
+        nullable=True,
+        default=None,
+        index=True,
+    )
+    published_revision_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("solution_source_revisions.id", ondelete="SET NULL"),
+        nullable=True,
+        default=None,
+    )
+    runtime_mode: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="isolated",
+        server_default="isolated",
+    )
+    approved_by: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        default=None,
+    )
+    published_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        server_default=text("NOW()"),
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        server_default=text("NOW()"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        server_default=text("NOW()"),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+
+class SolutionGlobalWorkspaceApply(Base):
+    """One reviewed application of a global-workspace proposal to ``_repo``."""
+
+    __tablename__ = "solution_global_workspace_applies"
+    __table_args__ = (
+        Index(
+            "ix_solution_global_workspace_applies_solution_applied",
+            "solution_id",
+            "applied_at",
+        ),
+        CheckConstraint(
+            "state IN ('applied', 'superseded', 'rolled_back')",
+            name="ck_solution_global_workspace_applies_state",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    solution_id: Mapped[UUID] = mapped_column(
+        ForeignKey("solutions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    from_revision_id: Mapped[UUID] = mapped_column(
+        ForeignKey("solution_source_revisions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    to_revision_id: Mapped[UUID] = mapped_column(
+        ForeignKey("solution_source_revisions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    state: Mapped[str] = mapped_column(
+        String(16),
+        nullable=False,
+        default="applied",
+        server_default="applied",
+    )
+    applied_by: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        default=None,
+    )
+    applied_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(timezone.utc),
+        server_default=text("NOW()"),
+    )
+    rolled_back_by: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        default=None,
+    )
+    rolled_back_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
     )
 
 
@@ -264,6 +429,17 @@ class SolutionBuilderTurn(Base):
         nullable=True,
         default=None,
     )
+    resume_from_turn_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("solution_builder_turns.id", ondelete="SET NULL"),
+        nullable=True,
+        default=None,
+        index=True,
+    )
+    checkpoint_sha256: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+        default=None,
+    )
     # Build and deploy job tables land in WP3; keep the reference columns without FKs.
     build_job_id: Mapped[UUID | None] = mapped_column(nullable=True, default=None)
     deploy_job_id: Mapped[UUID | None] = mapped_column(nullable=True, default=None)
@@ -291,3 +467,7 @@ class SolutionBuilderTurn(Base):
         nullable=True,
         default=None,
     )
+
+    @property
+    def checkpoint_available(self) -> bool:
+        return self.checkpoint_sha256 is not None

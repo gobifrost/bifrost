@@ -26,6 +26,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { MultiCombobox } from "@/components/ui/multi-combobox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -102,6 +103,9 @@ function PromotionReviewWorkspace({ review }: { review: PromotionReview }) {
 		review.config_keys_requiring_reentry_for_global ?? [];
 	const unresolvedRoles = review.unresolved_roles ?? [];
 	const [target, setTarget] = useState<"company" | "global">("company");
+	const [targetOrganizationId, setTargetOrganizationId] = useState<
+		string | null
+	>(review.organization_id ?? null);
 	const [runtimeMode, setRuntimeMode] = useState<"isolated" | "trusted">("isolated");
 	const [approveRoleCreation, setApproveRoleCreation] = useState(false);
 	const [approvedConnections, setApprovedConnections] = useState<string[]>([]);
@@ -126,7 +130,10 @@ function PromotionReviewWorkspace({ review }: { review: PromotionReview }) {
 	const approvalsComplete =
 		(unresolvedRoles.length === 0 || approveRoleCreation) &&
 		missingConnectionApprovals.length === 0;
-	const canPromote = review.ready && approvalsComplete;
+	const canPromote =
+		review.ready &&
+		approvalsComplete &&
+		(target === "global" || targetOrganizationId !== null);
 
 	const promoteMutation = useMutation({
 		mutationFn: (request: PromotionTargetRequest) =>
@@ -134,7 +141,7 @@ function PromotionReviewWorkspace({ review }: { review: PromotionReview }) {
 		onSuccess: (result) => {
 			setConfirmOpen(false);
 			toast.success(
-				`${review.name} promoted to ${
+				`${review.name} published to ${
 					result.target === "company" ? "Company" : "Global"
 				}`,
 			);
@@ -158,6 +165,8 @@ function PromotionReviewWorkspace({ review }: { review: PromotionReview }) {
 	function submitPromotion() {
 		promoteMutation.mutate({
 			target,
+			target_organization_id:
+				target === "company" ? targetOrganizationId : null,
 			runtime_mode: runtimeMode,
 			approve_role_creation: approveRoleCreation,
 			approved_connection_names: approvedConnections,
@@ -292,7 +301,7 @@ function PromotionReviewWorkspace({ review }: { review: PromotionReview }) {
 											Company
 										</span>
 										<span className="mt-0.5 block text-xs text-muted-foreground">
-											Share inside the current organization.
+											Publish a managed release for one customer organization.
 										</span>
 									</span>
 								</label>
@@ -309,6 +318,22 @@ function PromotionReviewWorkspace({ review }: { review: PromotionReview }) {
 									</span>
 								</label>
 							</RadioGroup>
+							{target === "company" ? (
+								<div className="mt-3 space-y-1.5">
+									<span className="text-xs font-medium">
+										Customer organization
+									</span>
+									<OrganizationSelect
+										value={targetOrganizationId}
+										onChange={(value) =>
+											setTargetOrganizationId(value ?? null)
+										}
+										showGlobal={false}
+										placeholder="Choose a customer"
+										triggerClassName="bg-background"
+									/>
+								</div>
+							) : null}
 							{target === "global" &&
 							globalConfigKeys.length > 0 ? (
 								<div className="mt-3 rounded-lg bg-amber-500/10 p-3 text-xs text-amber-800 ring-1 ring-amber-500/20 dark:text-amber-200">
@@ -431,8 +456,8 @@ function PromotionReviewWorkspace({ review }: { review: PromotionReview }) {
 
 			<footer className="flex flex-wrap items-center justify-between gap-3 border-t px-5 py-3">
 				<p className="text-xs text-muted-foreground">
-					Promotion replays this pinned revision. Later private edits are not
-					included.
+					Publishing updates a separate release. The private source project,
+					conversation, and future edits stay here.
 				</p>
 				<Button
 					disabled={!canPromote || promoteMutation.isPending}
@@ -443,7 +468,7 @@ function PromotionReviewWorkspace({ review }: { review: PromotionReview }) {
 					) : (
 						<ArrowRight className="h-4 w-4" />
 					)}
-					Promote to {targetLabel}
+					Publish to {targetLabel}
 				</Button>
 			</footer>
 
@@ -451,18 +476,18 @@ function PromotionReviewWorkspace({ review }: { review: PromotionReview }) {
 				<AlertDialogContent>
 					<AlertDialogHeader>
 						<AlertDialogTitle>
-							Promote {review.name} to {targetLabel}?
+							Publish {review.name} to {targetLabel}?
 						</AlertDialogTitle>
 						<AlertDialogDescription>
 							This replays pinned revision{" "}
 							{review.pinned_revision_id?.slice(0, 8)}, applies the reviewed
-							role and connection grants, and ends private-owner bypass. The app will run in <strong>{runtimeMode}</strong> mode.
+							role and connection grants, and updates a separate shared release. The private source project remains editable. The app will run in <strong>{runtimeMode}</strong> mode.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
 						<AlertDialogCancel>Cancel</AlertDialogCancel>
 						<AlertDialogAction onClick={submitPromotion}>
-							Promote Solution
+							Publish release
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>

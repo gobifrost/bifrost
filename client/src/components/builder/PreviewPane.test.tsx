@@ -38,6 +38,21 @@ describe("before the first successful deployment", () => {
 		expect(screen.queryByTestId("preview-frame")).not.toBeInTheDocument();
 	});
 
+	it("shows durable build activity instead of a dead preview empty state", () => {
+		renderPane({
+			isBuilding: true,
+			buildDetail: "Generating and validating the Solution",
+		});
+
+		expect(
+			screen.getByRole("status", { name: /building your app/i }),
+		).toHaveTextContent(/generating and validating/i);
+		expect(
+			screen.getByText(/leave this page and return/i),
+		).toBeInTheDocument();
+		expect(screen.queryByTestId("preview-unavailable")).not.toBeInTheDocument();
+	});
+
 	it("disables the reload button", () => {
 		renderPane();
 

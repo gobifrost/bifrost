@@ -9,6 +9,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import func, select, text
@@ -32,7 +33,10 @@ from src.services.builder.turns import (
     BuilderTurnConflict,
     BuilderTurnService,
 )
-from src.services.builder.turn_artifacts import BuilderTurnArtifactStorage
+from src.services.builder.turn_artifacts import (
+    BuilderHarnessStateStorage,
+    BuilderTurnArtifactStorage,
+)
 from src.services.solutions.deploy_jobs import create_staged_deploy_job
 
 _SUMMARY_MAX_CHARS = 120
@@ -131,6 +135,7 @@ class BuilderAgentTurnService:
         session_id: UUID,
         requested_by: UUID,
         user_message: str,
+        resume_from_turn_id: UUID | None = None,
     ) -> QueuedAgentTurn:
         """Persist the prompt and enqueue one encrypted sandbox PlatformJob."""
         session = await self._load_session(solution_id, session_id)
@@ -141,6 +146,22 @@ class BuilderAgentTurnService:
         project = await self.db.get(SolutionBuilderProject, solution_id)
         if project is None or project.current_revision_id is None:
             raise BuilderProjectMissing(f"Solution {solution_id} has no current revision")
+        resume_from = None
+        if resume_from_turn_id is not None:
+            resume_from = await self.db.get(SolutionBuilderTurn, resume_from_turn_id)
+            if (
+                resume_from is None
+                or resume_from.session_id != session_id
+                or resume_from.status not in {"failed", "cancelled"}
+                or resume_from.checkpoint_sha256 is None
+            ):
+                raise BuilderProjectMissing(
+                    "The requested Builder checkpoint is not available in this session"
+                )
+            if resume_from.base_revision_id != project.current_revision_id:
+                raise BuilderTurnConflict(
+                    "The Solution changed after this checkpoint was captured"
+                )
         await self.db.execute(
             text(
                 "SELECT pg_advisory_xact_lock("
@@ -178,6 +199,7 @@ class BuilderAgentTurnService:
             session_id=session_id,
             requested_by=requested_by,
             base_revision_id=project.current_revision_id,
+            resume_from_turn_id=(resume_from.id if resume_from is not None else None),
             status="queued",
         )
         self.db.add(turn)
@@ -234,9 +256,11 @@ class BuilderAgentTurnService:
         model: str | None = None,
         token_count_input: int | None = None,
         token_count_output: int | None = None,
+        harness_diagnostics: dict[str, Any] | None = None,
     ) -> CompletedAgentTurn:
         """Atomically accept one fenced sandbox result and restore chat state."""
         artifact_storage = BuilderTurnArtifactStorage(turn_id, dispatch_attempt)
+        harness_storage = BuilderHarnessStateStorage()
         created_revision_id: UUID | None = None
         try:
             with tempfile.TemporaryDirectory(prefix="bifrost-builder-result-") as tmp:
@@ -259,6 +283,13 @@ class BuilderAgentTurnService:
                 )
                 if materialized.revision_created:
                     created_revision_id = materialized.turn.output_revision_id
+
+            await harness_storage.promote(
+                solution_id=solution_id,
+                session_id=session.id,
+                turn_id=turn_id,
+                dispatch_attempt=dispatch_attempt,
+            )
 
             conversation = await self.db.get(Conversation, session.conversation_id)
             if conversation is None:
@@ -289,6 +320,7 @@ class BuilderAgentTurnService:
                     "revision_id": str(materialized.turn.output_revision_id),
                     "revision_created": materialized.revision_created,
                     "tool_call_count": tool_call_count,
+                    "harness_diagnostics": harness_diagnostics,
                 },
             )
             if platform_job is None:
@@ -300,12 +332,16 @@ class BuilderAgentTurnService:
                 materialized.revision_created
                 and materialized.turn.output_revision_id is not None
             ):
-                await enqueue_builder_turn_deploy(
-                    self.db,
-                    solution_id,
-                    turn=materialized.turn,
-                    revision_id=materialized.turn.output_revision_id,
-                )
+                project = await self.db.get(SolutionBuilderProject, solution_id)
+                if project is not None and project.target_kind == "global_repo":
+                    await self.db.commit()
+                else:
+                    await enqueue_builder_turn_deploy(
+                        self.db,
+                        solution_id,
+                        turn=materialized.turn,
+                        revision_id=materialized.turn.output_revision_id,
+                    )
             else:
                 await self.db.commit()
             await publish_platform_job_update(platform_job)
@@ -335,6 +371,14 @@ class BuilderAgentTurnService:
                     extra={"turn_id": str(turn_id)},
                     exc_info=True,
                 )
+            try:
+                await harness_storage.delete_staged(turn_id, dispatch_attempt)
+            except Exception:  # noqa: BLE001 - staged state cleanup is best effort
+                logger.warning(
+                    "Failed to delete staged Builder harness state",
+                    extra={"turn_id": str(turn_id)},
+                    exc_info=True,
+                )
 
     async def finish_failed_agent_turn(
         self,
@@ -343,6 +387,8 @@ class BuilderAgentTurnService:
         dispatch_attempt: int,
         status: str,
         error: str | None,
+        harness_diagnostics: dict[str, Any] | None = None,
+        checkpoint_output_sha256: str | None = None,
     ) -> PlatformJob:
         """Persist one failed/cancelled sandbox result under attempt fencing."""
         if status not in {"failed", "cancelled"}:
@@ -350,6 +396,12 @@ class BuilderAgentTurnService:
         turn = await self.db.get(SolutionBuilderTurn, turn_id, with_for_update=True)
         if turn is None:
             raise BuilderProjectMissing(f"Builder turn {turn_id} does not exist")
+        if checkpoint_output_sha256 is not None:
+            await self.preserve_agent_turn_checkpoint(
+                turn_id=turn_id,
+                dispatch_attempt=dispatch_attempt,
+                output_sha256=checkpoint_output_sha256,
+            )
 
         from src.services.platform_jobs import (
             publish_platform_job_update,
@@ -361,7 +413,10 @@ class BuilderAgentTurnService:
             turn_id,
             dispatch_attempt,
             status=status,
-            result={"turn_id": str(turn_id)},
+            result={
+                "turn_id": str(turn_id),
+                "harness_diagnostics": harness_diagnostics,
+            },
             error_message=error if status == "failed" else None,
         )
         if platform_job is None:
@@ -378,6 +433,103 @@ class BuilderAgentTurnService:
         except Exception:  # noqa: BLE001 - terminal state is already durable
             logger.warning(
                 "Failed to delete staged Builder output",
+                extra={"turn_id": str(turn_id)},
+                exc_info=True,
+            )
+        try:
+            await BuilderHarnessStateStorage().delete_staged(
+                turn_id,
+                dispatch_attempt,
+            )
+        except Exception:  # noqa: BLE001 - terminal state is already durable
+            logger.warning(
+                "Failed to delete staged Builder harness state",
+                extra={"turn_id": str(turn_id)},
+                exc_info=True,
+            )
+        return platform_job
+
+    async def preserve_agent_turn_checkpoint(
+        self,
+        *,
+        turn_id: UUID,
+        dispatch_attempt: int,
+        output_sha256: str,
+    ) -> SolutionBuilderTurn:
+        """Accept an inert workspace/OpenCode checkpoint without publishing it."""
+        turn = await self.db.get(SolutionBuilderTurn, turn_id, with_for_update=True)
+        if turn is None:
+            raise BuilderProjectMissing(f"Builder turn {turn_id} does not exist")
+        session = await self.db.get(SolutionBuilderSession, turn.session_id)
+        if session is None:
+            raise BuilderProjectMissing(f"Builder session {turn.session_id} is missing")
+        artifact_storage = BuilderTurnArtifactStorage(turn_id, dispatch_attempt)
+        harness_storage = BuilderHarnessStateStorage()
+        with tempfile.TemporaryDirectory(prefix="bifrost-builder-checkpoint-") as tmp:
+            output_path = Path(tmp) / "output.zip"
+            await artifact_storage.copy_to_path(output_path)
+            actual_sha256 = await asyncio.to_thread(_file_sha256, output_path)
+            if actual_sha256 != output_sha256:
+                raise ValueError("Builder checkpoint digest does not match upload")
+        await harness_storage.promote(
+            solution_id=session.solution_id,
+            session_id=session.id,
+            turn_id=turn.id,
+            dispatch_attempt=dispatch_attempt,
+        )
+        await artifact_storage.promote_checkpoint(
+            solution_id=session.solution_id,
+            session_id=session.id,
+        )
+        turn.checkpoint_sha256 = output_sha256
+        await self.db.flush()
+        return turn
+
+    async def retry_external_agent_turn(
+        self,
+        *,
+        turn_id: UUID,
+        dispatch_attempt: int,
+        error: str,
+    ) -> PlatformJob | None:
+        """Atomically requeue a transient sandbox fault without failing the turn."""
+        from src.services.platform_jobs import (
+            publish_platform_job_update,
+            stage_external_platform_job_retry,
+        )
+
+        platform_job = await stage_external_platform_job_retry(
+            self.db,
+            turn_id,
+            dispatch_attempt,
+            error_message=error,
+        )
+        if platform_job is None:
+            return None
+        turn = await self.db.get(SolutionBuilderTurn, turn_id, with_for_update=True)
+        if turn is None:
+            return None
+        turn.status = "queued"
+        turn.error = None
+        turn.completed_at = None
+        await self.db.commit()
+        await publish_platform_job_update(platform_job)
+        try:
+            await BuilderTurnArtifactStorage(turn_id, dispatch_attempt).delete()
+        except Exception:  # noqa: BLE001 - retry state is already durable
+            logger.warning(
+                "Failed to delete staged Builder output before retry",
+                extra={"turn_id": str(turn_id)},
+                exc_info=True,
+            )
+        try:
+            await BuilderHarnessStateStorage().delete_staged(
+                turn_id,
+                dispatch_attempt,
+            )
+        except Exception:  # noqa: BLE001 - retry state is already durable
+            logger.warning(
+                "Failed to delete staged Builder harness state before retry",
                 extra={"turn_id": str(turn_id)},
                 exc_info=True,
             )

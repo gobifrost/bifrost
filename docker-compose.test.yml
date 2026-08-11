@@ -354,7 +354,7 @@ services:
       BIFROST_S3_REGION: us-east-1
       # For E2E tests, point to the API container
       TEST_API_URL: http://api:8000
-      PYTHONPATH: /app
+      PYTHONPATH: /app:/app/builder-runner
       # Coverage data stored on shared volume for cross-phase accumulation
       COVERAGE_FILE: /coverage/.coverage
       # GitHub E2E test configuration (optional - tests skip if not set)
@@ -384,6 +384,8 @@ services:
       - ./api/bifrost:/app/bifrost:ro
       - ./api/scripts:/app/scripts:ro  # Scripts for migration utilities
       - ./api/tests:/app/tests:ro
+      - ./builder-runner:/app/builder-runner:ro
+      - ./api/src/services/cloudflare_runner/package.json:/app/api/src/services/cloudflare_runner/package.json:ro
       - ./api/alembic:/app/alembic:ro
       - ./api/alembic.ini:/app/alembic.ini:ro
       - ./api/pytest.ini:/app/pytest.ini:ro

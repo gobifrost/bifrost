@@ -40,6 +40,13 @@ Built with the Bifrost Solution builder.
 """
 
 BUILDER_SKILL_BUNDLE_PATH = "skills/bifrost-build"
+BUILDER_AGENT_MAX_ITERATIONS = 80
+# Coding harness context is cumulative across model/tool iterations. A normal
+# full-app turn used about 466k input tokens in its first 14 calls even though
+# it generated fewer than 3k output tokens. Keep the turn finite while leaving
+# enough headroom for roughly 60 compacted coding steps. The token ceiling is
+# the primary cost guardrail; the higher call ceiling still stops tool loops.
+BUILDER_AGENT_MAX_TOKEN_BUDGET = 2_000_000
 BUILDER_AGENT_SYSTEM_TOOLS = [
     "list_files",
     "read_file",
@@ -116,6 +123,8 @@ def build_initial_workspace(
                 "bundle_path": BUILDER_SKILL_BUNDLE_PATH,
                 "channels": ["chat"],
                 "system_tools": BUILDER_AGENT_SYSTEM_TOOLS,
+                "max_iterations": BUILDER_AGENT_MAX_ITERATIONS,
+                "max_token_budget": BUILDER_AGENT_MAX_TOKEN_BUDGET,
                 "access_level": "role_based",
             }
         }

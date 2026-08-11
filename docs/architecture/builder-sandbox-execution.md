@@ -1,7 +1,7 @@
 # Builder sandbox execution
 
 **Status:** implementation contract  
-**Updated:** 2026-08-07
+**Updated:** 2026-08-10
 
 ## Decision
 
@@ -133,17 +133,16 @@ The administrator opens **Settings > Builder runtime** and completes a guarded
 wizard:
 
 1. Configure and test the Bifrost AI provider and optional Builder model.
-2. Paste a Cloudflare API token. Bifrost verifies it and discovers accessible
-   accounts; a choice appears only when the token reaches more than one.
+2. Enter the Cloudflare account ID and a scoped API token. Bifrost encrypts the
+   token at rest and never returns it to the browser.
 3. Confirm the callback address. It defaults to the current Bifrost browser
-   origin and requires no second hostname. Bifrost verifies HTTPS in
-   production and performs an external callback probe.
-4. Select capacity and budget defaults, then choose **Provision runtime**.
-   Provisioning is itself a PlatformJob and uploads/updates the versioned
-   Worker, Workflow, and Sandbox configuration.
-5. The wizard shows live checks for credentials, account, Worker deployment,
-   Workflow dispatch, sandbox boot, callback reachability, artifact storage,
-   scheduler health, and a minimal end-to-end build.
+   origin and requires no second hostname. Cloudflare requires a public HTTPS
+   callback; the self-hosted provider may use a private HTTP address.
+4. Choose **Provision and test**. Provisioning is itself a PlatformJob and
+   uploads/updates the versioned Worker, Workflow, and Sandbox configuration,
+   starts a real sandbox probe, and streams its progress to the wizard.
+5. The wizard shows blocking checks for AI, credentials, callback address,
+   provisioning, and live connectivity.
 6. **Enable Builder** becomes available only when every blocking check is
    green. Ordinary users do not see Build before that; administrators see the
    readiness card and direct links to the missing setting.
@@ -154,19 +153,25 @@ Builder stops new jobs without destroying saved work. Disconnecting a provider
 is a separate explicit operation and never switches to local execution.
 
 For local development, the explicit local provider uses the same callback and
-runner contracts. It may use an opt-in local runner profile or a developer-only
-sandbox process, but the UI must label the weaker isolation and refuse that
-mode in production. Cloudflare cannot call an unexposed `localhost`; local
+runner contracts. The administrator supplies the self-hosted runner endpoint
+and shared secret. Cloudflare cannot call an unexposed `localhost`; local
 development therefore does not pretend to be a Cloudflare connectivity test.
 
 ## Capacity, cost, and tenancy
 
-Every job records provider identity, model usage, elapsed time, estimated
-container CPU/memory/disk consumption, and the owning user, organization, and
-Solution. Limits are checked before dispatch and enforced again by the
-job-bound AI proxy. The Builder UI shows consumed/remaining percentages and an
-estimated dollar amount; administrators can filter and aggregate by customer,
-user, Solution, provider, and job type.
+Every Builder model call records provider/model usage, estimated model cost,
+and the owning user, organization, conversation, and Solution job. Every
+external job records provider identity, external run identity, and elapsed
+time. Per-turn call/token limits are reserved transactionally and enforced by
+the job-bound AI proxy; the workbench shows consumed values and percentages.
+Administrators can use the existing AI Usage report for user/organization cost
+attribution.
+
+The current implementation does not ingest Cloudflare invoice data, calculate
+authoritative per-run container dollars, or enforce monthly Builder quotas by
+user/organization. Cloudflare billing remains in the connected account. Those
+aggregate policy and billing integrations require a separate platform-wide
+quota contract; they are not implied by the implemented per-turn fences.
 
 Provider-wide access does not widen the default catalog. Builders see their
 own and explicitly shared work. Operators and administrators deliberately open
@@ -182,4 +187,3 @@ cross-tenant read or mutation remains authorized and audited.
 - [Worker module upload API](https://developers.cloudflare.com/api/resources/workers/subresources/scripts/methods/update/)
 - [Workers multipart metadata](https://developers.cloudflare.com/workers/configuration/multipart-upload-metadata/)
 - [Workers and Containers configuration](https://developers.cloudflare.com/workers/wrangler/configuration/)
-

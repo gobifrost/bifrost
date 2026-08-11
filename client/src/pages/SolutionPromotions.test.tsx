@@ -21,6 +21,20 @@ vi.mock("@/hooks/useUsers", () => ({
 	useUsersFiltered: () => ({ data: [], isLoading: false }),
 }));
 
+vi.mock("@/components/forms/OrganizationSelect", () => ({
+	OrganizationSelect: ({
+		value,
+		onChange,
+	}: {
+		value: string | null;
+		onChange: (value: string | null) => void;
+	}) => (
+		<button type="button" onClick={() => onChange("org-2")}>
+			Customer {value}
+		</button>
+	),
+}));
+
 const review = {
 	solution_id: "solution-1",
 	slug: "dispatch-board",
@@ -68,6 +82,8 @@ beforeEach(() => {
 	mockPromoteSolution.mockReset();
 	mockListPromotionReviews.mockResolvedValue([review]);
 	mockPromoteSolution.mockResolvedValue({
+		release_id: "release-1",
+		published_solution_id: "published-1",
 		solution_id: "solution-1",
 		target: "company",
 		visibility: "shared",
@@ -89,7 +105,7 @@ describe("SolutionPromotions", () => {
 		).toBeInTheDocument();
 
 		const promote = screen.getByRole("button", {
-			name: /promote to company/i,
+			name: /publish to company/i,
 		});
 		expect(promote).toBeDisabled();
 
@@ -101,7 +117,7 @@ describe("SolutionPromotions", () => {
 
 		await user.click(promote);
 		await user.click(
-			await screen.findByRole("button", { name: "Promote Solution" }),
+			await screen.findByRole("button", { name: "Publish release" }),
 		);
 
 		await waitFor(() => {
@@ -111,7 +127,32 @@ describe("SolutionPromotions", () => {
 					target: "company",
 					approve_role_creation: true,
 					approved_connection_names: ["HaloPSA"],
+					target_organization_id: "org-1",
 				}),
+			);
+		});
+	});
+
+	it("can publish the reviewed release into another customer organization", async () => {
+		const { user } = renderWithProviders(<SolutionPromotions />);
+
+		await screen.findByRole("heading", { name: "Dispatch board" });
+		await user.click(screen.getByRole("button", { name: "Customer org-1" }));
+		await user.click(
+			screen.getByRole("checkbox", { name: /approve role creation/i }),
+		);
+		await user.click(screen.getByRole("checkbox", { name: "HaloPSA" }));
+		await user.click(
+			screen.getByRole("button", { name: /publish to company/i }),
+		);
+		await user.click(
+			await screen.findByRole("button", { name: "Publish release" }),
+		);
+
+		await waitFor(() => {
+			expect(mockPromoteSolution).toHaveBeenCalledWith(
+				"solution-1",
+				expect.objectContaining({ target_organization_id: "org-2" }),
 			);
 		});
 	});

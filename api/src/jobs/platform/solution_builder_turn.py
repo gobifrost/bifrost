@@ -45,6 +45,22 @@ async def run_solution_builder_turn(
                 "The Builder turn or its base revision no longer exists.",
             )
         input_sha256 = base.source_sha256
+        if turn.resume_from_turn_id is not None:
+            resume_from = await db.get(
+                SolutionBuilderTurn,
+                turn.resume_from_turn_id,
+            )
+            if (
+                resume_from is None
+                or resume_from.session_id != turn.session_id
+                or resume_from.checkpoint_sha256 is None
+                or resume_from.base_revision_id != turn.base_revision_id
+            ):
+                raise PlatformJobFailure(
+                    "builder_checkpoint_missing",
+                    "The Builder checkpoint is no longer available.",
+                )
+            input_sha256 = resume_from.checkpoint_sha256
         if turn.status == "queued":
             turn.status = "running"
             turn.started_at = datetime.now(timezone.utc)

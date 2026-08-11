@@ -74,6 +74,29 @@ async def test_write_output_streams_and_hashes(build_job_id) -> None:
     await storage.delete_job()
 
 
+async def test_delete_outputs_preserves_staged_input(tmp_path: Path, build_job_id) -> None:
+    storage = StagedBuildArtifactStorage(build_job_id)
+    app_id = uuid.uuid4()
+    input_path = tmp_path / "input.zip"
+    input_path.write_bytes(b"PK\x05\x06" + b"\x00" * 18)
+    await storage.write_input(input_path)
+    await storage.write_output(
+        app_id,
+        "assets/app.js",
+        _achunks(b"console.log('partial')"),
+        max_total_bytes=10_000,
+    )
+
+    await storage.delete_outputs(app_id)
+
+    assert await storage.list_outputs(app_id) == []
+    restored = bytearray()
+    async for chunk in storage.open_input_stream():
+        restored.extend(chunk)
+    assert bytes(restored) == input_path.read_bytes()
+    await storage.delete_job()
+
+
 async def test_write_output_raises_when_cumulative_exceeds_cap(build_job_id) -> None:
     storage = StagedBuildArtifactStorage(build_job_id)
     app_id = uuid.uuid4()

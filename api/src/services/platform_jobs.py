@@ -566,6 +566,46 @@ async def finish_external_platform_job(
     return True
 
 
+async def stage_external_platform_job_retry(
+    db: AsyncSession,
+    job_id: UUID,
+    dispatch_attempt: int,
+    *,
+    error_message: str,
+) -> PlatformJob | None:
+    """Requeue one fenced external attempt when its provider reports a transient fault."""
+    job = (
+        await db.execute(
+            select(PlatformJob)
+            .where(
+                PlatformJob.id == job_id,
+                PlatformJob.attempt == dispatch_attempt,
+                PlatformJob.status.in_(("running", "waiting")),
+                PlatformJob.attempt < PlatformJob.max_attempts,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if job is None:
+        return None
+    job.status = "queued"
+    job.phase = "Retrying external runner"
+    job.available_at = _now() + timedelta(seconds=5)
+    job.error_code = "external_job_failed"
+    job.error_message = error_message[:4000]
+    job.error_retryable = True
+    job.external_provider = None
+    job.external_run_id = None
+    job.external_started_at = None
+    job.lease_owner = None
+    job.lease_token = None
+    job.heartbeat_at = None
+    job.lease_expires_at = None
+    job.revision += 1
+    await db.flush()
+    return job
+
+
 async def stage_external_platform_job_completion(
     db: AsyncSession,
     job_id: UUID,

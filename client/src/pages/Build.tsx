@@ -8,6 +8,7 @@ import {
 	Building2,
 	Check,
 	Clock3,
+	Database,
 	Filter,
 	FolderKanban,
 	Loader2,
@@ -39,6 +40,8 @@ import {
 	createBuilderSession,
 	createBuilderSolution,
 	deleteBuilderSolution,
+	ensureGlobalWorkspace,
+	getGlobalWorkspace,
 	listBuilderSolutions,
 	type BuilderSolution,
 } from "@/services/builder";
@@ -74,6 +77,32 @@ export function Build() {
 	const [search, setSearch] = useState("");
 	const [organizationId, setOrganizationId] = useState<string | undefined>();
 	const [ownerUserId, setOwnerUserId] = useState("");
+	const [globalError, setGlobalError] = useState<string | null>(null);
+
+	const globalWorkspaceQuery = useQuery({
+		queryKey: ["builder", "global-workspace"],
+		queryFn: ({ signal }) => getGlobalWorkspace({ signal }),
+		enabled: isPlatformAdmin && builderReady,
+	});
+	const openGlobalWorkspaceMutation = useMutation({
+		mutationFn: async () => {
+			setGlobalError(null);
+			return globalWorkspaceQuery.data?.exists
+				? globalWorkspaceQuery.data
+				: ensureGlobalWorkspace();
+		},
+		onSuccess: (workspace) => {
+			void queryClient.invalidateQueries({
+				queryKey: ["builder", "global-workspace"],
+			});
+			if (workspace.solution_id) {
+				navigate(`/solutions/${workspace.solution_id}/builder`, {
+					viewTransition: true,
+				});
+			}
+		},
+		onError: (caught: Error) => setGlobalError(caught.message),
+	});
 
 	const allSolutionsQuery = useQuery({
 		queryKey: [
@@ -233,6 +262,50 @@ export function Build() {
 				</div>
 				{isPlatformAdmin ? <Button variant="ghost" size="sm" onClick={() => navigate("/settings/builder")}><Settings2 className="h-4 w-4" />Builder setup</Button> : null}
 			</header>
+
+			{isPlatformAdmin ? (
+				<section className="relative overflow-hidden rounded-3xl border border-primary/20 bg-gradient-to-br from-primary/[0.07] via-card to-card p-5 sm:p-6">
+					<div className="absolute -right-16 -top-20 h-48 w-48 rounded-full bg-primary/10 blur-3xl" aria-hidden="true" />
+					<div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+						<div className="flex min-w-0 gap-4">
+							<span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-primary text-primary-foreground shadow-sm">
+								<Database className="h-5 w-5" />
+							</span>
+							<div className="min-w-0">
+								<div className="flex flex-wrap items-center gap-2">
+									<p className="text-xs font-semibold uppercase tracking-wider text-primary">Administrator workspace</p>
+									{globalWorkspaceQuery.data?.exists ? (
+										<Badge variant="outline" className="bg-background/70">
+											{globalWorkspaceQuery.data.has_pending_proposal ? "Proposal ready" : "Synced with live _repo"}
+										</Badge>
+									) : null}
+								</div>
+								<h2 className="mt-1 text-xl font-semibold tracking-tight">Global Workspace</h2>
+								<p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
+									Ask AI to propose changes to the instance-wide <code className="rounded bg-muted px-1 py-0.5 text-xs text-foreground">_repo</code>. Manifests stay locked, and nothing changes live until an administrator validates and applies the reviewed diff.
+								</p>
+								{globalError || globalWorkspaceQuery.isError ? (
+									<p className="mt-2 text-sm text-destructive" role="alert">
+										{globalError ?? (globalWorkspaceQuery.error as Error).message}
+									</p>
+								) : null}
+							</div>
+						</div>
+						<Button
+							className="shrink-0"
+							disabled={globalWorkspaceQuery.isLoading || openGlobalWorkspaceMutation.isPending}
+							onClick={() => openGlobalWorkspaceMutation.mutate()}
+						>
+							{globalWorkspaceQuery.isLoading || openGlobalWorkspaceMutation.isPending ? (
+								<Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+							) : (
+								<Database className="h-4 w-4" />
+							)}
+							{globalWorkspaceQuery.data?.exists ? "Open Global Workspace" : "Create Global Workspace"}
+						</Button>
+					</div>
+				</section>
+			) : null}
 
 			<section className="grid overflow-hidden rounded-3xl border bg-card lg:grid-cols-[minmax(0,1.55fr)_minmax(260px,.45fr)]">
 				<div className="p-4 sm:p-6">

@@ -8263,6 +8263,92 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/builder/solutions/global-workspace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the administrator global workspace state */
+        get: operations["get_global_workspace_api_builder_solutions_global_workspace_get"];
+        put?: never;
+        /** Create or open the administrator global workspace */
+        post: operations["create_global_workspace_api_builder_solutions_global_workspace_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/global-workspace/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh the proposal baseline from live _repo */
+        post: operations["refresh_global_workspace_route_api_builder_solutions_global_workspace_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/global-workspace/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate the current global workspace proposal without executing it */
+        post: operations["validate_global_workspace_route_api_builder_solutions_global_workspace_validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/global-workspace/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply the reviewed global workspace proposal to live _repo */
+        post: operations["apply_global_workspace_route_api_builder_solutions_global_workspace_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/global-workspace/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Roll back the latest global workspace apply */
+        post: operations["rollback_global_workspace_route_api_builder_solutions_global_workspace_rollback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/builder/solutions/{solution_id}": {
         parameters: {
             query?: never;
@@ -12310,6 +12396,12 @@ export interface components {
             current_revision_id?: string | null;
             /** Deployed Revision Id */
             deployed_revision_id?: string | null;
+            /**
+             * Target Kind
+             * @default solution
+             * @enum {string}
+             */
+            target_kind: "solution" | "global_repo";
             /** Promotion Status */
             promotion_status: string;
             /** Promotion Revision Id */
@@ -12404,6 +12496,13 @@ export interface components {
             base_revision_id?: string | null;
             /** Output Revision Id */
             output_revision_id?: string | null;
+            /** Resume From Turn Id */
+            resume_from_turn_id?: string | null;
+            /**
+             * Checkpoint Available
+             * @default false
+             */
+            checkpoint_available: boolean;
             /** Build Job Id */
             build_job_id?: string | null;
             /** Deploy Job Id */
@@ -17371,6 +17470,70 @@ export interface components {
             error?: string | null;
         };
         /**
+         * GlobalWorkspaceApplyDTO
+         * @description Result of explicitly applying or rolling back reviewed ``_repo`` source.
+         */
+        GlobalWorkspaceApplyDTO: {
+            /**
+             * Revision Id
+             * Format: uuid
+             */
+            revision_id: string;
+            /** Changed Paths */
+            changed_paths?: string[];
+            /**
+             * Applied At
+             * Format: date-time
+             */
+            applied_at: string;
+            /**
+             * Rolled Back
+             * @default false
+             */
+            rolled_back: boolean;
+        };
+        /**
+         * GlobalWorkspaceStatusDTO
+         * @description Current state of the singular administrator ``_repo`` workbench.
+         */
+        GlobalWorkspaceStatusDTO: {
+            /** Exists */
+            exists: boolean;
+            /** Solution Id */
+            solution_id?: string | null;
+            /** Current Revision Id */
+            current_revision_id?: string | null;
+            /** Deployed Revision Id */
+            deployed_revision_id?: string | null;
+            /**
+             * Has Pending Proposal
+             * @default false
+             */
+            has_pending_proposal: boolean;
+            /**
+             * Can Rollback
+             * @default false
+             */
+            can_rollback: boolean;
+            /** Last Applied At */
+            last_applied_at?: string | null;
+        };
+        /**
+         * GlobalWorkspaceValidationDTO
+         * @description Non-executing validation result for the current proposal.
+         */
+        GlobalWorkspaceValidationDTO: {
+            /**
+             * Revision Id
+             * Format: uuid
+             */
+            revision_id: string;
+            /** Valid */
+            valid: boolean;
+            /** Errors */
+            errors?: string[];
+        };
+        /**
          * GoogleOAuthConfigRequest
          * @description Request model for configuring Google OAuth SSO.
          */
@@ -21248,6 +21411,12 @@ export interface components {
             collaborator_access?: ("view" | "edit") | null;
             /** Status */
             status: string;
+            /**
+             * Target Kind
+             * @default solution
+             * @enum {string}
+             */
+            target_kind: "solution" | "global_repo";
             /** Promotion Status */
             promotion_status: string;
             /**
@@ -21441,6 +21610,16 @@ export interface components {
         /** PromotionResultDTO */
         PromotionResultDTO: {
             /**
+             * Release Id
+             * Format: uuid
+             */
+            release_id: string;
+            /**
+             * Published Solution Id
+             * Format: uuid
+             */
+            published_solution_id: string;
+            /**
              * Solution Id
              * Format: uuid
              */
@@ -21548,6 +21727,8 @@ export interface components {
              * @enum {string}
              */
             target: "company" | "global";
+            /** Target Organization Id */
+            target_organization_id?: string | null;
             /**
              * Runtime Mode
              * @default isolated
@@ -22600,6 +22781,8 @@ export interface components {
             session_id: string;
             /** Message */
             message: string;
+            /** Resume From Turn Id */
+            resume_from_turn_id?: string | null;
         };
         /**
          * RunTurnResponse
@@ -36904,6 +37087,7 @@ export interface operations {
         parameters: {
             query?: {
                 limit?: number;
+                /** @description Return messages older than this PostgreSQL INTEGER sequence */
                 before_sequence?: number | null;
             };
             header?: never;
@@ -41400,6 +41584,126 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_global_workspace_api_builder_solutions_global_workspace_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalWorkspaceStatusDTO"];
+                };
+            };
+        };
+    };
+    create_global_workspace_api_builder_solutions_global_workspace_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalWorkspaceStatusDTO"];
+                };
+            };
+        };
+    };
+    refresh_global_workspace_route_api_builder_solutions_global_workspace_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalWorkspaceStatusDTO"];
+                };
+            };
+        };
+    };
+    validate_global_workspace_route_api_builder_solutions_global_workspace_validate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalWorkspaceValidationDTO"];
+                };
+            };
+        };
+    };
+    apply_global_workspace_route_api_builder_solutions_global_workspace_apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalWorkspaceApplyDTO"];
+                };
+            };
+        };
+    };
+    rollback_global_workspace_route_api_builder_solutions_global_workspace_rollback_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalWorkspaceApplyDTO"];
                 };
             };
         };

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -11,11 +13,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.models.enums import MessageRole
 from src.models.orm.agents import Agent, Conversation, Message
 from src.models.orm.platform_jobs import PlatformJob
-from src.models.orm.solution_builder import SolutionBuilderSession
+from src.models.orm.solution_builder import (
+    SolutionBuilderProject,
+    SolutionBuilderSession,
+    SolutionSourceRevision,
+)
 from src.models.orm.solutions import Solution
 from src.models.orm.users import User
 from src.services.builder.agent_turns import BuilderAgentTurnService
 from src.services.builder.scaffold import (
+    BUILDER_AGENT_MAX_ITERATIONS,
+    BUILDER_AGENT_MAX_TOKEN_BUDGET,
     BUILDER_AGENT_SYSTEM_TOOLS,
     BUILDER_SKILL_BUNDLE_PATH,
     builder_agent_id,
@@ -122,6 +130,8 @@ async def test_enqueue_turn_persists_prompt_agent_and_encrypted_platform_job(
     assert agent.solution_id == solution.id
     assert agent.bundle_path == BUILDER_SKILL_BUNDLE_PATH
     assert agent.system_tools == BUILDER_AGENT_SYSTEM_TOOLS
+    assert agent.max_iterations == BUILDER_AGENT_MAX_ITERATIONS
+    assert agent.max_token_budget == BUILDER_AGENT_MAX_TOKEN_BUDGET
     assert agent.system_prompt.startswith("---")
 
     conversation = await db_session.get(Conversation, session.conversation_id)
@@ -174,3 +184,198 @@ async def test_enqueue_turn_refuses_a_second_active_turn(
         )
     ).scalars().all()
     assert len(jobs) == 1
+
+
+@pytest.mark.asyncio
+async def test_enqueue_turn_can_explicitly_resume_a_failed_checkpoint(
+    db_session: AsyncSession,
+    builder_rows: tuple[Solution, SolutionBuilderSession, User],
+) -> None:
+    solution, session, user = builder_rows
+    service = BuilderAgentTurnService(db_session)
+    interrupted = await service.enqueue_agent_turn(
+        solution.id,
+        session_id=session.id,
+        requested_by=user.id,
+        user_message="Build the first draft.",
+    )
+    interrupted.turn.status = "failed"
+    interrupted.turn.checkpoint_sha256 = "a" * 64
+    interrupted.platform_job.status = "failed"
+    await db_session.commit()
+
+    resumed = await service.enqueue_agent_turn(
+        solution.id,
+        session_id=session.id,
+        requested_by=user.id,
+        user_message="Continue from the saved checkpoint.",
+        resume_from_turn_id=interrupted.turn.id,
+    )
+
+    assert resumed.turn.resume_from_turn_id == interrupted.turn.id
+    assert resumed.turn.base_revision_id == interrupted.turn.base_revision_id
+    assert resumed.turn.status == "queued"
+
+
+@pytest.mark.asyncio
+async def test_enqueue_turn_refuses_checkpoint_after_solution_revision_changed(
+    db_session: AsyncSession,
+    builder_rows: tuple[Solution, SolutionBuilderSession, User],
+) -> None:
+    solution, session, user = builder_rows
+    service = BuilderAgentTurnService(db_session)
+    interrupted = await service.enqueue_agent_turn(
+        solution.id,
+        session_id=session.id,
+        requested_by=user.id,
+        user_message="Build the first draft.",
+    )
+    interrupted.turn.status = "failed"
+    interrupted.turn.checkpoint_sha256 = "a" * 64
+    interrupted.platform_job.status = "failed"
+    base = await db_session.get(
+        SolutionSourceRevision,
+        interrupted.turn.base_revision_id,
+    )
+    project = await db_session.get(SolutionBuilderProject, solution.id)
+    assert base is not None
+    assert project is not None
+    newer = SolutionSourceRevision(
+        id=uuid4(),
+        solution_id=solution.id,
+        parent_revision_id=base.id,
+        created_by=user.id,
+        source_sha256=base.source_sha256,
+        size_bytes=base.size_bytes,
+        summary="newer revision",
+    )
+    db_session.add(newer)
+    await db_session.flush()
+    project.current_revision_id = newer.id
+    await db_session.commit()
+
+    with pytest.raises(BuilderTurnConflict, match="changed after this checkpoint"):
+        await service.enqueue_agent_turn(
+            solution.id,
+            session_id=session.id,
+            requested_by=user.id,
+            user_message="Resume stale work.",
+            resume_from_turn_id=interrupted.turn.id,
+        )
+
+
+@pytest.mark.asyncio
+async def test_finalize_turn_accepts_harness_state_with_workspace_result(
+    db_session: AsyncSession,
+    builder_rows: tuple[Solution, SolutionBuilderSession, User],
+    fake_revision_storage: dict[str, bytes],
+) -> None:
+    solution, session, user = builder_rows
+    service = BuilderAgentTurnService(db_session)
+    queued = await service.enqueue_agent_turn(
+        solution.id,
+        session_id=session.id,
+        requested_by=user.id,
+        user_message="Keep the existing workspace.",
+    )
+    base = fake_revision_storage[str(queued.turn.base_revision_id)]
+    artifact = MagicMock()
+
+    async def copy_output(destination: Path) -> None:
+        destination.write_bytes(base)
+
+    artifact.copy_to_path = AsyncMock(side_effect=copy_output)
+    artifact.delete = AsyncMock()
+    harness = MagicMock()
+    harness.promote = AsyncMock()
+    harness.delete_staged = AsyncMock()
+
+    with (
+        patch(
+            "src.services.builder.agent_turns.BuilderTurnArtifactStorage",
+            return_value=artifact,
+        ),
+        patch(
+            "src.services.builder.agent_turns.BuilderHarnessStateStorage",
+            return_value=harness,
+        ),
+        patch(
+            "src.services.platform_jobs.stage_external_platform_job_completion",
+            AsyncMock(return_value=queued.platform_job),
+        ),
+        patch(
+            "src.services.platform_jobs.publish_platform_job_update",
+            AsyncMock(),
+        ),
+    ):
+        completed = await service.finalize_agent_turn(
+            solution.id,
+            turn_id=queued.turn.id,
+            dispatch_attempt=4,
+            output_sha256=hashlib.sha256(base).hexdigest(),
+            final_text="No file changes were needed.",
+            tool_call_count=1,
+            model="builder-model",
+        )
+
+    assert completed.revision_created is False
+    harness.promote.assert_awaited_once_with(
+        solution_id=solution.id,
+        session_id=session.id,
+        turn_id=queued.turn.id,
+        dispatch_attempt=4,
+    )
+    harness.delete_staged.assert_awaited_once_with(queued.turn.id, 4)
+
+
+@pytest.mark.asyncio
+async def test_preserve_turn_checkpoint_accepts_matching_workspace_and_harness(
+    db_session: AsyncSession,
+    builder_rows: tuple[Solution, SolutionBuilderSession, User],
+) -> None:
+    solution, session, user = builder_rows
+    service = BuilderAgentTurnService(db_session)
+    queued = await service.enqueue_agent_turn(
+        solution.id,
+        session_id=session.id,
+        requested_by=user.id,
+        user_message="Build a draft.",
+    )
+    payload = b"checkpoint workspace"
+    artifact = MagicMock()
+
+    async def copy_output(destination: Path) -> None:
+        destination.write_bytes(payload)
+
+    artifact.copy_to_path = AsyncMock(side_effect=copy_output)
+    artifact.promote_checkpoint = AsyncMock()
+    harness = MagicMock()
+    harness.promote = AsyncMock()
+
+    with (
+        patch(
+            "src.services.builder.agent_turns.BuilderTurnArtifactStorage",
+            return_value=artifact,
+        ),
+        patch(
+            "src.services.builder.agent_turns.BuilderHarnessStateStorage",
+            return_value=harness,
+        ),
+    ):
+        turn = await service.preserve_agent_turn_checkpoint(
+            turn_id=queued.turn.id,
+            dispatch_attempt=3,
+            output_sha256=hashlib.sha256(payload).hexdigest(),
+        )
+
+    assert turn.checkpoint_available
+    harness.promote.assert_awaited_once_with(
+        solution_id=solution.id,
+        session_id=session.id,
+        turn_id=queued.turn.id,
+        dispatch_attempt=3,
+    )
+    artifact.promote_checkpoint.assert_awaited_once_with(
+        solution_id=solution.id,
+        session_id=session.id,
+    )

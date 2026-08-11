@@ -69,6 +69,9 @@ interface PreviewPaneProps {
 	onReload: () => void;
 	/** Source is ahead of the deployed revision — preview is last-good. */
 	isStale: boolean;
+	/** A durable Builder job is changing this Solution. */
+	isBuilding?: boolean;
+	buildDetail?: string;
 	device?: PreviewDevice;
 	onDeviceChange?: (device: PreviewDevice) => void;
 }
@@ -196,6 +199,68 @@ function PreviewRestoreState({
 	);
 }
 
+function PreviewBuildState({ detail }: { detail?: string }) {
+	const reduceMotion = useReducedMotion();
+
+	return (
+		<motion.div
+			role="status"
+			aria-live="polite"
+			aria-label="Building your app"
+			className="flex h-full min-h-[360px] flex-col items-center justify-center gap-6 p-8 text-center"
+			initial={reduceMotion ? false : { opacity: 0 }}
+			animate={{ opacity: 1 }}
+			transition={{ duration: reduceMotion ? 0 : 0.18 }}
+		>
+			<div
+				className="w-full max-w-sm overflow-hidden rounded-xl border bg-background shadow-sm"
+				aria-hidden="true"
+			>
+				<div className="flex h-8 items-center gap-1.5 border-b px-3">
+					<span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/30" />
+					<span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/30" />
+					<span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/30" />
+				</div>
+				<div className="space-y-3 p-4">
+					<div className="h-5 w-2/5 rounded bg-muted" />
+					<div className="grid grid-cols-3 gap-2">
+						<div className="h-16 rounded-lg bg-muted/80" />
+						<div className="h-16 rounded-lg bg-muted/60" />
+						<div className="h-16 rounded-lg bg-muted/40" />
+					</div>
+					<div className="h-20 rounded-lg bg-muted/50" />
+				</div>
+				<div className="h-1 overflow-hidden bg-muted">
+					<motion.div
+						className="h-full w-1/3 bg-primary"
+						initial={reduceMotion ? { x: "100%" } : { x: "-100%" }}
+						animate={reduceMotion ? { x: "100%" } : { x: "300%" }}
+						transition={
+							reduceMotion
+								? { duration: 0 }
+								: {
+										duration: 1.2,
+										ease: [0.16, 1, 0.3, 1],
+										repeat: Infinity,
+									}
+						}
+					/>
+				</div>
+			</div>
+			<div>
+				<p className="text-sm font-medium">Building your app</p>
+				<p className="mt-1 max-w-md text-sm leading-6 text-muted-foreground">
+					{detail ??
+						"The Builder Agent is working in an isolated runner. Your conversation and source are saved as it works."}
+				</p>
+				<p className="mt-2 text-xs text-muted-foreground">
+					You can leave this page and return without interrupting the build.
+				</p>
+			</div>
+		</motion.div>
+	);
+}
+
 function PreviewDocument({
 	launchUrl,
 	device,
@@ -247,6 +312,8 @@ export function PreviewPane({
 	onRouteChange,
 	onReload,
 	isStale,
+	isBuilding = false,
+	buildDetail,
 	device: controlledDevice,
 	onDeviceChange,
 }: PreviewPaneProps) {
@@ -323,6 +390,12 @@ export function PreviewPane({
 						Stale
 					</Badge>
 				)}
+				{isBuilding ? (
+					<Badge variant="secondary" className="shrink-0 gap-1.5">
+						<Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" />
+						Building
+					</Badge>
+				) : null}
 			</div>
 
 			<div
@@ -338,6 +411,8 @@ export function PreviewPane({
 					/>
 				) : state === "loading" ? (
 					<PreviewRestoreState phase="session" />
+				) : isBuilding ? (
+					<PreviewBuildState detail={buildDetail} />
 				) : (
 					<div
 						className="flex h-full flex-col items-center justify-center gap-2 p-8 text-center"

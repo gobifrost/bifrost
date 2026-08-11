@@ -336,8 +336,7 @@ export function ChatInput({
 
 				{/* Disclaimer */}
 				<p className="text-center text-xs text-muted-foreground mt-2">
-					Claude is AI and can make mistakes. Please double-check
-					responses.
+					AI-generated responses can be inaccurate. Review important changes.
 				</p>
 			</div>
 		</div>

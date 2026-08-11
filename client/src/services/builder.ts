@@ -23,8 +23,19 @@ export type BuilderRevisionDiff = components["schemas"]["RevisionDiffDTO"];
 export type BuilderCollaborator =
 	components["schemas"]["BuilderCollaboratorDTO"];
 export type BuilderBlocker = components["schemas"]["SandboxRunnerBlocker"];
+export type GlobalWorkspaceStatus =
+	components["schemas"]["GlobalWorkspaceStatusDTO"];
+export type GlobalWorkspaceValidation =
+	components["schemas"]["GlobalWorkspaceValidationDTO"];
+export type GlobalWorkspaceApply =
+	components["schemas"]["GlobalWorkspaceApplyDTO"];
 
-export type BuilderTurnStatus = "queued" | "running" | "succeeded" | "failed";
+export type BuilderTurnStatus =
+	| "queued"
+	| "running"
+	| "succeeded"
+	| "failed"
+	| "cancelled";
 
 export type BuilderTurn = Omit<
 	components["schemas"]["BuilderTurnDTO"],
@@ -102,10 +113,19 @@ async function errorFrom(
 		);
 	}
 	const body = await response.json().catch(() => null);
-	const detail =
-		body && typeof body === "object" && typeof body.detail === "string"
+	const rawDetail =
+		body && typeof body === "object" && "detail" in body
 			? body.detail
-			: fallback;
+			: null;
+	const detail =
+		typeof rawDetail === "string"
+			? rawDetail
+			: rawDetail &&
+				  typeof rawDetail === "object" &&
+				  "message" in rawDetail &&
+				  typeof rawDetail.message === "string"
+				? rawDetail.message
+				: fallback;
 	return new BuilderApiError(response.status, detail);
 }
 
@@ -142,6 +162,66 @@ export async function listBuilderSolutions(
 		`${BASE}${suffix}`,
 		"Failed to list builder solutions",
 		{ signal: options.signal },
+	);
+}
+
+export async function getGlobalWorkspace(
+	options: RequestOptions = {},
+): Promise<GlobalWorkspaceStatus> {
+	return requestJson<GlobalWorkspaceStatus>(
+		`${BASE}/global-workspace`,
+		"Failed to load the Global Workspace",
+		{ signal: options.signal },
+	);
+}
+
+export async function ensureGlobalWorkspace(
+	options: RequestOptions = {},
+): Promise<GlobalWorkspaceStatus> {
+	return requestJson<GlobalWorkspaceStatus>(
+		`${BASE}/global-workspace`,
+		"Failed to open the Global Workspace",
+		{ method: "POST", signal: options.signal },
+	);
+}
+
+export async function refreshGlobalWorkspace(
+	options: RequestOptions = {},
+): Promise<GlobalWorkspaceStatus> {
+	return requestJson<GlobalWorkspaceStatus>(
+		`${BASE}/global-workspace/refresh`,
+		"Failed to refresh the Global Workspace",
+		{ method: "POST", signal: options.signal },
+	);
+}
+
+export async function validateGlobalWorkspace(
+	options: RequestOptions = {},
+): Promise<GlobalWorkspaceValidation> {
+	return requestJson<GlobalWorkspaceValidation>(
+		`${BASE}/global-workspace/validate`,
+		"Failed to validate the Global Workspace proposal",
+		{ method: "POST", signal: options.signal },
+	);
+}
+
+export async function applyGlobalWorkspace(
+	options: RequestOptions = {},
+): Promise<GlobalWorkspaceApply> {
+	return requestJson<GlobalWorkspaceApply>(
+		`${BASE}/global-workspace/apply`,
+		"Failed to apply the Global Workspace proposal",
+		{ method: "POST", signal: options.signal },
+	);
+}
+
+export async function rollbackGlobalWorkspace(
+	options: RequestOptions = {},
+): Promise<GlobalWorkspaceApply> {
+	return requestJson<GlobalWorkspaceApply>(
+		`${BASE}/global-workspace/rollback`,
+		"Failed to roll back the Global Workspace",
+		{ method: "POST", signal: options.signal },
 	);
 }
 
@@ -377,7 +457,11 @@ export async function listTurns(
 
 export async function runBuilderTurn(
 	solutionId: string,
-	params: { sessionId: string; message: string },
+	params: {
+		sessionId: string;
+		message: string;
+		resumeFromTurnId?: string;
+	},
 	options: RequestOptions = {},
 ): Promise<BuilderTurnResult> {
 	return requestJson<BuilderTurnResult>(
@@ -388,6 +472,9 @@ export async function runBuilderTurn(
 			body: JSON.stringify({
 				session_id: params.sessionId,
 				message: params.message,
+				...(params.resumeFromTurnId
+					? { resume_from_turn_id: params.resumeFromTurnId }
+					: {}),
 			}),
 			signal: options.signal,
 		},

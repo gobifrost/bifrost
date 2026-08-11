@@ -1,0 +1,12 @@
+{
+  "name": "bifrost-builder-runner",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test opencode_turn*.test.mjs"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "1.18.15",
+    "undici": "7.16.0"
+  }
+}

@@ -55,7 +55,7 @@ def _http_client(response_body: dict):
 
 
 @pytest.mark.asyncio
-async def test_cloudflare_dispatch_uses_attempt_id_and_json_encoded_params():
+async def test_cloudflare_dispatch_uses_attempt_id_and_object_params():
     job = _job(attempt=3)
     manager, client = _http_client(
         {"success": True, "result": {"id": "workflow-run-123"}}
@@ -101,7 +101,7 @@ async def test_cloudflare_dispatch_uses_attempt_id_and_json_encoded_params():
     )
     assert request.kwargs["headers"] == {"Authorization": "Bearer cf-secret"}
     assert request.kwargs["json"]["instance_id"] == f"{job.id}-3"
-    params = json.loads(request.kwargs["json"]["params"])
+    params = request.kwargs["json"]["params"]
     assert params == {
         "schema_version": 1,
         "job_id": str(job.id),
@@ -112,13 +112,13 @@ async def test_cloudflare_dispatch_uses_attempt_id_and_json_encoded_params():
         "input_sha256": "a" * 64,
         "timeout_seconds": 900,
     }
-    assert "cf-secret" not in request.kwargs["json"]["params"]
+    assert "cf-secret" not in json.dumps(request.kwargs["json"]["params"])
     assert job.external_provider == "cloudflare"
     assert job.external_run_id == "workflow-run-123"
 
 
 @pytest.mark.asyncio
-async def test_dispatch_terminates_run_accepted_during_cancellation():
+async def test_dispatch_marks_run_cancelled_without_orphaning_background_process():
     job = _job(attempt=4)
     job.status = "cancel_requested"
     manager, client = _http_client(
@@ -158,10 +158,7 @@ async def test_dispatch_terminates_run_accepted_during_cancellation():
         )
 
     assert result.cancelled is True
-    client.patch.assert_awaited_once()
-    assert client.patch.await_args.args[0].endswith(
-        "/workflows/workflow/instances/workflow-run-cancelled/status"
-    )
+    client.patch.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -278,7 +275,7 @@ async def test_cloudflare_dispatch_rejects_malformed_success_response():
 
 
 @pytest.mark.asyncio
-async def test_cloudflare_cancel_terminates_exact_external_run():
+async def test_cloudflare_cancel_leaves_workflow_to_reap_background_process():
     job = _job()
     job.external_provider = "cloudflare"
     job.external_run_id = "workflow-run-123"
@@ -306,8 +303,4 @@ async def test_cloudflare_cancel_terminates_exact_external_run():
         cancelled = await cancel_external_sandbox_run(job)
 
     assert cancelled is True
-    request = client.patch.await_args
-    assert request.args[0].endswith(
-        "/workflows/workflow/instances/workflow-run-123/status"
-    )
-    assert request.kwargs["json"] == {"status": "terminate", "rollback": False}
+    client.patch.assert_not_awaited()

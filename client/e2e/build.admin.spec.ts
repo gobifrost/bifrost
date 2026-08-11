@@ -19,23 +19,35 @@ async function exposeConfiguredBuilder(page: import("@playwright/test").Page) {
 		const body = (await response.json()) as Record<string, unknown>;
 		await route.fulfill({
 			response,
-			json: { ...body, ai_configured: true },
+			json: {
+				...body,
+				ai_configured: true,
+				builder_ready: true,
+				builder_blockers: [],
+			},
 		});
 	});
 }
 
-test("guides an admin to AI settings before Build is configured", async ({
+test("guides an admin through Builder setup before Build is configured", async ({
 	page,
 }) => {
 	await page.goto("/build");
 
 	await expect(
-		page.getByRole("heading", { name: "Connect AI to start building" }),
+		page.getByRole("heading", { name: "Finish connecting Builder" }),
 	).toBeVisible({ timeout: 10_000 });
+	await expect(page.getByText("AI provider configuration is required")).toBeVisible();
 	await expect(
-		page.getByText("Only platform administrators can change this setting."),
+		page.getByText("No sandbox runner provider has been configured."),
 	).toBeVisible();
-	await page.getByRole("button", { name: "Configure AI" }).click();
+
+	await page.getByRole("button", { name: "Open Builder setup" }).click();
+	await expect(page).toHaveURL(/\/settings\/builder$/);
+	await expect(
+		page.getByRole("heading", { name: "Native app building" }),
+	).toBeVisible();
+	await page.getByRole("link", { name: "Configure AI" }).click();
 	await expect(page).toHaveURL(/\/settings\/ai$/);
 });
 
@@ -63,7 +75,7 @@ test("creates a private app workspace from /build", async ({ page, api }) => {
 
 	await page.goto("/build");
 	await expect(
-		page.getByRole("heading", { name: "What do you want to build?" }),
+		page.getByRole("heading", { name: "What should Bifrost build?" }),
 	).toBeVisible({ timeout: 10000 });
 
 	await page.getByRole("textbox", { name: "App name" }).fill(name);
@@ -119,6 +131,50 @@ test("creates a private app workspace from /build", async ({ page, api }) => {
 	expect(response.ok()).toBe(true);
 });
 
+test("opens the admin Global Workspace as a proposal-only workbench", async ({
+	page,
+}) => {
+	test.setTimeout(60_000);
+	await exposeConfiguredBuilder(page);
+
+	await page.goto("/build");
+	await expect(
+		page.getByRole("heading", { name: "Global Workspace" }),
+	).toBeVisible({ timeout: 10_000 });
+	await expect(
+		page.getByText(/nothing changes live until an administrator validates/i),
+	).toBeVisible();
+
+	await page
+		.getByRole("button", { name: /^(?:Create|Open) Global Workspace$/ })
+		.click();
+	await expect(page).toHaveURL(/\/solutions\/[0-9a-f-]+\/builder$/, {
+		timeout: 15_000,
+	});
+
+	await expect(
+		page.getByRole("heading", { name: "Global Workspace" }),
+	).toBeVisible();
+	await expect(page.getByText("Live _repo", { exact: true })).toBeVisible();
+	await expect(page.getByText("Admin only", { exact: true })).toBeVisible();
+	await expect(
+		page.getByText("Global Workspace agent", { exact: true }),
+	).toBeVisible();
+	await expect(
+		page.getByText(/AI edits only the immutable proposal/i),
+	).toBeVisible();
+	await expect(
+		page.getByRole("button", { name: "Apply to live" }),
+	).toBeDisabled();
+	await expect(page.getByRole("tab", { name: "Preview" })).toHaveCount(0);
+	await expect(page.getByRole("button", { name: /open app/i })).toHaveCount(0);
+
+	await page.getByRole("tab", { name: "Code" }).click();
+	await expect(
+		page.getByRole("textbox", { name: "Find a source file" }),
+	).toBeVisible();
+});
+
 test("keeps Agent, Preview, Code, and Changes usable at mobile width", async ({
 	page,
 	api,
@@ -146,7 +202,7 @@ test("keeps Agent, Preview, Code, and Changes usable at mobile width", async ({
 		await expect(
 			page.getByRole("button", { name: "Agent", exact: true }),
 		).toBeVisible();
-		await page.getByRole("button", { name: "Code" }).click();
+		await page.getByRole("button", { name: "Code", exact: true }).click();
 		await expect(
 			page.getByRole("textbox", { name: "Find a source file" }),
 		).toBeVisible();

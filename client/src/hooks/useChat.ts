@@ -26,6 +26,11 @@ export type ChatRequest = components["schemas"]["ChatRequest"];
 export type ChatResponse = components["schemas"]["ChatResponse"];
 
 const MESSAGE_PAGE_SIZE = 100;
+// `messages.sequence` is a PostgreSQL INTEGER. Keep the first-page cursor in
+// that domain; Number.MAX_SAFE_INTEGER is serialized successfully by the
+// browser but overflows asyncpg's int32 encoder and turns a restored transcript
+// into an empty state.
+const INITIAL_MESSAGE_SEQUENCE = 2_147_483_647;
 
 /** Helper to extract error message from API error response */
 function getErrorMessage(error: unknown, fallback: string): string {
@@ -190,7 +195,7 @@ export function useMessages(conversationId: string | undefined) {
 		{
 			enabled: !!conversationId,
 			pageParamName: "before_sequence",
-			initialPageParam: Number.MAX_SAFE_INTEGER,
+			initialPageParam: INITIAL_MESSAGE_SEQUENCE,
 			getNextPageParam: (lastPage) => {
 				if (lastPage.length < MESSAGE_PAGE_SIZE) return undefined;
 				return lastPage[0]?.sequence ?? undefined;

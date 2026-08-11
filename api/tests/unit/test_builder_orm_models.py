@@ -11,8 +11,10 @@ from sqlalchemy import Table
 
 from src.models.orm.solution_builder import (
     SolutionBuilderProject,
+    SolutionBuilderRelease,
     SolutionBuilderSession,
     SolutionBuilderTurn,
+    SolutionGlobalWorkspaceApply,
     SolutionSourceRevision,
 )
 
@@ -28,6 +30,11 @@ def _fk_targets(table: Table, column: str) -> set[tuple[str, str | None]]:
 
 def test_table_names() -> None:
     assert SolutionBuilderProject.__tablename__ == "solution_builder_projects"
+    assert SolutionBuilderRelease.__tablename__ == "solution_builder_releases"
+    assert (
+        SolutionGlobalWorkspaceApply.__tablename__
+        == "solution_global_workspace_applies"
+    )
     assert SolutionSourceRevision.__tablename__ == "solution_source_revisions"
     assert SolutionBuilderSession.__tablename__ == "solution_builder_sessions"
     assert SolutionBuilderTurn.__tablename__ == "solution_builder_turns"
@@ -62,6 +69,43 @@ def test_project_promotion_status_defaults_to_none() -> None:
     assert column.default is not None and column.default.arg == "none"
     assert column.server_default is not None and column.server_default.arg == "none"
     assert not column.nullable
+
+
+def test_release_separates_private_source_from_shared_install() -> None:
+    table = SolutionBuilderRelease.__table__
+    assert _fk_targets(table, "source_solution_id") == {("solutions.id", "CASCADE")}
+    assert _fk_targets(table, "published_solution_id") == {
+        ("solutions.id", "CASCADE")
+    }
+    assert _fk_targets(table, "published_revision_id") == {
+        ("solution_source_revisions.id", "SET NULL")
+    }
+    assert table.columns["published_solution_id"].unique
+    indexes = {index.name for index in table.indexes}
+    assert "ix_solution_builder_releases_source_org_unique" in indexes
+    assert "ix_solution_builder_releases_source_global_unique" in indexes
+
+
+def test_global_workspace_apply_tracks_reversible_revision_pair() -> None:
+    table = SolutionGlobalWorkspaceApply.__table__
+    assert _fk_targets(table, "solution_id") == {("solutions.id", "CASCADE")}
+    assert _fk_targets(table, "from_revision_id") == {
+        ("solution_source_revisions.id", "CASCADE")
+    }
+    assert _fk_targets(table, "to_revision_id") == {
+        ("solution_source_revisions.id", "CASCADE")
+    }
+    assert _fk_targets(table, "applied_by") == {("users.id", "SET NULL")}
+    assert _fk_targets(table, "rolled_back_by") == {("users.id", "SET NULL")}
+    assert not table.columns["state"].nullable
+
+
+def test_project_has_one_global_workspace_target() -> None:
+    column = SolutionBuilderProject.__table__.columns["target_kind"]
+    assert column.default is not None and column.default.arg == "solution"
+    assert column.server_default is not None and column.server_default.arg == "solution"
+    indexes = {index.name for index in SolutionBuilderProject.__table__.indexes}
+    assert "ix_solution_builder_projects_global_target_unique" in indexes
 
 
 def test_revision_lineage_is_self_referential() -> None:
@@ -125,6 +169,8 @@ def test_turn_status_defaults_to_queued() -> None:
 def test_all_datetime_columns_are_timezone_aware() -> None:
     models = (
         SolutionBuilderProject,
+        SolutionBuilderRelease,
+        SolutionGlobalWorkspaceApply,
         SolutionSourceRevision,
         SolutionBuilderSession,
         SolutionBuilderTurn,
@@ -138,6 +184,7 @@ def test_all_datetime_columns_are_timezone_aware() -> None:
 def test_created_at_has_python_and_server_default() -> None:
     models = (
         SolutionBuilderProject,
+        SolutionBuilderRelease,
         SolutionSourceRevision,
         SolutionBuilderSession,
         SolutionBuilderTurn,
@@ -150,6 +197,10 @@ def test_created_at_has_python_and_server_default() -> None:
 
 
 def test_updated_at_refreshes_on_update() -> None:
-    for model in (SolutionBuilderProject, SolutionBuilderSession):
+    for model in (
+        SolutionBuilderProject,
+        SolutionBuilderRelease,
+        SolutionBuilderSession,
+    ):
         column = model.__table__.columns["updated_at"]
         assert column.onupdate is not None and callable(column.onupdate.arg)

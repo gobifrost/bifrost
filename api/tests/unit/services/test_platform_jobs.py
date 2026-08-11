@@ -437,3 +437,41 @@ async def test_external_completion_can_win_defer_race(
         status="failed",
         error_message="stale callback",
     )
+
+
+@pytest.mark.asyncio
+async def test_transient_external_completion_requeues_the_fenced_attempt(
+    db_session: AsyncSession,
+) -> None:
+    job = await _enqueue(db_session)
+    job.status = "waiting"
+    job.attempt = 1
+    job.max_attempts = 2
+    job.external_provider = "cloudflare"
+    job.external_run_id = "run-1"
+    job.external_started_at = datetime.now(timezone.utc)
+    await db_session.commit()
+
+    retried = await service.stage_external_platform_job_retry(
+        db_session,
+        job.id,
+        1,
+        error_message="Durable Object reset because its code was updated.",
+    )
+    assert retried is not None
+    await db_session.commit()
+    await db_session.refresh(job)
+
+    assert job.status == "queued"
+    assert job.phase == "Retrying external runner"
+    assert job.attempt == 1
+    assert job.error_retryable is True
+    assert job.external_provider is None
+    assert job.external_run_id is None
+    assert job.available_at > datetime.now(timezone.utc)
+    assert await service.stage_external_platform_job_retry(
+        db_session,
+        job.id,
+        1,
+        error_message="stale callback",
+    ) is None

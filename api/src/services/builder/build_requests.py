@@ -5,12 +5,14 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import get_settings
 from src.core.database import get_db_context
@@ -26,6 +28,7 @@ from src.services.builder.staged_artifacts import StagedBuildArtifactStorage
 from src.services.sandbox_runner_config import SandboxRunnerConfigService
 
 TERMINAL_BUILD_STATUSES = {"succeeded", "failed", "cancelled", "timeout"}
+logger = logging.getLogger(__name__)
 
 
 class BuildFailed(Exception):
@@ -226,3 +229,47 @@ async def cancel_build_job(job_id: UUID) -> SolutionBuildJob:
 
         await cancel_external_sandbox_run(platform_job)
     return job
+
+
+async def retry_external_build_completion(
+    db: AsyncSession,
+    *,
+    build_job_id: UUID,
+    dispatch_attempt: int,
+    error: str,
+) -> bool:
+    """Atomically requeue a transient external build attempt and its projection."""
+    from src.services.platform_jobs import (
+        publish_platform_job_update,
+        stage_external_platform_job_retry,
+    )
+
+    platform_job = await stage_external_platform_job_retry(
+        db,
+        build_job_id,
+        dispatch_attempt,
+        error_message=error,
+    )
+    if platform_job is None:
+        return False
+    build_job = await db.get(SolutionBuildJob, build_job_id, with_for_update=True)
+    if build_job is None:
+        return False
+    build_job.status = "queued"
+    build_job.error = None
+    build_job.log_excerpt = None
+    build_job.output_manifest = None
+    build_job.claimed_at = None
+    build_job.completed_at = None
+    await db.commit()
+    await publish_platform_job_update(platform_job)
+    if build_job.app_id is not None:
+        try:
+            await StagedBuildArtifactStorage(build_job.id).delete_outputs(build_job.app_id)
+        except Exception:  # noqa: BLE001 - retry state is already durable
+            logger.warning(
+                "Failed to clear staged output before an external build retry",
+                extra={"build_job_id": str(build_job.id)},
+                exc_info=True,
+            )
+    return True

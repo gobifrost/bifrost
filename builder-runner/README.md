@@ -54,5 +54,36 @@ SDK version. The Dockerfile intentionally does not override the Sandbox image
 entrypoint. Use this command inside the sandbox runtime:
 
 ```bash
-bifrost-sandbox-runner /workspace/bifrost-job.json
+bifrost-sandbox-runner /work/bifrost-job.json
+```
+
+## Local/self-hosted control service
+
+The image also exposes a long-running control service for local/self-hosted
+deployment. It uses a small HTTP API on port `8300` protected by
+`BIFROST_RUNNER_SECRET` and executes only one fixed harness command per job:
+`/usr/local/bin/bifrost-sandbox-runner <job-file>`. No command strings are
+constructed from request data.
+
+Endpoint summary:
+
+- `GET /health`
+- `POST /provision`
+- `POST /jobs` with body `{"instance_id", "job"}`
+- `DELETE /jobs/{run_id}`
+
+Run the control service container entrypoint with:
+
+```bash
+docker run --rm \
+  -e BIFROST_RUNNER_SECRET=<secret> \
+  -p 8300:8300 \
+  <image>:latest
+```
+
+To run a one-shot harness as before, keep the existing command path:
+
+```bash
+docker run --rm <image>:latest \
+  bifrost-sandbox-runner /work/bifrost-job.json
 ```

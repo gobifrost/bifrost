@@ -3,13 +3,36 @@
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from typing import cast
-from unittest.mock import AsyncMock
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from src.jobs.platform.base import PlatformJobContext
 from src.services import sandbox_runner_provisioning as provisioning
+
+
+def test_cloudflare_worker_is_an_es_module() -> None:
+    source = (
+        Path(provisioning.__file__).with_name("cloudflare_runner") / "worker.mjs"
+    ).read_text(encoding="utf-8")
+
+    assert "export default" in source
+    assert 'NonRetryableError } from "cloudflare:workflows"' in source
+    assert "reportTerminalWorkflowFailure" in source
+
+
+def test_cloudflare_worker_reattaches_to_one_background_runner_process() -> None:
+    source = (
+        Path(provisioning.__file__).with_name("cloudflare_runner") / "worker.mjs"
+    ).read_text(encoding="utf-8")
+
+    assert "keepAlive: true" in source
+    assert "sandbox.startProcess(" in source
+    assert "sandbox.getProcess(RUNNER_PROCESS_ID)" in source
+    assert "processId: RUNNER_PROCESS_ID" in source
+    assert "autoCleanup: false" in source
+    assert source.count("sandbox.exec(") == 1  # The short setup probe only.
 
 
 def test_configured_runner_image_uses_release_version(monkeypatch):
@@ -21,6 +44,40 @@ def test_configured_runner_image_uses_release_version(monkeypatch):
             builder_runner_image_tag=None,
         ),
     )
+
+
+@pytest.mark.asyncio
+async def test_cloudflare_probe_uses_object_params_and_bounded_instance_id(
+    monkeypatch,
+):
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json.return_value = {
+        "success": True,
+        "result": {"id": "cloudflare-workflow-instance"},
+    }
+    client = AsyncMock()
+    client.post.return_value = response
+    manager = MagicMock()
+    manager.__aenter__ = AsyncMock(return_value=client)
+    manager.__aexit__ = AsyncMock(return_value=None)
+    monkeypatch.setattr(provisioning.httpx, "AsyncClient", lambda **_: manager)
+
+    result = await provisioning._start_cloudflare_probe(
+        "account-123",
+        "secret-token",
+        "bifrost-workflow",
+    )
+
+    assert result == "cloudflare-workflow-instance"
+    request = client.post.await_args
+    instance_id = request.kwargs["json"]["instance_id"]
+    assert instance_id.startswith("bifrost-probe-")
+    assert len(instance_id) == len("bifrost-probe-") + 32
+    assert request.kwargs["json"]["params"] == {
+        "mode": "probe",
+        "probe_id": instance_id,
+    }
     monkeypatch.setattr(provisioning, "get_version", lambda: "v2.4.1")
 
     assert (
@@ -114,19 +171,22 @@ async def test_wrangler_config_uses_private_worker_and_public_versioned_image(
         workflow_name="bifrost-workflow",
     )
 
-    config = json.loads(str(captured["config"]))
+    config = cast(dict[str, Any], json.loads(str(captured["config"])))
     assert config["workers_dev"] is False
+    assert config["observability"] == {"enabled": True}
     assert config["containers"] == [
         {
             "class_name": "Sandbox",
             "image": "ghcr.io/gobifrost/bifrost-builder-runner:2.4.1",
-            "instance_type": "lite",
+            "instance_type": "basic",
             "max_instances": 20,
         }
     ]
     assert config["workflows"][0]["name"] == "bifrost-workflow"
     assert "secret-token" not in str(captured["args"])
     assert "secret-token" not in str(captured["config"])
+    args = cast(tuple[Any, ...], captured["args"])
+    assert args[-2:] == ("--containers-rollout", "immediate")
     env = captured["env"]
     assert isinstance(env, dict)
     assert env["CLOUDFLARE_API_TOKEN"] == "secret-token"

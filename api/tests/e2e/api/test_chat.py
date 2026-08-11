@@ -357,6 +357,23 @@ class TestMessages:
         assert earlier.status_code == 200
         assert [message["sequence"] for message in earlier.json()] == [1, 2, 3]
 
+    def test_get_messages_rejects_cursor_outside_database_sequence_range(
+        self,
+        e2e_client,
+        platform_admin,
+        test_conversation,
+    ):
+        """An invalid browser cursor is a client error, not a database 500."""
+        response = e2e_client.get(
+            (
+                f"/api/chat/conversations/{test_conversation['id']}/messages"
+                "?before_sequence=9007199254740991"
+            ),
+            headers=platform_admin.headers,
+        )
+
+        assert response.status_code == 422
+
     def test_get_messages_from_nonexistent_conversation(
         self,
         e2e_client,

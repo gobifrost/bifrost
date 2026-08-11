@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	Activity,
 	AlertTriangle,
+	BarChart3,
 	Check,
 	CheckCircle2,
 	Cloud,
@@ -15,6 +16,7 @@ import {
 	Play,
 	Save,
 	ShieldCheck,
+	TimerReset,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
@@ -397,6 +399,61 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 					/>
 				</div>
 			</section>
+
+			<section className="space-y-4 rounded-3xl border bg-card p-5 sm:p-6">
+				<div className="flex flex-wrap items-start justify-between gap-3">
+					<div>
+						<h3 className="text-lg font-semibold">Usage, limits, and billing</h3>
+						<p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
+							Builders see their enforced turn budget while they work. Administrators can trace AI spend to the user and customer organization that created it.
+						</p>
+					</div>
+					<Button asChild variant="outline" size="sm">
+						<Link to="/reports/usage">
+							<BarChart3 className="h-4 w-4" /> View AI usage
+						</Link>
+					</Button>
+				</div>
+				<div className="grid gap-px overflow-hidden rounded-2xl border bg-border md:grid-cols-3">
+					<UsageFact
+						icon={ShieldCheck}
+						title="Hard turn limits"
+						detail="The Builder agent's call and token limits stop a turn before it can exceed its configured budget."
+					/>
+					<UsageFact
+						icon={BarChart3}
+						title="Attributed AI spend"
+						detail="Provider, model, tokens, and estimated model cost are recorded by user and organization in Bifrost."
+					/>
+					<UsageFact
+						icon={TimerReset}
+						title="Runner consumption"
+						detail="Bifrost records the external run and duration. Cloudflare container charges remain in the connected Cloudflare account."
+					/>
+				</div>
+			</section>
+		</div>
+	);
+}
+
+function UsageFact({
+	icon: Icon,
+	title,
+	detail,
+}: {
+	icon: typeof ShieldCheck;
+	title: string;
+	detail: string;
+}) {
+	return (
+		<div className="flex items-start gap-3 bg-card p-4">
+			<span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-muted text-muted-foreground">
+				<Icon className="h-4 w-4" />
+			</span>
+			<div>
+				<p className="text-sm font-medium">{title}</p>
+				<p className="mt-1 text-xs leading-5 text-muted-foreground">{detail}</p>
+			</div>
 		</div>
 	);
 }

@@ -59,8 +59,10 @@ from src.models.orm.solution_export_jobs import SolutionExportJob
 from src.models.orm.solution_builder import (
     SolutionBuilderCollaborator,
     SolutionBuilderProject,
+    SolutionBuilderRelease,
     SolutionBuilderSession,
     SolutionBuilderTurn,
+    SolutionGlobalWorkspaceApply,
     SolutionSourceRevision,
 )
 from src.models.orm.solution_build_jobs import SolutionBuildJob
@@ -92,8 +94,10 @@ __all__ = [
     "SolutionBuildJob",
     "SolutionBuilderCollaborator",
     "SolutionBuilderProject",
+    "SolutionBuilderRelease",
     "SolutionBuilderSession",
     "SolutionBuilderTurn",
+    "SolutionGlobalWorkspaceApply",
     "SolutionSourceRevision",
     # Applications (App Builder)
     "Application",

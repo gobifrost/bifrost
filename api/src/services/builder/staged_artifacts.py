@@ -206,6 +206,30 @@ class StagedBuildArtifactStorage:
                 continuation_token = response.get("NextContinuationToken")
         return paths
 
+    async def delete_outputs(self, app_id: UUID | str) -> None:
+        """Delete only attempt output while preserving the immutable staged input."""
+        prefix = self._output_prefix(app_id)
+        async with self._get_client() as client:
+            continuation_token = None
+            while True:
+                kwargs = {"Bucket": self._bucket, "Prefix": prefix}
+                if continuation_token:
+                    kwargs["ContinuationToken"] = continuation_token
+                response = await client.list_objects_v2(**kwargs)
+                objects = [
+                    {"Key": key}
+                    for entry in response.get("Contents", [])
+                    if (key := entry.get("Key"))
+                ]
+                if objects:
+                    await client.delete_objects(
+                        Bucket=self._bucket,
+                        Delete={"Objects": objects, "Quiet": True},
+                    )
+                if not response.get("IsTruncated"):
+                    return
+                continuation_token = response.get("NextContinuationToken")
+
     async def verify_manifest(self, app_id: UUID | str, manifest: list[dict]) -> None:
         """Re-hash every staged file and require an exact manifest match.
 

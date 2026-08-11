@@ -304,7 +304,26 @@ class BuilderTurnService:
                     workspace_dir = scratch / _WORKSPACE_DIRNAME
                     workspace_dir.mkdir(mode=0o700)
                     safe_extract_zip(output_zip, workspace_dir, self.limits)
-                    errors = validate_workspace(workspace_dir)
+                    if project.target_kind == "global_repo":
+                        base_zip = scratch / "base.zip"
+                        if not await self._storage(solution_id).copy_to_path(
+                            base.id, base_zip
+                        ):
+                            raise BuilderProjectMissing(
+                                f"Base revision {base.id} content is missing"
+                            )
+                        base_workspace = scratch / "base-workspace"
+                        base_workspace.mkdir(mode=0o700)
+                        safe_extract_zip(base_zip, base_workspace, self.limits)
+                        from src.services.builder.global_workspace import (
+                            validate_global_workspace,
+                        )
+
+                        errors = validate_global_workspace(
+                            base_workspace, workspace_dir
+                        )
+                    else:
+                        errors = validate_workspace(workspace_dir)
                     if errors:
                         raise WorkspaceInvalid(errors)
                     normalized_zip = scratch / _SOURCE_ZIP_NAME
@@ -459,9 +478,21 @@ class BuilderTurnService:
             workspace_dir.mkdir(mode=0o700)
             safe_extract_zip(base_zip, workspace_dir, self.limits)
 
+            baseline_dir: Path | None = None
+            if project.target_kind == "global_repo":
+                baseline_dir = scratch / "baseline"
+                shutil.copytree(workspace_dir, baseline_dir)
+
             await mutate(WorkspaceRoot(workspace_dir, self.limits))
 
-            errors = validate_workspace(workspace_dir)
+            if baseline_dir is not None:
+                from src.services.builder.global_workspace import (
+                    validate_global_workspace,
+                )
+
+                errors = validate_global_workspace(baseline_dir, workspace_dir)
+            else:
+                errors = validate_workspace(workspace_dir)
             if errors:
                 raise WorkspaceInvalid(errors)
 

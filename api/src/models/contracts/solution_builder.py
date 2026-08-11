@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from src.models.contracts.sandbox_runner import SandboxRunnerBlocker
 
@@ -52,6 +52,7 @@ class PrivateSolutionDTO(BaseModel):
     caller_access: Literal["owner", "collaborator", "support"] = "owner"
     collaborator_access: Literal["view", "edit"] | None = None
     status: str
+    target_kind: Literal["solution", "global_repo"] = "solution"
     promotion_status: str
     created_at: datetime
     updated_at: datetime
@@ -103,6 +104,7 @@ class BuilderProjectDTO(BaseModel):
     solution_id: UUID
     current_revision_id: UUID | None = None
     deployed_revision_id: UUID | None = None
+    target_kind: Literal["solution", "global_repo"] = "solution"
     promotion_status: str
     promotion_revision_id: UUID | None = None
     promotion_requested_by: UUID | None = None
@@ -111,10 +113,40 @@ class BuilderProjectDTO(BaseModel):
     updated_at: datetime
 
 
+class GlobalWorkspaceStatusDTO(BaseModel):
+    """Current state of the singular administrator ``_repo`` workbench."""
+
+    exists: bool
+    solution_id: UUID | None = None
+    current_revision_id: UUID | None = None
+    deployed_revision_id: UUID | None = None
+    has_pending_proposal: bool = False
+    can_rollback: bool = False
+    last_applied_at: datetime | None = None
+
+
+class GlobalWorkspaceValidationDTO(BaseModel):
+    """Non-executing validation result for the current proposal."""
+
+    revision_id: UUID
+    valid: bool
+    errors: list[str] = Field(default_factory=list)
+
+
+class GlobalWorkspaceApplyDTO(BaseModel):
+    """Result of explicitly applying or rolling back reviewed ``_repo`` source."""
+
+    revision_id: UUID
+    changed_paths: list[str] = Field(default_factory=list)
+    applied_at: datetime
+    rolled_back: bool = False
+
+
 class PromotionTargetRequest(BaseModel):
     """Administrator approval of one pinned private-Solution revision."""
 
     target: Literal["company", "global"]
+    target_organization_id: UUID | None = None
     runtime_mode: Literal["isolated", "trusted"] = "isolated"
     approve_role_creation: bool = False
     approved_connection_names: list[str] = Field(default_factory=list)
@@ -173,6 +205,8 @@ class PromotionReviewsList(BaseModel):
 
 
 class PromotionResultDTO(BaseModel):
+    release_id: UUID
+    published_solution_id: UUID
     solution_id: UUID
     target: Literal["company", "global"]
     visibility: Literal["shared"]
@@ -309,6 +343,8 @@ class BuilderTurnDTO(BaseModel):
     requested_by: UUID | None = None
     base_revision_id: UUID | None = None
     output_revision_id: UUID | None = None
+    resume_from_turn_id: UUID | None = None
+    checkpoint_available: bool = False
     build_job_id: UUID | None = None
     deploy_job_id: UUID | None = None
     status: str
@@ -330,6 +366,7 @@ class RunTurnRequest(BaseModel):
 
     session_id: UUID
     message: str = Field(min_length=1, max_length=32_000)
+    resume_from_turn_id: UUID | None = None
 
 
 class RunTurnResponse(BaseModel):
@@ -353,8 +390,15 @@ class BuildJobStatusUpdate(BaseModel):
 
     status: Literal["succeeded", "failed", "timeout", "cancelled"]
     error: str | None = None
+    retryable: bool = False
     log_excerpt: str | None = None
     output_manifest: list[BuildOutputEntry] | None = None
+
+    @model_validator(mode="after")
+    def validate_retryable_status(self) -> "BuildJobStatusUpdate":
+        if self.retryable and self.status != "failed":
+            raise ValueError("Only failed build jobs can be retryable")
+        return self
 
 
 class ClaimedBuildJob(BaseModel):

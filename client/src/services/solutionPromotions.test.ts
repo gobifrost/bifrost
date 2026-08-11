@@ -18,6 +18,8 @@ describe("Solution promotion service", () => {
 			ok: true,
 			json: () =>
 				Promise.resolve({
+					release_id: "release-1",
+					published_solution_id: "published-1",
 					promotions: [{ solution_id: "solution-1", name: "Ops app" }],
 					total: 1,
 				}),

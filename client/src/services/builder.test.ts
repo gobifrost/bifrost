@@ -10,6 +10,7 @@ import {
 	BuilderApiError,
 	BuilderRevision,
 	BuilderTurn,
+	applyGlobalWorkspace,
 	createBuilderSession,
 	createBuilderSolution,
 	currentRevision,
@@ -20,6 +21,7 @@ import {
 	getRevisionDiff,
 	getRevisionFile,
 	getBuilderSolution,
+	getGlobalWorkspace,
 	isPreviewStale,
 	latestTurn,
 	listBuilderSessions,
@@ -28,7 +30,9 @@ import {
 	listRevisionFiles,
 	listTurns,
 	requestPromotion,
+	rollbackGlobalWorkspace,
 	runBuilderTurn,
+	validateGlobalWorkspace,
 	undoToRevision,
 } from "./builder";
 
@@ -80,11 +84,68 @@ function turn(overrides: Partial<BuilderTurn> = {}): BuilderTurn {
 		started_at: null,
 		completed_at: null,
 		...overrides,
+		checkpoint_available: overrides.checkpoint_available ?? false,
 	};
 }
 
 beforeEach(() => {
 	mockAuthFetch.mockReset();
+});
+
+describe("global workspace", () => {
+	it("loads, validates, applies, and rolls back through explicit admin routes", async () => {
+		mockAuthFetch
+			.mockResolvedValueOnce(
+				jsonResponse({ exists: true, solution_id: "global-1" }),
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({ revision_id: "rev-2", valid: true, errors: [] }),
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					revision_id: "rev-2",
+					changed_paths: ["workflows/example.py"],
+					rolled_back: false,
+				}),
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					revision_id: "rev-3",
+					changed_paths: ["workflows/example.py"],
+					rolled_back: true,
+				}),
+			);
+
+		await expect(getGlobalWorkspace()).resolves.toMatchObject({
+			exists: true,
+			solution_id: "global-1",
+		});
+		await expect(validateGlobalWorkspace()).resolves.toMatchObject({
+			valid: true,
+		});
+		await expect(applyGlobalWorkspace()).resolves.toMatchObject({
+			rolled_back: false,
+		});
+		await expect(rollbackGlobalWorkspace()).resolves.toMatchObject({
+			rolled_back: true,
+		});
+
+		expect(mockAuthFetch.mock.calls).toEqual([
+			["/api/builder/solutions/global-workspace", { signal: undefined }],
+			[
+				"/api/builder/solutions/global-workspace/validate",
+				{ method: "POST", signal: undefined },
+			],
+			[
+				"/api/builder/solutions/global-workspace/apply",
+				{ method: "POST", signal: undefined },
+			],
+			[
+				"/api/builder/solutions/global-workspace/rollback",
+				{ method: "POST", signal: undefined },
+			],
+		]);
+	});
 });
 
 describe("builder solutions", () => {
@@ -395,6 +456,35 @@ describe("revisions and turns", () => {
 		);
 		expect(out.job_id).toBe("job-8");
 		expect(out.status).toBe("queued");
+	});
+
+	it("explicitly resumes an isolated failed-turn checkpoint", async () => {
+		mockAuthFetch.mockResolvedValue(
+			jsonResponse({
+				turn: turn({ id: "turn-9" }),
+				job_id: "job-9",
+				status: "queued",
+			}),
+		);
+
+		await runBuilderTurn("sol-1", {
+			sessionId: "sess-1",
+			message: "Continue from the saved checkpoint.",
+			resumeFromTurnId: "turn-8",
+		});
+
+		expect(mockAuthFetch).toHaveBeenCalledWith(
+			"/api/builder/solutions/sol-1/turns",
+			{
+				method: "POST",
+				body: JSON.stringify({
+					session_id: "sess-1",
+					message: "Continue from the saved checkpoint.",
+					resume_from_turn_id: "turn-8",
+				}),
+				signal: undefined,
+			},
+		);
 	});
 
 	it("mints an exact app-host launch URL for the requested route", async () => {

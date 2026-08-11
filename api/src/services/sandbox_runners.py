@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -166,7 +165,7 @@ async def _cancel_dispatched_run(
     run_id: str,
     job_id: UUID,
 ) -> None:
-    """Terminate a run accepted during a concurrent cancellation/fencing race."""
+    """Coordinate a run accepted during a concurrent cancellation race."""
     try:
         if provider == "cloudflare":
             await _cancel_cloudflare(config, run_id)
@@ -174,7 +173,7 @@ async def _cancel_dispatched_run(
             await _cancel_local(config, run_id)
     except (SandboxRunnerUnavailable, SandboxDispatchFailed):
         logger.warning(
-            "Sandbox run accepted after cancellation could not be terminated",
+            "Sandbox run accepted after cancellation could not be notified",
             extra={"platform_job_id": str(job_id), "external_run_id": run_id},
             exc_info=True,
         )
@@ -205,7 +204,7 @@ async def _dispatch_cloudflare(
                 headers={"Authorization": f"Bearer {api_token}"},
                 json={
                     "instance_id": instance_id,
-                    "params": json.dumps(asdict(envelope), separators=(",", ":")),
+                    "params": asdict(envelope),
                 },
             )
             response.raise_for_status()
@@ -254,7 +253,7 @@ async def _dispatch_local(
 
 
 async def cancel_external_sandbox_run(job: PlatformJob) -> bool:
-    """Best-effort termination for a dispatched external run."""
+    """Best-effort cancellation coordination for a dispatched external run."""
     if not job.external_provider or not job.external_run_id:
         return False
     async with get_db_context() as db:
@@ -283,28 +282,17 @@ async def cancel_external_sandbox_run(job: PlatformJob) -> bool:
 
 
 async def _cancel_cloudflare(config: dict[str, Any], run_id: str) -> None:
+    """Let the job-bound runner observe durable cancellation and clean up.
+
+    Cloudflare Workflow termination stops orchestration immediately but does
+    not terminate a background Sandbox process. The runner polls Bifrost's
+    cancellation state every second, reports the fenced terminal result, and
+    lets the Workflow destroy its keep-alive sandbox without orphaning cost.
+    """
     cloudflare = config.get("cloudflare")
     if not isinstance(cloudflare, dict):
         raise SandboxRunnerUnavailable("Cloudflare runner settings are missing")
-    account_id = _required_string(cloudflare.get("account_id"), "Cloudflare account")
-    workflow_name = _required_string(
-        cloudflare.get("workflow_name"), "Cloudflare workflow"
-    )
-    api_token = _required_string(cloudflare.get("api_token"), "Cloudflare API token")
-    url = (
-        f"{_CLOUDFLARE_API_BASE}/accounts/{account_id}/workflows/"
-        f"{workflow_name}/instances/{run_id}/status"
-    )
-    try:
-        async with httpx.AsyncClient(timeout=_DISPATCH_TIMEOUT_SECONDS) as client:
-            response = await client.patch(
-                url,
-                headers={"Authorization": f"Bearer {api_token}"},
-                json={"status": "terminate", "rollback": False},
-            )
-            response.raise_for_status()
-    except httpx.HTTPError as exc:
-        raise SandboxDispatchFailed("Cloudflare did not terminate the sandbox job") from exc
+    _required_string(run_id, "Cloudflare workflow run")
 
 
 async def _cancel_local(config: dict[str, Any], run_id: str) -> None:

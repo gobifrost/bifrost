@@ -6,6 +6,7 @@ import hashlib
 import tempfile
 import zipfile
 from collections.abc import Iterable
+from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 
@@ -25,10 +26,12 @@ from src.models.orm.policy_rule import PolicyRule
 from src.models.orm.solution_build_jobs import SolutionBuildJob
 from src.models.orm.solution_builder import (
     SolutionBuilderProject,
+    SolutionBuilderRelease,
     SolutionBuilderSession,
     SolutionBuilderTurn,
     SolutionSourceRevision,
 )
+from src.models.orm.organizations import Organization
 from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.solution_connection_schema import SolutionConnectionSchema
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
@@ -338,7 +341,10 @@ async def _assert_target_collisions(
     db: AsyncSession,
     solution: Solution,
     target_org: UUID | None,
+    *,
+    allowed_solution_ids: set[UUID] | None = None,
 ) -> None:
+    allowed_ids = allowed_solution_ids or {solution.id}
     await db.execute(
         text("SELECT pg_advisory_xact_lock(hashtext('bifrost:solution:' || :s))"),
         {"s": solution.slug},
@@ -351,7 +357,7 @@ async def _assert_target_collisions(
     sibling = (
         await db.execute(
             select(Solution.id).where(
-                Solution.id != solution.id,
+                Solution.id.not_in(allowed_ids),
                 Solution.slug == solution.slug,
                 Solution.visibility == "shared",
                 scope_predicate,
@@ -379,7 +385,7 @@ async def _assert_target_collisions(
         )
         predicates = [
             Application.slug == slug,
-            Application.solution_id != solution.id,
+            Application.solution_id.not_in(allowed_ids),
         ]
         if target_org is not None:
             predicates.append(
@@ -395,6 +401,101 @@ async def _assert_target_collisions(
         )
         if collision is not None:
             raise PromotionBlocked([f"App slug '{slug}' conflicts with a visible app"])
+
+
+async def _release_for_target(
+    db: AsyncSession,
+    *,
+    source_solution_id: UUID,
+    target_organization_id: UUID | None,
+) -> SolutionBuilderRelease | None:
+    target_predicate = (
+        SolutionBuilderRelease.target_organization_id.is_(None)
+        if target_organization_id is None
+        else SolutionBuilderRelease.target_organization_id == target_organization_id
+    )
+    return (
+        (
+            await db.execute(
+                select(SolutionBuilderRelease)
+                .where(
+                    SolutionBuilderRelease.source_solution_id == source_solution_id,
+                    target_predicate,
+                )
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .one_or_none()
+    )
+
+
+async def _prepare_release_target(
+    db: AsyncSession,
+    *,
+    source: Solution,
+    target_organization_id: UUID | None,
+    global_repo_access: bool,
+    runtime_mode: str,
+    admin_user_id: UUID,
+) -> tuple[SolutionBuilderRelease, Solution]:
+    release = await _release_for_target(
+        db,
+        source_solution_id=source.id,
+        target_organization_id=target_organization_id,
+    )
+    published = (
+        await db.get(Solution, release.published_solution_id)
+        if release is not None
+        else None
+    )
+    if release is not None and published is None:
+        raise PromotionBlocked(["Published release target is missing"])
+
+    allowed_ids = {source.id}
+    if published is not None:
+        allowed_ids.add(published.id)
+    await _assert_target_collisions(
+        db,
+        source,
+        target_organization_id,
+        allowed_solution_ids=allowed_ids,
+    )
+
+    if published is None:
+        published = Solution(
+            slug=source.slug,
+            name=source.name,
+            organization_id=target_organization_id,
+            global_repo_access=global_repo_access,
+            owner_user_id=None,
+            visibility="shared",
+            status="active",
+        )
+        db.add(published)
+        await db.flush()
+        release = SolutionBuilderRelease(
+            source_solution_id=source.id,
+            published_solution_id=published.id,
+            target_organization_id=target_organization_id,
+            runtime_mode=runtime_mode,
+            approved_by=admin_user_id,
+        )
+        db.add(release)
+        await db.flush()
+    else:
+        if (
+            published.visibility != "shared"
+            or published.organization_id != target_organization_id
+        ):
+            raise PromotionBlocked(["Published release target has an invalid scope"])
+        published.slug = source.slug
+        published.name = source.name
+        published.status = "active"
+        published.global_repo_access = global_repo_access
+
+    assert release is not None
+    return release, published
 
 
 async def _assign_role_users(
@@ -455,13 +556,21 @@ async def promote_private_solution(
         raise PromotionBlocked(blockers)
     assert review.pinned_revision_id is not None
 
-    target_org = review.organization_id if request.target == "company" else None
+    if request.target == "global" and request.target_organization_id is not None:
+        raise PromotionBlocked(["Global promotion cannot target an organization"])
+    target_org = (
+        request.target_organization_id or review.organization_id
+        if request.target == "company"
+        else None
+    )
     if request.target == "company" and target_org is None:
         raise PromotionBlocked(["Company promotion requires an organization"])
+    if target_org is not None and await db.get(Organization, target_org) is None:
+        raise PromotionBlocked(["Target organization does not exist"])
 
     try:
         async with solution_write_lock(solution_id):
-            solution, project = await _load_requested(db, solution_id)
+            source, project = await _load_requested(db, solution_id)
             await db.refresh(project, with_for_update=True)
             if (
                 project.promotion_revision_id != review.pinned_revision_id
@@ -471,67 +580,90 @@ async def promote_private_solution(
                 raise PromotionBlocked(
                     ["Promotion request changed during administrator review"]
                 )
-            await _assert_target_collisions(db, solution, target_org)
+            release, published = await _prepare_release_target(
+                db,
+                source=source,
+                target_organization_id=target_org,
+                global_repo_access=request.allow_global_repo_access,
+                runtime_mode=request.runtime_mode,
+                admin_user_id=admin_user_id,
+            )
 
-            with tempfile.TemporaryDirectory(prefix="bifrost-promotion-replay-") as tmp:
-                source_path = Path(tmp) / "source.zip"
-                copied = await SolutionRevisionStorage(solution_id).copy_to_path(
-                    review.pinned_revision_id,
-                    source_path,
-                )
-                if not copied:
-                    raise PromotionBlocked(["Pinned source artifact is missing"])
+            async with solution_write_lock(published.id):
+                with tempfile.TemporaryDirectory(prefix="bifrost-promotion-replay-") as tmp:
+                    source_path = Path(tmp) / "source.zip"
+                    copied = await SolutionRevisionStorage(solution_id).copy_to_path(
+                        review.pinned_revision_id,
+                        source_path,
+                    )
+                    if not copied:
+                        raise PromotionBlocked(["Pinned source artifact is missing"])
 
-                solution.organization_id = target_org
-                solution.global_repo_access = request.allow_global_repo_access
-                await db.flush()
-                result = await deploy_zip_to_solution_path(
-                    db,
-                    solution,
-                    source_path,
-                    force=True,
-                    promotion=True,
-                )
-                await rehome_solution_owned_rows(
-                    db,
-                    solution_id=solution_id,
-                    organization_id=target_org,
-                )
-                await _assign_role_users(
-                    db,
-                    request.role_user_assignments,
-                    assigned_by=admin_user_id,
-                )
-                await db.execute(
-                    update(Application)
-                    .where(Application.solution_id == solution_id)
-                    .values(runtime_mode=request.runtime_mode)
-                )
-                # Generated Python, schedules, events, and autonomous agents
-                # remain inactive because promotion replay keeps the runtime
-                # suppression arm enabled. Visibility is the final DB mutation.
-                solution.visibility = "shared"
-                project.promotion_status = "none"
-                await emit_audit(
-                    db,
-                    "solution.promote",
-                    resource_type="solution",
-                    resource_id=solution_id,
-                    details={
-                        "target": request.target,
-                        "revision_id": str(review.pinned_revision_id),
-                        "source_sha256": review.source_sha256,
-                        "roles_created": list(result.roles_created),
-                        "approved_connections": request.approved_connection_names,
-                        "global_repo_access": request.allow_global_repo_access,
-                        "runtime_mode": request.runtime_mode,
-                    },
-                )
-                # The pinned bundle is already the deployed preview, so a
-                # pre-commit finalize can only republish reviewed deterministic
-                # artifacts. It keeps visibility and role/scope changes atomic.
-                await result.finalize_s3()
-                await db.commit()
+                    result = await deploy_zip_to_solution_path(
+                        db,
+                        published,
+                        source_path,
+                        force=True,
+                        promotion=True,
+                    )
+                    await rehome_solution_owned_rows(
+                        db,
+                        solution_id=published.id,
+                        organization_id=target_org,
+                    )
+                    await _assign_role_users(
+                        db,
+                        request.role_user_assignments,
+                        assigned_by=admin_user_id,
+                    )
+                    await db.execute(
+                        update(Application)
+                        .where(Application.solution_id == published.id)
+                        .values(runtime_mode=request.runtime_mode)
+                    )
+                    # Runtime activation remains suppressed by promotion replay.
+                    # The private source and all Builder history stay untouched.
+                    published.visibility = "shared"
+                    release.published_revision_id = review.pinned_revision_id
+                    release.runtime_mode = request.runtime_mode
+                    release.approved_by = admin_user_id
+                    release.published_at = datetime.now(timezone.utc)
+                    project.promotion_status = "none"
+                    await emit_audit(
+                        db,
+                        "solution.release.publish",
+                        resource_type="solution",
+                        resource_id=published.id,
+                        details={
+                            "source_solution_id": str(solution_id),
+                            "release_id": str(release.id),
+                            "target": request.target,
+                            "target_organization_id": str(target_org) if target_org else None,
+                            "revision_id": str(review.pinned_revision_id),
+                            "source_sha256": review.source_sha256,
+                            "roles_created": list(result.roles_created),
+                            "approved_connections": request.approved_connection_names,
+                            "global_repo_access": request.allow_global_repo_access,
+                            "runtime_mode": request.runtime_mode,
+                        },
+                    )
+                    await emit_audit(
+                        db,
+                        "solution.publish",
+                        resource_type="solution",
+                        resource_id=solution_id,
+                        details={
+                            "release_id": str(release.id),
+                            "published_solution_id": str(published.id),
+                            "revision_id": str(review.pinned_revision_id),
+                            "target": request.target,
+                        },
+                    )
+                    # The pinned bundle is already the deployed preview, so a
+                    # pre-commit finalize only publishes reviewed deterministic
+                    # artifacts to the separate release install.
+                    await result.finalize_s3()
+                    await db.commit()
     except IntegrityError as exc:
         await db.rollback()
         raise PromotionBlocked(
@@ -545,6 +677,8 @@ async def promote_private_solution(
         raise
 
     return PromotionResultDTO(
+        release_id=release.id,
+        published_solution_id=published.id,
         solution_id=solution_id,
         target=request.target,
         visibility="shared",

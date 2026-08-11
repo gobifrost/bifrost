@@ -22,6 +22,7 @@ from src.models.contracts.sandbox_runner import (
     SandboxJobProgressUpdate,
     SandboxLLMCompletionRequest,
     SandboxLLMCompletionResponse,
+    SandboxOpenAIChatCompletionRequest,
 )
 from src.models.orm.agents import Agent, Conversation, Message
 from src.models.contracts.solution_builder import BuildJobStatusUpdate
@@ -54,6 +55,8 @@ from src.services.builder.staged_artifacts import (
     StagedBuildArtifactStorage,
 )
 from src.services.builder.turn_artifacts import (
+    BuilderHarnessStateStorage,
+    BuilderHarnessStateTooLarge,
     BuilderTurnArtifactStorage,
     BuilderTurnOutputTooLarge,
 )
@@ -65,8 +68,10 @@ from src.services.builder.turns import (
 from src.services.builder.llm_proxy import (
     BuilderLLMBudgetExceeded,
     BuilderLLMCompletionFenced,
+    BuilderLLMProxyError,
     BuilderLLMUnavailable,
     complete_builder_llm,
+    start_builder_openai_stream,
 )
 from src.services.execution.agent_helpers import build_agent_system_prompt
 
@@ -132,10 +137,28 @@ async def get_input(
         )
     if turn.base_revision_id is None:
         raise HTTPException(status_code=409, detail="Builder turn has no base revision")
+    session = await _turn_session(db, turn)
+    if turn.resume_from_turn_id is not None:
+        resume_from = await db.get(SolutionBuilderTurn, turn.resume_from_turn_id)
+        if (
+            resume_from is None
+            or resume_from.session_id != session.id
+            or resume_from.checkpoint_sha256 is None
+        ):
+            raise HTTPException(status_code=409, detail="Builder checkpoint is missing")
+        return StreamingResponse(
+            BuilderTurnArtifactStorage(
+                resume_from.id,
+                1,
+            ).iter_checkpoint(
+                session.solution_id,
+                session.id,
+                resume_from.id,
+            ),
+            media_type="application/zip",
+        )
     return StreamingResponse(
-        SolutionRevisionStorage(
-            (await _turn_session(db, turn)).solution_id
-        ).iter_chunks(turn.base_revision_id),
+        SolutionRevisionStorage(session.solution_id).iter_chunks(turn.base_revision_id),
         media_type="application/zip",
     )
 
@@ -152,7 +175,7 @@ async def get_turn_context(
     capability.require(SANDBOX_INPUT_READ)
     _require_turn(capability)
     turn = await db.get(SolutionBuilderTurn, job_id)
-    if turn is None or turn.status not in {"queued", "running"}:
+    if turn is None or turn.status not in {"queued", "running", "cancelled"}:
         raise HTTPException(status_code=409, detail="Builder turn is not running")
     session = await _turn_session(db, turn)
     conversation = await db.get(Conversation, session.conversation_id)
@@ -198,6 +221,107 @@ async def get_turn_context(
     )
 
 
+@router.get("/{job_id}/harness-state")
+async def get_turn_harness_state(
+    job_id: UUID,
+    db: Db,
+    capability: Capability,
+) -> Response:
+    """Restore the OpenCode state from this session's latest accepted turn."""
+    capability.require(SANDBOX_INPUT_READ)
+    _require_turn(capability)
+    turn = await db.get(SolutionBuilderTurn, job_id)
+    if turn is None or turn.status not in {"queued", "running"}:
+        raise HTTPException(status_code=409, detail="Builder turn is not running")
+    session = await _turn_session(db, turn)
+    if turn.resume_from_turn_id is not None:
+        resume_from = await db.get(SolutionBuilderTurn, turn.resume_from_turn_id)
+        if (
+            resume_from is None
+            or resume_from.session_id != session.id
+            or resume_from.checkpoint_sha256 is None
+        ):
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        storage = BuilderHarnessStateStorage()
+        if not await storage.exists_accepted(
+            session.solution_id,
+            session.id,
+            resume_from.id,
+        ):
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+        return StreamingResponse(
+            storage.iter_accepted(
+                session.solution_id,
+                session.id,
+                resume_from.id,
+            ),
+            media_type="application/zip",
+            headers={
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+    previous_turn = await db.scalar(
+        select(SolutionBuilderTurn)
+        .where(
+            SolutionBuilderTurn.session_id == session.id,
+            SolutionBuilderTurn.id != turn.id,
+            SolutionBuilderTurn.output_revision_id.is_not(None),
+        )
+        .order_by(
+            SolutionBuilderTurn.completed_at.desc().nullslast(),
+            SolutionBuilderTurn.created_at.desc(),
+        )
+        .limit(1)
+    )
+    if previous_turn is None:
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    storage = BuilderHarnessStateStorage()
+    if not await storage.exists_accepted(
+        session.solution_id,
+        session.id,
+        previous_turn.id,
+    ):
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
+    return StreamingResponse(
+        storage.iter_accepted(
+            session.solution_id,
+            session.id,
+            previous_turn.id,
+        ),
+        media_type="application/zip",
+        headers={
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.put("/{job_id}/harness-state")
+async def put_turn_harness_state(
+    job_id: UUID,
+    request: Request,
+    db: Db,
+    capability: Capability,
+) -> dict[str, str | int]:
+    """Stage one fenced OpenCode state archive for completion-time acceptance."""
+    capability.require(SANDBOX_OUTPUT_WRITE)
+    _require_turn(capability)
+    turn = await db.get(SolutionBuilderTurn, job_id)
+    if turn is None or turn.status not in {"queued", "running", "cancelled"}:
+        raise HTTPException(status_code=409, detail="Builder turn is not running")
+    try:
+        digest, size = await BuilderHarnessStateStorage().write_staged(
+            job_id,
+            capability.dispatch_attempt,
+            request.stream(),
+            max_bytes=get_settings().builder_harness_state_limit_bytes,
+        )
+    except BuilderHarnessStateTooLarge as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    return {"sha256": digest, "size": size}
+
+
 @router.put("/{job_id}/output")
 async def put_turn_output(
     job_id: UUID,
@@ -208,7 +332,7 @@ async def put_turn_output(
     capability.require(SANDBOX_OUTPUT_WRITE)
     _require_turn(capability)
     turn = await db.get(SolutionBuilderTurn, job_id)
-    if turn is None or turn.status not in {"queued", "running"}:
+    if turn is None or turn.status not in {"queued", "running", "cancelled"}:
         raise HTTPException(status_code=409, detail="Builder turn is not running")
     try:
         digest, size = await BuilderTurnArtifactStorage(
@@ -248,6 +372,46 @@ async def complete_turn_llm(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except BuilderLLMUnavailable as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/{job_id}/llm/v1/chat/completions")
+async def stream_turn_llm_openai(
+    job_id: UUID,
+    body: SandboxOpenAIChatCompletionRequest,
+    db: Db,
+    capability: Capability,
+) -> StreamingResponse:
+    """OpenAI-compatible streaming boundary for standard coding harnesses."""
+    capability.require(SANDBOX_LLM_INVOKE)
+    _require_turn(capability)
+    if not body.stream:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Builder harness completions must use streaming",
+        )
+    try:
+        stream = await start_builder_openai_stream(
+            db,
+            job_id=job_id,
+            dispatch_attempt=capability.dispatch_attempt,
+            request=body,
+        )
+    except BuilderLLMBudgetExceeded as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    except BuilderLLMCompletionFenced as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except BuilderLLMUnavailable as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except BuilderLLMProxyError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return StreamingResponse(
+        stream,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 async def _turn_session(
@@ -401,6 +565,17 @@ async def complete_build(
             detail="Invalid build transition",
         )
 
+    if body.status == "failed" and body.retryable:
+        from src.services.builder.build_requests import retry_external_build_completion
+
+        if await retry_external_build_completion(
+            db,
+            build_job_id=job_id,
+            dispatch_attempt=capability.dispatch_attempt,
+            error=body.error or "External build runner failed transiently",
+        ):
+            return Response(status_code=status.HTTP_204_NO_CONTENT)
+
     manifest = (
         [entry.model_dump(mode="json") for entry in body.output_manifest]
         if body.output_manifest is not None
@@ -479,15 +654,33 @@ async def complete_turn(
     turn = await db.get(SolutionBuilderTurn, job_id)
     if platform_job is None or turn is None:
         raise HTTPException(status_code=404, detail="Builder turn not found")
+    service = BuilderAgentTurnService(db)
     if platform_job.status in {"succeeded", "failed", "cancelled"}:
         if platform_job.status == body.status:
+            if (
+                body.checkpoint_output_sha256 is not None
+                and turn.checkpoint_sha256 is None
+            ):
+                await service.preserve_agent_turn_checkpoint(
+                    turn_id=turn.id,
+                    dispatch_attempt=capability.dispatch_attempt,
+                    output_sha256=body.checkpoint_output_sha256,
+                )
+                await db.commit()
             return Response(status_code=204)
         raise HTTPException(status_code=409, detail="Builder turn already completed")
     if platform_job.status == "cancel_requested" and body.status != "cancelled":
         raise HTTPException(status_code=409, detail="Builder turn was cancelled")
 
-    service = BuilderAgentTurnService(db)
     try:
+        if body.status == "failed" and body.retryable:
+            retried = await service.retry_external_agent_turn(
+                turn_id=turn.id,
+                dispatch_attempt=capability.dispatch_attempt,
+                error=body.error or "External Builder runner failed transiently",
+            )
+            if retried is not None:
+                return Response(status_code=204)
         if body.status == "succeeded":
             assert body.output_sha256 is not None
             assert body.final_text is not None
@@ -502,6 +695,11 @@ async def complete_turn(
                 model=body.model,
                 token_count_input=body.token_count_input,
                 token_count_output=body.token_count_output,
+                harness_diagnostics=(
+                    body.harness_diagnostics.model_dump(mode="json")
+                    if body.harness_diagnostics is not None
+                    else None
+                ),
             )
         else:
             await service.finish_failed_agent_turn(
@@ -509,6 +707,12 @@ async def complete_turn(
                 dispatch_attempt=capability.dispatch_attempt,
                 status=body.status,
                 error=body.error,
+                harness_diagnostics=(
+                    body.harness_diagnostics.model_dump(mode="json")
+                    if body.harness_diagnostics is not None
+                    else None
+                ),
+                checkpoint_output_sha256=body.checkpoint_output_sha256,
             )
     except FileNotFoundError as exc:
         raise HTTPException(status_code=409, detail="Builder output was not uploaded") from exc

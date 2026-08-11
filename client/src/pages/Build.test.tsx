@@ -25,6 +25,8 @@ vi.mock("@/hooks/useBuilderAccess", () => ({
 const mockCreateBuilderSolution = vi.fn();
 const mockCreateBuilderSession = vi.fn();
 const mockListBuilderSolutions = vi.fn();
+const mockGetGlobalWorkspace = vi.fn();
+const mockEnsureGlobalWorkspace = vi.fn();
 vi.mock("@/services/builder", async () => {
 	const actual =
 		await vi.importActual<typeof import("@/services/builder")>(
@@ -38,6 +40,10 @@ vi.mock("@/services/builder", async () => {
 			mockCreateBuilderSession(...args),
 		listBuilderSolutions: (...args: unknown[]) =>
 			mockListBuilderSolutions(...args),
+		getGlobalWorkspace: (...args: unknown[]) =>
+			mockGetGlobalWorkspace(...args),
+		ensureGlobalWorkspace: (...args: unknown[]) =>
+			mockEnsureGlobalWorkspace(...args),
 	};
 });
 
@@ -70,6 +76,7 @@ function solution(
 		created_at: "2026-07-25T10:00:00Z",
 		updated_at: "2026-07-25T10:00:00Z",
 		...overrides,
+		target_kind: overrides.target_kind ?? "solution",
 	};
 }
 
@@ -91,6 +98,18 @@ beforeEach(() => {
 		builder_ready: true,
 		builder_blockers: [],
 		is_platform_admin: true,
+	});
+	mockGetGlobalWorkspace.mockResolvedValue({
+		exists: false,
+		solution_id: null,
+		has_pending_proposal: false,
+		can_rollback: false,
+	});
+	mockEnsureGlobalWorkspace.mockResolvedValue({
+		exists: true,
+		solution_id: "global-workspace-1",
+		has_pending_proposal: false,
+		can_rollback: false,
 	});
 	mockUseBuilderAccess.mockReturnValue({
 		aiConfigured: true,
@@ -245,6 +264,35 @@ describe("Build home", () => {
 		expect(screen.getByText("Support access")).toBeInTheDocument();
 		expect(mockListBuilderSolutions).toHaveBeenCalledWith(
 			expect.objectContaining({ view: "all", signal: expect.any(AbortSignal) }),
+		);
+	});
+
+	it("gives platform admins an explicit Global Workspace entry point", async () => {
+		mockUseBuilderAccess.mockReturnValue({
+			aiConfigured: true,
+			canBuild: true,
+			hasPermission: true,
+			builderReady: true,
+			blockers: [],
+			canViewAll: true,
+			isPlatformAdmin: true,
+			isLoading: false,
+			solutions: [],
+		});
+		const { user } = renderWithProviders(<Build />);
+
+		expect(
+			await screen.findByRole("heading", { name: "Global Workspace" }),
+		).toBeInTheDocument();
+		expect(screen.getByText(/nothing changes live until/i)).toBeInTheDocument();
+		await user.click(
+			screen.getByRole("button", { name: /create global workspace/i }),
+		);
+
+		await waitFor(() => expect(mockEnsureGlobalWorkspace).toHaveBeenCalled());
+		expect(mockNavigate).toHaveBeenCalledWith(
+			"/solutions/global-workspace-1/builder",
+			{ viewTransition: true },
 		);
 	});
 

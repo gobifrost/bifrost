@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Literal, cast
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
@@ -245,8 +245,13 @@ async def get_messages(
     conversation_id: UUID,
     db: DbSession,
     user: CurrentActiveUser,
-    limit: int = 100,
-    before_sequence: int | None = None,
+    limit: int = Query(default=100, ge=1, le=200),
+    before_sequence: int | None = Query(
+        default=None,
+        ge=1,
+        le=2_147_483_647,
+        description="Return messages older than this PostgreSQL INTEGER sequence",
+    ),
 ) -> list[MessagePublic]:
     """Get messages in a conversation."""
     # Verify conversation belongs to user

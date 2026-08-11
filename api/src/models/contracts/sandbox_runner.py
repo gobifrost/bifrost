@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -216,6 +216,28 @@ class SandboxBuilderTurnContext(BaseModel):
     messages: list[SandboxBuilderMessage]
 
 
+class SandboxHarnessToolDiagnostic(BaseModel):
+    """Privacy-safe aggregate for one harness tool name."""
+
+    name: str = Field(min_length=1, max_length=100)
+    count: int = Field(ge=1, le=10_000)
+    error_count: int = Field(default=0, ge=0, le=10_000)
+
+
+class SandboxHarnessDiagnostics(BaseModel):
+    """Bounded aggregate diagnostics with no prompts, paths, inputs, or outputs."""
+
+    message_count: int = Field(ge=0, le=10_000)
+    assistant_message_count: int = Field(ge=0, le=10_000)
+    tool_call_count: int = Field(ge=0, le=10_000)
+    tool_error_count: int = Field(ge=0, le=10_000)
+    other_tool_call_count: int = Field(default=0, ge=0, le=10_000)
+    compaction_count: int = Field(default=0, ge=0, le=10_000)
+    retry_count: int = Field(default=0, ge=0, le=10_000)
+    truncated: bool = False
+    tools: list[SandboxHarnessToolDiagnostic] = Field(default_factory=list, max_length=32)
+
+
 class SandboxBuilderTurnCompletion(BaseModel):
     """Terminal result reported by an isolated Builder harness."""
 
@@ -223,10 +245,16 @@ class SandboxBuilderTurnCompletion(BaseModel):
     output_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     final_text: str | None = Field(default=None, max_length=100_000)
     error: str | None = Field(default=None, max_length=4_000)
+    retryable: bool = False
     tool_call_count: int = Field(default=0, ge=0, le=10_000)
     model: str | None = Field(default=None, max_length=100)
     token_count_input: int | None = Field(default=None, ge=0)
     token_count_output: int | None = Field(default=None, ge=0)
+    harness_diagnostics: SandboxHarnessDiagnostics | None = None
+    checkpoint_output_sha256: str | None = Field(
+        default=None,
+        pattern=r"^[0-9a-f]{64}$",
+    )
 
     @model_validator(mode="after")
     def validate_terminal_payload(self) -> "SandboxBuilderTurnCompletion":
@@ -237,6 +265,10 @@ class SandboxBuilderTurnCompletion(BaseModel):
                 raise ValueError("A successful Builder turn requires final_text")
         elif self.status == "failed" and not self.error:
             raise ValueError("A failed Builder turn requires an error")
+        if self.retryable and self.status != "failed":
+            raise ValueError("Only failed Builder turns can be retryable")
+        if self.checkpoint_output_sha256 is not None and self.status == "succeeded":
+            raise ValueError("Successful Builder turns do not use failure checkpoints")
         return self
 
 
@@ -257,9 +289,12 @@ class SandboxLLMMessage(BaseModel):
     tool_name: str | None = Field(default=None, max_length=255)
 
 
+MAX_SANDBOX_TOOL_DESCRIPTION_CHARS = 32 * 1024
+
+
 class SandboxLLMToolDefinition(BaseModel):
     name: str = Field(min_length=1, max_length=255)
-    description: str = Field(max_length=4_000)
+    description: str = Field(max_length=MAX_SANDBOX_TOOL_DESCRIPTION_CHARS)
     parameters: dict[str, object]
 
 
@@ -279,3 +314,60 @@ class SandboxLLMCompletionResponse(BaseModel):
     input_tokens: int
     output_tokens: int
     model: str
+
+
+class SandboxOpenAIFunctionCall(BaseModel):
+    """OpenAI-compatible function call emitted in assistant history."""
+
+    name: str = Field(min_length=1, max_length=255)
+    arguments: str = Field(default="{}", max_length=5 * 1024 * 1024)
+
+
+class SandboxOpenAIToolCall(BaseModel):
+    """OpenAI-compatible tool call used by standard coding harnesses."""
+
+    id: str = Field(min_length=1, max_length=255)
+    type: Literal["function"] = "function"
+    function: SandboxOpenAIFunctionCall
+
+
+class SandboxOpenAIChatMessage(BaseModel):
+    """Bounded subset of OpenAI chat messages accepted from the harness."""
+
+    role: Literal["system", "developer", "user", "assistant", "tool"]
+    content: str | list[dict[str, Any]] | None = None
+    tool_calls: list[SandboxOpenAIToolCall] | None = Field(default=None, max_length=64)
+    tool_call_id: str | None = Field(default=None, max_length=255)
+    name: str | None = Field(default=None, max_length=255)
+
+
+class SandboxOpenAIFunctionDefinition(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    description: str = Field(
+        default="",
+        max_length=MAX_SANDBOX_TOOL_DESCRIPTION_CHARS,
+    )
+    parameters: dict[str, Any] = Field(default_factory=dict)
+
+
+class SandboxOpenAIChatTool(BaseModel):
+    type: Literal["function"] = "function"
+    function: SandboxOpenAIFunctionDefinition
+
+
+class SandboxOpenAIChatCompletionRequest(BaseModel):
+    """OpenAI-compatible streaming request from a standard coding harness.
+
+    The requested model is informational. Bifrost always substitutes the
+    Builder Agent's configured model before contacting the provider.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    model: str = Field(min_length=1, max_length=255)
+    messages: list[SandboxOpenAIChatMessage] = Field(min_length=1, max_length=500)
+    tools: list[SandboxOpenAIChatTool] | None = Field(default=None, max_length=64)
+    max_tokens: int | None = Field(default=None, ge=1, le=65_536)
+    max_completion_tokens: int | None = Field(default=None, ge=1, le=65_536)
+    stream: bool = True
+    stream_options: dict[str, Any] | None = None

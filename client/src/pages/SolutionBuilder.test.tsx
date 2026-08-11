@@ -13,9 +13,14 @@ import {
 	type BuilderSolution,
 	type BuilderTurn,
 } from "@/services/builder";
+import type { PlatformJob } from "@/services/platformJobs";
 import { saveBuilderWorkbenchState } from "@/lib/builder-workbench-state";
 
 let mockLocationState: Record<string, unknown> | null = null;
+vi.mock("@/contexts/AuthContext", () => ({
+	useAuth: () => ({ user: { id: "user-1" } }),
+}));
+
 vi.mock("react-router-dom", async () => {
 	const actual =
 		await vi.importActual<typeof import("react-router-dom")>(
@@ -36,6 +41,7 @@ vi.mock("@/components/chat", () => ({
 		conversationId?: string;
 		onSend?: (message: string) => void;
 		inputDisabled?: boolean;
+		isSending?: boolean;
 	}) => {
 		mockChatWindow(props);
 		return (
@@ -70,6 +76,34 @@ const mockCreateBuilderAppLaunch = vi.fn();
 const mockGetRevisionDiff = vi.fn();
 const mockListRevisionFiles = vi.fn();
 const mockGetRevisionFile = vi.fn();
+const mockGetGlobalWorkspace = vi.fn();
+const mockValidateGlobalWorkspace = vi.fn();
+const mockRefreshGlobalWorkspace = vi.fn();
+const mockApplyGlobalWorkspace = vi.fn();
+const mockRollbackGlobalWorkspace = vi.fn();
+const mockGetPlatformJob = vi.fn();
+const mockCancelPlatformJob = vi.fn();
+const mockOnPlatformJobUpdate = vi.fn((..._args: unknown[]) => vi.fn());
+
+vi.mock("@/services/platformJobs", async () => {
+	const actual =
+		await vi.importActual<typeof import("@/services/platformJobs")>(
+			"@/services/platformJobs",
+		);
+	return {
+		...actual,
+		getPlatformJob: (...args: unknown[]) => mockGetPlatformJob(...args),
+		cancelPlatformJob: (...args: unknown[]) => mockCancelPlatformJob(...args),
+	};
+});
+
+vi.mock("@/services/websocket", () => ({
+	webSocketService: {
+		connect: vi.fn().mockResolvedValue(undefined),
+		onPlatformJobUpdate: (...args: unknown[]) =>
+			mockOnPlatformJobUpdate(...args),
+	},
+}));
 
 vi.mock("@/services/builder", async () => {
 	const actual =
@@ -93,6 +127,15 @@ vi.mock("@/services/builder", async () => {
 		getRevisionDiff: (...a: unknown[]) => mockGetRevisionDiff(...a),
 		listRevisionFiles: (...a: unknown[]) => mockListRevisionFiles(...a),
 		getRevisionFile: (...a: unknown[]) => mockGetRevisionFile(...a),
+		getGlobalWorkspace: (...a: unknown[]) => mockGetGlobalWorkspace(...a),
+		validateGlobalWorkspace: (...a: unknown[]) =>
+			mockValidateGlobalWorkspace(...a),
+		refreshGlobalWorkspace: (...a: unknown[]) =>
+			mockRefreshGlobalWorkspace(...a),
+		applyGlobalWorkspace: (...a: unknown[]) =>
+			mockApplyGlobalWorkspace(...a),
+		rollbackGlobalWorkspace: (...a: unknown[]) =>
+			mockRollbackGlobalWorkspace(...a),
 	};
 });
 
@@ -114,6 +157,7 @@ function solution(overrides: Partial<BuilderSolution> = {}): BuilderSolution {
 		created_at: "2026-07-25T10:00:00Z",
 		updated_at: "2026-07-25T10:00:00Z",
 		...overrides,
+		target_kind: overrides.target_kind ?? "solution",
 	};
 }
 
@@ -141,11 +185,58 @@ function turn(overrides: Partial<BuilderTurn> = {}): BuilderTurn {
 		error: null,
 		base_revision_id: null,
 		output_revision_id: null,
+		resume_from_turn_id: null,
+		checkpoint_available: false,
 		build_job_id: null,
 		deploy_job_id: null,
 		created_at: "2026-07-25T10:00:00Z",
 		started_at: null,
 		completed_at: null,
+		...overrides,
+	};
+}
+
+function platformJob(overrides: Partial<PlatformJob> = {}): PlatformJob {
+	return {
+		id: "turn-1",
+		job_type: "solution_builder_turn",
+		payload_version: 1,
+		organization_id: "org-1",
+		resource_type: "solution_builder_turn",
+		resource_id: "turn-1",
+		resource_lock_key: "solution:sol-1",
+		priority: 400,
+		title: "Building Expense Tracker",
+		action_url: "/solutions/sol-1/builder",
+		requested_by_user_id: "user-1",
+		requested_by_name: "Dev User",
+		status: "waiting",
+		progress: { phase: "Building with AI", current: 0, total: null, percent: null },
+		revision: 4,
+		attempt: 1,
+		max_attempts: 2,
+		can_cancel: true,
+		result: {
+			llm_usage: {
+				calls: 12,
+				input_tokens: 230_000,
+				output_tokens: 20_000,
+				reserved_tokens: 0,
+			},
+			llm_limits: { max_calls: 80, max_tokens: 2_000_000 },
+		},
+		error: null,
+		notification_id: null,
+		memory_start_bytes: null,
+		memory_peak_bytes: null,
+		memory_limit_bytes: null,
+		external_provider: "cloudflare",
+		external_run_id: "run-1",
+		external_started_at: "2026-07-25T10:00:01Z",
+		started_at: "2026-07-25T10:00:00Z",
+		completed_at: null,
+		created_at: "2026-07-25T10:00:00Z",
+		updated_at: "2026-07-25T10:00:02Z",
 		...overrides,
 	};
 }
@@ -175,6 +266,11 @@ beforeEach(() => {
 		revision({ is_current: true, is_deployed: true }),
 	]);
 	mockListTurns.mockResolvedValue([turn()]);
+	mockGetPlatformJob.mockResolvedValue(platformJob());
+	mockCancelPlatformJob.mockResolvedValue({
+		job: platformJob({ status: "cancel_requested" }),
+		accepted: true,
+	});
 	mockUseApplications.mockReturnValue({
 		data: { applications: [] },
 		isLoading: false,
@@ -184,6 +280,8 @@ beforeEach(() => {
 	});
 	mockRunBuilderTurn.mockResolvedValue({
 		turn: turn(),
+		job_id: "turn-1",
+		job_status: "queued",
 		final_text: "Done",
 		tool_call_count: 1,
 		revision_created: true,
@@ -197,6 +295,38 @@ beforeEach(() => {
 		deletions: 0,
 	});
 	mockListRevisionFiles.mockResolvedValue([]);
+	mockGetGlobalWorkspace.mockResolvedValue({
+		exists: true,
+		solution_id: "sol-1",
+		current_revision_id: "rev-1",
+		deployed_revision_id: "rev-1",
+		has_pending_proposal: false,
+		can_rollback: false,
+		last_applied_at: null,
+	});
+	mockValidateGlobalWorkspace.mockResolvedValue({
+		revision_id: "rev-2",
+		valid: true,
+		errors: [],
+	});
+	mockApplyGlobalWorkspace.mockResolvedValue({
+		revision_id: "rev-2",
+		changed_paths: ["workflows/example.py"],
+		applied_at: "2026-07-25T12:00:00Z",
+		rolled_back: false,
+	});
+	mockRefreshGlobalWorkspace.mockResolvedValue({
+		exists: true,
+		solution_id: "sol-1",
+		has_pending_proposal: false,
+		can_rollback: false,
+	});
+	mockRollbackGlobalWorkspace.mockResolvedValue({
+		revision_id: "rev-3",
+		changed_paths: ["workflows/example.py"],
+		applied_at: "2026-07-25T12:05:00Z",
+		rolled_back: true,
+	});
 });
 
 describe("load states", () => {
@@ -240,6 +370,63 @@ describe("load states", () => {
 });
 
 describe("top bar", () => {
+	it("separates admin Global Workspace proposals from live _repo", async () => {
+		mockGetBuilderSolution.mockResolvedValue(
+			solution({
+				name: "Global Workspace",
+				slug: "bifrost-global-workspace",
+				target_kind: "global_repo",
+			}),
+		);
+		mockListRevisions.mockResolvedValue([
+			revision({ id: "rev-2", is_current: true, parent_revision_id: "rev-1" }),
+			revision({ id: "rev-1", is_deployed: true }),
+		]);
+		mockGetGlobalWorkspace.mockResolvedValue({
+			exists: true,
+			solution_id: "sol-1",
+			current_revision_id: "rev-2",
+			deployed_revision_id: "rev-1",
+			has_pending_proposal: true,
+			can_rollback: true,
+			last_applied_at: "2026-07-25T11:00:00Z",
+		});
+		const { user } = renderWithProviders(<SolutionBuilder />);
+
+		expect(await screen.findByText("Live _repo")).toBeInTheDocument();
+		expect(screen.getByText("Admin only")).toBeInTheDocument();
+		expect(screen.getByText("Global Workspace agent")).toBeInTheDocument();
+		expect(screen.getByText("Admin instructions")).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: /open app/i }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: /request promotion/i }),
+		).not.toBeInTheDocument();
+		expect(screen.queryByRole("tab", { name: "Preview" })).not.toBeInTheDocument();
+
+		const apply = screen.getByRole("button", { name: /apply to live/i });
+		expect(apply).toBeDisabled();
+		await user.click(
+			screen.getByRole("button", { name: /validate proposal/i }),
+		);
+		await waitFor(() =>
+			expect(mockValidateGlobalWorkspace).toHaveBeenCalled(),
+		);
+		expect(apply).not.toBeDisabled();
+
+		await user.click(apply);
+		expect(
+			await screen.findByRole("heading", {
+				name: /apply this proposal to live _repo/i,
+			}),
+		).toBeInTheDocument();
+		await user.click(
+			screen.getByRole("button", { name: /^apply to live _repo$/i }),
+		);
+		await waitFor(() => expect(mockApplyGlobalWorkspace).toHaveBeenCalled());
+	});
+
 	it("shows the name, slug, and Private badge", async () => {
 		renderWithProviders(<SolutionBuilder />);
 
@@ -291,6 +478,53 @@ describe("top bar", () => {
 		);
 	});
 
+	it("shows durable job activity, prevents duplicate prompts, and can cancel", async () => {
+		mockListTurns.mockResolvedValue([turn({ status: "running" })]);
+		const { user } = renderWithProviders(<SolutionBuilder />);
+
+		expect(await screen.findByTestId("build-usage")).toHaveTextContent(
+			"12 of 80 AI calls · 250K of 2M tokens",
+		);
+		expect(screen.getByTestId("build-usage-percentages")).toHaveTextContent(
+			"15% calls · 13% tokens",
+		);
+		expect(screen.getByLabelText(/calls: 15% of this turn's limit used/i)).toBeInTheDocument();
+		expect(screen.getByLabelText(/tokens: 13% of this turn's limit used/i)).toBeInTheDocument();
+		expect(
+			screen.getByRole("status", { name: /building your app/i }),
+		).toHaveTextContent(/building with ai/i);
+		expect(mockChatWindow).toHaveBeenLastCalledWith(
+			expect.objectContaining({ inputDisabled: true, isSending: true }),
+		);
+
+		await user.click(screen.getByRole("button", { name: /^cancel$/i }));
+
+		await waitFor(() =>
+			expect(mockCancelPlatformJob).toHaveBeenCalledWith("turn-1"),
+		);
+	});
+
+	it("shows the durable job failure without waiting for turn refetch", async () => {
+		mockListTurns.mockResolvedValue([turn({ status: "running" })]);
+		mockGetPlatformJob.mockResolvedValue(
+			platformJob({
+				status: "failed",
+				can_cancel: false,
+				error: {
+					code: "external_job_failed",
+					message: "The coding harness lost its local runtime",
+					retryable: false,
+				},
+			}),
+		);
+
+		renderWithProviders(<SolutionBuilder />);
+
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"The coding harness lost its local runtime",
+		);
+	});
+
 	it("reflects a failed turn", async () => {
 		mockListTurns.mockResolvedValue([turn({ status: "failed" })]);
 
@@ -298,6 +532,32 @@ describe("top bar", () => {
 
 		expect(await screen.findByTestId("build-status")).toHaveTextContent(
 			"Build failed",
+		);
+	});
+
+	it("offers an explicit resume for saved partial work", async () => {
+		mockListTurns.mockResolvedValue([
+			turn({
+				status: "cancelled",
+				checkpoint_available: true,
+			}),
+		]);
+		const { user } = renderWithProviders(<SolutionBuilder />);
+
+		expect(await screen.findByTestId("builder-checkpoint")).toHaveTextContent(
+			"Partial work was saved",
+		);
+		await user.click(
+			screen.getByRole("button", { name: /resume saved work/i }),
+		);
+
+		await waitFor(() =>
+			expect(mockRunBuilderTurn).toHaveBeenCalledWith("sol-1", {
+				sessionId: "sess-1",
+				message:
+					"Continue from the saved checkpoint and finish the original request.",
+				resumeFromTurnId: "turn-1",
+			}),
 		);
 	});
 

@@ -23,6 +23,8 @@ import { useLocation, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	Code2,
+	CheckCircle2,
+	Database,
 	Download,
 	Eye,
 	ExternalLink,
@@ -30,7 +32,10 @@ import {
 	Loader2,
 	Lock,
 	MessageSquarePlus,
+	RefreshCw,
+	RotateCcw,
 	Send,
+	Square,
 	Sparkles,
 	Undo2,
 	Users,
@@ -45,6 +50,17 @@ import {
 } from "@/components/builder/PreviewPane";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+	AlertDialog,
+	AlertDialogAction,
+	AlertDialogCancel,
+	AlertDialogContent,
+	AlertDialogDescription,
+	AlertDialogFooter,
+	AlertDialogHeader,
+	AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -55,39 +71,52 @@ import {
 } from "@/components/ui/tooltip";
 import {
 	BuilderApiError,
+	applyGlobalWorkspace,
 	createBuilderAppLaunch,
 	createBuilderSession,
 	currentRevision,
 	deployedRevision,
 	downloadRevision,
 	getBuilderSolution,
+	getGlobalWorkspace,
 	isPreviewStale,
 	latestTurn,
 	listBuilderSessions,
 	listRevisions,
 	listTurns,
 	requestPromotion,
+	refreshGlobalWorkspace,
+	rollbackGlobalWorkspace,
 	runBuilderTurn,
 	undoToRevision,
+	validateGlobalWorkspace,
 	type BuilderTurnStatus,
 } from "@/services/builder";
 import { useApplications } from "@/hooks/useApplications";
+import { useAuth } from "@/contexts/AuthContext";
 import {
 	loadBuilderWorkbenchState,
 	saveBuilderWorkbenchState,
 	type BuilderMobilePane,
 	type BuilderWorkbenchTab,
 } from "@/lib/builder-workbench-state";
+import {
+	cancelPlatformJob,
+	getPlatformJob,
+	type PlatformJob,
+} from "@/services/platformJobs";
+import {
+	webSocketService,
+	type PlatformJobUpdate,
+} from "@/services/websocket";
 import { cn } from "@/lib/utils";
-
-/** Poll while a turn is in flight so build status stays live. */
-const ACTIVE_POLL_MS = 3000;
 
 function turnBadgeVariant(
 	status: BuilderTurnStatus,
 ): "default" | "secondary" | "destructive" | "outline" {
 	if (status === "failed") return "destructive";
 	if (status === "succeeded") return "secondary";
+	if (status === "cancelled") return "outline";
 	return "default";
 }
 
@@ -102,7 +131,87 @@ function turnLabel(status: BuilderTurnStatus | null): string {
 			return "Succeeded";
 		case "failed":
 			return "Build failed";
+		case "cancelled":
+			return "Cancelled";
 	}
+}
+
+function terminalJob(status: PlatformJob["status"]): boolean {
+	return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function jobTurnStatus(job: PlatformJob | null): BuilderTurnStatus | null {
+	if (!job) return null;
+	if (job.status === "succeeded") return "succeeded";
+	if (job.status === "failed") return "failed";
+	if (job.status === "cancelled") return "cancelled";
+	return job.status === "queued" ? "queued" : "running";
+}
+
+function buildUsage(job: PlatformJob | null): {
+	calls: number;
+	tokens: number;
+	maxCalls: number | null;
+	maxTokens: number | null;
+} | null {
+	const usage = job?.result?.llm_usage;
+	if (!usage || typeof usage !== "object") return null;
+	const record = usage as Record<string, unknown>;
+	const calls = Number(record.calls ?? 0);
+	const input = Number(record.input_tokens ?? 0);
+	const output = Number(record.output_tokens ?? 0);
+	if (![calls, input, output].every(Number.isFinite)) return null;
+	const limits = job?.result?.llm_limits;
+	const limitRecord =
+		limits && typeof limits === "object"
+			? (limits as Record<string, unknown>)
+			: null;
+	const maxCalls = Number(limitRecord?.max_calls);
+	const maxTokens = Number(limitRecord?.max_tokens);
+	return {
+		calls: Math.max(0, calls),
+		tokens: Math.max(0, input) + Math.max(0, output),
+		maxCalls: Number.isFinite(maxCalls) && maxCalls > 0 ? maxCalls : null,
+		maxTokens: Number.isFinite(maxTokens) && maxTokens > 0 ? maxTokens : null,
+	};
+}
+
+function compactNumber(value: number): string {
+	return new Intl.NumberFormat(undefined, {
+		notation: "compact",
+		maximumFractionDigits: 1,
+	}).format(value);
+}
+
+function usagePercent(value: number, limit: number | null): number | null {
+	if (!limit) return null;
+	return Math.min(100, Math.max(0, Math.round((value / limit) * 100)));
+}
+
+function BuilderUsageMeter({
+	label,
+	value,
+	limit,
+}: {
+	label: string;
+	value: number;
+	limit: number;
+}) {
+	const percent = usagePercent(value, limit) ?? 0;
+	return (
+		<span
+			className="flex items-center gap-1.5"
+			aria-label={`${label}: ${percent}% of this turn's limit used`}
+		>
+			<span className="h-1.5 w-12 overflow-hidden rounded-full bg-muted-foreground/20">
+				<span
+					className="block h-full rounded-full bg-primary transition-[width] motion-reduce:transition-none"
+					style={{ width: `${percent}%` }}
+				/>
+			</span>
+			<span className="tabular-nums">{percent}% {label.toLowerCase()}</span>
+		</span>
+	);
 }
 
 function triggerDownload(blob: Blob, filename: string) {
@@ -118,6 +227,7 @@ export function SolutionBuilder() {
 	const { solutionId } = useParams<{ solutionId: string }>();
 	const location = useLocation();
 	const queryClient = useQueryClient();
+	const { user } = useAuth();
 	const initialPromptHandled = useRef(false);
 	const id = solutionId ?? "";
 	const locationState = location.state as {
@@ -156,6 +266,11 @@ export function SolutionBuilder() {
 	);
 	const [actionError, setActionError] = useState<string | null>(null);
 	const [shareOpen, setShareOpen] = useState(false);
+	const [submittedJobId, setSubmittedJobId] = useState<string | null>(null);
+	const [liveJob, setLiveJob] = useState<PlatformJobUpdate | null>(null);
+	const [globalConfirmation, setGlobalConfirmation] = useState<
+		"apply" | "rollback" | null
+	>(null);
 
 	const solutionQuery = useQuery({
 		queryKey: ["builder", "solution", id],
@@ -180,15 +295,20 @@ export function SolutionBuilder() {
 		queryKey: ["builder", "turns", id],
 		queryFn: ({ signal }) => listTurns(id, { signal }),
 		enabled: Boolean(id),
-		refetchInterval: (query) => {
-			const turn = latestTurn(query.state.data ?? []);
-			return turn &&
-				(turn.status === "queued" || turn.status === "running")
-				? ACTIVE_POLL_MS
-				: false;
-		},
 	});
 	const applicationsQuery = useApplications();
+	const isGlobalWorkspace =
+		solutionQuery.data?.target_kind === "global_repo";
+	const globalWorkspaceQuery = useQuery({
+		queryKey: ["builder", "global-workspace"],
+		queryFn: ({ signal }) => getGlobalWorkspace({ signal }),
+		enabled: isGlobalWorkspace,
+		retry: false,
+	});
+	const displayedWorkbenchTab =
+		isGlobalWorkspace && workbenchTab === "preview" ? "changes" : workbenchTab;
+	const displayedMobilePane =
+		isGlobalWorkspace && mobilePane === "preview" ? "changes" : mobilePane;
 
 	const revisions = useMemo(
 		() => revisionsQuery.data ?? [],
@@ -199,6 +319,22 @@ export function SolutionBuilder() {
 		[sessionsQuery.data],
 	);
 	const turn = latestTurn(turnsQuery.data ?? []);
+	const activeJobId =
+		submittedJobId ??
+		(turn?.status === "queued" || turn?.status === "running" ? turn.id : null);
+	const platformJobQuery = useQuery({
+		queryKey: ["platform-job", activeJobId],
+		queryFn: ({ signal }) => getPlatformJob(activeJobId!, signal),
+		enabled: Boolean(activeJobId),
+		retry: false,
+	});
+	const platformJob =
+		liveJob?.id === activeJobId
+			? liveJob
+			: (platformJobQuery.data ?? null);
+	const buildInProgress = Boolean(
+		activeJobId && (!platformJob || !terminalJob(platformJob.status)),
+	);
 	const stale = isPreviewStale(revisions);
 	const source = currentRevision(revisions);
 	const deployed = deployedRevision(revisions);
@@ -220,8 +356,17 @@ export function SolutionBuilder() {
 		sessions.find((session) => session.id === activeSessionId) ??
 		sessions.find((session) => session.id === initialSessionId) ??
 		sessions[0];
+	const selectedSessionTurn = (turnsQuery.data ?? []).find(
+		(candidate) => candidate.session_id === selectedSession?.id,
+	);
+	const resumableTurn =
+		selectedSessionTurn?.checkpoint_available &&
+		(selectedSessionTurn.status === "failed" ||
+			selectedSessionTurn.status === "cancelled")
+			? selectedSessionTurn
+			: null;
 
-	const canLaunchApp = Boolean(builderApp && deployed);
+	const canLaunchApp = Boolean(!isGlobalWorkspace && builderApp && deployed);
 	const resizeAgentPanel = useCallback(
 		(event: ReactPointerEvent<HTMLDivElement>) => {
 			const bounds = workbenchRef.current?.getBoundingClientRect();
@@ -280,7 +425,33 @@ export function SolutionBuilder() {
 		queryClient.invalidateQueries({
 			queryKey: ["get", "/api/applications"],
 		});
-	}, [queryClient, id]);
+		queryClient.invalidateQueries({
+			queryKey: ["builder", "global-workspace"],
+		});
+		if (selectedSession) {
+			queryClient.invalidateQueries({
+				queryKey: [
+					"get",
+					"/api/chat/conversations/{conversation_id}/messages",
+				],
+			});
+		}
+	}, [queryClient, id, selectedSession]);
+
+	useEffect(() => {
+		if (!activeJobId) {
+			return;
+		}
+		if (user?.id) {
+			void webSocketService.connect([`notification:${user.id}`]);
+		}
+		return webSocketService.onPlatformJobUpdate(activeJobId, (job) => {
+			setLiveJob(job);
+			queryClient.setQueryData(["platform-job", activeJobId], job);
+			if (!terminalJob(job.status)) return;
+			invalidateAll();
+		});
+	}, [activeJobId, invalidateAll, queryClient, user?.id]);
 
 	const newSessionMutation = useMutation({
 		mutationFn: () => createBuilderSession(id),
@@ -324,11 +495,73 @@ export function SolutionBuilder() {
 		onError: (error: Error) => setActionError(error.message),
 	});
 
-	const runTurnMutation = useMutation({
-		mutationFn: (params: { sessionId: string; message: string }) =>
-			runBuilderTurn(id, params),
+	const globalValidationMutation = useMutation({
+		mutationFn: () => validateGlobalWorkspace(),
+		onMutate: () => setActionError(null),
+		onError: (error: Error) => setActionError(error.message),
+	});
+
+	const globalRefreshMutation = useMutation({
+		mutationFn: () => refreshGlobalWorkspace(),
 		onMutate: () => setActionError(null),
 		onSuccess: () => {
+			globalValidationMutation.reset();
+			invalidateAll();
+		},
+		onError: (error: Error) => setActionError(error.message),
+	});
+
+	const globalApplyMutation = useMutation({
+		mutationFn: () => applyGlobalWorkspace(),
+		onMutate: () => setActionError(null),
+		onSuccess: () => {
+			setGlobalConfirmation(null);
+			globalValidationMutation.reset();
+			invalidateAll();
+		},
+		onError: (error: Error) => {
+			setGlobalConfirmation(null);
+			setActionError(error.message);
+		},
+	});
+
+	const globalRollbackMutation = useMutation({
+		mutationFn: () => rollbackGlobalWorkspace(),
+		onMutate: () => setActionError(null),
+		onSuccess: () => {
+			setGlobalConfirmation(null);
+			globalValidationMutation.reset();
+			invalidateAll();
+		},
+		onError: (error: Error) => {
+			setGlobalConfirmation(null);
+			setActionError(error.message);
+		},
+	});
+
+	const cancelMutation = useMutation({
+		mutationFn: (jobId: string) => cancelPlatformJob(jobId),
+		onMutate: () => setActionError(null),
+		onSuccess: () => {
+			if (activeJobId) {
+				queryClient.invalidateQueries({
+					queryKey: ["platform-job", activeJobId],
+				});
+			}
+		},
+		onError: (error: Error) => setActionError(error.message),
+	});
+
+	const runTurnMutation = useMutation({
+		mutationFn: (params: {
+			sessionId: string;
+			message: string;
+			resumeFromTurnId?: string;
+		}) =>
+			runBuilderTurn(id, params),
+		onMutate: () => setActionError(null),
+		onSuccess: (result) => {
+			setSubmittedJobId(result.job_id);
 			invalidateAll();
 			if (selectedSession) {
 				queryClient.invalidateQueries({
@@ -354,13 +587,37 @@ export function SolutionBuilder() {
 				);
 				return;
 			}
+			if (runTurnMutation.isPending || buildInProgress) {
+				setActionError(
+					"This build is still running. Wait for it to finish or cancel it before sending another change.",
+				);
+				return;
+			}
 			runTurnMutation.mutate({
 				sessionId: selectedSession.id,
 				message,
 			});
 		},
-		[canEdit, runTurnMutation, selectedSession],
+		[buildInProgress, canEdit, runTurnMutation, selectedSession],
 	);
+
+	const handleResumeCheckpoint = useCallback(() => {
+		if (!canEdit || !selectedSession || !resumableTurn || buildInProgress) {
+			return;
+		}
+		runTurnMutation.mutate({
+			sessionId: selectedSession.id,
+			message:
+				"Continue from the saved checkpoint and finish the original request.",
+			resumeFromTurnId: resumableTurn.id,
+		});
+	}, [
+		buildInProgress,
+		canEdit,
+		resumableTurn,
+		runTurnMutation,
+		selectedSession,
+	]);
 
 	useEffect(() => {
 		saveBuilderWorkbenchState(id, {
@@ -413,9 +670,31 @@ export function SolutionBuilder() {
 		}
 	}, [id, queryClient, turn?.id, turn?.status]);
 
-	const displayedTurnStatus: BuilderTurnStatus | null =
-		runTurnMutation.isPending ? "running" : (turn?.status ?? null);
+	const displayedTurnStatus: BuilderTurnStatus | null = runTurnMutation.isPending
+		? "running"
+		: (jobTurnStatus(platformJob) ?? turn?.status ?? null);
+	const buildActive = Boolean(
+		runTurnMutation.isPending || buildInProgress,
+	);
+	const usage = buildUsage(platformJob);
+	const durableError =
+		platformJob?.status === "failed" ? platformJob.error?.message : null;
+	const hasGlobalProposal = Boolean(
+		isGlobalWorkspace && source && deployed && source.id !== deployed.id,
+	);
+	const globalValidationIsCurrent = Boolean(
+		globalValidationMutation.data?.revision_id === source?.id,
+	);
+	const globalProposalIsValid = Boolean(
+		globalValidationIsCurrent && globalValidationMutation.data?.valid,
+	);
+	const globalActionPending =
+		globalValidationMutation.isPending ||
+		globalRefreshMutation.isPending ||
+		globalApplyMutation.isPending ||
+		globalRollbackMutation.isPending;
 	const promotionReady = Boolean(
+		!isGlobalWorkspace &&
 		canManage &&
 		source &&
 		deployed &&
@@ -483,21 +762,73 @@ export function SolutionBuilder() {
 	return (
 		<TooltipProvider>
 			<div className="flex h-full min-h-0 flex-col bg-background">
-				{solution ? (
-					<BuilderShareDialog
+			{solution && !isGlobalWorkspace ? (
+				<BuilderShareDialog
 						solutionId={solution.id}
 						solutionName={solution.name}
 						open={shareOpen}
 						onOpenChange={setShareOpen}
-					/>
-				) : null}
-				<header className="flex flex-wrap items-center gap-3 border-b px-3 py-2.5 sm:px-4">
+				/>
+			) : null}
+			<AlertDialog
+				open={globalConfirmation === "apply"}
+				onOpenChange={(open) => !open && setGlobalConfirmation(null)}
+			>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>Apply this proposal to live _repo?</AlertDialogTitle>
+						<AlertDialogDescription>
+							Only the validated revision you reviewed will be written. If live source changed since the proposal began, Bifrost stops and asks you to refresh instead.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel>Keep reviewing</AlertDialogCancel>
+						<AlertDialogAction
+							disabled={globalApplyMutation.isPending}
+							onClick={() => globalApplyMutation.mutate()}
+						>
+							{globalApplyMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+							Apply to live _repo
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
+			<AlertDialog
+				open={globalConfirmation === "rollback"}
+				onOpenChange={(open) => !open && setGlobalConfirmation(null)}
+			>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>Roll back the latest live apply?</AlertDialogTitle>
+						<AlertDialogDescription>
+							Bifrost will restore the previous reviewed revision only if live _repo still matches the last apply. Newer edits are never overwritten.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel>Cancel</AlertDialogCancel>
+						<AlertDialogAction
+							variant="destructive"
+							disabled={globalRollbackMutation.isPending}
+							onClick={() => globalRollbackMutation.mutate()}
+						>
+							{globalRollbackMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+							Roll back live _repo
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
+			<header className="flex flex-wrap items-center gap-3 border-b px-3 py-2.5 sm:px-4">
 					<div className="min-w-0 flex-1">
 						<div className="flex min-w-0 items-center gap-2">
 							<h1 className="truncate text-base font-semibold sm:text-lg">
 								{solution?.name}
 							</h1>
-							{solution?.visibility === "private" ? (
+						{isGlobalWorkspace ? (
+							<Badge variant="outline" className="shrink-0 gap-1 border-primary/30 text-primary">
+								<Database className="h-3 w-3" />
+								Live _repo
+							</Badge>
+						) : solution?.visibility === "private" ? (
 								<Badge
 									variant="outline"
 									className="shrink-0 gap-1"
@@ -507,22 +838,29 @@ export function SolutionBuilder() {
 								</Badge>
 							) : null}
 						</div>
-						<p className="truncate text-xs text-muted-foreground">
-							{solution?.organization_name ?? "Build"} / {solution?.slug}
-							{solution?.caller_access !== "owner" && solution?.owner_name
-								? ` · Owned by ${solution.owner_name}`
-								: ""}
-						</p>
+					<p className="truncate text-xs text-muted-foreground">
+						{isGlobalWorkspace
+							? "Instance-wide source · changes require explicit apply"
+							: `${solution?.organization_name ?? "Build"} / ${solution?.slug}${
+									solution?.caller_access !== "owner" && solution?.owner_name
+										? ` · Owned by ${solution.owner_name}`
+										: ""
+								}`}
+					</p>
 					</div>
 
 					<div className="flex w-full items-center gap-1.5 overflow-x-auto sm:w-auto">
 						<Badge variant="secondary" className="h-7 shrink-0 gap-1.5">
-							{solution?.caller_access === "owner" ? (
+						{isGlobalWorkspace ? (
+							<Database className="h-3 w-3" />
+						) : solution?.caller_access === "owner" ? (
 								<Lock className="h-3 w-3" />
 							) : (
 								<Users className="h-3 w-3" />
 							)}
-							{solution?.caller_access === "owner"
+						{isGlobalWorkspace
+							? "Admin only"
+							: solution?.caller_access === "owner"
 								? "Owner"
 								: solution?.caller_access === "support"
 									? "Support"
@@ -530,7 +868,7 @@ export function SolutionBuilder() {
 										? "Can edit"
 										: "View only"}
 						</Badge>
-						{canManage ? (
+					{canManage && !isGlobalWorkspace ? (
 							<Button
 								variant="ghost"
 								size="sm"
@@ -545,7 +883,7 @@ export function SolutionBuilder() {
 							variant="ghost"
 							size="sm"
 							className="h-9 sm:h-7"
-							aria-label="Undo latest source change"
+						aria-label={isGlobalWorkspace ? "Undo latest proposal change" : "Undo latest source change"}
 							disabled={
 								!canEdit ||
 								!source?.parent_revision_id ||
@@ -580,7 +918,7 @@ export function SolutionBuilder() {
 							)}
 							<span className="hidden xl:inline">Download</span>
 						</Button>
-						<Tooltip>
+					{!isGlobalWorkspace ? <Tooltip>
 							<TooltipTrigger asChild>
 								<span>
 									<Button
@@ -613,8 +951,8 @@ export function SolutionBuilder() {
 									The app needs a successful deploy first
 								</TooltipContent>
 							) : null}
-						</Tooltip>
-						<Tooltip>
+					</Tooltip> : null}
+					{!isGlobalWorkspace ? <Tooltip>
 							<TooltipTrigger asChild>
 								<span>
 									<Button
@@ -659,74 +997,223 @@ export function SolutionBuilder() {
 									{promotionGuidance}
 								</TooltipContent>
 							) : null}
-						</Tooltip>
-					</div>
-				</header>
+					</Tooltip> : null}
+				</div>
+			</header>
 
-				<div
-					className="flex min-h-9 items-center gap-3 overflow-x-auto border-b bg-muted/25 px-3 py-1.5 text-xs sm:px-4"
-					aria-live="polite"
-				>
-					<Badge
-						variant={turnBadgeVariant(
-							displayedTurnStatus ?? "succeeded",
-						)}
-						data-testid="build-status"
-					>
-						{turnLabel(displayedTurnStatus)}
-					</Badge>
-					<span className="flex shrink-0 items-center gap-1.5 text-muted-foreground">
-						<Sparkles className="h-3.5 w-3.5 text-primary" />
-						Skill{" "}
-						<strong className="font-medium text-foreground">
-							bifrost-build
-						</strong>
-					</span>
-					<span className="shrink-0 text-muted-foreground">
-						Source{" "}
-						<code className="text-foreground">
-							{source?.id.slice(0, 8) ?? "none"}
-						</code>
-					</span>
-					<span aria-hidden="true" className="text-muted-foreground">
-						→
-					</span>
-					<span className="shrink-0 text-muted-foreground">
-						Preview{" "}
-						<code className="text-foreground">
-							{deployed?.id.slice(0, 8) ?? "not deployed"}
-						</code>
-					</span>
-					{stale ? (
-						<span
-							className="shrink-0 text-amber-600 dark:text-amber-400"
-							data-testid="source-ahead-note"
-						>
-							Preview is behind source
-						</span>
-					) : null}
-					<span
-						className={cn(
-							"ml-auto flex shrink-0 items-center gap-1.5",
-							promotionReady
-								? "text-emerald-600 dark:text-emerald-400"
-								: "text-muted-foreground",
-						)}
-					>
-						<span
-							className={cn(
-								"h-1.5 w-1.5 rounded-full",
-								promotionReady
-									? "bg-emerald-500"
-									: "bg-muted-foreground/50",
+			{isGlobalWorkspace ? (
+				<div className="border-b border-primary/15 bg-primary/[0.045] px-3 py-3 sm:px-4">
+					<div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+						<div className="min-w-0">
+							<div className="flex flex-wrap items-center gap-2">
+								<p className="text-sm font-medium">
+									{hasGlobalProposal
+										? globalProposalIsValid
+											? "Validated proposal ready to apply"
+											: "Review and validate this proposal"
+										: "Proposal matches live _repo"}
+								</p>
+								{globalProposalIsValid ? (
+									<Badge variant="secondary" className="gap-1 text-emerald-700 dark:text-emerald-300">
+										<CheckCircle2 className="h-3 w-3" /> Validated
+									</Badge>
+								) : null}
+							</div>
+						<p className="mt-1 text-xs leading-5 text-muted-foreground">
+							AI edits only the immutable proposal. Refresh and rollback both stop if they would overwrite newer live work.
+						</p>
+						{globalWorkspaceQuery.isError ? (
+							<p className="mt-2 text-xs text-destructive" role="alert">
+								{(globalWorkspaceQuery.error as Error).message}
+							</p>
+						) : null}
+							{globalValidationIsCurrent && !globalValidationMutation.data?.valid ? (
+								<ul className="mt-2 space-y-1 text-xs text-destructive" role="alert">
+								{(globalValidationMutation.data?.errors ?? []).slice(0, 3).map((validationError) => (
+										<li key={validationError}>{validationError}</li>
+									))}
+								</ul>
+							) : null}
+						</div>
+						<div className="flex flex-wrap items-center gap-2">
+							<Button
+								variant="ghost"
+								size="sm"
+								disabled={hasGlobalProposal || buildActive || globalActionPending}
+								onClick={() => globalRefreshMutation.mutate()}
+							>
+								{globalRefreshMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+								Refresh from live
+							</Button>
+							<Button
+								variant="outline"
+								size="sm"
+								disabled={!hasGlobalProposal || buildActive || globalActionPending}
+								onClick={() => globalValidationMutation.mutate()}
+							>
+								{globalValidationMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
+								Validate proposal
+							</Button>
+							<Button
+								size="sm"
+								disabled={!globalProposalIsValid || buildActive || globalActionPending}
+								onClick={() => setGlobalConfirmation("apply")}
+							>
+							{globalApplyMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
+								Apply to live
+							</Button>
+							<Button
+								variant="ghost"
+								size="sm"
+								className="text-destructive hover:text-destructive"
+								disabled={!globalWorkspaceQuery.data?.can_rollback || hasGlobalProposal || buildActive || globalActionPending}
+								onClick={() => setGlobalConfirmation("rollback")}
+							>
+							{globalRollbackMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+								Roll back
+							</Button>
+						</div>
+					</div>
+				</div>
+			) : null}
+
+			<div className="border-b bg-muted/25" aria-live="polite">
+					<div className="flex min-h-10 items-center gap-2 px-3 py-1.5 text-xs sm:px-4">
+						<div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto">
+							<Badge
+								variant={turnBadgeVariant(
+									displayedTurnStatus ?? "succeeded",
+								)}
+								className="shrink-0 gap-1.5"
+								data-testid="build-status"
+							>
+								{buildActive ? (
+									<Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" />
+								) : null}
+							{platformJob?.status === "cancel_requested"
+								? "Cancelling"
+								: isGlobalWorkspace && displayedTurnStatus === "running"
+									? "Preparing proposal"
+									: turnLabel(displayedTurnStatus)}
+						</Badge>
+						<span className="flex shrink-0 items-center gap-1.5 text-muted-foreground">
+							{isGlobalWorkspace ? <Database className="h-3.5 w-3.5 text-primary" /> : <Sparkles className="h-3.5 w-3.5 text-primary" />}
+							{isGlobalWorkspace ? (
+								<strong className="font-medium text-foreground">Global Workspace agent</strong>
+							) : (
+								<>Skill <strong className="font-medium text-foreground">bifrost-build</strong></>
 							)}
+							</span>
+							{usage ? (
+								<span
+									className="flex shrink-0 items-center gap-2 text-muted-foreground"
+									data-testid="build-usage"
+								>
+									<span>
+										{usage.calls}
+										{usage.maxCalls ? ` of ${usage.maxCalls}` : ""} AI calls ·{" "}
+										{compactNumber(usage.tokens)}
+										{usage.maxTokens
+											? ` of ${compactNumber(usage.maxTokens)}`
+											: ""}{" "}
+										tokens
+									</span>
+									{usage.maxCalls && usage.maxTokens ? (
+										<span
+											className="hidden items-center gap-2 rounded-full border bg-background/70 px-2 py-1 lg:flex"
+											data-testid="build-usage-percentages"
+										>
+											<BuilderUsageMeter
+												label="Calls"
+												value={usage.calls}
+												limit={usage.maxCalls}
+											/>
+							<span aria-hidden="true"> · </span>
+											<BuilderUsageMeter
+												label="Tokens"
+												value={usage.tokens}
+												limit={usage.maxTokens}
+											/>
+										</span>
+									) : null}
+								</span>
+							) : null}
+							{platformJob?.external_provider ? (
+								<span className="hidden shrink-0 text-muted-foreground md:inline">
+									{platformJob.external_provider} runner
+								</span>
+							) : null}
+							<span className="hidden shrink-0 items-center gap-1 text-muted-foreground xl:flex">
+							{isGlobalWorkspace ? "Proposal" : "Source"}{" "}
+								<code className="text-foreground">
+									{source?.id.slice(0, 8) ?? "none"}
+								</code>
+								<span aria-hidden="true">→</span>
+							{isGlobalWorkspace ? "Live" : "Preview"}{" "}
+								<code className="text-foreground">
+									{deployed?.id.slice(0, 8) ?? "not deployed"}
+								</code>
+							</span>
+							{stale ? (
+								<span
+									className="shrink-0 text-amber-600 dark:text-amber-400"
+									data-testid="source-ahead-note"
+								>
+							{isGlobalWorkspace ? "Proposal not applied" : "Preview is behind source"}
+								</span>
+							) : null}
+							<span
+							className={cn(
+								"ml-auto hidden shrink-0 items-center gap-1.5 2xl:flex",
+								isGlobalWorkspace ? (globalProposalIsValid ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground") : promotionReady
+										? "text-emerald-600 dark:text-emerald-400"
+										: "text-muted-foreground",
+								)}
+							>
+								<span
+									className={cn(
+										"h-1.5 w-1.5 rounded-full",
+									isGlobalWorkspace ? (globalProposalIsValid ? "bg-emerald-500" : "bg-muted-foreground/50") : promotionReady
+											? "bg-emerald-500"
+											: "bg-muted-foreground/50",
+									)}
+								/>
+							{isGlobalWorkspace
+								? globalProposalIsValid
+									? "Validated for explicit apply"
+									: hasGlobalProposal
+										? "Proposal requires validation"
+										: "Live source is current"
+								: promotionRequested
+									? "Awaiting admin review"
+									: promotionReady
+										? "Ready for review"
+										: promotionGuidance}
+							</span>
+						</div>
+						{activeJobId && platformJob?.can_cancel ? (
+							<Button
+								variant="ghost"
+								size="sm"
+								className="h-8 shrink-0 gap-1.5"
+								disabled={cancelMutation.isPending}
+								onClick={() => cancelMutation.mutate(activeJobId)}
+							>
+								{cancelMutation.isPending ? (
+									<Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
+								) : (
+									<Square className="h-3 w-3 fill-current" />
+								)}
+								Cancel
+							</Button>
+						) : null}
+					</div>
+					{buildActive && platformJob?.progress.percent != null ? (
+						<Progress
+							value={platformJob.progress.percent}
+							className="h-0.5 rounded-none"
 						/>
-						{promotionRequested
-							? "Awaiting admin review"
-							: promotionReady
-								? "Ready for review"
-								: promotionGuidance}
-					</span>
+					) : null}
 				</div>
 
 				{actionError && (
@@ -737,7 +1224,15 @@ export function SolutionBuilder() {
 						{actionError}
 					</p>
 				)}
-				{!actionError && turn?.status === "failed" && turn.error && (
+				{!actionError && durableError ? (
+					<p
+						className="border-b bg-destructive/10 px-4 py-2 text-sm text-destructive"
+						role="alert"
+					>
+						{durableError}
+					</p>
+				) : null}
+				{!actionError && !durableError && turn?.status === "failed" && turn.error && (
 					<p
 						className="border-b bg-destructive/10 px-4 py-2 text-sm text-destructive"
 						role="alert"
@@ -745,25 +1240,49 @@ export function SolutionBuilder() {
 						{turn.error}
 					</p>
 				)}
+				{resumableTurn && canEdit && !buildActive ? (
+					<div
+						className="flex flex-col gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
+						data-testid="builder-checkpoint"
+					>
+						<div className="min-w-0">
+							<p className="text-sm font-medium text-foreground">
+								Partial work was saved
+							</p>
+							<p className="text-xs text-muted-foreground">
+								Resume this session from its isolated checkpoint, or send a new request to start from the current app.
+							</p>
+						</div>
+						<Button
+							variant="outline"
+							size="sm"
+							className="shrink-0 bg-background"
+							onClick={handleResumeCheckpoint}
+						>
+							<Undo2 className="h-3.5 w-3.5" />
+							Resume saved work
+						</Button>
+					</div>
+				) : null}
 				{!canEdit && !actionError ? (
 					<p className="border-b bg-muted/35 px-4 py-2 text-xs text-muted-foreground">
 						You are reviewing this build. Conversation, source, and preview are available; only editors can make changes.
 					</p>
 				) : null}
 
-				<div className="grid grid-cols-4 border-b p-1 lg:hidden">
-					{(
+			<div className={cn("grid border-b p-1 lg:hidden", isGlobalWorkspace ? "grid-cols-3" : "grid-cols-4")}>
+				{(
 						[
 							["agent", Sparkles, "Agent"],
 							["preview", Eye, "Preview"],
 							["code", Code2, "Code"],
 							["changes", FileDiff, "Changes"],
-						] as const
-					).map(([value, Icon, label]) => (
+					] as const
+				).filter(([value]) => !isGlobalWorkspace || value !== "preview").map(([value, Icon, label]) => (
 						<Button
 							key={value}
 							variant={
-								mobilePane === value ? "secondary" : "ghost"
+							displayedMobilePane === value ? "secondary" : "ghost"
 							}
 							size="sm"
 							className="min-h-10 gap-1.5 px-2 text-xs"
@@ -793,23 +1312,25 @@ export function SolutionBuilder() {
 					<section
 						className={cn(
 							"min-h-0 flex-1 flex-col border-b lg:w-[var(--agent-panel-width)] lg:flex-none lg:border-b-0 lg:border-r",
-							mobilePane === "agent" ? "flex" : "hidden lg:flex",
+					displayedMobilePane === "agent" ? "flex" : "hidden lg:flex",
 						)}
 					>
 						<div className="flex min-h-11 items-center justify-between gap-2 border-b px-3 py-2">
 							<div className="min-w-0">
 								<div className="flex items-center gap-2 text-sm font-medium">
-									Agent
+							{isGlobalWorkspace ? "Workspace Agent" : "Agent"}
 									<Badge
 										variant="outline"
 										className="gap-1 border-primary/20 text-[10px] text-primary"
 									>
 										<Sparkles className="h-2.5 w-2.5" />
-										bifrost-build
+								{isGlobalWorkspace ? "Admin instructions" : "bifrost-build"}
 									</Badge>
 								</div>
 								<p className="truncate text-[11px] text-muted-foreground">
-									bifrost-build guides each generated change
+							{isGlobalWorkspace
+								? "Proposes bounded _repo edits; never applies them"
+								: "bifrost-build guides each generated change"}
 								</p>
 							</div>
 							<Button
@@ -857,11 +1378,17 @@ export function SolutionBuilder() {
 									conversationId={
 										selectedSession.conversation_id
 									}
-									agentName="App Builder"
+							agentName={isGlobalWorkspace ? "Global Workspace Agent" : "App Builder"}
 									onSend={handleBuilderMessage}
-									isSending={runTurnMutation.isPending}
-									inputDisabled={!canEdit}
-									inputPlaceholder="Describe what to build or change…"
+									isSending={buildActive}
+									inputDisabled={!canEdit || buildActive}
+									inputPlaceholder={
+										buildActive
+								? "The Builder Agent is working…"
+								: isGlobalWorkspace
+									? "Describe a change to propose for the global workspace…"
+									: "Describe what to build or change…"
+									}
 								/>
 							) : (
 								<div
@@ -869,8 +1396,9 @@ export function SolutionBuilder() {
 									data-testid="no-session"
 								>
 									<p className="text-sm text-muted-foreground">
-										Start a session to describe what you
-										want to build.
+							{isGlobalWorkspace
+								? "Start a session to describe the instance-wide change you want to propose."
+								: "Start a session to describe what you want to build."}
 									</p>
 									<Button
 										size="sm"
@@ -918,11 +1446,11 @@ export function SolutionBuilder() {
 					<section
 						className={cn(
 							"min-h-0 min-w-0 flex-1 flex-col",
-							mobilePane === "agent" ? "hidden lg:flex" : "flex",
+					displayedMobilePane === "agent" ? "hidden lg:flex" : "flex",
 						)}
 					>
-						<Tabs
-							value={workbenchTab}
+				<Tabs
+					value={displayedWorkbenchTab}
 							onValueChange={(value) =>
 								selectWorkbenchTab(value as BuilderWorkbenchTab)
 							}
@@ -930,13 +1458,13 @@ export function SolutionBuilder() {
 						>
 							<div className="hidden min-h-11 items-center border-b px-2 lg:flex">
 								<TabsList className="h-8 bg-transparent p-0">
-									<TabsTrigger
-										value="preview"
+							{!isGlobalWorkspace ? <TabsTrigger
+								value="preview"
 										className="gap-1.5"
 									>
 										<Eye className="h-3.5 w-3.5" />
 										Preview
-									</TabsTrigger>
+							</TabsTrigger> : null}
 									<TabsTrigger
 										value="code"
 										className="gap-1.5"
@@ -958,8 +1486,8 @@ export function SolutionBuilder() {
 									</TabsTrigger>
 								</TabsList>
 							</div>
-							<TabsContent
-								value="preview"
+					{!isGlobalWorkspace ? <TabsContent
+						value="preview"
 								className="m-0 min-h-0 flex-1"
 							>
 								<PreviewPane
@@ -984,10 +1512,14 @@ export function SolutionBuilder() {
 										setPreviewNonce((nonce) => nonce + 1)
 									}
 									isStale={stale}
+									isBuilding={buildActive}
+									buildDetail={
+										platformJob?.progress.phase ?? undefined
+									}
 									device={previewDevice}
 									onDeviceChange={setPreviewDevice}
 								/>
-							</TabsContent>
+					</TabsContent> : null}
 							<TabsContent
 								value="code"
 								className="m-0 min-h-0 flex-1"

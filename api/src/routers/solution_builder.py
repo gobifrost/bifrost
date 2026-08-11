@@ -16,7 +16,7 @@ Solution catalogs.
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Annotated, Literal, NoReturn
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -33,6 +33,9 @@ from src.models.contracts.solution_builder import (
     BuilderTurnsList,
     BuildJobPublic,
     CreateSessionRequest,
+    GlobalWorkspaceApplyDTO,
+    GlobalWorkspaceStatusDTO,
+    GlobalWorkspaceValidationDTO,
     PrivateSolutionCreate,
     PrivateSolutionDTO,
     PrivateSolutionsList,
@@ -52,6 +55,18 @@ from src.models.orm.solutions import Solution
 from src.services.builder.agent_turns import (
     BuilderAgentTurnService,
     enqueue_builder_turn_deploy,
+)
+from src.services.builder.global_workspace import (
+    GlobalWorkspaceConflict,
+    GlobalWorkspaceError,
+    GlobalWorkspaceInvalid,
+    GlobalWorkspaceState,
+    apply_global_workspace,
+    ensure_global_workspace,
+    global_workspace_state,
+    refresh_global_workspace,
+    rollback_global_workspace,
+    validate_global_workspace_revision,
 )
 from src.services.builder.private_solutions import (
     CollaboratorNotEligible,
@@ -116,6 +131,52 @@ async def require_builder(ctx: Context) -> ExecutionContext:
 BuilderContext = Annotated[ExecutionContext, Depends(require_builder)]
 
 
+def _require_platform_admin(ctx: ExecutionContext) -> None:
+    if not ctx.user.is_platform_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Platform administrator access is required",
+        )
+
+
+def _global_workspace_dto(
+    state: GlobalWorkspaceState | None,
+) -> GlobalWorkspaceStatusDTO:
+    if state is None:
+        return GlobalWorkspaceStatusDTO(exists=False)
+    current = state.project.current_revision_id
+    deployed = state.project.deployed_revision_id
+    return GlobalWorkspaceStatusDTO(
+        exists=True,
+        solution_id=state.solution.id,
+        current_revision_id=current,
+        deployed_revision_id=deployed,
+        has_pending_proposal=current is not None and current != deployed,
+        can_rollback=state.can_rollback,
+        last_applied_at=state.last_applied_at,
+    )
+
+
+def _raise_global_workspace_error(exc: GlobalWorkspaceError) -> NoReturn:
+    if isinstance(exc, GlobalWorkspaceConflict):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+    if isinstance(exc, GlobalWorkspaceInvalid):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Global workspace validation failed",
+                "errors": exc.errors,
+            },
+        ) from exc
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail=str(exc),
+    ) from exc
+
+
 async def _load_or_404(
     ctx: ExecutionContext, solution_id: UUID, action: SolutionAction
 ) -> tuple[Solution, SolutionBuilderProject]:
@@ -132,6 +193,11 @@ async def _load_or_404(
     if loaded is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=NOT_FOUND_DETAIL
+        )
+    if loaded[1].target_kind == "global_repo" and not ctx.user.is_platform_admin:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=NOT_FOUND_DETAIL,
         )
     return loaded
 
@@ -222,6 +288,140 @@ async def list_solutions(
         builder_ready=readiness.ready,
         builder_blockers=readiness.blockers,
         is_platform_admin=ctx.user.is_platform_admin,
+    )
+
+
+@router.get(
+    "/global-workspace",
+    response_model=GlobalWorkspaceStatusDTO,
+    summary="Get the administrator global workspace state",
+)
+async def get_global_workspace(ctx: BuilderContext) -> GlobalWorkspaceStatusDTO:
+    _require_platform_admin(ctx)
+    return _global_workspace_dto(await global_workspace_state(ctx.db))
+
+
+@router.post(
+    "/global-workspace",
+    response_model=GlobalWorkspaceStatusDTO,
+    summary="Create or open the administrator global workspace",
+)
+async def create_global_workspace(ctx: BuilderContext) -> GlobalWorkspaceStatusDTO:
+    _require_platform_admin(ctx)
+    state = await ensure_global_workspace(
+        ctx.db,
+        owner_user_id=ctx.user.user_id,
+        organization_id=ctx.org_id,
+    )
+    return _global_workspace_dto(state)
+
+
+@router.post(
+    "/global-workspace/refresh",
+    response_model=GlobalWorkspaceStatusDTO,
+    summary="Refresh the proposal baseline from live _repo",
+)
+async def refresh_global_workspace_route(
+    ctx: BuilderContext,
+) -> GlobalWorkspaceStatusDTO:
+    _require_platform_admin(ctx)
+    state = await global_workspace_state(ctx.db)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Global workspace not found")
+    try:
+        refreshed = await refresh_global_workspace(
+            ctx.db,
+            solution_id=state.solution.id,
+            requested_by=ctx.user.user_id,
+        )
+    except GlobalWorkspaceError as exc:
+        _raise_global_workspace_error(exc)
+    return _global_workspace_dto(refreshed)
+
+
+@router.post(
+    "/global-workspace/validate",
+    response_model=GlobalWorkspaceValidationDTO,
+    summary="Validate the current global workspace proposal without executing it",
+)
+async def validate_global_workspace_route(
+    ctx: BuilderContext,
+) -> GlobalWorkspaceValidationDTO:
+    _require_platform_admin(ctx)
+    state = await global_workspace_state(ctx.db)
+    revision_id = state.project.current_revision_id if state else None
+    if state is None or revision_id is None:
+        raise HTTPException(status_code=404, detail="Global workspace not found")
+    try:
+        errors = await validate_global_workspace_revision(
+            ctx.db,
+            solution_id=state.solution.id,
+            revision_id=revision_id,
+        )
+    except GlobalWorkspaceError as exc:
+        _raise_global_workspace_error(exc)
+    return GlobalWorkspaceValidationDTO(
+        revision_id=revision_id,
+        valid=not errors,
+        errors=errors,
+    )
+
+
+@router.post(
+    "/global-workspace/apply",
+    response_model=GlobalWorkspaceApplyDTO,
+    summary="Apply the reviewed global workspace proposal to live _repo",
+)
+async def apply_global_workspace_route(
+    ctx: BuilderContext,
+) -> GlobalWorkspaceApplyDTO:
+    _require_platform_admin(ctx)
+    state = await global_workspace_state(ctx.db)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Global workspace not found")
+    try:
+        result = await apply_global_workspace(
+            ctx.db,
+            solution_id=state.solution.id,
+            requested_by=ctx.user.user_id,
+            requested_by_email=ctx.user.email,
+        )
+    except GlobalWorkspaceError as exc:
+        _raise_global_workspace_error(exc)
+    return GlobalWorkspaceApplyDTO(
+        revision_id=result.revision_id,
+        changed_paths=result.changed_paths,
+        applied_at=result.applied_at,
+        rolled_back=result.rolled_back,
+    )
+
+
+@router.post(
+    "/global-workspace/rollback",
+    response_model=GlobalWorkspaceApplyDTO,
+    summary="Roll back the latest global workspace apply",
+)
+async def rollback_global_workspace_route(
+    ctx: BuilderContext,
+) -> GlobalWorkspaceApplyDTO:
+    _require_platform_admin(ctx)
+    state = await global_workspace_state(ctx.db)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Global workspace not found")
+    try:
+        result = await rollback_global_workspace(
+            ctx.db,
+            solution_id=state.solution.id,
+            requested_by=ctx.user.user_id,
+            requested_by_email=ctx.user.email,
+        )
+    except GlobalWorkspaceError as exc:
+        _raise_global_workspace_error(exc)
+    return GlobalWorkspaceApplyDTO(
+        revision_id=result.revision_id,
+        changed_paths=result.changed_paths,
+        applied_at=result.applied_at,
+        rolled_back=result.rolled_back,
     )
 
 
@@ -326,7 +526,12 @@ async def delete_collaborator(
     summary="Delete a private builder Solution and everything it owns (owner only)",
 )
 async def delete_solution(solution_id: UUID, ctx: BuilderContext) -> None:
-    solution, _project = await _load_or_404(ctx, solution_id, SolutionAction.MANAGE)
+    solution, project = await _load_or_404(ctx, solution_id, SolutionAction.MANAGE)
+    if project.target_kind == "global_repo":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The global workspace cannot be deleted from the Builder",
+        )
     await delete_private_solution(ctx.db, solution)
 
 
@@ -543,12 +748,16 @@ async def undo_to_revision(
         turn.output_revision_id is not None
         and turn.output_revision_id != turn.base_revision_id
     ):
-        await enqueue_builder_turn_deploy(
-            ctx.db,
-            solution_id,
-            turn=turn,
-            revision_id=turn.output_revision_id,
-        )
+        project = await ctx.db.get(SolutionBuilderProject, solution_id)
+        if project is not None and project.target_kind == "global_repo":
+            await ctx.db.commit()
+        else:
+            await enqueue_builder_turn_deploy(
+                ctx.db,
+                solution_id,
+                turn=turn,
+                revision_id=turn.output_revision_id,
+            )
     else:
         await ctx.db.commit()
     return BuilderTurnDTO.model_validate(turn)
@@ -589,6 +798,7 @@ async def run_turn(
             session_id=body.session_id,
             requested_by=ctx.user.user_id,
             user_message=body.message,
+            resume_from_turn_id=body.resume_from_turn_id,
         )
     except BuilderTurnConflict as exc:
         raise HTTPException(

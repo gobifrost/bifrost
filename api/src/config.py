@@ -346,6 +346,10 @@ class Settings(BaseSettings):
         default=104_857_600,
         description="Max bytes of build output (compiled app dist) accepted per build job"
     )
+    builder_harness_state_limit_bytes: int = Field(
+        default=52_428_800,
+        description="Max bytes accepted for one persisted Builder harness state archive",
+    )
     builder_staged_retention_hours: int = Field(
         default=6,
         description="Hours a staged (not-yet-deployed) build output is retained before cleanup"

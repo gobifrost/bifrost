@@ -258,6 +258,44 @@ class TestBuilderStateIsWritable:
         await db.delete(rev)
         await db.flush()  # must not raise
 
+    async def test_global_workspace_apply_history_is_writable(
+        self, db_session
+    ) -> None:
+        from src.models.orm.solution_builder import (
+            SolutionGlobalWorkspaceApply,
+            SolutionSourceRevision,
+        )
+
+        db = db_session
+        sol = await self._private_solution(db)
+        from_revision = SolutionSourceRevision(
+            id=uuid.uuid4(),
+            solution_id=sol.id,
+            source_sha256="0" * 64,
+            size_bytes=1,
+            summary="before",
+        )
+        to_revision = SolutionSourceRevision(
+            id=uuid.uuid4(),
+            solution_id=sol.id,
+            source_sha256="1" * 64,
+            size_bytes=1,
+            summary="after",
+        )
+        db.add_all([from_revision, to_revision])
+        await db.flush()
+        apply = SolutionGlobalWorkspaceApply(
+            solution_id=sol.id,
+            from_revision_id=from_revision.id,
+            to_revision_id=to_revision.id,
+        )
+        db.add(apply)
+        await db.flush()
+
+        apply.state = "rolled_back"
+        apply.rolled_back_at = datetime.now(timezone.utc)
+        await db.flush()  # must not raise
+
     async def test_collaborator_grants_are_writable_and_deletable(
         self, db_session
     ) -> None:
@@ -297,6 +335,7 @@ class TestBuilderStateIsWritable:
         for name in (
             "SolutionBuilderCollaborator",
             "SolutionBuilderProject",
+            "SolutionGlobalWorkspaceApply",
             "SolutionSourceRevision",
             "SolutionBuilderSession",
             "SolutionBuilderTurn",

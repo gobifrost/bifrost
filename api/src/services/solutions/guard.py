@@ -71,6 +71,7 @@ _OPERATIONAL_SOLUTION_ROW_NAMES = {
     # only through the normal deploy path, which this guard still protects.
     "SolutionBuilderCollaborator",
     "SolutionBuilderProject",
+    "SolutionGlobalWorkspaceApply",
     "SolutionSourceRevision",
     "SolutionBuilderSession",
     "SolutionBuilderTurn",

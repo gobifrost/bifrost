@@ -122,6 +122,7 @@ def to_dto(
         caller_access=caller_access,
         collaborator_access=collaborator_access,
         status=solution.status,
+        target_kind=project.target_kind,
         promotion_status=project.promotion_status,
         created_at=solution.created_at,
         updated_at=solution.updated_at,
@@ -231,6 +232,7 @@ async def list_private_solutions(
             & (collaborator.user_id == actor_user_id),
         )
         .where(Solution.visibility == VISIBILITY_PRIVATE)
+        .where(SolutionBuilderProject.target_kind == "solution")
         .options(
             noload(Solution.connection_schema),
             noload(Solution.file_locations),
@@ -508,6 +510,8 @@ async def request_promotion(
     The owner may only *request*; performing the promotion is a platform-admin
     action on a separate surface (spec, "Private access invariant").
     """
+    if project.target_kind != "solution":
+        raise ValueError("The global workspace cannot be published as an app")
     if (
         project.deployed_revision_id is None
         or project.current_revision_id != project.deployed_revision_id

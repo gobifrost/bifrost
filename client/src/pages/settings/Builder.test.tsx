@@ -69,6 +69,9 @@ describe("BuilderSettings", () => {
 		expect(screen.getByRole("link", { name: /configure ai/i })).toHaveAttribute("href", "/settings/ai");
 		expect(screen.getByText(/no additional hostname or forwarded port is needed/i)).toBeInTheDocument();
 		expect(screen.getByText(/containers scale to zero between jobs/i)).toBeInTheDocument();
+		expect(screen.getByText(/hard turn limits/i)).toBeInTheDocument();
+		expect(screen.getByText(/cloudflare container charges remain/i)).toBeInTheDocument();
+		expect(screen.getByRole("link", { name: /view ai usage/i })).toHaveAttribute("href", "/reports/usage");
 		expect(screen.getByRole("switch", { name: /enable builder for users/i })).toBeDisabled();
 	});
 

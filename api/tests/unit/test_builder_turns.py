@@ -23,6 +23,7 @@ from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+import yaml
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -38,6 +39,8 @@ from src.models.orm.users import User
 from src.services.builder import turns as turns_module
 from src.services.builder.fs_tools import WorkspaceLimits, WorkspaceRoot, safe_extract_zip
 from src.services.builder.scaffold import (
+    BUILDER_AGENT_MAX_ITERATIONS,
+    BUILDER_AGENT_MAX_TOKEN_BUDGET,
     build_initial_workspace,
     validate_workspace,
     zip_workspace,
@@ -62,6 +65,12 @@ def test_scaffold_is_a_valid_workspace(tmp_path: Path):
     assert (workspace / "bifrost.solution.yaml").is_file()
     assert (workspace / "workflows").is_dir()
     assert (workspace / "README.md").is_file()
+    agents = yaml.safe_load((workspace / ".bifrost" / "agents.yaml").read_text())[
+        "agents"
+    ]
+    builder = next(iter(agents.values()))
+    assert builder["max_iterations"] == BUILDER_AGENT_MAX_ITERATIONS
+    assert builder["max_token_budget"] == BUILDER_AGENT_MAX_TOKEN_BUDGET
 
 
 def test_scaffold_survives_a_zip_round_trip(tmp_path: Path):

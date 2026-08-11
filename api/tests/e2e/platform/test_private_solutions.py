@@ -104,6 +104,168 @@ class TestBuilderCapabilityGate:
 
 
 @pytest.mark.e2e
+class TestGlobalWorkspace:
+
+    def test_global_workspace_routes_require_platform_admin(
+        self, e2e_client, builder_alice
+    ):
+        response = e2e_client.get(
+            f"{BUILDER_URL}/global-workspace",
+            headers=builder_alice.headers,
+        )
+        assert response.status_code == 403, response.text
+
+    async def test_admin_validates_applies_and_rolls_back_a_repo_proposal(
+        self,
+        e2e_client,
+        db_session,
+        platform_admin,
+        tmp_path,
+    ):
+        from src.models.orm.solution_builder import (
+            SolutionBuilderProject,
+            SolutionSourceRevision,
+        )
+        from src.services.builder.revision_storage import SolutionRevisionStorage
+        from src.services.builder.scaffold import zip_workspace
+        from src.services.file_storage import FileStorageService
+        from src.services.repo_storage import RepoStorage
+
+        assert platform_admin.user_id is not None
+
+        initial = e2e_client.get(
+            f"{BUILDER_URL}/global-workspace",
+            headers=platform_admin.headers,
+        )
+        assert initial.status_code == 200, initial.text
+        assert initial.json() == {
+            "exists": False,
+            "solution_id": None,
+            "current_revision_id": None,
+            "deployed_revision_id": None,
+            "has_pending_proposal": False,
+            "can_rollback": False,
+            "last_applied_at": None,
+        }
+
+        opened = e2e_client.post(
+            f"{BUILDER_URL}/global-workspace",
+            headers=platform_admin.headers,
+            timeout=120,
+        )
+        assert opened.status_code == 200, opened.text
+        state = opened.json()
+        assert state["exists"] is True
+        assert state["current_revision_id"] == state["deployed_revision_id"]
+        solution_id = uuid.UUID(state["solution_id"])
+        baseline_id = uuid.UUID(state["deployed_revision_id"])
+
+        # The special workspace is deliberately absent from both ordinary and
+        # provider-wide customer build catalogs.
+        for suffix in ("", "?view=all"):
+            listing = e2e_client.get(
+                f"{BUILDER_URL}{suffix}",
+                headers=platform_admin.headers,
+            )
+            assert listing.status_code == 200, listing.text
+            assert state["solution_id"] not in {
+                item["id"] for item in listing.json()["solutions"]
+            }
+
+        detail = e2e_client.get(
+            f"{BUILDER_URL}/{solution_id}",
+            headers=platform_admin.headers,
+        )
+        assert detail.status_code == 200, detail.text
+        assert detail.json()["target_kind"] == "global_repo"
+
+        baseline = e2e_client.get(
+            f"{BUILDER_URL}/{solution_id}/revisions/{baseline_id}/download",
+            headers=platform_admin.headers,
+        )
+        assert baseline.status_code == 200, baseline.text
+        source_root = tmp_path / "source"
+        source_root.mkdir()
+        with zipfile.ZipFile(io.BytesIO(baseline.content)) as archive:
+            archive.extractall(source_root)
+        proposal_path = "workflows/e2e_global_workspace.py"
+        proposal_file = source_root / proposal_path
+        proposal_file.parent.mkdir(parents=True, exist_ok=True)
+        proposal_file.write_text("VALUE = 'reviewed'\n", encoding="utf-8")
+        proposal_archive = tmp_path / "proposal.zip"
+        proposal_sha = zip_workspace(source_root, proposal_archive)
+        proposal_id = uuid.uuid4()
+        await SolutionRevisionStorage(solution_id).write_from_path(
+            proposal_id,
+            proposal_archive,
+        )
+        db_session.add(
+            SolutionSourceRevision(
+                id=proposal_id,
+                solution_id=solution_id,
+                parent_revision_id=baseline_id,
+                created_by=platform_admin.user_id,
+                source_sha256=proposal_sha,
+                size_bytes=proposal_archive.stat().st_size,
+                summary="E2E reviewed global proposal",
+            )
+        )
+        project = await db_session.get(SolutionBuilderProject, solution_id)
+        assert project is not None
+        project.current_revision_id = proposal_id
+        await db_session.commit()
+
+        try:
+            validation = e2e_client.post(
+                f"{BUILDER_URL}/global-workspace/validate",
+                headers=platform_admin.headers,
+                timeout=120,
+            )
+            assert validation.status_code == 200, validation.text
+            assert validation.json() == {
+                "revision_id": str(proposal_id),
+                "valid": True,
+                "errors": [],
+            }
+
+            applied = e2e_client.post(
+                f"{BUILDER_URL}/global-workspace/apply",
+                headers=platform_admin.headers,
+                timeout=120,
+            )
+            assert applied.status_code == 200, applied.text
+            assert applied.json()["changed_paths"] == [proposal_path]
+            assert await RepoStorage().read(proposal_path) == b"VALUE = 'reviewed'\n"
+
+            after_apply = e2e_client.get(
+                f"{BUILDER_URL}/global-workspace",
+                headers=platform_admin.headers,
+            )
+            assert after_apply.json()["has_pending_proposal"] is False
+            assert after_apply.json()["can_rollback"] is True
+
+            rolled_back = e2e_client.post(
+                f"{BUILDER_URL}/global-workspace/rollback",
+                headers=platform_admin.headers,
+                timeout=120,
+            )
+            assert rolled_back.status_code == 200, rolled_back.text
+            assert rolled_back.json()["rolled_back"] is True
+            assert rolled_back.json()["changed_paths"] == [proposal_path]
+            assert not await RepoStorage().exists(proposal_path)
+        finally:
+            if await RepoStorage().exists(proposal_path):
+                await FileStorageService(db_session).delete_file(proposal_path)
+                await db_session.commit()
+
+        refused_delete = e2e_client.delete(
+            f"{BUILDER_URL}/{solution_id}",
+            headers=platform_admin.headers,
+        )
+        assert refused_delete.status_code == 409, refused_delete.text
+
+
+@pytest.mark.e2e
 class TestPrivateInvisibility:
 
     def test_owner_sees_own_solution(self, e2e_client, builder_alice, alice_solution):
@@ -402,6 +564,7 @@ class TestPromotionAndDelete:
         assert created.status_code == 201, created.text
         solution = created.json()
         solution_id = uuid.UUID(solution["id"])
+        published_solution_id: str | None = None
         try:
             session_response = e2e_client.post(
                 f"{BUILDER_URL}/{solution_id}/sessions",
@@ -482,22 +645,60 @@ class TestPromotionAndDelete:
             assert promoted.status_code == 200, promoted.text
             assert promoted.json()["visibility"] == "shared"
             assert promoted.json()["promoted_revision_id"] == str(revision.id)
+            published_solution_id = promoted.json()["published_solution_id"]
+            assert published_solution_id != str(solution_id)
 
             owner_private = e2e_client.get(
                 f"{BUILDER_URL}/{solution_id}",
                 headers=builder_alice.headers,
             )
-            assert owner_private.status_code == 404
+            assert owner_private.status_code == 200, owner_private.text
+            assert owner_private.json()["visibility"] == "private"
             admin_shared = e2e_client.get(
-                f"/api/solutions/{solution_id}",
+                f"/api/solutions/{published_solution_id}",
                 headers=platform_admin.headers,
             )
             assert admin_shared.status_code == 200, admin_shared.text
-        finally:
-            e2e_client.delete(
-                f"/api/solutions/{solution_id}",
+            from src.models.orm.solutions import Solution
+
+            published_row = await db_session.get(
+                Solution,
+                uuid.UUID(published_solution_id),
+            )
+            assert published_row is not None
+            await db_session.refresh(published_row)
+            assert published_row.visibility == "shared"
+
+            # Publishing the next approved revision updates the stable release
+            # install instead of creating a second shared Solution or consuming
+            # the private source project.
+            requested_again = e2e_client.post(
+                f"{BUILDER_URL}/{solution_id}/promotion-request",
+                headers=builder_alice.headers,
+            )
+            assert requested_again.status_code == 200, requested_again.text
+            promoted_again = e2e_client.post(
+                f"/api/solution-promotions/{solution_id}/promote",
                 headers=platform_admin.headers,
-                params={"confirm": slug},
+                json={
+                    "target": "company",
+                    "approve_role_creation": True,
+                    "approved_connection_names": review.json()["connection_names"],
+                },
+                timeout=120,
+            )
+            assert promoted_again.status_code == 200, promoted_again.text
+            assert promoted_again.json()["published_solution_id"] == published_solution_id
+            assert promoted_again.json()["release_id"] == promoted.json()["release_id"]
+        finally:
+            if published_solution_id is not None:
+                e2e_client.delete(
+                    f"/api/solutions/{published_solution_id}",
+                    headers=platform_admin.headers,
+                    params={"confirm": slug},
+                )
+            e2e_client.delete(
+                f"{BUILDER_URL}/{solution_id}", headers=builder_alice.headers
             )
 
 

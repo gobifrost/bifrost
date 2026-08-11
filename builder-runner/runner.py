@@ -8,7 +8,6 @@ import dataclasses
 import hashlib
 import json
 import os
-import re
 import shutil
 import signal
 import stat
@@ -24,8 +23,6 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit
 from urllib.request import Request, urlopen
 
-import yaml
-
 SCHEMA_VERSION = 1
 MAX_TIMEOUT_SECONDS = 2 * 60 * 60
 MAX_INPUT_BYTES = 200 * 1024 * 1024
@@ -35,24 +32,72 @@ MAX_FILES = 10_000
 MAX_OUTPUT_BYTES = 100 * 1024 * 1024
 MAX_LOG_BYTES = 128 * 1024
 MAX_TOOL_FILE_BYTES = 5 * 1024 * 1024
-MAX_TOOL_READ_BYTES = 256 * 1024
 MAX_TOOL_WORKSPACE_BYTES = 200 * 1024 * 1024
 MAX_TOOL_WORKSPACE_FILES = 5_000
 MAX_ENVELOPE_BYTES = 1024 * 1024
+MAX_HARNESS_OUTPUT_BYTES = 2 * 1024 * 1024
+MAX_HARNESS_STATE_BYTES = 50 * 1024 * 1024
+REPORTED_FAILURE_EXIT = 1
+REPORTED_CANCELLED_EXIT = 2
+CALLBACK_FAILURE_EXIT = 3
+CALLBACK_RETRY_ATTEMPTS = 3
+CALLBACK_RETRY_BASE_SECONDS = 1
+CANCELLATION_CHECK_TIMEOUT_SECONDS = 5
+OPENCODE_PROVIDER_TIMEOUT_MS = 15 * 60 * 1000
+OPENCODE_CONTEXT_WINDOW = 64_000
+OPENCODE_OUTPUT_LIMIT = 16_384
+OPENCODE_HELPER = Path(__file__).resolve().with_name("opencode_turn.mjs")
 COPY_CHUNK_BYTES = 1024 * 1024
 ZIP_TIMESTAMP = (1980, 1, 1, 0, 0, 0)
 JOB_TYPES = {"solution.build", "solution.builder.turn"}
+RUNNER_USER_AGENT = "Bifrost-Builder-Runner/1.0"
+NATIVE_BUILDER_RUNTIME_CONTRACT = """## Native Builder Runtime Contract
+
+You are running inside Bifrost's native private Solution Builder. This contract
+specializes the general Bifrost Build Skill for this environment:
+
+- The current directory is already the authenticated v2 Solution workspace.
+- The Solution owner, organization, and access policy are already captured by Bifrost.
+  Do not run CLI authentication/environment probes and do not ask for those choices.
+- Do not mutate live platform entities and do not deploy. Author files only inside this
+  workspace; Bifrost validates, versions, builds, and deploys the returned revision.
+- Read the relevant bundled references before editing, inspect the existing workspace,
+  keep a concise task list, and implement the user's complete request autonomously.
+- Do not edit the bundled `skills/bifrost-build` Skill or the private Builder Agent
+  definition unless the user explicitly asks to change Builder itself.
+- Never start a development server, watcher, interactive process, or other command that
+  waits indefinitely. Use bounded, one-shot build, typecheck, lint, and test commands.
+- Validate the Solution with the tools available in this sandbox. Once the requested
+  behavior is implemented and validation passes, stop and give a concise user-facing
+  summary. Do not repeat completed discovery or continue polishing without a concrete
+  unmet requirement.
+"""
 
 
 class RunnerError(Exception):
-    def __init__(self, message: str, *, log_excerpt: str = "") -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        log_excerpt: str = "",
+        harness_session_id: str | None = None,
+        harness_diagnostics: dict[str, Any] | None = None,
+    ) -> None:
         super().__init__(message)
         self.message = message
         self.log_excerpt = log_excerpt
+        self.harness_session_id = harness_session_id
+        self.harness_diagnostics = harness_diagnostics
 
 
 class Cancelled(RunnerError):
     pass
+
+
+class CallbackRequestError(RunnerError):
+    def __init__(self, message: str, *, retryable: bool) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
 @dataclasses.dataclass(frozen=True)
@@ -122,7 +167,11 @@ class CallbackClient:
             envelope.callback_base_url.rstrip("/")
             + f"/api/internal/sandbox/jobs/{envelope.job_id}"
         )
-        self.headers = {"Authorization": f"Bearer {envelope.capability}"}
+        self.headers = {
+            "Authorization": f"Bearer {envelope.capability}",
+            "User-Agent": RUNNER_USER_AGENT,
+        }
+        self._cancel_check_failures = 0
 
     def request(
         self,
@@ -132,6 +181,7 @@ class CallbackClient:
         body: bytes | None = None,
         json_body: dict[str, Any] | None = None,
         timeout: float = 30,
+        attempts: int = CALLBACK_RETRY_ATTEMPTS,
     ) -> bytes:
         headers = dict(self.headers)
         payload = body
@@ -139,17 +189,35 @@ class CallbackClient:
             payload = json.dumps(json_body, separators=(",", ":")).encode()
             headers["Content-Type"] = "application/json"
         req = Request(self.base + path, data=payload, headers=headers, method=method)
-        try:
-            with urlopen(req, timeout=timeout) as response:
-                return response.read()
-        except HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")[:4000]
-            raise RunnerError(f"callback {method} {path} failed: {exc.code} {detail}") from exc
-        except URLError as exc:
-            raise RunnerError(f"callback {method} {path} failed: {exc.reason}") from exc
+        for attempt in range(max(1, attempts)):
+            try:
+                with urlopen(req, timeout=timeout) as response:
+                    return response.read()
+            except HTTPError as exc:
+                detail = exc.read().decode("utf-8", errors="replace")[:4000]
+                error = CallbackRequestError(
+                    f"callback {method} {path} failed: {exc.code} {detail}",
+                    retryable=exc.code in {408, 429} or exc.code >= 500,
+                )
+            except (URLError, TimeoutError) as exc:
+                reason = getattr(exc, "reason", str(exc))
+                error = CallbackRequestError(
+                    f"callback {method} {path} failed: {reason}",
+                    retryable=True,
+                )
+            if not error.retryable or attempt + 1 >= max(1, attempts):
+                raise error
+            time.sleep(CALLBACK_RETRY_BASE_SECONDS * (2**attempt))
+        raise AssertionError("callback retry loop did not return or raise")
 
-    def get_json(self, path: str) -> dict[str, Any]:
-        body = self.request("GET", path)
+    def get_json(
+        self,
+        path: str,
+        *,
+        timeout: float = 30,
+        attempts: int = CALLBACK_RETRY_ATTEMPTS,
+    ) -> dict[str, Any]:
+        body = self.request("GET", path, timeout=timeout, attempts=attempts)
         try:
             data = json.loads(body)
         except json.JSONDecodeError as exc:
@@ -158,25 +226,36 @@ class CallbackClient:
             raise RunnerError(f"callback {path} returned non-object JSON")
         return data
 
-    def complete_llm(self, payload: dict[str, Any]) -> dict[str, Any]:
-        body = self.request("POST", "/llm/completions", json_body=payload, timeout=120)
-        try:
-            data = json.loads(body)
-        except json.JSONDecodeError as exc:
-            raise RunnerError("LLM completion callback returned invalid JSON") from exc
-        if not isinstance(data, dict):
-            raise RunnerError("LLM completion callback returned non-object JSON")
-        return data
-
     def progress(self, phase: str, current: int = 0, total: int | None = None) -> None:
         payload: dict[str, Any] = {"phase": phase[:200], "current": max(0, current)}
         if total is not None:
             payload["total"] = max(0, total)
             payload["percent"] = 100.0 if total == 0 else min(100.0, current / total * 100)
-        self.request("POST", "/progress", json_body=payload, timeout=10)
+        try:
+            self.request("POST", "/progress", json_body=payload, timeout=10)
+        except CallbackRequestError as exc:
+            if not exc.retryable:
+                raise
+            print(f"Transient progress callback failure: {exc.message}", file=sys.stderr)
 
     def ensure_not_cancelled(self) -> None:
-        data = self.get_json("/cancelled")
+        try:
+            data = self.get_json(
+                "/cancelled",
+                timeout=CANCELLATION_CHECK_TIMEOUT_SECONDS,
+                attempts=1,
+            )
+        except CallbackRequestError as exc:
+            if not exc.retryable:
+                raise
+            self._cancel_check_failures += 1
+            if self._cancel_check_failures == 1 or self._cancel_check_failures % 60 == 0:
+                print(
+                    f"Transient cancellation callback failure: {exc.message}",
+                    file=sys.stderr,
+                )
+            return
+        self._cancel_check_failures = 0
         if data.get("cancelled") is True:
             raise Cancelled("job cancelled")
 
@@ -247,6 +326,35 @@ def download_input(client: CallbackClient, destination: Path, expected_sha: str)
         raise RunnerError(f"callback GET /input failed: {exc.reason}") from exc
     if digest.hexdigest() != expected_sha:
         raise RunnerError("input_sha256 mismatch")
+
+
+def download_harness_state(client: CallbackClient, destination: Path) -> bool:
+    """Download the latest successful OpenCode state without buffering it."""
+    total = 0
+    req = Request(client.base + "/harness-state", headers=client.headers, method="GET")
+    try:
+        with urlopen(req, timeout=60) as response:
+            if response.status == 204:
+                return False
+            with destination.open("xb") as output:
+                while True:
+                    chunk = response.read(COPY_CHUNK_BYTES)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > MAX_HARNESS_STATE_BYTES:
+                        raise RunnerError("OpenCode state archive exceeds size limit")
+                    output.write(chunk)
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")[:4000]
+        raise RunnerError(
+            f"callback GET /harness-state failed: {exc.code} {detail}"
+        ) from exc
+    except URLError as exc:
+        raise RunnerError(f"callback GET /harness-state failed: {exc.reason}") from exc
+    if total == 0:
+        raise RunnerError("OpenCode state callback returned an empty archive")
+    return True
 
 
 def extract_zip(zip_path: Path, destination: Path, client: CallbackClient) -> None:
@@ -387,6 +495,59 @@ def _tail(data: bytes | str) -> str:
     return raw[-MAX_LOG_BYTES:].decode("utf-8", errors="replace")
 
 
+def _opencode_exit_error(returncode: int, raw: bytes) -> RunnerError:
+    """Turn the helper's bounded structured stderr into an actionable error."""
+    log_excerpt = _tail(raw).strip()
+    if not log_excerpt:
+        return RunnerError(f"OpenCode exited with status {returncode}")
+    # The SDK helper emits one final, sanitized diagnostic line. Keep the
+    # owner-visible turn error within the callback contract while retaining
+    # the longer excerpt for provider observability.
+    detail = log_excerpt.splitlines()[-1].strip()
+    harness_session_id = None
+    harness_diagnostics = None
+    try:
+        diagnostic = json.loads(detail)
+    except json.JSONDecodeError:
+        diagnostic = None
+    if isinstance(diagnostic, dict):
+        error = diagnostic.get("error")
+        if isinstance(error, str) and error.strip():
+            detail = error.strip()
+        session_id = diagnostic.get("harness_session_id")
+        if isinstance(session_id, str) and session_id.strip():
+            harness_session_id = session_id.strip()
+        if isinstance(diagnostic.get("harness_diagnostics"), dict):
+            harness_diagnostics = diagnostic["harness_diagnostics"]
+    message = f"OpenCode turn failed: {detail}"[:4000]
+    return RunnerError(
+        message,
+        log_excerpt=log_excerpt,
+        harness_session_id=harness_session_id,
+        harness_diagnostics=harness_diagnostics,
+    )
+
+
+def _session_id_from_marker(marker_path: Path) -> str | None:
+    """Read the trusted helper marker left before a long-running prompt."""
+    try:
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(marker, dict) or set(marker) != {"schema_version", "session_id"}:
+        return None
+    session_id = marker.get("session_id")
+    if marker.get("schema_version") != 1 or not isinstance(session_id, str):
+        return None
+    return session_id.strip() or None
+
+
+def _attach_marker_session(error: RunnerError, marker_path: Path) -> RunnerError:
+    if error.harness_session_id is None:
+        error.harness_session_id = _session_id_from_marker(marker_path)
+    return error
+
+
 def _safe_output_path(path: Path, base: Path) -> str:
     rel = path.relative_to(base).as_posix()
     _safe_member(rel)
@@ -450,277 +611,405 @@ def workspace_zip(workspace: Path, destination: Path) -> str:
     return digest.hexdigest()
 
 
-def _workspace_path(workspace: Path, rel: str) -> Path:
-    pure, is_dir = _safe_member(rel)
-    if is_dir:
-        raise RunnerError("workspace tool paths must name files")
-    current = workspace.resolve()
-    for part in pure.parts:
-        current = current / part
-        if current.is_symlink():
-            raise RunnerError("workspace path contains a symlink")
-    target = workspace.joinpath(*pure.parts).resolve()
-    base = workspace.resolve()
-    if target != base and base not in target.parents:
-        raise RunnerError("workspace path escapes sandbox")
-    return target
-
-
-def _workspace_usage(workspace: Path) -> tuple[int, int]:
-    files = [path for path in workspace.rglob("*") if path.is_file()]
-    if any(path.is_symlink() for path in files):
-        raise RunnerError("workspace contains a symlink")
-    return len(files), sum(path.stat().st_size for path in files)
-
-
-def _write_workspace_file(workspace: Path, rel: str, content: str) -> None:
-    encoded = content.encode("utf-8")
-    if len(encoded) > MAX_TOOL_FILE_BYTES:
-        raise RunnerError("file exceeds per-file byte limit")
-    target = _workspace_path(workspace, rel)
-    old_size = target.stat().st_size if target.is_file() else 0
-    count, total = _workspace_usage(workspace)
-    if not target.exists() and count + 1 > MAX_TOOL_WORKSPACE_FILES:
-        raise RunnerError("workspace exceeds file count limit")
-    if total - old_size + len(encoded) > MAX_TOOL_WORKSPACE_BYTES:
-        raise RunnerError("workspace exceeds total byte limit")
-    target.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(dir=target.parent, delete=False) as handle:
-        temporary = Path(handle.name)
-        handle.write(encoded)
-        handle.flush()
-        os.fsync(handle.fileno())
+def restore_harness_state(
+    archive_path: Path,
+    home: Path,
+    client: CallbackClient,
+) -> str:
+    """Restore a runner-owned OpenCode state archive and return its session id."""
+    extract_zip(archive_path, home, client)
+    manifest_path = home / "harness.json"
     try:
-        os.replace(temporary, target)
-    finally:
-        temporary.unlink(missing_ok=True)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise RunnerError("OpenCode state archive has an invalid manifest") from exc
+    manifest_path.unlink()
+    if not isinstance(manifest, dict) or set(manifest) != {
+        "schema_version",
+        "session_id",
+    }:
+        raise RunnerError("OpenCode state archive has an invalid manifest")
+    if manifest.get("schema_version") != 1:
+        raise RunnerError("OpenCode state archive uses an unsupported schema")
+    session_id = manifest.get("session_id")
+    if not isinstance(session_id, str) or not session_id.strip():
+        raise RunnerError("OpenCode state archive has no session id")
+    state_root = home / ".local" / "share" / "opencode"
+    if not state_root.is_dir() or state_root.is_symlink():
+        raise RunnerError("OpenCode state archive has no runtime state")
+    return session_id.strip()
 
 
-def _builder_tools(
-    enabled_system_tools: object,
-    bundle_path: str | None,
-) -> list[dict[str, Any]]:
-    path = {"type": "string", "description": "Workspace-relative POSIX path."}
-    catalog: list[dict[str, Any]] = [
-        {"name": "list_files", "description": "List every file in the Solution workspace.", "parameters": {"type": "object", "properties": {}}},
-        {"name": "read_file", "description": "Read a UTF-8 workspace file.", "parameters": {"type": "object", "properties": {"path": path}, "required": ["path"]}},
-        {"name": "search_text", "description": "Regex-search text files in the workspace.", "parameters": {"type": "object", "properties": {"pattern": {"type": "string"}, "glob": {"type": "string", "default": "**/*"}}, "required": ["pattern"]}},
-        {"name": "write_file", "description": "Create or replace a UTF-8 workspace file.", "parameters": {"type": "object", "properties": {"path": path, "content": {"type": "string"}}, "required": ["path", "content"]}},
-        {"name": "apply_patch", "description": "Replace exact text in one workspace file.", "parameters": {"type": "object", "properties": {"path": path, "old_string": {"type": "string"}, "new_string": {"type": "string"}, "replace_all": {"type": "boolean", "default": False}}, "required": ["path", "old_string", "new_string"]}},
-        {"name": "delete_file", "description": "Delete one workspace file.", "parameters": {"type": "object", "properties": {"path": path}, "required": ["path"]}},
-        {"name": "make_directory", "description": "Create a workspace directory.", "parameters": {"type": "object", "properties": {"path": path}, "required": ["path"]}},
-        {"name": "validate_solution", "description": "Validate the workspace's Bifrost Solution descriptor.", "parameters": {"type": "object", "properties": {}}},
-    ]
-    if not isinstance(enabled_system_tools, list) or not all(
-        isinstance(name, str) for name in enabled_system_tools
-    ):
-        raise RunnerError("Builder context system_tools must be a list of names")
-    definitions = {tool["name"]: tool for tool in catalog}
-    unknown = sorted(set(enabled_system_tools) - definitions.keys())
-    if unknown:
-        raise RunnerError(f"Unsupported Builder system tools: {', '.join(unknown)}")
-    tools = [
-        definitions[name]
-        for name in dict.fromkeys(enabled_system_tools)
-    ]
-    if bundle_path:
-        tools.append({"name": "read_skill_asset", "description": "Read a relative file from this agent's skill bundle.", "parameters": {"type": "object", "properties": {"path": path}, "required": ["path"]}})
-    return tools
+def harness_state_zip(home: Path, destination: Path, session_id: str) -> str:
+    """Archive the closed OpenCode runtime state for the next Builder turn."""
+    if not session_id.strip():
+        raise RunnerError("OpenCode completion has no session id")
+    state_root = home / ".local" / "share" / "opencode"
+    if not state_root.is_dir() or state_root.is_symlink():
+        raise RunnerError("OpenCode did not persist its session state")
+    files = sorted(path for path in state_root.rglob("*") if path.is_file())
+    if not files:
+        raise RunnerError("OpenCode persisted an empty session state")
+    if len(files) + 1 > MAX_FILES:
+        raise RunnerError("OpenCode state exceeds file count limit")
+
+    digest = hashlib.sha256()
+    expanded = 0
+    with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        manifest = json.dumps(
+            {"schema_version": 1, "session_id": session_id.strip()},
+            separators=(",", ":"),
+        ).encode()
+        info = zipfile.ZipInfo("harness.json", ZIP_TIMESTAMP)
+        info.compress_type = zipfile.ZIP_DEFLATED
+        info.external_attr = (stat.S_IFREG | 0o600) << 16
+        archive.writestr(info, manifest)
+        expanded += len(manifest)
+
+        for path in files:
+            if path.is_symlink():
+                raise RunnerError("OpenCode state contains a symlink")
+            rel = _safe_output_path(path, home)
+            data = path.read_bytes()
+            expanded += len(data)
+            if len(data) > MAX_FILE_BYTES or expanded > MAX_EXPANDED_BYTES:
+                raise RunnerError("OpenCode state exceeds expanded size limit")
+            info = zipfile.ZipInfo(rel, ZIP_TIMESTAMP)
+            info.compress_type = zipfile.ZIP_DEFLATED
+            info.external_attr = (stat.S_IFREG | 0o600) << 16
+            archive.writestr(info, data)
+
+    if destination.stat().st_size > MAX_HARNESS_STATE_BYTES:
+        raise RunnerError("OpenCode state archive exceeds size limit")
+    with destination.open("rb") as source:
+        while chunk := source.read(COPY_CHUNK_BYTES):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
-def run_turn_loop(client: CallbackClient, workspace: Path) -> dict[str, Any]:
-    context = client.get_json("/context")
-    messages: list[dict[str, Any]] = []
-    system_prompt = context.get("system_prompt")
-    if isinstance(system_prompt, str) and system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-    restored = context.get("messages")
-    if isinstance(restored, list):
-        messages.extend(item for item in restored if isinstance(item, dict))
-    bundle_path = context.get("bundle_path")
-    if not isinstance(bundle_path, str) or not bundle_path:
-        bundle_path = None
-    tools = _builder_tools(context.get("system_tools"), bundle_path)
-    allowed_tools = {tool["name"] for tool in tools}
-    final_text = ""
-    tool_calls = 0
-    input_tokens = 0
-    output_tokens = 0
-    model = context.get("model") if isinstance(context.get("model"), str) else None
-    max_iterations = int(context.get("max_iterations") or 1)
-    for iteration in range(1, max(1, min(max_iterations, 50)) + 1):
-        client.ensure_not_cancelled()
-        client.progress("llm", iteration, max_iterations)
-        remaining = max(1, int(context.get("max_token_budget") or 100_000) - output_tokens)
-        response = client.complete_llm(
-            {"messages": messages, "tools": tools, "max_tokens": min(16_384, remaining)}
-        )
-        input_tokens += int(response.get("input_tokens") or 0)
-        output_tokens += int(response.get("output_tokens") or 0)
-        if isinstance(response.get("model"), str):
-            model = response["model"]
-        content = response.get("content")
-        calls = response.get("tool_calls")
-        if isinstance(content, str):
-            final_text = content
-        if not calls:
-            break
-        if not isinstance(calls, list):
-            raise RunnerError("LLM completion returned invalid tool_calls")
-        messages.append({"role": "assistant", "content": content, "tool_calls": calls})
-        for call in calls:
-            if not isinstance(call, dict):
-                continue
-            tool_calls += 1
-            messages.append(
-                _execute_workspace_tool(
-                    workspace,
-                    call,
-                    allowed_tools=allowed_tools,
-                    bundle_path=bundle_path,
-                )
-            )
-    archive = workspace.parent / "turn-output.zip"
-    output_sha = workspace_zip(workspace, archive)
-    client.request("PUT", "/output", body=archive.read_bytes(), timeout=60)
-    return {
-        "status": "succeeded",
-        "output_sha256": output_sha,
-        "final_text": final_text,
-        "tool_call_count": tool_calls,
-        "model": model,
-        "token_count_input": input_tokens,
-        "token_count_output": output_tokens,
-    }
+def _required_context_string(context: dict[str, Any], key: str) -> str:
+    value = context.get(key)
+    if not isinstance(value, str) or not value.strip():
+        raise RunnerError(f"Builder context {key} is required")
+    return value.strip()
 
 
-def _execute_workspace_tool(
-    workspace: Path,
-    call: dict[str, Any],
+def _conversation_tail(context: dict[str, Any]) -> str:
+    raw = context.get("messages")
+    if not isinstance(raw, list):
+        raise RunnerError("Builder context messages must be a list")
+    prior: list[str] = []
+    for item in raw[:-1][-20:]:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role in {"user", "assistant"} and isinstance(content, str) and content.strip():
+            prior.append(f"{str(role).upper()}: {content.strip()}")
+    tail = "\n\n".join(prior)
+    if len(tail) > 30_000:
+        tail = tail[-30_000:]
+    return tail
+
+
+def _latest_user_prompt(context: dict[str, Any]) -> str:
+    raw = context.get("messages")
+    if not isinstance(raw, list):
+        raise RunnerError("Builder context messages must be a list")
+    for item in reversed(raw):
+        if (
+            isinstance(item, dict)
+            and item.get("role") == "user"
+            and isinstance(item.get("content"), str)
+            and item["content"].strip()
+        ):
+            return item["content"].strip()
+    raise RunnerError("Builder context has no user prompt")
+
+
+def opencode_config(
+    client: CallbackClient,
+    context: dict[str, Any],
     *,
-    allowed_tools: set[str],
-    bundle_path: str | None = None,
+    restored_session: bool = False,
 ) -> dict[str, Any]:
-    name = call.get("name")
-    arguments = call.get("arguments")
-    call_id = call.get("id")
-    result: dict[str, Any]
-    try:
-        if not isinstance(name, str) or name not in allowed_tools:
-            raise RunnerError(f"tool is not enabled for this Builder turn: {name}")
-        if not isinstance(arguments, dict):
-            raise RunnerError("tool arguments must be an object")
-        if name == "write_file":
-            path = arguments.get("path")
-            content = arguments.get("content")
-            if not isinstance(path, str) or not isinstance(content, str):
-                raise RunnerError("write_file requires path and content")
-            _write_workspace_file(workspace, path, content)
-            result = {"ok": True}
-        elif name == "read_file":
-            path = arguments.get("path")
-            if not isinstance(path, str):
-                raise RunnerError("read_file requires path")
-            target = _workspace_path(workspace, path)
-            if not target.is_file() or target.is_symlink():
-                raise RunnerError("file not found or not a regular file")
-            data = target.read_bytes()
-            result = {"content": data[:MAX_TOOL_READ_BYTES].decode("utf-8", errors="replace"), "truncated": len(data) > MAX_TOOL_READ_BYTES}
-        elif name == "list_files":
-            files = sorted(_safe_output_path(path, workspace) for path in workspace.rglob("*") if path.is_file() and not path.is_symlink())
-            if len(files) > MAX_TOOL_WORKSPACE_FILES:
-                raise RunnerError("workspace exceeds file count limit")
-            result = {"files": files}
-        elif name == "search_text":
-            pattern = arguments.get("pattern")
-            glob = arguments.get("glob", "**/*")
-            if not isinstance(pattern, str) or not isinstance(glob, str):
-                raise RunnerError("search_text requires pattern and optional glob")
-            _safe_member(glob)
-            try:
-                regex = re.compile(pattern)
-            except re.error as exc:
-                raise RunnerError(f"invalid search pattern: {exc}") from exc
-            matches: list[dict[str, object]] = []
-            for target in sorted(workspace.rglob(glob)):
-                if not target.is_file() or target.is_symlink() or target.stat().st_size > MAX_TOOL_READ_BYTES:
-                    continue
-                try:
-                    lines = target.read_text(encoding="utf-8").splitlines()
-                except (UnicodeDecodeError, OSError):
-                    continue
-                for line_number, line in enumerate(lines, start=1):
-                    if regex.search(line):
-                        matches.append({"path": _safe_output_path(target, workspace), "line_number": line_number, "line": line[:2000]})
-                        if len(matches) >= 200:
-                            break
-                if len(matches) >= 200:
-                    break
-            result = {"matches": matches}
-        elif name == "apply_patch":
-            path = arguments.get("path")
-            old = arguments.get("old_string")
-            new = arguments.get("new_string")
-            replace_all = arguments.get("replace_all", False)
-            if not isinstance(path, str) or not isinstance(old, str) or not isinstance(new, str) or not isinstance(replace_all, bool) or not old:
-                raise RunnerError("apply_patch requires path, old_string, and new_string")
-            target = _workspace_path(workspace, path)
-            text = target.read_text(encoding="utf-8")
-            occurrences = text.count(old)
-            if occurrences == 0:
-                raise RunnerError("old_string not found in file")
-            if occurrences > 1 and not replace_all:
-                raise RunnerError(f"old_string matches {occurrences} times")
-            _write_workspace_file(workspace, path, text.replace(old, new, -1 if replace_all else 1))
-            result = {"ok": True, "replacements": occurrences if replace_all else 1}
-        elif name == "delete_file":
-            path = arguments.get("path")
-            if not isinstance(path, str):
-                raise RunnerError("delete_file requires path")
-            target = _workspace_path(workspace, path)
-            if not target.is_file() or target.is_symlink():
-                raise RunnerError("file not found or not a regular file")
-            target.unlink()
-            result = {"ok": True}
-        elif name == "make_directory":
-            path = arguments.get("path")
-            if not isinstance(path, str):
-                raise RunnerError("make_directory requires path")
-            target = _workspace_path(workspace, path)
-            if target.exists() and not target.is_dir():
-                raise RunnerError("path exists and is not a directory")
-            target.mkdir(parents=True, exist_ok=True)
-            result = {"ok": True}
-        elif name == "validate_solution":
-            descriptor = workspace / "bifrost.solution.yaml"
-            try:
-                parsed = yaml.safe_load(descriptor.read_text(encoding="utf-8"))
-            except (FileNotFoundError, UnicodeDecodeError, yaml.YAMLError) as exc:
-                raise RunnerError(f"invalid bifrost.solution.yaml: {exc}") from exc
-            if not isinstance(parsed, dict) or not all(isinstance(parsed.get(key), str) and parsed[key].strip() for key in ("slug", "name")):
-                raise RunnerError("bifrost.solution.yaml requires non-empty slug and name")
-            result = {"valid": True, "file_count": _workspace_usage(workspace)[0]}
-        elif name == "read_skill_asset":
-            path = arguments.get("path")
-            if not isinstance(path, str) or bundle_path is None:
-                raise RunnerError("read_skill_asset is unavailable")
-            bundle_root = _workspace_path(workspace, f"{bundle_path}/SKILL.md").parent
-            target = _workspace_path(bundle_root, path)
-            if not target.is_file() or target.is_symlink():
-                raise RunnerError("skill asset not found or not a regular file")
-            data = target.read_bytes()
-            if len(data) > 1024 * 1024:
-                raise RunnerError("skill asset exceeds read limit")
-            result = {"path": path, "content": data.decode("utf-8", errors="replace")}
-        else:
-            raise RunnerError(f"unsupported tool: {name}")
-    except Exception as exc:
-        result = {"error": str(exc)[:4000]}
+    model = _required_context_string(context, "model")
+    system_prompt = _required_context_string(context, "system_prompt")
+    bundle_path = context.get("bundle_path")
+    if isinstance(bundle_path, str) and bundle_path.strip():
+        bundle_path = bundle_path.strip().rstrip("/")
+        system_prompt += (
+            "\n\n## Native Agent Skill\n\n"
+            f"These instructions are sourced from `{bundle_path}/SKILL.md`. "
+            f"Read supporting files under `{bundle_path}/` when the instructions "
+            "reference them."
+        )
+    history = _conversation_tail(context)
+    if history and not restored_session:
+        system_prompt += (
+            "\n\n## Restored Builder conversation\n\n"
+            "Use this bounded tail only as prior context; the current user request is "
+            "provided separately.\n\n" + history
+        )
+    steps = max(1, min(200, int(context.get("max_iterations") or 50)))
     return {
-        "role": "tool",
-        "tool_call_id": call_id if isinstance(call_id, str) else "",
-        "content": json.dumps(result, separators=(",", ":")),
+        "$schema": "https://opencode.ai/config.json",
+        "share": "disabled",
+        "autoupdate": False,
+        "enabled_providers": ["bifrost"],
+        "model": f"bifrost/{model}",
+        "small_model": f"bifrost/{model}",
+        "default_agent": "bifrost-builder",
+        "provider": {
+            "bifrost": {
+                "name": "Bifrost metered Builder gateway",
+                "npm": "@ai-sdk/openai-compatible",
+                "options": {
+                    "apiKey": client.envelope.capability,
+                    "baseURL": client.base + "/llm/v1",
+                    "timeout": OPENCODE_PROVIDER_TIMEOUT_MS,
+                    "headers": {"User-Agent": RUNNER_USER_AGENT},
+                },
+                "models": {
+                    model: {
+                        "tool_call": True,
+                        "limit": {
+                            "context": OPENCODE_CONTEXT_WINDOW,
+                            "output": OPENCODE_OUTPUT_LIMIT,
+                        },
+                    }
+                },
+            }
+        },
+        "agent": {
+            "bifrost-builder": {
+                "mode": "primary",
+                "model": f"bifrost/{model}",
+                "steps": steps,
+                "prompt": system_prompt + "\n\n" + NATIVE_BUILDER_RUNTIME_CONTRACT,
+                "permission": {
+                    "read": "allow",
+                    "edit": "allow",
+                    "glob": "allow",
+                    "grep": "allow",
+                    "list": "allow",
+                    "bash": {
+                        "*": "allow",
+                        "*npm run dev*": "deny",
+                        "*npm start*": "deny",
+                        "*pnpm dev*": "deny",
+                        "*yarn dev*": "deny",
+                        "*bun dev*": "deny",
+                        "*--watch*": "deny",
+                        "*python*http.server*": "deny",
+                        "*uvicorn*": "deny",
+                        "*flask run*": "deny",
+                    },
+                    "task": "allow",
+                    "external_directory": "deny",
+                    "todowrite": "allow",
+                    "todoread": "allow",
+                    "question": "deny",
+                    "webfetch": "deny",
+                    "websearch": "deny",
+                    "codesearch": "deny",
+                    "lsp": "allow",
+                    "doom_loop": "deny",
+                    "skill": "allow",
+                },
+            }
+        },
+        "compaction": {"auto": True, "prune": True},
+        "experimental": {"chatMaxRetries": 2},
     }
+
+
+def run_opencode_turn(
+    client: CallbackClient,
+    workspace: Path,
+    context: dict[str, Any],
+    timeout: int,
+    *,
+    home: Path,
+    restored_session_id: str | None,
+) -> dict[str, Any]:
+    if not shutil.which("opencode") or not shutil.which("node"):
+        raise RunnerError("OpenCode or Node.js is unavailable in the runner image")
+    if not OPENCODE_HELPER.is_file():
+        raise RunnerError("The typed OpenCode SDK helper is unavailable")
+    prompt = _latest_user_prompt(context)
+    model = _required_context_string(context, "model")
+    request_path = workspace.parent / "opencode-request.json"
+    session_marker_path = workspace.parent / "opencode-session.json"
+    request_path.write_text(
+        json.dumps(
+            {
+                "config": opencode_config(
+                    client,
+                    context,
+                    restored_session=restored_session_id is not None,
+                ),
+                "directory": str(workspace),
+                "prompt": prompt,
+                "model": model,
+                "title": f"Bifrost Builder {client.envelope.job_id}",
+                "sessionID": restored_session_id,
+                "sessionMarkerPath": str(session_marker_path),
+                "timeoutSeconds": timeout,
+            },
+            separators=(",", ":"),
+        ),
+        encoding="utf-8",
+    )
+    request_path.chmod(0o600)
+    env = {
+        "CI": "true",
+        "HOME": str(home),
+        "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
+        "TMPDIR": str(workspace.parent),
+        "XDG_CONFIG_HOME": str(home / ".config"),
+        "XDG_DATA_HOME": str(home / ".local" / "share"),
+        "XDG_CACHE_HOME": str(home / ".cache"),
+        "OPENCODE_DISABLE_AUTOUPDATE": "true",
+        "OPENCODE_DISABLE_TERMINAL_TITLE": "true",
+    }
+    command = (
+        "node",
+        str(OPENCODE_HELPER),
+        str(request_path),
+    )
+    deadline = time.monotonic() + timeout
+    client.progress("harness", 0, int(context.get("max_iterations") or 50))
+    with tempfile.TemporaryFile() as output:
+        process = subprocess.Popen(
+            command,
+            cwd=workspace,
+            env=env,
+            stdin=subprocess.DEVNULL,
+            stdout=output,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        try:
+            while process.poll() is None:
+                if time.monotonic() >= deadline:
+                    raise subprocess.TimeoutExpired(command, timeout)
+                if os.fstat(output.fileno()).st_size > MAX_HARNESS_OUTPUT_BYTES:
+                    raise RunnerError("OpenCode helper output exceeds the runner limit")
+                client.ensure_not_cancelled()
+                time.sleep(1)
+        except (subprocess.TimeoutExpired, Cancelled, RunnerError) as exc:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
+            output.seek(0)
+            log = _tail(output.read())
+            if isinstance(exc, Cancelled):
+                raise _attach_marker_session(
+                    Cancelled(exc.message, log_excerpt=log),
+                    session_marker_path,
+                ) from exc
+            if isinstance(exc, RunnerError):
+                error = RunnerError(
+                    exc.message,
+                    log_excerpt=log,
+                    harness_session_id=exc.harness_session_id,
+                    harness_diagnostics=exc.harness_diagnostics,
+                )
+                raise _attach_marker_session(error, session_marker_path) from exc
+            raise _attach_marker_session(
+                RunnerError("OpenCode turn timed out", log_excerpt=log),
+                session_marker_path,
+            ) from exc
+        output.seek(0)
+        raw = output.read(MAX_HARNESS_OUTPUT_BYTES + 1)
+    if len(raw) > MAX_HARNESS_OUTPUT_BYTES:
+        raise RunnerError("OpenCode helper output exceeds the runner limit")
+    if process.returncode != 0:
+        raise _attach_marker_session(
+            _opencode_exit_error(process.returncode, raw),
+            session_marker_path,
+        )
+    try:
+        completion = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise RunnerError(
+            "OpenCode SDK helper returned invalid JSON",
+            log_excerpt=_tail(raw),
+        ) from exc
+    if not isinstance(completion, dict):
+        raise RunnerError("OpenCode SDK helper returned a non-object result")
+    required = {
+        "status",
+        "final_text",
+        "tool_call_count",
+        "model",
+        "token_count_input",
+        "token_count_output",
+        "harness_session_id",
+        "harness_diagnostics",
+    }
+    if set(completion) != required or completion.get("status") != "succeeded":
+        raise RunnerError("OpenCode SDK helper returned an invalid completion")
+    if not isinstance(completion.get("harness_session_id"), str):
+        raise RunnerError("OpenCode SDK helper returned no session id")
+    return completion
+
+
+def stage_turn_artifacts(
+    client: CallbackClient,
+    *,
+    scratch: Path,
+    workspace: Path,
+    home: Path,
+    harness_session_id: str,
+) -> str:
+    """Upload one closed harness state and its matching workspace archive."""
+    state_output = scratch / "harness-output.zip"
+    harness_state_zip(home, state_output, harness_session_id)
+    client.request(
+        "PUT",
+        "/harness-state",
+        body=state_output.read_bytes(),
+        timeout=120,
+    )
+    output_zip = scratch / "turn-output.zip"
+    output_sha256 = workspace_zip(workspace, output_zip)
+    client.request("PUT", "/output", body=output_zip.read_bytes(), timeout=120)
+    return output_sha256
+
+
+def _checkpoint_after_interruption(
+    client: CallbackClient,
+    *,
+    scratch: Path,
+    workspace: Path,
+    home: Path | None,
+    error: RunnerError,
+) -> str | None:
+    """Stage an inert checkpoint when a turn reached a durable harness session."""
+    if home is None or error.harness_session_id is None:
+        return None
+    try:
+        return stage_turn_artifacts(
+            client,
+            scratch=scratch,
+            workspace=workspace,
+            home=home,
+            harness_session_id=error.harness_session_id,
+        )
+    except RunnerError as checkpoint_error:
+        print(
+            f"Builder checkpoint could not be preserved: {checkpoint_error.message}",
+            file=sys.stderr,
+        )
+        error.message = (
+            f"{error.message} Checkpoint could not be preserved: "
+            f"{checkpoint_error.message}"
+        )[:4000]
+        return None
 
 
 def run(envelope: Envelope, work_root: Path) -> int:
@@ -729,6 +1018,7 @@ def run(envelope: Envelope, work_root: Path) -> int:
     input_zip = scratch / "input.zip"
     workspace = scratch / "workspace"
     workspace.mkdir()
+    turn_home: Path | None = None
     try:
         client.progress("starting")
         download_input(client, input_zip, envelope.input_sha256)
@@ -738,21 +1028,94 @@ def run(envelope: Envelope, work_root: Path) -> int:
             manifest = upload_dist(client, workspace)
             client.complete_build("succeeded", manifest=manifest, log_excerpt=log)
         else:
-            completion = run_turn_loop(client, workspace)
+            context = client.get_json("/context")
+            turn_home = scratch / "opencode-home"
+            turn_home.mkdir(mode=0o700)
+            state_input = scratch / "harness-input.zip"
+            restored_session_id = None
+            if download_harness_state(client, state_input):
+                restored_session_id = restore_harness_state(
+                    state_input,
+                    turn_home,
+                    client,
+                )
+            completion = run_opencode_turn(
+                client,
+                workspace,
+                context,
+                envelope.timeout_seconds,
+                home=turn_home,
+                restored_session_id=restored_session_id,
+            )
+            harness_session_id = completion.pop("harness_session_id")
+            assert isinstance(harness_session_id, str)
+            completion["output_sha256"] = stage_turn_artifacts(
+                client,
+                scratch=scratch,
+                workspace=workspace,
+                home=turn_home,
+                harness_session_id=harness_session_id,
+            )
             client.complete_turn(completion)
         return 0
     except Cancelled as exc:
-        if envelope.job_type == "solution.build":
-            client.complete_build("cancelled", error=exc.message, log_excerpt=exc.log_excerpt)
-        else:
-            client.complete_turn({"status": "cancelled", "error": exc.message})
-        return 2
+        try:
+            if envelope.job_type == "solution.build":
+                client.complete_build(
+                    "cancelled",
+                    error=exc.message,
+                    log_excerpt=exc.log_excerpt,
+                )
+            else:
+                body: dict[str, Any] = {
+                    "status": "cancelled",
+                    "error": exc.message,
+                }
+                checkpoint_sha256 = _checkpoint_after_interruption(
+                    client,
+                    scratch=scratch,
+                    workspace=workspace,
+                    home=turn_home,
+                    error=exc,
+                )
+                if checkpoint_sha256 is not None:
+                    body["checkpoint_output_sha256"] = checkpoint_sha256
+                if exc.harness_diagnostics is not None:
+                    body["harness_diagnostics"] = exc.harness_diagnostics
+                client.complete_turn(body)
+        except RunnerError as callback_error:
+            print(callback_error.message, file=sys.stderr)
+            return CALLBACK_FAILURE_EXIT
+        return REPORTED_CANCELLED_EXIT
     except RunnerError as exc:
-        if envelope.job_type == "solution.build":
-            client.complete_build("failed", error=exc.message, log_excerpt=exc.log_excerpt)
-        else:
-            client.complete_turn({"status": "failed", "error": exc.message})
-        return 1
+        if exc.log_excerpt:
+            print(exc.log_excerpt, file=sys.stderr)
+        try:
+            if envelope.job_type == "solution.build":
+                client.complete_build(
+                    "failed",
+                    error=exc.message,
+                    log_excerpt=exc.log_excerpt,
+                )
+            else:
+                body: dict[str, Any] = {"status": "failed", "error": exc.message}
+                checkpoint_sha256 = _checkpoint_after_interruption(
+                    client,
+                    scratch=scratch,
+                    workspace=workspace,
+                    home=turn_home,
+                    error=exc,
+                )
+                body["error"] = exc.message
+                if checkpoint_sha256 is not None:
+                    body["checkpoint_output_sha256"] = checkpoint_sha256
+                if exc.harness_diagnostics is not None:
+                    body["harness_diagnostics"] = exc.harness_diagnostics
+                client.complete_turn(body)
+        except RunnerError as callback_error:
+            print(callback_error.message, file=sys.stderr)
+            return CALLBACK_FAILURE_EXIT
+        return REPORTED_FAILURE_EXIT
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -766,7 +1129,20 @@ def main(argv: list[str] | None = None) -> int:
     if args.probe:
         if args.envelope or args.envelope_file:
             parser.error("--probe cannot be combined with an envelope")
-        print(json.dumps({"ready": True, "schema_version": SCHEMA_VERSION}))
+        opencode = shutil.which("opencode")
+        node = shutil.which("node")
+        if opencode is None or node is None or not OPENCODE_HELPER.is_file():
+            print("OpenCode SDK harness is unavailable in the runner image", file=sys.stderr)
+            return 1
+        print(
+            json.dumps(
+                {
+                    "ready": True,
+                    "schema_version": SCHEMA_VERSION,
+                    "harness": "opencode",
+                }
+            )
+        )
         return 0
     if args.envelope and args.envelope_file:
         parser.error("provide an envelope path, --envelope, or stdin, not multiple")
