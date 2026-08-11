@@ -53,7 +53,7 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "5432", "-U", "bifrost"]
+      test: ["CMD", "pg_isready", "-h", "localhost", "-p", "5432", "-U", "bifrost", "-d", "bifrost_test"]
       interval: 2s
       timeout: 5s
       retries: 10
@@ -330,6 +330,31 @@ services:
       retries: 20
     profiles:
       - e2e
+
+  # Canonical external runner used only by the build-plane E2E. Production
+  # Bifrost does not deploy this service: Cloudflare starts the same image on
+  # demand, while hosters who choose Local provide their own endpoint.
+  sandbox-runner:
+    image: bifrost-test-builder-runner:latest
+    build:
+      context: .
+      dockerfile: builder-runner/Dockerfile
+    environment:
+      BIFROST_RUNNER_SECRET: test-sandbox-runner-secret
+    healthcheck:
+      test:
+        - CMD
+        - python3
+        - -c
+        - >-
+          import urllib.request; request = urllib.request.Request('http://localhost:8300/health', headers={'Authorization': 'Bearer test-sandbox-runner-secret'}); response = urllib.request.urlopen(request, timeout=2); raise SystemExit(0 if response.status == 200 else 1)
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 30s
+    mem_limit: 1g
+    profiles:
+      - sandbox
 
   # Test Runner - Executes pytest inside container with all dependencies
   test-runner:

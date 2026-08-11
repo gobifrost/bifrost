@@ -7,22 +7,20 @@
 
 ## TL;DR
 
-The reconstructed Builder has the intended durable architecture and most of the
-first-class product surface, but it is not yet a release candidate. One
-multi-tenant promotion defect must be fixed before release, and the admin setup
-and workbench need to tell the truth after reloads and request failures. The
-support catalog also needs bounded pagination before it is credible at the
-stated MSP scale of hundreds of customers and thousands of apps.
+The audit found one multi-tenant release blocker and six P2 product/test gaps.
+All seven are now remediated in the recovery working tree and have focused
+automated evidence. The remaining release gates are current-main integration,
+the final exact backup inventory, and the complete post-integration matrix.
 
 | Rank | Finding | Disposition |
 | --- | --- | --- |
-| P1 | Publishing to another customer still loads role assignees from the source customer, and the server accepts those IDs without target-scope validation. | Release blocker; fix UI and server, add cross-org E2E coverage. |
-| P2 | The support-wide build catalog fetches and renders every matching private Solution. | Add server pagination and a familiar incremental catalog control. |
-| P2 | Several list/detail query failures are rendered as legitimate empty states. | Add retryable, query-specific error states. |
-| P2 | Runner provisioning progress cannot be restored after an admin reloads setup. | Return the active provisioning PlatformJob and hydrate progress from it. |
-| P2 | Builder setup receives actionable readiness blockers but discards their message/action details. | Surface the server-authored blockers in setup. |
-| P2 | The Builder enable switch remains visually changed when saving fails. | Revert to the persisted value on error and test the failure path. |
-| P2 test gate | Critical turn-finalization compensation and checkpoint retry branches have only partial direct coverage. | Add focused unit tests before release. |
+| P1 | Publishing to another customer loaded role assignees from the source customer, and the server accepted those IDs without target-scope validation. | **Resolved:** the picker follows the target organization; server validation rejects inactive, foreign-organization, or unknown users and invalid roles; cross-org E2E added. |
+| P2 | The support-wide build catalog fetched and rendered every matching private Solution. | **Resolved:** server-side total/limit/offset paging with 50-row pages and familiar Previous/Next controls. |
+| P2 | Several list/detail query failures were rendered as legitimate empty states. | **Resolved:** retryable query-specific error states gate actions whose source state is unavailable. |
+| P2 | Runner provisioning progress could not be restored after an admin reloaded setup. | **Resolved:** setup returns the active provisioning PlatformJob and the UI rehydrates live progress. |
+| P2 | Builder setup received actionable readiness blockers but discarded their message/action details. | **Resolved:** server-authored blocker messages and actions are rendered in setup. |
+| P2 | The Builder enable switch remained visually changed when saving failed. | **Resolved:** failed saves restore persisted state and retain the server error. |
+| P2 test gate | Critical turn-finalization compensation and checkpoint retry branches had only partial direct coverage. | **Resolved:** focused tests cover fenced completion, changed-revision enqueue failure, staged/accepted harness cleanup, and partial-promotion compensation. |
 | P3 / post-release | Aggregate user/org quotas, Cloudflare invoice ingestion, favorites, review comments, presence, and simultaneous co-editing remain deferred. | Keep explicit in release notes; do not imply they exist. |
 
 ## Lens 1: UX and user trust
@@ -106,15 +104,16 @@ failure can therefore leave the page saying “Enabled” until it is reloaded.
   changes (`api/src/services/platform_jobs.py:569` and
   `api/src/services/platform_jobs.py:609`).
 
-### Broad-suite signal requiring disposition
+### Broad-suite signal — disposition complete
 
-The pre-integration `./test.sh all` run collected 7,698 tests and exposed a
-failure in `tests/e2e/api/test_events.py::TestDeliveryRetry::test_cannot_retry_pending_delivery`.
-The Builder branch has no diff from `origin/main` in the event router,
-processor, or this test, but repository policy does not permit calling the
-failure “unrelated.” The failure must be classified from the final traceback
-and either fixed as a product/harness defect or split into a blocking repair
-before release.
+The pre-integration `./test.sh all` run collected 7,698 tests while source was
+being live-mounted and exposed a failure in
+`tests/e2e/api/test_events.py::TestDeliveryRetry::test_cannot_retry_pending_delivery`.
+The deterministic harness was corrected so API/scheduler fixtures are ready
+before execution services start, and the exact event test now passes. The same
+clean-stack work exposed missing real build-plane provisioning; the test matrix
+now provisions the authenticated Local provider through a durable PlatformJob
+and exercises the canonical sandbox image end to end.
 
 ## Lens 3: product completeness and parity
 
@@ -139,14 +138,12 @@ before release.
 - Promotion explicitly selects isolated or trusted browser runtime while legacy
   apps preserve trusted behavior.
 
-### P2 — The support catalog is unbounded
+### P2 — The support catalog was unbounded (resolved)
 
-The list handler accepts filters but no limit/cursor at
-`api/src/routers/solution_builder.py:240`. The service executes the full ordered
-query and calls `rows.all()` at
-`api/src/services/builder/private_solutions.py:267`. The UI then mounts every
-row at `client/src/pages/Build.tsx:361`. This does not meet the stated operating
-shape of roughly 1,000 apps, especially on support workstations and mobile.
+The support catalog now returns a paged response with total, limit, and offset;
+the UI requests 50 rows at a time and provides Previous/Next navigation while
+preserving organization, owner, and search filters. The personal “My work”
+view remains intentionally compact and unpaged.
 
 ### Explicitly deferred, not silently missing
 
@@ -179,37 +176,30 @@ the existing usage report.
 - Python and JavaScript runner harnesses have direct suites, including
   cancellation and OpenCode state restoration.
 
-### P2 test gates
+### P2 test gates — resolved
 
-- `BuilderAgentTurnService.finalize_agent_turn` has a no-change success test,
-  but no direct test for a changed workspace followed by deploy enqueue failure,
-  completion fencing, revision-storage compensation, and staged/accepted
-  harness cleanup (`api/src/services/builder/agent_turns.py:247`;
-  `api/tests/unit/test_builder_agent_turns.py:267`).
-- Checkpoint preservation has a matching-digest happy path, but digest mismatch,
-  promotion failure, fenced terminal completion, and retry cleanup do not all
-  have direct service-level assertions
-  (`api/src/services/builder/agent_turns.py:383` and
-  `api/src/services/builder/agent_turns.py:452`).
-- Existing promotion UI coverage changes the target organization but mocks the
-  user hook without asserting its scope
-  (`client/src/pages/SolutionPromotions.test.tsx:20` and
-  `client/src/pages/SolutionPromotions.test.tsx:136`).
-- Existing promotion E2E coverage publishes to the source organization and does
-  not exercise target-organization role assignment validation
-  (`api/tests/e2e/platform/test_private_solutions.py:633`).
+- `BuilderAgentTurnService.finalize_agent_turn` directly covers changed
+  workspaces followed by deploy enqueue failure, completion fencing,
+  revision-storage compensation, and staged/accepted harness cleanup.
+- Checkpoint coverage includes digest mismatch, promotion failure, fenced
+  terminal completion, retry cleanup, and partial-promotion compensation.
+- Promotion component coverage asserts that user discovery follows the selected
+  target organization and resets stale role selections.
+- Promotion E2E publishes across organizations and proves target-organization
+  role-assignment validation.
 
-## Suggested repair sequence
+## Completed repair sequence
 
-1. Fix and test promotion target/user validation on both client and server.
-2. Restore provisioning jobs across setup reloads; surface blocker details and
-   revert failed enablement.
-3. Add truthful Build/workbench error states.
-4. Add bounded support-catalog pagination and tests.
-5. Close changed-revision completion/checkpoint compensation coverage.
-6. Classify and resolve the broad event-delivery test failure.
-7. Re-run the focused Builder/shared scheduler matrix, then the final broad
-   gates after integrating current `origin/main`.
+1. Fixed and tested promotion target/user validation on client and server.
+2. Restored provisioning jobs across setup reloads, surfaced blocker details,
+   and reverted failed enablement.
+3. Added truthful Build/workbench error states.
+4. Added bounded support-catalog pagination and tests.
+5. Closed changed-revision completion/checkpoint compensation coverage.
+6. Classified and resolved the event-delivery harness signal.
+7. Proved the real build plane through durable Local-provider provisioning,
+   authenticated dispatch, compilation, callbacks, artifact staging, and live
+   deployment. Final post-`origin/main` verification remains.
 
 ## Release gate
 

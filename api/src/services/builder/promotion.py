@@ -36,7 +36,7 @@ from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.solution_connection_schema import SolutionConnectionSchema
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
 from src.models.orm.solutions import Solution
-from src.models.orm.users import Role, UserRole
+from src.models.orm.users import Role, User, UserRole
 from src.services.audit import emit_audit
 from src.services.builder.revision_storage import SolutionRevisionStorage
 from src.services.solutions.deploy import SolutionDeployConflict
@@ -533,6 +533,56 @@ async def _assign_role_users(
         )
 
 
+async def _validate_role_user_assignments(
+    db: AsyncSession,
+    assignments: dict[str, list[UUID]],
+    *,
+    allowed_roles: Iterable[str],
+    target_organization_id: UUID | None,
+) -> None:
+    """Keep promotion-time membership changes inside the reviewed target scope."""
+
+    unknown_roles = sorted(set(assignments) - set(allowed_roles))
+    if unknown_roles:
+        raise PromotionBlocked(
+            [
+                "Role assignments were supplied for roles outside this review: "
+                + ", ".join(unknown_roles)
+            ]
+        )
+
+    requested_user_ids = {
+        user_id for user_ids in assignments.values() for user_id in user_ids
+    }
+    if not requested_user_ids:
+        return
+    users = (
+        (
+            await db.execute(
+                select(User.id, User.organization_id, User.is_active).where(
+                    User.id.in_(requested_user_ids)
+                )
+            )
+        )
+        .tuples()
+        .all()
+    )
+    valid_user_ids = {
+        user_id
+        for user_id, organization_id, is_active in users
+        if is_active and organization_id == target_organization_id
+    }
+    if valid_user_ids != requested_user_ids:
+        target_label = (
+            "the selected customer organization"
+            if target_organization_id is not None
+            else "the global platform scope"
+        )
+        raise PromotionBlocked(
+            [f"Role assignments must contain active users from {target_label}"]
+        )
+
+
 async def promote_private_solution(
     db: AsyncSession,
     solution_id: UUID,
@@ -567,6 +617,12 @@ async def promote_private_solution(
         raise PromotionBlocked(["Company promotion requires an organization"])
     if target_org is not None and await db.get(Organization, target_org) is None:
         raise PromotionBlocked(["Target organization does not exist"])
+    await _validate_role_user_assignments(
+        db,
+        request.role_user_assignments,
+        allowed_roles=review.unresolved_roles,
+        target_organization_id=target_org,
+    )
 
     try:
         async with solution_write_lock(solution_id):

@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, waitFor } from "@/test-utils";
+import { renderWithProviders, screen, waitFor, within } from "@/test-utils";
 import { SolutionBuilder } from "./SolutionBuilder";
 import {
 	BuilderApiError,
@@ -366,6 +366,34 @@ describe("load states", () => {
 		expect(
 			screen.getByRole("button", { name: /try again/i }),
 		).toBeInTheDocument();
+	});
+
+	it("shows retryable errors instead of empty sessions and history", async () => {
+		mockListBuilderSessions.mockRejectedValue(
+			new Error("Session storage unavailable"),
+		);
+		mockListTurns.mockRejectedValue(new Error("Turn history unavailable"));
+		const { user } = renderWithProviders(<SolutionBuilder />);
+
+		expect(await screen.findByText("Could not restore sessions")).toBeInTheDocument();
+		expect(screen.getByText("Session storage unavailable")).toBeInTheDocument();
+		expect(screen.getByText("Could not restore build history")).toBeInTheDocument();
+		expect(screen.getByText("Turn history unavailable")).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: "Start session" })).not.toBeInTheDocument();
+
+		const historyAlert = screen
+			.getAllByRole("alert")
+			.find((element) => element.textContent?.includes("Could not restore build history"));
+		expect(historyAlert).toBeDefined();
+		await user.click(within(historyAlert!).getByRole("button", { name: "Try again" }));
+		await waitFor(() => expect(mockListTurns).toHaveBeenCalledTimes(2));
+
+		const sessionsAlert = screen
+			.getAllByRole("alert")
+			.find((element) => element.textContent?.includes("Could not restore sessions"));
+		expect(sessionsAlert).toBeDefined();
+		await user.click(within(sessionsAlert!).getByRole("button", { name: "Try again" }));
+		await waitFor(() => expect(mockListBuilderSessions).toHaveBeenCalledTimes(2));
 	});
 });
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import time
 import uuid
 import zipfile
 from contextlib import asynccontextmanager
@@ -16,6 +17,54 @@ from src.services.solutions.deploy import solution_entity_id
 from tests.e2e.platform.conftest import wait_for_deploy
 
 pytestmark = pytest.mark.e2e
+
+_LOCAL_RUNNER_SECRET = "test-sandbox-runner-secret"
+
+
+@pytest.fixture(scope="module")
+def configured_local_sandbox_runner(e2e_client, platform_admin):
+    """Provision the canonical runner image through the public admin contract."""
+    headers = platform_admin.headers
+    saved = e2e_client.put(
+        "/api/admin/builder/runner",
+        headers=headers,
+        json={
+            "provider": "local",
+            "enabled": True,
+            "callback_base_url": "http://api:8000",
+            "local": {
+                "endpoint_url": "http://sandbox-runner:8300",
+                "runner_secret": _LOCAL_RUNNER_SECRET,
+            },
+        },
+    )
+    assert saved.status_code == 200, saved.text
+
+    accepted = e2e_client.post(
+        "/api/admin/builder/runner/provision",
+        headers=headers,
+    )
+    assert accepted.status_code == 202, accepted.text
+    job_id = accepted.json()["job_id"]
+    deadline = time.monotonic() + 60
+    job: dict[str, object] = {}
+    while time.monotonic() < deadline:
+        response = e2e_client.get(f"/api/platform-jobs/{job_id}", headers=headers)
+        assert response.status_code == 200, response.text
+        job = response.json()
+        if job["status"] in {"succeeded", "failed", "cancelled"}:
+            break
+        time.sleep(0.25)
+    assert job.get("status") == "succeeded", job
+
+    setup = e2e_client.get("/api/admin/builder/runner", headers=headers)
+    assert setup.status_code == 200, setup.text
+    config = setup.json()["config"]
+    assert config["provider"] == "local"
+    assert config["provisioned"] is True
+    assert config["connected"] is True
+    yield
+    e2e_client.delete("/api/admin/builder/runner", headers=headers)
 
 
 def _source_app_zip(slug: str, app_id: uuid.UUID, app_slug: str) -> bytes:
@@ -59,6 +108,7 @@ async def test_real_coordinator_runner_and_staged_artifacts(
     platform_admin,
     async_session_factory,
     monkeypatch,
+    configured_local_sandbox_runner,
 ) -> None:
     """RabbitMQ claim -> runner -> per-file S3 staging succeeds without mocks."""
     from src.jobs.rabbitmq import rabbitmq
@@ -151,6 +201,7 @@ export function mount(element: HTMLElement) {
 def test_source_app_deploy_builds_and_finalizes_real_dist(
     e2e_client,
     platform_admin,
+    configured_local_sandbox_runner,
 ) -> None:
     """A source-only Solution app becomes a deployed, fetchable dist."""
     headers = platform_admin.headers

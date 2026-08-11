@@ -243,6 +243,8 @@ async def list_solutions(
     organization_id: UUID | None = Query(default=None),
     owner_user_id: UUID | None = Query(default=None),
     search: str | None = Query(default=None, max_length=255),
+    limit: int = Query(default=50, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
 ) -> PrivateSolutionsList:
     can_view_all = can_support_builds(ctx.user)
     if view == "all" and not can_view_all:
@@ -250,7 +252,7 @@ async def list_solutions(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="The organization.impersonation scope is required for the support view",
         )
-    rows = await list_private_solutions(
+    page = await list_private_solutions(
         ctx.db,
         actor_user_id=ctx.user.user_id,
         is_external=ctx.user.is_external,
@@ -259,6 +261,8 @@ async def list_solutions(
         organization_id=organization_id,
         owner_user_id=owner_user_id,
         search=search,
+        limit=limit if view == "all" else None,
+        offset=offset if view == "all" else 0,
     )
     items = [
         to_dto(
@@ -276,12 +280,14 @@ async def list_solutions(
             ),
             collaborator_access=row.collaborator_access,
         )
-        for row in rows
+        for row in page.records
     ]
     ai_configured, readiness = await get_builder_readiness(ctx.db)
     return PrivateSolutionsList(
         solutions=items,
-        total=len(items),
+        total=page.total,
+        limit=limit if view == "all" else None,
+        offset=offset if view == "all" else 0,
         view=view,
         can_view_all=can_view_all,
         ai_configured=ai_configured,

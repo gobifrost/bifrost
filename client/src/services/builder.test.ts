@@ -169,6 +169,26 @@ describe("builder solutions", () => {
 		expect(out.ai_configured).toBe(true);
 	});
 
+	it("serializes support-catalog filters and pagination", async () => {
+		mockAuthFetch.mockResolvedValue(
+			jsonResponse({ solutions: [], total: 0, view: "all" }),
+		);
+
+		await listBuilderSolutions({
+			view: "all",
+			organizationId: "org-2",
+			ownerUserId: "user-3",
+			search: "  inventory  ",
+			limit: 50,
+			offset: 100,
+		});
+
+		expect(mockAuthFetch).toHaveBeenCalledWith(
+			"/api/builder/solutions?view=all&organization_id=org-2&owner_user_id=user-3&search=inventory&limit=50&offset=100",
+			{ signal: undefined },
+		);
+	});
+
 	it("creates a solution with a slug and name body", async () => {
 		mockAuthFetch.mockResolvedValue(jsonResponse({ id: "sol-2" }));
 

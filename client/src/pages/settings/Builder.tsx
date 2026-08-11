@@ -38,6 +38,7 @@ import {
 	type BuilderRunnerConfigSave,
 	type BuilderRunnerSetup,
 } from "@/services/builderRunner";
+import { getPlatformJob } from "@/services/platformJobs";
 import {
 	webSocketService,
 	type PlatformJobUpdate,
@@ -103,8 +104,11 @@ export function BuilderSettings() {
 
 	return (
 		<BuilderSettingsContent
-			key={JSON.stringify(setupQuery.data.config)}
-			setup={setupQuery.data}
+				key={JSON.stringify([
+					setupQuery.data.config,
+					setupQuery.data.active_provisioning_job_id,
+				])}
+				setup={setupQuery.data}
 		/>
 	);
 }
@@ -113,8 +117,19 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 	const queryClient = useQueryClient();
 	const { user } = useAuth();
 	const [draft, setDraft] = useState<SetupDraft>(() => draftFromSetup(setup));
-	const [jobId, setJobId] = useState<string | null>(null);
+	const [jobId, setJobId] = useState<string | null>(
+		setup.active_provisioning_job_id ?? null,
+	);
 	const [liveJob, setLiveJob] = useState<PlatformJobUpdate | null>(null);
+	const platformJobQuery = useQuery({
+		queryKey: ["platform-job", jobId],
+		queryFn: ({ signal }) => getPlatformJob(jobId!, signal),
+		enabled: Boolean(jobId),
+		retry: false,
+	});
+	const provisioningJob =
+		liveJob?.id === jobId ? liveJob : (platformJobQuery.data ?? null);
+	const readinessBlockers = setup.readiness?.blockers ?? [];
 
 	useEffect(() => {
 		if (!jobId) return;
@@ -133,6 +148,11 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 			}
 		});
 	}, [jobId, queryClient, user?.id]);
+
+	useEffect(() => {
+		if (!platformJobQuery.data || !terminal(platformJobQuery.data.status)) return;
+		void queryClient.invalidateQueries({ queryKey: setupKey });
+	}, [platformJobQuery.data, queryClient]);
 
 	const saveMutation = useMutation({
 		mutationFn: (enabled: boolean) => {
@@ -169,7 +189,13 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 			await queryClient.invalidateQueries({ queryKey: setupKey });
 			toast.success(config.enabled ? "Builder enabled" : "Runner settings saved");
 		},
-		onError: (error: Error) => toast.error(error.message),
+		onError: (error: Error) => {
+			setDraft((current) => ({
+				...current,
+				enabled: setup.config?.enabled ?? false,
+			}));
+			toast.error(error.message);
+		},
 	});
 
 	const provisionMutation = useMutation({
@@ -183,7 +209,9 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 
 	const readiness = setup.readiness;
 	const config = setup.config;
-	const provisioning = Boolean(jobId && liveJob && !terminal(liveJob.status));
+	const provisioning = Boolean(
+		jobId && (!provisioningJob || !terminal(provisioningJob.status)),
+	);
 	const canProvision = Boolean(
 		config &&
 		readiness?.credentials_configured &&
@@ -193,7 +221,9 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 	);
 	const canEnable = Boolean(readiness?.provisioned && readiness.connected);
 	const setupPercent = useMemo(() => {
-		if (liveJob?.progress.percent != null) return liveJob.progress.percent;
+		if (provisioningJob?.progress.percent != null) {
+			return provisioningJob.progress.percent;
+		}
 		const checks = [
 			readiness?.ai_configured,
 			readiness?.credentials_configured,
@@ -203,7 +233,7 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 			readiness?.enabled,
 		];
 		return (checks.filter(Boolean).length / checks.length) * 100;
-	}, [liveJob?.progress.percent, readiness]);
+	}, [provisioningJob?.progress.percent, readiness]);
 
 	return (
 		<div className="space-y-6 pb-8">
@@ -245,7 +275,7 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 						</div>
 						<Progress value={setupPercent} className="mt-2 h-1.5" />
 						<p className="mt-3 text-xs leading-5 text-muted-foreground">
-							{liveJob?.progress.phase ??
+							{provisioningJob?.progress.phase ??
 								(readiness?.ready
 									? "AI, runner, and user access are connected."
 									: "Complete the checks below, then enable Builder.")}
@@ -255,6 +285,24 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 			</section>
 
 			<ReadinessChecklist readiness={readiness} />
+			{!readiness?.ready && readinessBlockers.length > 0 ? (
+				<Alert>
+					<AlertTriangle className="h-4 w-4" />
+					<AlertTitle>Finish these setup requirements</AlertTitle>
+					<AlertDescription>
+						<ul className="mt-2 space-y-2">
+							{readinessBlockers.map((blocker) => (
+								<li key={blocker.code}>
+									<span className="font-medium text-foreground">
+										{blocker.message}
+									</span>{" "}
+									{blocker.action}
+								</li>
+							))}
+						</ul>
+					</AlertDescription>
+				</Alert>
+			) : null}
 
 			<section className="space-y-4 rounded-3xl border bg-card p-5 sm:p-6">
 				<div>
@@ -357,13 +405,13 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 					<p className="mt-1 text-sm text-muted-foreground">
 						Provisioning deploys the control script, starts one real container, runs its self-test, and reports progress here live.
 					</p>
-					{liveJob ? (
-						<div className="mt-4 max-w-xl" role="status" aria-live="polite">
-							<div className="flex items-center justify-between text-xs">
-								<span>{liveJob.progress.phase ?? "Provisioning Builder runner"}</span>
-								<span>{Math.round(liveJob.progress.percent ?? 0)}%</span>
-							</div>
-							<Progress value={liveJob.progress.percent ?? 0} className="mt-2 h-1.5" />
+						{provisioningJob ? (
+							<div className="mt-4 max-w-xl" role="status" aria-live="polite">
+								<div className="flex items-center justify-between text-xs">
+									<span>{provisioningJob.progress.phase ?? "Provisioning Builder runner"}</span>
+									<span>{Math.round(provisioningJob.progress.percent ?? 0)}%</span>
+								</div>
+								<Progress value={provisioningJob.progress.percent ?? 0} className="mt-2 h-1.5" />
 						</div>
 					) : null}
 				</div>

@@ -20,7 +20,10 @@ from src.models.orm.solution_builder import (
 )
 from src.models.orm.solutions import Solution
 from src.models.orm.users import User
-from src.services.builder.agent_turns import BuilderAgentTurnService
+from src.services.builder.agent_turns import (
+    BuilderAgentTurnService,
+    BuilderTurnCompletionFenced,
+)
 from src.services.builder.scaffold import (
     BUILDER_AGENT_MAX_ITERATIONS,
     BUILDER_AGENT_MAX_TOKEN_BUDGET,
@@ -329,6 +332,113 @@ async def test_finalize_turn_accepts_harness_state_with_workspace_result(
 
 
 @pytest.mark.asyncio
+async def test_finalize_changed_turn_compensates_when_completion_is_fenced(
+    db_session: AsyncSession,
+    builder_rows: tuple[Solution, SolutionBuilderSession, User],
+) -> None:
+    solution, session, user = builder_rows
+    service = BuilderAgentTurnService(db_session)
+    queued = await service.enqueue_agent_turn(
+        solution.id,
+        session_id=session.id,
+        requested_by=user.id,
+        user_message="Change the workspace.",
+    )
+    solution_id = solution.id
+    session_id = session.id
+    turn_id = queued.turn.id
+    base_revision_id = queued.turn.base_revision_id
+    output = b"changed workspace"
+    artifact = MagicMock()
+
+    async def copy_output(destination: Path) -> None:
+        destination.write_bytes(output)
+
+    artifact.copy_to_path = AsyncMock(side_effect=copy_output)
+    artifact.delete = AsyncMock()
+    harness = MagicMock()
+    harness.promote = AsyncMock()
+    harness.delete_accepted = AsyncMock()
+    harness.delete_staged = AsyncMock()
+    revision_storage = MagicMock()
+    revision_storage.delete = AsyncMock()
+    revision_id = uuid4()
+
+    async def materialize_changed(*_args, **_kwargs):
+        base = await db_session.get(SolutionSourceRevision, base_revision_id)
+        project = await db_session.get(SolutionBuilderProject, solution.id)
+        assert base is not None
+        assert project is not None
+        db_session.add(
+            SolutionSourceRevision(
+                id=revision_id,
+                solution_id=solution.id,
+                parent_revision_id=base.id,
+                created_by=user.id,
+                source_sha256="f" * 64,
+                size_bytes=len(output),
+                summary="changed",
+            )
+        )
+        await db_session.flush()
+        project.current_revision_id = revision_id
+        queued.turn.output_revision_id = revision_id
+        queued.turn.status = "succeeded"
+        await db_session.flush()
+        materialized = MagicMock()
+        materialized.turn = queued.turn
+        materialized.revision_created = True
+        return materialized
+
+    service.turns.materialize_external_output = AsyncMock(
+        side_effect=materialize_changed
+    )
+    with (
+        patch(
+            "src.services.builder.agent_turns.BuilderTurnArtifactStorage",
+            return_value=artifact,
+        ),
+        patch(
+            "src.services.builder.agent_turns.BuilderHarnessStateStorage",
+            return_value=harness,
+        ),
+        patch(
+            "src.services.builder.agent_turns.SolutionRevisionStorage",
+            return_value=revision_storage,
+        ),
+        patch(
+            "src.services.platform_jobs.stage_external_platform_job_completion",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        with pytest.raises(BuilderTurnCompletionFenced):
+            await service.finalize_agent_turn(
+                solution.id,
+                turn_id=turn_id,
+                dispatch_attempt=2,
+                output_sha256=hashlib.sha256(output).hexdigest(),
+                final_text="Done",
+                tool_call_count=1,
+            )
+
+    assert await db_session.get(SolutionSourceRevision, revision_id) is None
+    restored_project = await db_session.get(SolutionBuilderProject, solution_id)
+    restored_turn = await db_session.get(type(queued.turn), turn_id)
+    assert restored_project is not None
+    assert restored_project.current_revision_id == base_revision_id
+    assert restored_turn is not None
+    assert restored_turn.status == "queued"
+    revision_storage.delete.assert_awaited_once_with(revision_id)
+    harness.delete_accepted.assert_awaited_once_with(
+        solution_id,
+        session_id,
+        turn_id,
+    )
+    artifact.delete.assert_awaited_once()
+    harness.delete_staged.assert_awaited_once_with(turn_id, 2)
+
+
+@pytest.mark.asyncio
 async def test_preserve_turn_checkpoint_accepts_matching_workspace_and_harness(
     db_session: AsyncSession,
     builder_rows: tuple[Solution, SolutionBuilderSession, User],
@@ -379,3 +489,75 @@ async def test_preserve_turn_checkpoint_accepts_matching_workspace_and_harness(
         solution_id=solution.id,
         session_id=session.id,
     )
+
+
+@pytest.mark.asyncio
+async def test_failed_turn_removes_checkpoint_when_completion_is_fenced(
+    db_session: AsyncSession,
+    builder_rows: tuple[Solution, SolutionBuilderSession, User],
+) -> None:
+    solution, session, user = builder_rows
+    service = BuilderAgentTurnService(db_session)
+    queued = await service.enqueue_agent_turn(
+        solution.id,
+        session_id=session.id,
+        requested_by=user.id,
+        user_message="Build a recoverable draft.",
+    )
+    solution_id = solution.id
+    session_id = session.id
+    turn_id = queued.turn.id
+    output = b"recoverable checkpoint"
+    artifact = MagicMock()
+
+    async def copy_output(destination: Path) -> None:
+        destination.write_bytes(output)
+
+    artifact.copy_to_path = AsyncMock(side_effect=copy_output)
+    artifact.promote_checkpoint = AsyncMock()
+    artifact.delete_checkpoint = AsyncMock()
+    artifact.delete = AsyncMock()
+    harness = MagicMock()
+    harness.promote = AsyncMock()
+    harness.delete_accepted = AsyncMock()
+    harness.delete_staged = AsyncMock()
+
+    with (
+        patch(
+            "src.services.builder.agent_turns.BuilderTurnArtifactStorage",
+            return_value=artifact,
+        ),
+        patch(
+            "src.services.builder.agent_turns.BuilderHarnessStateStorage",
+            return_value=harness,
+        ),
+        patch(
+            "src.services.platform_jobs.stage_external_platform_job_completion",
+            AsyncMock(return_value=None),
+        ),
+    ):
+        with pytest.raises(BuilderTurnCompletionFenced):
+            await service.finish_failed_agent_turn(
+                turn_id=turn_id,
+                dispatch_attempt=3,
+                status="failed",
+                error="Runner stopped",
+                checkpoint_output_sha256=hashlib.sha256(output).hexdigest(),
+            )
+
+    restored_turn = await db_session.get(type(queued.turn), turn_id)
+    assert restored_turn is not None
+    assert restored_turn.status == "queued"
+    assert restored_turn.checkpoint_sha256 is None
+    artifact.delete_checkpoint.assert_awaited_once_with(
+        solution_id,
+        session_id,
+        turn_id,
+    )
+    harness.delete_accepted.assert_awaited_once_with(
+        solution_id,
+        session_id,
+        turn_id,
+    )
+    artifact.delete.assert_awaited_once()
+    harness.delete_staged.assert_awaited_once_with(turn_id, 3)

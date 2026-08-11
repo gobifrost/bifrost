@@ -60,7 +60,7 @@ The reconstruction preserves these invariants:
 | Immutable revisions, sessions, turns, diffs, undo, deployed pins | implemented | unit, API E2E, workbench tests |
 | PlatformJob turn/build lifecycle and scheduler handoff | implemented | job, scheduler, callback tests |
 | Cloudflare provisioning and external callback contract | implemented | JS, provisioning, callback tests; one live Cloudflare checkpoint completed |
-| Optional authenticated local runner service | implemented | runner-service tests |
+| Optional authenticated local runner service | implemented | runner-service tests plus durable provision/dispatch/build/deploy E2E |
 | OpenCode harness, persisted state, compaction, and turn resume | implemented | JS integration and runner tests |
 | Agent Skill upload/browse/export and `SKILL.md` instruction source | implemented | API/CLI/MCP/component coverage |
 | Native/external MCP Solution workspace parity | implemented for the shared filesystem/validation surface | MCP gateway and workspace tests |
@@ -144,7 +144,13 @@ Current green checkpoints before the final `main` reconciliation include:
   cancellation, and percentage-based hard-limit meters;
 - Builder administrator Playwright: five desktop/mobile scenarios passed,
   including setup guidance, private creation, Global Workspace, and responsive
-  workbench panes.
+  workbench panes;
+- canonical runner Python suite: 41 tests passed;
+- real build plane: durable Local-provider provisioning, authenticated runner
+  dispatch, fixed-toolchain compilation, callback artifacts, and live deploy
+  passed end to end. The Local runner service used by this test is an opt-in
+  test profile only; production Compose and Kubernetes gain no permanent
+  Builder container.
 
 These checkpoints are not the final release claim. The complete post-merge
 matrix and exact inventory remain the active Wave 8 gate.

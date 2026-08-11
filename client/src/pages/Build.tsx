@@ -5,6 +5,7 @@ import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	ArrowRight,
+	AlertTriangle,
 	Building2,
 	Check,
 	Clock3,
@@ -53,6 +54,7 @@ interface NewBuild {
 
 type BuildStage = "workspace" | "agent" | "opening";
 type CatalogView = "mine" | "all";
+const SUPPORT_PAGE_SIZE = 50;
 
 export function Build() {
 	const navigate = useNavigate();
@@ -77,6 +79,7 @@ export function Build() {
 	const [search, setSearch] = useState("");
 	const [organizationId, setOrganizationId] = useState<string | undefined>();
 	const [ownerUserId, setOwnerUserId] = useState("");
+	const [supportPage, setSupportPage] = useState(0);
 	const [globalError, setGlobalError] = useState<string | null>(null);
 
 	const globalWorkspaceQuery = useQuery({
@@ -96,9 +99,7 @@ export function Build() {
 				queryKey: ["builder", "global-workspace"],
 			});
 			if (workspace.solution_id) {
-				navigate(`/solutions/${workspace.solution_id}/builder`, {
-					viewTransition: true,
-				});
+				navigate(`/solutions/${workspace.solution_id}/builder`);
 			}
 		},
 		onError: (caught: Error) => setGlobalError(caught.message),
@@ -111,6 +112,7 @@ export function Build() {
 			organizationId ?? null,
 			ownerUserId || null,
 			search.trim(),
+			supportPage,
 		],
 		queryFn: ({ signal }) =>
 			listBuilderSolutions({
@@ -118,6 +120,8 @@ export function Build() {
 				organizationId,
 				ownerUserId: ownerUserId || null,
 				search,
+				limit: SUPPORT_PAGE_SIZE,
+				offset: supportPage * SUPPORT_PAGE_SIZE,
 				signal,
 			}),
 		enabled: catalogView === "all" && canViewAll,
@@ -174,7 +178,6 @@ export function Build() {
 		if (!pendingLaunch || buildStage !== "opening") return;
 		const animationFrame = window.requestAnimationFrame(() => {
 			navigate(`/solutions/${pendingLaunch.solution.id}/builder`, {
-				viewTransition: true,
 				state: {
 					initialPrompt: prompt.trim(),
 					initialSessionId: pendingLaunch.sessionId,
@@ -341,27 +344,47 @@ export function Build() {
 			<section aria-labelledby="build-library-heading" className="overflow-hidden rounded-3xl border bg-card">
 				<div className="flex flex-wrap items-center justify-between gap-3 border-b p-4 sm:px-5">
 					<div><h2 id="build-library-heading" className="text-lg font-semibold">Build library</h2><p className="text-xs text-muted-foreground">Your work stays focused; support-wide discovery is deliberate.</p></div>
-					{canViewAll ? <Tabs value={catalogView} onValueChange={(value) => { setCatalogView(value as CatalogView); setOwnerUserId(""); setOrganizationId(undefined); }}><TabsList><TabsTrigger value="mine"><FolderKanban className="h-3.5 w-3.5" />My work</TabsTrigger><TabsTrigger value="all"><Building2 className="h-3.5 w-3.5" />All customer work</TabsTrigger></TabsList></Tabs> : <Badge variant="outline">{visibleSolutions.length}</Badge>}
+					{canViewAll ? <Tabs value={catalogView} onValueChange={(value) => { setCatalogView(value as CatalogView); setOwnerUserId(""); setOrganizationId(undefined); setSupportPage(0); }}><TabsList><TabsTrigger value="mine"><FolderKanban className="h-3.5 w-3.5" />My work</TabsTrigger><TabsTrigger value="all"><Building2 className="h-3.5 w-3.5" />All customer work</TabsTrigger></TabsList></Tabs> : <Badge variant="outline">{visibleSolutions.length}</Badge>}
 				</div>
 				<div className="flex flex-col gap-3 border-b bg-muted/15 p-3 sm:flex-row sm:items-center sm:px-5">
-					<div className="relative min-w-0 flex-1"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input aria-label="Search builds" value={search} onChange={(event) => setSearch(event.target.value)} placeholder={catalogView === "all" ? "Search app, customer, or owner" : "Search your apps"} className="pl-9" /></div>
+					<div className="relative min-w-0 flex-1"><Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" /><Input aria-label="Search builds" value={search} onChange={(event) => { setSearch(event.target.value); setSupportPage(0); }} placeholder={catalogView === "all" ? "Search app, customer, or owner" : "Search your apps"} className="pl-9" /></div>
 					{catalogView === "all" ? (
 						<SupportFilters
 							organizationId={organizationId}
 							ownerUserId={ownerUserId}
-							onOrganizationChange={(value) => { setOrganizationId(value); setOwnerUserId(""); }}
-							onOwnerChange={setOwnerUserId}
+							onOrganizationChange={(value) => { setOrganizationId(value); setOwnerUserId(""); setSupportPage(0); }}
+							onOwnerChange={(value) => { setOwnerUserId(value); setSupportPage(0); }}
 						/>
 					) : null}
 				</div>
 
-				{allSolutionsQuery.isFetching && catalogView === "all" && !allSolutionsQuery.data ? <div className="space-y-px bg-border"><Skeleton className="h-20 rounded-none" /><Skeleton className="h-20 rounded-none" /></div> : visibleSolutions.length === 0 ? (
+				{catalogView === "all" && allSolutionsQuery.isError ? (
+					<div className="flex flex-col items-center gap-3 px-6 py-12 text-center" role="alert">
+						<AlertTriangle className="h-8 w-8 text-destructive" />
+						<div>
+							<p className="font-medium">Could not load customer work</p>
+							<p className="mt-1 text-sm text-muted-foreground">{allSolutionsQuery.error.message}</p>
+						</div>
+						<Button variant="outline" size="sm" onClick={() => void allSolutionsQuery.refetch()}>Try again</Button>
+					</div>
+				) : allSolutionsQuery.isFetching && catalogView === "all" && !allSolutionsQuery.data ? <div className="space-y-px bg-border"><Skeleton className="h-20 rounded-none" /><Skeleton className="h-20 rounded-none" /></div> : visibleSolutions.length === 0 ? (
 					<div className="px-6 py-12 text-center"><Sparkles className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 font-medium">{search || organizationId || ownerUserId ? "No matching builds" : "No apps in progress"}</p><p className="mt-1 text-sm text-muted-foreground">{catalogView === "mine" ? "Describe an app above to create your first private workspace." : "Try another customer, owner, or search term."}</p></div>
 				) : (
 					<div className="divide-y">
 						{visibleSolutions.map((solution) => <BuildRow key={solution.id} solution={solution} currentUserId={user?.id} onOpen={() => navigate(`/solutions/${solution.id}/builder`)} />)}
 					</div>
 				)}
+				{catalogView === "all" && allSolutionsQuery.data && allSolutionsQuery.data.total > 0 ? (
+					<div className="flex flex-col gap-2 border-t px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between sm:px-5">
+						<p className="text-muted-foreground">
+							Showing {supportPage * SUPPORT_PAGE_SIZE + 1}–{Math.min((supportPage + 1) * SUPPORT_PAGE_SIZE, allSolutionsQuery.data.total)} of {allSolutionsQuery.data.total}
+						</p>
+						<div className="flex gap-2">
+							<Button variant="outline" size="sm" disabled={supportPage === 0 || allSolutionsQuery.isFetching} onClick={() => setSupportPage((page) => Math.max(0, page - 1))}>Previous</Button>
+							<Button variant="outline" size="sm" disabled={(supportPage + 1) * SUPPORT_PAGE_SIZE >= allSolutionsQuery.data.total || allSolutionsQuery.isFetching} onClick={() => setSupportPage((page) => page + 1)}>Next</Button>
+						</div>
+					</div>
+				) : null}
 			</section>
 		</div>
 	);

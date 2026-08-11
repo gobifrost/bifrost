@@ -52,6 +52,15 @@ async def get_runner_setup(
     del user
     config = await SandboxRunnerConfigService(db).get_config()
     _ai_configured, readiness = await get_builder_readiness(db)
+    active_provisioning_job_id = await db.scalar(
+        select(PlatformJob.id)
+        .where(
+            PlatformJob.job_type == "sandbox.runner.provision",
+            PlatformJob.status.in_(ACTIVE_PLATFORM_JOB_STATUSES),
+        )
+        .order_by(PlatformJob.created_at.desc())
+        .limit(1)
+    )
     configured_url = get_settings().public_url.strip().rstrip("/")
     recommended_url = configured_url or str(request.base_url).rstrip("/")
     return SandboxRunnerSetupState(
@@ -59,6 +68,7 @@ async def get_runner_setup(
         readiness=readiness,
         recommended_callback_base_url=recommended_url,
         runner_image=configured_runner_image(),
+        active_provisioning_job_id=active_provisioning_job_id,
     )
 
 

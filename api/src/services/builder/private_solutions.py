@@ -82,6 +82,14 @@ class PrivateSolutionRecord:
 
 
 @dataclass(frozen=True)
+class PrivateSolutionPage:
+    """One bounded support-catalog page and its filtered total."""
+
+    records: list[PrivateSolutionRecord]
+    total: int
+
+
+@dataclass(frozen=True)
 class PrivateSolutionDTOContext:
     owner_name: str | None
     owner_email: str | None
@@ -208,7 +216,9 @@ async def list_private_solutions(
     organization_id: UUID | None = None,
     owner_user_id: UUID | None = None,
     search: str | None = None,
-) -> list[PrivateSolutionRecord]:
+    limit: int | None = None,
+    offset: int = 0,
+) -> PrivateSolutionPage:
     """List personal/shared work or the deliberate provider support catalog."""
     collaborator = SolutionBuilderCollaborator
     query = (
@@ -240,7 +250,7 @@ async def list_private_solutions(
     )
     if view == "all":
         if not can_support or is_external:
-            return []
+            return PrivateSolutionPage(records=[], total=0)
         if organization_id is not None:
             query = query.where(Solution.organization_id == organization_id)
         if owner_user_id is not None:
@@ -264,8 +274,14 @@ async def list_private_solutions(
                 func.lower(func.coalesce(Organization.name, "")).like(pattern),
             )
         )
-    rows = await db.execute(query.order_by(Solution.updated_at.desc()))
-    return [
+    total = (
+        await db.execute(query.with_only_columns(func.count()).order_by(None))
+    ).scalar_one()
+    page_query = query.order_by(Solution.updated_at.desc()).offset(offset)
+    if limit is not None:
+        page_query = page_query.limit(limit)
+    rows = await db.execute(page_query)
+    records = [
         PrivateSolutionRecord(
             solution=solution,
             project=project,
@@ -283,6 +299,7 @@ async def list_private_solutions(
             collaborator_access,
         ) in rows.all()
     ]
+    return PrivateSolutionPage(records=records, total=total)
 
 
 async def load_accessible_private_solution(

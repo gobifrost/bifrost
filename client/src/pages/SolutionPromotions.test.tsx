@@ -4,6 +4,10 @@ import { SolutionPromotions } from "./SolutionPromotions";
 
 const mockListPromotionReviews = vi.fn();
 const mockPromoteSolution = vi.fn();
+const mockUseUsersFiltered = vi.fn((_organizationId?: string) => ({
+	data: [],
+	isLoading: false,
+}));
 
 vi.mock("@/services/solutionPromotions", async () => {
 	const actual = await vi.importActual<
@@ -18,7 +22,8 @@ vi.mock("@/services/solutionPromotions", async () => {
 });
 
 vi.mock("@/hooks/useUsers", () => ({
-	useUsersFiltered: () => ({ data: [], isLoading: false }),
+	useUsersFiltered: (organizationId?: string) =>
+		mockUseUsersFiltered(organizationId),
 }));
 
 vi.mock("@/components/forms/OrganizationSelect", () => ({
@@ -80,6 +85,7 @@ const review = {
 beforeEach(() => {
 	mockListPromotionReviews.mockReset();
 	mockPromoteSolution.mockReset();
+	mockUseUsersFiltered.mockClear();
 	mockListPromotionReviews.mockResolvedValue([review]);
 	mockPromoteSolution.mockResolvedValue({
 		release_id: "release-1",
@@ -137,7 +143,11 @@ describe("SolutionPromotions", () => {
 		const { user } = renderWithProviders(<SolutionPromotions />);
 
 		await screen.findByRole("heading", { name: "Dispatch board" });
+		expect(mockUseUsersFiltered).toHaveBeenLastCalledWith("org-1");
 		await user.click(screen.getByRole("button", { name: "Customer org-1" }));
+		await waitFor(() =>
+			expect(mockUseUsersFiltered).toHaveBeenLastCalledWith("org-2"),
+		);
 		await user.click(
 			screen.getByRole("checkbox", { name: /approve role creation/i }),
 		);

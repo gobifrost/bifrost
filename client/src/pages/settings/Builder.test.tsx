@@ -6,6 +6,7 @@ import { BuilderSettings } from "./Builder";
 const mockGetSetup = vi.fn();
 const mockSaveSetup = vi.fn();
 const mockProvision = vi.fn();
+const mockGetPlatformJob = vi.fn();
 
 vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => ({ user: { id: "admin-1" } }),
@@ -14,6 +15,9 @@ vi.mock("@/services/builderRunner", () => ({
 	getBuilderRunnerSetup: (...args: unknown[]) => mockGetSetup(...args),
 	saveBuilderRunnerSetup: (...args: unknown[]) => mockSaveSetup(...args),
 	provisionBuilderRunner: (...args: unknown[]) => mockProvision(...args),
+}));
+vi.mock("@/services/platformJobs", () => ({
+	getPlatformJob: (...args: unknown[]) => mockGetPlatformJob(...args),
 }));
 vi.mock("@/services/websocket", () => ({
 	webSocketService: {
@@ -52,6 +56,7 @@ const setup = {
 	recommended_callback_base_url: "https://bifrost.example.com",
 	runner_image: "ghcr.io/gobifrost/bifrost-builder-runner:dev",
 	cloudflare_permissions: ["Workers Scripts Write", "Workers Containers Write"],
+	active_provisioning_job_id: null,
 };
 
 beforeEach(() => {
@@ -59,6 +64,7 @@ beforeEach(() => {
 	mockGetSetup.mockResolvedValue(setup);
 	mockSaveSetup.mockResolvedValue(setup.config);
 	mockProvision.mockResolvedValue({ job_id: "job-1", status: "queued" });
+	mockGetPlatformJob.mockReset();
 });
 
 describe("BuilderSettings", () => {
@@ -95,5 +101,70 @@ describe("BuilderSettings", () => {
 				}),
 			),
 		);
+	});
+
+	it("restores durable provisioning progress after a reload", async () => {
+		mockGetSetup.mockResolvedValue({
+			...setup,
+			active_provisioning_job_id: "job-active",
+		});
+		mockGetPlatformJob.mockResolvedValue({
+			id: "job-active",
+			status: "running",
+			progress: { phase: "Starting a real runner container", percent: 45 },
+		});
+
+		renderWithProviders(<BuilderSettings />);
+
+		expect(
+			(await screen.findAllByText("Starting a real runner container")).length,
+		).toBeGreaterThan(0);
+		expect(screen.getAllByText("45%")).toHaveLength(2);
+		expect(
+			screen.getByRole("button", { name: /provision and test/i }),
+		).toBeDisabled();
+	});
+
+	it("shows actionable blockers and reverts failed enablement", async () => {
+		mockGetSetup.mockResolvedValue({
+			...setup,
+			config: {
+				...setup.config,
+				provisioned: true,
+				connected: true,
+			},
+			readiness: {
+				...setup.readiness,
+				ai_configured: true,
+				credentials_configured: true,
+				provisioned: true,
+				connected: true,
+				blockers: [
+					{
+						code: "builder_disabled",
+						message: "Builder is still disabled.",
+						action: "Enable it after reviewing these checks.",
+					},
+				],
+			},
+		});
+		mockSaveSetup.mockRejectedValue(new Error("Settings changed elsewhere"));
+		const { user } = renderWithProviders(<BuilderSettings />);
+
+		expect(await screen.findByText("Builder is still disabled.")).toBeInTheDocument();
+		expect(
+			screen.getByText("Enable it after reviewing these checks."),
+		).toBeInTheDocument();
+		const toggle = screen.getByRole("switch", {
+			name: /enable builder for users/i,
+		});
+		await user.click(toggle);
+
+		await waitFor(() =>
+			expect(mockSaveSetup).toHaveBeenCalledWith(
+				expect.objectContaining({ enabled: true }),
+			),
+		);
+		await waitFor(() => expect(toggle).not.toBeChecked());
 	});
 });

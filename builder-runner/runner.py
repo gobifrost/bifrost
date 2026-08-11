@@ -410,7 +410,16 @@ def build_commands(workspace: Path) -> tuple[tuple[str, ...], tuple[str, ...]]:
     except (FileNotFoundError, json.JSONDecodeError) as exc:
         raise RunnerError("build-meta.json is required and must be valid JSON") from exc
     base = meta.get("base") if isinstance(meta, dict) else None
-    if not isinstance(base, str) or not base.startswith("/") or "\x00" in base:
+    root_relative = (
+        isinstance(base, str)
+        and base.startswith("/")
+        and not base.startswith("//")
+    )
+    if (
+        not isinstance(base, str)
+        or (base != "./" and not root_relative)
+        or any(character in base for character in ("\x00", "\\", "?", "#"))
+    ):
         raise RunnerError("build-meta.json contains an invalid base path")
     if not shutil.which("npm"):
         raise RunnerError("npm is unavailable in the runner image")

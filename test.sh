@@ -100,7 +100,8 @@ require_stack_up() {
 reset_state() {
     echo "Resetting state..."
 
-    docker compose -f "$COMPOSE_FILE" stop api worker scheduler pgbouncer 2>/dev/null || true
+    docker compose -f "$COMPOSE_FILE" --profile sandbox stop \
+        api worker scheduler sandbox-runner pgbouncer 2>/dev/null || true
 
     docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U bifrost -d postgres -c \
         "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'bifrost_test' AND pid <> pg_backend_pid();" \
@@ -120,12 +121,40 @@ reset_state() {
           client/e2e/.auth/org2_user.json
 
     docker compose -f "$COMPOSE_FILE" start pgbouncer > /dev/null
-    wait_for_service "$COMPOSE_FILE" pgbouncer pg_isready -h localhost -p 5432 -U bifrost
+    wait_for_service "$COMPOSE_FILE" pgbouncer \
+        pg_isready -h localhost -p 5432 -U bifrost -d bifrost_test
+    # Bring the API to real readiness before starting services whose Compose
+    # dependencies require its health check. Starting the whole graph at once
+    # can observe the API's stale pre-stop health state and fail even though the
+    # restarted API becomes healthy moments later.
     docker compose -f "$COMPOSE_FILE" --profile e2e start \
-        api worker scheduler scheduler-fixtures > /dev/null
+        api scheduler-fixtures > /dev/null
     wait_for_api_ready "$COMPOSE_FILE"
+    docker compose -f "$COMPOSE_FILE" --profile e2e start \
+        worker scheduler > /dev/null
 
     echo "State reset complete."
+}
+
+pytest_needs_sandbox_runner() {
+    local argument
+    for argument in "$@"; do
+        case "$argument" in
+            tests/|tests/e2e/|*test_build_plane.py*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+ensure_sandbox_runner() {
+    local build_flag="--build"
+    if [ "${BIFROST_SKIP_BUILD:-0}" = "1" ]; then
+        build_flag="--no-build"
+    fi
+    docker compose -f "$COMPOSE_FILE" --profile sandbox up -d \
+        "$build_flag" sandbox-runner > /dev/null
+    wait_for_service "$COMPOSE_FILE" sandbox-runner \
+        python3 -c "import urllib.request; request = urllib.request.Request('http://localhost:8300/health', headers={'Authorization': 'Bearer test-sandbox-runner-secret'}); response = urllib.request.urlopen(request, timeout=2); raise SystemExit(0 if response.status == 200 else 1)"
 }
 
 # =============================================================================
@@ -188,6 +217,12 @@ stack_up() {
 
     echo "Building template database..."
     "$SCRIPT_DIR/scripts/stack_template_init.sh"
+    # A fresh template build creates bifrost_test after PgBouncer has already
+    # started. Recycle its backend pool so the API cannot inherit a connection
+    # opened while that database did not exist.
+    docker compose -f "$COMPOSE_FILE" restart pgbouncer > /dev/null
+    wait_for_service "$COMPOSE_FILE" pgbouncer \
+        pg_isready -h localhost -p 5432 -U bifrost -d bifrost_test
 
     echo "Starting API + Worker + Scheduler..."
     docker compose -f "$COMPOSE_FILE" --profile e2e up -d "$build_flag"
@@ -221,7 +256,7 @@ stack_down() {
     print_project
     echo "Tearing down stack..."
     export_logs "$COMPOSE_PROJECT_NAME" "$COMPOSE_FILE"
-    docker compose -f "$COMPOSE_FILE" --profile e2e --profile test --profile client down -v
+    docker compose -f "$COMPOSE_FILE" --profile e2e --profile test --profile client --profile sandbox down -v
     echo "Done."
 }
 
@@ -234,7 +269,7 @@ stack_reset() {
     # won't re-attach its network endpoint cleanly, and its pool only proxies
     # bifrost_test anyway (nothing here connects to bifrost_test through it
     # while it's stopped).
-    docker compose -f "$COMPOSE_FILE" stop api worker scheduler 2>/dev/null || true
+    docker compose -f "$COMPOSE_FILE" --profile sandbox stop api worker scheduler sandbox-runner 2>/dev/null || true
     "$SCRIPT_DIR/scripts/stack_template_init.sh"
     reset_state
 }
@@ -260,6 +295,9 @@ run_pytest() {
     # changed migrations they should run `./test.sh stack reset` once.
     require_stack_up
     reset_state
+    if pytest_needs_sandbox_runner "$@"; then
+        ensure_sandbox_runner
+    fi
     # LOG_DIR is mkdir'd on the host as the runner/host user, then bind-mounted
     # into the test-runner container at /tmp/bifrost. The container runs as
     # uid 1000 (non-root, hardened), so it cannot write pytest's --junitxml file

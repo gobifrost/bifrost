@@ -21439,6 +21439,13 @@ export interface components {
             solutions: components["schemas"]["PrivateSolutionDTO"][];
             /** Total */
             total: number;
+            /** Limit */
+            limit?: number | null;
+            /**
+             * Offset
+             * @default 0
+             */
+            offset: number;
             /**
              * View
              * @default mine
@@ -23363,6 +23370,8 @@ export interface components {
             recommended_callback_base_url: string;
             /** Runner Image */
             runner_image: string;
+            /** Active Provisioning Job Id */
+            active_provisioning_job_id?: string | null;
             /** Cloudflare Permissions */
             cloudflare_permissions?: string[];
         };
@@ -41528,6 +41537,8 @@ export interface operations {
                 organization_id?: string | null;
                 owner_user_id?: string | null;
                 search?: string | null;
+                limit?: number;
+                offset?: number;
             };
             header?: never;
             path?: never;

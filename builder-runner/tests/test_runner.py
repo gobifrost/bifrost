@@ -166,19 +166,35 @@ def test_runner_probe_and_file_envelope(
     assert parsed == [envelope()]
 
 
-def test_build_commands_use_fixed_bifrost_toolchain(tmp_path: Path) -> None:
+@pytest.mark.parametrize("base", ["/solution/apps/app/", "./"])
+def test_build_commands_use_fixed_bifrost_toolchain(tmp_path: Path, base: str) -> None:
     (tmp_path / "package.json").write_text(
         json.dumps({"private": True, "scripts": {"build": "malicious-command"}}),
         encoding="utf-8",
     )
     (tmp_path / "build-meta.json").write_text(
-        json.dumps({"base": "/solution/apps/app/"}),
+        json.dumps({"base": base}),
         encoding="utf-8",
     )
     install, build = runner.build_commands(tmp_path)
     assert install == ("npm", "install", "--ignore-scripts", "--no-audit", "--no-fund")
     assert build[:5] == ("npx", "--no-install", "vite", "build", "--config")
+    assert build[-1] == base
     assert "malicious-command" not in build
+
+
+@pytest.mark.parametrize("base", ["https://evil.example", "//evil.example", "/ok?x=1"])
+def test_build_commands_reject_non_path_base(tmp_path: Path, base: str) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps({"private": True}),
+        encoding="utf-8",
+    )
+    (tmp_path / "build-meta.json").write_text(
+        json.dumps({"base": base}),
+        encoding="utf-8",
+    )
+    with pytest.raises(runner.RunnerError, match="invalid base path"):
+        runner.build_commands(tmp_path)
 
 
 def test_opencode_config_uses_job_scoped_gateway_and_compaction() -> None:

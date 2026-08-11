@@ -114,9 +114,10 @@ function PromotionReviewWorkspace({ review }: { review: PromotionReview }) {
 		Record<string, string[]>
 	>({});
 	const [confirmOpen, setConfirmOpen] = useState(false);
-	const { data: users, isLoading: usersLoading } = useUsersFiltered(
-		review.organization_id,
-	);
+	const assignmentScope =
+		target === "company" ? targetOrganizationId : null;
+	const { data: users, isLoading: usersLoading } =
+		useUsersFiltered(assignmentScope);
 	const userOptions = (users ?? [])
 		.filter((user) => user.is_active)
 		.map((user) => ({
@@ -161,6 +162,14 @@ function PromotionReviewWorkspace({ review }: { review: PromotionReview }) {
 				: [],
 	);
 	const targetLabel = target === "company" ? "Company" : "Global";
+	function changeTarget(nextTarget: "company" | "global") {
+		setTarget(nextTarget);
+		setRoleAssignments({});
+	}
+	function changeTargetOrganization(value: string | null) {
+		setTargetOrganizationId(value);
+		setRoleAssignments({});
+	}
 
 	function submitPromotion() {
 		promoteMutation.mutate({
@@ -289,7 +298,7 @@ function PromotionReviewWorkspace({ review }: { review: PromotionReview }) {
 							<RadioGroup
 								value={target}
 								onValueChange={(value) =>
-									setTarget(value as "company" | "global")
+									changeTarget(value as "company" | "global")
 								}
 								className="grid gap-2"
 							>
@@ -326,7 +335,7 @@ function PromotionReviewWorkspace({ review }: { review: PromotionReview }) {
 									<OrganizationSelect
 										value={targetOrganizationId}
 										onChange={(value) =>
-											setTargetOrganizationId(value ?? null)
+											changeTargetOrganization(value ?? null)
 										}
 										showGlobal={false}
 										placeholder="Choose a customer"

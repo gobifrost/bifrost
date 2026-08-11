@@ -161,7 +161,6 @@ describe("Build home", () => {
 			expect(mockNavigate).toHaveBeenCalledWith(
 				"/solutions/sol-9/builder",
 				{
-					viewTransition: true,
 					state: {
 						initialPrompt: "Track receipts and monthly totals",
 						initialSessionId: "session-4",
@@ -267,6 +266,82 @@ describe("Build home", () => {
 		);
 	});
 
+	it("distinguishes an unavailable support catalog from an empty one", async () => {
+		mockUseBuilderAccess.mockReturnValue({
+			aiConfigured: true,
+			canBuild: true,
+			hasPermission: true,
+			builderReady: true,
+			blockers: [],
+			canViewAll: true,
+			isPlatformAdmin: true,
+			isLoading: false,
+			solutions: [solution()],
+		});
+		mockListBuilderSolutions.mockRejectedValue(
+			new Error("Support catalog unavailable"),
+		);
+		const { user } = renderWithProviders(<Build />);
+
+		await user.click(screen.getByRole("tab", { name: /all customer work/i }));
+
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"Could not load customer work",
+		);
+		expect(screen.getByRole("alert")).toHaveTextContent(
+			"Support catalog unavailable",
+		);
+		expect(screen.queryByText("No apps in progress")).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: /try again/i }));
+		await waitFor(() => expect(mockListBuilderSolutions).toHaveBeenCalledTimes(2));
+	});
+
+	it("pages the support catalog without loading every customer build", async () => {
+		mockUseBuilderAccess.mockReturnValue({
+			aiConfigured: true,
+			canBuild: true,
+			hasPermission: true,
+			builderReady: true,
+			blockers: [],
+			canViewAll: true,
+			isPlatformAdmin: true,
+			isLoading: false,
+			solutions: [],
+		});
+		mockListBuilderSolutions
+			.mockResolvedValueOnce({
+				solutions: [solution({ id: "sol-first", name: "First page app" })],
+				total: 51,
+				view: "all",
+				can_view_all: true,
+				ai_configured: true,
+				builder_ready: true,
+				builder_blockers: [],
+				is_platform_admin: true,
+			})
+			.mockResolvedValueOnce({
+				solutions: [solution({ id: "sol-last", name: "Last page app" })],
+				total: 51,
+				view: "all",
+				can_view_all: true,
+				ai_configured: true,
+				builder_ready: true,
+				builder_blockers: [],
+				is_platform_admin: true,
+			});
+		const { user } = renderWithProviders(<Build />);
+
+		await user.click(screen.getByRole("tab", { name: /all customer work/i }));
+		expect(await screen.findByText("Showing 1–50 of 51")).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Next" }));
+
+		expect(await screen.findByText("Last page app")).toBeInTheDocument();
+		expect(screen.getByText("Showing 51–51 of 51")).toBeInTheDocument();
+		expect(mockListBuilderSolutions).toHaveBeenLastCalledWith(
+			expect.objectContaining({ limit: 50, offset: 50 }),
+		);
+	});
+
 	it("gives platform admins an explicit Global Workspace entry point", async () => {
 		mockUseBuilderAccess.mockReturnValue({
 			aiConfigured: true,
@@ -292,7 +367,6 @@ describe("Build home", () => {
 		await waitFor(() => expect(mockEnsureGlobalWorkspace).toHaveBeenCalled());
 		expect(mockNavigate).toHaveBeenCalledWith(
 			"/solutions/global-workspace-1/builder",
-			{ viewTransition: true },
 		);
 	});
 

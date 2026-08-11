@@ -22,6 +22,7 @@ import {
 import { useLocation, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+	AlertTriangle,
 	Code2,
 	CheckCircle2,
 	Database,
@@ -349,6 +350,14 @@ export function SolutionBuilder() {
 		solution &&
 			(solution.caller_access === "owner" || solution.caller_access === "support"),
 	);
+	const workbenchStateError = revisionsQuery.isError
+		? revisionsQuery.error
+		: turnsQuery.isError
+			? turnsQuery.error
+			: null;
+	const workbenchStateUnavailable = Boolean(
+		sessionsQuery.isError || revisionsQuery.isError || turnsQuery.isError,
+	);
 	const builderApp = applicationsQuery.data?.applications.find(
 		(app) => app.solution_id === id,
 	);
@@ -581,6 +590,12 @@ export function SolutionBuilder() {
 				setActionError("You have view-only access to this build");
 				return;
 			}
+			if (workbenchStateUnavailable) {
+				setActionError(
+					"Restore this build's sessions and history before making another change",
+				);
+				return;
+			}
 			if (!selectedSession) {
 				setActionError(
 					"Start a builder session before sending a message",
@@ -598,11 +613,23 @@ export function SolutionBuilder() {
 				message,
 			});
 		},
-		[buildInProgress, canEdit, runTurnMutation, selectedSession],
+		[
+			buildInProgress,
+			canEdit,
+			runTurnMutation,
+			selectedSession,
+			workbenchStateUnavailable,
+		],
 	);
 
 	const handleResumeCheckpoint = useCallback(() => {
-		if (!canEdit || !selectedSession || !resumableTurn || buildInProgress) {
+		if (
+			!canEdit ||
+			!selectedSession ||
+			!resumableTurn ||
+			buildInProgress ||
+			workbenchStateUnavailable
+		) {
 			return;
 		}
 		runTurnMutation.mutate({
@@ -617,6 +644,7 @@ export function SolutionBuilder() {
 		resumableTurn,
 		runTurnMutation,
 		selectedSession,
+		workbenchStateUnavailable,
 	]);
 
 	useEffect(() => {
@@ -696,6 +724,7 @@ export function SolutionBuilder() {
 	const promotionReady = Boolean(
 		!isGlobalWorkspace &&
 		canManage &&
+		!workbenchStateUnavailable &&
 		source &&
 		deployed &&
 		source.id === deployed.id &&
@@ -884,9 +913,10 @@ export function SolutionBuilder() {
 							size="sm"
 							className="h-9 sm:h-7"
 						aria-label={isGlobalWorkspace ? "Undo latest proposal change" : "Undo latest source change"}
-							disabled={
-								!canEdit ||
-								!source?.parent_revision_id ||
+								disabled={
+									!canEdit ||
+									workbenchStateUnavailable ||
+									!source?.parent_revision_id ||
 								!selectedSession ||
 								undoMutation.isPending
 							}
@@ -1000,6 +1030,32 @@ export function SolutionBuilder() {
 					</Tooltip> : null}
 				</div>
 			</header>
+
+			{workbenchStateError ? (
+				<div
+					className="flex flex-col gap-3 border-b bg-destructive/10 px-4 py-3 text-sm sm:flex-row sm:items-center sm:justify-between"
+					role="alert"
+				>
+					<div className="flex min-w-0 items-start gap-2">
+						<AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+						<div>
+							<p className="font-medium text-destructive">Could not restore build history</p>
+							<p className="text-xs text-muted-foreground">{workbenchStateError.message}</p>
+						</div>
+					</div>
+					<Button
+						variant="outline"
+						size="sm"
+						className="shrink-0 bg-background"
+						onClick={() => {
+							if (revisionsQuery.isError) void revisionsQuery.refetch();
+							if (turnsQuery.isError) void turnsQuery.refetch();
+						}}
+					>
+						Try again
+					</Button>
+				</div>
+			) : null}
 
 			{isGlobalWorkspace ? (
 				<div className="border-b border-primary/15 bg-primary/[0.045] px-3 py-3 sm:px-4">
@@ -1240,7 +1296,7 @@ export function SolutionBuilder() {
 						{turn.error}
 					</p>
 				)}
-				{resumableTurn && canEdit && !buildActive ? (
+				{resumableTurn && canEdit && !buildActive && !workbenchStateUnavailable ? (
 					<div
 						className="flex flex-col gap-2 border-b border-amber-500/20 bg-amber-500/10 px-4 py-3 sm:flex-row sm:items-center sm:justify-between"
 						data-testid="builder-checkpoint"
@@ -1336,7 +1392,7 @@ export function SolutionBuilder() {
 							<Button
 								variant="ghost"
 								size="sm"
-								disabled={!canEdit || newSessionMutation.isPending}
+								disabled={!canEdit || workbenchStateUnavailable || newSessionMutation.isPending}
 								onClick={() => newSessionMutation.mutate()}
 							>
 								<MessageSquarePlus className="h-4 w-4" />
@@ -1373,6 +1429,15 @@ export function SolutionBuilder() {
 									<Skeleton className="h-16 w-full" />
 									<Skeleton className="h-16 w-full" />
 								</div>
+							) : sessionsQuery.isError ? (
+								<div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-center" role="alert">
+									<AlertTriangle className="h-7 w-7 text-destructive" />
+									<div>
+										<p className="text-sm font-medium">Could not restore sessions</p>
+										<p className="mt-1 text-xs text-muted-foreground">{sessionsQuery.error.message}</p>
+									</div>
+									<Button variant="outline" size="sm" onClick={() => void sessionsQuery.refetch()}>Try again</Button>
+								</div>
 							) : selectedSession ? (
 								<ChatWindow
 									conversationId={
@@ -1381,7 +1446,7 @@ export function SolutionBuilder() {
 							agentName={isGlobalWorkspace ? "Global Workspace Agent" : "App Builder"}
 									onSend={handleBuilderMessage}
 									isSending={buildActive}
-									inputDisabled={!canEdit || buildActive}
+									inputDisabled={!canEdit || buildActive || workbenchStateUnavailable}
 									inputPlaceholder={
 										buildActive
 								? "The Builder Agent is working…"
@@ -1402,7 +1467,7 @@ export function SolutionBuilder() {
 									</p>
 									<Button
 										size="sm"
-									disabled={!canEdit || newSessionMutation.isPending}
+									disabled={!canEdit || workbenchStateUnavailable || newSessionMutation.isPending}
 										onClick={() =>
 											newSessionMutation.mutate()
 										}
@@ -1537,7 +1602,7 @@ export function SolutionBuilder() {
 									solutionId={id}
 									revisions={revisions}
 									isLoading={revisionsQuery.isLoading}
-									canUndo={canEdit && Boolean(selectedSession)}
+									canUndo={canEdit && !workbenchStateUnavailable && Boolean(selectedSession)}
 									undoingRevisionId={
 										undoMutation.isPending
 											? (undoMutation.variables ?? null)

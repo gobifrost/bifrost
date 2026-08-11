@@ -69,6 +69,8 @@ export interface BuilderSolutionFilters {
 	organizationId?: string | null;
 	ownerUserId?: string | null;
 	search?: string;
+	limit?: number;
+	offset?: number;
 }
 
 /**
@@ -157,6 +159,8 @@ export async function listBuilderSolutions(
 	}
 	if (options.ownerUserId) query.set("owner_user_id", options.ownerUserId);
 	if (options.search?.trim()) query.set("search", options.search.trim());
+	if (options.limit != null) query.set("limit", String(options.limit));
+	if (options.offset != null) query.set("offset", String(options.offset));
 	const suffix = query.size > 0 ? `?${query.toString()}` : "";
 	return requestJson<BuilderSolutionsList>(
 		`${BASE}${suffix}`,

@@ -45,6 +45,8 @@ def _config() -> SandboxRunnerConfigPublic:
 @pytest.mark.asyncio
 async def test_get_runner_setup_returns_masked_config_and_recommended_origin():
     db = AsyncMock()
+    active_job_id = uuid4()
+    db.scalar.return_value = active_job_id
     request = SimpleNamespace(base_url="https://request.example.com/")
     service = AsyncMock()
     service.get_config.return_value = _config()
@@ -79,6 +81,7 @@ async def test_get_runner_setup_returns_masked_config_and_recommended_origin():
     assert state.recommended_callback_base_url == "https://request.example.com"
     assert state.cloudflare_permissions == ["Workers Scripts Write"]
     assert state.runner_image.endswith(":dev")
+    assert state.active_provisioning_job_id == active_job_id
 
 
 @pytest.mark.asyncio

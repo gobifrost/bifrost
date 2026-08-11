@@ -123,7 +123,7 @@ and therefore do not appear in the 76-path name inventory:
 | --- | --- |
 | durable build/deploy orchestration | canonical PlatformJob registry, runner policy, scheduler claim/recovery, and notification WebSocket |
 | private source revisions and conversation continuity | preserved and extended with OpenCode checkpoint state and resume links |
-| fixed credential-free application build | retained inside the provider-neutral one-shot runner |
+| fixed credential-free application build | retained inside the provider-neutral one-shot runner; safe `./` and root-relative asset bases are accepted while external/protocol-relative bases are rejected |
 | Builder Agent tools | retained as hidden target-bound workspace tools and bridged to external MCP harnesses |
 | Agent instructions and assets | canonical Solution-root-relative `SKILL.md`, direct bundle storage, browser/editor/export, CLI, MCP, and manifests |
 | private preview security | same-origin API-mounted opaque iframe runtime with exact app/Solution/org/viewer scopes |
@@ -132,6 +132,7 @@ and therefore do not appear in the 76-path name inventory:
 | global `_repo` editing | immutable admin proposal, non-executing validation, explicit apply, digest fencing, rollback |
 | setup/operations | admin readiness wizard, encrypted Cloudflare/local settings, live provisioning job, user enable gate |
 | AI execution | job-bound Bifrost LLM proxy, user/org usage attribution, transactional call/token fences, visible percentages |
+| production topology | no permanent Builder container; the canonical runner is started ephemerally by Cloudflare or explicitly by a self-hoster, while the identical image is an opt-in test profile for build-plane E2E only |
 
 ## New forward-only Builder migrations
 

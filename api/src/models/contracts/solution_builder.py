@@ -63,6 +63,8 @@ class PrivateSolutionsList(BaseModel):
 
     solutions: list[PrivateSolutionDTO]
     total: int
+    limit: int | None = None
+    offset: int = 0
     view: Literal["mine", "all"] = "mine"
     can_view_all: bool = False
     ai_configured: bool

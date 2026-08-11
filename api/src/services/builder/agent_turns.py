@@ -262,6 +262,7 @@ class BuilderAgentTurnService:
         artifact_storage = BuilderTurnArtifactStorage(turn_id, dispatch_attempt)
         harness_storage = BuilderHarnessStateStorage()
         created_revision_id: UUID | None = None
+        accepted_harness_session_id: UUID | None = None
         try:
             with tempfile.TemporaryDirectory(prefix="bifrost-builder-result-") as tmp:
                 output_path = Path(tmp) / "output.zip"
@@ -290,6 +291,7 @@ class BuilderAgentTurnService:
                 turn_id=turn_id,
                 dispatch_attempt=dispatch_attempt,
             )
+            accepted_harness_session_id = session.id
 
             conversation = await self.db.get(Conversation, session.conversation_id)
             if conversation is None:
@@ -352,6 +354,19 @@ class BuilderAgentTurnService:
             )
         except Exception:
             await self.db.rollback()
+            if accepted_harness_session_id is not None:
+                try:
+                    await harness_storage.delete_accepted(
+                        solution_id,
+                        accepted_harness_session_id,
+                        turn_id,
+                    )
+                except Exception:  # noqa: BLE001 - preserve the completion failure
+                    logger.warning(
+                        "Failed to delete an uncommitted accepted Builder harness",
+                        extra={"turn_id": str(turn_id)},
+                        exc_info=True,
+                    )
             if created_revision_id is not None:
                 try:
                     await SolutionRevisionStorage(solution_id).delete(created_revision_id)
@@ -396,11 +411,24 @@ class BuilderAgentTurnService:
         turn = await self.db.get(SolutionBuilderTurn, turn_id, with_for_update=True)
         if turn is None:
             raise BuilderProjectMissing(f"Builder turn {turn_id} does not exist")
+        checkpoint_location: tuple[UUID, UUID] | None = None
         if checkpoint_output_sha256 is not None:
             await self.preserve_agent_turn_checkpoint(
                 turn_id=turn_id,
                 dispatch_attempt=dispatch_attempt,
                 output_sha256=checkpoint_output_sha256,
+            )
+            checkpoint_session = await self.db.get(
+                SolutionBuilderSession,
+                turn.session_id,
+            )
+            if checkpoint_session is None:
+                raise BuilderProjectMissing(
+                    f"Builder session {turn.session_id} is missing"
+                )
+            checkpoint_location = (
+                checkpoint_session.solution_id,
+                checkpoint_session.id,
             )
 
         from src.services.platform_jobs import (
@@ -420,6 +448,57 @@ class BuilderAgentTurnService:
             error_message=error if status == "failed" else None,
         )
         if platform_job is None:
+            await self.db.rollback()
+            if checkpoint_location is not None:
+                checkpoint_solution_id, checkpoint_session_id = checkpoint_location
+                checkpoint_artifacts = BuilderTurnArtifactStorage(
+                    turn_id,
+                    dispatch_attempt,
+                )
+                checkpoint_harness = BuilderHarnessStateStorage()
+                try:
+                    await checkpoint_artifacts.delete_checkpoint(
+                        checkpoint_solution_id,
+                        checkpoint_session_id,
+                        turn_id,
+                    )
+                except Exception:  # noqa: BLE001 - preserve the fencing failure
+                    logger.warning(
+                        "Failed to delete a fenced Builder workspace checkpoint",
+                        extra={"turn_id": str(turn_id)},
+                        exc_info=True,
+                    )
+                try:
+                    await checkpoint_harness.delete_accepted(
+                        checkpoint_solution_id,
+                        checkpoint_session_id,
+                        turn_id,
+                    )
+                except Exception:  # noqa: BLE001 - preserve the fencing failure
+                    logger.warning(
+                        "Failed to delete a fenced accepted Builder harness",
+                        extra={"turn_id": str(turn_id)},
+                        exc_info=True,
+                    )
+                try:
+                    await checkpoint_artifacts.delete()
+                except Exception:  # noqa: BLE001 - preserve the fencing failure
+                    logger.warning(
+                        "Failed to delete fenced staged Builder output",
+                        extra={"turn_id": str(turn_id)},
+                        exc_info=True,
+                    )
+                try:
+                    await checkpoint_harness.delete_staged(
+                        turn_id,
+                        dispatch_attempt,
+                    )
+                except Exception:  # noqa: BLE001 - preserve the fencing failure
+                    logger.warning(
+                        "Failed to delete fenced staged Builder harness state",
+                        extra={"turn_id": str(turn_id)},
+                        exc_info=True,
+                    )
             raise BuilderTurnCompletionFenced(
                 "Builder turn completion was fenced out by a newer attempt"
             )
@@ -465,25 +544,58 @@ class BuilderAgentTurnService:
             raise BuilderProjectMissing(f"Builder session {turn.session_id} is missing")
         artifact_storage = BuilderTurnArtifactStorage(turn_id, dispatch_attempt)
         harness_storage = BuilderHarnessStateStorage()
+        harness_promoted = False
+        checkpoint_promoted = False
         with tempfile.TemporaryDirectory(prefix="bifrost-builder-checkpoint-") as tmp:
             output_path = Path(tmp) / "output.zip"
             await artifact_storage.copy_to_path(output_path)
             actual_sha256 = await asyncio.to_thread(_file_sha256, output_path)
             if actual_sha256 != output_sha256:
                 raise ValueError("Builder checkpoint digest does not match upload")
-        await harness_storage.promote(
-            solution_id=session.solution_id,
-            session_id=session.id,
-            turn_id=turn.id,
-            dispatch_attempt=dispatch_attempt,
-        )
-        await artifact_storage.promote_checkpoint(
-            solution_id=session.solution_id,
-            session_id=session.id,
-        )
-        turn.checkpoint_sha256 = output_sha256
-        await self.db.flush()
-        return turn
+        try:
+            await harness_storage.promote(
+                solution_id=session.solution_id,
+                session_id=session.id,
+                turn_id=turn.id,
+                dispatch_attempt=dispatch_attempt,
+            )
+            harness_promoted = True
+            await artifact_storage.promote_checkpoint(
+                solution_id=session.solution_id,
+                session_id=session.id,
+            )
+            checkpoint_promoted = True
+            turn.checkpoint_sha256 = output_sha256
+            await self.db.flush()
+            return turn
+        except Exception:
+            if checkpoint_promoted:
+                try:
+                    await artifact_storage.delete_checkpoint(
+                        session.solution_id,
+                        session.id,
+                        turn.id,
+                    )
+                except Exception:  # noqa: BLE001 - preserve the checkpoint failure
+                    logger.warning(
+                        "Failed to delete an incomplete Builder workspace checkpoint",
+                        extra={"turn_id": str(turn_id)},
+                        exc_info=True,
+                    )
+            if harness_promoted:
+                try:
+                    await harness_storage.delete_accepted(
+                        session.solution_id,
+                        session.id,
+                        turn.id,
+                    )
+                except Exception:  # noqa: BLE001 - preserve the checkpoint failure
+                    logger.warning(
+                        "Failed to delete an incomplete accepted Builder harness",
+                        extra={"turn_id": str(turn_id)},
+                        exc_info=True,
+                    )
+            raise
 
     async def retry_external_agent_turn(
         self,

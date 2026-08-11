@@ -315,7 +315,7 @@ class TestPrivateInvisibility:
             _login_user(e2e_client, bob_user)
 
     def test_platform_admin_uses_explicit_support_view(
-        self, e2e_client, platform_admin, alice_solution
+        self, e2e_client, platform_admin, builder_alice, alice_solution
     ):
         """Default stays personal; All is deliberate and detail is supportable."""
         listing = e2e_client.get(BUILDER_URL, headers=platform_admin.headers)
@@ -333,6 +333,41 @@ class TestPrivateInvisibility:
         assert alice_solution["id"] in {
             s["id"] for s in support_listing.json()["solutions"]
         }
+
+        second_response = _create(
+            e2e_client,
+            builder_alice.headers,
+            _slug("support-page"),
+            "Support pagination app",
+        )
+        assert second_response.status_code == 201, second_response.text
+        second_solution = second_response.json()
+        try:
+            first_page = e2e_client.get(
+                f"{BUILDER_URL}?view=all&limit=1&offset=0",
+                headers=platform_admin.headers,
+            )
+            second_page = e2e_client.get(
+                f"{BUILDER_URL}?view=all&limit=1&offset=1",
+                headers=platform_admin.headers,
+            )
+            assert first_page.status_code == 200, first_page.text
+            assert second_page.status_code == 200, second_page.text
+            assert first_page.json()["total"] >= 2
+            assert first_page.json()["limit"] == 1
+            assert first_page.json()["offset"] == 0
+            assert second_page.json()["offset"] == 1
+            assert len(first_page.json()["solutions"]) == 1
+            assert len(second_page.json()["solutions"]) == 1
+            assert (
+                first_page.json()["solutions"][0]["id"]
+                != second_page.json()["solutions"][0]["id"]
+            )
+        finally:
+            e2e_client.delete(
+                f"{BUILDER_URL}/{second_solution['id']}",
+                headers=builder_alice.headers,
+            )
 
         detail = e2e_client.get(
             f"{BUILDER_URL}/{alice_solution['id']}", headers=platform_admin.headers
@@ -550,6 +585,7 @@ class TestPromotionAndDelete:
         db_session,
         builder_alice,
         platform_admin,
+        org2_user,
     ):
         from src.models.orm.solution_build_jobs import SolutionBuildJob
         from src.models.orm.solution_builder import (
@@ -629,6 +665,34 @@ class TestPromotionAndDelete:
             assert review.json()["ready"] is True
             assert review.json()["pinned_revision_id"] == str(revision.id)
             assert review.json()["source_sha256"] == revision.source_sha256
+
+            # Role membership is a global assignment, so publishing into a
+            # different customer must reject a source-customer user before any
+            # release replay or role creation occurs.
+            role_name = f"Promotion target {slug}"
+            deploy.result = {
+                "roles_unresolved": [role_name],
+                "build_job_ids": [],
+            }
+            await db_session.commit()
+            wrong_customer = e2e_client.post(
+                f"/api/solution-promotions/{solution_id}/promote",
+                headers=platform_admin.headers,
+                json={
+                    "target": "company",
+                    "target_organization_id": str(org2_user.organization_id),
+                    "approve_role_creation": True,
+                    "approved_connection_names": review.json()["connection_names"],
+                    "role_user_assignments": {
+                        role_name: [str(builder_alice.user_id)]
+                    },
+                },
+                timeout=120,
+            )
+            assert wrong_customer.status_code == 409, wrong_customer.text
+            assert "active users from the selected customer organization" in wrong_customer.text
+            deploy.result = {"roles_unresolved": [], "build_job_ids": []}
+            await db_session.commit()
 
             promoted = e2e_client.post(
                 f"/api/solution-promotions/{solution_id}/promote",

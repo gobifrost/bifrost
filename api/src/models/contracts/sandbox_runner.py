@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 from urllib.parse import urlsplit
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -158,6 +159,7 @@ class SandboxRunnerSetupState(BaseModel):
     readiness: SandboxRunnerReadiness
     recommended_callback_base_url: str
     runner_image: str
+    active_provisioning_job_id: UUID | None = None
     cloudflare_permissions: list[str] = Field(
         default_factory=lambda: ["Workers Scripts Write"]
     )

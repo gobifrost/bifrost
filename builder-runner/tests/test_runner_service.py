@@ -142,6 +142,7 @@ def test_health_returns_service_status(service):
     assert status == 200
     assert body == {
         "max_concurrent": 1,
+        "ready": True,
         "running": 0,
         "status": "ok",
     }

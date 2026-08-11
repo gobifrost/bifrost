@@ -352,6 +352,7 @@ class RunnerRequestHandler(BaseHTTPRequestHandler):
                     HTTPStatus.OK,
                     {
                         "status": "ok",
+                        "ready": True,
                         "running": self.server.manager._running_count(),
                         "max_concurrent": self.server.manager.max_concurrent,
                     },
