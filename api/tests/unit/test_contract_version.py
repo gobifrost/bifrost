@@ -200,7 +200,15 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # MCPGatewayAgentDetail gained additive instruction_source + skill metadata
     # so external harnesses can discover portable Agent Skill files (2026-08-07).
     # Existing clients may ignore both optional response fields.
-    "2d62b7ed00e649db8acee1fcc3db57e4763d17ca6c47ca54a7b139a40c420a53"
+    #
+    # CLI/SDK file write and delete requests gained optional guarded-mutation
+    # fields (2026-08-08). ADDITIVE: old clients omit them and retain the prior
+    # unconditional behavior; new clients can reject stale writes and deletes.
+    #
+    # PlatformJobStatus gained `waiting` for durable parent jobs (2026-08-07).
+    # CONTRACT_VERSION bumped to 9 because an older CLI cannot parse the new
+    # enum value while polling PlatformJobPublic.
+    "05fde29ec5350655827bd99a423583ef9bee26101fcd841e4dd61a48f9d492ce"
 )
 
 

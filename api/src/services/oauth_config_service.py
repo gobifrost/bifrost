@@ -23,6 +23,7 @@ from src.models.contracts.oauth_config import (
     OAUTH_MICROSOFT_CLIENT_ID,
     OAUTH_MICROSOFT_CLIENT_SECRET,
     OAUTH_MICROSOFT_TENANT_ID,
+    OAUTH_LOGIN_PREFERENCE,
     OAUTH_OIDC_CLIENT_ID,
     OAUTH_OIDC_CLIENT_SECRET,
     OAUTH_OIDC_DISCOVERY_URL,
@@ -30,6 +31,7 @@ from src.models.contracts.oauth_config import (
     GoogleOAuthConfigRequest,
     MicrosoftOAuthConfigRequest,
     OAuthConfigTestResponse,
+    OAuthLoginPreference,
     OAuthProviderConfigResponse,
     OAuthSSOProvider,
     OIDCConfigRequest,
@@ -37,6 +39,14 @@ from src.models.contracts.oauth_config import (
 from src.models.orm.config import SystemConfig
 
 logger = logging.getLogger(__name__)
+
+
+class OAuthLoginPreferenceError(ValueError):
+    """Raised when a preferred SSO provider cannot be used."""
+
+
+class OAuthProviderPreferenceConflict(ValueError):
+    """Raised when deleting the provider used by an active preference."""
 
 
 @dataclass
@@ -143,6 +153,64 @@ class OAuthConfigService:
             )
         )
         await self.db.flush()
+
+    async def get_login_preference(self) -> OAuthLoginPreference:
+        """Return the platform-wide preferred SSO behavior."""
+        result = await self.db.execute(
+            select(SystemConfig).where(
+                SystemConfig.category == OAUTH_CONFIG_CATEGORY,
+                SystemConfig.key == OAUTH_LOGIN_PREFERENCE,
+                SystemConfig.organization_id.is_(None),
+            )
+        )
+        config = result.scalar_one_or_none()
+        if not config or not config.value_json:
+            return OAuthLoginPreference()
+        return OAuthLoginPreference.model_validate(config.value_json)
+
+    async def set_login_preference(
+        self,
+        preference: OAuthLoginPreference,
+        updated_by: str = "system",
+    ) -> OAuthLoginPreference:
+        """Persist a preferred provider after verifying it is configured."""
+        if preference.default_sso_provider is not None:
+            provider_config = await self.get_provider_config(
+                preference.default_sso_provider
+            )
+            if not provider_config or not provider_config.is_complete:
+                raise OAuthLoginPreferenceError(
+                    f"{preference.default_sso_provider.title()} SSO must be configured "
+                    "before it can be preferred"
+                )
+
+        result = await self.db.execute(
+            select(SystemConfig).where(
+                SystemConfig.category == OAUTH_CONFIG_CATEGORY,
+                SystemConfig.key == OAUTH_LOGIN_PREFERENCE,
+                SystemConfig.organization_id.is_(None),
+            )
+        )
+        existing = result.scalar_one_or_none()
+        value_json = preference.model_dump(mode="json")
+
+        if existing:
+            existing.value_json = value_json
+            existing.updated_by = updated_by
+        else:
+            self.db.add(
+                SystemConfig(
+                    category=OAUTH_CONFIG_CATEGORY,
+                    key=OAUTH_LOGIN_PREFERENCE,
+                    value_json=value_json,
+                    organization_id=None,
+                    created_by=updated_by,
+                    updated_by=updated_by,
+                )
+            )
+
+        await self.db.flush()
+        return preference
 
     # =========================================================================
     # Provider Configuration CRUD
@@ -263,8 +331,21 @@ class OAuthConfigService:
         )
         logger.info(f"OIDC config updated by {updated_by}")
 
-    async def delete_provider_config(self, provider: OAuthSSOProvider) -> bool:
+    async def delete_provider_config(
+        self,
+        provider: OAuthSSOProvider,
+        updated_by: str = "system",
+    ) -> bool:
         """Delete all configuration for a provider."""
+        preference = await self.get_login_preference()
+        if (
+            preference.auto_redirect_to_sso
+            and preference.default_sso_provider == provider
+        ):
+            raise OAuthProviderPreferenceConflict(
+                f"Disable preferred SSO redirect before removing {provider.title()}"
+            )
+
         if provider == "microsoft":
             keys = [
                 OAUTH_MICROSOFT_CLIENT_ID,
@@ -287,6 +368,11 @@ class OAuthConfigService:
             return False
 
         await self._delete_config_keys(keys)
+        if preference.default_sso_provider == provider:
+            await self.set_login_preference(
+                OAuthLoginPreference(),
+                updated_by=updated_by,
+            )
         logger.info(f"OAuth config deleted for provider: {log_safe(provider)}")
         return True
 

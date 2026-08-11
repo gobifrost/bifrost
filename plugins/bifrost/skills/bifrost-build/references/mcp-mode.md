@@ -1,133 +1,58 @@
-# MCP-Only Mode
+# MCP-Only Bifrost Work
 
-MCP-only mode applies when there is no local source workspace — for example, when Claude is assisting a user who has connected Bifrost via MCP without a local repo clone, or when building inside a cloud agent without file access.
+Use this path when Bifrost MCP tools are available but the CLI or local source filesystem is not. Treat mutations as live changes on the connected instance.
 
-In MCP-only mode, all entity creation and content editing happens through MCP tools. There is no `bifrost` CLI available and no workspace to write `.py` files to.
+## Establish context
 
----
+Use the available list/get tools to identify the target organization, existing entity, access controls, and dependencies. Do not infer instance or Solution ownership from names alone.
 
-## When MCP-Only Applies
+MCP tools primarily operate on live instance entities and `_repo` content. If an entity is Solution-managed, stop and route the change through its Solution source/deploy workflow; do not create a loose duplicate to bypass ownership.
 
-- No local source checkout (no `workflows/` or `apps/` directory available)
-- Operating as a cloud agent connected to Bifrost via MCP
-- Building or modifying forms, agents, tables, and configs that do not require custom Python code
+## Discover, read, then write
 
-For content that requires Python logic (custom `@workflow` functions), the user must have a local workspace. MCP-mode can scaffold and register once the user provides the workspace path.
+Tool names can vary by installed server version. Search the available tools and use their provided schemas rather than inventing a name or argument.
 
----
+Common entity patterns are:
 
-## Discovery Flow
+- `list_*` and `get_*` for discovery;
+- `create_*`, `update_*`, and `delete_*` for live entities;
+- `list_content`, `search_content`, `read_content_lines`, and `get_content` for `_repo` files;
+- `patch_content` for focused source edits;
+- `replace_content` for complete replacement;
+- `register_workflow`, `validate_workflow`, and `execute_workflow` for loose workflows;
+- `validate_app`, publish/status tools, and dependency tools for v1 apps.
 
-Before creating anything, discover what exists:
+Always read the current entity/file before mutation. Prefer `patch_content` when it can express the change safely; use full replacement only after preserving unrelated content. Read back and validate after writing.
 
-1. `list_workflows` — see registered workflows (potential form targets)
-2. `list_forms` — see existing forms
-3. `list_agents` — see existing agents
-4. `list_tables` — see existing tables
-5. `list_configs` — see existing configs
-6. `list_apps` — see existing apps
+## Source and registration
 
----
+Editing a Python file does not create a workflow record. Register each decorated callable that should execute, including organization/access/roles. Editing an existing registered function body keeps its registration; preserve the record when renaming/moving rather than creating an accidental second workflow.
 
-## Verified MCP Tool Names
+An agent tool must reference an `@tool`-decorated workflow registration. Source presence or a plain `@workflow` is insufficient.
 
-These are the real tool names as registered in `api/src/services/mcp_server/tools/`. Do not invent or guess tool names.
+Editing v1 app source also requires an existing `inline_v1` app record and compatible scope. Apply `apps-v1.md` and `app-quality.md`; validate and inspect the rendered app rather than stopping after source replacement.
 
-### Workflows
-- `list_workflows` — list registered workflows
-- `get_workflow` — get a single workflow by UUID or name
-- `register_workflow` — register a decorated function from a workspace path
-- `execute_workflow` — execute a workflow by ID or name
-- `validate_workflow` — validate a workflow file
-- `update_workflow` — update workflow metadata (thin HTTP wrapper)
-- `delete_workflow` — delete a workflow (thin HTTP wrapper)
-- `grant_workflow_role` — grant a role access (thin HTTP wrapper)
-- `revoke_workflow_role` — revoke a role's access (thin HTTP wrapper)
+## Entity mutations
 
-### Forms
-- `list_forms` — list all forms
-- `get_form` — get a form with full field detail
-- `create_form` — create a form with fields linked to a workflow
-- `update_form` — update a form's properties or fields
+Before create/update:
 
-### Agents
-- `list_agents` — list agents
-- `get_agent` — get an agent's full config
-- `create_agent` — create an agent with tools/delegations/knowledge
-- `update_agent` — update an agent (full replacement of tool_ids/delegated_agent_ids lists)
-- `delete_agent` — delete an agent
+1. Get the target and its dependents.
+2. Confirm organization, access level, roles, and policies.
+3. Send complete list fields for agents and other replacement-style updates.
+4. Re-read the result and exercise the consuming behavior.
 
-### Apps
-- `list_apps` — list apps with file summaries
-- `get_app` — get an app's full config
-- `create_app` — create an app
-- `update_app` — update app metadata
-- `publish_app` — queue a durable rebuild-and-publish; returns a publish job ID
-- `get_app_publish_status` — poll publish phase/progress and the persisted result or error
-- `replace_app` — repoint an app's source directory
-- `validate_app` — validate an app's source before publish
-- `push_files` — push source files into an app
-- `get_app_dependencies` — get app npm dependencies
-- `update_app_dependencies` — update app npm dependencies
+Use exact tool descriptions for required fields. Do not translate a remembered CLI flag into a guessed MCP argument.
 
-### Content Editing (code editor tools)
-- `list_content` — list files in the workspace
-- `search_content` — search file content
-- `read_content_lines` — read specific lines from a file
-- `get_content` — get a file's full content
-- `patch_content` — apply a patch to a file (preferred for edits)
-- `replace_content` — replace a file's full content
-- `delete_content` — delete a file
+## Known parity boundary
 
-### Tables
-- `list_tables` — list tables
-- `get_table` — get a table's config and schema
-- `create_table` — create a table
-- `update_table` — update a table
-- `delete_table` — delete a table
+Some older form, agent, table, app, and event MCP tools predate the thin HTTP-wrapper pattern and may not match every REST side effect or permission check. Roles, configs, integrations, organizations, and current workflow lifecycle tools use the newer REST-wrapper pattern.
 
-### Configs
-- `list_configs` — list configs
-- `get_config` — get a config value
-- `create_config` — create a config entry
-- `update_config` — update a config entry
-- `delete_config` — delete a config entry
+When behavior is ambiguous or production-sensitive, inspect the tool result carefully and prefer a verified REST-wrapper tool if one is available. Do not add direct ORM/repository behavior to new MCP tools; new platform MCP tools should call the REST endpoint.
 
-### Integrations
-- `list_integrations` — list integrations
-- `get_integration` — get an integration
-- `create_integration` — create an integration
-- `update_integration` — update an integration
-- `add_integration_mapping` — add a per-org mapping
-- `update_integration_mapping` — update a per-org mapping
+## Verification and handoff
 
-### Roles
-- `list_roles`, `get_role`, `create_role`, `update_role`, `delete_role`
-
-### Organizations
-- `list_organizations`, `get_organization`, `create_organization`, `update_organization`, `delete_organization`
-
-### Claims
-- `list_claims`, `get_claim`, `create_claim`, `update_claim`, `delete_claim`
-
-### Events
-- `list_event_sources`, `get_event_source`, `create_event_source`, `update_event_source`, `delete_event_source`
-- `list_event_subscriptions`, `create_event_subscription`, `update_event_subscription`, `delete_event_subscription`
-- `list_webhook_adapters`
-
-### Executions
-- `list_executions` — list executions with filters
-- `get_execution` — get a specific execution record
-
-### Knowledge
-- `search_knowledge` — semantic search in the knowledge store
-
----
-
-## Important Caveats
-
-**Existing drift:** The form, agent, table, app, and event MCP tools predate the thin-HTTP-wrapper pattern and contain diverged logic (different permission models, missing side effects). The roles, configs, integrations, organizations, and workflow lifecycle tools (`update_workflow` etc.) are thin wrappers that call the REST endpoints and are always safe. See `docs/plans/2026-04-18-mcp-router-reconciliation.md` for the catalog.
-
-**New tools must be thin wrappers.** Any new MCP tool must call the REST endpoints via `_http_bridge.call_rest` — no direct ORM access, no repository imports. Enforced by `api/tests/unit/test_mcp_thin_wrapper.py`.
-
-**MCP authenticates as the user directly** and does not follow the engine-sentinel pattern.
+- Validate edited code/content with the available validation tool.
+- Execute the workflow or inspect the app/entity as a realistic caller.
+- Test permission denial when access changed.
+- Report every live mutation and any source/deploy work that MCP could not perform.
+- Never claim that a Solution source change was made when only a loose live entity was changed.

@@ -85,6 +85,7 @@
 | DELETE | `/api/applications/{app_id}/files/{file_path}` |
 | GET | `/api/applications/{app_id}/files/{file_path}` |
 | PUT | `/api/applications/{app_id}/files/{file_path}` |
+| POST | `/api/applications/{app_id}/isolated-launch` |
 | DELETE | `/api/applications/{app_id}/logo` |
 | GET | `/api/applications/{app_id}/logo` |
 | POST | `/api/applications/{app_id}/logo` |
@@ -105,6 +106,12 @@
 | POST | `/api/branding/logo/{logo_type}` |
 | GET | `/api/builder/solutions` |
 | POST | `/api/builder/solutions` |
+| GET | `/api/builder/solutions/global-workspace` |
+| POST | `/api/builder/solutions/global-workspace` |
+| POST | `/api/builder/solutions/global-workspace/apply` |
+| POST | `/api/builder/solutions/global-workspace/refresh` |
+| POST | `/api/builder/solutions/global-workspace/rollback` |
+| POST | `/api/builder/solutions/global-workspace/validate` |
 | DELETE | `/api/builder/solutions/{solution_id}` |
 | GET | `/api/builder/solutions/{solution_id}` |
 | POST | `/api/builder/solutions/{solution_id}/apps/{app_id}/launch` |
@@ -207,6 +214,7 @@
 | POST | `/api/files/search` |
 | POST | `/api/files/signed-url` |
 | POST | `/api/files/signed-urls` |
+| POST | `/api/files/stat` |
 | POST | `/api/files/structure` |
 | POST | `/api/files/watch` |
 | GET | `/api/files/watchers` |
@@ -451,6 +459,7 @@
 | PUT | `/api/settings/ai/pricing/{pricing_id}` |
 | GET | `/api/settings/oauth` |
 | PUT | `/api/settings/oauth/google` |
+| PUT | `/api/settings/oauth/login-preference` |
 | PUT | `/api/settings/oauth/microsoft` |
 | PUT | `/api/settings/oauth/oidc` |
 | DELETE | `/api/settings/oauth/{provider}` |

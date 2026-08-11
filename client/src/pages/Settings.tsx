@@ -72,7 +72,7 @@ export function Settings() {
 						</TabsTrigger>
 						<TabsTrigger value="sso">
 							<Shield className="h-4 w-4 mr-1" />
-							SSO
+							Authentication
 						</TabsTrigger>
 						<TabsTrigger value="github">
 							<Github className="h-4 w-4 mr-1" />

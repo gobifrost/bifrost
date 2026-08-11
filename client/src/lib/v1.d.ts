@@ -2849,6 +2849,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/files/stat": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * File Stat
+         * @description Return file metadata for guarded CLI workflows.
+         */
+        post: operations["file_stat_api_files_stat_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/files/signed-url": {
         parameters: {
             query?: never;
@@ -6759,6 +6779,26 @@ export interface paths {
          */
         get: operations["list_oauth_configs_api_settings_oauth_get"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/oauth/login-preference": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Configure preferred SSO redirect
+         * @description Choose whether login should first redirect to a configured SSO provider
+         */
+        put: operations["set_oauth_login_preference_api_settings_oauth_login_preference_put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -11900,6 +11940,13 @@ export interface components {
             mfa_required_for_password: boolean;
             /** Oauth Providers */
             oauth_providers: components["schemas"]["src__models__contracts__auth__OAuthProviderInfo"][];
+            /**
+             * Auto Redirect To Sso
+             * @default false
+             */
+            auto_redirect_to_sso: boolean;
+            /** Default Sso Provider */
+            default_sso_provider?: ("microsoft" | "google" | "oidc") | null;
         };
         /**
          * AuthorizationScopePublic
@@ -15844,12 +15891,32 @@ export interface components {
              * @description Type of conflict
              * @enum {string}
              */
-            reason: "content_changed" | "path_not_found" | "workflows_would_deactivate";
+            reason: "content_changed" | "file_exists" | "file_missing" | "path_not_found" | "version_conflict" | "workflows_would_deactivate";
             /**
              * Message
              * @description Human-readable conflict description
              */
             message: string;
+            /**
+             * Current Etag
+             * @description Current ETag when the conflict is caused by a stale precondition
+             */
+            current_etag?: string | null;
+            /**
+             * Current Last Modified
+             * @description Current modified timestamp when the conflict is caused by a stale precondition
+             */
+            current_last_modified?: string | null;
+            /**
+             * Current Updated By
+             * @description Current last editor when the conflict is caused by a stale precondition
+             */
+            current_updated_by?: string | null;
+            /**
+             * Current Version
+             * @description Current opaque version when a guarded CLI mutation conflicts
+             */
+            current_version?: string | null;
             /**
              * Pending Deactivations
              * @description Workflows that would be deactivated (only for workflows_would_deactivate)
@@ -15992,6 +16059,11 @@ export interface components {
              * @enum {string}
              */
             mode: "local" | "cloud";
+            /**
+             * Expected Version
+             * @description Delete only when the current content has this version
+             */
+            expected_version?: string | null;
         };
         /**
          * FileDiagnostic
@@ -16378,6 +16450,42 @@ export interface components {
             binary: boolean;
         };
         /**
+         * FileStatResponse
+         * @description Response with file metadata for conflict-safe CLI workflows.
+         */
+        FileStatResponse: {
+            /**
+             * Path
+             * @description Relative path from /home/repo
+             */
+            path: string;
+            /**
+             * Exists
+             * @description True if the file exists
+             */
+            exists: boolean;
+            /**
+             * Version
+             * @description Opaque content version for guarded writes and deletes
+             */
+            version?: string | null;
+            /**
+             * Size
+             * @description File size in bytes
+             */
+            size?: number | null;
+            /**
+             * Last Modified
+             * @description Last modified timestamp (ISO 8601)
+             */
+            last_modified?: string | null;
+            /**
+             * Updated By
+             * @description User who last updated the file
+             */
+            updated_by?: string | null;
+        };
+        /**
          * FileStructureRequest
          * @description Request for the admin-only structural listing endpoint.
          */
@@ -16507,6 +16615,17 @@ export interface components {
              * @default false
              */
             binary: boolean;
+            /**
+             * Expected Version
+             * @description Write only when the current content has this version
+             */
+            expected_version?: string | null;
+            /**
+             * Create Only
+             * @description Create the file only when the path does not already exist
+             * @default false
+             */
+            create_only: boolean;
         };
         /** FlagConversationResponse */
         FlagConversationResponse: {
@@ -19873,6 +19992,8 @@ export interface components {
              * @description OAuth callback URL to configure in each provider
              */
             callback_url: string;
+            /** @description Preferred SSO behavior before the full login screen */
+            login_preference: components["schemas"]["OAuthLoginPreference"];
         };
         /**
          * OAuthConfigResponse
@@ -20216,6 +20337,23 @@ export interface components {
             authorization_url: string;
             /** State */
             state: string;
+        };
+        /**
+         * OAuthLoginPreference
+         * @description Preferred SSO behavior before the full login screen is shown.
+         */
+        OAuthLoginPreference: {
+            /**
+             * Auto Redirect To Sso
+             * @description Whether login should first redirect to the preferred SSO provider
+             * @default false
+             */
+            auto_redirect_to_sso: boolean;
+            /**
+             * Default Sso Provider
+             * @description Configured SSO provider used for the preferred redirect
+             */
+            default_sso_provider?: ("microsoft" | "google" | "oidc") | null;
         };
         /**
          * OAuthProviderConfigResponse
@@ -32036,6 +32174,39 @@ export interface operations {
             };
         };
     };
+    file_stat_api_files_stat_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileReadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileStatResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_signed_url_api_files_signed_url_post: {
         parameters: {
             query?: never;
@@ -38769,6 +38940,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OAuthConfigListResponse"];
+                };
+            };
+        };
+    };
+    set_oauth_login_preference_api_settings_oauth_login_preference_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OAuthLoginPreference"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OAuthLoginPreference"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

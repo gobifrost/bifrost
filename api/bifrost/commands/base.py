@@ -16,7 +16,8 @@ Error-surfacing contract (matches the plan's Task 4):
 
 * :class:`bifrost.refs.RefNotFoundError` → exit 2.
 * :class:`bifrost.refs.AmbiguousRefError` → exit 2 with candidate list.
-* HTTP 4xx → exit 1 with the server's error body.
+* Guarded file conflicts (HTTP 409) → exit 4 with current-version details.
+* Other HTTP 4xx → exit 1 with the server's error body.
 * HTTP 4xx with ``403`` → exit 1; error body's ``required_role`` / ``detail``
   surfaced alongside the standard body (server error shapes vary; we print
   the full body plus a ``required`` hint when the shape matches).
@@ -161,6 +162,23 @@ def _print_http_error(exc: httpx.HTTPStatusError) -> _ExitCode:
     except ValueError:
         body_json = None
     body_text_raw = exc.response.text or ""
+
+    detail = body_json.get("detail") if isinstance(body_json, dict) else None
+    if (
+        status == 409
+        and isinstance(detail, dict)
+        and detail.get("reason")
+        in {"file_exists", "file_missing", "version_conflict"}
+    ):
+        payload = {"error": "file_conflict", "status": status, **detail}
+        human = [f"File conflict: {detail.get('message', 'remote file changed')}"]
+        if detail.get("path"):
+            human.append(f"Path: {detail['path']}")
+        if detail.get("current_version"):
+            human.append(f"Current version: {detail['current_version']}")
+        human.append("Read the current file, merge the changes, and retry with its new version.")
+        _emit_error(payload, human)
+        return 4
 
     required: Any = None
     if status == 403 and isinstance(body_json, dict):

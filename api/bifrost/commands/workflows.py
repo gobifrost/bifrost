@@ -170,9 +170,10 @@ async def register_workflow(
 ) -> None:
     """Register a decorated function from an existing workspace ``.py`` file.
 
-    The file must already exist in the workspace (written via ``bifrost push``
-    or the file editor). This command indexes a ``@workflow`` / ``@tool`` /
-    ``@data_provider`` function so it becomes executable via the API.
+    The file must already exist in the workspace. Write it directly with
+    ``bifrost files write`` or the file editor first. This command indexes a
+    ``@workflow`` / ``@tool`` / ``@data_provider`` function so it becomes
+    executable via the API.
 
     Org targeting follows the unified ``--org`` standard: HOME (omit) scopes the
     workflow to the caller's org, ``--global`` makes it global, ``--org

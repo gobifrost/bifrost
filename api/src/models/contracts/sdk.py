@@ -39,6 +39,11 @@ class SDKFileWriteRequest(BaseModel):
     path: str = Field(..., description="Relative path to file")
     content: str = Field(..., description="File content (text)")
     location: str = Field(default="workspace", description=FILE_LOCATION_DESCRIPTION)
+    expected_version: str | None = Field(
+        default=None,
+        description="Opaque version required for a guarded write",
+    )
+    create_only: bool = Field(default=False, description="Fail if the file already exists")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -55,6 +60,10 @@ class SDKFileDeleteRequest(BaseModel):
     """Request to delete a file or directory via SDK."""
     path: str = Field(..., description="Path to file or directory")
     location: str = Field(default="workspace", description=FILE_LOCATION_DESCRIPTION)
+    expected_version: str | None = Field(
+        default=None,
+        description="Opaque version required for a guarded delete",
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -243,4 +252,3 @@ class ConfigData:
     def to_dict(self) -> dict[str, Any]:
         """Return underlying dict (for serialization)."""
         return self._data.copy()
-

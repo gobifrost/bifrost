@@ -15,6 +15,8 @@ export type OAuthProviderConfig =
 export type OAuthConfigList = components["schemas"]["OAuthConfigListResponse"];
 export type OAuthConfigTestResponse =
 	components["schemas"]["OAuthConfigTestResponse"];
+export type OAuthLoginPreference =
+	components["schemas"]["OAuthLoginPreference"];
 export type MicrosoftOAuthConfig =
 	components["schemas"]["MicrosoftOAuthConfigRequest"];
 export type GoogleOAuthConfig =
@@ -28,6 +30,24 @@ export type OAuthProvider = "microsoft" | "google" | "oidc";
  */
 export function useOAuthConfigs() {
 	return $api.useQuery("get", "/api/settings/oauth");
+}
+
+/**
+ * Hook to update whether login should first redirect to a preferred provider.
+ */
+export function useUpdateOAuthLoginPreference() {
+	const queryClient = useQueryClient();
+
+	return $api.useMutation("put", "/api/settings/oauth/login-preference", {
+		onSuccess: () => {
+			queryClient.invalidateQueries({
+				queryKey: ["get", "/api/settings/oauth"],
+			});
+			queryClient.invalidateQueries({
+				queryKey: ["get", "/auth/status"],
+			});
+		},
+	});
 }
 
 /**

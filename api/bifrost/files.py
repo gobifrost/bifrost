@@ -130,6 +130,8 @@ class files:
         content: str,
         location: str = "workspace",
         mode: Mode = "cloud",
+        expected_version: str | None = None,
+        create_only: bool = False,
         scope: str | None = None,
     ) -> None:
         """
@@ -140,13 +142,25 @@ class files:
             content: Text content to write
             location: Storage location (special or freeform)
             mode: Storage mode (local or cloud, default: cloud)
+            expected_version: Opaque version from ``files.stat`` required for
+                a guarded replacement.
+            create_only: Create a new file and fail if the path already exists.
             scope: Org scope; provider-org override allowed.
         """
         client = get_client()
         effective_scope = resolve_scope(scope)
         response = await client.post(
             f"/api/files/write{_solution_query()}",
-            json={"path": path, "content": content, "location": location, "mode": mode, "binary": False, "scope": effective_scope}
+            json={
+                "path": path,
+                "content": content,
+                "location": location,
+                "mode": mode,
+                "binary": False,
+                "expected_version": expected_version,
+                "create_only": create_only,
+                "scope": effective_scope,
+            }
         )
         raise_for_status_with_detail(response)
 
@@ -156,6 +170,8 @@ class files:
         content: bytes,
         location: str = "workspace",
         mode: Mode = "cloud",
+        expected_version: str | None = None,
+        create_only: bool = False,
         scope: str | None = None,
     ) -> None:
         """
@@ -166,6 +182,9 @@ class files:
             content: Binary content to write
             location: Storage location (special or freeform)
             mode: Storage mode (local or cloud, default: cloud)
+            expected_version: Opaque version from ``files.stat`` required for
+                a guarded replacement.
+            create_only: Create a new file and fail if the path already exists.
             scope: Org scope; provider-org override allowed.
         """
         client = get_client()
@@ -174,7 +193,16 @@ class files:
         effective_scope = resolve_scope(scope)
         response = await client.post(
             f"/api/files/write{_solution_query()}",
-            json={"path": path, "content": encoded_content, "location": location, "mode": mode, "binary": True, "scope": effective_scope}
+            json={
+                "path": path,
+                "content": encoded_content,
+                "location": location,
+                "mode": mode,
+                "binary": True,
+                "expected_version": expected_version,
+                "create_only": create_only,
+                "scope": effective_scope,
+            }
         )
         raise_for_status_with_detail(response)
 
@@ -219,6 +247,7 @@ class files:
         path: str,
         location: str = "workspace",
         mode: Mode = "cloud",
+        expected_version: str | None = None,
         scope: str | None = None,
     ) -> None:
         """
@@ -228,6 +257,8 @@ class files:
             path: File path relative to location root
             location: Storage location (special or freeform)
             mode: Storage mode (local or cloud, default: cloud)
+            expected_version: Opaque version from ``files.stat`` required for
+                a guarded delete.
             scope: Org scope; provider-org override allowed.
 
         Example:
@@ -238,9 +269,37 @@ class files:
         effective_scope = resolve_scope(scope)
         response = await client.post(
             f"/api/files/delete{_solution_query()}",
-            json={"path": path, "location": location, "mode": mode, "scope": effective_scope}
+            json={
+                "path": path,
+                "location": location,
+                "mode": mode,
+                "expected_version": expected_version,
+                "scope": effective_scope,
+            }
         )
         raise_for_status_with_detail(response)
+
+    @staticmethod
+    async def stat(
+        path: str,
+        location: str = "workspace",
+        mode: Mode = "cloud",
+        scope: str | None = None,
+    ) -> dict:
+        """
+        Fetch file metadata for conflict-safe workflows.
+
+        Returns:
+            dict with keys: path, exists, version, size, last_modified, updated_by
+        """
+        client = get_client()
+        effective_scope = resolve_scope(scope)
+        response = await client.post(
+            f"/api/files/stat{_solution_query()}",
+            json={"path": path, "location": location, "mode": mode, "scope": effective_scope},
+        )
+        raise_for_status_with_detail(response)
+        return response.json()
 
     @staticmethod
     async def exists(
