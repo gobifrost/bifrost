@@ -5,7 +5,7 @@ from __future__ import annotations
 import secrets
 from datetime import datetime, timezone
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 from urllib.parse import urlsplit
 
 from sqlalchemy import select
@@ -27,6 +27,12 @@ from src.models.orm import SystemConfig
 
 SANDBOX_RUNNER_CONFIG_CATEGORY = "sandbox_runner"
 SANDBOX_RUNNER_CONFIG_KEY = "provider_config"
+
+
+def cloudflare_resource_names(config_id: UUID) -> tuple[str, str]:
+    """Return stable, collision-resistant Cloudflare names for one installation."""
+    stem = f"bifrost-build-{config_id.hex[:8]}"
+    return stem, f"{stem}-workflow"
 
 
 class SandboxRunnerConfigService:
@@ -69,16 +75,18 @@ class SandboxRunnerConfigService:
         self,
         request: SandboxRunnerConfigSave,
         *,
+        callback_base_url: str | None,
         updated_by: str = "system",
     ) -> SandboxRunnerConfigPublic:
-        """Save provider configuration, preserving omitted existing secrets."""
+        """Save provider configuration with a server-resolved callback address."""
         existing_row = await self._get_row()
         existing = self._parse_row(existing_row)
+        config_id = existing_row.id if existing_row is not None else uuid4()
 
         data: dict[str, Any] = {
             "provider": request.provider,
             "enabled": request.enabled,
-            "callback_base_url": request.callback_base_url,
+            "callback_base_url": callback_base_url,
             "provisioned": False,
             "connected": False,
             "cloudflare": None,
@@ -86,16 +94,20 @@ class SandboxRunnerConfigService:
         }
 
         if request.provider == "cloudflare":
-            data["cloudflare"] = self._build_cloudflare_payload(request, existing)
+            data["cloudflare"] = self._build_cloudflare_payload(
+                request,
+                existing,
+                config_id=config_id,
+            )
         else:
             data["local"] = self._build_local_payload(request, existing)
 
-        if request.enabled and not request.callback_base_url:
-            raise ValueError("callback_base_url is required to enable the sandbox runner")
+        if request.enabled and not callback_base_url:
+            raise ValueError("A Bifrost callback address is required to enable the sandbox runner")
         if (
             request.provider == "cloudflare"
-            and request.callback_base_url
-            and urlsplit(request.callback_base_url).scheme != "https"
+            and callback_base_url
+            and urlsplit(callback_base_url).scheme != "https"
         ):
             raise ValueError(
                 "Cloudflare requires an HTTPS Bifrost callback URL; no extra "
@@ -112,7 +124,7 @@ class SandboxRunnerConfigService:
 
         if existing_row is None:
             existing_row = SystemConfig(
-                id=uuid4(),
+                id=config_id,
                 category=SANDBOX_RUNNER_CONFIG_CATEGORY,
                 key=SANDBOX_RUNNER_CONFIG_KEY,
                 value_json=data,
@@ -294,6 +306,8 @@ class SandboxRunnerConfigService:
         self,
         request: SandboxRunnerConfigSave,
         existing: SandboxRunnerStoredConfig | None,
+        *,
+        config_id: UUID,
     ) -> dict[str, object]:
         cloudflare = request.cloudflare
         existing_cloudflare = (
@@ -307,19 +321,13 @@ class SandboxRunnerConfigService:
         elif existing_cloudflare:
             encrypted_token = existing_cloudflare.get("encrypted_api_token")
 
+        script_name, workflow_name = cloudflare_resource_names(config_id)
+
         return {
             "account_id": cloudflare.account_id if cloudflare else None,
             "encrypted_api_token": encrypted_token,
-            "script_name": (
-                cloudflare.script_name
-                if cloudflare and cloudflare.script_name
-                else DEFAULT_CLOUDFLARE_SCRIPT_NAME
-            ),
-            "workflow_name": (
-                cloudflare.workflow_name
-                if cloudflare and cloudflare.workflow_name
-                else DEFAULT_CLOUDFLARE_WORKFLOW_NAME
-            ),
+            "script_name": script_name,
+            "workflow_name": workflow_name,
         }
 
     def _build_local_payload(
@@ -395,7 +403,7 @@ class SandboxRunnerConfigService:
     ) -> bool:
         if existing.provider != request.provider:
             return True
-        if existing.callback_base_url != request.callback_base_url:
+        if existing.callback_base_url != new_data.get("callback_base_url"):
             return True
         if request.provider == "cloudflare":
             if request.cloudflare and request.cloudflare.api_token:
@@ -436,4 +444,8 @@ def _optional_str(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-__all__ = ["SandboxRunnerConfigService", "get_builder_readiness"]
+__all__ = [
+    "SandboxRunnerConfigService",
+    "cloudflare_resource_names",
+    "get_builder_readiness",
+]

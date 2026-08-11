@@ -36,8 +36,8 @@ const setup = {
 		cloudflare: {
 			account_id: null,
 			api_token_set: false,
-			script_name: "bifrost-builder-runner",
-			workflow_name: "bifrost-builder-workflow",
+			script_name: "bifrost-build-a1b2c3d4",
+			workflow_name: "bifrost-build-a1b2c3d4-workflow",
 		},
 		local: null,
 	},
@@ -54,7 +54,7 @@ const setup = {
 		blockers: [],
 	},
 	recommended_callback_base_url: "https://bifrost.example.com",
-	runner_image: "ghcr.io/gobifrost/bifrost-builder-runner:dev",
+	runner_image: "ghcr.io/gobifrost/bifrost-build:dev",
 	cloudflare_permissions: ["Workers Scripts Write", "Workers Containers Write"],
 	active_provisioning_job_id: null,
 };
@@ -68,12 +68,18 @@ beforeEach(() => {
 });
 
 describe("BuilderSettings", () => {
-	it("walks the administrator through AI, runner, callback, and enablement", async () => {
+	it("walks the administrator through AI, runner, and enablement", async () => {
 		renderWithProviders(<BuilderSettings />);
 
 		expect(await screen.findByRole("heading", { name: /native app building/i })).toBeInTheDocument();
 		expect(screen.getByRole("link", { name: /configure ai/i })).toHaveAttribute("href", "/settings/ai");
-		expect(screen.getByText(/no additional hostname or forwarded port is needed/i)).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				/no additional hostname, dns record, or forwarded port is needed/i,
+			),
+		).toBeInTheDocument();
+		expect(screen.getByText("https://bifrost.example.com")).toBeInTheDocument();
+		expect(screen.queryByLabelText(/bifrost callback address/i)).not.toBeInTheDocument();
 		expect(screen.getByText(/containers scale to zero between jobs/i)).toBeInTheDocument();
 		expect(screen.getByText(/hard turn limits/i)).toBeInTheDocument();
 		expect(screen.getByText(/cloudflare container charges remain/i)).toBeInTheDocument();
@@ -93,7 +99,6 @@ describe("BuilderSettings", () => {
 				expect.objectContaining({
 					provider: "cloudflare",
 					enabled: false,
-					callback_base_url: "https://bifrost.example.com",
 					cloudflare: expect.objectContaining({
 						account_id: "account-123",
 						api_token: "secret-token",
@@ -101,6 +106,7 @@ describe("BuilderSettings", () => {
 				}),
 			),
 		);
+		expect(mockSaveSetup.mock.calls[0][0]).not.toHaveProperty("callback_base_url");
 	});
 
 	it("restores durable provisioning progress after a reload", async () => {

@@ -355,7 +355,7 @@ class Settings(BaseSettings):
         description="Hours a staged (not-yet-deployed) build output is retained before cleanup"
     )
     builder_runner_image_repository: str = Field(
-        default="ghcr.io/gobifrost/bifrost-builder-runner",
+        default="ghcr.io/gobifrost/bifrost-build",
         description=(
             "Public container image repository provisioned into the selected "
             "sandbox provider"

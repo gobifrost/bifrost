@@ -44,12 +44,9 @@ describe("Builder runner service", () => {
 		await saveBuilderRunnerSetup({
 			provider: "cloudflare",
 			enabled: false,
-			callback_base_url: "https://bifrost.example.com",
 			cloudflare: {
 				account_id: "account",
 				api_token: "secret",
-				script_name: "bifrost-builder-runner",
-				workflow_name: "bifrost-builder-workflow",
 			},
 		});
 		const job = await provisionBuilderRunner();

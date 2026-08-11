@@ -42,6 +42,11 @@ router = APIRouter(
 )
 
 
+def _recommended_callback_base_url(request: Request) -> str:
+    configured_url = get_settings().public_url.strip().rstrip("/")
+    return configured_url or str(request.base_url).rstrip("/")
+
+
 @router.get("", response_model=SandboxRunnerSetupState)
 async def get_runner_setup(
     request: Request,
@@ -61,12 +66,10 @@ async def get_runner_setup(
         .order_by(PlatformJob.created_at.desc())
         .limit(1)
     )
-    configured_url = get_settings().public_url.strip().rstrip("/")
-    recommended_url = configured_url or str(request.base_url).rstrip("/")
     return SandboxRunnerSetupState(
         config=config,
         readiness=readiness,
-        recommended_callback_base_url=recommended_url,
+        recommended_callback_base_url=_recommended_callback_base_url(request),
         runner_image=configured_runner_image(),
         active_provisioning_job_id=active_provisioning_job_id,
     )
@@ -74,15 +77,21 @@ async def get_runner_setup(
 
 @router.put("", response_model=SandboxRunnerConfigPublic)
 async def save_runner_setup(
+    request: Request,
     body: SandboxRunnerConfigSave,
     db: DbSession,
     user: CurrentActiveUser,
 ) -> SandboxRunnerConfigPublic:
     """Save encrypted provider settings; connection state is never client-set."""
     await _require_no_active_sandbox_work(db)
+    recommended_url = _recommended_callback_base_url(request)
+    callback_base_url = recommended_url
+    if body.provider == "local":
+        callback_base_url = body.callback_base_url or recommended_url
     try:
         saved = await SandboxRunnerConfigService(db).save_config(
             body,
+            callback_base_url=callback_base_url,
             updated_by=user.email,
         )
     except ValueError as exc:

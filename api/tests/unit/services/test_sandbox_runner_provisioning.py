@@ -40,9 +40,15 @@ def test_configured_runner_image_uses_release_version(monkeypatch):
         provisioning,
         "get_settings",
         lambda: SimpleNamespace(
-            builder_runner_image_repository="ghcr.io/gobifrost/bifrost-builder-runner",
+            builder_runner_image_repository="ghcr.io/gobifrost/bifrost-build",
             builder_runner_image_tag=None,
         ),
+    )
+    monkeypatch.setattr(provisioning, "get_version", lambda: "v2.4.1")
+
+    assert (
+        provisioning.configured_runner_image()
+        == "ghcr.io/gobifrost/bifrost-build:2.4.1"
     )
 
 
@@ -78,12 +84,6 @@ async def test_cloudflare_probe_uses_object_params_and_bounded_instance_id(
         "mode": "probe",
         "probe_id": instance_id,
     }
-    monkeypatch.setattr(provisioning, "get_version", lambda: "v2.4.1")
-
-    assert (
-        provisioning.configured_runner_image()
-        == "ghcr.io/gobifrost/bifrost-builder-runner:2.4.1"
-    )
 
 
 @pytest.mark.asyncio
@@ -141,7 +141,7 @@ async def test_wrangler_config_uses_private_worker_and_public_versioned_image(
     monkeypatch.setattr(
         provisioning,
         "configured_runner_image",
-        lambda: "ghcr.io/gobifrost/bifrost-builder-runner:2.4.1",
+        lambda: "ghcr.io/gobifrost/bifrost-build:2.4.1",
     )
     captured: dict[str, object] = {}
 
@@ -177,7 +177,7 @@ async def test_wrangler_config_uses_private_worker_and_public_versioned_image(
     assert config["containers"] == [
         {
             "class_name": "Sandbox",
-            "image": "ghcr.io/gobifrost/bifrost-builder-runner:2.4.1",
+            "image": "ghcr.io/gobifrost/bifrost-build:2.4.1",
             "instance_type": "basic",
             "max_instances": 20,
         }

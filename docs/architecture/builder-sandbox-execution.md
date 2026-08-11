@@ -135,9 +135,11 @@ wizard:
 1. Configure and test the Bifrost AI provider and optional Builder model.
 2. Enter the Cloudflare account ID and a scoped API token. Bifrost encrypts the
    token at rest and never returns it to the browser.
-3. Confirm the callback address. It defaults to the current Bifrost browser
-   origin and requires no second hostname. Cloudflare requires a public HTTPS
-   callback; the self-hosted provider may use a private HTTP address.
+3. Bifrost derives its callback from the configured public URL or current
+   browser origin and generates installation-specific Worker and Workflow
+   names. Cloudflare setup has no editable callback, resource-name, DNS, or
+   public-port fields. The explicit self-hosted provider retains a callback
+   override because its network topology may require one.
 4. Choose **Provision and test**. Provisioning is itself a PlatformJob and
    uploads/updates the versioned Worker, Workflow, and Sandbox configuration,
    starts a real sandbox probe, and streams its progress to the wizard.
@@ -148,7 +150,8 @@ wizard:
    readiness card and direct links to the missing setting.
 
 The token is encrypted at rest and masked after save. Re-provisioning is
-idempotent and uses stable Bifrost-owned script/workflow names. Disabling
+idempotent and uses stable, installation-specific Bifrost-owned
+script/workflow names. Disabling
 Builder stops new jobs without destroying saved work. Disconnecting a provider
 is a separate explicit operation and never switches to local execution.
 

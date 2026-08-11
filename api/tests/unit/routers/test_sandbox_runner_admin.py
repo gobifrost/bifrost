@@ -72,7 +72,7 @@ async def test_get_runner_setup_returns_masked_config_and_recommended_origin():
         ),
         patch(
             "src.routers.sandbox_runner_admin.configured_runner_image",
-            return_value="ghcr.io/gobifrost/bifrost-builder-runner:dev",
+            return_value="ghcr.io/gobifrost/bifrost-build:dev",
         ),
     ):
         state = await get_runner_setup(request, db, _user())
@@ -91,12 +91,12 @@ async def test_save_runner_setup_commits_encrypted_service_result():
     service.save_config.return_value = _config()
     body = SandboxRunnerConfigSave(
         provider="cloudflare",
-        callback_base_url="https://bifrost.example.com",
         cloudflare=SandboxRunnerCloudflareConfig(
             account_id="account-id",
             api_token="write-only-token",
         ),
     )
+    request = SimpleNamespace(base_url="https://bifrost.example.com/")
 
     with (
         patch(
@@ -107,13 +107,55 @@ async def test_save_runner_setup_commits_encrypted_service_result():
             "src.routers.sandbox_runner_admin.SandboxRunnerConfigService",
             return_value=service,
         ),
+        patch(
+            "src.routers.sandbox_runner_admin.get_settings",
+            return_value=SimpleNamespace(public_url=""),
+        ),
     ):
-        saved = await save_runner_setup(body, db, _user())
+        saved = await save_runner_setup(request, body, db, _user())
 
     assert saved == _config()
     service.save_config.assert_awaited_once()
+    assert service.save_config.await_args.kwargs["callback_base_url"] == (
+        "https://bifrost.example.com"
+    )
     assert service.save_config.await_args.kwargs["updated_by"] == "admin@example.com"
     db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_local_runner_can_override_the_callback_address():
+    db = AsyncMock()
+    service = AsyncMock()
+    service.save_config.return_value = SandboxRunnerConfigPublic(
+        provider="local",
+        callback_base_url="http://api:8000",
+    )
+    body = SandboxRunnerConfigSave(
+        provider="local",
+        callback_base_url="http://api:8000/",
+    )
+    request = SimpleNamespace(base_url="http://localhost:3000/")
+
+    with (
+        patch(
+            "src.routers.sandbox_runner_admin._require_no_active_sandbox_work",
+            AsyncMock(),
+        ),
+        patch(
+            "src.routers.sandbox_runner_admin.SandboxRunnerConfigService",
+            return_value=service,
+        ),
+        patch(
+            "src.routers.sandbox_runner_admin.get_settings",
+            return_value=SimpleNamespace(public_url=""),
+        ),
+    ):
+        await save_runner_setup(request, body, db, _user())
+
+    assert service.save_config.await_args.kwargs["callback_base_url"] == (
+        "http://api:8000"
+    )
 
 
 @pytest.mark.asyncio

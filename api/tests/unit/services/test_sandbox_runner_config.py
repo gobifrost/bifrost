@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from pydantic import ValidationError
 
 from src.core.security import decrypt_secret
 from src.models.contracts.sandbox_runner import (
@@ -18,6 +19,7 @@ from src.services.sandbox_runner_config import (
     SANDBOX_RUNNER_CONFIG_CATEGORY,
     SANDBOX_RUNNER_CONFIG_KEY,
     SandboxRunnerConfigService,
+    cloudflare_resource_names,
 )
 
 
@@ -49,6 +51,15 @@ def _system_config(value_json):
     return row
 
 
+def test_cloudflare_request_does_not_accept_a_manual_callback() -> None:
+    with pytest.raises(ValidationError, match="determined automatically"):
+        SandboxRunnerConfigSave(
+            provider="cloudflare",
+            callback_base_url="https://different.example.com",
+            cloudflare=SandboxRunnerCloudflareConfig(account_id="acct_123"),
+        )
+
+
 @pytest.mark.asyncio
 async def test_save_cloudflare_encrypts_and_masks_api_token(mock_session):
     _set_row(mock_session, None)
@@ -57,13 +68,13 @@ async def test_save_cloudflare_encrypts_and_masks_api_token(mock_session):
     public = await service.save_config(
         SandboxRunnerConfigSave(
             provider="cloudflare",
-            callback_base_url="https://bifrost.example.com/",
             enabled=True,
             cloudflare=SandboxRunnerCloudflareConfig(
                 account_id="acct_123",
                 api_token="cf-secret-token",
             ),
         ),
+        callback_base_url="https://bifrost.example.com",
         updated_by="admin@example.com",
     )
 
@@ -74,8 +85,10 @@ async def test_save_cloudflare_encrypts_and_masks_api_token(mock_session):
     assert saved.organization_id is None
     assert saved.value_json["callback_base_url"] == "https://bifrost.example.com"
     cloudflare = saved.value_json["cloudflare"]
-    assert cloudflare["script_name"] == DEFAULT_CLOUDFLARE_SCRIPT_NAME
-    assert cloudflare["workflow_name"] == DEFAULT_CLOUDFLARE_WORKFLOW_NAME
+    assert (
+        cloudflare["script_name"],
+        cloudflare["workflow_name"],
+    ) == cloudflare_resource_names(saved.id)
     assert cloudflare["encrypted_api_token"] != "cf-secret-token"
     assert "cf-secret-token" not in str(saved.value_json)
     assert decrypt_secret(cloudflare["encrypted_api_token"]) == "cf-secret-token"
@@ -97,12 +110,12 @@ async def test_cloudflare_refuses_insecure_callback_without_extra_host_requireme
         await SandboxRunnerConfigService(mock_session).save_config(
             SandboxRunnerConfigSave(
                 provider="cloudflare",
-                callback_base_url="http://bifrost.example.com",
                 cloudflare=SandboxRunnerCloudflareConfig(
                     account_id="acct_123",
                     api_token="token",
                 ),
-            )
+            ),
+            callback_base_url="http://bifrost.example.com",
         )
 
 
@@ -163,9 +176,9 @@ async def test_connection_change_resets_proven_runtime_status(mock_session):
         SandboxRunnerConfigSave(
             provider="cloudflare",
             enabled=True,
-            callback_base_url="https://new.example.com",
             cloudflare=SandboxRunnerCloudflareConfig(account_id="acct_123"),
-        )
+        ),
+        callback_base_url="https://new.example.com",
     )
 
     assert public.provisioned is False
@@ -181,6 +194,7 @@ async def test_save_preserves_existing_cloudflare_token_when_omitted(mock_sessio
             cloudflare=SandboxRunnerCloudflareConfig(api_token="original-token"),
         ),
         None,
+        config_id=uuid4(),
     )["encrypted_api_token"]
     row = _system_config(
         {
@@ -203,19 +217,20 @@ async def test_save_preserves_existing_cloudflare_token_when_omitted(mock_sessio
     await service.save_config(
         SandboxRunnerConfigSave(
             provider="cloudflare",
-            callback_base_url="https://new.example.com",
             cloudflare=SandboxRunnerCloudflareConfig(
                 account_id="new-account",
-                script_name="new-script",
-                workflow_name="new-workflow",
             ),
-        )
+        ),
+        callback_base_url="https://new.example.com",
     )
 
     assert row.value_json["cloudflare"]["encrypted_api_token"] == first_encrypted
     assert decrypt_secret(row.value_json["cloudflare"]["encrypted_api_token"]) == "original-token"
     assert row.value_json["cloudflare"]["account_id"] == "new-account"
-    assert row.value_json["cloudflare"]["script_name"] == "new-script"
+    assert (
+        row.value_json["cloudflare"]["script_name"],
+        row.value_json["cloudflare"]["workflow_name"],
+    ) == cloudflare_resource_names(row.id)
 
 
 @pytest.mark.asyncio
@@ -227,6 +242,7 @@ async def test_get_decrypted_internal_config_returns_secret_only_in_internal_met
             cloudflare=SandboxRunnerCloudflareConfig(api_token="private-token"),
         ),
         None,
+        config_id=uuid4(),
     )["encrypted_api_token"]
     _set_row(
         mock_session,
@@ -268,9 +284,9 @@ async def test_local_config_generates_runner_secret_and_masks_it(mock_session):
     public = await service.save_config(
         SandboxRunnerConfigSave(
             provider="local",
-            callback_base_url="http://localhost:3000",
             local=SandboxRunnerLocalConfig(endpoint_url="http://localhost:9137"),
-        )
+        ),
+        callback_base_url="http://localhost:3000",
     )
 
     saved = mock_session.add.call_args[0][0]
@@ -370,6 +386,7 @@ async def test_dispatch_readiness_does_not_require_ai_but_requires_live_provider
             cloudflare=SandboxRunnerCloudflareConfig(api_token="private-token"),
         ),
         None,
+        config_id=uuid4(),
     )["encrypted_api_token"]
     row = _system_config(
         {

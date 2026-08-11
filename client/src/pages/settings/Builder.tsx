@@ -53,8 +53,6 @@ interface SetupDraft {
 	callbackBaseUrl: string;
 	accountId: string;
 	apiToken: string;
-	scriptName: string;
-	workflowName: string;
 	endpointUrl: string;
 	runnerSecret: string;
 	enabled: boolean;
@@ -67,9 +65,6 @@ function draftFromSetup(setup: BuilderRunnerSetup): SetupDraft {
 		callbackBaseUrl: config?.callback_base_url ?? recommended,
 		accountId: config?.cloudflare?.account_id ?? "",
 		apiToken: "",
-		scriptName: config?.cloudflare?.script_name ?? "bifrost-builder-runner",
-		workflowName:
-			config?.cloudflare?.workflow_name ?? "bifrost-builder-workflow",
 		endpointUrl: config?.local?.endpoint_url ?? "",
 		runnerSecret: "",
 		enabled: config?.enabled ?? false,
@@ -159,14 +154,14 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 			const payload: BuilderRunnerConfigSave = {
 				provider: draft.provider,
 				enabled,
-				callback_base_url: draft.callbackBaseUrl.trim() || null,
+				...(draft.provider === "local"
+					? { callback_base_url: draft.callbackBaseUrl.trim() || null }
+					: {}),
 				cloudflare:
 					draft.provider === "cloudflare"
 						? {
 								account_id: draft.accountId.trim() || null,
 								api_token: draft.apiToken.trim() || null,
-								script_name: draft.scriptName.trim(),
-								workflow_name: draft.workflowName.trim(),
 							}
 						: null,
 				local:
@@ -349,6 +344,18 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 							<KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0" />
 							Create a scoped token with {setup.cloudflare_permissions?.join(", ") || "Workers Scripts Write"}. Bifrost encrypts it and never returns it to the browser.
 						</p>
+						<div className="sm:col-span-2 flex items-start gap-3 rounded-2xl border bg-muted/20 p-3">
+							<Link2 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+							<div className="min-w-0">
+								<p className="text-xs font-medium">Bifrost address</p>
+								<p className="mt-1 truncate font-mono text-xs text-muted-foreground">
+									{setup.recommended_callback_base_url}
+								</p>
+								<p className="mt-1 text-xs leading-5 text-muted-foreground">
+									Bifrost uses its existing address automatically. No additional hostname, DNS record, or forwarded port is needed.
+								</p>
+							</div>
+						</div>
 					</div>
 				) : (
 					<div className="grid gap-4 sm:grid-cols-2">
@@ -367,25 +374,24 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 							placeholder={config?.local?.runner_secret_set ? "Saved — enter only to replace" : "Generated when left blank"}
 							type="password"
 						/>
+						<div className="space-y-2 sm:col-span-2">
+							<Label htmlFor="callback-url">Bifrost callback address</Label>
+							<div className="relative">
+								<Link2 className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
+								<Input
+									id="callback-url"
+									className="pl-9"
+									value={draft.callbackBaseUrl}
+									onChange={(event) => setDraft((current) => ({ ...current, callbackBaseUrl: event.target.value }))}
+									placeholder={setup.recommended_callback_base_url}
+								/>
+							</div>
+							<p className="text-xs leading-5 text-muted-foreground">
+								Use an address the self-hosted runner can reach. The current Bifrost address is filled in by default.
+							</p>
+						</div>
 					</div>
 				)}
-
-				<div className="space-y-2">
-					<Label htmlFor="callback-url">Bifrost callback address</Label>
-					<div className="relative">
-						<Link2 className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
-						<Input
-							id="callback-url"
-							className="pl-9"
-							value={draft.callbackBaseUrl}
-							onChange={(event) => setDraft((current) => ({ ...current, callbackBaseUrl: event.target.value }))}
-							placeholder={setup.recommended_callback_base_url}
-						/>
-					</div>
-					<p className="text-xs leading-5 text-muted-foreground">
-						Use the same public address people already use for Bifrost. The runner calls a scoped API route below this address; no additional hostname or forwarded port is needed. Cloudflare requires HTTPS; a private HTTP address is valid for a self-hosted runner.
-					</p>
-				</div>
 
 				<div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
 					<div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -524,7 +530,7 @@ function ReadinessChecklist({
 			),
 		},
 		{ label: "Runner credentials", ready: readiness?.credentials_configured },
-		{ label: "Callback address", ready: readiness?.callback_configured },
+		{ label: "Bifrost address", ready: readiness?.callback_configured },
 		{ label: "Runner provisioned", ready: readiness?.provisioned },
 		{ label: "Live connection verified", ready: readiness?.connected },
 	] as const;

@@ -23346,16 +23346,6 @@ export interface components {
             account_id?: string | null;
             /** Api Token */
             api_token?: string | null;
-            /**
-             * Script Name
-             * @default bifrost-builder-runner
-             */
-            script_name: string;
-            /**
-             * Workflow Name
-             * @default bifrost-builder-workflow
-             */
-            workflow_name: string;
         };
         /**
          * SandboxRunnerCloudflarePublic
@@ -23371,12 +23361,12 @@ export interface components {
             api_token_set: boolean;
             /**
              * Script Name
-             * @default bifrost-builder-runner
+             * @default bifrost-build
              */
             script_name: string;
             /**
              * Workflow Name
-             * @default bifrost-builder-workflow
+             * @default bifrost-build-workflow
              */
             workflow_name: string;
         };

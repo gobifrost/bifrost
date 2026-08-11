@@ -11,8 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 SandboxRunnerProvider = Literal["cloudflare", "local"]
 
 
-DEFAULT_CLOUDFLARE_SCRIPT_NAME = "bifrost-builder-runner"
-DEFAULT_CLOUDFLARE_WORKFLOW_NAME = "bifrost-builder-workflow"
+DEFAULT_CLOUDFLARE_SCRIPT_NAME = "bifrost-build"
+DEFAULT_CLOUDFLARE_WORKFLOW_NAME = "bifrost-build-workflow"
 
 
 class SandboxRunnerCloudflareConfig(BaseModel):
@@ -23,18 +23,8 @@ class SandboxRunnerCloudflareConfig(BaseModel):
 
     account_id: str | None = Field(default=None, min_length=1)
     api_token: str | None = Field(default=None, min_length=1)
-    script_name: str = Field(
-        default=DEFAULT_CLOUDFLARE_SCRIPT_NAME,
-        min_length=1,
-        max_length=128,
-    )
-    workflow_name: str = Field(
-        default=DEFAULT_CLOUDFLARE_WORKFLOW_NAME,
-        min_length=1,
-        max_length=64,
-    )
 
-    @field_validator("account_id", "api_token", "script_name", "workflow_name", mode="before")
+    @field_validator("account_id", "api_token", mode="before")
     @classmethod
     def _blank_to_none_or_trim(cls, value: object) -> object:
         if isinstance(value, str):
@@ -91,6 +81,14 @@ class SandboxRunnerConfigSave(BaseModel):
     callback_base_url: str | None = Field(default=None, min_length=1)
     cloudflare: SandboxRunnerCloudflareConfig | None = None
     local: SandboxRunnerLocalConfig | None = None
+
+    @model_validator(mode="after")
+    def validate_provider_specific_callback(self) -> "SandboxRunnerConfigSave":
+        if self.provider == "cloudflare" and self.callback_base_url is not None:
+            raise ValueError(
+                "callback_base_url is determined automatically for Cloudflare"
+            )
+        return self
 
     @field_validator("callback_base_url", mode="before")
     @classmethod

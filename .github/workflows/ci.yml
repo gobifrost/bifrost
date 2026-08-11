@@ -59,7 +59,7 @@ env:
   REGISTRY: ghcr.io
   API_IMAGE: gobifrost/bifrost-api
   CLIENT_IMAGE: gobifrost/bifrost-client
-  BUILDER_RUNNER_IMAGE: gobifrost/bifrost-builder-runner
+  BUILDER_RUNNER_IMAGE: gobifrost/bifrost-build
   # Legacy image names under jackmusick — kept for dual-publish during namespace
   # migration window. Remove after 2 stable releases or 60 days post-transfer.
   LEGACY_API_IMAGE: jackmusick/bifrost-api
@@ -1049,7 +1049,7 @@ jobs:
 
             **Builder sandbox runner:**
             ```bash
-            docker pull ghcr.io/gobifrost/bifrost-builder-runner:${{ steps.get_version.outputs.version }}
+            docker pull ghcr.io/gobifrost/bifrost-build:${{ steps.get_version.outputs.version }}
             ```
 
             ### Type Stubs for IDEs

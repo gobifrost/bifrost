@@ -47,6 +47,15 @@ test("guides an admin through Builder setup before Build is configured", async (
 	await expect(
 		page.getByRole("heading", { name: "Native app building" }),
 	).toBeVisible();
+	await expect(page.getByLabel("Account ID")).toBeVisible();
+	await expect(page.getByLabel("API token")).toBeVisible();
+	await expect(page.getByLabel("Bifrost callback address")).toHaveCount(0);
+	await expect(
+		page.getByText(
+			/No additional hostname, DNS record, or forwarded port is needed/i,
+		),
+	).toBeVisible();
+	await expect(page.getByText(/ghcr\.io\/gobifrost\/bifrost-build:/)).toBeVisible();
 	await page.getByRole("link", { name: "Configure AI" }).click();
 	await expect(page).toHaveURL(/\/settings\/ai$/);
 });
