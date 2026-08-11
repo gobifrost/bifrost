@@ -51,6 +51,7 @@ def _ctx(db, *, app_id, is_superuser, is_provider_org=False) -> Any:
             is_platform_admin=is_superuser,
             is_provider_org=is_provider_org,
             is_external=False,
+            has_scope=lambda _scope: is_provider_org,
         ),
     ))
 
@@ -89,10 +90,11 @@ async def test_own_org_app_id_resolves_its_table(db_session):
 
 
 async def test_provider_org_member_resolves_foreign_install_table(db_session):
-    """Canonical bypass rule (is_superuser OR is_provider_org): a NON-admin
-    provider-org staffer targeting org B's install (target_org defaults to their
-    own org A) resolves the install's own table, identical to a platform admin.
-    Row access is decided by org B's table policies afterward."""
+    """A scoped provider staffer may resolve a customer's install table.
+
+    The fixture grants ``organization.impersonation`` through ``has_scope``;
+    provider membership alone is not the support-access grant.
+    """
     db = db_session
     org_a = Organization(id=uuid4(), name=f"A-{uuid4().hex[:6]}", created_by="t")
     org_b = Organization(id=uuid4(), name=f"B-{uuid4().hex[:6]}", created_by="t")

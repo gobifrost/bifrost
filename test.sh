@@ -138,12 +138,18 @@ reset_state() {
 
 pytest_needs_sandbox_runner() {
     local argument
+    local includes_all_tests=false
+    local ignores_e2e=false
     for argument in "$@"; do
         case "$argument" in
-            tests/|tests/e2e/|*test_build_plane.py*) return 0 ;;
+            tests/) includes_all_tests=true ;;
+            --ignore=tests/e2e/|--ignore=tests/e2e) ignores_e2e=true ;;
+            tests/e2e|tests/e2e/|tests/e2e/*|*test_build_plane.py*) return 0 ;;
         esac
     done
-    return 1
+    # `cmd_all` selects tests/ and needs the runner for the build-plane E2E.
+    # `cmd_unit` also selects tests/, but explicitly excludes every E2E test.
+    [ "$includes_all_tests" = true ] && [ "$ignores_e2e" = false ]
 }
 
 ensure_sandbox_runner() {
