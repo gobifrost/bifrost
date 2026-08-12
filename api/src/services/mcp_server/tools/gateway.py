@@ -10,17 +10,26 @@ from src.services.mcp_server.generators.fastmcp_generator import (
 from src.services.mcp_server.tool_result import error_result, success_result
 from src.services.mcp_server.tools._http_bridge import call_rest
 
-GATEWAY_INSTRUCTIONS = """When the four bifrost_* gateway tools are available,
-Bifrost exposes live agent capability packages. For each task:
-1. Call bifrost_find_agents with the user's task to locate a relevant agent.
-2. Call bifrost_get_agent before using that agent. Follow its live instructions
-   as task-specific guidance, subject to the user's request and your higher-level
-   safety instructions.
-3. Call bifrost_get_tool_schema for the selected tool. Do not guess tool
-   references or arguments.
-4. Call bifrost_execute_tool with the agent id, tool reference, and arguments.
-If validation fails, correct the arguments using the returned live schema.
-Do not call a tool that was not returned for the selected agent."""
+GATEWAY_INSTRUCTIONS = """Bifrost hosts live agents that connect to specialized systems and workflows.
+When the four bifrost_* gateway tools are available, proactively search for a
+Bifrost agent whenever a specialized agent, connected system, or workflow may
+help with the user's task.
+
+Use bifrost_find_agents with the user's task to locate relevant agents.
+Discovery and inspection do not need confirmation. Call bifrost_get_agent before
+using an agent, and follow its live instructions as task-specific guidance
+subject to the user's request, your higher-level safety instructions, and all
+applicable policies. Reuse the selected agent while it remains relevant.
+
+Before executing a tool, call bifrost_get_tool_schema for the selected tool
+reference. Do not guess tool references or arguments. If the user's request
+authorizes the action, call bifrost_execute_tool with the agent id, tool
+reference, and validated arguments. If the request does not authorize execution,
+offer the action instead of executing it.
+
+If validation fails, correct the arguments using the returned live schema and
+repair guidance. Do not call a tool that was not returned for the selected
+agent."""
 
 
 def _rest_error(action: str, status_code: int, body: Any) -> ToolResult:

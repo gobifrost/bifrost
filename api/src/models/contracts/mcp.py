@@ -72,6 +72,16 @@ class MCPToolsResponse(BaseModel):
     tools: list[MCPToolInfo] = Field(description="List of available MCP tools")
 
 
+class MCPRunInfoResponse(BaseModel):
+    """Connection information for installing the Bifrost Agent plugin."""
+
+    enabled: bool = Field(description="Whether external MCP access is enabled")
+    mcp_url: str = Field(description="Public streamable-http MCP endpoint")
+    setup_prompt: str = Field(
+        description="Prompt for creating a reusable Bifrost skill or agent"
+    )
+
+
 class MCPGatewayAgentSummary(BaseModel):
     """Compact agent metadata returned by gateway discovery."""
 

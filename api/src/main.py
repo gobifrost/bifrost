@@ -278,6 +278,21 @@ async def create_default_user() -> None:
 
         existing = await user_repo.get_by_email(settings.default_user_email)
         if existing:
+            if settings.debug:
+                # In debug stacks the configured seed credential is the source
+                # of truth. This lets debug.sh replace the shared development
+                # password before a NetBird public proxy is enabled, including
+                # for a stack created before public exposure was introduced.
+                existing.hashed_password = get_password_hash(
+                    settings.default_user_password
+                )
+                existing.mfa_enabled = False
+                await db.commit()
+                logger.info(
+                    "Synchronized debug user credentials: %s",
+                    settings.default_user_email,
+                )
+                return
             logger.info(f"Default user already exists: {settings.default_user_email}")
             return
 

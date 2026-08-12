@@ -18,8 +18,8 @@ Authentication:
 Usage:
     # Get access token from Bifrost login
     curl -X POST https://your-bifrost.com/auth/login \
-        -d '{"email":"admin@example.com","password":"..."}' \
-        -H "Content-Type: application/json"
+        --data-urlencode 'username=admin@example.com' \
+        --data-urlencode 'password=...'
 
     # Use token for MCP access (example with test initialize)
     curl -X POST https://your-bifrost.com/mcp \
@@ -32,8 +32,10 @@ import logging
 from typing import NoReturn
 
 from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.responses import Response
 from starlette.middleware.cors import CORSMiddleware
 
+from src.config import get_settings
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.models.contracts.mcp import (
@@ -44,6 +46,7 @@ from src.models.contracts.mcp import (
     MCPGatewayExecuteResponse,
     MCPGatewayFindAgentsResponse,
     MCPGatewayToolSchemaResponse,
+    MCPRunInfoResponse,
     MCPToolInfo,
     MCPToolsResponse,
 )
@@ -185,6 +188,48 @@ async def execute_gateway_tool(
 # =============================================================================
 # MCP Status Endpoint (for debugging/info)
 # =============================================================================
+
+
+@router.get("/run", response_model=MCPRunInfoResponse)
+async def mcp_run_info(
+    current_user: CurrentActiveUser,
+    db: DbSession,
+) -> MCPRunInfoResponse:
+    """Return install information for the Bifrost Agent plugin."""
+    from src.services.mcp_server.run_package import build_setup_prompt, mcp_url
+
+    config = await MCPConfigService(db).get_config()
+    return MCPRunInfoResponse(
+        enabled=config.enabled,
+        mcp_url=mcp_url(get_settings().public_url),
+        setup_prompt=build_setup_prompt(),
+    )
+
+
+@router.get(
+    "/run/plugin",
+    responses={200: {"content": {"application/zip": {}}}},
+)
+async def download_mcp_run_plugin(
+    current_user: CurrentActiveUser,
+    db: DbSession,
+) -> Response:
+    """Download the Bifrost Agent Plugins 1.0 package."""
+    from src.services.mcp_server.run_package import (
+        PLUGIN_FILENAME,
+        build_bifrost_run_plugin,
+    )
+
+    await _require_mcp_enabled(db)
+    zip_bytes = build_bifrost_run_plugin(get_settings().public_url)
+    return Response(
+        content=zip_bytes,
+        media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{PLUGIN_FILENAME}"',
+            "Cache-Control": "no-store",
+        },
+    )
 
 
 @router.get("/status")

@@ -106,6 +106,8 @@ RUN chmod -R a+rX /app/src/services/sdk_package
 
 # Copy entrypoint script
 COPY api/entrypoint.sh /entrypoint.sh
+COPY assets/ /app/assets/
+RUN chmod -R a+rX /app/assets
 RUN chmod 755 /entrypoint.sh
 
 # Don't switch to bifrost here - entrypoint handles user switching

@@ -7,7 +7,8 @@
 #
 # Two boot modes, auto-detected:
 #   Mode A (netbird): NETBIRD_SETUP_KEY is set in env or ~/.config/bifrost/debug.env.
-#                     Stack reachable only via Netbird peer hostname (no host ports).
+#                     Stack gets a private peer hostname and an ephemeral public
+#                     HTTPS URL through NetBird Peer Expose (no host ports).
 #   Mode B (port):    no key. Client is exposed on a free host port (auto-picked,
 #                     deterministic per worktree). Stack reachable at http://localhost:PORT.
 #
@@ -20,7 +21,7 @@
 #
 # Login (configured via .env.debug + the seed-user provisioning fix):
 #   email:    dev@gobifrost.com
-#   password: password
+#   password: generated per worktree in NetBird mode; password in port mode
 #   MFA:      off
 
 set -euo pipefail
@@ -106,6 +107,163 @@ compute_netbird_hostname() {
     sanitize_hostname "bifrost-debug-${base}"
 }
 
+# Generate one strong password per worktree and retain it across stack and host
+# restarts. NetBird-mode stacks are exposed through a public HTTPS proxy, so the
+# shared dev password must never be used there.
+configure_netbird_public_credentials() {
+    local state_root credential_dir password_file
+    state_root="${XDG_STATE_HOME:-$HOME/.local/state}"
+    credential_dir="$state_root/bifrost/debug/$COMPOSE_PROJECT_NAME"
+    password_file="$credential_dir/admin-password"
+
+    mkdir -p "$credential_dir"
+    chmod 700 "$credential_dir"
+    if [ ! -f "$password_file" ]; then
+        umask 077
+        od -An -N24 -tx1 /dev/urandom | tr -d ' \n' > "$password_file"
+    fi
+    chmod 600 "$password_file"
+    BIFROST_DEFAULT_USER_PASSWORD="$(<"$password_file")"
+    export BIFROST_DEFAULT_USER_PASSWORD
+}
+
+compute_netbird_expose_prefix() {
+    local worktree_hash
+    worktree_hash="${COMPOSE_PROJECT_NAME##*-}"
+    sanitize_hostname "bifrost-$worktree_hash" | cut -c1-32
+}
+
+netbird_container_id() {
+    docker ps -q \
+        --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+        --filter "label=com.docker.compose.service=netbird" 2>/dev/null \
+        | head -1
+}
+
+netbird_public_url() {
+    local cid="$1"
+    docker logs "$cid" 2>&1 \
+        | awk '/^[[:space:]]*URL:[[:space:]]+https:\/\// {url=$2} END {print url}'
+}
+
+service_public_url() {
+    local service="$1" cid
+    cid=$(docker ps -q \
+        --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+        --filter "label=com.docker.compose.service=$service" 2>/dev/null \
+        | head -1)
+    [ -z "$cid" ] && return 0
+    docker inspect "$cid" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
+        | awk -F= '$1 == "BIFROST_PUBLIC_URL" {print substr($0, index($0, "=") + 1); exit}'
+}
+
+service_admin_password() {
+    local service="$1" cid
+    cid=$(docker ps -q \
+        --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+        --filter "label=com.docker.compose.service=$service" 2>/dev/null \
+        | head -1)
+    [ -z "$cid" ] && return 0
+    docker inspect "$cid" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
+        | awk -F= '$1 == "BIFROST_DEFAULT_USER_PASSWORD" {print substr($0, index($0, "=") + 1); exit}'
+}
+
+apply_netbird_secure_credentials() {
+    if [ "$(service_admin_password api)" != "$BIFROST_DEFAULT_USER_PASSWORD" ]; then
+        echo "Applying the generated public-debug credential..."
+        docker compose -f "$COMPOSE_FILE" --profile netbird \
+            up -d --no-deps --force-recreate api
+        wait_for_api_ready "$COMPOSE_FILE" 180
+    fi
+
+    local api_cid
+    api_cid=$(docker ps -q \
+        --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+        --filter "label=com.docker.compose.service=api" 2>/dev/null \
+        | head -1)
+    if ! docker exec "$api_cid" sh -c \
+        'curl -sf -o /dev/null \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            --data-urlencode "username=$BIFROST_DEFAULT_USER_EMAIL" \
+            --data-urlencode "password=$BIFROST_DEFAULT_USER_PASSWORD" \
+            http://localhost:8000/auth/login'; then
+        echo "ERROR: generated debug credential was not accepted; public exposure remains disabled" >&2
+        return 1
+    fi
+}
+
+apply_netbird_public_url() {
+    local public_url="$1" public_host service needs_recreate="false"
+    public_host="${public_url#https://}"
+    public_host="${public_host%%/*}"
+
+    BIFROST_PUBLIC_URL="$public_url"
+    BIFROST_WEBAUTHN_ORIGIN="$public_url"
+    BIFROST_WEBAUTHN_RP_ID="$public_host"
+    export BIFROST_PUBLIC_URL BIFROST_WEBAUTHN_ORIGIN BIFROST_WEBAUTHN_RP_ID
+
+    for service in api scheduler worker; do
+        if [ "$(service_public_url "$service")" != "$public_url" ]; then
+            needs_recreate="true"
+            break
+        fi
+    done
+
+    if [ "$needs_recreate" = "true" ]; then
+        echo "Applying public URL to Bifrost services..."
+        docker compose -f "$COMPOSE_FILE" --profile netbird \
+            up -d --no-deps --force-recreate api
+        wait_for_api_ready "$COMPOSE_FILE" 180
+        docker compose -f "$COMPOSE_FILE" --profile netbird \
+            up -d --no-deps --force-recreate scheduler worker
+    fi
+}
+
+ensure_netbird_public_expose() {
+    local cid entrypoint public_url i
+    apply_netbird_secure_credentials
+    cid="$(netbird_container_id)"
+    entrypoint=""
+    if [ -n "$cid" ]; then
+        entrypoint=$(docker inspect "$cid" --format '{{index .Config.Entrypoint 0}}' 2>/dev/null || true)
+    fi
+
+    if [ -z "$cid" ] || [ "$entrypoint" != "/usr/local/bin/bifrost-netbird-entrypoint.sh" ]; then
+        echo "Starting NetBird peer and ephemeral public proxy..."
+        docker compose -f "$COMPOSE_FILE" --profile netbird \
+            up -d --no-deps --force-recreate netbird
+        for ((i=1; i<=30; i++)); do
+            cid="$(netbird_container_id)"
+            [ -n "$cid" ] && break
+            sleep 1
+        done
+    fi
+
+    if [ -z "$cid" ]; then
+        echo "ERROR: NetBird container did not start" >&2
+        return 1
+    fi
+
+    docker exec "$cid" touch /tmp/bifrost-netbird-expose-ready
+    for ((i=1; i<=90; i++)); do
+        public_url="$(netbird_public_url "$cid")"
+        if [ -n "$public_url" ]; then
+            apply_netbird_public_url "$public_url"
+            return 0
+        fi
+        if ! docker ps -q --filter "id=$cid" | grep -q .; then
+            echo "ERROR: NetBird exited while creating the public proxy" >&2
+            docker logs "$cid" >&2 2>&1 || true
+            return 1
+        fi
+        sleep 1
+    done
+
+    echo "ERROR: NetBird did not issue a public URL within 90 seconds" >&2
+    docker logs "$cid" >&2 2>&1 || true
+    return 1
+}
+
 # Pick a free TCP port deterministically per-worktree.
 # Strategy: hash the project name into the 30000-39999 range, scan forward
 # from there until we find one nothing's listening on.
@@ -168,6 +326,13 @@ cmd_up() {
 
     if stack_is_running; then
         echo "Stack already running."
+        if [ "$(detect_mode)" = "netbird" ]; then
+            configure_netbird_public_credentials
+            NETBIRD_HOSTNAME="${NETBIRD_HOSTNAME:-$(compute_netbird_hostname)}"
+            NETBIRD_EXPOSE_NAME_PREFIX="${NETBIRD_EXPOSE_NAME_PREFIX:-$(compute_netbird_expose_prefix)}"
+            export NETBIRD_HOSTNAME NETBIRD_EXPOSE_NAME_PREFIX
+            ensure_netbird_public_expose
+        fi
         echo ""
         cmd_status
         return 0
@@ -185,12 +350,14 @@ cmd_up() {
     mode="$(detect_mode)"
 
     if [ "$mode" = "netbird" ]; then
+        configure_netbird_public_credentials
         NETBIRD_HOSTNAME="${NETBIRD_HOSTNAME:-$(compute_netbird_hostname)}"
-        export NETBIRD_HOSTNAME
+        NETBIRD_EXPOSE_NAME_PREFIX="${NETBIRD_EXPOSE_NAME_PREFIX:-$(compute_netbird_expose_prefix)}"
+        export NETBIRD_HOSTNAME NETBIRD_EXPOSE_NAME_PREFIX
         echo "Mode:     netbird"
         echo "Hostname: $NETBIRD_HOSTNAME"
-        # Mode A: no host port bound for client; netbird sidecar shares its
-        # network namespace and surfaces the stack on the Netbird mesh.
+        # Mode A: no host port is bound. The sidecar provides both private mesh
+        # access and an ephemeral public HTTPS proxy.
         docker compose -f "$COMPOSE_FILE" --profile netbird up -d --build
     else
         DEBUG_CLIENT_PORT="$(compute_client_port)"
@@ -216,6 +383,10 @@ cmd_up() {
         fi
         sleep 1
     done
+
+    if [ "$mode" = "netbird" ]; then
+        ensure_netbird_public_expose
+    fi
     echo "Stack is up."
     echo ""
     cmd_status
@@ -239,14 +410,22 @@ cmd_status() {
     local nb_cid
     nb_cid=$(docker ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" --filter "label=com.docker.compose.service=netbird" 2>/dev/null | head -1)
     if [ -n "$nb_cid" ]; then
+        configure_netbird_public_credentials
         echo "Mode:     netbird"
         # FQDN comes from `netbird status` once the peer registers (Netbird
         # appends a numeric suffix when the chosen NB_HOSTNAME isn't unique).
         local nb_fqdn
         nb_fqdn=$(docker exec "$nb_cid" netbird status 2>/dev/null \
             | awk -F': ' '/^FQDN:/ {print $2; exit}' | tr -d '\r')
-        if [ -n "$nb_fqdn" ]; then
-            echo "Open:     http://$nb_fqdn"
+        local public_url
+        public_url="$(netbird_public_url "$nb_cid")"
+        if [ -n "$public_url" ]; then
+            echo "Open:     $public_url"
+            if [ -n "$nb_fqdn" ]; then
+                echo "Private:  http://$nb_fqdn"
+            fi
+        elif [ -n "$nb_fqdn" ]; then
+            echo "Open:     http://$nb_fqdn  (public proxy still provisioning)"
         else
             local nb_host
             nb_host=$(docker exec "$nb_cid" sh -c 'echo $NB_HOSTNAME' 2>/dev/null | tr -d '\r')

@@ -6824,6 +6824,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mcp/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Mcp Run Info
+         * @description Return install information for the Bifrost Agent plugin.
+         */
+        get: operations["mcp_run_info_api_mcp_run_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/run/plugin": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download Mcp Run Plugin
+         * @description Download the Bifrost Agent Plugins 1.0 package.
+         */
+        get: operations["download_mcp_run_plugin_api_mcp_run_plugin_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/mcp/status": {
         parameters: {
             query?: never;
@@ -18178,6 +18218,27 @@ export interface components {
             description: string;
             /** Source */
             source: string;
+        };
+        /**
+         * MCPRunInfoResponse
+         * @description Connection information for installing the Bifrost Agent plugin.
+         */
+        MCPRunInfoResponse: {
+            /**
+             * Enabled
+             * @description Whether external MCP access is enabled
+             */
+            enabled: boolean;
+            /**
+             * Mcp Url
+             * @description Public streamable-http MCP endpoint
+             */
+            mcp_url: string;
+            /**
+             * Setup Prompt
+             * @description Prompt for creating a reusable Bifrost skill or agent
+             */
+            setup_prompt: string;
         };
         /**
          * MCPServerCreate
@@ -36857,6 +36918,47 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    mcp_run_info_api_mcp_run_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MCPRunInfoResponse"];
+                };
+            };
+        };
+    };
+    download_mcp_run_plugin_api_mcp_run_plugin_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                    "application/zip": unknown;
                 };
             };
         };

@@ -54,7 +54,7 @@ Use this whenever you need a running Bifrost instance to exercise — clicking a
    ./debug.sh up
    ./debug.sh status
    ```
-   Capture the URL from `./debug.sh status`. Under netbird mode (default when `NETBIRD_SETUP_KEY` is set), the host-reachable URL is the full `http://bifrost-debug-<name>-<n>-<n>.netbird.cloud` form — the short `http://bifrost-debug-<name>` form is only resolvable from inside the mesh. Under port mode, the URL is `http://localhost:<port>`.
+   Capture the `Open:` URL from `./debug.sh status`. Under netbird mode (default when `NETBIRD_SETUP_KEY` is set), this is an ephemeral public HTTPS URL issued by `netbird expose`; `Private:` shows the peer's mesh-only URL. Under port mode, `Open:` is `http://localhost:<port>`.
 
 2. **Connect via the CLI** from an isolated scratch directory outside the repo (not the worktree, not `~`). This keeps `.env`/credentials out of the source tree and lets you install the API-matched CLI without disturbing the user's global `bifrost` install:
    ```bash
@@ -68,9 +68,9 @@ Use this whenever you need a running Bifrost instance to exercise — clicking a
 
 3. **Log in** inside the scratch directory using password-grant. This stores credentials globally under the stack URL and writes only `BIFROST_API_URL` to the scratch directory's `.env`, so subsequent commands there select the correct credentials automatically:
    ```bash
-   ./.venv/bin/bifrost login --url <API_URL> --email dev@gobifrost.com --password password
+   ./.venv/bin/bifrost login --url <API_URL> --email dev@gobifrost.com --password <PASSWORD_FROM_DEBUG_STATUS>
    ```
-   Default credentials are `dev@gobifrost.com` / `password` (MFA off) — password-grant works only because the dev stack has MFA disabled.
+   The default email is `dev@gobifrost.com`; use the password printed by `./debug.sh status`. Netbird-mode stacks generate a strong per-worktree password because they are publicly reachable. Port-mode stacks retain `password`. MFA is disabled for the seeded debug user.
 
 4. **Drive the API** with `./.venv/bin/bifrost <entity> <command> ...`. Use `--help` on any subcommand. Browser testing goes against the URL from step 1.
 
@@ -100,9 +100,9 @@ Start the development stack (per-worktree isolated):
 ./debug.sh logs api    # Follow logs for one service
 ```
 
-`./debug.sh` derives its Compose project name from the worktree path, so multiple worktrees can run debug stacks in parallel. URL and login are printed at the end of `up` (default: `dev@gobifrost.com` / `password`, MFA off).
+`./debug.sh` derives its Compose project name from the worktree path, so multiple worktrees can run debug stacks in parallel. URL and login are printed at the end of `up`. Port mode uses `dev@gobifrost.com` / `password`; Netbird mode uses the same email with a strong generated per-worktree password. MFA is off.
 
-The default mode allocates a free local port for the client (deterministic per worktree, in 30000-39999). If `NETBIRD_SETUP_KEY` is set in `~/.config/bifrost/debug.env`, the stack boots with a Netbird sidecar instead and is reachable at `http://<bifrost-debug-WORKTREE>` over the Netbird mesh — no host ports.
+The default mode allocates a free local port for the client (deterministic per worktree, in 30000-39999). If `NETBIRD_SETUP_KEY` is set in `~/.config/bifrost/debug.env`, the stack boots with a NetBird sidecar that provides both private mesh access and an ephemeral public HTTPS proxy through `netbird expose` — no host ports, durable Admin proxy mapping, or NetBird API key.
 
 **Forcing port mode for browser/Playwright work:** Chrome/Playwright cannot drive netbird stacks (Vite HMR websocket hangs). If your `~/.config/bifrost/debug.env` has `NETBIRD_SETUP_KEY`, run `BIFROST_FORCE_PORT=1 ./debug.sh up` to force port mode for that boot without editing the global config. `env -u NETBIRD_SETUP_KEY ./debug.sh up` does **not** work — `debug.sh` re-sources the global `debug.env` under `set -a`, re-introducing the key.
 
