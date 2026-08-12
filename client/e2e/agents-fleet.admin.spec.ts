@@ -6,9 +6,50 @@
  * Phase 5 visual review pass.
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/api-fixture";
 
 test.describe("Agents Fleet Page (admin)", () => {
+	test("hides inactive agents until Show inactive is enabled", async ({
+		page,
+		api,
+	}) => {
+		const name = `Inactive Fleet Agent ${Date.now()}`;
+		const createResponse = await api.post("/api/agents", {
+			data: {
+				name,
+				system_prompt:
+					"You are an inactive fleet visibility test agent.",
+				access_level: "authenticated",
+			},
+		});
+		expect(createResponse.ok(), await createResponse.text()).toBe(true);
+		const agent = await createResponse.json();
+
+		try {
+			const deactivateResponse = await api.put(
+				`/api/agents/${agent.id}`,
+				{
+					data: { is_active: false },
+				},
+			);
+			expect(
+				deactivateResponse.ok(),
+				await deactivateResponse.text(),
+			).toBe(true);
+
+			await page.goto("/agents");
+			await expect(
+				page.getByRole("heading", { name: /agents/i }).first(),
+			).toBeVisible({ timeout: 10000 });
+			await expect(page.getByText(name)).toHaveCount(0);
+
+			await page.getByRole("switch", { name: /show inactive/i }).click();
+			await expect(page.getByText(name)).toBeVisible();
+		} finally {
+			await api.delete(`/api/agents/${agent.id}`);
+		}
+	});
+
 	test("displays fleet stats and agent cards", async ({ page }) => {
 		await page.goto("/agents");
 
@@ -54,9 +95,7 @@ test.describe("Agents Fleet Page (admin)", () => {
 			// match your search" when there were agents, or "No agents yet"
 			// when the fleet was empty to begin with).
 			await expect(
-				page
-					.getByRole("heading", { name: /no agents/i })
-					.first(),
+				page.getByRole("heading", { name: /no agents/i }).first(),
 			).toBeVisible({ timeout: 5000 });
 		}
 	});

@@ -13,6 +13,7 @@ from uuid import uuid4
 from fastmcp.tools import ToolResult
 
 from src.services.mcp_server.tool_result import error_result, success_result
+from src.services.mcp_server.tools._http_bridge import call_rest
 from src.services.mcp_server.tools.db import get_tool_db
 
 # MCPContext is imported where needed to avoid circular imports
@@ -59,7 +60,7 @@ async def get_agent_schema(context: Any) -> ToolResult:  # noqa: ARG001
 - `get_agent` - Get agent details by ID or name
 - `create_agent` - Create a new agent
 - `update_agent` - Update agent properties
-- `delete_agent` - Soft-delete an agent (deactivate)
+- `delete_agent` - Permanently delete an agent
 """
 
     schema_doc = model_docs + channels_doc
@@ -627,7 +628,7 @@ async def delete_agent(
     context: Any,
     agent_id: str,
 ) -> ToolResult:
-    """Delete an agent (soft delete).
+    """Permanently delete an agent through the canonical REST endpoint.
 
     Args:
         context: MCP context with user permissions
@@ -636,69 +637,31 @@ async def delete_agent(
     Returns:
         ToolResult with deletion confirmation
     """
-    from sqlalchemy import select
-
-    from src.models.orm import Agent
-
     logger.info(f"MCP delete_agent called: agent_id={agent_id}")
 
     if not agent_id:
         return error_result("agent_id is required")
 
-    # Validate agent_id is a valid UUID
     try:
         uuid_id = UUID(agent_id)
     except ValueError:
         return error_result(f"'{agent_id}' is not a valid UUID")
 
-    try:
-        async with get_tool_db(context) as db:
-            result = await db.execute(
-                select(Agent).where(Agent.id == uuid_id)
-            )
-            agent = result.scalar_one_or_none()
+    status_code, body = await call_rest(
+        context,
+        "DELETE",
+        f"/api/agents/{uuid_id}",
+    )
+    if status_code != 204:
+        return error_result(
+            f"delete_agent failed: HTTP {status_code}",
+            {"body": body},
+        )
 
-            if not agent:
-                return error_result(f"Agent '{agent_id}' not found. Use list_agents to see available agents.")
-
-            # Solution-managed agents are read-only (criterion 6). Refuse BEFORE
-            # mutating so the caller gets the clean locked message instead of the
-            # before_flush backstop raising a 500 (audit M-MCP).
-            from src.services.solutions.guard import (
-                SOLUTION_MANAGED_MESSAGE,
-                is_solution_managed,
-            )
-
-            if is_solution_managed(agent):
-                return error_result(SOLUTION_MANAGED_MESSAGE)
-
-            # Check access for non-admins
-            if not context.is_platform_admin:
-                if agent.organization_id:
-                    if context.org_id and str(agent.organization_id) != str(context.org_id):
-                        return error_result("You don't have permission to delete this agent.")
-                # Global agents can only be deleted by admins
-                if agent.organization_id is None:
-                    return error_result("Only platform admins can delete global agents.")
-
-            # Soft delete
-            agent.is_active = False
-            agent.updated_at = datetime.now(timezone.utc)
-            await db.flush()
-
-            logger.info(f"Deleted (soft) agent {agent.id}: {agent.name}")
-
-            display_text = f"Deleted agent: {agent.name}"
-            return success_result(display_text, {
-                "success": True,
-                "id": str(agent.id),
-                "name": agent.name,
-                "message": f"Agent '{agent.name}' has been deactivated.",
-            })
-
-    except Exception as e:
-        logger.exception(f"Error deleting agent via MCP: {e}")
-        return error_result(f"Error deleting agent: {str(e)}")
+    return success_result(
+        f"Deleted agent {uuid_id}",
+        {"deleted": str(uuid_id)},
+    )
 
 
 # Tool metadata for registration
@@ -707,7 +670,7 @@ TOOLS = [
     ("get_agent", "Get Agent", "Get detailed information about a specific agent including assigned tools and delegation targets."),
     ("create_agent", "Create Agent", "Create a new AI agent with system prompt and configuration."),
     ("update_agent", "Update Agent", "Update an existing agent's properties."),
-    ("delete_agent", "Delete Agent", "Delete an agent (soft delete - sets is_active to false)."),
+    ("delete_agent", "Delete Agent", "Permanently delete an agent."),
 ]
 
 

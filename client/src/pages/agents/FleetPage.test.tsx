@@ -15,7 +15,10 @@ import { fireEvent, renderWithProviders, screen, within } from "@/test-utils";
 
 const mockUseAgents = vi.fn();
 vi.mock("@/hooks/useAgents", () => ({
-	useAgents: () => mockUseAgents(),
+	useAgents: (
+		filterScope?: string | null,
+		options?: { includeInactive?: boolean },
+	) => mockUseAgents(filterScope, options),
 }));
 
 const mockUseAgentStats = vi.fn();
@@ -124,7 +127,9 @@ describe("FleetPage — header + fleet stats", () => {
 			isLoading: false,
 		});
 		await renderPage();
-		expect(screen.getByTestId("mobile-fleet-metrics")).toHaveClass("md:hidden");
+		expect(screen.getByTestId("mobile-fleet-metrics")).toHaveClass(
+			"md:hidden",
+		);
 		expect(screen.getByTestId("desktop-fleet-stats")).toHaveClass(
 			"hidden",
 			"md:grid",
@@ -169,6 +174,21 @@ describe("FleetPage — header + fleet stats", () => {
 });
 
 describe("FleetPage — agent cards (grid)", () => {
+	it("hides inactive agents by default and includes them when requested", async () => {
+		const { user } = await renderPage();
+
+		expect(mockUseAgents).toHaveBeenLastCalledWith(undefined, {
+			includeInactive: false,
+		});
+
+		const toggle = screen.getByRole("switch", { name: /show inactive/i });
+		await user.click(toggle);
+
+		expect(mockUseAgents).toHaveBeenLastCalledWith(undefined, {
+			includeInactive: true,
+		});
+	});
+
 	it("renders one card per agent in grid view by default", async () => {
 		mockUseAgents.mockReturnValue({
 			data: [
@@ -295,7 +315,10 @@ describe("FleetPage — agent MCP URL copy badge", () => {
 		});
 		await renderPage();
 		const badge = screen.getByTestId("agent-mcp-copy");
-		const event = new MouseEvent("click", { bubbles: true, cancelable: true });
+		const event = new MouseEvent("click", {
+			bubbles: true,
+			cancelable: true,
+		});
 		badge.dispatchEvent(event);
 		expect(writeText).toHaveBeenCalledTimes(1);
 		expect(event.defaultPrevented).toBe(true);

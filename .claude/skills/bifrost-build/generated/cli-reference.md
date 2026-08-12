@@ -15,9 +15,9 @@ Options:
 
 Commands:
   create  Create a new agent.
-  delete  Soft-delete an agent.
+  delete  Permanently delete an agent.
   get     Get a single agent by UUID or name.
-  list    List all agents.
+  list    List active agents by default.
   update  Update an agent.
 ```
 
@@ -73,7 +73,7 @@ Options:
 ```
 Usage: agents delete [OPTIONS] REF
 
-  Soft-delete an agent.
+  Permanently delete an agent.
 
   ``REF`` is a UUID or agent name. The server returns ``204 No Content`` on
   success; the CLI reports the resolved UUID.
@@ -100,11 +100,12 @@ Options:
 ```
 Usage: agents list [OPTIONS]
 
-  List all agents.
+  List active agents by default.
 
 Options:
-  --json  Emit JSON instead of human-readable output.
-  --help  Show this message and exit.
+  --include-inactive  Include inactive agents.
+  --json              Emit JSON instead of human-readable output.
+  --help              Show this message and exit.
 ```
 
 ### `agents update`

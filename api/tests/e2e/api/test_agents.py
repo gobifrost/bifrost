@@ -5,8 +5,13 @@ Tests agent CRUD operations and role assignment.
 """
 
 import logging
+from uuid import UUID, uuid4
 
 import pytest
+from sqlalchemy import func, select
+
+from src.models.orm.agents import Agent
+from src.models.orm.agent_runs import AgentRun
 
 logger = logging.getLogger(__name__)
 
@@ -99,20 +104,73 @@ class TestAgentsCRUD:
         platform_admin,
         test_agent,
     ):
-        """Test soft deleting an agent."""
+        """Test permanently deleting an agent."""
         response = e2e_client.delete(
             f"/api/agents/{test_agent['id']}",
             headers=platform_admin.headers,
         )
         assert response.status_code == 204
 
-        # Verify it's inactive
+        # Verify the row no longer exists.
         response = e2e_client.get(
             f"/api/agents/{test_agent['id']}",
             headers=platform_admin.headers,
         )
-        assert response.status_code == 200
-        assert response.json()["is_active"] is False
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_delete_agent_removes_run_history(
+        self,
+        e2e_client,
+        platform_admin,
+        db_session,
+    ):
+        """Permanent deletion cascades through the agent's run history."""
+        create_response = e2e_client.post(
+            "/api/agents",
+            json={
+                "name": f"Delete Cascade {uuid4().hex[:8]}",
+                "system_prompt": "You are a deletion cascade test agent.",
+                "access_level": "authenticated",
+            },
+            headers=platform_admin.headers,
+        )
+        assert create_response.status_code == 201, create_response.text
+        agent_id = UUID(create_response.json()["id"])
+
+        db_session.add(
+            AgentRun(
+                agent_id=agent_id,
+                trigger_type="test",
+                status="completed",
+                iterations_used=1,
+                tokens_used=10,
+            )
+        )
+        await db_session.commit()
+
+        try:
+            delete_response = e2e_client.delete(
+                f"/api/agents/{agent_id}",
+                headers=platform_admin.headers,
+            )
+            assert delete_response.status_code == 204, delete_response.text
+
+            agent_count = await db_session.scalar(
+                select(func.count()).select_from(Agent).where(Agent.id == agent_id)
+            )
+            run_count = await db_session.scalar(
+                select(func.count())
+                .select_from(AgentRun)
+                .where(AgentRun.agent_id == agent_id)
+            )
+            assert agent_count == 0
+            assert run_count == 0
+        finally:
+            e2e_client.delete(
+                f"/api/agents/{agent_id}",
+                headers=platform_admin.headers,
+            )
 
     def test_list_agents_excludes_inactive_by_default(
         self,
@@ -121,9 +179,10 @@ class TestAgentsCRUD:
         test_agent,
     ):
         """Test that inactive agents are excluded from list by default."""
-        # First delete the agent
-        e2e_client.delete(
+        # First deactivate the agent without deleting it.
+        e2e_client.put(
             f"/api/agents/{test_agent['id']}",
+            json={"is_active": False},
             headers=platform_admin.headers,
         )
 

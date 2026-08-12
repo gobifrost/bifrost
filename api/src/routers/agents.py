@@ -846,7 +846,7 @@ async def delete_agent(
     db: DbSession,
     user: CurrentActiveUser,
 ) -> None:
-    """Soft delete an agent. Admins can delete any agent. Users can delete their own private agents.
+    """Permanently delete an agent. Admins can delete any agent. Users can delete their own private agents.
 
     System agents can be deleted - they will be recreated on next startup
     if they are still defined in the system agent definitions.
@@ -871,9 +871,9 @@ async def delete_agent(
         if agent.owner_user_id != user.user_id:
             raise HTTPException(403, "You can only delete your own private agents")
 
-    # Soft delete
-    agent.is_active = False
-    agent.updated_at = datetime.now(timezone.utc)
+    # Use a SQL DELETE so database-level cascades remove run history and agent
+    # memberships while SET NULL references (such as conversations) are preserved.
+    await db.execute(delete(Agent).where(Agent.id == agent_id))
     await db.flush()
 
 

@@ -133,17 +133,25 @@ _UPDATE_FLAGS = build_cli_flags(
 
 
 @agents_group.command("list")
+@click.option(
+    "--include-inactive",
+    is_flag=True,
+    default=False,
+    help="Include inactive agents.",
+)
 @click.pass_context
 @pass_resolver
 @run_async
 async def list_agents(
     ctx: click.Context,
+    include_inactive: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,  # noqa: ARG001 - kept for signature parity
 ) -> None:
-    """List all agents."""
-    response = await client.get("/api/agents")
+    """List active agents by default."""
+    params = {"active_only": False} if include_inactive else None
+    response = await client.get("/api/agents", params=params)
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
 
@@ -287,7 +295,7 @@ async def delete_agent(
     client: BifrostClient,
     resolver: RefResolver,
 ) -> None:
-    """Soft-delete an agent.
+    """Permanently delete an agent.
 
     ``REF`` is a UUID or agent name. The server returns ``204 No Content``
     on success; the CLI reports the resolved UUID.

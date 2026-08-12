@@ -578,8 +578,6 @@ async def test_mcp_update_form_refuses_managed_without_deleting_fields(db_sessio
 
 
 async def test_mcp_delete_agent_refuses_managed(db_session, monkeypatch):
-    from contextlib import asynccontextmanager
-
     from sqlalchemy import select
 
     from src.models.orm.agents import Agent
@@ -587,18 +585,19 @@ async def test_mcp_delete_agent_refuses_managed(db_session, monkeypatch):
 
     aid, _wf = await _managed_agent_with_tool(db_session)
 
-    @asynccontextmanager
-    async def _fake_tool_db(_context):
-        yield db_session
+    async def _fake_call_rest(_context, method, path):
+        assert method == "DELETE"
+        assert path == f"/api/agents/{aid}"
+        return 409, {"detail": SOLUTION_MANAGED_MESSAGE}
 
-    monkeypatch.setattr(mcp_agents, "get_tool_db", _fake_tool_db)
+    monkeypatch.setattr(mcp_agents, "call_rest", _fake_call_rest)
 
     context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
     result = await mcp_agents.delete_agent(context, agent_id=str(aid))
 
     text = str(result.model_dump() if hasattr(result, "model_dump") else result)
     assert SOLUTION_MANAGED_MESSAGE in text, text
-    # The agent is still active — the soft-delete never ran.
+    # The canonical REST endpoint refused the delete, so the agent is unchanged.
     is_active = (await db_session.execute(
         select(Agent.is_active).where(Agent.id == aid)
     )).scalar_one()

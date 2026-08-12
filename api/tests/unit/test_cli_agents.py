@@ -16,7 +16,7 @@ from bifrost.commands.agents import agents_group
 class _FakeClient:
     """Minimal async client for agents CLI unit tests."""
 
-    def __init__(self, *, put_body: dict[str, Any]) -> None:
+    def __init__(self, *, put_body: Any) -> None:
         self.api_url = "http://test.local"
         self._access_token = "test-token"
         self.calls: list[tuple[str, str, dict[str, Any] | None]] = []
@@ -30,8 +30,13 @@ class _FakeClient:
         self.calls.append(("PUT", path, json))
         return self._response("PUT", path, self._put_body)
 
-    async def get(self, path: str) -> httpx.Response:
-        self.calls.append(("GET", path, None))
+    async def get(
+        self,
+        path: str,
+        *,
+        params: dict[str, Any] | None = None,
+    ) -> httpx.Response:
+        self.calls.append(("GET", path, params))
         return self._response("GET", path, self._put_body)
 
 
@@ -70,3 +75,15 @@ def test_update_tool_ids_fails_when_persisted_ids_differ(_patch_client) -> None:
     assert "tool_ids" in result.output
     assert "did not persist" in result.output
     assert fake.calls[0] == ("PUT", f"/api/agents/{agent_id}", {"tool_ids": [tool_id]})
+
+
+def test_list_include_inactive_requests_all_agents(_patch_client) -> None:
+    fake = _patch_client(_FakeClient(put_body=[]))
+
+    result = CliRunner().invoke(
+        agents_group,
+        ["--json", "list", "--include-inactive"],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert fake.calls == [("GET", "/api/agents", {"active_only": False})]

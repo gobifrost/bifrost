@@ -6,8 +6,8 @@ Covers the CRUD surface from Task 5e of the CLI mutation surface plan:
   new agent with the prompt loaded from disk.
 * ``bifrost agents update <ref> --llm-model ...`` — PUTs (the audit
   correction — **not** PATCH) by UUID or name ref.
-* ``bifrost agents delete <ref>`` — soft-deletes the agent; subsequent
-  fetches via the admin API return 404 / mark the record inactive.
+* ``bifrost agents update <ref> --no-is-active`` — deactivates the agent.
+* ``bifrost agents delete <ref>`` — permanently deletes the agent.
 
 The commands are invoked via :class:`click.testing.CliRunner` against the
 real API stack. ``BifrostClient.get_instance`` is patched via the thread-
@@ -136,21 +136,40 @@ class TestCliAgents:
         # The unrelated prompt should be left untouched (default-omit for unset flags).
         assert updated["system_prompt"] == prompt_text
 
+        # --- deactivate and reactivate (existing DTO-generated CLI flags) ---
+        deactivate_result = _invoke(
+            ["--json", "update", created_id, "--no-is-active"]
+        )
+        assert deactivate_result.exit_code == 0, deactivate_result.output
+        assert json.loads(deactivate_result.output)["is_active"] is False
+
+        default_list_result = _invoke(["--json", "list"])
+        assert default_list_result.exit_code == 0, default_list_result.output
+        default_ids = {str(a["id"]) for a in json.loads(default_list_result.output)}
+        assert created_id not in default_ids
+
+        all_list_result = _invoke(["--json", "list", "--include-inactive"])
+        assert all_list_result.exit_code == 0, all_list_result.output
+        all_ids = {str(a["id"]) for a in json.loads(all_list_result.output)}
+        assert created_id in all_ids
+
+        reactivate_result = _invoke(
+            ["--json", "update", created_id, "--is-active"]
+        )
+        assert reactivate_result.exit_code == 0, reactivate_result.output
+        assert json.loads(reactivate_result.output)["is_active"] is True
+
         # --- delete (by UUID — exercise the pass-through path) ---
         delete_result = _invoke(["--json", "delete", created_id])
         assert delete_result.exit_code == 0, delete_result.output
         deleted_payload = json.loads(delete_result.output)
         assert deleted_payload["deleted"] == created_id
 
-        # Confirm the soft-delete: admin list filters inactive agents by default.
-        list_resp = e2e_client.get(
-            "/api/agents", headers=platform_admin.headers
+        # Confirm permanent deletion rather than another deactivation.
+        get_deleted_resp = e2e_client.get(
+            f"/api/agents/{created_id}", headers=platform_admin.headers
         )
-        assert list_resp.status_code == 200
-        active_ids = {str(a["id"]) for a in list_resp.json()}
-        assert created_id not in active_ids, (
-            f"Agent {created_id} should be absent from active list after delete"
-        )
+        assert get_deleted_resp.status_code == 404
 
     def test_update_tool_ids_persists_exact_set(
         self,
