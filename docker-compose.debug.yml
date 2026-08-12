@@ -95,6 +95,24 @@ services:
     volumes:
       - seaweedfs_data:/data
 
+  # Deterministic external-provider stand-ins used by `./debug.sh fixtures`.
+  # They exercise real HTTP token refresh and real Git clone code paths without
+  # requiring a developer to connect a live OAuth account or remote repository.
+  scheduler-fixtures:
+    build:
+      context: .
+      dockerfile: api/Dockerfile.dev
+      args:
+        BIFROST_VERSION: ${BIFROST_VERSION:-debug}
+    command: ["python", "/app/scripts/scheduler_fixture_server.py"]
+    volumes:
+      - ./api/scripts:/app/scripts:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+
   init:
     build:
       context: .
@@ -227,6 +245,11 @@ services:
         condition: service_healthy
       api:
         condition: service_healthy
+      scheduler-fixtures:
+        condition: service_healthy
+    # Keep cgroup admission and Diagnostics representative in debug. Override
+    # upward when exercising a job with a larger declared headroom.
+    mem_limit: ${SCHEDULER_MEMORY_LIMIT:-1g}
     user: root
     command: >
       watchmedo auto-restart --directory=/app/src --directory=/app/shared

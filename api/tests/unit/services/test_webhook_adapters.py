@@ -7,10 +7,14 @@ request handling logic.
 
 import hashlib
 import hmac
+from datetime import datetime, timezone
+from types import SimpleNamespace
 
 import pytest
 
 from src.services.webhooks.adapters.generic import GenericWebhookAdapter
+from src.services.webhooks.adapters.local_fixture import LocalFixtureWebhookAdapter
+from src.services.webhooks import registry as webhook_registry
 from src.services.webhooks.protocol import Deliver, Rejected, WebhookAdapter, WebhookRequest
 
 
@@ -32,6 +36,51 @@ def _make_request(
         body=body,
         query_params={},
     )
+
+
+@pytest.mark.asyncio
+async def test_local_fixture_adapter_renews_deterministically():
+    adapter = LocalFixtureWebhookAdapter()
+
+    result = await adapter.renew(
+        external_id="local-scheduler-fixture",
+        state={"renewal_count": 2},
+        integration=None,
+    )
+
+    assert result is not None
+    assert result.state == {"renewal_count": 3}
+    assert result.expires_at is not None
+    assert result.expires_at > datetime.now(timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_local_fixture_adapter_rejects_unknown_subscription():
+    adapter = LocalFixtureWebhookAdapter()
+
+    result = await adapter.renew(
+        external_id="not-the-fixture",
+        state={},
+        integration=None,
+    )
+
+    assert result is None
+
+
+def test_local_fixture_adapter_is_registered_only_outside_production(monkeypatch):
+    monkeypatch.setattr(
+        webhook_registry,
+        "get_settings",
+        lambda: SimpleNamespace(environment="development"),
+    )
+    assert webhook_registry.AdapterRegistry().get("local_fixture") is not None
+
+    monkeypatch.setattr(
+        webhook_registry,
+        "get_settings",
+        lambda: SimpleNamespace(environment="production"),
+    )
+    assert webhook_registry.AdapterRegistry().get("local_fixture") is None
 
 
 # =============================================================================

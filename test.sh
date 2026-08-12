@@ -51,11 +51,23 @@ mkdir -p "$LOG_DIR"
 mkdir -p "$LOG_DIR/solution-repo-fixtures"
 export LOG_DIR
 
-# Load .env.test for optional secrets (GitHub PAT, LLM keys, etc.)
-if [ -f ".env.test" ]; then
+# Load .env.test for optional secrets (GitHub PAT, LLM keys, etc.). Since the
+# file is intentionally ignored, linked worktrees do not receive it from Git;
+# fall back to the primary checkout's copy when the worktree has none.
+BIFROST_TEST_ENV_FILE="$SCRIPT_DIR/.env.test"
+if [ ! -f "$BIFROST_TEST_ENV_FILE" ]; then
+    BIFROST_COMMON_GIT_DIR="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+    if [ -n "$BIFROST_COMMON_GIT_DIR" ]; then
+        BIFROST_PRIMARY_TEST_ENV_FILE="$(dirname "$BIFROST_COMMON_GIT_DIR")/.env.test"
+        if [ -f "$BIFROST_PRIMARY_TEST_ENV_FILE" ]; then
+            BIFROST_TEST_ENV_FILE="$BIFROST_PRIMARY_TEST_ENV_FILE"
+        fi
+    fi
+fi
+if [ -f "$BIFROST_TEST_ENV_FILE" ]; then
     set -a
     # shellcheck disable=SC1091
-    source .env.test
+    source "$BIFROST_TEST_ENV_FILE"
     set +a
 fi
 
@@ -109,7 +121,8 @@ reset_state() {
 
     docker compose -f "$COMPOSE_FILE" start pgbouncer > /dev/null
     wait_for_service "$COMPOSE_FILE" pgbouncer pg_isready -h localhost -p 5432 -U bifrost
-    docker compose -f "$COMPOSE_FILE" --profile e2e start api worker scheduler > /dev/null
+    docker compose -f "$COMPOSE_FILE" --profile e2e start \
+        api worker scheduler scheduler-fixtures > /dev/null
     wait_for_api_ready "$COMPOSE_FILE"
 
     echo "State reset complete."

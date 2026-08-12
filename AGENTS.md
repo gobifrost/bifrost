@@ -286,6 +286,10 @@ export async function getDataProviders() {
 
 -   **Tests**: All work requires tests. Backend logic → unit tests in `api/tests/unit/`. Endpoint/workflow/integration changes → e2e tests in `api/tests/e2e/`. React components → sibling `*.test.tsx` (vitest). User-facing features → happy-path spec in `client/e2e/` (Playwright).
     -   **Functional frontend modules require vitest coverage.** New or modified `.ts` files under `client/src/lib/**` and `client/src/services/**` that export functions (auth helpers, storage adapters, API wrappers, formatters, etc.) need a sibling `*.test.ts` covering the public API. Pure type/constant re-export files and files that only import and re-configure third-party SDKs are exempt. If the module has a cross-tab, cross-window, or storage-boundary concern (like `auth-token.ts`), the test MUST exercise that boundary — a regression that only reproduces with two tabs open is one a future refactor will silently re-introduce otherwise.
+    -   **Scoped verification is the local default.** Run the tests that directly exercise the changed behavior, its known consumers, and any affected contract boundaries. Full backend, Vitest, and Playwright suites are broad integration-gate checks, not a routine local completion requirement. Until every suite is wired into that gate, targeted coverage for changed behavior remains mandatory; never assume an unrun suite is covered elsewhere. Report exactly what ran and which broader suites did not run.
+    -   **A known failure must receive a durable disposition.** If a broader local or CI run finds a failure outside the scoped set, determine whether it is a regression, product race, leaked state, harness defect, overcomplicated test, or obsolete coverage. Fix the cause, simplify the test, or delete genuinely redundant coverage with a documented replacement. "Unrelated" or "flaky" alone is not a disposition.
+    -   **Never rerun until green or mask instability.** Do not add retries, longer timeouts, `skip`, or `xfail`. Reproduce the exposing condition, fix the hypothesized cause, then use repetition only to validate the fix. See `.claude/skills/bifrost-testing/SKILL.md` for the full protocol.
+    -   **Prefer simple, durable tests.** Keep one observable contract per test, minimal fixtures, deterministic state, explicit cleanup, and only one useful end-to-end happy path. Move edge cases down to unit/component tests; complexity is not evidence of rigor.
     -   **IMPORTANT**: Always use `./test.sh` — it manages the Dockerized test stack (PostgreSQL, Redis, RabbitMQ, SeaweedFS, API, worker). Running pytest directly on the host will FAIL for anything touching DB/queue/cache.
     -   **Stack lifecycle is separate from test execution.** Boot once per worktree, run tests many times. See the Commands section below.
     -   **Test results**: `./test.sh` writes JUnit XML to `/tmp/bifrost/test-results.xml` — parse this for pass/fail details instead of grepping stdout.
@@ -374,33 +378,24 @@ export async function getDataProviders() {
 
 ## Pre-Completion Verification (REQUIRED)
 
-Before marking any significant work complete, run this verification sequence:
+Before marking work complete, select verification from the actual change surface. The examples below are choices, not a command list to run wholesale:
 
 ```bash
-# 1. Ensure debug stack is running for THIS worktree
+# Backend source changed
+./test.sh quality api
+./test.sh tests/unit/test_relevant_behavior.py -v
+./test.sh tests/e2e/path/test_relevant_boundary.py -v  # when a live boundary changed
+
+# Client source changed
+(cd client && npm run tsc && npm run lint)
+./test.sh client unit src/path/RelevantComponent.test.tsx
+./test.sh client e2e e2e/relevant-flow.admin.spec.ts  # when a user journey changed
+
+# API contract changed: regenerate types against this worktree's running debug stack
 ./debug.sh status | grep -q "Status:   UP" || ./debug.sh up
-
-# 2. Backend checks
-./test.sh quality api       # Dockerized pyright + ruff; must pass with 0 errors
-
-# 3. Regenerate frontend types (from client/ directory)
-cd client
-npm run generate:types     # Requires debug stack up. If client is bound to a non-default port,
-                           # set OPENAPI_URL=http://localhost:<port>/openapi.json (see ./debug.sh status).
-
-# 4. Frontend checks
-npm run tsc                # Type checking - must pass
-npm run lint               # Linting - must pass
-
-# 5. Run tests
-cd ..
-./test.sh stack up         # boot if not already up (per-worktree)
-./test.sh all              # backend unit + e2e
-./test.sh client unit      # vitest component tests
-./test.sh client e2e       # Playwright E2E (skip if no UI changes)
+(cd client && npm run generate:types)
 ```
 
-**This is mandatory for any changes that touch:**
-- Backend API endpoints or models
-- Frontend components or hooks
-- Database schema or migrations
+The selected tests must cover the changed behavior, known consumers, and contract tripwires. Do not run `./test.sh all`, the full Vitest suite, or the full Playwright suite by default; use them when explicitly requested, when reproducing a broad CI failure, or when no honest bounded selection exists for a cross-cutting change.
+
+In the final handoff, list the exact checks and tests run, state which broader suites were not run, and disclose any known failure. A known out-of-scope failure must be permanently fixed in the current change or split into a dedicated blocking repair change; it cannot be waived as flaky or left as an unowned follow-up.

@@ -9,11 +9,11 @@ Workflow for running and writing tests in Bifrost. Covers: stack lifecycle, whic
 
 ## Hard Rules (Non-Negotiable)
 
-1. **Never leave tests failing.** A red test means work is not done. Fix the test or fix the code under test. Never commit or claim completion with failing tests.
+1. **Never wave away a known failure.** Every test selected for the change must pass. A failure discovered by a broader local or CI run must receive a durable disposition under "Known failures outside the scoped run" below; "unrelated" and "flaky" are diagnoses to investigate, not permission to ignore it.
 
 2. **Never skip tests as a shortcut.** No `@pytest.mark.skip`, `pytest.skip()`, `test.skip()`, `test.only()`, `it.skip()`, `xfail`, or commenting a test out to silence it. A skipped test must be either **fixed** or **deleted** — and delete only if the test is genuinely no longer useful (feature removed, behavior moved, truly redundant). "I'll come back to it" is not a valid reason to skip.
 
-3. **Flaky ≠ add retries.** Per the user's memory on flaky tests (`feedback_flaky_tests.md`), E2E flakes are always state pollution from a prior test. Find the dirty state. Do not add retries, do not increase timeouts, do not re-run until green.
+3. **Flaky is a symptom, not a disposition.** Intermittent failures have previously exposed real product races as well as leaked test state. Find the cause. Do not add retries, increase timeouts, or re-run until green.
 
 4. **No silencing.** If a test is noisy, fix the source or delete the test. Don't filter output, don't swallow the failure.
 
@@ -62,16 +62,20 @@ If `DOWN` → `./test.sh stack up`. Each worktree runs its own isolated stack (C
 - Backend with live services → `./test.sh e2e` (or `./test.sh tests/e2e/test_foo.py -v`)
 - React component behavior → `./test.sh client unit` (vitest on host, no stack needed)
 - Full user flow through UI → `./test.sh client e2e`
-- Everything (like CI) → `./test.sh all` (backend) + `./test.sh client unit` + `./test.sh client e2e`
+- All available suites (manual broad run) → `./test.sh all` (backend) + `./test.sh client unit` + `./test.sh client e2e`
 
 State is auto-reset before every test subcommand. If migrations changed, run `./test.sh stack reset` once — that rebuilds the template DB.
 
-### 3. Before declaring done
+### 3. Before declaring done: scoped verification
 
-Run the broader suite to catch regressions outside your targeted area:
+Run the smallest test set that gives direct evidence for the change:
 
-- Backend change → `./test.sh all`
-- UI change → `./test.sh client unit && ./test.sh client e2e`
+- The tests added or changed with the implementation.
+- Existing tests for the changed behavior and its known consumers or contracts.
+- The relevant contract tripwires when DTOs, CLI/MCP surfaces, manifests, permissions, storage, scheduling, or other shared boundaries change.
+- One targeted live-service or Playwright happy path when the behavior crosses that boundary.
+
+The full backend, Vitest, and Playwright suites are **not** a default local completion requirement. They are broad integration-gate checks unless the user explicitly requests them or the change is so cross-cutting that no honest bounded selection exists. Until every broad suite is wired into that gate, targeted coverage for changed behavior remains mandatory; never assume an unrun suite is covered elsewhere. In the handoff, list the exact commands run and any broader suites not run. Never imply unrun suites are green.
 
 Verify the authoring rules above are satisfied for any new code.
 
@@ -87,20 +91,32 @@ Verify the authoring rules above are satisfied for any new code.
 
 **Skip when:** bugfixes, backend changes, routine pre-merge sanity checks. Most runs do not need a UX review.
 
-### 5. Flaky / failing tests
+### 5. Known failures outside the scoped run
 
-Before anything else, read the user's memory on this: flaky E2E tests are always **state pollution** from a prior test, not resource saturation. Do not add retries or raise timeouts.
+A scoped change may be complete without running every suite. If a broader local run or CI later finds another failure, however, the failure becomes owned work and must be classified from evidence:
+
+1. Capture the exact failure, logs, and test order or concurrency conditions. Do not start with blind reruns.
+2. Run the failing test alone, then reproduce the condition that exposed it (for example, after a suspected neighbor or under the relevant concurrency). A pass in isolation does not prove the failure is harmless.
+3. Choose a permanent outcome:
+   - **Regression caused by the change:** fix the product and add or strengthen the scoped regression test.
+   - **Real product race or nondeterminism:** fix the product boundary and preserve a deterministic regression test.
+   - **Leaked test state or harness defect:** make the test own its cleanup or fix isolation at the narrowest safe layer.
+   - **Overcomplicated or duplicated test:** simplify it to one stable contract, move edge cases to unit/component tests, and retain at most the useful end-to-end happy path.
+   - **Obsolete or redundant signal:** delete the test and document which remaining test covers the behavior, or why the behavior no longer matters.
+4. Validate the fix under the condition that previously failed. Repetition is acceptable after a hypothesized fix to demonstrate stability; it is not acceptable as a way to fish for a green run.
+
+If the repair is bounded, make it in the current change. If it is substantial and unrelated, split it into a dedicated blocking repair change rather than expanding the feature indefinitely. The scoped feature can be reported as implemented, but it must not be merged through a red required gate and the failure must not be left as an unowned follow-up.
 
 Diagnostics:
 - Logs per service: `/tmp/bifrost-<project-name>/*.log` (per-worktree).
 - JUnit: `/tmp/bifrost/test-results.xml`.
 - To isolate a test, run it alone: `./test.sh tests/e2e/path/test_foo.py::TestClass::test_method -v`.
 
-If a test is genuinely broken:
-- Fix it, or
-- Delete it (and document why in the commit message).
+### 6. Prefer simple tests
 
-No third option.
+Test complexity is a liability, not evidence of rigor. Prefer one observable contract, minimal fixtures, deterministic state, explicit cleanup, and the lowest test layer that can catch the regression. An end-to-end test should prove the primary integration or user journey, not reproduce every validation rule and edge case already covered below it.
+
+When simplifying or deleting a test, preserve its unique behavioral signal. Do not preserve incidental implementation assertions merely because they already exist.
 
 ## Definition-of-Done Checklist
 
@@ -111,7 +127,8 @@ Before declaring work complete, every box must be checked:
 - [ ] Backend logic has a unit test; endpoint/workflow changes have an e2e test
 - [ ] No new `skip`, `xfail`, `.only`, or commented-out tests introduced
 - [ ] Targeted suite green
-- [ ] Broader suite green (`./test.sh all` for backend, `./test.sh client e2e` for UI)
+- [ ] Exact test commands and unrun broader suites reported honestly
+- [ ] Every known out-of-scope failure has a durable fix or a dedicated blocking repair change
 - [ ] UX review done if new UI was built
 
 If any box is unchecked, keep working. Do not declare done.

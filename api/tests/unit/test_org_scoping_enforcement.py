@@ -110,8 +110,6 @@ ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
     # All 5 OAuthProvider/Token inline-cascade entries in oauth_connections.py
     # disappeared with the class. The new OAuthProviderRepository in
     # api/src/repositories/oauth.py is the canonical class.
-    ('routers/oauth_connections.py', 'SystemConfig.organization_id.is_(None),  # Global system config', 'SystemConfig admin lookup; pre-repo pattern (permanent)'),
-    ('routers/oauth_connections.py', 'SystemConfig.organization_id.is_(None),', 'SystemConfig admin lookup; pre-repo pattern (permanent)'),
     ('routers/roi_reports.py', 'query = query.where(ExecutionMetricsDaily.organization_id.is_(None))', 'identity-entity scope filter (permanent)'),
     ('routers/roi_reports.py', 'query = query.where(ExecutionMetricsDaily.organization_id == org_uuid)', 'identity-entity scope filter (permanent)'),
     ('routers/roi_reports.py', 'query = query.where(WorkflowROIDaily.organization_id.is_(None))', 'identity-entity scope filter (permanent)'),

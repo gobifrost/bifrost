@@ -59,6 +59,11 @@ from src.models.orm import (
     # Applications (App Builder)
     Application,
     PlatformJob,
+    SchedulerLease,
+    SchedulerReplica,
+    SchedulerTaskRun,
+    SchedulerTaskState,
+    SystemDiagnosticLog,
     AppRole,
 )
 
@@ -124,6 +129,11 @@ __all__ = [
     # Applications (App Builder)
     "Application",
     "PlatformJob",
+    "SchedulerLease",
+    "SchedulerReplica",
+    "SchedulerTaskRun",
+    "SchedulerTaskState",
+    "SystemDiagnosticLog",
     "AppRole",
     # Enums
     "ExecutionStatus",

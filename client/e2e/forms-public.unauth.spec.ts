@@ -6,6 +6,7 @@ import {
 	expect,
 	request as playwrightRequest,
 	type APIRequestContext,
+	type Locator,
 } from "@playwright/test";
 
 const API_URL = process.env.TEST_API_URL || "http://api:8000";
@@ -33,8 +34,20 @@ async def ${PROVIDER_FN}():
 const SUBMIT_SOURCE = `from bifrost import workflow
 
 @workflow(name="${SUBMIT_FN}")
-async def ${SUBMIT_FN}(company: str, email: str, company_name: str = ""):
-    return {"company": company, "email": email, "company_name": company_name}
+async def ${SUBMIT_FN}(
+    company: str,
+    email: str,
+    company_name: str = "",
+    company_size: str = "",
+    referral_source: str = "",
+):
+    return {
+        "company": company,
+        "email": email,
+        "company_name": company_name,
+        "company_size": company_size,
+        "referral_source": referral_source,
+    }
 `;
 
 async function expectOk(
@@ -47,6 +60,8 @@ test.describe.serial("Public form iframe", () => {
 	let api: APIRequestContext;
 	let formId: string;
 	let publicKey: string;
+	let scrollFormId: string;
+	let scrollPublicKey: string;
 
 	test.beforeAll(async () => {
 		const credentials = JSON.parse(
@@ -123,10 +138,82 @@ test.describe.serial("Public form iframe", () => {
 		});
 		await expectOk(created);
 		formId = ((await created.json()) as { id: string }).id;
+
+		const scrollForm = await api.post("/api/forms", {
+			data: {
+				name: `Embedded scroll regression ${UNIQUE}`,
+				workflow_id: workflow!.id,
+				form_schema: {
+					fields: [
+						{
+							name: "company",
+							label: "Company",
+							type: "select",
+							required: true,
+							data_provider_id: provider!.id,
+							auto_fill: { company_name: "company_name" },
+						},
+						{
+							name: "company_name",
+							label: "Company name",
+							type: "text",
+						},
+						{
+							name: "company_size",
+							label: "Company size",
+							type: "select",
+							options: [
+								{ value: "small", label: "1–10 people" },
+								{ value: "medium", label: "11–100 people" },
+								{ value: "large", label: "101+ people" },
+							],
+						},
+						{
+							name: "email",
+							label: "Email",
+							type: "email",
+							required: true,
+						},
+						{
+							name: "referral_source",
+							label: "How did you hear about us",
+							type: "select",
+							options: [
+								{ value: "search", label: "Search engine" },
+								{ value: "referral", label: "Referral" },
+								{ value: "event", label: "Event" },
+							],
+						},
+					],
+				},
+			},
+		});
+		await expectOk(scrollForm);
+		scrollFormId = ((await scrollForm.json()) as { id: string }).id;
+
+		const scrollReview = await api.get(
+			`/api/forms/${scrollFormId}/publication-review`,
+		);
+		await expectOk(scrollReview);
+		const review = (await scrollReview.json()) as { fingerprint: string };
+		const scrollPublication = await api.put(
+			`/api/forms/${scrollFormId}/publication`,
+			{
+				data: {
+					reviewed_fingerprint: review.fingerprint,
+					allowed_origins: ["http://allowed-origin"],
+				},
+			},
+		);
+		await expectOk(scrollPublication);
+		scrollPublicKey = (
+			(await scrollPublication.json()) as { public_key: string }
+		).public_key;
 	});
 
 	test.afterAll(async () => {
 		if (!api) return;
+		if (scrollFormId) await api.delete(`/api/forms/${scrollFormId}`);
 		if (formId) await api.delete(`/api/forms/${formId}`);
 		await api.delete(
 			`/api/files/editor?path=${encodeURIComponent(PROVIDER_PATH)}`,
@@ -283,7 +370,9 @@ test.describe.serial("Public form iframe", () => {
 				name: `Public website form ${UNIQUE}`,
 			}),
 		).toBeVisible({ timeout: 15_000 });
-		await frame.getByRole("combobox", { name: "Company" }).click();
+		await frame
+			.getByRole("combobox", { name: "Company *", exact: true })
+			.click();
 		await frame.getByText("Acme Corporation", { exact: true }).click();
 		await expect(frame.getByLabel("Company name")).toHaveValue(
 			"Acme Corporation",
@@ -335,6 +424,80 @@ test.describe.serial("Public form iframe", () => {
 		await expectOk(hmacSecret);
 	});
 
+	test("keeps the host page fixed while opening consecutive form dropdowns", async ({
+		page,
+	}) => {
+		await page.route("http://allowed-origin/**", (route) =>
+			route.request().resourceType() === "script"
+				? route.abort()
+				: route.continue(),
+		);
+		await page.goto("http://allowed-origin/");
+		await page.setContent(`
+			<div style="height:1200px"></div>
+			<iframe
+				title="Bottom form"
+				style="display:block;width:100%;height:900px;border:0"
+				src="${BIFROST_URL}/embed/forms/public/${scrollPublicKey}"
+			></iframe>
+		`);
+
+		const frame = page.frameLocator('iframe[title="Bottom form"]');
+		await expect(
+			frame.getByRole("heading", {
+				name: `Embedded scroll regression ${UNIQUE}`,
+			}),
+		).toBeVisible({ timeout: 15_000 });
+		await page.evaluate(() =>
+			window.scrollTo(0, document.body.scrollHeight),
+		);
+		const bottom = await page.evaluate(() => window.scrollY);
+		const clickVisibleControl = async (control: Locator) => {
+			const bounds = await control.boundingBox();
+			expect(bounds).not.toBeNull();
+			expect(bounds!.y).toBeGreaterThanOrEqual(0);
+			expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(
+				page.viewportSize()!.height,
+			);
+			await page.mouse.click(
+				bounds!.x + bounds!.width / 2,
+				bounds!.y + bounds!.height / 2,
+			);
+		};
+		const expectParentToRemainFixed = async () => {
+			const positions = await page.evaluate(async () => {
+				const samples: number[] = [];
+				for (let frame = 0; frame < 5; frame += 1) {
+					await new Promise<void>((resolve) =>
+						requestAnimationFrame(() => resolve()),
+					);
+					samples.push(window.scrollY);
+				}
+				return samples;
+			});
+			expect(positions).toEqual(Array(5).fill(bottom));
+		};
+
+		await clickVisibleControl(
+			frame.getByRole("combobox", { name: "Company size" }),
+		);
+		await expect(
+			frame.getByRole("option", { name: "1–10 people" }),
+		).toBeVisible();
+		await expectParentToRemainFixed();
+		await page.keyboard.press("Escape");
+
+		await clickVisibleControl(
+			frame.getByRole("combobox", {
+				name: "How did you hear about us",
+			}),
+		);
+		await expect(
+			frame.getByRole("option", { name: "Search engine" }),
+		).toBeVisible();
+		await expectParentToRemainFixed();
+	});
+
 	test("shows only the signed session's execution result after an HMAC submission", async ({
 		page,
 	}) => {
@@ -362,7 +525,9 @@ test.describe.serial("Public form iframe", () => {
 				name: `Public website form ${UNIQUE}`,
 			}),
 		).toBeVisible();
-		await frame.getByRole("combobox", { name: "Company" }).click();
+		await frame
+			.getByRole("combobox", { name: "Company *", exact: true })
+			.click();
 		await frame.getByText("Acme Corporation", { exact: true }).click();
 		await frame.getByLabel("Email").fill("hmac@example.com");
 		await expect(

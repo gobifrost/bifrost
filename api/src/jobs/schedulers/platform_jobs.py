@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import signal
 import socket
@@ -12,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select, text
 
 from src.core.database import get_db_context
 from src.jobs.platform.base import PlatformJobPolicy
@@ -27,6 +28,9 @@ LEASE_DURATION = timedelta(seconds=30)
 HEARTBEAT_INTERVAL_SECONDS = 5
 RUNNER_TERMINATE_GRACE_SECONDS = 5
 RUNNER_RETRY_DELAY = timedelta(seconds=5)
+PLATFORM_JOB_IDLE_SECONDS = 2.0
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> datetime:
@@ -121,19 +125,30 @@ async def claim_platform_job() -> ClaimedPlatformJob | None:
     """Claim one admissible queued job using row locking and a fenced lease."""
     updated: list[PlatformJob] = []
     async with get_db_context() as db:
-        candidates = (
+        candidate_ids = (
             await db.execute(
-                select(PlatformJob)
+                select(PlatformJob.id)
                 .where(
                     PlatformJob.status == "queued",
                     PlatformJob.available_at <= _now(),
                 )
-                .order_by(PlatformJob.created_at.asc())
-                .limit(20)
-                .with_for_update(skip_locked=True)
+                .order_by(PlatformJob.priority.desc(), PlatformJob.created_at.asc())
             )
         ).scalars().all()
-        for job in candidates:
+        for candidate_id in candidate_ids:
+            job = (
+                await db.execute(
+                    select(PlatformJob)
+                    .where(
+                        PlatformJob.id == candidate_id,
+                        PlatformJob.status == "queued",
+                        PlatformJob.available_at <= _now(),
+                    )
+                    .with_for_update(skip_locked=True)
+                )
+            ).scalar_one_or_none()
+            if job is None:
+                continue
             definition = get_platform_job_definition(job.job_type)
             if definition is None:
                 job.status = "failed"
@@ -145,6 +160,44 @@ async def claim_platform_job() -> ClaimedPlatformJob | None:
                 job.revision += 1
                 updated.append(job)
                 continue
+            if definition.policy.max_concurrency is not None:
+                handler_lock = (
+                    await db.execute(
+                        text("SELECT pg_try_advisory_xact_lock(hashtext(:key))"),
+                        {"key": f"bifrost:platform-job-type:{job.job_type}"},
+                    )
+                ).scalar_one()
+                if not handler_lock:
+                    continue
+                running_count = (
+                    await db.execute(
+                        select(func.count(PlatformJob.id)).where(
+                            PlatformJob.job_type == job.job_type,
+                            PlatformJob.status.in_(("running", "cancel_requested")),
+                        )
+                    )
+                ).scalar_one()
+                if running_count >= definition.policy.max_concurrency:
+                    continue
+            if job.resource_lock_key is not None:
+                resource_lock = (
+                    await db.execute(
+                        text("SELECT pg_try_advisory_xact_lock(hashtext(:key))"),
+                        {"key": f"bifrost:platform-job-resource:{job.resource_lock_key}"},
+                    )
+                ).scalar_one()
+                if not resource_lock:
+                    continue
+                resource_busy = (
+                    await db.execute(
+                        select(func.count(PlatformJob.id)).where(
+                            PlatformJob.resource_lock_key == job.resource_lock_key,
+                            PlatformJob.status.in_(("running", "cancel_requested")),
+                        )
+                    )
+                ).scalar_one()
+                if resource_busy:
+                    continue
             if not _memory_allows_start(definition.policy):
                 if job.phase != "Waiting for scheduler memory":
                     job.phase = "Waiting for scheduler memory"
@@ -165,6 +218,10 @@ async def claim_platform_job() -> ClaimedPlatformJob | None:
             job.error_code = None
             job.error_message = None
             job.error_retryable = None
+            current_memory, memory_limit = get_cgroup_memory()
+            job.memory_start_bytes = current_memory if current_memory >= 0 else None
+            job.memory_peak_bytes = current_memory if current_memory >= 0 else None
+            job.memory_limit_bytes = memory_limit if memory_limit > 0 else None
             job.revision += 1
             await db.commit()
             claimed = ClaimedPlatformJob(
@@ -205,6 +262,11 @@ async def _heartbeat(
         now = _now()
         job.heartbeat_at = now
         job.lease_expires_at = now + LEASE_DURATION
+        current_memory, memory_limit = get_cgroup_memory()
+        if current_memory >= 0:
+            job.memory_peak_bytes = max(job.memory_peak_bytes or 0, current_memory)
+        if memory_limit > 0:
+            job.memory_limit_bytes = memory_limit
         await db.commit()
         return job.status
 
@@ -288,54 +350,70 @@ async def run_claimed_platform_job(claim: ClaimedPlatformJob) -> bool:
         str(claim.lease_token),
         start_new_session=True,
     )
-    started = _monotonic()
-    while process.returncode is None:
-        try:
-            await asyncio.wait_for(
-                process.wait(),
-                timeout=HEARTBEAT_INTERVAL_SECONDS,
-            )
-            break
-        except TimeoutError:
-            # Expected heartbeat tick while the runner is still active.
-            pass
+    try:
+        started = _monotonic()
+        while process.returncode is None:
+            try:
+                await asyncio.wait_for(
+                    process.wait(),
+                    timeout=HEARTBEAT_INTERVAL_SECONDS,
+                )
+                break
+            except TimeoutError:
+                # Expected heartbeat tick while the runner is still active.
+                pass
 
-        status = await _heartbeat(claim.id, claim.lease_token)
-        if status is None:
-            await _terminate_runner(process)
-            return True
-        if status == "cancel_requested":
-            await _terminate_runner(process)
+            status = await _heartbeat(claim.id, claim.lease_token)
+            if status is None:
+                await _terminate_runner(process)
+                return True
+            if status == "cancel_requested":
+                await _terminate_runner(process)
+                await _handle_runner_loss(
+                    claim.id,
+                    claim.lease_token,
+                    error_code="cancelled",
+                    error_message="Platform job was cancelled.",
+                )
+                return True
+            if _monotonic() - started >= claim.timeout_seconds:
+                await _terminate_runner(process)
+                await _handle_runner_loss(
+                    claim.id,
+                    claim.lease_token,
+                    error_code="timeout",
+                    error_message=(
+                        f"Platform job timed out after {claim.timeout_seconds} seconds."
+                    ),
+                )
+                return False
+            if _memory_exceeds_hard_limit(claim.hard_memory_ratio):
+                await _terminate_runner(process)
+                await _handle_runner_loss(
+                    claim.id,
+                    claim.lease_token,
+                    error_code="memory_pressure",
+                    error_message=(
+                        "Platform job was stopped before the scheduler container "
+                        "exceeded its memory limit."
+                    ),
+                )
+                return False
+    except asyncio.CancelledError:
+        await _terminate_runner(process)
+        try:
             await _handle_runner_loss(
                 claim.id,
                 claim.lease_token,
-                error_code="cancelled",
-                error_message="Platform job was cancelled.",
+                error_code="runner_shutdown",
+                error_message="Platform-job runner stopped during scheduler shutdown.",
             )
-            return True
-        if _monotonic() - started >= claim.timeout_seconds:
-            await _terminate_runner(process)
-            await _handle_runner_loss(
-                claim.id,
-                claim.lease_token,
-                error_code="timeout",
-                error_message=(
-                    f"Platform job timed out after {claim.timeout_seconds} seconds."
-                ),
+        except Exception:
+            logger.exception(
+                "Failed to release platform job after worker shutdown",
+                extra={"job_id": str(claim.id)},
             )
-            return False
-        if _memory_exceeds_hard_limit(claim.hard_memory_ratio):
-            await _terminate_runner(process)
-            await _handle_runner_loss(
-                claim.id,
-                claim.lease_token,
-                error_code="memory_pressure",
-                error_message=(
-                    "Platform job was stopped before the scheduler container "
-                    "exceeded its memory limit."
-                ),
-            )
-            return False
+        raise
 
     async with get_db_context() as db:
         job = await db.get(PlatformJob, claim.id)
@@ -364,10 +442,36 @@ async def process_platform_jobs() -> tuple[int, int]:
     return recovered + 1, recovery_failures + (0 if succeeded else 1)
 
 
+async def platform_job_worker_loop(
+    shutdown_event: asyncio.Event,
+    *,
+    idle_seconds: float = PLATFORM_JOB_IDLE_SECONDS,
+) -> None:
+    """Continuously claim one job at a time for this scheduler replica."""
+    while not shutdown_event.is_set():
+        processed = 0
+        try:
+            processed, _ = await process_platform_jobs()
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.exception("Platform-job worker iteration failed")
+
+        if processed:
+            continue
+
+        try:
+            await asyncio.wait_for(shutdown_event.wait(), timeout=idle_seconds)
+        except TimeoutError:
+            # The idle interval elapsed; the next loop iteration may claim work.
+            continue
+
+
 __all__ = [
     "HEARTBEAT_INTERVAL_SECONDS",
     "LEASE_DURATION",
     "claim_platform_job",
+    "platform_job_worker_loop",
     "process_platform_jobs",
     "recover_expired_platform_jobs",
     "run_claimed_platform_job",

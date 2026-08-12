@@ -162,20 +162,20 @@ class TestLLMConfigurationCRUD:
             },
             headers=platform_admin.headers,
         )
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
 
         # Update with different settings
         response = e2e_client.post(
             "/api/admin/llm/config",
             json={
                 "provider": "anthropic",
-                "model": "claude-sonnet-4-20250514",
+                "model": "claude-haiku-4-5-20251001",
                 "api_key": llm_test_anthropic_key,
                 "max_tokens": 4096,
             },
             headers=platform_admin.headers,
         )
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
 
         # Verify updated values
         response = e2e_client.get(
@@ -184,7 +184,7 @@ class TestLLMConfigurationCRUD:
         )
         assert response.status_code == 200
         data = response.json()
-        assert data["model"] == "claude-sonnet-4-20250514"
+        assert data["model"] == "claude-haiku-4-5-20251001"
         assert data["max_tokens"] == 4096
 
     def test_get_config_after_set(

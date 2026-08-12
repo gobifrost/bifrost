@@ -21,6 +21,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm.agent_runs import AgentRun
+from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
 
 
@@ -142,10 +143,8 @@ class TestBackfillSummaries:
         mixed_runs,
         db_session: AsyncSession,
     ):
-        # Queue-routing assertion lives in the unit test
-        # ``test_backfill_publishes_to_backfill_queue`` — the e2e client runs
-        # the API in a separate process, so a host-side patch on
-        # ``publish_message`` never fires. Here we verify the DB side-effects.
+        # The durable parent publishes child messages from the scheduler. Here
+        # we verify the endpoint's orchestration and persistence side-effects.
         res = e2e_client.post(
             "/api/agent-runs/backfill-summaries",
             json={
@@ -174,6 +173,14 @@ class TestBackfillSummaries:
         assert job.status == "running"
         assert job.agent_id == UUID(backfill_agent["id"])
         assert job.estimated_cost_usd >= Decimal("0")
+
+        platform_job = await db_session.get(PlatformJob, UUID(body["job_id"]))
+        assert platform_job is not None
+        assert platform_job.job_type == "agent.summary_backfill"
+        assert platform_job.status in {"queued", "running", "waiting", "succeeded"}
+        assert platform_job.payload == {"protected": True}
+        assert platform_job.encrypted_payload is not None
+        assert backfill_agent["id"] not in platform_job.encrypted_payload
 
         # All previously-failed runs should now be pending (and summary_error cleared).
         for r in mixed_runs:

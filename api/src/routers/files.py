@@ -20,7 +20,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.auth import Context, CurrentActiveUser, CurrentSuperuser
@@ -44,6 +44,7 @@ from src.models import (
     FileDiagnostic,
     FileMetadata,
     FileType,
+    FileStatResponse,
     PendingDeactivation,
     SearchRequest,
     SearchResponse,
@@ -97,6 +98,14 @@ class FileWriteRequest(BaseModel):
     scope: str | None = Field(default=None, description="Org scope. Required for non-workspace, non-uploads locations.")
     mode: Mode = Field(default="cloud", description="Storage mode: local or cloud")
     binary: bool = Field(default=False, description="If true, content is base64-encoded")
+    expected_version: str | None = Field(
+        default=None,
+        description="Write only when the current content has this version",
+    )
+    create_only: bool = Field(
+        default=False,
+        description="Create the file only when the path does not already exist",
+    )
 
 
 class FileDeleteRequest(BaseModel):
@@ -105,6 +114,10 @@ class FileDeleteRequest(BaseModel):
     location: str = Field(default="workspace", description=FILE_LOCATION_DESCRIPTION)
     scope: str | None = Field(default=None, description="Org scope. Required for non-workspace, non-uploads locations.")
     mode: Mode = Field(default="cloud", description="Storage mode: local or cloud")
+    expected_version: str | None = Field(
+        default=None,
+        description="Delete only when the current content has this version",
+    )
 
 
 class FileListRequest(BaseModel):
@@ -1101,7 +1114,7 @@ async def read_file(
         for tier in tiers:
             if not await _authorize_file_policy(
                 ctx,
-                action="read",
+                action="exists",
                 location=request.location,
                 scope=tier.scope,
                 path=request.path,
@@ -1179,6 +1192,64 @@ async def write_file(
         )
         backend = get_backend(request.mode, db)
 
+        if request.create_only and request.expected_version is not None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="create_only and expected_version cannot be combined",
+            )
+        await _lock_file_mutation(
+            db,
+            location=request.location,
+            scope=effective_scope,
+            path=request.path,
+        )
+
+        current_stat = None
+        if request.create_only or request.expected_version is not None:
+            current_stat = await _get_file_stat(
+                db,
+                request.path,
+                request.location,
+                effective_scope,
+                request.mode,
+            )
+            if request.create_only and current_stat.exists:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "reason": "file_exists",
+                        "path": request.path,
+                        "message": "File already exists; read it before replacing it.",
+                        "current_version": current_stat.version,
+                        "current_last_modified": current_stat.last_modified,
+                        "current_updated_by": current_stat.updated_by,
+                    },
+                )
+            if request.expected_version is not None:
+                if not current_stat.exists:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "reason": "file_missing",
+                            "path": request.path,
+                            "expected_version": request.expected_version,
+                            "message": "File no longer exists.",
+                        },
+                    )
+                if current_stat.version != request.expected_version:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail={
+                            "reason": "version_conflict",
+                            "path": request.path,
+                            "expected_version": request.expected_version,
+                            "current_version": current_stat.version,
+                            "message": "File changed after it was read.",
+                            "current_last_modified": current_stat.last_modified,
+                            "current_updated_by": current_stat.updated_by,
+                        },
+                    )
+
         if request.binary:
             content = base64.b64decode(request.content)
         else:
@@ -1246,6 +1317,45 @@ async def delete_file(
             solution_id=solution_id,
         )
         backend = get_backend(request.mode, db)
+
+        await _lock_file_mutation(
+            db,
+            location=request.location,
+            scope=effective_scope,
+            path=request.path,
+        )
+
+        if request.expected_version is not None:
+            current_stat = await _get_file_stat(
+                db,
+                request.path,
+                request.location,
+                effective_scope,
+                request.mode,
+            )
+            if not current_stat.exists:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "reason": "file_missing",
+                        "path": request.path,
+                        "expected_version": request.expected_version,
+                        "message": "File no longer exists.",
+                    },
+                )
+            if current_stat.version != request.expected_version:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "reason": "version_conflict",
+                        "path": request.path,
+                        "expected_version": request.expected_version,
+                        "current_version": current_stat.version,
+                        "message": "File changed after it was read.",
+                        "current_last_modified": current_stat.last_modified,
+                        "current_updated_by": current_stat.updated_by,
+                    },
+                )
         await backend.delete(request.path, request.location, scope=effective_scope)
         if request.mode == "cloud":
             from src.core.pubsub import publish_file_change
@@ -1277,6 +1387,57 @@ async def delete_file(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+
+
+def _content_version(content: bytes) -> str:
+    return f"sha256:{hashlib.sha256(content).hexdigest()}"
+
+
+async def _lock_file_mutation(
+    db: AsyncSession,
+    *,
+    location: str,
+    scope: str | None,
+    path: str,
+) -> None:
+    """Serialize competing API mutations for one logical file path."""
+    lock_key = f"{location}:{scope or ''}:{path}"
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:lock_key, 0))"),
+        {"lock_key": lock_key},
+    )
+
+
+async def _get_file_stat(
+    db: AsyncSession,
+    path: str,
+    location: str,
+    scope: str | None,
+    mode: str,
+) -> FileStatResponse:
+    """Load file metadata for conflict detection and stat output."""
+    try:
+        backend = get_backend(mode, db)
+        content = await backend.read(path, location, scope=scope)
+    except FileNotFoundError:
+        return FileStatResponse(path=path, exists=False)
+
+    meta = None
+    if location == "workspace" and mode == "cloud":
+        from src.models.orm.file_index import FileIndex
+
+        row = await db.execute(
+            select(FileIndex.updated_at, FileIndex.updated_by).where(FileIndex.path == path)
+        )
+        meta = row.first()
+    return FileStatResponse(
+        path=path,
+        exists=True,
+        version=_content_version(content),
+        size=len(content),
+        last_modified=meta.updated_at.isoformat() if meta and meta.updated_at else None,
+        updated_by=meta.updated_by if meta else None,
+    )
 
 
 @router.post("/list", response_model=FileListResponse)
@@ -1457,7 +1618,7 @@ async def file_exists(
         for tier in tiers:
             allowed = await _authorize_file_policy(
                 ctx,
-                action="exists",
+                action="read",
                 location=request.location,
                 scope=tier.scope,
                 path=request.path,
@@ -1474,6 +1635,57 @@ async def file_exists(
             if exists:
                 return FileExistsResponse(exists=True)
         return FileExistsResponse(exists=False)
+
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+
+
+@router.post("/stat", response_model=FileStatResponse)
+async def file_stat(
+    request: FileReadRequest,
+    ctx: Context,
+    user: CurrentActiveUser,
+    db: AsyncSession = Depends(get_db),
+) -> FileStatResponse:
+    """Return file metadata for guarded CLI workflows."""
+    try:
+        from src.services.solution_scope import file_read_tiers
+
+        if request.location != "workspace":
+            await _require_declared_solution_file_location(
+                ctx,
+                solution_id=_ctx_solution_id(ctx, request.location),
+                location=request.location,
+            )
+        tiers = _tiers_for_backend_mode(
+            await file_read_tiers(db, ctx, request.location, request.scope),
+            request.mode,
+        )
+        for tier in tiers:
+            allowed = await _authorize_file_policy(
+                ctx,
+                action="read",
+                location=request.location,
+                scope=tier.scope,
+                path=request.path,
+                solution_id=tier.solution_id,
+                organization_id=tier.organization_id,
+            )
+            if not allowed:
+                continue
+            stat = await _get_file_stat(
+                db,
+                request.path,
+                request.location,
+                tier.scope,
+                request.mode,
+            )
+            if stat.exists:
+                return stat
+        return FileStatResponse(path=request.path, exists=False)
 
     except ValueError as e:
         raise HTTPException(
@@ -1822,6 +2034,12 @@ async def put_file_content_editor(
     """
     try:
         storage = FileStorageService(db)
+        await _lock_file_mutation(
+            db,
+            location="workspace",
+            scope=None,
+            path=request.path,
+        )
 
         # Convert content to bytes
         if request.encoding == "base64":

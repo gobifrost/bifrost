@@ -226,10 +226,7 @@ export function RefreshJobStatus({ className }: RefreshJobStatusProps) {
 										</h4>
 										<div className="space-y-3">
 											{jobStatus.errors.map(
-												(
-													error: string,
-													index: number,
-												) => (
+												(error, index) => (
 													<div
 														key={index}
 														className="rounded-lg bg-destructive/5 p-3 ring-1 ring-destructive/20"
@@ -237,7 +234,9 @@ export function RefreshJobStatus({ className }: RefreshJobStatusProps) {
 														<div className="flex items-start gap-2">
 															<div className="flex-1">
 																<p className="text-sm text-muted-foreground">
-																	{error}
+																	{typeof error === "string"
+																		? error
+																		: JSON.stringify(error)}
 																</p>
 															</div>
 														</div>

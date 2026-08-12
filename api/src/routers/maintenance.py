@@ -168,6 +168,7 @@ async def index_documentation(
     description="Queue a reimport of all entities from S3. Poll GET /api/jobs/{job_id} for result.",
 )
 async def reimport_from_repo(
+    ctx: Context,
     user: CurrentSuperuser,
 ) -> ReimportJobResponse:
     """
@@ -176,13 +177,31 @@ async def reimport_from_repo(
     Returns a job_id immediately. Poll GET /api/jobs/{job_id} for completion.
     Platform admin only.
     """
-    from uuid import uuid4
+    from src.jobs.platform.reimport import (
+        WORKSPACE_REIMPORT_DEFINITION,
+        WorkspaceReimportPayload,
+    )
+    from src.services.platform_jobs import enqueue_platform_job, publish_platform_job_update
 
-    from src.core.pubsub import publish_reimport_request
-
-    job_id = str(uuid4())
-    await publish_reimport_request(job_id)
-    return ReimportJobResponse(status="queued", job_id=job_id)
+    job, _ = await enqueue_platform_job(
+        ctx.db,
+        WORKSPACE_REIMPORT_DEFINITION,
+        WorkspaceReimportPayload(),
+        dedupe_key="workspace",
+        resource_lock_key="workspace",
+        priority=500,
+        organization_id=None,
+        requested_by_user_id=user.user_id,
+        requested_by_email=user.email,
+        requested_by_name=user.name or user.email or "Unknown",
+        resource_type="workspace",
+        resource_id="_repo",
+        title="Reimport workspace",
+        action_url="/diagnostics",
+    )
+    await ctx.db.commit()
+    await publish_platform_job_update(job)
+    return ReimportJobResponse(status=job.status, job_id=str(job.id))
 
 
 @router.post(

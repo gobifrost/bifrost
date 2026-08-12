@@ -7,7 +7,12 @@
 import { useState, useEffect, useCallback, useMemo } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
-import { getOAuthProviders, hashOAuthState, initOAuth } from "@/services/auth";
+import {
+	getAuthStatus,
+	hashOAuthState,
+	initOAuth,
+	PREFERRED_SSO_REDIRECT_ATTEMPTED_KEY,
+} from "@/services/auth";
 import { supportsPasskeys } from "@/services/passkeys";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -69,6 +74,11 @@ export function Login() {
 	const [finalizing, setFinalizing] = useState<string | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [oauthProviders, setOAuthProviders] = useState<OAuthProvider[]>([]);
+	const [authStatusLoaded, setAuthStatusLoaded] = useState(false);
+	const [autoRedirectToSso, setAutoRedirectToSso] = useState(false);
+	const [defaultSsoProvider, setDefaultSsoProvider] = useState<string | null>(
+		null,
+	);
 	// Derived synchronously — `supportsPasskeys()` is a pure feature check on
 	// `window` that returns the same value across renders for the lifetime of
 	// the page, so it does not need to live in state.
@@ -139,13 +149,106 @@ export function Login() {
 		}
 	}, [email, loginWithPasskey, redirectToFrom]);
 
-	// Load OAuth providers
+	const handleOAuthLogin = useCallback(
+		async (provider: string) => {
+			setError(null);
+			setIsLoading(true);
+
+			try {
+				// Store redirect info for callback
+				// Note: PKCE (code_verifier) is now handled server-side
+				sessionStorage.setItem("oauth_redirect_from", from);
+
+				// Build callback URL
+				const callbackUrl = `${window.location.origin}/auth/callback/${provider}`;
+
+				// Get authorization URL (server generates and stores PKCE verifier)
+				const { authorization_url, state } = await initOAuth(
+					provider,
+					callbackUrl,
+				);
+
+				// Store only a digest of the state for the callback CSRF check —
+				// never the raw token (see hashOAuthState).
+				sessionStorage.setItem(
+					"oauth_state",
+					await hashOAuthState(state),
+				);
+
+				// Redirect to OAuth provider
+				setFinalizing("Redirecting to sign-in…");
+				window.location.assign(authorization_url);
+			} catch (err) {
+				setError(
+					err instanceof Error
+						? err.message
+						: "OAuth initialization failed",
+				);
+				setFinalizing(null);
+				setIsLoading(false);
+			}
+		},
+		[from],
+	);
+
+	// Load the full login policy before presenting or starting an auth method.
 	useEffect(() => {
-		getOAuthProviders()
-			.then(setOAuthProviders)
+		getAuthStatus()
+			.then((status) => {
+				setOAuthProviders(status.oauth_providers);
+				setAutoRedirectToSso(
+					status.auto_redirect_to_sso && !status.needs_setup,
+				);
+				setDefaultSsoProvider(status.default_sso_provider ?? null);
+			})
 			.catch(() => {
-				// OAuth not configured, that's fine
-			});
+				// If status cannot load, leave all optional methods disabled and
+				// present the standard login screen.
+			})
+			.finally(() => setAuthStatusLoaded(true));
+	}, []);
+
+	// The preference is one attempt, not an enforcement loop. Set the guard
+	// before leaving so browser Back and provider cancellation show the full
+	// login screen on return.
+	useEffect(() => {
+		if (
+			!authStatusLoaded ||
+			authLoading ||
+			isAuthenticated ||
+			step !== "credentials" ||
+			!autoRedirectToSso ||
+			!defaultSsoProvider ||
+			sessionStorage.getItem(PREFERRED_SSO_REDIRECT_ATTEMPTED_KEY)
+		) {
+			return;
+		}
+
+		sessionStorage.setItem(PREFERRED_SSO_REDIRECT_ATTEMPTED_KEY, "true");
+		queueMicrotask(() => void handleOAuthLogin(defaultSsoProvider));
+	}, [
+		authLoading,
+		authStatusLoaded,
+		autoRedirectToSso,
+		defaultSsoProvider,
+		handleOAuthLogin,
+		isAuthenticated,
+		step,
+	]);
+
+	// Browsers may restore the pre-redirect page from the back-forward cache.
+	// Clear its transient loading state while keeping the attempt guard.
+	useEffect(() => {
+		const handlePageShow = () => {
+			if (
+				sessionStorage.getItem(PREFERRED_SSO_REDIRECT_ATTEMPTED_KEY)
+			) {
+				setFinalizing(null);
+				setIsLoading(false);
+			}
+		};
+		window.addEventListener("pageshow", handlePageShow);
+		return () => window.removeEventListener("pageshow", handlePageShow);
 	}, []);
 
 	// Auto-trigger passkey authentication if:
@@ -160,6 +263,8 @@ export function Login() {
 		const hasAttempted = sessionStorage.getItem("passkey_auto_attempted");
 		if (
 			supported &&
+			authStatusLoaded &&
+			!autoRedirectToSso &&
 			!authLoading &&
 			!isAuthenticated &&
 			!hasAttempted &&
@@ -173,7 +278,15 @@ export function Login() {
 			return () => clearTimeout(timer);
 		}
 		return undefined;
-	}, [authLoading, isAuthenticated, step, handlePasskeyLogin, passkeySupported]);
+	}, [
+		authLoading,
+		authStatusLoaded,
+		autoRedirectToSso,
+		isAuthenticated,
+		step,
+		handlePasskeyLogin,
+		passkeySupported,
+	]);
 
 	// Clear the auto-attempt flag when user logs out and returns
 	useEffect(() => {
@@ -251,42 +364,6 @@ export function Login() {
 		}
 	};
 
-	const handleOAuthLogin = async (provider: string) => {
-		setError(null);
-		setIsLoading(true);
-
-		try {
-			// Store redirect info for callback
-			// Note: PKCE (code_verifier) is now handled server-side
-			sessionStorage.setItem("oauth_redirect_from", from);
-
-			// Build callback URL
-			const callbackUrl = `${window.location.origin}/auth/callback/${provider}`;
-
-			// Get authorization URL (server generates and stores PKCE verifier)
-			const { authorization_url, state } = await initOAuth(
-				provider,
-				callbackUrl,
-			);
-
-			// Store only a digest of the state for the callback CSRF check —
-			// never the raw token (see hashOAuthState).
-			sessionStorage.setItem("oauth_state", await hashOAuthState(state));
-
-			// Redirect to OAuth provider
-			setFinalizing("Redirecting to sign-in…");
-			window.location.assign(authorization_url);
-		} catch (err) {
-			setError(
-				err instanceof Error
-					? err.message
-					: "OAuth initialization failed",
-			);
-			setFinalizing(null);
-			setIsLoading(false);
-		}
-	};
-
 	const getProviderIcon = (provider: string) => {
 		switch (provider) {
 			case "microsoft":
@@ -346,7 +423,7 @@ export function Login() {
 		return <AuthTransition message={finalizing} />;
 	}
 
-	if (authLoading) {
+	if (authLoading || !authStatusLoaded) {
 		return (
 			<div className="min-h-screen flex items-center justify-center bg-background">
 				<Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />

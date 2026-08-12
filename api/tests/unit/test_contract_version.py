@@ -191,7 +191,20 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     #
     # Forms gained optional confirmation_markdown (2026-08-04). ADDITIVE: old
     # clients omit it and continue receiving the prior default confirmation.
-    "b439c518e0e97014ae0db4629fd750640053ec5e0e9c6809bafc5bf427b5a2f6"
+    #
+    # RoleCreate/RoleUpdate gained additive scopes fields (2026-07-30).
+    # Old CLIs omit them and retain empty-scope custom-role behavior.
+    # Forms also gained optional confirmation_markdown (2026-08-04). All are
+    # additive; fingerprint refreshed after merging the contract surfaces.
+    #
+    # CLI/SDK file write and delete requests gained optional guarded-mutation
+    # fields (2026-08-08). ADDITIVE: old clients omit them and retain the prior
+    # unconditional behavior; new clients can reject stale writes and deletes.
+    #
+    # PlatformJobStatus gained `waiting` for durable parent jobs (2026-08-07).
+    # CONTRACT_VERSION bumped to 9 because an older CLI cannot parse the new
+    # enum value while polling PlatformJobPublic.
+    "12c65f3865127c0dbbdbb4237943169bf6a1fb79ad566b68ef1a45a1fbfc1854"
 )
 
 

@@ -7,10 +7,12 @@ can outlive an HTTP request. New platform operations must extend this system
 instead of creating a feature-specific job table, worker, scheduler host,
 status endpoint, progress event, or UI polling implementation.
 
-Application publishing (`application.publish`) is the first migrated consumer.
-Older systems such as Solution deploy/export jobs and reindexing remain
-migration candidates. Their existing implementations are not templates for new
-work.
+The migrated job families are application publishing, OAuth refresh, webhook
+renewal, Solution update checks, Solution export/deploy/install, isolated
+Solution application builds, embedding reindex, workspace reimport and git
+operations, and agent-summary backfills.
+Feature-specific rows that remain for API compatibility are projections; they
+do not own execution.
 
 ## When to use it
 
@@ -39,8 +41,9 @@ PostgreSQL is the source of truth. Each `platform_jobs` row stores the typed
 payload version, requester and resource scope, progress, result or structured
 error, retry policy, timestamps, and lease state.
 
-The existing singleton scheduler container is the platform-job host; there is
-no separate platform-job container. Every two seconds it:
+Every scheduler replica is a platform-job host; there is no separate
+platform-job container. Each replica runs two claim loops as an internal safety
+ceiling, not a deployment setting. Each loop:
 
 1. recovers expired leases from a stopped scheduler or runner;
 2. claims one available row with `FOR UPDATE SKIP LOCKED`;
@@ -57,14 +60,80 @@ reaches its limit. If the scheduler container still exits or is OOM-killed, the
 durable lease expires and a later scheduler instance retries or fails the job
 according to policy.
 
-The host currently runs one platform job at a time. If shared concurrency or
-different resource classes become necessary, evolve the common host and its
-policy contract; do not add per-feature worker containers.
+PostgreSQL row locking assigns each job to exactly one slot on one replica.
+Adding replicas adds both independent cgroups and execution capacity. Two slots
+allow serialized Solution work to dispatch isolated child work while retaining
+capacity for other system jobs. This is deliberately an implementation detail:
+operators should provision scheduler resources and replicas, not tune an
+internal process count. If resource classes become necessary, evolve the common
+host and its policy contract; do not add per-feature worker containers.
+
+One replica also holds the fenced `scheduler-triggers` database lease. Only
+that trigger leader runs APScheduler. On-demand work is persisted directly to
+PostgreSQL and does not depend on Redis delivery. The lease uses database-time expiry rather than a session advisory
+lock because supported deployments use transaction-mode PgBouncer. A follower
+takes over after expiry when the leader stops renewing; trigger services stop
+before a healthy leader voluntarily releases its lease.
+
+Leader failover recreates APScheduler's in-memory schedules. Existing callbacks
+configured to run immediately at scheduler startup therefore have at-least-once
+failover behavior. Long-running callbacks must migrate by making the elected
+callback enqueue a deduplicated platform job. Small, idempotent housekeeping may
+remain leader-only scheduler work.
+
+The elected leader retains only short trigger and housekeeping callbacks:
+workflow schedule processing, deferred execution promotion, stuck execution and
+event cleanup, metric snapshots, knowledge-storage metrics, artifact retention,
+and diagnostics/backfill reconciliation. Recurring OAuth, webhook, and Solution
+update callbacks enqueue singleton high-priority platform jobs. User-initiated
+long-running work is claimed by any replica.
+
+A handler may release its scheduler slot in `waiting` state after dispatching
+durable child work. The child tracker completes the parent row later. Summary
+backfills and Solution app builds use this path so RabbitMQ fan-out or an
+isolated build process does not occupy scheduler capacity.
 
 Lease-token checks fence stale runners: only the current attempt may update
 progress or record a terminal result. A handler may be retried after runner
 loss only when its side effects are idempotent. Otherwise set
 `retry_on_runner_loss=False` or use a single attempt.
+
+## Capacity and resource policy
+
+`PlatformJobPolicy` is an execution guardrail, not a second container scheduler.
+Every job type must declare a timeout, retry behavior, minimum memory headroom,
+and admission/hard memory ratios. The host evaluates those values against the
+container's cgroup-v2 working set and memory limit before and during execution.
+Deployments therefore need a real container memory limit; without one, memory
+admission is unavailable.
+
+Size a scheduler replica for its host plus the heaviest safe combination of jobs
+it may admit. Establish a new job's initial policy from
+representative data volume: record peak cgroup working set and wall-clock
+duration, include operational margin, and exercise low-memory deferral and
+timeout behavior in tests. These measurements inform policy and deployment
+guidance; they are not per-job CPU or memory reservations.
+
+The kernel persists the cgroup working set at job start, the peak observed while
+the attempt runs, and the cgroup limit. The difference between start and peak is
+shown in Scheduler Diagnostics as a practical sizing sample. It includes the
+scheduler host and any other occupied slots, so treat it as an operational
+upper-bound signal rather than exact process-tree attribution. Add shared
+process-tree/CPU telemetry only when these representative samples prove
+insufficient.
+
+Scale replicas when queue wait time grows while all slots are occupied. Increase
+container memory when representative jobs are repeatedly deferred or approach
+the hard ratio. Do not add Kubernetes-style resource classes until observed
+workloads show that one common scheduler size cannot safely serve the registered
+job types.
+
+`GET /api/platform/scheduler` and the Diagnostics → Scheduler tab expose leader
+health, online replicas and active claims, queue age, memory-admission waits,
+maximum replica memory utilization, every registered schedule and its last run,
+per-job memory samples, and explicitly published operator-safe logs. Persistent
+memory waits/high utilization indicate vertical scaling; a growing queue while
+all slots are occupied indicates horizontal scaling.
 
 ## Shared caller contract
 
@@ -113,8 +182,10 @@ invoke handlers or repositories directly.
 
 1. Add `api/src/jobs/platform/<job_name>.py`.
 2. Define a Pydantic payload model and version. Stored payloads must be
-   sufficient to run after the request context is gone, but must not contain
-   secrets that should not be persisted.
+   sufficient to run after the request context is gone. Set
+   `encrypt_payload=True` when the durable payload contains credentials, config
+   values, passwords, or other protected inputs; the public JSON column then
+   contains only a protected marker.
 3. Implement a handler with the
    `PlatformJobHandler(PlatformJobContext, payload)` contract. Report meaningful
    phases and bounded progress with `context.report(...)`. Return a
@@ -155,6 +226,20 @@ Use the shared platform-job service and scheduler tests for generic behavior;
 add feature tests only for the handler's business semantics and its caller
 surfaces.
 
+## Local scheduler validation
+
+With a worktree debug stack running, execute `./debug.sh fixtures` to seed and
+run deterministic scheduler workloads through the same trigger and platform-job
+paths used in production. The fixture service supplies local OAuth-token and Git
+endpoints, so this validation does not require a live OAuth account or remote
+repository.
+
+The command verifies OAuth refresh, webhook renewal, Solution update detection,
+file-index reconciliation, summary-backfill reconciliation, and Solution-build
+reconciliation, then leaves their runs and published logs available under
+Diagnostics → Scheduler. Fixture registration and seeding are rejected when the
+application environment is production.
+
 ## Canonical implementation map
 
 | Concern | Location |
@@ -166,6 +251,10 @@ surfaces.
 | Registered job types | `api/src/jobs/platform/registry.py` |
 | Isolated child runner | `api/src/jobs/platform/runner.py` |
 | Lease recovery, claiming, and resource enforcement | `api/src/jobs/schedulers/platform_jobs.py` |
+| Trigger leader election | `api/src/scheduler/leadership.py` |
 | Generic status and cancellation API | `api/src/routers/platform_jobs.py` |
 | Scheduler host registration | `api/src/scheduler/main.py` |
+| Scheduler run/replica/log diagnostics | `api/src/services/scheduler_diagnostics.py` |
+| Diagnostics API | `api/src/routers/scheduler_diagnostics.py` |
+| Diagnostics UI | `client/src/pages/diagnostics/components/SchedulerTab.tsx` |
 | Browser WebSocket transport | `client/src/services/websocket.ts` |

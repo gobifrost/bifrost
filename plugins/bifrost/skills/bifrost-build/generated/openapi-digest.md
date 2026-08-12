@@ -177,6 +177,7 @@
 | POST | `/api/files/search` |
 | POST | `/api/files/signed-url` |
 | POST | `/api/files/signed-urls` |
+| POST | `/api/files/stat` |
 | POST | `/api/files/structure` |
 | POST | `/api/files/watch` |
 | GET | `/api/files/watchers` |
@@ -326,6 +327,8 @@
 | GET | `/api/platform-jobs/{job_id}` |
 | POST | `/api/platform-jobs/{job_id}/cancel` |
 | GET | `/api/platform/queue` |
+| GET | `/api/platform/scheduler` |
+| GET | `/api/platform/scheduler/tasks/{task_id}/runs` |
 | GET | `/api/platform/stuck-history` |
 | GET | `/api/platform/workers` |
 | GET | `/api/platform/workers/metrics` |
@@ -418,6 +421,7 @@
 | PUT | `/api/settings/ai/pricing/{pricing_id}` |
 | GET | `/api/settings/oauth` |
 | PUT | `/api/settings/oauth/google` |
+| PUT | `/api/settings/oauth/login-preference` |
 | PUT | `/api/settings/oauth/microsoft` |
 | PUT | `/api/settings/oauth/oidc` |
 | DELETE | `/api/settings/oauth/{provider}` |

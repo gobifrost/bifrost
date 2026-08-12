@@ -678,6 +678,7 @@ async def {workflow_name}():
         workflow_path,
         workflow_content,
         workflow_name,
+        organization_id=None,
     )
     workflow_id = result["id"]
 

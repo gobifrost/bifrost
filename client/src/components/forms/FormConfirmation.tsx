@@ -41,7 +41,7 @@ export function FormConfirmation({ formId, markdown }: FormConfirmationProps) {
 
 	useEffect(() => {
 		window.scrollTo({ top: 0, behavior: "smooth" });
-		containerRef.current?.focus();
+		containerRef.current?.focus({ preventScroll: true });
 
 		const targetOrigin = parentOrigin();
 		if (!targetOrigin || window.parent === window) return;

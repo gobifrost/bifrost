@@ -841,7 +841,7 @@ Usage: files [OPTIONS] COMMAND [ARGS]...
 
   Read, write, list, search files and manage file policies.
 
-  Without --solution, commands target the global _repo workspace file scope
+  Without --solution, commands target the instance _repo source file scope
   (location "workspace" by default). With --solution <slug|id>,
   read/write/list target that Solution install's runtime file scope and
   default the location to "solutions". Solution source files are deployed from
@@ -849,16 +849,17 @@ Usage: files [OPTIONS] COMMAND [ARGS]...
   --solution ...` is for runtime/user file bytes after install, not for
   editing deploy-owned source.
 
-  `bifrost files write` writes one explicit file through the Files API. It
-  does not walk a local tree, apply the sync ignore rules, compare server
-  state, or trigger the push/sync TUI. Use `bifrost push`/`sync`/`watch` when
-  local disk is the source of truth for _repo source files; use `files write`
-  for one-off API writes, scripts, or Solution runtime file data.
+  `bifrost files` is the direct authoring surface for instance _repo text
+  source and managed runtime/user files. For an existing file, record its
+  version with `files stat`, read it, then write with `--expected-version`.
+  For a new path, use `--create-only`. A conflict never overwrites the remote
+  file.
 
   Examples:
-    bifrost files list workflows/              # global _repo files
-    bifrost files write notes.txt --content hi # one direct API write
-    bifrost files read apps/desk/pages/App.tsx # global _repo file
+    bifrost files list workflows/              # instance _repo files
+    bifrost files write notes.txt --content hi --create-only
+    bifrost files stat workflows/contact.py --json
+    bifrost files read apps/desk/pages/App.tsx # instance _repo file
     bifrost files list --solution desk         # Solution runtime files
     bifrost files read notes/today.txt --solution desk
 
@@ -867,12 +868,13 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  delete    Delete a workspace file.
+  delete    Delete a workspace file, optionally guarded by its current...
   exists    Check if a file exists.
   list      List files in a directory (default: location root).
   policies  Manage file access policies.
   read      Read a workspace file and write its contents to stdout.
   search    Search workspace file contents.
+  stat      Show existence, version, size, and last-edit metadata without...
   write     Write to a workspace file.
 ```
 
@@ -881,14 +883,17 @@ Commands:
 ```
 Usage: files delete [OPTIONS] PATH
 
-  Delete a workspace file.
+  Delete a workspace file, optionally guarded by its current version.
 
 Options:
-  --location TEXT  Storage location. Special: "workspace" (default), "temp",
-                   "uploads". Custom names (e.g. "reports") are accepted;
-                   "_repo", "_tmp", and "_apps" are blocked.
-  --json           Emit JSON instead of human-readable output.
-  --help           Show this message and exit.
+  --location TEXT          Storage location. Special: "workspace" (default),
+                           "temp", "uploads". Custom names (e.g. "reports")
+                           are accepted; "_repo", "_tmp", and "_apps" are
+                           blocked.
+  --expected-version TEXT  Delete only if the remote file still has this
+                           version from `files stat`.
+  --json                   Emit JSON instead of human-readable output.
+  --help                   Show this message and exit.
 ```
 
 ### `files exists`
@@ -1044,6 +1049,24 @@ Options:
   --help                       Show this message and exit.
 ```
 
+### `files stat`
+
+```
+Usage: files stat [OPTIONS] PATH
+
+  Show existence, version, size, and last-edit metadata without content.
+
+Options:
+  --location TEXT  Storage location. Special: "workspace" (default), "temp",
+                   "uploads". Custom names (e.g. "reports") are accepted;
+                   "_repo", "_tmp", and "_apps" are blocked.
+  --solution TEXT  Solution install slug or UUID. When given, targets that
+                   install's file scope (location defaults to "solutions").
+                   Slug resolved via GET /api/solutions.
+  --json           Emit JSON instead of human-readable output.
+  --help           Show this message and exit.
+```
+
 ### `files write`
 
 ```
@@ -1051,20 +1074,25 @@ Usage: files write [OPTIONS] PATH [SOURCE]
 
   Write to a workspace file. Source: --content, --from-file, or `-` for stdin.
 
-  Text files only. Pass --content "" to truncate an existing file. Pass
-  ``--solution`` to target a solution install's file scope.
+  Text files only. Pass --content "" to truncate an existing file. Use
+  --create-only for a new path or --expected-version for a guarded
+  replacement. Pass ``--solution`` to target a solution install's file scope.
 
 Options:
-  --content TEXT    Inline content to write.
-  --from-file FILE  Read content from a local file.
-  --location TEXT   Storage location. Special: "workspace" (default), "temp",
-                    "uploads". Custom names (e.g. "reports") are accepted;
-                    "_repo", "_tmp", and "_apps" are blocked.
-  --solution TEXT   Solution install slug or UUID. When given, targets that
-                    install's file scope (location defaults to "solutions").
-                    Slug resolved via GET /api/solutions.
-  --json            Emit JSON instead of human-readable output.
-  --help            Show this message and exit.
+  --content TEXT           Inline content to write.
+  --from-file FILE         Read content from a local file.
+  --location TEXT          Storage location. Special: "workspace" (default),
+                           "temp", "uploads". Custom names (e.g. "reports")
+                           are accepted; "_repo", "_tmp", and "_apps" are
+                           blocked.
+  --solution TEXT          Solution install slug or UUID. When given, targets
+                           that install's file scope (location defaults to
+                           "solutions"). Slug resolved via GET /api/solutions.
+  --expected-version TEXT  Write only if the remote file still has this
+                           version from `files stat`.
+  --create-only            Create a new file; fail if the path already exists.
+  --json                   Emit JSON instead of human-readable output.
+  --help                   Show this message and exit.
 ```
 
 ## `forms`
@@ -2315,9 +2343,10 @@ Usage: workflows register [OPTIONS]
 
   Register a decorated function from an existing workspace ``.py`` file.
 
-  The file must already exist in the workspace (written via ``bifrost push``
-  or the file editor). This command indexes a ``@workflow`` / ``@tool`` /
-  ``@data_provider`` function so it becomes executable via the API.
+  The file must already exist in the workspace. Write it directly with
+  ``bifrost files write`` or the file editor first. This command indexes a
+  ``@workflow`` / ``@tool`` / ``@data_provider`` function so it becomes
+  executable via the API.
 
   Org targeting follows the unified ``--org`` standard: HOME (omit) scopes the
   workflow to the caller's org, ``--global`` makes it global, ``--org

@@ -141,11 +141,8 @@ def test_summarize_consumer_uses_prefetch_one():
 
 
 @pytest.mark.asyncio
-async def test_backfill_publishes_to_backfill_queue(async_session_factory):
-    """Regression guard: backfill must route to the dedicated backfill queue,
-    not the live ``agent-summarization`` queue that serves just-finished runs.
-    Publishing to the live queue causes a 2000-run bulk op to block live
-    traffic for the full drain duration."""
+async def test_backfill_endpoint_enqueues_durable_platform_job(async_session_factory):
+    """The request path persists orchestration and hands work to the scheduler."""
     from unittest.mock import patch
     from uuid import uuid4
 
@@ -153,10 +150,12 @@ async def test_backfill_publishes_to_backfill_queue(async_session_factory):
     from src.models.contracts.agent_runs import BackfillSummariesRequest
     from src.models.orm.agent_runs import AgentRun
     from src.models.orm.agents import Agent
+    from src.models.orm.summary_backfill_job import SummaryBackfillJob
     from src.routers.agent_runs import backfill_summaries
 
     agent_id = uuid4()
     run_id = uuid4()
+    created_backfill_job_id: UUID | None = None
 
     # Seed an agent + a pending run so the endpoint has something to enqueue.
     async with async_session_factory() as db:
@@ -194,9 +193,12 @@ async def test_backfill_publishes_to_backfill_queue(async_session_factory):
     try:
         async with async_session_factory() as db:
             with patch(
-                "src.jobs.rabbitmq.publish_message",
+                "src.services.platform_jobs.enqueue_platform_job",
+                new=AsyncMock(return_value=(object(), True)),
+            ) as enqueue, patch(
+                "src.services.platform_jobs.publish_platform_job_update",
                 new=AsyncMock(),
-            ) as pub:
+            ):
                 result = await backfill_summaries(
                     request=BackfillSummariesRequest(
                         agent_id=agent_id,
@@ -209,17 +211,61 @@ async def test_backfill_publishes_to_backfill_queue(async_session_factory):
                 )
 
             assert result.queued == 1
-            assert pub.await_count == 1
-            call = pub.await_args_list[0]
-            assert call.args[0] == "agent-summarization-backfill"
-            assert call.args[1]["run_id"] == str(run_id)
+            created_backfill_job_id = result.job_id
+            enqueue.assert_awaited_once()
+            definition = enqueue.await_args.args[1]
+            payload = enqueue.await_args.args[2]
+            assert definition.job_type == "agent.summary_backfill"
+            assert payload.run_ids == [run_id]
+            assert payload.backfill_job_id == result.job_id
     finally:
         async with async_session_factory() as db:
+            if created_backfill_job_id is not None:
+                await db.execute(
+                    SummaryBackfillJob.__table__.delete().where(
+                        SummaryBackfillJob.id == created_backfill_job_id
+                    )
+                )
             await db.execute(
                 AgentRun.__table__.delete().where(AgentRun.id == run_id)
             )
             await db.execute(Agent.__table__.delete().where(Agent.id == agent_id))
             await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_summary_backfill_platform_job_uses_dedicated_queue():
+    """The scheduler parent fans out only to the bulk backfill queue."""
+    from src.jobs.platform.base import PlatformJobDeferred
+    from src.jobs.platform.summary_backfill import (
+        SummaryBackfillPayload,
+        run_summary_backfill,
+    )
+
+    backfill_job_id = uuid4()
+    run_ids = [uuid4(), uuid4()]
+    context = AsyncMock()
+    with patch(
+        "src.jobs.rabbitmq.publish_message",
+        new=AsyncMock(),
+    ) as publish:
+        with pytest.raises(PlatformJobDeferred):
+            await run_summary_backfill(
+                context,
+                SummaryBackfillPayload(
+                    backfill_job_id=backfill_job_id,
+                    run_ids=run_ids,
+                ),
+            )
+
+    context.report.assert_awaited_once()
+    assert publish.await_count == 2
+    for call, run_id in zip(publish.await_args_list, run_ids, strict=True):
+        assert call.args[0] == "agent-summarization-backfill"
+        assert call.args[1] == {
+            "run_id": str(run_id),
+            "backfill_job_id": str(backfill_job_id),
+        }
 
 
 @pytest.mark.asyncio

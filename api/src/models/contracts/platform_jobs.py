@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 class PlatformJobStatus(str, Enum):
     QUEUED = "queued"
     RUNNING = "running"
+    WAITING = "waiting"
     CANCEL_REQUESTED = "cancel_requested"
     SUCCEEDED = "succeeded"
     FAILED = "failed"
@@ -48,6 +49,8 @@ class PlatformJobPublic(BaseModel):
     organization_id: UUID | None = None
     resource_type: str | None = None
     resource_id: str | None = None
+    resource_lock_key: str | None = None
+    priority: int = 100
     title: str
     action_url: str | None = None
     requested_by_user_id: str
@@ -61,6 +64,9 @@ class PlatformJobPublic(BaseModel):
     result: dict[str, Any] | None = None
     error: PlatformJobError | None = None
     notification_id: UUID | None = None
+    memory_start_bytes: int | None = None
+    memory_peak_bytes: int | None = None
+    memory_limit_bytes: int | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
     created_at: datetime

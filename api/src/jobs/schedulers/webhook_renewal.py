@@ -65,7 +65,7 @@ async def renew_expiring_webhooks() -> dict[str, Any]:
                     "external_id": webhook.external_id,
                     "state": webhook.state or {},
                     "integration": webhook.integration if webhook.integration_id else None,
-                    "callback_path": webhook.callback_path,
+                    "callback_path": f"/hooks/{webhook.event_source_id}",
                     "has_event_source": webhook.event_source is not None,
                 })
 

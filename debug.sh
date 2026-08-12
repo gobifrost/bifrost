@@ -17,6 +17,7 @@
 #   ./debug.sh up           same
 #   ./debug.sh down         tear down + remove volumes for THIS worktree
 #   ./debug.sh status       print mode, project name, URL, login
+#   ./debug.sh fixtures     seed and run real local scheduler workloads
 #   ./debug.sh logs [svc]   docker compose logs -f, optionally for one service
 #
 # Login (configured via .env.debug + the seed-user provisioning fix):
@@ -452,6 +453,41 @@ cmd_logs() {
     fi
 }
 
+cmd_fixtures() {
+    print_header
+    if ! stack_is_running; then
+        echo "ERROR: debug stack is not running. Run ./debug.sh up first." >&2
+        return 1
+    fi
+
+    echo "Starting local OAuth and Git fixtures..."
+    docker compose -f "$COMPOSE_FILE" up -d --build scheduler-fixtures
+
+    echo "Waiting for scheduler fixtures to be ready (up to 60s)..."
+    local fixture_cid i
+    for ((i=1; i<=60; i++)); do
+        fixture_cid=$(docker ps -q \
+            --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+            --filter "label=com.docker.compose.service=scheduler-fixtures" \
+            2>/dev/null | head -1)
+        if [ -n "$fixture_cid" ] && docker exec "$fixture_cid" \
+            curl -sf -o /dev/null http://localhost:8080/health 2>/dev/null; then
+            break
+        fi
+        if [ $i -eq 60 ]; then
+            echo "ERROR: scheduler fixtures did not become ready in 60s." >&2
+            return 1
+        fi
+        sleep 1
+    done
+
+    echo "Running scheduler fixture suite through the central job runner..."
+    docker compose -f "$COMPOSE_FILE" exec -T -e BIFROST_DEBUG=false api \
+        python -m src.dev.scheduler_fixtures
+    echo ""
+    cmd_status
+}
+
 # =============================================================================
 # Dispatch
 # =============================================================================
@@ -467,6 +503,7 @@ case "$1" in
     up)     shift; cmd_up "$@" ;;
     down)   shift; cmd_down "$@" ;;
     status) shift; cmd_status "$@" ;;
+    fixtures) shift; cmd_fixtures "$@" ;;
     logs)   shift; cmd_logs "$@" ;;
     -h|--help|help)
         sed -n '2,30p' "$0"

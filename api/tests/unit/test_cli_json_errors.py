@@ -115,6 +115,36 @@ class TestJsonErrorContract:
         payload = json.loads(result.stderr.strip())
         assert payload["status"] == 503
 
+    def test_guarded_file_conflict_has_dedicated_exit_code_and_shape(self) -> None:
+        group = _make_group(
+            lambda: _http_error(
+                409,
+                {
+                    "detail": {
+                        "reason": "version_conflict",
+                        "path": "workflows/contact.py",
+                        "expected_version": "sha256:old",
+                        "current_version": "sha256:new",
+                        "message": "File changed after it was read.",
+                    }
+                },
+            )
+        )
+        runner = CliRunner()
+        result = runner.invoke(group, ["fail", "--json"])
+
+        assert result.exit_code == 4
+        payload = json.loads(result.stderr.strip())
+        assert payload == {
+            "error": "file_conflict",
+            "status": 409,
+            "reason": "version_conflict",
+            "path": "workflows/contact.py",
+            "expected_version": "sha256:old",
+            "current_version": "sha256:new",
+            "message": "File changed after it was read.",
+        }
+
     def test_non_json_error_body_is_carried_as_string(self) -> None:
         group = _make_group(
             lambda: _http_error(502, "upstream crashed", as_json=False)

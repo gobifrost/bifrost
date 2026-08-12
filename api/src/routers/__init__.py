@@ -57,6 +57,7 @@ from src.routers.export_import import router as export_import_router
 from src.routers.docs import router as docs_router
 from src.routers.jobs import router as jobs_router
 from src.routers.platform_jobs import router as platform_jobs_router
+from src.routers.scheduler_diagnostics import router as scheduler_diagnostics_router
 from src.routers.platform import (
     workers_router as platform_workers_router,
     queue_router as platform_queue_router,
@@ -132,6 +133,7 @@ __all__ = [
     "docs_router",
     "jobs_router",
     "platform_jobs_router",
+    "scheduler_diagnostics_router",
     "platform_workers_router",
     "platform_queue_router",
     "platform_stuck_router",

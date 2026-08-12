@@ -7,13 +7,14 @@ These are stored in the system_configs table with category='oauth_sso'.
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 # Supported OAuth SSO providers
 OAuthSSOProvider = Literal["microsoft", "google", "oidc"]
 
 # Config key constants for each provider
 OAUTH_CONFIG_CATEGORY = "oauth_sso"
+OAUTH_LOGIN_PREFERENCE = "login_preference"
 
 # Microsoft config keys
 OAUTH_MICROSOFT_CLIENT_ID = "microsoft_client_id"
@@ -29,6 +30,27 @@ OAUTH_OIDC_DISCOVERY_URL = "oidc_discovery_url"
 OAUTH_OIDC_CLIENT_ID = "oidc_client_id"
 OAUTH_OIDC_CLIENT_SECRET = "oidc_client_secret"
 OAUTH_OIDC_DISPLAY_NAME = "oidc_display_name"
+
+
+class OAuthLoginPreference(BaseModel):
+    """Preferred SSO behavior before the full login screen is shown."""
+
+    auto_redirect_to_sso: bool = Field(
+        default=False,
+        description="Whether login should first redirect to the preferred SSO provider",
+    )
+    default_sso_provider: OAuthSSOProvider | None = Field(
+        default=None,
+        description="Configured SSO provider used for the preferred redirect",
+    )
+
+    @model_validator(mode="after")
+    def require_provider_when_enabled(self) -> "OAuthLoginPreference":
+        if self.auto_redirect_to_sso and self.default_sso_provider is None:
+            raise ValueError(
+                "default_sso_provider is required when auto_redirect_to_sso is enabled"
+            )
+        return self
 
 
 class MicrosoftOAuthConfigRequest(BaseModel):
@@ -140,6 +162,10 @@ class OAuthConfigListResponse(BaseModel):
     callback_url: str = Field(
         ...,
         description="OAuth callback URL to configure in each provider"
+    )
+    login_preference: OAuthLoginPreference = Field(
+        ...,
+        description="Preferred SSO behavior before the full login screen",
     )
 
 

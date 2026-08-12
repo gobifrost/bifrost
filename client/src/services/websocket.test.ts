@@ -15,6 +15,8 @@ describe("platform-job WebSocket contract", () => {
 			organization_id: null,
 			resource_type: "application",
 			resource_id: "app-1",
+			resource_lock_key: null,
+			priority: 100,
 			title: "Publishing Test",
 			action_url: "/apps/test/edit",
 			requested_by_user_id: "user-1",

@@ -26,7 +26,7 @@ k8s/
 ├── worker/
 │   └── deployment.yaml # Background job workers
 ├── scheduler/
-│   └── deployment.yaml # Cron scheduler (singleton)
+│   └── deployment.yaml # Scalable jobs + elected Cron trigger leader
 ├── coding-agent/
 │   └── deployment.yaml # Claude Agent SDK container
 └── rabbitmq/
@@ -205,9 +205,24 @@ kubectl scale deployment bifrost-worker -n bifrost --replicas=5
 
 ### Scheduler
 
-**WARNING: Do NOT scale the scheduler beyond 1 replica!**
+Every scheduler replica executes up to two durable platform jobs at a time. The
+two internal slots are a safety ceiling rather than a deployment setting. A
+fenced PostgreSQL lease elects exactly one replica to run Cron triggers and the
+legacy scheduler pub/sub listener.
 
-The scheduler must run as a singleton to prevent duplicate job executions.
+```bash
+kubectl scale deployment bifrost-scheduler -n bifrost --replicas=3
+```
+
+Deploy the lease-aware scheduler version before scaling an existing installation.
+The manifest retains the `Recreate` rollout strategy so an older singleton pod
+cannot overlap the first lease-aware rollout; `Recreate` does not restrict the
+steady-state replica count. Scale back to one before rolling back to a release
+that predates scheduler leader election.
+
+Long-running platform work runs through the shared durable queue on every
+replica; the elected leader retains only short trigger and housekeeping work.
+Scale gradually and monitor memory-pressure deferrals and queue wait time.
 
 ## Configuration Reference
 

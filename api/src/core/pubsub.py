@@ -582,7 +582,7 @@ async def publish_app_published(
 
 
 # =============================================================================
-# Git Desktop Operations Pub/Sub (API -> Scheduler Communication)
+# Git Desktop Operations
 # =============================================================================
 
 
@@ -593,12 +593,9 @@ async def publish_git_operation(
     user_email: str,
     op_type: str,
     **kwargs: Any,
-) -> None:
+) -> str:
     """
-    Request a git desktop operation from the scheduler.
-
-    The scheduler listens on `bifrost:scheduler:git-op` and dispatches
-    to the appropriate service method based on op_type.
+    Queue a durable git desktop operation for any scheduler replica.
 
     Args:
         job_id: Unique job ID for tracking
@@ -608,15 +605,45 @@ async def publish_git_operation(
         op_type: Operation type (git_fetch, git_commit, git_pull, git_push, git_status, git_resolve, git_diff)
         **kwargs: Additional operation-specific data
     """
-    message: dict[str, Any] = {
-        "type": op_type,
-        "jobId": job_id,
-        "orgId": org_id,
-        "userId": user_id,
-        "userEmail": user_email,
-        **kwargs,
-    }
-    await manager._publish_to_redis("scheduler:git-op", message)
+    from uuid import UUID, uuid4
+
+    from src.core.database import get_db_context
+    from src.jobs.platform.git_operation import (
+        GIT_OPERATION_DEFINITION,
+        GitOperationPayload,
+    )
+    from src.services.platform_jobs import enqueue_platform_job, publish_platform_job_update
+
+    try:
+        resolved_job_id = UUID(job_id)
+    except ValueError:
+        resolved_job_id = uuid4()
+    organization_id = UUID(org_id) if org_id else None
+    async with get_db_context() as db:
+        job, _ = await enqueue_platform_job(
+            db,
+            GIT_OPERATION_DEFINITION,
+            GitOperationPayload(
+                operation=op_type,
+                organization_id=organization_id,
+                options=kwargs,
+            ),
+            dedupe_key=str(resolved_job_id),
+            resource_lock_key="workspace",
+            priority=500,
+            organization_id=organization_id,
+            requested_by_user_id=user_id,
+            requested_by_email=user_email,
+            requested_by_name=user_email,
+            resource_type="workspace",
+            resource_id="git",
+            title=op_type.replace("_", " ").title(),
+            action_url="/git",
+            job_id=resolved_job_id,
+        )
+        await db.commit()
+    await publish_platform_job_update(job)
+    return str(job.id)
 
 
 async def publish_git_progress(
@@ -824,24 +851,6 @@ async def publish_pool_scaling(
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
     await manager.broadcast("platform_workers", message)
-
-
-async def publish_reimport_request(job_id: str) -> None:
-    """Publish a reimport request to the scheduler."""
-    await manager._publish_to_redis("scheduler:reimport", {"action": "reimport", "job_id": job_id})
-
-
-async def publish_embedding_reindex_request(notification_id: str) -> None:
-    """Publish an embedding-reindex request to the scheduler.
-
-    The scheduler reads the saved embedding config and re-embeds every
-    knowledge_store row, pushing progress through the notification at
-    `notification_id`.
-    """
-    await manager._publish_to_redis(
-        "scheduler:embedding-reindex",
-        {"action": "embedding_reindex", "notification_id": notification_id},
-    )
 
 
 async def publish_pool_progress(

@@ -30,7 +30,7 @@ from src.models.orm.platform_jobs import PlatformJob
 from src.services.notification_service import get_notification_service
 
 logger = logging.getLogger(__name__)
-ACTIVE_PLATFORM_JOB_STATUSES = ("queued", "running", "cancel_requested")
+ACTIVE_PLATFORM_JOB_STATUSES = ("queued", "running", "waiting", "cancel_requested")
 TERMINAL_PLATFORM_JOB_STATUSES = ("succeeded", "failed", "cancelled")
 
 
@@ -49,7 +49,7 @@ def platform_job_to_public(job: PlatformJob) -> PlatformJobPublic:
             retryable=bool(job.error_retryable),
         )
     definition = get_platform_job_definition(job.job_type)
-    can_cancel = job.status == "queued" or (
+    can_cancel = job.status in ("queued", "waiting") or (
         job.status == "running"
         and definition is not None
         and definition.policy.allow_running_cancellation
@@ -61,6 +61,8 @@ def platform_job_to_public(job: PlatformJob) -> PlatformJobPublic:
         organization_id=job.organization_id,
         resource_type=job.resource_type,
         resource_id=job.resource_id,
+        resource_lock_key=job.resource_lock_key,
+        priority=job.priority,
         title=job.title,
         action_url=job.action_url,
         requested_by_user_id=job.requested_by_user_id,
@@ -79,6 +81,9 @@ def platform_job_to_public(job: PlatformJob) -> PlatformJobPublic:
         result=job.result,
         error=error,
         notification_id=job.notification_id,
+        memory_start_bytes=job.memory_start_bytes,
+        memory_peak_bytes=job.memory_peak_bytes,
+        memory_limit_bytes=job.memory_limit_bytes,
         started_at=job.started_at,
         completed_at=job.completed_at,
         created_at=job.created_at,
@@ -90,6 +95,7 @@ def _notification_status(status: str) -> NotificationStatus:
     return {
         "queued": NotificationStatus.PENDING,
         "running": NotificationStatus.RUNNING,
+        "waiting": NotificationStatus.RUNNING,
         "cancel_requested": NotificationStatus.RUNNING,
         "succeeded": NotificationStatus.COMPLETED,
         "failed": NotificationStatus.FAILED,
@@ -147,6 +153,8 @@ async def enqueue_platform_job(
     payload: BaseModel | dict[str, Any],
     *,
     dedupe_key: str | None,
+    resource_lock_key: str | None = None,
+    priority: int = 100,
     organization_id: UUID | None,
     requested_by_user_id: UUID | str,
     requested_by_email: str,
@@ -155,6 +163,7 @@ async def enqueue_platform_job(
     resource_id: str | None,
     title: str,
     action_url: str | None,
+    job_id: UUID | None = None,
 ) -> tuple[PlatformJob, bool]:
     """Create or reuse one active job under a durable deduplication key."""
     parsed_payload = definition.payload_model.model_validate(payload)
@@ -181,12 +190,23 @@ async def enqueue_platform_job(
         if existing is not None:
             return existing, True
 
+    payload_json = parsed_payload.model_dump(mode="json")
+    encrypted_payload = None
+    if definition.encrypt_payload:
+        from src.core.security import encrypt_secret
+
+        encrypted_payload = encrypt_secret(parsed_payload.model_dump_json())
+        payload_json = {"protected": True}
+
     job = PlatformJob(
-        id=uuid4(),
+        id=job_id or uuid4(),
         job_type=definition.job_type,
         payload_version=definition.payload_version,
-        payload=parsed_payload.model_dump(mode="json"),
+        payload=payload_json,
+        encrypted_payload=encrypted_payload,
         dedupe_key=dedupe_key,
+        resource_lock_key=resource_lock_key,
+        priority=priority,
         organization_id=organization_id,
         requested_by_user_id=str(requested_by_user_id),
         requested_by_email=requested_by_email,
@@ -330,6 +350,101 @@ async def finish_platform_job(
     return True
 
 
+async def defer_platform_job(
+    job_id: UUID,
+    lease_token: UUID,
+    *,
+    phase: str,
+    result: dict[str, Any] | None = None,
+) -> bool:
+    """Release a runner after durable child work has been dispatched."""
+    async with get_db_context() as db:
+        job = (
+            await db.execute(
+                select(PlatformJob)
+                .where(
+                    PlatformJob.id == job_id,
+                    PlatformJob.lease_token == lease_token,
+                    PlatformJob.status == "running",
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if job is None:
+            return False
+        job.status = "waiting"
+        job.phase = phase[:200]
+        job.result = result
+        job.lease_owner = None
+        job.lease_token = None
+        job.heartbeat_at = None
+        job.lease_expires_at = None
+        job.revision += 1
+        await db.commit()
+    await publish_platform_job_update(job)
+    return True
+
+
+async def finish_deferred_platform_job(
+    job_id: UUID,
+    *,
+    status: str,
+    result: dict[str, Any] | None = None,
+    error_message: str | None = None,
+) -> bool:
+    """Complete an externally-tracked job that no longer holds a runner lease."""
+    if status not in TERMINAL_PLATFORM_JOB_STATUSES:
+        raise ValueError(f"Invalid terminal platform-job status: {status}")
+    async with get_db_context() as db:
+        job = (
+            await db.execute(
+                select(PlatformJob)
+                .where(PlatformJob.id == job_id, PlatformJob.status == "waiting")
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if job is None:
+            return False
+        job.status = status
+        job.phase = {"succeeded": "Completed", "failed": "Failed", "cancelled": "Cancelled"}[status]
+        job.progress_percent = 100 if status == "succeeded" else job.progress_percent
+        job.result = result
+        job.error_code = "child_work_failed" if error_message else None
+        job.error_message = error_message[:4000] if error_message else None
+        job.completed_at = _now()
+        job.revision += 1
+        await db.commit()
+    await publish_platform_job_update(job)
+    return True
+
+
+async def update_deferred_platform_job_progress(
+    job_id: UUID,
+    *,
+    phase: str,
+    current: int,
+    total: int,
+) -> bool:
+    async with get_db_context() as db:
+        job = (
+            await db.execute(
+                select(PlatformJob)
+                .where(PlatformJob.id == job_id, PlatformJob.status == "waiting")
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if job is None:
+            return False
+        job.phase = phase[:200]
+        job.progress_current = current
+        job.progress_total = total
+        job.progress_percent = 100 * current / total if total else 100
+        job.revision += 1
+        await db.commit()
+    await publish_platform_job_update(job)
+    return True
+
+
 async def request_platform_job_cancel(
     db: AsyncSession,
     job: PlatformJob,
@@ -345,7 +460,7 @@ async def request_platform_job_cancel(
     now = _now()
     accepted = job.cancel_requested_at is None
     job.cancel_requested_at = job.cancel_requested_at or now
-    if job.status == "queued":
+    if job.status in ("queued", "waiting"):
         job.status = "cancelled"
         job.phase = "Cancelled"
         job.completed_at = now

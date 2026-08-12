@@ -90,9 +90,9 @@ async def test_pending_job_completes_and_clears_options(
         fake_upload_artifact,
     )
 
-    processed, failed = await scheduler.process_solution_export_jobs(batch_limit=1)
+    completed = await scheduler.run_solution_export_job(job.id)
 
-    assert (processed, failed) == (1, 0)
+    assert completed
     await db_session.refresh(job)
     assert job.status == "completed"
     assert job.progress_percent == 100
@@ -123,9 +123,9 @@ async def test_missing_encrypted_options_fails_and_clears_job(
 
     monkeypatch.setattr(scheduler, "_update_notification", AsyncMock())
 
-    processed, failed = await scheduler.process_solution_export_jobs(batch_limit=1)
+    completed = await scheduler.run_solution_export_job(job.id)
 
-    assert (processed, failed) == (1, 1)
+    assert not completed
     await db_session.refresh(job)
     assert job.status == "failed"
     assert job.message == "Backup failed"
@@ -135,7 +135,7 @@ async def test_missing_encrypted_options_fails_and_clears_job(
 
 
 @pytest.mark.asyncio
-async def test_stale_running_job_is_marked_failed_and_cleared(
+async def test_running_job_can_resume_after_platform_runner_retry(
     db_session,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -153,39 +153,14 @@ async def test_stale_running_job_is_marked_failed_and_cleared(
 
     monkeypatch.setattr(scheduler, "_update_notification", AsyncMock())
 
-    processed, failed = await scheduler.process_solution_export_jobs(batch_limit=1)
-
-    assert (processed, failed) == (1, 1)
-    await db_session.refresh(job)
-    assert job.status == "failed"
-    assert job.message == "Backup failed"
-    assert job.failure_message == "Backup export job was abandoned and will need to be retried"
-    assert job.encrypted_options is None
-    assert job.completed_at is not None
-
-
-@pytest.mark.asyncio
-async def test_running_job_without_claim_time_is_marked_failed(
-    db_session,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    solution = await _solution(db_session)
-    job = SolutionExportJob(
-        solution_id=solution.id,
-        status="running",
-        progress_percent=5,
-        message="Building backup",
-        claimed_at=None,
-        encrypted_options=encrypt_export_options(_options()),
+    monkeypatch.setattr(
+        scheduler.SolutionExportArtifactService,
+        "build_zip_tempfile",
+        AsyncMock(side_effect=RuntimeError("storage unavailable")),
     )
-    db_session.add(job)
-    await db_session.commit()
+    completed = await scheduler.run_solution_export_job(job.id)
 
-    monkeypatch.setattr(scheduler, "_update_notification", AsyncMock())
-
-    processed, failed = await scheduler.process_solution_export_jobs(batch_limit=1)
-
-    assert (processed, failed) == (1, 1)
+    assert not completed
     await db_session.refresh(job)
     assert job.status == "failed"
     assert job.encrypted_options is None

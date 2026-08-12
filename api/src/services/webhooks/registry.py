@@ -9,6 +9,7 @@ Manages discovery and lookup of webhook adapters:
 import logging
 from typing import Any
 
+from src.config import get_settings
 from src.core.log_safety import log_safe
 from src.services.webhooks.adapters import BUILTIN_ADAPTERS
 from src.services.webhooks.protocol import WebhookAdapter
@@ -32,6 +33,13 @@ class AdapterRegistry:
         # Register built-in adapters
         for name, adapter_cls in BUILTIN_ADAPTERS.items():
             self.register(name, adapter_cls)
+
+        if get_settings().environment != "production":
+            from src.services.webhooks.adapters.local_fixture import (
+                LocalFixtureWebhookAdapter,
+            )
+
+            self.register(LocalFixtureWebhookAdapter.name, LocalFixtureWebhookAdapter)
 
     def register(self, name: str, adapter_cls: type[WebhookAdapter]) -> None:
         """

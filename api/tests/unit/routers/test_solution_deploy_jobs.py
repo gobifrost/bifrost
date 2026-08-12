@@ -1,108 +1,58 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
+from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solutions import Solution
 from src.routers.solutions import (
-    DEPLOY_JOB_TIMEOUT,
+    _enqueue_solution_deploy_job,
     _run_deploy_job,
-    expire_deploy_job_if_timed_out,
-    reconcile_orphaned_deploy_jobs,
 )
 
 
 @pytest.mark.asyncio
-async def test_reconcile_orphaned_deploy_jobs_fails_stale_non_terminal_jobs(db_session):
-    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+async def test_deploy_job_is_staged_as_encrypted_central_job(
+    db_session,
+    tmp_path,
+    monkeypatch,
+):
     sol = Solution(slug="demo", name="Demo")
     db_session.add(sol)
     await db_session.flush()
+    path = tmp_path / "deploy.zip"
+    path.write_bytes(b"validated")
+    monkeypatch.setattr(
+        "src.routers.solutions.SolutionDeployJobStorage.write_path",
+        AsyncMock(return_value=("a" * 64, len(b"validated"))),
+    )
+    monkeypatch.setattr(
+        "src.routers.solutions.publish_platform_job_update", AsyncMock()
+    )
 
-    stale_queued = SolutionDeployJob(
-        install_id=sol.id,
-        status="queued",
-        created_at=now - timedelta(minutes=30),
-        updated_at=now - timedelta(minutes=30),
-    )
-    stale_running = SolutionDeployJob(
-        install_id=sol.id,
-        status="running",
-        created_at=now - timedelta(minutes=30),
-        updated_at=now - timedelta(minutes=30),
-    )
-    fresh_queued = SolutionDeployJob(
-        install_id=sol.id,
-        status="queued",
-        created_at=now,
-        updated_at=now,
-    )
-    succeeded = SolutionDeployJob(
-        install_id=sol.id,
-        status="succeeded",
-        created_at=now - timedelta(minutes=30),
-        updated_at=now - timedelta(minutes=30),
-    )
-    db_session.add_all([stale_queued, stale_running, fresh_queued, succeeded])
-    await db_session.flush()
-
-    changed = await reconcile_orphaned_deploy_jobs(
+    projection = await _enqueue_solution_deploy_job(
         db_session,
-        older_than=timedelta(minutes=10),
-        now=now,
+        kind="deploy",
+        install_id=sol.id,
+        organization_id=None,
+        options={"force": True, "password": "not-plaintext"},
+        requested_by_user_id=uuid4(),
+        requested_by_email="admin@example.com",
+        requested_by_name="Admin",
+        input_path=path,
     )
-
-    assert changed == 2
-    assert stale_queued.status == "failed"
-    assert stale_running.status == "failed"
-    assert "API restarted" in (stale_queued.error or "")
-    assert "API restarted" in (stale_running.error or "")
-    assert fresh_queued.status == "queued"
-    assert fresh_queued.error is None
-    assert succeeded.status == "succeeded"
-
-
-@pytest.mark.asyncio
-async def test_expire_deploy_job_if_timed_out_marks_running_job_failed(db_session):
-    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    job = SolutionDeployJob(
-        install_id=None,
-        status="running",
-        result={"phase": "building app dist"},
-        created_at=now - DEPLOY_JOB_TIMEOUT - timedelta(seconds=1),
-        updated_at=now - DEPLOY_JOB_TIMEOUT - timedelta(seconds=1),
-    )
-    db_session.add(job)
-    await db_session.flush()
-
-    changed = expire_deploy_job_if_timed_out(job, now=now)
-
-    assert changed is True
-    assert job.status == "failed"
-    assert job.result is None
-    assert "15-minute" in (job.error or "")
-
-
-def test_expire_deploy_job_if_timed_out_leaves_terminal_job_unchanged():
-    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
-    job = SolutionDeployJob(
-        install_id=None,
-        status="succeeded",
-        result={"solution_id": "abc"},
-        created_at=now - DEPLOY_JOB_TIMEOUT - timedelta(seconds=1),
-        updated_at=now,
-    )
-
-    changed = expire_deploy_job_if_timed_out(job, now=now)
-
-    assert changed is False
-    assert job.status == "succeeded"
-    assert job.result == {"solution_id": "abc"}
+    central = await db_session.get(PlatformJob, projection.id)
+    assert central is not None
+    assert central.id == projection.id
+    assert central.job_type == "solution.deploy"
+    assert central.payload == {"protected": True}
+    assert central.encrypted_payload is not None
+    assert "not-plaintext" not in central.encrypted_payload
+    assert central.resource_lock_key == f"solution:{sol.id}"
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ describe("FormConfirmation", () => {
 	});
 
 	it("focuses and renders safe Markdown without raw HTML", () => {
+		const focus = vi.spyOn(HTMLElement.prototype, "focus");
 		render(
 			<FormConfirmation
 				formId="form-1"
@@ -26,6 +27,7 @@ describe("FormConfirmation", () => {
 
 		const status = screen.getByRole("status");
 		expect(status).toHaveFocus();
+		expect(focus).toHaveBeenCalledWith({ preventScroll: true });
 		expect(
 			screen.getByRole("heading", { name: "Thank you" }),
 		).toBeVisible();

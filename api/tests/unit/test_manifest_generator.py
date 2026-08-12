@@ -381,5 +381,3 @@ def test_serialize_workflow_carries_tool_description():
 
     out = serialize_workflow(wf)
     assert out.tool_description == "CURATED-TOOLDESC"
-
-

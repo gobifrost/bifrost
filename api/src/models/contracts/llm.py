@@ -223,5 +223,3 @@ class EmbeddingConfigSaveResponse(BaseModel):
         default=None,
         description="Rows that would be re-embedded if confirmed.",
     )
-
-

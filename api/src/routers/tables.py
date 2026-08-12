@@ -972,6 +972,10 @@ async def update_table(
         )
 
     if "policies" in data.model_fields_set:
+        # Subscribers re-read policies on a separate database connection when
+        # they receive this event.  Commit first so they cannot observe the old
+        # policy and incorrectly retain access under load.
+        await ctx.db.commit()
         await publish_policy_changed(str(table.id))
 
     return TablePublic.model_validate(table)

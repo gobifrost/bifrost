@@ -82,6 +82,25 @@ async def record_backfill_outcome(
 
         # Broadcast after commit so subscribers see the latest committed state.
         await publish_summary_backfill_update(job_id, payload)
+        from src.services.platform_jobs import (
+            finish_deferred_platform_job,
+            update_deferred_platform_job_progress,
+        )
+
+        completed = payload["succeeded"] + payload["failed"]
+        if payload["status"] == "complete":
+            await finish_deferred_platform_job(
+                job_id,
+                status="succeeded",
+                result=payload,
+            )
+        else:
+            await update_deferred_platform_job_progress(
+                job_id,
+                phase=f"Summarized {completed}/{payload['total']} agent runs",
+                current=completed,
+                total=payload["total"],
+            )
     except Exception:
         logger.exception(
             "Failed to record backfill outcome for job %s run %s",

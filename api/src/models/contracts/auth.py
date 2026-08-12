@@ -2,7 +2,7 @@
 Authentication and MFA contract models for Bifrost.
 """
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, EmailStr
 
@@ -34,6 +34,8 @@ class AuthStatusResponse(BaseModel):
     password_login_enabled: bool
     mfa_required_for_password: bool
     oauth_providers: list[OAuthProviderInfo]
+    auto_redirect_to_sso: bool = False
+    default_sso_provider: Literal["microsoft", "google", "oidc"] | None = None
 
 
 class MFARequiredResponse(BaseModel):

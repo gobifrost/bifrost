@@ -229,15 +229,14 @@ services:
       api:
         condition: service_healthy
 
-  # Scheduler Service + isolated platform-job host
-  # MUST run as single instance - handles CRON, maintenance, and durable
-  # non-workflow jobs. Workflow/agent execution remains in worker containers.
+  # Scheduler Service + isolated platform-job host. Every replica runs a small
+  # job pool; a PostgreSQL lease elects one trigger leader.
+  # Workflow/agent execution remains in worker containers.
   scheduler:
     # build:
     #   context: .
     #   dockerfile: api/Dockerfile
     image: ghcr.io/gobifrost/bifrost-api:latest
-    container_name: bifrost-scheduler
     environment:
       # Core (must match API)
       BIFROST_ENVIRONMENT: ${BIFROST_ENVIRONMENT:-production}
@@ -272,7 +271,7 @@ services:
       retries: 3
       start_period: 30s
     deploy:
-      replicas: 1 # MUST be single instance
+      replicas: ${SCHEDULER_REPLICAS:-1}
       resources:
         reservations:
           cpus: "0.05"

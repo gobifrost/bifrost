@@ -23,6 +23,7 @@ import {
 	getActiveToken,
 	isEmbedSession,
 } from "@/lib/auth-token";
+import { clearPreferredSsoRedirectAttempt } from "@/services/auth";
 
 // Consume the fragment before AuthProvider performs its initial auth check.
 // api-client does the same defensively before requests; this keeps auth state
@@ -155,6 +156,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
 	const completeLoginWithToken = useCallback((accessToken: string): void => {
 		clearEmbedToken();
+		clearPreferredSsoRedirectAttempt();
 		localStorage.setItem(ACCESS_TOKEN_KEY, accessToken);
 
 		const payload = parseJwt(accessToken);

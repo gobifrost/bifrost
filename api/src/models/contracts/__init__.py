@@ -151,6 +151,15 @@ from src.models.contracts.platform_jobs import (
     PlatformJobPublic,
     PlatformJobStatus,
 )
+from src.models.contracts.scheduler_diagnostics import (
+    SchedulerCapacityStatus,
+    SchedulerDiagnosticsResponse,
+    SchedulerLeaderStatus,
+    SchedulerReplicaStatus,
+    SchedulerTaskRunStatus,
+    SchedulerTaskStatus,
+    SystemDiagnosticLogPublic,
+)
 
 # Agents & Chat
 from src.models.contracts.agents import (
@@ -303,6 +312,7 @@ from src.models.contracts.editor import (
     FileDiagnostic,
     FileMetadata,
     FileType,
+    FileStatResponse,
     PendingDeactivation,
     ScriptExecutionRequest,
     ScriptExecutionResponse,
@@ -807,6 +817,7 @@ __all__ = [
     "FileContentRequest",
     "FileContentResponse",
     "FileConflictResponse",
+    "FileStatResponse",
     "FileDiagnostic",
     "WorkflowIdConflict",
     "AffectedEntity",
@@ -1055,6 +1066,13 @@ __all__ = [
     "PlatformJobProgress",
     "PlatformJobPublic",
     "PlatformJobStatus",
+    "SchedulerCapacityStatus",
+    "SchedulerDiagnosticsResponse",
+    "SchedulerLeaderStatus",
+    "SchedulerReplicaStatus",
+    "SchedulerTaskRunStatus",
+    "SchedulerTaskStatus",
+    "SystemDiagnosticLogPublic",
     # Platform Admin
     "PoolDetail",
     "PoolsListResponse",

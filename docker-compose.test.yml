@@ -146,6 +146,9 @@ services:
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
+      # The full E2E suite intentionally reuses session-scoped users. Keep its
+      # access tokens valid for the longest supported local/CI run.
+      BIFROST_ACCESS_TOKEN_EXPIRE_MINUTES: "120"
       # S3-compatible object storage
       BIFROST_S3_BUCKET: bifrost-test
       BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
@@ -253,8 +256,8 @@ services:
     profiles:
       - e2e  # Only start in E2E mode
 
-  # Scheduler (Test) - Only started for E2E tests
-  # Handles background jobs like GitHub sync via Redis pubsub
+  # Scheduler (Test) - Only started for E2E tests. Every replica is a durable
+  # platform-job runner; the trigger leader is elected in PostgreSQL.
   scheduler:
     image: bifrost-test-api-dev:latest
     build:
@@ -297,11 +300,30 @@ services:
         condition: service_started
       api:
         condition: service_healthy
+      scheduler-fixtures:
+        condition: service_healthy
+    mem_limit: 1g
     # Entrypoint handles permissions; run as root so it can fix volume ownership
     user: root
     command: ["python", "-m", "src.scheduler.main"]
     profiles:
       - e2e  # Only start in E2E mode
+
+  scheduler-fixtures:
+    image: bifrost-test-api-dev:latest
+    build:
+      context: .
+      dockerfile: api/Dockerfile.dev
+    command: ["python", "/app/scripts/scheduler_fixture_server.py"]
+    volumes:
+      - ./api/scripts:/app/scripts:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 2s
+      timeout: 2s
+      retries: 20
+    profiles:
+      - e2e
 
   # Test Runner - Executes pytest inside container with all dependencies
   test-runner:

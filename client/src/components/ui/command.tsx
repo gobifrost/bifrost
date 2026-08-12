@@ -17,6 +17,46 @@ import {
 } from "@/components/ui/input-group"
 import { SearchIcon, CheckIcon } from "lucide-react"
 
+function scrollWithinCommandList(item: HTMLElement) {
+  const list = item.closest<HTMLElement>('[cmdk-list=""]')
+  if (!list) return
+
+  const listRect = list.getBoundingClientRect()
+  const itemRect = item.getBoundingClientRect()
+  const styles = window.getComputedStyle(list)
+  const scrollPaddingTop = Number.parseFloat(styles.scrollPaddingTop) || 0
+  const scrollPaddingBottom = Number.parseFloat(styles.scrollPaddingBottom) || 0
+  const visibleTop = listRect.top + scrollPaddingTop
+  const visibleBottom = listRect.bottom - scrollPaddingBottom
+
+  if (itemRect.top < visibleTop) {
+    list.scrollTop -= visibleTop - itemRect.top
+  } else if (itemRect.bottom > visibleBottom) {
+    list.scrollTop += itemRect.bottom - visibleBottom
+  }
+}
+
+function setCommandItemRef(
+  ref: React.Ref<HTMLDivElement> | undefined,
+  item: HTMLDivElement | null
+) {
+  if (item) {
+    // cmdk calls scrollIntoView when its selected item changes. The native
+    // method may scroll every ancestor, including a cross-origin iframe's host
+    // page. Keep that internal selection bookkeeping inside the command list.
+    Object.defineProperty(item, "scrollIntoView", {
+      configurable: true,
+      value: () => scrollWithinCommandList(item),
+    })
+  }
+
+  if (typeof ref === "function") {
+    ref(item)
+  } else if (ref) {
+    ref.current = item
+  }
+}
+
 function Command({
   className,
   ...props
@@ -192,10 +232,17 @@ function CommandSeparator({
 function CommandItem({
   className,
   children,
+  ref,
   ...props
 }: React.ComponentProps<typeof CommandPrimitive.Item>) {
+  const commandItemRef = React.useCallback(
+    (item: HTMLDivElement | null) => setCommandItemRef(ref, item),
+    [ref]
+  )
+
   return (
     <CommandPrimitive.Item
+      ref={commandItemRef}
       data-slot="command-item"
       className={cn(
         "group/command-item relative flex min-h-7 cursor-default items-center gap-2 rounded-xl px-2 py-1.5 text-sm outline-hidden select-none in-data-[slot=dialog-content]:rounded-2xl data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-selected:bg-muted data-selected:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 data-selected:*:[svg]:text-foreground",

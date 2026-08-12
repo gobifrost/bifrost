@@ -51,7 +51,7 @@ Event publishing operations (async).
 
 
 
-**`files.delete(path: str, location: str = 'workspace', mode: Mode = 'cloud', scope: str | None = None) -> None`**
+**`files.delete(path: str, location: str = 'workspace', mode: Mode = 'cloud', expected_version: str | None = None, scope: str | None = None) -> None`**
 
 **`files.exists(path: str, location: str = 'workspace', mode: Mode = 'cloud', scope: str | None = None) -> bool`**
 
@@ -65,9 +65,11 @@ Event publishing operations (async).
 
 **`files.search(query: str, case_sensitive: bool = False, is_regex: bool = False, include_pattern: str = '**/*', max_results: int = 1000) -> dict`**
 
-**`files.write(path: str, content: str, location: str = 'workspace', mode: Mode = 'cloud', scope: str | None = None) -> None`**
+**`files.stat(path: str, location: str = 'workspace', mode: Mode = 'cloud', scope: str | None = None) -> dict`**
 
-**`files.write_bytes(path: str, content: bytes, location: str = 'workspace', mode: Mode = 'cloud', scope: str | None = None) -> None`**
+**`files.write(path: str, content: str, location: str = 'workspace', mode: Mode = 'cloud', expected_version: str | None = None, create_only: bool = False, scope: str | None = None) -> None`**
+
+**`files.write_bytes(path: str, content: bytes, location: str = 'workspace', mode: Mode = 'cloud', expected_version: str | None = None, create_only: bool = False, scope: str | None = None) -> None`**
 
 ### forms
 
