@@ -16,6 +16,17 @@ from typing import Any
 from fastmcp.tools import ToolResult
 
 
+def direct_result(data: Any) -> ToolResult:
+    """Return a tool payload without adding display or metadata envelopes.
+
+    MCP ``structuredContent`` only accepts JSON objects, so using it would
+    either duplicate object payloads or require wrapping arrays and scalars.
+    Direct execution results instead use the required content channel for
+    every JSON value, preserving the selected tool's exact return shape.
+    """
+    return ToolResult(content="null" if data is None else data)
+
+
 def success_result(display_text: str, data: dict[str, Any] | None = None) -> ToolResult:
     """
     Create a successful tool result with display text and structured data.

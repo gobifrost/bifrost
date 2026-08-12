@@ -4,6 +4,7 @@
 from fastmcp.tools import ToolResult
 
 from src.services.mcp_server.tool_result import (
+    direct_result,
     error_result,
     format_diff,
     format_file_content,
@@ -22,6 +23,28 @@ class TestSuccessResult:
         result = success_result("Found items", {"count": 5, "items": ["a", "b"]})
         assert isinstance(result, ToolResult)
         assert result.structured_content == {"count": 5, "items": ["a", "b"]}
+
+
+class TestDirectResult:
+    def test_returns_array_as_the_only_content(self):
+        result = direct_result([{"echo": "hello"}])
+
+        assert result.structured_content is None
+        assert len(result.content) == 1
+        assert result.content[0].text == '[{"echo":"hello"}]'
+
+    def test_returns_object_without_a_gateway_envelope(self):
+        result = direct_result({"echo": "hello"})
+
+        assert result.structured_content is None
+        assert len(result.content) == 1
+        assert result.content[0].text == '{"echo":"hello"}'
+
+    def test_serializes_null_result(self):
+        result = direct_result(None)
+
+        assert result.structured_content is None
+        assert result.content[0].text == "null"
 
 
 class TestErrorResult:

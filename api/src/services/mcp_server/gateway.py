@@ -549,13 +549,12 @@ class MCPAgentGatewayService:
                 retryable=True,
                 details={"underlying_result": structured},
             )
-        return {
-            "content": pydantic_core.to_jsonable_python(
-                getattr(result, "content", result),
-                fallback=str,
-            ),
-            "structured_content": structured,
-        }
+        if structured is not None:
+            return structured
+        return pydantic_core.to_jsonable_python(
+            getattr(result, "content", result),
+            fallback=str,
+        )
 
     async def _dispatch_workflow(
         self,
@@ -594,7 +593,7 @@ class MCPAgentGatewayService:
                 response.error or "Workflow execution failed.",
                 details={"underlying_result": data},
             )
-        return data
+        return response.result
 
     async def _dispatch_delegation(
         self,
@@ -684,13 +683,14 @@ class MCPAgentGatewayService:
                         "External MCP connection is no longer available.",
                         retryable=True,
                     )
-                return await mcp_dispatch.invoke(
+                result = await mcp_dispatch.invoke(
                     connection=connection,
                     tool_name=tool.remote_tool_name,
                     arguments=arguments,
                     caller_user_id=UUID(str(self.context.user_id)),
                     db=db,
                 )
+                return self.unwrap_external_result(result)
         except NeedsReauthError as exc:
             raise GatewayError(
                 "NEEDS_REAUTH",
@@ -715,3 +715,24 @@ class MCPAgentGatewayService:
                 retryable=True,
                 details={"connection_id": str(tool.source_id)},
             ) from exc
+
+    @staticmethod
+    def unwrap_external_result(result: dict[str, Any]) -> Any:
+        """Return an external MCP tool's payload without its transport envelope."""
+        if result.get("is_error"):
+            structured = result.get("structured_content")
+            message = (
+                structured.get("error")
+                if isinstance(structured, dict)
+                else None
+            )
+            raise GatewayError(
+                "TOOL_EXECUTION_FAILED",
+                str(message or "External MCP tool reported an error."),
+                retryable=True,
+                details={"underlying_result": result},
+            )
+        structured = result.get("structured_content")
+        if structured is not None:
+            return structured
+        return result.get("content")

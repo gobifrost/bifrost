@@ -131,7 +131,11 @@ class MCPGatewayExecuteRequest(BaseModel):
 
 
 class MCPGatewayExecuteResponse(BaseModel):
-    """Auditable envelope returned after a gateway tool call."""
+    """Internal REST envelope for an auditable gateway tool call.
+
+    The public MCP execute tool returns ``result`` directly; the remaining
+    fields support the REST bridge and server-side diagnostics.
+    """
 
     agent_id: str
     agent_name: str

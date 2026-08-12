@@ -120,7 +120,9 @@ default gateway obtains live agent instructions through `bifrost_get_agent`.
   - external MCP tools: `mcp_client.dispatch.invoke`.
 - Uses the authenticated MCP caller identity for downstream execution and
   OAuth resolution.
-- Returns resolved agent/tool provenance, result, and duration.
+- Returns the selected tool's result directly to the MCP caller. Agent/tool
+  provenance, execution identifiers, status, and duration remain in server
+  logs and source-specific execution records rather than the model payload.
 
 The gateway logs the authenticated caller, resolved agent, resolved tool name,
 source, success/failure, and duration. Existing workflow, agent-run, and

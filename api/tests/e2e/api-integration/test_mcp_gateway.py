@@ -1,12 +1,11 @@
 """Wire-level proof for progressive agent discovery on the default MCP URL."""
 
+import json
 import os
 import uuid
 
 import pytest
 import requests
-
-from tests.fixtures.auth import create_test_jwt
 
 TEST_API_URL = os.getenv("TEST_API_URL", "http://api:8000")
 MCP_ACCEPT = "application/json, text/event-stream"
@@ -63,24 +62,30 @@ def _call_gateway(token: str, name: str, arguments: dict) -> dict:
         "tools/call",
         {"name": name, "arguments": arguments},
     )
-    return payload["result"]["structuredContent"]
+    result = payload["result"]
+    structured = result.get("structuredContent")
+    if structured is not None:
+        return structured
+    assert len(result["content"]) == 1, result
+    return json.loads(result["content"][0]["text"])
 
 
 @pytest.mark.e2e
 class TestMCPAgentGateway:
     @pytest.fixture(autouse=True, scope="class")
-    def gateway_fixture(self, request):
+    def gateway_fixture(self, request, platform_admin):
         suffix = uuid.uuid4().hex[:8]
         function_name = f"gateway_echo_{suffix}"
         path = f"workflows/{function_name}.py"
-        token = create_test_jwt(is_superuser=True)
+        token = platform_admin.access_token
+        assert token is not None
         headers = _api_headers(token)
 
         content = (
             "from bifrost import tool\n\n"
             "@tool(description='Echo a message for the MCP gateway proof.')\n"
-            f"def {function_name}(message: str) -> dict:\n"
-            "    return {'echo': message}\n"
+            f"async def {function_name}(message: str) -> list[dict]:\n"
+            "    return [{'echo': message}]\n"
         )
         write_response = requests.put(
             f"{TEST_API_URL}/api/files/editor/content",
@@ -202,6 +207,23 @@ class TestMCPAgentGateway:
         )
         assert schema["input_schema"]["required"] == ["message"]
 
+        execution_payload = _mcp_request(
+            self.token,
+            "tools/call",
+            {
+                "name": "bifrost_execute_tool",
+                "arguments": {
+                    "agent_id": self.agent_id,
+                    "tool_ref": tool_ref,
+                    "arguments": {"message": "hello"},
+                },
+            },
+        )["result"]
+        assert "structuredContent" not in execution_payload
+        assert json.loads(execution_payload["content"][0]["text"]) == [
+            {"echo": "hello"}
+        ]
+
         invalid = _call_gateway(
             self.token,
             "bifrost_execute_tool",
@@ -225,10 +247,7 @@ class TestMCPAgentGateway:
                 "arguments": {},
             },
         )
-        assert executed["agent_id"] == self.agent_id
-        assert executed["tool_ref"] == system_tool["tool_ref"]
-        assert executed["source"] == "system"
-        assert "schema" in executed["result"]["structured_content"]
+        assert "schema" in executed
 
         updated_prompt = f"{self.prompt} updated"
         update_response = requests.put(

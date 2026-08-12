@@ -198,3 +198,101 @@ async def test_execute_returns_auditable_envelope():
     assert result["source"] == "workflow"
     assert result["result"] == {"ticket": 42}
     assert isinstance(result["duration_ms"], int)
+
+
+@pytest.mark.asyncio
+async def test_workflow_dispatch_returns_only_the_workflow_result():
+    service = MCPAgentGatewayService(_context())
+    tool = _resolved_tool()
+    response = MagicMock()
+    response.execution_id = str(uuid4())
+    response.status.value = "Success"
+    response.duration_ms = 125
+    response.result = [{"ticket": 42}]
+    response.error = None
+    response.error_type = None
+
+    with patch(
+        "src.services.execution.service.execute_tool",
+        new=AsyncMock(return_value=response),
+    ):
+        result = await service._dispatch_workflow(tool, {"ticket_id": 42})
+
+    assert result == [{"ticket": 42}]
+
+
+@pytest.mark.asyncio
+async def test_workflow_dispatch_keeps_execution_details_on_failure():
+    service = MCPAgentGatewayService(_context())
+    tool = _resolved_tool()
+    execution_id = str(uuid4())
+    response = MagicMock()
+    response.execution_id = execution_id
+    response.status.value = "Failed"
+    response.duration_ms = 125
+    response.result = None
+    response.error = "HaloPSA rejected the query"
+    response.error_type = "UserError"
+
+    with patch(
+        "src.services.execution.service.execute_tool",
+        new=AsyncMock(return_value=response),
+    ):
+        with pytest.raises(GatewayError) as exc_info:
+            await service._dispatch_workflow(tool, {"ticket_id": 42})
+
+    error = exc_info.value
+    assert error.message == "HaloPSA rejected the query"
+    assert error.details["underlying_result"] == {
+        "execution_id": execution_id,
+        "status": "Failed",
+        "duration_ms": 125,
+        "result": None,
+        "error": "HaloPSA rejected the query",
+        "error_type": "UserError",
+    }
+
+
+def test_external_dispatch_prefers_the_structured_tool_payload():
+    result = MCPAgentGatewayService.unwrap_external_result(
+        {
+            "content": [{"type": "text", "text": "fallback"}],
+            "structured_content": {"tickets": [42]},
+            "is_error": False,
+            "_resolution_path": "user_token",
+        }
+    )
+
+    assert result == {"tickets": [42]}
+
+
+def test_external_dispatch_uses_content_without_structured_payload():
+    content = [{"type": "text", "text": "plain result"}]
+
+    result = MCPAgentGatewayService.unwrap_external_result(
+        {
+            "content": content,
+            "structured_content": None,
+            "is_error": False,
+            "_resolution_path": "service_token",
+        }
+    )
+
+    assert result == content
+
+
+def test_external_dispatch_preserves_structured_error_details():
+    underlying = {
+        "content": [{"type": "text", "text": "vendor rejected request"}],
+        "structured_content": {"error": "Invalid project"},
+        "is_error": True,
+        "_resolution_path": "user_token",
+    }
+
+    with pytest.raises(GatewayError) as exc_info:
+        MCPAgentGatewayService.unwrap_external_result(underlying)
+
+    error = exc_info.value
+    assert error.message == "Invalid project"
+    assert error.retryable is True
+    assert error.details["underlying_result"] == underlying
