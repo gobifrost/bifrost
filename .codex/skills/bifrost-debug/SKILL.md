@@ -20,12 +20,14 @@ Do **not** activate for backend-only work that can be verified via tests, type g
 
 `./debug.sh` picks the mode based on whether `NETBIRD_SETUP_KEY` is available in the env (process env, or `~/.config/bifrost/debug.env`):
 
-- **Mode A — netbird:** key present. Stack reachable only via the Netbird mesh at `http://<bifrost-debug-WORKTREE>`. No host port bindings. Suited for showing the user's stack to anyone on their Netbird network (or themselves on a different device).
+- **Mode A — netbird:** key present. The peer joins the private NetBird mesh and creates an ephemeral public HTTPS URL with `netbird expose`. No host ports, durable Admin proxy mappings, or NetBird API key are required. `./debug.sh status` reports both URLs.
 - **Mode B — port:** no key. Client exposed on a deterministic free host port (30000–39999, hashed from worktree path). Reachable at `http://localhost:<port>`. Default for most local development.
 
 The user picks the mode by setting (or not setting) `NETBIRD_SETUP_KEY` in `~/.config/bifrost/debug.env`. Don't try to switch modes for them.
 
-**Optional in Mode A:** `NETBIRD_EXTRA_DNS_LABELS` in `~/.config/bifrost/debug.env` adds DNS aliases for the peer (comma-separated, e.g. `bifrost,debug-current` → `bifrost.netbird.cloud`, `debug-current.netbird.cloud`). Wildcards work (`*.myserver`). Useful for stable per-user names that don't change with the worktree. Don't set this for the user — they manage it themselves.
+Mode A stores a strong generated admin password per worktree under the user's local state directory and reports it from `./debug.sh status`. Never replace it with the shared `password` development credential while public exposure is active.
+
+**Optional in Mode A:** `NETBIRD_EXTRA_DNS_LABELS` in `~/.config/bifrost/debug.env` adds private-mesh DNS aliases for the peer (comma-separated, e.g. `bifrost,debug-current` → `bifrost.netbird.cloud`, `debug-current.netbird.cloud`). Wildcards work (`*.myserver`). Don't set this for the user — they manage it themselves.
 
 ## The basic flow
 
@@ -132,17 +134,21 @@ Group by project name to find each worktree's URL: `cd <worktree> && ./debug.sh 
 - The seed-user provisioning runs on every API boot. If the wizard appears, the seed env vars probably aren't loaded — check `docker compose -f docker-compose.debug.yml exec api env | grep BIFROST_DEFAULT_USER`. If empty, `.env.debug` isn't being sourced; investigate `load_env_files` in `debug.sh`.
 - "User already exists" on the wizard: a previous (broken) seed user lingers without an org. Run `./debug.sh down` (wipes the DB volume) and `./debug.sh up` again.
 
-**Mode A can't be reached at the hostname:**
+**Mode A can't be reached at the public URL:**
+- Run `./debug.sh status`. If it only shows the private URL, inspect `./debug.sh logs netbird` for Peer Expose permissions or certificate provisioning errors.
+- Confirm Peer Expose is enabled for the setup key's peer group under NetBird **Settings → Clients**.
+- The public service is ephemeral. Restarting the NetBird container issues a new URL; `debug.sh` applies it to `BIFROST_PUBLIC_URL` automatically.
+
+**Mode A can't be reached at the private hostname:**
 - DNS propagation in Netbird takes a few seconds after first peer enrollment. Wait 30s and retry.
 - Confirm the peer is registered: `docker compose -f docker-compose.debug.yml logs netbird | tail -20`. Look for `Peer registration completed`.
-- The Netbird Admin reverse-proxy mapping needs a one-time setup: peer = the worktree hostname, port = 80. The skill doesn't manage this; the user does it once per worktree (or sets up a wildcard).
 
 **Mode B port not reachable:**
 - `./debug.sh status` re-reads the published port from `docker port`. If `Open:` shows nothing, the client container didn't start — `./debug.sh logs client`.
 
 ## What this skill does NOT do
 
-- Doesn't manage Netbird account / Admin config (one-time manual setup).
+- Doesn't manage NetBird account settings. Peer Expose must already be enabled for the debug peer group.
 - Doesn't set up `~/.config/bifrost/debug.env` — point the user at it, don't write keys there for them.
 - Doesn't run tests. That's the `bifrost-testing` skill's job.
 - Doesn't reset DB state. `./debug.sh down` wipes the volume; there's no fast in-place reset (unlike `./test.sh stack reset`).

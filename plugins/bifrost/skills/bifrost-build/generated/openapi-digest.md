@@ -286,6 +286,8 @@
 | GET | `/api/mcp/gateway/agents/{agent_id}` |
 | GET | `/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}` |
 | POST | `/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute` |
+| GET | `/api/mcp/run` |
+| GET | `/api/mcp/run/plugin` |
 | GET | `/api/mcp/status` |
 | GET | `/api/mcp/tools` |
 | GET | `/api/me/mcp-connections` |
