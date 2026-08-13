@@ -85,10 +85,14 @@ async def test_memory_save_search_and_remove_stay_in_the_user_store(
     assert matches[0][0].doc_metadata == {"customer": "acme"}
     assert matches[0][1] == pytest.approx(1.0)
 
-    assert await second.list_entries() == []
-    assert await second.remove(acme.id) is False
-    assert await first.remove(acme.id) is True
-    assert all(entry.id != acme.id for entry in await first.list_entries())
+    second_entries = await second.list_entries()
+    second_removed = await second.remove(acme.id)
+    first_removed = await first.remove(acme.id)
+    first_entries = await first.list_entries()
+    assert second_entries == []
+    assert second_removed is False
+    assert first_removed is True
+    assert all(entry.id != acme.id for entry in first_entries)
 
     stores = (await db_session.execute(select(MemoryStore))).scalars().all()
     assert {store.user_id for store in stores} == {first_user.id}
