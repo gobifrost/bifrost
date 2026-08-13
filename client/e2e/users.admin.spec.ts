@@ -18,7 +18,7 @@ test.describe("User Listing", () => {
 			page.getByRole("heading", { name: /users/i }).first(),
 		).toBeVisible({ timeout: 10000 });
 		await expect(
-			page.getByRole("switch", { name: "Show Disabled" }),
+			page.getByRole("switch", { name: "Show Inactive" }),
 		).toBeVisible();
 	});
 
