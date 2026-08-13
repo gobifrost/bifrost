@@ -167,10 +167,14 @@ class TestMCPProtocol:
         tools = result["tools"]
         tool_names = {t["name"] for t in tools}
         assert tool_names == {
+            "bifrost_get_required_instructions",
             "bifrost_find_agents",
             "bifrost_get_agent",
             "bifrost_get_tool_schema",
             "bifrost_execute_tool",
+            "bifrost_search_memory",
+            "bifrost_save_memory",
+            "bifrost_remove_memory",
         }
 
     def test_mcp_non_admin_allowed(self):

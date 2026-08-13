@@ -1,7 +1,7 @@
-"""Local HTTP and Git fixtures for scheduler integration tests.
+"""Local HTTP and Git fixtures for integration tests.
 
-This process deliberately behaves like external OAuth and Git providers while
-remaining entirely inside the debug/test Compose network.
+This process deliberately behaves like external OAuth, embeddings, and Git
+providers while remaining entirely inside the debug/test Compose network.
 """
 
 from __future__ import annotations
@@ -68,11 +68,38 @@ class FixtureHandler(BaseHTTPRequestHandler):
         self._json(404, {"error": "not_found"})
 
     def do_POST(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        length = int(self.headers.get("Content-Length", "0"))
+        body = self.rfile.read(length)
+
+        if self.path == "/v1/embeddings":
+            request = json.loads(body or b"{}")
+            raw_input = request.get("input", [])
+            inputs = raw_input if isinstance(raw_input, list) else [raw_input]
+            self._json(
+                200,
+                {
+                    "object": "list",
+                    "data": [
+                        {
+                            "object": "embedding",
+                            "index": index,
+                            "embedding": [1.0, 0.0, 0.0],
+                        }
+                        for index, _text in enumerate(inputs)
+                    ],
+                    "model": request.get("model", "fixture-embedding"),
+                    "usage": {
+                        "prompt_tokens": len(inputs),
+                        "total_tokens": len(inputs),
+                    },
+                },
+            )
+            return
+
         if self.path != "/oauth/token":
             self._json(404, {"error": "not_found"})
             return
-        length = int(self.headers.get("Content-Length", "0"))
-        form = parse_qs(self.rfile.read(length).decode())
+        form = parse_qs(body.decode())
         expected = {
             "grant_type": "refresh_token",
             "refresh_token": "scheduler-fixture-refresh",

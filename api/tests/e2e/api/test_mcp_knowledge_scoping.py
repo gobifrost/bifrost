@@ -4,7 +4,7 @@ E2E: search_knowledge exposure and scoping over the MCP HTTP transport.
 Two MCP surfaces:
 
 - POST /mcp                — progressive agent discovery and dispatch through
-                              four stable gateway tools.
+                              stable gateway tools.
 - POST /mcp/{agent_id}     — agent-scoped: tools/list and tool calls
                               are limited to that one agent.
 
@@ -249,10 +249,14 @@ class TestMCPKnowledgeScoping:
         tools = _mcp_list_tools(e2e_client, "/mcp", platform_admin.headers)
 
         assert {tool["name"] for tool in tools} == {
+            "bifrost_get_required_instructions",
             "bifrost_find_agents",
             "bifrost_get_agent",
             "bifrost_get_tool_schema",
             "bifrost_execute_tool",
+            "bifrost_search_memory",
+            "bifrost_save_memory",
+            "bifrost_remove_memory",
         }
         loaded = _gateway_call(
             e2e_client,

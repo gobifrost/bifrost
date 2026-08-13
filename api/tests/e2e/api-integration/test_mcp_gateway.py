@@ -10,10 +10,14 @@ import requests
 TEST_API_URL = os.getenv("TEST_API_URL", "http://api:8000")
 MCP_ACCEPT = "application/json, text/event-stream"
 GATEWAY_TOOLS = {
+    "bifrost_get_required_instructions",
     "bifrost_find_agents",
     "bifrost_get_agent",
     "bifrost_get_tool_schema",
     "bifrost_execute_tool",
+    "bifrost_search_memory",
+    "bifrost_save_memory",
+    "bifrost_remove_memory",
 }
 
 
@@ -153,6 +157,7 @@ class TestMCPAgentGateway:
             },
         )
         assert "bifrost_find_agents" in initialize["result"]["instructions"]
+        assert "bifrost_get_required_instructions" in initialize["result"]["instructions"]
 
         default_tools = _mcp_request(
             self.token,
@@ -173,6 +178,105 @@ class TestMCPAgentGateway:
             for name in scoped_names
         )
         assert not (scoped_names & GATEWAY_TOOLS)
+
+    def test_required_instructions_can_be_empty(self):
+        result = _call_gateway(
+            self.token,
+            "bifrost_get_required_instructions",
+            {},
+        )
+        assert result["instructions"] == []
+
+    def test_memory_tools_save_search_and_remove_over_mcp(self):
+        embedding_response = requests.post(
+            f"{TEST_API_URL}/api/admin/llm/embedding-config",
+            headers=self.headers,
+            json={
+                "model": "fixture-embedding",
+                "api_key": "fixture-key",
+                "endpoint": "http://scheduler-fixtures:8080/v1",
+            },
+        )
+        assert embedding_response.status_code == 200, embedding_response.text
+        assert embedding_response.json()["saved"] is True
+
+        platform_response = requests.put(
+            f"{TEST_API_URL}/api/admin/memory/settings",
+            headers=self.headers,
+            json={"enabled": True},
+        )
+        assert platform_response.status_code == 200, platform_response.text
+        user_response = requests.get(
+            f"{TEST_API_URL}/api/memory/settings",
+            headers=self.headers,
+        )
+        assert user_response.status_code == 200, user_response.text
+        assert user_response.json()["user_enabled"] is True
+        assert user_response.json()["effective_enabled"] is True
+
+        memory_id: str | None = None
+        try:
+            instructions = _call_gateway(
+                self.token,
+                "bifrost_get_required_instructions",
+                {},
+            )
+            assert "Search memory" in instructions["instructions"][0]
+
+            saved = _call_gateway(
+                self.token,
+                "bifrost_save_memory",
+                {
+                    "content": "# Acme onboarding\nUse the Northwind tenant checklist.",
+                    "metadata": {"customer": "acme"},
+                },
+            )
+            memory_id = saved["id"]
+            assert saved["metadata"] == {"customer": "acme"}
+
+            found = _call_gateway(
+                self.token,
+                "bifrost_search_memory",
+                {"query": "How do we onboard Acme?", "limit": 5},
+            )
+            assert found["count"] == 1
+            assert found["results"][0]["id"] == memory_id
+            assert found["results"][0]["content"].startswith("# Acme onboarding")
+
+            removed = _call_gateway(
+                self.token,
+                "bifrost_remove_memory",
+                {"memory_id": memory_id},
+            )
+            assert removed == {"removed_id": memory_id}
+            memory_id = None
+
+            empty = _call_gateway(
+                self.token,
+                "bifrost_search_memory",
+                {"query": "Acme onboarding"},
+            )
+            assert empty == {"results": [], "count": 0}
+        finally:
+            if memory_id is not None:
+                requests.delete(
+                    f"{TEST_API_URL}/api/memory/{memory_id}",
+                    headers=self.headers,
+                )
+            requests.put(
+                f"{TEST_API_URL}/api/memory/settings",
+                headers=self.headers,
+                json={"enabled": False},
+            )
+            requests.put(
+                f"{TEST_API_URL}/api/admin/memory/settings",
+                headers=self.headers,
+                json={"enabled": False},
+            )
+            requests.delete(
+                f"{TEST_API_URL}/api/admin/llm/embedding-config",
+                headers=self.headers,
+            )
 
     def test_live_discovery_schema_execution_and_revocation(self):
         found = _call_gateway(

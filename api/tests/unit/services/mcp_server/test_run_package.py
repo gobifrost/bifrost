@@ -4,16 +4,21 @@ import json
 import zipfile
 from io import BytesIO
 
+import pytest
+
 from src.services.mcp_server.run_package import (
+    MARKETPLACE_ID,
     PLUGIN_FILENAME,
     build_bifrost_run_plugin,
     build_setup_prompt,
     mcp_url,
+    normalize_plugin_version,
 )
 from src.services.mcp_server.tools.gateway import GATEWAY_INSTRUCTIONS
 
 
 PUBLIC_URL = "https://bifrost.example.com/"
+INSTANCE_VERSION = "1.2.2-dev.12"
 
 
 def _read_package(zip_bytes: bytes) -> dict[str, bytes]:
@@ -22,15 +27,15 @@ def _read_package(zip_bytes: bytes) -> dict[str, bytes]:
 
 
 def test_build_bifrost_run_plugin_is_deterministic():
-    first = build_bifrost_run_plugin(PUBLIC_URL)
-    second = build_bifrost_run_plugin(PUBLIC_URL)
+    first = build_bifrost_run_plugin(PUBLIC_URL, INSTANCE_VERSION)
+    second = build_bifrost_run_plugin(PUBLIC_URL, INSTANCE_VERSION)
 
     assert first == second
     assert PLUGIN_FILENAME == "bifrost-agent.zip"
 
 
 def test_build_bifrost_run_plugin_contents_and_metadata_are_canonical():
-    zip_bytes = build_bifrost_run_plugin(PUBLIC_URL)
+    zip_bytes = build_bifrost_run_plugin(PUBLIC_URL, INSTANCE_VERSION)
 
     with zipfile.ZipFile(BytesIO(zip_bytes)) as archive:
         assert archive.namelist() == [
@@ -49,6 +54,7 @@ def test_build_bifrost_run_plugin_contents_and_metadata_are_canonical():
             "plugin.json",
             "server.json",
             "skills/bifrost-agent/SKILL.md",
+            "skills/bifrost-agent/agents/openai.yaml",
         ]
         for info in archive.infolist():
             assert info.date_time == (2024, 1, 1, 0, 0, 0)
@@ -59,7 +65,7 @@ def test_build_bifrost_run_plugin_contents_and_metadata_are_canonical():
     assert plugin == {
         "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
         "name": "bifrost-agent",
-        "version": "1.0.0",
+        "version": INSTANCE_VERSION,
         "description": (
             "Proactively use Bifrost whenever a request could benefit from a "
             "specialized agent, connected system, or executable workflow. Search "
@@ -99,7 +105,9 @@ def test_build_bifrost_run_plugin_contents_and_metadata_are_canonical():
 
 
 def test_build_bifrost_run_plugin_includes_native_harness_manifests():
-    files = _read_package(build_bifrost_run_plugin(PUBLIC_URL))
+    files = _read_package(
+        build_bifrost_run_plugin(PUBLIC_URL, INSTANCE_VERSION)
+    )
 
     claude = json.loads(files[".claude-plugin/plugin.json"])
     codex = json.loads(files[".codex-plugin/plugin.json"])
@@ -114,10 +122,12 @@ def test_build_bifrost_run_plugin_includes_native_harness_manifests():
 
     for manifest in (claude, codex, github, cursor):
         assert manifest["name"] == "bifrost-agent"
-        assert manifest["version"] == "1.0.0"
+        assert manifest["version"] == INSTANCE_VERSION
         assert manifest["description"] == json.loads(files["plugin.json"])[
             "description"
         ]
+    assert gemini["version"] == INSTANCE_VERSION
+    assert registry["version"] == INSTANCE_VERSION
 
     assert codex["skills"] == "./skills/"
     assert codex["mcpServers"] == "./.mcp.json"
@@ -141,6 +151,11 @@ def test_build_bifrost_run_plugin_includes_native_harness_manifests():
         }
     ]
     assert claude_marketplace["plugins"][0]["source"] == "./"
+    assert claude_marketplace["name"] == MARKETPLACE_ID
+    assert claude_marketplace["plugins"][0]["version"] == INSTANCE_VERSION
+    assert MARKETPLACE_ID == "bifrost-agent"
+    assert codex_marketplace["name"] == MARKETPLACE_ID
+    assert codex_marketplace["interface"]["displayName"] == "Bifrost Agent"
     assert codex_marketplace["plugins"][0]["source"] == {
         "source": "local",
         "path": "./",
@@ -148,13 +163,20 @@ def test_build_bifrost_run_plugin_includes_native_harness_manifests():
 
 
 def test_build_bifrost_run_plugin_skill_and_readme_use_gateway_instructions():
-    files = _read_package(build_bifrost_run_plugin(PUBLIC_URL))
+    files = _read_package(
+        build_bifrost_run_plugin(PUBLIC_URL, INSTANCE_VERSION)
+    )
 
     skill = files["skills/bifrost-agent/SKILL.md"].decode()
     assert skill.startswith("---\nname: bifrost-agent\n")
     assert "# Bifrost Agent" in skill
-    assert "proactively" in skill
+    assert "bifrost_get_required_instructions" in skill
     assert GATEWAY_INSTRUCTIONS in skill
+    assert files["skills/bifrost-agent/agents/openai.yaml"].decode() == (
+        "interface:\n"
+        '  display_name: "Assist"\n'
+        '  short_description: "Find and use the right Bifrost agent or workflow"\n'
+    )
 
     readme = files["README.md"].decode()
     assert "https://bifrost.example.com/mcp" in readme
@@ -163,7 +185,30 @@ def test_build_bifrost_run_plugin_skill_and_readme_use_gateway_instructions():
     assert "GitHub Copilot" in readme
     assert "Claude Desktop" in readme
     assert "Microsoft Copilot Studio" in readme
+    assert "codex plugin add bifrost-agent@bifrost-agent" in readme
+    assert "claude plugin install bifrost-agent@bifrost-agent" in readme
+    assert "separately from the standard `bifrost` marketplace" in readme
+    assert f"Bifrost version: `{INSTANCE_VERSION}`" in readme
     assert "OAuth" not in readme
+
+
+@pytest.mark.parametrize(
+    ("instance_version", "expected"),
+    [
+        ("1.2.1", "1.2.1"),
+        ("v1.2.1", "1.2.1"),
+        ("1.2.2-dev.12", "1.2.2-dev.12"),
+        (
+            "v1.2.0-12-g88a02534c-dirty",
+            "1.2.0-12-g88a02534c-dirty",
+        ),
+        ("88a02534c", "0.0.0+g88a02534c"),
+        ("88a02534c-dirty", "0.0.0+g88a02534c.dirty"),
+        ("unknown", "0.0.0"),
+    ],
+)
+def test_normalize_plugin_version(instance_version: str, expected: str):
+    assert normalize_plugin_version(instance_version) == expected
 
 
 def test_build_setup_prompt_preserves_the_exact_gateway_instructions():

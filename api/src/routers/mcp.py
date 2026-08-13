@@ -7,7 +7,7 @@ Uses FastMCP to expose tools via Streamable HTTP transport with Bearer token aut
 Architecture:
     - FastMCP server is mounted as an ASGI sub-application at /mcp
     - JWT Bearer token authentication using Bifrost's existing auth system
-    - /mcp exposes four stable agent discovery and dispatch tools
+    - /mcp exposes stable agent discovery, dispatch, instruction, and memory tools
     - /mcp/{agent_id} preserves the native agent-scoped tool surface
 
 Authentication:
@@ -214,14 +214,18 @@ async def download_mcp_run_plugin(
     current_user: CurrentActiveUser,
     db: DbSession,
 ) -> Response:
-    """Download the Bifrost Agent Plugins 1.0 package."""
+    """Download the instance-matched Bifrost Agent package."""
+    from shared.version import get_version
     from src.services.mcp_server.run_package import (
         PLUGIN_FILENAME,
         build_bifrost_run_plugin,
     )
 
     await _require_mcp_enabled(db)
-    zip_bytes = build_bifrost_run_plugin(get_settings().public_url)
+    zip_bytes = build_bifrost_run_plugin(
+        get_settings().public_url,
+        get_version(),
+    )
     return Response(
         content=zip_bytes,
         media_type="application/zip",

@@ -5,6 +5,7 @@ import { BasicInfo } from "@/pages/user-settings/BasicInfo";
 import { Security } from "@/pages/user-settings/Security";
 import { DeveloperSettings } from "@/pages/user-settings/Developer";
 import { UserMCPConnections } from "@/components/user/UserMCPConnections";
+import { Preferences } from "@/pages/user-settings/Preferences";
 
 export function UserSettings() {
 	const navigate = useNavigate();
@@ -33,17 +34,24 @@ export function UserSettings() {
 				</h1>
 				<p className="mt-2 text-muted-foreground">
 					Manage your profile, security, connections, and developer
-					settings
+					settings and preferences
 				</p>
 			</div>
 
 			<Tabs value={currentTab} onValueChange={handleTabChange}>
-				<TabsList>
-					<TabsTrigger value="basic-info">Basic Info</TabsTrigger>
-					<TabsTrigger value="security">Security</TabsTrigger>
-					<TabsTrigger value="connections">Connections</TabsTrigger>
-					<TabsTrigger value="developer">Developer</TabsTrigger>
-				</TabsList>
+				<div className="overflow-x-auto">
+					<TabsList className="w-max">
+						<TabsTrigger value="basic-info">Basic Info</TabsTrigger>
+						<TabsTrigger value="security">Security</TabsTrigger>
+						<TabsTrigger value="connections">
+							Connections
+						</TabsTrigger>
+						<TabsTrigger value="preferences">
+							Preferences
+						</TabsTrigger>
+						<TabsTrigger value="developer">Developer</TabsTrigger>
+					</TabsList>
+				</div>
 
 				<TabsContent value="basic-info" className="mt-6">
 					<BasicInfo />
@@ -55,6 +63,10 @@ export function UserSettings() {
 
 				<TabsContent value="connections" className="mt-6">
 					<UserMCPConnections />
+				</TabsContent>
+
+				<TabsContent value="preferences" className="mt-6">
+					<Preferences />
 				</TabsContent>
 
 				<TabsContent value="developer" className="mt-6">

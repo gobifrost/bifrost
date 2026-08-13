@@ -9,6 +9,11 @@ Tests that MCP REST endpoints are properly protected:
 Uses real HTTP requests to the running API server.
 """
 
+import json
+import os
+import zipfile
+from io import BytesIO
+
 import pytest
 import requests
 
@@ -17,12 +22,7 @@ from tests.fixtures.auth import (
     create_test_jwt,
 )
 
-
 # Base URL for test API (set by docker-compose.test.yml)
-import os
-import zipfile
-from io import BytesIO
-
 TEST_API_URL = os.getenv("TEST_API_URL", "http://api:8000")
 
 
@@ -375,12 +375,16 @@ class TestMCPStatusEndpoint:
         assert "tools_count" in data
         assert "tools" in data
         assert set(data["tools"]) == {
+            "bifrost_get_required_instructions",
             "bifrost_find_agents",
             "bifrost_get_agent",
             "bifrost_get_tool_schema",
             "bifrost_execute_tool",
+            "bifrost_search_memory",
+            "bifrost_save_memory",
+            "bifrost_remove_memory",
         }
-        assert data["tools_count"] == 4
+        assert data["tools_count"] == 8
 
 
 # ==================== Bifrost Agent Plugin Endpoint Tests ====================
@@ -438,7 +442,7 @@ class TestMCPRunEndpoint:
             "Help me create a reusable skill or agent with this exact prompt:"
         )
         assert "bifrost_find_agents" in data["setup_prompt"]
-        assert "proactively search" in data["setup_prompt"]
+        assert "bifrost_get_required_instructions" in data["setup_prompt"]
 
     @pytest.mark.e2e
     def test_run_plugin_requires_auth(self):
@@ -481,10 +485,28 @@ class TestMCPRunEndpoint:
                 "plugin.json",
                 "server.json",
                 "skills/bifrost-agent/SKILL.md",
+                "skills/bifrost-agent/agents/openai.yaml",
             ]
             assert "bifrost_execute_tool" in archive.read(
                 "skills/bifrost-agent/SKILL.md"
             ).decode()
+            codex_marketplace = json.loads(
+                archive.read(".agents/plugins/marketplace.json")
+            )
+            assert codex_marketplace["name"] == "bifrost-agent"
+            assert json.loads(
+                archive.read(".claude-plugin/marketplace.json")
+            )["name"] == "bifrost-agent"
+            assert (
+                'display_name: "Assist"'
+                in archive.read(
+                    "skills/bifrost-agent/agents/openai.yaml"
+                ).decode()
+            )
+            assert (
+                "codex plugin add bifrost-agent@bifrost-agent"
+                in archive.read("README.md").decode()
+            )
 
     @pytest.mark.e2e
     def test_run_plugin_disabled_returns_forbidden(self):
