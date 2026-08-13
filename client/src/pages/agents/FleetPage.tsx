@@ -309,7 +309,7 @@ export function FleetPage() {
 							htmlFor="show-inactive"
 							className="cursor-pointer whitespace-nowrap text-sm text-muted-foreground"
 						>
-							Show inactive
+							Show Inactive
 						</Label>
 					</div>
 				</div>

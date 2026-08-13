@@ -9,7 +9,7 @@
 import { test, expect } from "./fixtures/api-fixture";
 
 test.describe("Agents Fleet Page (admin)", () => {
-	test("hides inactive agents until Show inactive is enabled", async ({
+	test("hides inactive agents until Show Inactive is enabled", async ({
 		page,
 		api,
 	}) => {
@@ -43,7 +43,7 @@ test.describe("Agents Fleet Page (admin)", () => {
 			).toBeVisible({ timeout: 10000 });
 			await expect(page.getByText(name)).toHaveCount(0);
 
-			await page.getByRole("switch", { name: /show inactive/i }).click();
+			await page.getByRole("switch", { name: "Show Inactive" }).click();
 			await expect(page.getByText(name)).toBeVisible();
 		} finally {
 			await api.delete(`/api/agents/${agent.id}`);

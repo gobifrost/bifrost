@@ -181,7 +181,7 @@ describe("FleetPage — agent cards (grid)", () => {
 			includeInactive: false,
 		});
 
-		const toggle = screen.getByRole("switch", { name: /show inactive/i });
+		const toggle = screen.getByRole("switch", { name: "Show Inactive" });
 		await user.click(toggle);
 
 		expect(mockUseAgents).toHaveBeenLastCalledWith(undefined, {
