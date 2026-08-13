@@ -288,10 +288,9 @@
 | DELETE | `/api/mcp/config` |
 | GET | `/api/mcp/config` |
 | PUT | `/api/mcp/config` |
-| GET | `/api/mcp/gateway/agents` |
-| GET | `/api/mcp/gateway/agents/{agent_id}` |
-| GET | `/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}` |
 | POST | `/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute` |
+| POST | `/api/mcp/gateway/capabilities/search` |
+| GET | `/api/mcp/gateway/executions/{execution_id}` |
 | GET | `/api/mcp/run` |
 | GET | `/api/mcp/run/plugin` |
 | GET | `/api/mcp/status` |
