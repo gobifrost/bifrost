@@ -256,6 +256,9 @@ IDENTITY_MODELS: set[str] = {
     # resolved by exact (org, location, path) — it carries no policy of its own.
     "FileMetadata",
     "FilePolicy",
+    # A memory store is an owner boundary looked up by its user/organization
+    # identity. It is never name-resolved through the org-to-global cascade.
+    "MemoryStore",
 }
 
 
