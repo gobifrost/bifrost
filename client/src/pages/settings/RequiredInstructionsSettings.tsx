@@ -33,7 +33,6 @@ export function RequiredInstructionsSettings({
 
 	useEffect(() => {
 		let active = true;
-		setLoading(true);
 		getRequiredInstructionsSettings(organizationId)
 			.then((settings) => {
 				if (!active) return;
