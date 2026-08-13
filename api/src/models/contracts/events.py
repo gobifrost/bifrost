@@ -166,6 +166,18 @@ class EventSourceUpdate(BaseModel):
     )
 
 
+class WebhookRuntimeConfigure(BaseModel):
+    """Instance-owned adapter state for an already deployed webhook source."""
+
+    config: dict[str, Any] = Field(
+        default_factory=dict,
+        description=(
+            "Adapter-specific runtime credentials. Values are stored in adapter "
+            "state and are not written into the deploy-owned source definition."
+        ),
+    )
+
+
 # ==================== EVENT SUBSCRIPTION REQUEST MODELS ====================
 
 

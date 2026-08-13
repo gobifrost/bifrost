@@ -215,6 +215,18 @@ class WebhookAdapter(ABC):
         """
         pass
 
+    async def configure(
+        self,
+        config: dict[str, Any],
+        state: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Update encrypted adapter state after webhook configuration changes.
+
+        Providers that reveal signing credentials only after receiving the
+        callback URL can override this hook. The default preserves state.
+        """
+        return state
+
     @abstractmethod
     async def unsubscribe(
         self,

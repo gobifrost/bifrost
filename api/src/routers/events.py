@@ -41,6 +41,7 @@ from src.models.contracts.events import (
     TopicsRegistryResponse,
     WebhookAdapterInfo,
     WebhookAdapterListResponse,
+    WebhookRuntimeConfigure,
     WebhookSourceResponse,
 )
 from src.models.enums import EventDeliveryStatus, EventSourceType
@@ -596,11 +597,18 @@ async def update_source(
         ws = source.webhook_source
         if request.webhook.config:
             ws.config = request.webhook.config
-            # Sync secret to state (adapter reads from state, not config)
-            if request.webhook.config.get("secret"):
-                new_state = dict(ws.state or {})
-                new_state["secret"] = request.webhook.config["secret"]
-                ws.state = new_state
+            adapter = get_adapter_registry().get(ws.adapter_name)
+            if adapter:
+                try:
+                    ws.state = await adapter.configure(
+                        request.webhook.config,
+                        dict(ws.state or {}),
+                    )
+                except ValueError as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=str(exc),
+                    ) from exc
         if "rate_limit_per_minute" in request.webhook.model_fields_set:
             ws.rate_limit_per_minute = request.webhook.rate_limit_per_minute
         if "rate_limit_window_seconds" in request.webhook.model_fields_set:
@@ -640,6 +648,57 @@ async def update_source(
 
     logger.info(f"Updated event source {log_safe(source_id)}")
 
+    return await _build_event_source_response(source, db)
+
+
+@router.put(
+    "/sources/{source_id}/webhook/runtime",
+    response_model=EventSourceResponse,
+    summary="Configure webhook runtime state",
+    description=(
+        "Configure instance-owned adapter credentials without modifying the "
+        "deploy-owned event source definition."
+    ),
+)
+async def configure_webhook_runtime(
+    source_id: UUID,
+    request: WebhookRuntimeConfigure,
+    ctx: Context,
+    user: CurrentSuperuser,
+    db: DbSession,
+) -> EventSourceResponse:
+    """Configure secret adapter state for loose or Solution-managed webhooks."""
+    repo = EventSourceRepository(db)
+    source = await repo.get_by_id_with_details(source_id)
+    if not source:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event source not found",
+        )
+    if source.source_type != EventSourceType.WEBHOOK or not source.webhook_source:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Event source is not a webhook",
+        )
+
+    ws = source.webhook_source
+    adapter = get_adapter_registry().get(ws.adapter_name)
+    if not adapter:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Unknown adapter: {ws.adapter_name}",
+        )
+    try:
+        ws.state = await adapter.configure(request.config, dict(ws.state or {}))
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+    ws.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+
+    logger.info(f"Configured webhook runtime state: {log_safe(source_id)}")
     return await _build_event_source_response(source, db)
 
 

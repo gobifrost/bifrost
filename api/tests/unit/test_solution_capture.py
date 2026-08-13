@@ -654,6 +654,52 @@ async def test_capture_webhook_trigger_scrubs_instance_secrets(db_session) -> No
     assert "TOPSECRET" not in blob and "ext-123" not in blob
 
 
+async def test_redeploy_webhook_preserves_instance_state(db_session) -> None:
+    """Solution redeploy keeps runtime secrets for an unchanged adapter."""
+    db = db_session
+    sol = await _make_solution(db)
+    from src.models.orm.events import EventSource, WebhookSource
+
+    source_id = uuid.uuid4()
+    db.add(EventSource(
+        id=source_id,
+        name="resend-hook",
+        source_type="webhook",
+        organization_id=sol.organization_id,
+        solution_id=sol.id,
+        created_by="test",
+    ))
+    await db.flush()
+    db.add(WebhookSource(
+        event_source_id=source_id,
+        adapter_name="resend",
+        config={"timestamp_tolerance_seconds": 300},
+        external_id="resend-endpoint",
+        state={"signing_secret": "TOPSECRET"},
+    ))
+    await db.flush()
+
+    await SolutionDeployer(db)._upsert_events(sol, [{
+        "id": str(source_id),
+        "name": "resend-hook",
+        "source_type": "webhook",
+        "is_active": True,
+        "adapter_name": "resend",
+        "webhook_config": {"timestamp_tolerance_seconds": 600},
+        "subscriptions": [],
+    }])
+    await db.flush()
+
+    webhook = (
+        await db.execute(
+            select(WebhookSource).where(WebhookSource.event_source_id == source_id)
+        )
+    ).scalar_one()
+    assert webhook.config == {"timestamp_tolerance_seconds": 600}
+    assert webhook.external_id == "resend-endpoint"
+    assert webhook.state == {"signing_secret": "TOPSECRET"}
+
+
 async def test_deploy_schedule_trigger_under_guard(db_session) -> None:
     """End-to-end: a captured schedule trigger deploys (Core stmts) under the
     always-on read-only guard, with the subscription's workflow_id remapped."""

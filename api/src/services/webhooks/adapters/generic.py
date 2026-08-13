@@ -117,6 +117,17 @@ class GenericWebhookAdapter(WebhookAdapter):
             expires_at=None,  # Never expires
         )
 
+    async def configure(
+        self,
+        config: dict[str, Any],
+        state: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Copy the optional shared secret into encrypted adapter state."""
+        new_state = dict(state)
+        if config.get("secret"):
+            new_state["secret"] = config["secret"]
+        return new_state
+
     async def unsubscribe(
         self,
         external_id: str | None,

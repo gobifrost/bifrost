@@ -9,8 +9,11 @@ Tests the full event lifecycle:
 - Delivery retry
 """
 
+import base64
 import hashlib
 import hmac
+import json
+import time
 import uuid
 
 import pytest
@@ -223,6 +226,62 @@ class TestEventSourceCRUD:
             f"/api/events/sources/{source['id']}",
             headers=platform_admin.headers,
         )
+
+    def test_resend_source_can_add_signing_secret_after_callback(
+        self, e2e_client, platform_admin
+    ):
+        """Resend's secret can be attached after its callback URL is known."""
+        create_response = e2e_client.post(
+            "/api/events/sources",
+            headers=platform_admin.headers,
+            json={
+                "name": f"E2E Resend Test {uuid.uuid4().hex[:8]}",
+                "source_type": "webhook",
+                "webhook": {"adapter_name": "resend", "config": {}},
+            },
+        )
+        assert create_response.status_code == 201, create_response.text
+        source = create_response.json()
+
+        try:
+            secret_bytes = b"a-32-byte-test-secret-for-resend!"
+            signing_secret = "whsec_" + base64.b64encode(secret_bytes).decode()
+            update_response = e2e_client.put(
+                f"/api/events/sources/{source['id']}/webhook/runtime",
+                headers=platform_admin.headers,
+                json={"config": {"signing_secret": signing_secret}},
+            )
+            assert update_response.status_code == 200, update_response.text
+
+            body = json.dumps(
+                {"type": "email.received", "data": {"email_id": "email_123"}},
+                separators=(",", ":"),
+            ).encode()
+            message_id = "msg_e2e_resend"
+            timestamp = str(int(time.time()))
+            signature = base64.b64encode(
+                hmac.new(
+                    secret_bytes,
+                    f"{message_id}.{timestamp}.".encode() + body,
+                    hashlib.sha256,
+                ).digest()
+            ).decode()
+            hook_response = e2e_client.post(
+                source["webhook"]["callback_url"],
+                content=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "svix-id": message_id,
+                    "svix-timestamp": timestamp,
+                    "svix-signature": f"v1,{signature}",
+                },
+            )
+            assert hook_response.status_code == 202, hook_response.text
+        finally:
+            e2e_client.delete(
+                f"/api/events/sources/{source['id']}",
+                headers=platform_admin.headers,
+            )
 
     def test_list_event_sources(self, e2e_client, platform_admin, event_source):
         """List event sources (platform admin sees all)."""

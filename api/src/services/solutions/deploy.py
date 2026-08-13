@@ -1757,9 +1757,9 @@ class SolutionDeployer:
         via Core statements (the always-on read-only guard rejects ORM-object
         mutation of managed rows — Core insert/update/delete is the contract).
         Subscription ``workflow_id``/``agent_id`` were already remapped by
-        ``_remapped_bundle``; webhook instance secrets are absent (capture scrubs
-        them) so the install starts the webhook from a clean, unauthenticated
-        shell the operator re-establishes.
+        ``_remapped_bundle``. Webhook instance state is absent from the manifest,
+        so first deploy starts with an unauthenticated shell; later redeploys
+        preserve runtime state when the adapter identity is unchanged.
         """
         from src.models.enums import ScheduleOverlapPolicy
 
@@ -1770,6 +1770,30 @@ class SolutionDeployer:
         for mevent in events:
             source_id = UUID(str(mevent["id"]))
             await self._guard_owner(EventSource, source_id, sid)
+
+            preserved_webhook: dict[str, Any] = {}
+            if mevent.get("source_type") == "webhook":
+                existing_webhook = (
+                    await self.db.execute(
+                        select(
+                            WebhookSource.adapter_name,
+                            WebhookSource.integration_id,
+                            WebhookSource.external_id,
+                            WebhookSource.state,
+                            WebhookSource.expires_at,
+                        ).where(WebhookSource.event_source_id == source_id)
+                    )
+                ).one_or_none()
+                if (
+                    existing_webhook
+                    and existing_webhook.adapter_name == mevent.get("adapter_name")
+                ):
+                    preserved_webhook = {
+                        "integration_id": existing_webhook.integration_id,
+                        "external_id": existing_webhook.external_id,
+                        "state": existing_webhook.state or {},
+                        "expires_at": existing_webhook.expires_at,
+                    }
 
             # Full-replace children + subs for a clean idempotent redeploy.
             await self.db.execute(
@@ -1831,15 +1855,18 @@ class SolutionDeployer:
                     )
                 )
             elif mevent.get("source_type") == "webhook":
-                # Webhook shell: portable adapter/config only. external_id/state/
-                # expires_at are instance secrets (scrubbed at capture); the
-                # operator re-establishes the external subscription post-install.
+                # Portable adapter/config comes from deploy. Runtime credentials
+                # are instance-owned and survive idempotent redeploys of the same
+                # adapter, but never cross an adapter change.
                 await self.db.execute(
                     insert(WebhookSource).values(
                         event_source_id=source_id,
                         adapter_name=mevent.get("adapter_name"),
-                        integration_id=None,
+                        integration_id=preserved_webhook.get("integration_id"),
                         config=mevent.get("webhook_config") or {},
+                        external_id=preserved_webhook.get("external_id"),
+                        state=preserved_webhook.get("state", {}),
+                        expires_at=preserved_webhook.get("expires_at"),
                         rate_limit_per_minute=mevent.get("rate_limit_per_minute", 60),
                         rate_limit_window_seconds=mevent.get(
                             "rate_limit_window_seconds", 60
