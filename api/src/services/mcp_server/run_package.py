@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import zipfile
 from pathlib import Path
 
@@ -12,11 +13,22 @@ from src.services.mcp_server.tools.gateway import GATEWAY_INSTRUCTIONS
 PLUGIN_FILENAME = "bifrost-agent.zip"
 PLUGIN_ID = "bifrost-agent"
 PLUGIN_NAME = "Bifrost Agent"
-PLUGIN_VERSION = "1.0.0"
+MARKETPLACE_ID = "bifrost-agent"
+MARKETPLACE_NAME = "Bifrost Agent"
 ZIP_TIMESTAMP = (2024, 1, 1, 0, 0, 0)
 HOMEPAGE_URL = "https://gobifrost.com"
 REPOSITORY_URL = "https://github.com/gobifrost/bifrost"
 ASSET_DIRECTORY = Path("/app/assets")
+
+SEMVER_RE = re.compile(
+    r"^(0|[1-9]\d*)\."
+    r"(0|[1-9]\d*)\."
+    r"(0|[1-9]\d*)"
+    r"(?:-(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\."
+    r"(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*)?"
+    r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
+)
+GIT_HASH_RE = re.compile(r"^(?P<sha>[0-9a-f]{7,40})(?P<dirty>-dirty)?$")
 
 PLUGIN_DESCRIPTION = (
     "Proactively use Bifrost whenever a request could benefit from a "
@@ -39,28 +51,58 @@ def build_setup_prompt() -> str:
     )
 
 
-def build_bifrost_run_plugin(public_url: str) -> bytes:
+def normalize_plugin_version(instance_version: str) -> str:
+    """Convert the running Bifrost version to strict plugin semver."""
+    candidate = instance_version.strip().removeprefix("v")
+    if SEMVER_RE.fullmatch(candidate):
+        return candidate
+
+    git_hash = GIT_HASH_RE.fullmatch(candidate)
+    if git_hash is not None:
+        dirty = ".dirty" if git_hash.group("dirty") else ""
+        return f"0.0.0+g{git_hash.group('sha')}{dirty}"
+
+    return "0.0.0"
+
+
+def build_bifrost_run_plugin(public_url: str, instance_version: str) -> bytes:
     """Build a deterministic polyglot agent plugin package."""
+    plugin_version = normalize_plugin_version(instance_version)
     files = {
         ".agents/plugins/marketplace.json": _json_bytes(
             _codex_marketplace_json()
         ),
         ".claude-plugin/marketplace.json": _json_bytes(
-            _claude_marketplace_json()
+            _claude_marketplace_json(plugin_version)
         ),
-        ".claude-plugin/plugin.json": _json_bytes(_claude_plugin_json()),
-        ".codex-plugin/plugin.json": _json_bytes(_codex_plugin_json()),
-        ".cursor-plugin/plugin.json": _json_bytes(_cursor_plugin_json()),
-        ".github/plugin/plugin.json": _json_bytes(_github_plugin_json()),
+        ".claude-plugin/plugin.json": _json_bytes(
+            _claude_plugin_json(plugin_version)
+        ),
+        ".codex-plugin/plugin.json": _json_bytes(
+            _codex_plugin_json(plugin_version)
+        ),
+        ".cursor-plugin/plugin.json": _json_bytes(
+            _cursor_plugin_json(plugin_version)
+        ),
+        ".github/plugin/plugin.json": _json_bytes(
+            _github_plugin_json(plugin_version)
+        ),
         ".mcp.json": _json_bytes(_native_mcp_json(public_url)),
         "assets/icon.png": _asset_bytes("icon.png"),
         "assets/logo.png": _asset_bytes("logo.png"),
-        "plugin.json": _json_bytes(_plugin_json()),
+        "plugin.json": _json_bytes(_plugin_json(plugin_version)),
         "mcp.json": _json_bytes(_mcp_json(public_url)),
-        "gemini-extension.json": _json_bytes(_gemini_extension_json(public_url)),
-        "server.json": _json_bytes(_server_json(public_url)),
+        "gemini-extension.json": _json_bytes(
+            _gemini_extension_json(public_url, plugin_version)
+        ),
+        "server.json": _json_bytes(
+            _server_json(public_url, plugin_version)
+        ),
+        "skills/bifrost-agent/agents/openai.yaml": (
+            _openai_skill_yaml().encode()
+        ),
         "skills/bifrost-agent/SKILL.md": _skill_md().encode(),
-        "README.md": _readme(public_url).encode(),
+        "README.md": _readme(public_url, plugin_version).encode(),
     }
 
     buffer = io.BytesIO()
@@ -91,11 +133,11 @@ def _asset_bytes(filename: str) -> bytes:
     return (ASSET_DIRECTORY / filename).read_bytes()
 
 
-def _plugin_json() -> dict:
+def _plugin_json(plugin_version: str) -> dict:
     return {
         "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
         "name": PLUGIN_ID,
-        "version": PLUGIN_VERSION,
+        "version": plugin_version,
         "description": PLUGIN_DESCRIPTION,
         "author": {
             "name": "Bifrost",
@@ -131,19 +173,19 @@ def _native_mcp_json(public_url: str) -> dict:
     }
 
 
-def _claude_plugin_json() -> dict:
+def _claude_plugin_json(plugin_version: str) -> dict:
     return {
         "name": PLUGIN_ID,
         "displayName": PLUGIN_NAME,
         "description": PLUGIN_DESCRIPTION,
-        "version": PLUGIN_VERSION,
+        "version": plugin_version,
         "author": {"name": "Bifrost"},
     }
 
 
-def _claude_marketplace_json() -> dict:
+def _claude_marketplace_json(plugin_version: str) -> dict:
     return {
-        "name": "bifrost",
+        "name": MARKETPLACE_ID,
         "owner": {"name": "Bifrost"},
         "description": "Plugins for connecting AI assistants to Bifrost.",
         "plugins": [
@@ -151,7 +193,7 @@ def _claude_marketplace_json() -> dict:
                 "name": PLUGIN_ID,
                 "source": "./",
                 "description": PLUGIN_DESCRIPTION,
-                "version": PLUGIN_VERSION,
+                "version": plugin_version,
                 "author": {"name": "Bifrost"},
                 "homepage": HOMEPAGE_URL,
                 "repository": REPOSITORY_URL,
@@ -163,10 +205,10 @@ def _claude_marketplace_json() -> dict:
     }
 
 
-def _codex_plugin_json() -> dict:
+def _codex_plugin_json(plugin_version: str) -> dict:
     return {
         "name": PLUGIN_ID,
-        "version": PLUGIN_VERSION,
+        "version": plugin_version,
         "description": PLUGIN_DESCRIPTION,
         "skills": "./skills/",
         "mcpServers": "./.mcp.json",
@@ -196,8 +238,8 @@ def _codex_plugin_json() -> dict:
 
 def _codex_marketplace_json() -> dict:
     return {
-        "name": "bifrost",
-        "interface": {"displayName": "Bifrost"},
+        "name": MARKETPLACE_ID,
+        "interface": {"displayName": MARKETPLACE_NAME},
         "plugins": [
             {
                 "name": PLUGIN_ID,
@@ -215,11 +257,11 @@ def _codex_marketplace_json() -> dict:
     }
 
 
-def _github_plugin_json() -> dict:
+def _github_plugin_json(plugin_version: str) -> dict:
     return {
         "name": PLUGIN_ID,
         "description": PLUGIN_DESCRIPTION,
-        "version": PLUGIN_VERSION,
+        "version": plugin_version,
         "author": {
             "name": "Bifrost",
             "url": HOMEPAGE_URL,
@@ -231,12 +273,12 @@ def _github_plugin_json() -> dict:
     }
 
 
-def _cursor_plugin_json() -> dict:
+def _cursor_plugin_json(plugin_version: str) -> dict:
     return {
         "name": PLUGIN_ID,
         "displayName": PLUGIN_NAME,
         "description": PLUGIN_DESCRIPTION,
-        "version": PLUGIN_VERSION,
+        "version": plugin_version,
         "author": {
             "name": "Bifrost",
             "url": HOMEPAGE_URL,
@@ -251,10 +293,10 @@ def _cursor_plugin_json() -> dict:
     }
 
 
-def _gemini_extension_json(public_url: str) -> dict:
+def _gemini_extension_json(public_url: str, plugin_version: str) -> dict:
     return {
         "name": PLUGIN_NAME,
-        "version": PLUGIN_VERSION,
+        "version": plugin_version,
         "description": PLUGIN_DESCRIPTION,
         "mcpServers": {
             "bifrost": {
@@ -265,7 +307,7 @@ def _gemini_extension_json(public_url: str) -> dict:
     }
 
 
-def _server_json(public_url: str) -> dict:
+def _server_json(public_url: str, plugin_version: str) -> dict:
     return {
         "$schema": (
             "https://static.modelcontextprotocol.io/schemas/"
@@ -278,7 +320,7 @@ def _server_json(public_url: str) -> dict:
             "url": REPOSITORY_URL,
             "source": "github",
         },
-        "version": PLUGIN_VERSION,
+        "version": plugin_version,
         "remotes": [
             {
                 "type": "streamable-http",
@@ -303,15 +345,23 @@ def _skill_md() -> str:
     )
 
 
-def _readme(public_url: str) -> str:
+def _openai_skill_yaml() -> str:
+    return (
+        "interface:\n"
+        '  display_name: "Assist"\n'
+        '  short_description: "Find and use the right Bifrost agent or workflow"\n'
+    )
+
+
+def _readme(public_url: str, plugin_version: str) -> str:
     return (
         "# Bifrost Agent\n\n"
         "Connect an AI assistant to the agents and tools in this Bifrost "
         "instance. The package keeps one shared skill and includes thin "
         "adapters for the major plugin formats.\n\n"
         "## Install\n\n"
-        "The exact MCP URL for this Bifrost instance is already embedded in "
-        "every configuration file.\n\n"
+        "The exact MCP URL and Bifrost version for this instance are already "
+        "embedded in the package.\n\n"
         "### Claude Code\n\n"
         "Load the downloaded archive directly for the current session:\n\n"
         "```sh\n"
@@ -321,15 +371,19 @@ def _readme(public_url: str) -> str:
         "then install the plugin:\n\n"
         "```sh\n"
         "claude plugin marketplace add /path/to/bifrost-agent\n"
-        "claude plugin install bifrost-agent@bifrost\n"
+        f"claude plugin install {PLUGIN_ID}@{MARKETPLACE_ID}\n"
         "```\n\n"
         "### Codex and ChatGPT desktop\n\n"
         "Extract the archive and register its included marketplace:\n\n"
         "```sh\n"
         "codex plugin marketplace add /path/to/bifrost-agent\n"
+        f"codex plugin add {PLUGIN_ID}@{MARKETPLACE_ID}\n"
         "```\n\n"
-        "Restart ChatGPT desktop, choose the Bifrost marketplace in the "
-        "Plugins Directory, and install Bifrost Agent.\n\n"
+        "Restart ChatGPT desktop if it is already open. The package registers "
+        f"the `{MARKETPLACE_NAME}` marketplace (ID `{MARKETPLACE_ID}`), "
+        "separately from the standard `bifrost` "
+        "marketplace. You can also install Bifrost Agent from that marketplace "
+        "in the Plugins Directory.\n\n"
         "### GitHub Copilot CLI\n\n"
         "Extract the archive, then install its folder:\n\n"
         "```sh\n"
@@ -345,6 +399,7 @@ def _readme(public_url: str) -> str:
         "that cannot import the package, connect the streamable HTTP MCP URL "
         "and use the included `skills/bifrost-agent/SKILL.md` instructions.\n\n"
         f"- MCP URL: `{mcp_url(public_url)}`\n"
+        f"- Bifrost version: `{plugin_version}`\n"
         "- Transport: `streamable-http`\n"
         "- Authenticate with your Bifrost account when prompted.\n"
     )
