@@ -456,6 +456,22 @@ from src.models.contracts.profile import (
     ProfileUpdate,
 )
 
+# Memory
+from src.models.contracts.memory import (
+    MemoryDeleteResponse,
+    MemoryEntryList,
+    MemoryEntryPublic,
+    MemoryPlatformSettings,
+    MemoryPlatformSettingsUpdate,
+    MemorySaveRequest,
+    MemorySearchRequest,
+    MemorySearchResponse,
+    MemorySearchResult,
+    MemoryUserSettings,
+    MemoryUserSettingsUpdate,
+    RequiredInstructionsResponse,
+)
+
 # Notifications
 from src.models.contracts.notifications import (
     JobDispatchResponse,
@@ -951,6 +967,19 @@ __all__ = [
     "ProfileUpdate",
     "PasswordChange",
     "ProfileResponse",
+    # Memory
+    "MemoryDeleteResponse",
+    "MemoryEntryList",
+    "MemoryEntryPublic",
+    "MemoryPlatformSettings",
+    "MemoryPlatformSettingsUpdate",
+    "MemorySaveRequest",
+    "MemorySearchRequest",
+    "MemorySearchResponse",
+    "MemorySearchResult",
+    "MemoryUserSettings",
+    "MemoryUserSettingsUpdate",
+    "RequiredInstructionsResponse",
     # LLM Configuration
     "LLMConfigRequest",
     "LLMConfigResponse",

@@ -44,6 +44,9 @@ class User(Base):
         Boolean, default=False, nullable=False, server_default=text("false")
     )
     mfa_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    memory_enabled: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default=text("true")
+    )
     mfa_enforced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     organization_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("organizations.id"), nullable=True

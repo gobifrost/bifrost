@@ -80,6 +80,7 @@ import {
 	type AIModelPricingListItem,
 	type AIModelPricingCreate,
 } from "@/services/ai-pricing";
+import { MemorySettings } from "@/pages/settings/MemorySettings";
 
 type Provider = "openai" | "anthropic";
 
@@ -703,6 +704,8 @@ export function LLMConfig() {
 				llmProvider={config?.provider}
 				llmEndpoint={config?.endpoint ?? null}
 			/>
+
+			<MemorySettings />
 
 			{/* Model Pricing Card */}
 			<ModelPricingCard refreshKey={pricingRefreshKey} />

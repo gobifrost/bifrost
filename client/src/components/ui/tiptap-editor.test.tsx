@@ -44,18 +44,19 @@ describe("TiptapEditor", () => {
 				content="# Hello"
 				readOnly
 				ariaLabel="Confirmation Message editor"
+				editorClassName="min-h-0 p-0"
 			/>,
 		);
 
 		expect(mockUseEditor).toHaveBeenCalledWith(
-			expect.objectContaining({
-				editorProps: expect.objectContaining({
-					attributes: expect.objectContaining({
-						class: expect.stringContaining("tiptap-editor"),
-						"aria-label": "Confirmation Message editor",
+				expect.objectContaining({
+					editorProps: expect.objectContaining({
+						attributes: expect.objectContaining({
+							class: expect.stringMatching(/tiptap-editor.*min-h-0/),
+							"aria-label": "Confirmation Message editor",
+						}),
 					}),
 				}),
-			}),
 		);
 	});
 });
