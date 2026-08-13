@@ -5,7 +5,10 @@ from uuid import uuid4
 import pytest
 
 from src.models.orm import Organization
-from src.services.required_instructions import RequiredInstructionsService
+from src.services.required_instructions import (
+    MEMORY_INSTRUCTIONS,
+    RequiredInstructionsService,
+)
 
 
 @pytest.mark.asyncio
@@ -34,12 +37,7 @@ async def test_required_instructions_compose_memory_global_and_organization(db_s
     )
 
     assert await service.resolved(memory_enabled=True) == [
-        "# Memory\n\nThese built-in memory safety requirements take precedence over "
-        "global and organization instructions. Memory is enabled for this user. Search "
-        "memory when prior preferences, decisions, or durable context may help with the current task. "
-        "Save only durable, reusable information that is explicitly worth remembering; "
-        "do not save secrets, temporary task state, or unverified assumptions. Tell the "
-        "user whenever you save or remove a memory.",
+        f"# Memory\n\n{MEMORY_INSTRUCTIONS}",
         "# Global Instructions\n\nConfirm destructive actions.",
         "# Organization Instructions\n\nUse the Acme onboarding runbook.",
     ]
