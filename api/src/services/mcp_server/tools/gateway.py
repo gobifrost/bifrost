@@ -69,7 +69,7 @@ async def bifrost_get_required_instructions(context: Any) -> ToolResult:
     status_code, data = await call_rest(
         context,
         "GET",
-        "/api/memory/instructions",
+        "/api/required-instructions",
     )
     if status_code != 200 or not isinstance(data, dict):
         return _rest_error("Required instruction lookup", status_code, data)

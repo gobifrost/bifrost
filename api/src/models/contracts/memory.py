@@ -59,7 +59,3 @@ class MemorySearchResponse(BaseModel):
 
 class MemoryDeleteResponse(BaseModel):
     removed_id: UUID
-
-
-class RequiredInstructionsResponse(BaseModel):
-    instructions: list[str] = Field(default_factory=list)

@@ -46,6 +46,10 @@ async function authenticatedJson(
 test.describe("Private memory", () => {
 	test("enables and manages private memory", async ({ page }, testInfo) => {
 		await page.goto("/settings/ai");
+		const currentUser = await authenticatedJson(page, "/api/auth/me");
+		const organizationId = (
+			currentUser.body as { organization_id: string }
+		).organization_id;
 		const existingMemories = await authenticatedJson(page, "/api/memory");
 		if (existingMemories.status === 200) {
 			for (const memory of (
@@ -63,6 +67,15 @@ test.describe("Private memory", () => {
 		await authenticatedJson(page, "/api/admin/llm/embedding-config", {
 			method: "DELETE",
 		});
+		await authenticatedJson(page, "/api/admin/required-instructions", {
+			method: "PUT",
+			body: { instructions: "" },
+		});
+		await authenticatedJson(
+			page,
+			`/api/admin/required-instructions/organizations/${organizationId}`,
+			{ method: "PUT", body: { instructions: "" } },
+		);
 		const embedding = await authenticatedJson(
 			page,
 			"/api/admin/llm/embedding-config",
@@ -90,14 +103,75 @@ test.describe("Private memory", () => {
 		await platformToastClose.click();
 		await expect(platformToastClose).toBeHidden();
 		await page
-			.getByText("Enable private memory for", {
-				exact: false,
-			})
+			.getByText("Users can disable memory in their preferences.")
 			.scrollIntoViewIfNeeded();
 		await testInfo.attach("AI settings — Memory", {
 			body: await page.screenshot(),
 			contentType: "image/png",
 		});
+		const globalEditor = page.locator(
+			'[aria-label="Global Instructions editor"]',
+		);
+		await globalEditor.scrollIntoViewIfNeeded();
+		await globalEditor.fill(
+			"Confirm the customer and summarize any destructive action before execution.",
+		);
+		await page.getByRole("button", { name: "Save Instructions" }).click();
+		await expect(
+			page.getByText("Global Instructions saved"),
+		).toBeVisible();
+		await testInfo.attach("AI settings — Global instructions", {
+			body: await page.screenshot(),
+			contentType: "image/png",
+		});
+
+		await page.goto("/organizations");
+		await page
+			.getByRole("row")
+			.filter({ hasText: organizationId })
+			.getByRole("button", { name: "Edit required instructions" })
+			.click();
+		const organizationEditor = page.locator(
+			'[aria-label="Organization Instructions editor"]',
+		);
+		await organizationEditor.fill(
+			"Use the organization onboarding runbook before provisioning access.",
+		);
+		await page.getByRole("button", { name: "Save Instructions" }).click();
+		await expect(
+			page.getByText("Organization Instructions saved"),
+		).toBeVisible();
+		await testInfo.attach("Organization instructions", {
+			body: await page.screenshot(),
+			contentType: "image/png",
+		});
+
+		const requiredInstructions = await authenticatedJson(page, "/mcp", {
+			method: "POST",
+			mcp: true,
+			body: {
+				jsonrpc: "2.0",
+				id: 2,
+				method: "tools/call",
+				params: {
+					name: "bifrost_get_required_instructions",
+					arguments: {},
+				},
+			},
+		});
+		expect(requiredInstructions.status).toBe(200);
+		const resolved = (
+			requiredInstructions.body as {
+				result: { structuredContent: { instructions: string[] } };
+			}
+		).result.structuredContent.instructions;
+		expect(resolved[0]).toContain("# Memory");
+		expect(resolved).toContain(
+			"# Global Instructions\n\nConfirm the customer and summarize any destructive action before execution.",
+		);
+		expect(resolved).toContain(
+			"# Organization Instructions\n\nUse the organization onboarding runbook before provisioning access.",
+		);
 
 		let memoryId: string | null = null;
 		try {
@@ -211,6 +285,15 @@ test.describe("Private memory", () => {
 			await authenticatedJson(page, "/api/admin/llm/embedding-config", {
 				method: "DELETE",
 			});
+			await authenticatedJson(page, "/api/admin/required-instructions", {
+				method: "PUT",
+				body: { instructions: "" },
+			});
+			await authenticatedJson(
+				page,
+				`/api/admin/required-instructions/organizations/${organizationId}`,
+				{ method: "PUT", body: { instructions: "" } },
+			);
 		}
 	});
 });

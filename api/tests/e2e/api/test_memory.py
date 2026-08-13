@@ -45,10 +45,11 @@ class TestMemoryAPI:
         }
 
         instructions = e2e_client.get(
-            "/api/memory/instructions",
+            "/api/required-instructions",
             headers=org1_user.headers,
         )
         assert instructions.status_code == 200
+        assert instructions.json()["instructions"][0].startswith("# Memory")
         assert "do not save secrets" in instructions.json()["instructions"][0]
 
         memories = e2e_client.get("/api/memory", headers=org1_user.headers)
@@ -86,3 +87,78 @@ class TestMemoryAPI:
         with httpx.Client(base_url=e2e_api_url, timeout=30.0) as client:
             assert client.get("/api/memory/settings").status_code == 401
             assert client.get("/api/memory").status_code == 401
+            assert client.get("/api/required-instructions").status_code == 401
+
+    def test_required_instructions_resolve_global_and_organization_sections(
+        self,
+        e2e_client,
+        platform_admin,
+        org1,
+        org1_user,
+        org2_user,
+    ):
+        global_update = e2e_client.put(
+            "/api/admin/required-instructions",
+            headers=platform_admin.headers,
+            json={"instructions": "Confirm all destructive actions."},
+        )
+        assert global_update.status_code == 200
+
+        organization_update = e2e_client.put(
+            f"/api/admin/required-instructions/organizations/{org1['id']}",
+            headers=platform_admin.headers,
+            json={"instructions": "Use the Acme runbook."},
+        )
+        assert organization_update.status_code == 200
+
+        try:
+            org1_response = e2e_client.get(
+                "/api/required-instructions",
+                headers=org1_user.headers,
+            )
+            assert org1_response.status_code == 200
+            org1_instructions = org1_response.json()["instructions"]
+            assert "# Global Instructions\n\nConfirm all destructive actions." in org1_instructions
+            assert "# Organization Instructions\n\nUse the Acme runbook." in org1_instructions
+
+            org2_response = e2e_client.get(
+                "/api/required-instructions",
+                headers=org2_user.headers,
+            )
+            assert org2_response.status_code == 200
+            org2_instructions = org2_response.json()["instructions"]
+            assert "# Global Instructions\n\nConfirm all destructive actions." in org2_instructions
+            assert not any(
+                item.startswith("# Organization Instructions")
+                for item in org2_instructions
+            )
+        finally:
+            e2e_client.put(
+                f"/api/admin/required-instructions/organizations/{org1['id']}",
+                headers=platform_admin.headers,
+                json={"instructions": ""},
+            )
+            e2e_client.put(
+                "/api/admin/required-instructions",
+                headers=platform_admin.headers,
+                json={"instructions": ""},
+            )
+
+    def test_required_instruction_settings_require_platform_admin(
+        self,
+        e2e_client,
+        org1,
+        org1_user,
+    ):
+        global_response = e2e_client.put(
+            "/api/admin/required-instructions",
+            headers=org1_user.headers,
+            json={"instructions": "Not allowed"},
+        )
+        organization_response = e2e_client.put(
+            f"/api/admin/required-instructions/organizations/{org1['id']}",
+            headers=org1_user.headers,
+            json={"instructions": "Not allowed"},
+        )
+        assert global_response.status_code == 403
+        assert organization_response.status_code == 403

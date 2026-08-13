@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Building2, Plus, Pencil, Trash2, RefreshCw, Star } from "lucide-react";
+import { Building2, FileText, Plus, Pencil, Trash2, RefreshCw, Star } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
 	DataTable,
@@ -40,6 +40,7 @@ import {
 	useDeleteOrganization,
 } from "@/hooks/useOrganizations";
 import type { components } from "@/lib/v1";
+import { RequiredInstructionsSettings } from "@/pages/settings/RequiredInstructionsSettings";
 type Organization = components["schemas"]["OrganizationPublic"];
 
 interface OrganizationFormData {
@@ -51,6 +52,7 @@ export function Organizations() {
 	const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 	const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
 	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+	const [isInstructionsDialogOpen, setIsInstructionsDialogOpen] = useState(false);
 	const [selectedOrg, setSelectedOrg] = useState<Organization | undefined>();
 	const [formData, setFormData] = useState<OrganizationFormData>({
 		name: "",
@@ -88,6 +90,11 @@ export function Organizations() {
 	const handleDelete = (org: Organization) => {
 		setSelectedOrg(org);
 		setIsDeleteDialogOpen(true);
+	};
+
+	const handleInstructions = (org: Organization) => {
+		setSelectedOrg(org);
+		setIsInstructionsDialogOpen(true);
 	};
 
 	const handleSubmitCreate = async (e: React.FormEvent) => {
@@ -256,6 +263,14 @@ export function Organizations() {
 									</DataTableCell>
 									<DataTableCell className="w-0 whitespace-nowrap text-right">
 										<div className="flex items-center justify-end gap-2">
+											<Button
+												variant="ghost"
+												size="icon"
+												onClick={() => handleInstructions(org)}
+												title="Edit required instructions"
+											>
+												<FileText className="h-4 w-4" />
+											</Button>
 											<Button
 												variant="ghost"
 												size="icon"
@@ -446,6 +461,31 @@ export function Organizations() {
 							</Button>
 						</DialogFooter>
 					</form>
+				</DialogContent>
+			</Dialog>
+
+			{/* Organization Instructions Dialog */}
+			<Dialog
+				open={isInstructionsDialogOpen}
+				onOpenChange={(open) => {
+					setIsInstructionsDialogOpen(open);
+					if (!open) setSelectedOrg(undefined);
+				}}
+			>
+				<DialogContent className="max-w-3xl">
+					<DialogHeader>
+						<DialogTitle>{selectedOrg?.name}</DialogTitle>
+						<DialogDescription>
+							Configure instructions that apply only to this organization.
+						</DialogDescription>
+					</DialogHeader>
+					{selectedOrg && (
+						<RequiredInstructionsSettings
+							key={selectedOrg.id}
+							organizationId={selectedOrg.id}
+							embedded
+						/>
+					)}
 				</DialogContent>
 			</Dialog>
 

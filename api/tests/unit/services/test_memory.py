@@ -39,14 +39,9 @@ async def test_memory_is_on_for_users_by_default_when_platform_enables_it(db_ses
         "user_enabled": True,
         "effective_enabled": False,
     }
-    assert await service.required_instructions() == []
-
     await service.set_platform_enabled(True, updated_by="admin@example.com")
 
     assert (await service.settings())["effective_enabled"] is True
-    instructions = await service.required_instructions()
-    assert len(instructions) == 1
-    assert "do not save secrets" in instructions[0]
 
     await service.set_user_enabled(False)
     with pytest.raises(MemoryDisabledError):

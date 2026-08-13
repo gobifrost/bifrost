@@ -4997,23 +4997,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/memory/instructions": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get Required Instructions */
-        get: operations["get_required_instructions_api_memory_instructions_get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/memory": {
         parameters: {
             query?: never;
@@ -5077,6 +5060,59 @@ export interface paths {
         get: operations["get_platform_memory_settings_api_admin_memory_settings_get"];
         /** Update Platform Memory Settings */
         put: operations["update_platform_memory_settings_api_admin_memory_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/required-instructions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Required Instructions */
+        get: operations["get_required_instructions_api_required_instructions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/required-instructions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Global Required Instructions */
+        get: operations["get_global_required_instructions_api_admin_required_instructions_get"];
+        /** Update Global Required Instructions */
+        put: operations["update_global_required_instructions_api_admin_required_instructions_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/required-instructions/organizations/{organization_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Organization Required Instructions */
+        get: operations["get_organization_required_instructions_api_admin_required_instructions_organizations__organization_id__get"];
+        /** Update Organization Required Instructions */
+        put: operations["update_organization_required_instructions_api_admin_required_instructions_organizations__organization_id__put"];
         post?: never;
         delete?: never;
         options?: never;
@@ -5205,7 +5241,7 @@ export interface paths {
         post?: never;
         /**
          * Delete Agent
-         * @description Soft delete an agent. Admins can delete any agent. Users can delete their own private agents.
+         * @description Permanently delete an agent. Admins can delete any agent. Users can delete their own private agents.
          *
          *     System agents can be deleted - they will be recreated on next startup
          *     if they are still defined in the system agent definitions.
@@ -21461,6 +21497,14 @@ export interface components {
             /** Instructions */
             instructions?: string[];
         };
+        /** RequiredInstructionsSettings */
+        RequiredInstructionsSettings: {
+            /**
+             * Instructions
+             * @default
+             */
+            instructions: string;
+        };
         /**
          * ResolveRequest
          * @description Request to resolve merge conflicts after a failed pull.
@@ -34287,26 +34331,6 @@ export interface operations {
             };
         };
     };
-    get_required_instructions_api_memory_instructions_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["RequiredInstructionsResponse"];
-                };
-            };
-        };
-    };
     list_memories_api_memory_get: {
         parameters: {
             query?: never;
@@ -34464,6 +34488,145 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MemoryPlatformSettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_required_instructions_api_required_instructions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequiredInstructionsResponse"];
+                };
+            };
+        };
+    };
+    get_global_required_instructions_api_admin_required_instructions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequiredInstructionsSettings"];
+                };
+            };
+        };
+    };
+    update_global_required_instructions_api_admin_required_instructions_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RequiredInstructionsSettings"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequiredInstructionsSettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_organization_required_instructions_api_admin_required_instructions_organizations__organization_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organization_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequiredInstructionsSettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_organization_required_instructions_api_admin_required_instructions_organizations__organization_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                organization_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RequiredInstructionsSettings"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RequiredInstructionsSettings"];
                 };
             };
             /** @description Validation Error */

@@ -18,7 +18,6 @@ from src.models.contracts.memory import (
     MemorySearchResult,
     MemoryUserSettings,
     MemoryUserSettingsUpdate,
-    RequiredInstructionsResponse,
 )
 from src.services.memory import (
     MemoryConfigurationError,
@@ -104,16 +103,6 @@ async def update_user_memory_settings(
         _raise_memory_error(exc)
     await db.commit()
     return MemoryUserSettings(**await service.settings())
-
-
-@router.get("/instructions", response_model=RequiredInstructionsResponse)
-async def get_required_instructions(
-    db: DbSession,
-    current_user: CurrentActiveUser,
-) -> RequiredInstructionsResponse:
-    return RequiredInstructionsResponse(
-        instructions=await _service(db, current_user).required_instructions()
-    )
 
 
 @router.get("", response_model=MemoryEntryList)

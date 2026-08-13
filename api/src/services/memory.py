@@ -1,4 +1,4 @@
-"""Business logic for opt-in, ownership-scoped Bifrost memory."""
+"""Business logic for ownership-scoped Bifrost memory."""
 
 from datetime import datetime, timezone
 from typing import Any
@@ -12,15 +12,6 @@ from src.services.embeddings import get_embedding_client
 
 MEMORY_CONFIG_CATEGORY = "memory"
 MEMORY_CONFIG_KEY = "settings"
-
-MEMORY_INSTRUCTIONS = (
-    "Memory is enabled for this user. Search memory when prior preferences, "
-    "decisions, or durable context may help with the current task. Save only "
-    "durable, reusable information that is explicitly worth remembering; do "
-    "not save secrets, temporary task state, or unverified assumptions. Tell "
-    "the user whenever you save or remove a memory."
-)
-
 
 class MemoryDisabledError(RuntimeError):
     """Raised when platform memory is off or the user has opted out."""
@@ -108,10 +99,6 @@ class MemoryService:
             "user_enabled": user_enabled,
             "effective_enabled": platform_enabled and user_enabled,
         }
-
-    async def required_instructions(self) -> list[str]:
-        settings = await self.settings()
-        return [MEMORY_INSTRUCTIONS] if settings["effective_enabled"] else []
 
     async def list_entries(self) -> list[MemoryEntry]:
         store = await self._get_store()

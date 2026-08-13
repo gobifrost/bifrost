@@ -469,7 +469,10 @@ from src.models.contracts.memory import (
     MemorySearchResult,
     MemoryUserSettings,
     MemoryUserSettingsUpdate,
+)
+from src.models.contracts.required_instructions import (
     RequiredInstructionsResponse,
+    RequiredInstructionsSettings,
 )
 
 # Notifications
@@ -980,6 +983,7 @@ __all__ = [
     "MemoryUserSettings",
     "MemoryUserSettingsUpdate",
     "RequiredInstructionsResponse",
+    "RequiredInstructionsSettings",
     # LLM Configuration
     "LLMConfigRequest",
     "LLMConfigResponse",

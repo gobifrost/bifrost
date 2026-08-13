@@ -55,6 +55,8 @@ from src.routers import (
     profile_router,
     memory_router,
     memory_admin_router,
+    required_instructions_admin_router,
+    required_instructions_router,
     agent_runs_router,
     agent_tuning_router,
     agents_router,
@@ -570,6 +572,8 @@ def create_app() -> FastAPI:
     app.include_router(profile_router)
     app.include_router(memory_router)
     app.include_router(memory_admin_router)
+    app.include_router(required_instructions_router)
+    app.include_router(required_instructions_admin_router)
     app.include_router(agents_router)
     app.include_router(agent_runs_router)
     app.include_router(agent_tuning_router)
