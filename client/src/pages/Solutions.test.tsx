@@ -242,8 +242,8 @@ describe("Solutions — list", () => {
 		const { user } = await renderPage();
 		await screen.findByText("Active One");
 
-		const toggle = screen.getByTestId("show-inactive-toggle");
-		await user.click(toggle.querySelector("input")!);
+		const toggle = screen.getByRole("switch", { name: "Show Inactive" });
+		await user.click(toggle);
 
 		await waitFor(() =>
 			expect(screen.getByText("Inactive One")).toBeInTheDocument(),

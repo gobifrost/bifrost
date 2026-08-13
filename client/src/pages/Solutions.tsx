@@ -37,6 +37,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
 	DataTable,
@@ -406,19 +408,19 @@ export function Solutions() {
 						placeholder="All organizations"
 					/>
 				</div>
-				<label
-					className="flex cursor-pointer items-center gap-2 whitespace-nowrap text-sm text-muted-foreground"
-					data-testid="show-inactive-toggle"
-				>
-					<input
-						type="checkbox"
+				<div className="flex items-center gap-2 sm:ml-auto">
+					<Switch
+						id="show-inactive-solutions"
 						checked={showInactive}
-						onChange={(e) => setShowInactive(e.target.checked)}
-						className="accent-primary"
-						aria-label="Show inactive"
+						onCheckedChange={setShowInactive}
 					/>
-					Show inactive
-				</label>
+					<Label
+						htmlFor="show-inactive-solutions"
+						className="cursor-pointer whitespace-nowrap text-sm text-muted-foreground"
+					>
+						Show Inactive
+					</Label>
+				</div>
 			</div>
 
 			<div className="flex-1 min-h-0 overflow-auto">

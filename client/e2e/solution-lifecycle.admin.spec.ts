@@ -22,9 +22,9 @@ test.describe("Solution lifecycle UI (admin)", () => {
 			page.getByRole("heading", { name: "Solutions", exact: true }),
 		).toBeVisible({ timeout: 10000 });
 
-		// Show-inactive toggle must be present on the list page.
+		// Show Inactive uses the standard list-filter switch.
 		await expect(
-			page.locator('[data-testid="show-inactive-toggle"]'),
+			page.getByRole("switch", { name: "Show Inactive" }),
 		).toBeVisible();
 	});
 

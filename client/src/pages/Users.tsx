@@ -434,7 +434,7 @@ export function Users() {
 						htmlFor="show-disabled"
 						className="text-sm text-muted-foreground cursor-pointer"
 					>
-						Show disabled
+						Show Disabled
 					</Label>
 				</div>
 			</div>
