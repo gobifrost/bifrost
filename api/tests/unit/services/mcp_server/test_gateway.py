@@ -1,5 +1,6 @@
 """Unit tests for the unscoped MCP agent gateway."""
 
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -42,13 +43,14 @@ def _agent() -> MagicMock:
 def _resolved_tool(
     *,
     name: str = "lookup_ticket",
+    description: str = "Look up a ticket",
     parameters: dict | None = None,
 ) -> ResolvedGatewayTool:
     return ResolvedGatewayTool(
         tool_ref=str(uuid4()),
         definition=ToolDefinition(
             name=name,
-            description="Look up a ticket",
+            description=description,
             parameters=parameters
             or {
                 "type": "object",
@@ -154,6 +156,224 @@ def test_unknown_reference_does_not_fall_back_to_tool_name():
     assert exc_info.value.retryable is True
 
 
+def test_agent_hydration_never_implies_zero_matches_is_a_full_catalog():
+    service = MCPAgentGatewayService(_context())
+    agent = _agent()
+    snapshot = AgentToolSnapshot(
+        agent=agent,
+        tools=[_resolved_tool(name="lookup_ticket"), _resolved_tool(name="close_ticket")],
+    )
+
+    result = service._search_agent_snapshot(
+        snapshot,
+        query=None,
+        tool_ref=None,
+        limit=10,
+    )
+
+    found = result["agents"][0]
+    assert found["instructions"] == agent.system_prompt
+    assert found["instructions_included"] is True
+    assert found["matching_tools"] == []
+    assert found["total_tools"] == 2
+    assert found["returned_tools"] == 0
+    assert found["complete"] is False
+    assert "not the agent's full tool catalog" in found["search_again"]
+
+
+def test_scoped_search_returns_only_matching_tools_with_disclosure_counts():
+    service = MCPAgentGatewayService(_context())
+    snapshot = AgentToolSnapshot(
+        agent=_agent(),
+        tools=[
+            _resolved_tool(name="lookup_ticket"),
+            _resolved_tool(
+                name="send_invoice",
+                description="Send an invoice",
+                parameters={
+                    "type": "object",
+                    "properties": {"invoice_id": {"type": "integer"}},
+                },
+            ),
+        ],
+    )
+
+    result = service._search_agent_snapshot(
+        snapshot,
+        query="ticket",
+        tool_ref=None,
+        limit=10,
+    )
+
+    found = result["agents"][0]
+    assert [tool["name"] for tool in found["matching_tools"]] == ["lookup_ticket"]
+    assert found["total_tools"] == 2
+    assert found["returned_tools"] == 1
+    assert found["complete"] is False
+    assert found["total_matching_tools"] == 1
+    assert found["has_more_matches"] is False
+    assert result["response_complete"] is True
+
+
+def test_exact_tool_hydration_includes_only_the_selected_live_schema():
+    service = MCPAgentGatewayService(_context())
+    tool = _resolved_tool()
+    snapshot = AgentToolSnapshot(agent=_agent(), tools=[tool])
+
+    result = service._search_agent_snapshot(
+        snapshot,
+        query=None,
+        tool_ref=tool.tool_ref,
+        limit=10,
+    )
+
+    found_tool = result["agents"][0]["matching_tools"][0]
+    assert found_tool["tool_ref"] == tool.tool_ref
+    assert found_tool["schema_included"] is True
+    assert found_tool["input_schema"] == tool.definition.parameters
+
+
+def test_execution_result_pages_large_values_without_invalid_json_truncation():
+    result, page = MCPAgentGatewayService._page_execution_result(
+        {
+            "small": 42,
+            "huge": {"rows": ["x" * 30_000]},
+            "after": True,
+        },
+        result_path="",
+        offset=0,
+        limit=20,
+    )
+
+    assert result["small"] == 42
+    assert result["huge"]["$omitted"] is True
+    assert result["huge"]["path"] == "/huge"
+    assert result["after"] is True
+    assert page["has_more"] is False
+
+
+def test_execution_result_path_can_hydrate_an_omitted_value():
+    result, page = MCPAgentGatewayService._page_execution_result(
+        {"huge": {"rows": list(range(50))}},
+        result_path="/huge/rows",
+        offset=10,
+        limit=5,
+    )
+
+    assert result == [10, 11, 12, 13, 14]
+    assert page["next_offset"] == 15
+    assert page["has_more"] is True
+
+
+@pytest.mark.asyncio
+async def test_get_execution_authorizes_redis_only_pending_receipt():
+    context = _context()
+    service = MCPAgentGatewayService(context)
+    execution_id = str(uuid4())
+    db = AsyncMock()
+    db_result = MagicMock()
+    db_result.scalar_one_or_none.return_value = None
+    db.execute.return_value = db_result
+    db_context = MagicMock()
+    db_context.__aenter__ = AsyncMock(return_value=db)
+    db_context.__aexit__ = AsyncMock(return_value=None)
+    redis = MagicMock()
+    redis.get_pending_execution = AsyncMock(
+        return_value={
+            "execution_id": execution_id,
+            "workflow_id": str(uuid4()),
+            "script_name": None,
+            "user_id": str(context.user_id),
+            "created_at": "2026-08-13T12:00:00+00:00",
+        }
+    )
+
+    with (
+        patch("src.core.database.get_db_context", return_value=db_context),
+        patch("src.core.redis_client.get_redis_client", return_value=redis),
+    ):
+        result = await service.get_execution(execution_id)
+
+    assert result["execution_id"] == execution_id
+    assert result["status"] == "Pending"
+    assert result["result_available"] is False
+
+
+@pytest.mark.asyncio
+async def test_get_execution_hides_another_users_redis_only_receipt():
+    service = MCPAgentGatewayService(_context())
+    execution_id = str(uuid4())
+    db = AsyncMock()
+    db_result = MagicMock()
+    db_result.scalar_one_or_none.return_value = None
+    db.execute.return_value = db_result
+    db_context = MagicMock()
+    db_context.__aenter__ = AsyncMock(return_value=db)
+    db_context.__aexit__ = AsyncMock(return_value=None)
+    redis = MagicMock()
+    redis.get_pending_execution = AsyncMock(
+        return_value={"user_id": str(uuid4())}
+    )
+
+    with (
+        patch("src.core.database.get_db_context", return_value=db_context),
+        patch("src.core.redis_client.get_redis_client", return_value=redis),
+    ):
+        with pytest.raises(GatewayError) as exc_info:
+            await service.get_execution(execution_id)
+
+    assert exc_info.value.code == "EXECUTION_NOT_FOUND_OR_FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_capability_search_stops_before_the_serialized_response_budget(
+    monkeypatch,
+):
+    service = MCPAgentGatewayService(_context())
+    agents = []
+    snapshots = {}
+    for index in range(8):
+        agent = _agent()
+        agent.id = uuid4()
+        agent.name = f"Ticket Agent {index}"
+        agent.description = "ticket operations " * 100
+        agents.append(agent)
+        snapshots[str(agent.id)] = AgentToolSnapshot(
+            agent=agent,
+            tools=[
+                _resolved_tool(
+                    name=f"lookup_ticket_{index}",
+                    description="ticket lookup " * 100,
+                )
+            ],
+        )
+
+    monkeypatch.setattr(
+        "src.services.mcp_server.gateway.MAX_CAPABILITY_RESPONSE_BYTES",
+        4_000,
+    )
+    with (
+        patch.object(
+            service,
+            "_list_accessible_agents",
+            new=AsyncMock(return_value=agents),
+        ),
+        patch.object(
+            service,
+            "get_agent_snapshot",
+            new=AsyncMock(side_effect=lambda agent_id: snapshots[agent_id]),
+        ),
+    ):
+        result = await service.search_capabilities(query="ticket", limit=20)
+
+    from src.services.mcp_server.gateway import _serialized_size
+
+    assert _serialized_size(result) <= 4_000
+    assert result["has_more_matches"] is True
+    assert result["response_complete"] is False
+    assert result["returned_matches"] < result["total_matches"]
+
+
 @pytest.mark.asyncio
 async def test_execute_validates_before_dispatch():
     service = MCPAgentGatewayService(_context())
@@ -196,6 +416,7 @@ async def test_execute_returns_auditable_envelope():
     assert result["tool_ref"] == tool.tool_ref
     assert result["tool_name"] == "lookup_ticket"
     assert result["source"] == "workflow"
+    assert result["async"] is False
     assert result["result"] == {"ticket": 42}
     assert isinstance(result["duration_ms"], int)
 
@@ -219,6 +440,53 @@ async def test_workflow_dispatch_returns_only_the_workflow_result():
         result = await service._dispatch_workflow(tool, {"ticket_id": 42})
 
     assert result == [{"ticket": 42}]
+
+
+@pytest.mark.asyncio
+async def test_async_workflow_dispatch_returns_immediate_execution_receipt():
+    service = MCPAgentGatewayService(_context())
+    tool = _resolved_tool()
+    execution_id = str(uuid4())
+    response = MagicMock()
+    response.execution_id = execution_id
+    response.status.value = "Pending"
+    response.duration_ms = None
+    response.result = None
+    response.error = None
+    response.error_type = None
+
+    with patch(
+        "src.services.execution.service.execute_tool",
+        new=AsyncMock(return_value=response),
+    ) as execute:
+        result = await service._dispatch_workflow(
+            tool,
+            {"ticket_id": 42},
+            async_execution=True,
+        )
+
+    assert result == {"execution_id": execution_id, "status": "Pending"}
+    assert execute.await_args.kwargs["sync"] is False
+
+
+@pytest.mark.asyncio
+async def test_async_rejects_non_workflow_sources_without_dispatching():
+    service = MCPAgentGatewayService(_context())
+    agent = _agent()
+    tool = replace(_resolved_tool(), source="system")
+    snapshot = AgentToolSnapshot(agent=agent, tools=[tool])
+
+    with patch.object(service, "_dispatch", new_callable=AsyncMock) as dispatch:
+        with pytest.raises(GatewayError) as exc_info:
+            await service.execute_tool(
+                snapshot,
+                tool,
+                {"ticket_id": 42},
+                async_execution=True,
+            )
+
+    assert exc_info.value.code == "ASYNC_NOT_SUPPORTED"
+    dispatch.assert_not_awaited()
 
 
 @pytest.mark.asyncio

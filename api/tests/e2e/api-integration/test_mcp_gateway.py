@@ -2,6 +2,7 @@
 
 import json
 import os
+import time
 import uuid
 
 import pytest
@@ -11,10 +12,9 @@ TEST_API_URL = os.getenv("TEST_API_URL", "http://api:8000")
 MCP_ACCEPT = "application/json, text/event-stream"
 GATEWAY_TOOLS = {
     "bifrost_get_required_instructions",
-    "bifrost_find_agents",
-    "bifrost_get_agent",
-    "bifrost_get_tool_schema",
+    "bifrost_search_capabilities",
     "bifrost_execute_tool",
+    "bifrost_get_execution",
     "bifrost_search_memory",
     "bifrost_save_memory",
     "bifrost_remove_memory",
@@ -156,7 +156,7 @@ class TestMCPAgentGateway:
                 "clientInfo": {"name": "gateway-e2e", "version": "1.0"},
             },
         )
-        assert "bifrost_find_agents" in initialize["result"]["instructions"]
+        assert "bifrost_search_capabilities" in initialize["result"]["instructions"]
         assert "bifrost_get_required_instructions" in initialize["result"]["instructions"]
 
         default_tools = _mcp_request(
@@ -165,6 +165,13 @@ class TestMCPAgentGateway:
             {},
         )["result"]["tools"]
         assert {tool["name"] for tool in default_tools} == GATEWAY_TOOLS
+        execute_schema = next(
+            tool["inputSchema"]
+            for tool in default_tools
+            if tool["name"] == "bifrost_execute_tool"
+        )
+        assert "async" in execute_schema["properties"]
+        assert "async_" not in execute_schema["properties"]
 
         scoped_tools = _mcp_request(
             self.token,
@@ -281,35 +288,59 @@ class TestMCPAgentGateway:
     def test_live_discovery_schema_execution_and_revocation(self):
         found = _call_gateway(
             self.token,
-            "bifrost_find_agents",
+            "bifrost_search_capabilities",
             {"query": self.agent_name},
         )
-        assert any(
-            agent["id"] == self.agent_id for agent in found["agents"]
+        found_agent = next(
+            agent for agent in found["agents"] if agent["id"] == self.agent_id
         )
+        assert found_agent["instructions_included"] is False
+        assert found_agent["complete"] is False
+        assert "not the agent's full tool catalog" in found_agent["search_again"]
 
         loaded = _call_gateway(
             self.token,
-            "bifrost_get_agent",
+            "bifrost_search_capabilities",
             {"agent_id": self.agent_id},
         )
-        assert loaded["agent"]["instructions"] == self.prompt
+        selected_agent = loaded["agents"][0]
+        assert selected_agent["instructions"] == self.prompt
+        assert selected_agent["matching_tools"] == []
+        assert selected_agent["total_tools"] == 2
+        assert selected_agent["returned_tools"] == 0
+        assert selected_agent["complete"] is False
+
+        matched = _call_gateway(
+            self.token,
+            "bifrost_search_capabilities",
+            {"agent_id": self.agent_id, "query": "echo message"},
+        )
         workflow_tool = next(
-            tool for tool in loaded["tools"] if tool["source"] == "workflow"
+            tool
+            for tool in matched["agents"][0]["matching_tools"]
+            if tool["source"] == "workflow"
         )
         tool_ref = workflow_tool["tool_ref"]
+
+        system_search = _call_gateway(
+            self.token,
+            "bifrost_search_capabilities",
+            {"agent_id": self.agent_id, "query": "platform documentation"},
+        )
         system_tool = next(
             tool
-            for tool in loaded["tools"]
+            for tool in system_search["agents"][0]["matching_tools"]
             if tool["source"] == "system" and tool["name"] == "get_docs"
         )
 
         schema = _call_gateway(
             self.token,
-            "bifrost_get_tool_schema",
+            "bifrost_search_capabilities",
             {"agent_id": self.agent_id, "tool_ref": tool_ref},
         )
-        assert schema["input_schema"]["required"] == ["message"]
+        hydrated_tool = schema["agents"][0]["matching_tools"][0]
+        assert hydrated_tool["schema_included"] is True
+        assert hydrated_tool["input_schema"]["required"] == ["message"]
 
         execution_payload = _mcp_request(
             self.token,
@@ -327,6 +358,48 @@ class TestMCPAgentGateway:
         assert json.loads(execution_payload["content"][0]["text"]) == [
             {"echo": "hello"}
         ]
+
+        async_receipt = _call_gateway(
+            self.token,
+            "bifrost_execute_tool",
+            {
+                "agent_id": self.agent_id,
+                "tool_ref": tool_ref,
+                "arguments": {"message": "later"},
+                "async": True,
+            },
+        )
+        assert async_receipt["async"] is True
+        assert async_receipt["status"] == "Pending"
+        assert async_receipt["execution_id"]
+
+        deadline = time.monotonic() + 15
+        while True:
+            async_result = _call_gateway(
+                self.token,
+                "bifrost_get_execution",
+                {"execution_id": async_receipt["execution_id"]},
+            )
+            if async_result["status"] not in {"Pending", "Running"}:
+                break
+            assert time.monotonic() < deadline, async_result
+            time.sleep(0.1)
+        assert async_result["status"] == "Success"
+        assert async_result["result"] == [{"echo": "later"}]
+        assert async_result["result_page"]["has_more"] is False
+
+        unsupported_async = _call_gateway(
+            self.token,
+            "bifrost_execute_tool",
+            {
+                "agent_id": self.agent_id,
+                "tool_ref": system_tool["tool_ref"],
+                "arguments": {},
+                "async": True,
+            },
+        )
+        assert unsupported_async["code"] == "ASYNC_NOT_SUPPORTED"
+        assert unsupported_async["retryable"] is True
 
         invalid = _call_gateway(
             self.token,
@@ -362,10 +435,10 @@ class TestMCPAgentGateway:
         assert update_response.status_code == 200, update_response.text
         refreshed = _call_gateway(
             self.token,
-            "bifrost_get_agent",
+            "bifrost_search_capabilities",
             {"agent_id": self.agent_id},
         )
-        assert refreshed["agent"]["instructions"] == updated_prompt
+        assert refreshed["agents"][0]["instructions"] == updated_prompt
 
         revoke_response = requests.put(
             f"{TEST_API_URL}/api/agents/{self.agent_id}",

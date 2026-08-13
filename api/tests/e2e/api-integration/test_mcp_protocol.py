@@ -117,7 +117,7 @@ class TestMCPProtocol:
         result = data["result"]
         assert "serverInfo" in result
         assert "protocolVersion" in result
-        assert "bifrost_find_agents" in result["instructions"]
+        assert "bifrost_search_capabilities" in result["instructions"]
 
     def test_mcp_list_tools(self):
         """Should be able to list available tools.
@@ -168,10 +168,9 @@ class TestMCPProtocol:
         tool_names = {t["name"] for t in tools}
         assert tool_names == {
             "bifrost_get_required_instructions",
-            "bifrost_find_agents",
-            "bifrost_get_agent",
-            "bifrost_get_tool_schema",
+            "bifrost_search_capabilities",
             "bifrost_execute_tool",
+            "bifrost_get_execution",
             "bifrost_search_memory",
             "bifrost_save_memory",
             "bifrost_remove_memory",

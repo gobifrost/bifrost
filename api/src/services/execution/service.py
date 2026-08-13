@@ -540,11 +540,13 @@ async def execute_tool(
     is_platform_admin: bool = False,
     is_agent: bool = False,
     execution_id: str | None = None,
+    sync: bool = True,
 ) -> WorkflowExecutionResponse:
     """
     Execute a workflow as a tool (for AI agent tool calls).
 
-    Uses sync execution via RabbitMQ with Redis BLPOP for result.
+    Uses the existing execution queue. Sync calls wait for the worker result;
+    async calls return the generated execution ID immediately.
 
     Args:
         workflow_id: Workflow UUID
@@ -557,6 +559,7 @@ async def execute_tool(
         org_name: Organization name (optional)
         is_platform_admin: Whether user is platform admin
         execution_id: Optional pre-generated execution ID (for streaming)
+        sync: Whether to wait for the result instead of returning Pending
 
     Returns:
         WorkflowExecutionResponse with execution results
@@ -598,11 +601,10 @@ async def execute_tool(
         public_url=get_settings().public_url,
     )
 
-    # Execute synchronously via queue
     return await _enqueue_workflow_async(
         context=context,
         workflow_id=workflow_id,
         workflow_name=workflow_name,
         parameters=parameters,
-        sync=True,  # Wait for result
+        sync=sync,
     )

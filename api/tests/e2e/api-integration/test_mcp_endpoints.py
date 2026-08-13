@@ -376,15 +376,14 @@ class TestMCPStatusEndpoint:
         assert "tools" in data
         assert set(data["tools"]) == {
             "bifrost_get_required_instructions",
-            "bifrost_find_agents",
-            "bifrost_get_agent",
-            "bifrost_get_tool_schema",
+            "bifrost_search_capabilities",
             "bifrost_execute_tool",
+            "bifrost_get_execution",
             "bifrost_search_memory",
             "bifrost_save_memory",
             "bifrost_remove_memory",
         }
-        assert data["tools_count"] == 8
+        assert data["tools_count"] == 7
 
 
 # ==================== Bifrost Agent Plugin Endpoint Tests ====================
@@ -441,7 +440,7 @@ class TestMCPRunEndpoint:
         assert data["setup_prompt"].startswith(
             "Help me create a reusable skill or agent with this exact prompt:"
         )
-        assert "bifrost_find_agents" in data["setup_prompt"]
+        assert "bifrost_search_capabilities" in data["setup_prompt"]
         assert "bifrost_get_required_instructions" in data["setup_prompt"]
 
     @pytest.mark.e2e
@@ -661,9 +660,10 @@ class TestMCPConfigToolFiltering:
         )
         assert configured.status_code == 200
 
-        response = requests.get(
-            f"{TEST_API_URL}/api/mcp/gateway/agents",
+        response = requests.post(
+            f"{TEST_API_URL}/api/mcp/gateway/capabilities/search",
             headers=headers,
+            json={"query": "anything"},
         )
         assert response.status_code == 403
         assert response.json()["detail"] == "External MCP access is disabled"

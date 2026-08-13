@@ -41,11 +41,11 @@ from src.core.db_deps import DbSession
 from src.models.contracts.mcp import (
     MCPConfigRequest,
     MCPConfigResponse,
-    MCPGatewayAgentResponse,
+    MCPGatewayCapabilitySearchRequest,
+    MCPGatewayCapabilitySearchResponse,
     MCPGatewayExecuteRequest,
     MCPGatewayExecuteResponse,
-    MCPGatewayFindAgentsResponse,
-    MCPGatewayToolSchemaResponse,
+    MCPGatewayExecutionResponse,
     MCPRunInfoResponse,
     MCPToolInfo,
     MCPToolsResponse,
@@ -97,8 +97,12 @@ def _raise_gateway_http_error(exc: Exception) -> NoReturn:
         raise exc
     status_code = {
         "INVALID_ARGUMENTS": status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "INVALID_CAPABILITY_SEARCH": status.HTTP_422_UNPROCESSABLE_ENTITY,
+        "INVALID_RESULT_PATH": status.HTTP_422_UNPROCESSABLE_ENTITY,
         "AGENT_NOT_FOUND_OR_FORBIDDEN": status.HTTP_404_NOT_FOUND,
         "TOOL_NOT_FOUND_OR_FORBIDDEN": status.HTTP_404_NOT_FOUND,
+        "EXECUTION_NOT_FOUND_OR_FORBIDDEN": status.HTTP_404_NOT_FOUND,
+        "ASYNC_NOT_SUPPORTED": status.HTTP_422_UNPROCESSABLE_ENTITY,
         "NEEDS_REAUTH": status.HTTP_409_CONFLICT,
         "TOOL_SCHEMA_INVALID": status.HTTP_500_INTERNAL_SERVER_ERROR,
         "TOOL_EXECUTION_FAILED": status.HTTP_502_BAD_GATEWAY,
@@ -106,57 +110,48 @@ def _raise_gateway_http_error(exc: Exception) -> NoReturn:
     raise HTTPException(status_code=status_code, detail=exc.as_dict()) from exc
 
 
-@router.get(
-    "/gateway/agents",
-    response_model=MCPGatewayFindAgentsResponse,
+@router.post(
+    "/gateway/capabilities/search",
+    response_model=MCPGatewayCapabilitySearchResponse,
 )
-async def find_gateway_agents(
-    current_user: CurrentActiveUser,
-    db: DbSession,
-    query: str | None = None,
-    limit: int = Query(default=10, ge=1, le=20),
-) -> dict:
-    """Find accessible agents for progressive MCP discovery."""
-    await _require_mcp_enabled(db)
-    return await _gateway_service(current_user).find_agents(
-        query=query,
-        limit=limit,
-    )
-
-
-@router.get(
-    "/gateway/agents/{agent_id}",
-    response_model=MCPGatewayAgentResponse,
-)
-async def get_gateway_agent(
-    agent_id: str,
+async def search_gateway_capabilities(
+    request: MCPGatewayCapabilitySearchRequest,
     current_user: CurrentActiveUser,
     db: DbSession,
 ) -> dict:
-    """Load one accessible agent's live capability package."""
+    """Search agents and tools or hydrate one exact capability."""
     await _require_mcp_enabled(db)
     try:
-        return await _gateway_service(current_user).get_agent(agent_id)
+        return await _gateway_service(current_user).search_capabilities(
+            query=request.query,
+            agent_id=request.agent_id,
+            tool_ref=request.tool_ref,
+            limit=request.limit,
+        )
     except Exception as exc:
         _raise_gateway_http_error(exc)
 
 
 @router.get(
-    "/gateway/agents/{agent_id}/tools/{tool_ref}",
-    response_model=MCPGatewayToolSchemaResponse,
+    "/gateway/executions/{execution_id}",
+    response_model=MCPGatewayExecutionResponse,
 )
-async def get_gateway_tool_schema(
-    agent_id: str,
-    tool_ref: str,
+async def get_gateway_execution(
+    execution_id: str,
     current_user: CurrentActiveUser,
     db: DbSession,
+    result_path: str = "",
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=20, ge=1, le=100),
 ) -> dict:
-    """Load the current schema for an agent-bound tool."""
+    """Read compact status and a bounded result page for an owned execution."""
     await _require_mcp_enabled(db)
     try:
-        return await _gateway_service(current_user).get_tool_schema(
-            agent_id,
-            tool_ref,
+        return await _gateway_service(current_user).get_execution(
+            execution_id,
+            result_path=result_path,
+            offset=offset,
+            limit=limit,
         )
     except Exception as exc:
         _raise_gateway_http_error(exc)
@@ -180,6 +175,7 @@ async def execute_gateway_tool(
             agent_id,
             tool_ref,
             request.arguments,
+            async_execution=request.async_,
         )
     except Exception as exc:
         _raise_gateway_http_error(exc)
@@ -261,7 +257,7 @@ async def mcp_status(
         )
 
     gateway = _gateway_service(current_user)
-    agent_result = await gateway.find_agents(limit=1)
+    accessible_agents_count = await gateway.accessible_agent_count()
     gateway_tools = sorted(GATEWAY_TOOL_NAMES)
 
     return {
@@ -270,7 +266,7 @@ async def mcp_status(
         "is_platform_admin": current_user.is_superuser,
         "tools_count": len(gateway_tools),
         "tools": gateway_tools,
-        "accessible_agents_count": agent_result["total_matches"],
+        "accessible_agents_count": accessible_agents_count,
         "mcp_endpoint": "/mcp",
         "transport": "streamable-http",
         "auth": "oauth2.1",

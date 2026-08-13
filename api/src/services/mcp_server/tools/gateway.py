@@ -1,8 +1,9 @@
 """Stable progressive-discovery tools exposed by the unscoped MCP endpoint."""
 
-from typing import Any
+from typing import Annotated, Any
 
 from fastmcp.tools import ToolResult
+from pydantic import Field
 
 from src.services.mcp_server.generators.fastmcp_generator import (
     register_tool_with_context,
@@ -19,17 +20,24 @@ At the beginning of every task, call bifrost_get_required_instructions exactly
 once before calling any other Bifrost tool. Follow any returned instructions;
 if none are returned, continue normally.
 
-Use bifrost_find_agents with the user's task to locate relevant agents.
-Discovery and inspection do not need confirmation. Call bifrost_get_agent before
-using an agent, and follow its live instructions as task-specific guidance
-subject to the user's request, your higher-level safety instructions, and all
-applicable policies. Reuse the selected agent while it remains relevant.
+Use bifrost_search_capabilities with the user's task to search accessible agents
+and their tools. Results are bounded: matching_tools is never an implicit full
+catalog. Read total_tools, returned_tools, complete, and has_more_matches. When
+complete is false—or when no matching tool is returned—assume more tools may
+exist and search again with the same agent_id plus a different or narrower
+query. Do not conclude that a capability is absent from a partial result.
 
-Before executing a tool, call bifrost_get_tool_schema for the selected tool
-reference. Do not guess tool references or arguments. If the user's request
-authorizes the action, call bifrost_execute_tool with the agent id, tool
-reference, and validated arguments. If the request does not authorize execution,
-offer the action instead of executing it.
+After selecting an agent, call bifrost_search_capabilities again with agent_id
+to load its live instructions. Follow those instructions as task-specific
+guidance subject to the user's request, your higher-level safety instructions,
+and all applicable policies. Add tool_ref to the same call to load the exact
+live input schema before execution. Do not guess tool references or arguments.
+
+If the user's request authorizes the action, call bifrost_execute_tool. Calls
+are synchronous by default. Set async=true only for workflow tools when an
+immediate execution ID is preferable, then use bifrost_get_execution until it
+reaches a terminal state. If the request does not authorize execution, offer
+the action instead of executing it.
 
 If validation fails, correct the arguments using the returned live schema and
 repair guidance. Do not call a tool that was not returned for the selected
@@ -44,22 +52,29 @@ def _rest_error(action: str, status_code: int, body: Any) -> ToolResult:
     return error_result(message, payload)
 
 
-async def bifrost_find_agents(
+async def bifrost_search_capabilities(
     context: Any,
     query: str | None = None,
+    agent_id: str | None = None,
+    tool_ref: str | None = None,
     limit: int = 10,
 ) -> ToolResult:
-    """Find live Bifrost agents relevant to a task."""
+    """Search live agents and tools, or hydrate one selected capability."""
     status_code, data = await call_rest(
         context,
-        "GET",
-        "/api/mcp/gateway/agents",
-        params={"query": query, "limit": limit},
+        "POST",
+        "/api/mcp/gateway/capabilities/search",
+        json_body={
+            "query": query,
+            "agent_id": agent_id,
+            "tool_ref": tool_ref,
+            "limit": limit,
+        },
     )
     if status_code != 200 or not isinstance(data, dict):
-        return _rest_error("Agent search", status_code, data)
+        return _rest_error("Capability search", status_code, data)
     return success_result(
-        f"Found {data['count']} accessible agent(s).",
+        f"Returned {data['returned_matches']} capability match(es).",
         data,
     )
 
@@ -128,50 +143,54 @@ async def bifrost_remove_memory(context: Any, memory_id: str) -> ToolResult:
     return success_result("Removed private memory. Tell the user it was forgotten.", data)
 
 
-async def bifrost_get_agent(context: Any, agent_id: str) -> ToolResult:
-    """Get one accessible agent's live instructions and compact tool catalog."""
-    status_code, data = await call_rest(
-        context,
-        "GET",
-        f"/api/mcp/gateway/agents/{agent_id}",
-    )
-    if status_code != 200 or not isinstance(data, dict):
-        return _rest_error("Agent lookup", status_code, data)
-    return success_result(f"Loaded agent '{data['agent']['name']}'.", data)
-
-
-async def bifrost_get_tool_schema(
-    context: Any,
-    agent_id: str,
-    tool_ref: str,
-) -> ToolResult:
-    """Get the exact live input schema for one tool returned by get-agent."""
-    status_code, data = await call_rest(
-        context,
-        "GET",
-        f"/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}",
-    )
-    if status_code != 200 or not isinstance(data, dict):
-        return _rest_error("Tool schema lookup", status_code, data)
-    return success_result(f"Loaded schema for '{data['name']}'.", data)
-
-
 async def bifrost_execute_tool(
     context: Any,
     agent_id: str,
     tool_ref: str,
     arguments: dict[str, Any],
+    async_: Annotated[bool, Field(alias="async")] = False,
 ) -> ToolResult:
     """Validate and execute one live tool through its selected agent."""
     status_code, data = await call_rest(
         context,
         "POST",
         f"/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute",
-        json_body={"arguments": arguments},
+        json_body={"arguments": arguments, "async": async_},
     )
     if status_code != 200 or not isinstance(data, dict):
         return _rest_error("Tool execution", status_code, data)
+    if data.get("async") is True:
+        return success_result(
+            f"Queued execution {data['execution_id']}.",
+            data,
+        )
     return direct_result(data["result"])
+
+
+async def bifrost_get_execution(
+    context: Any,
+    execution_id: str,
+    result_path: str = "",
+    offset: int = 0,
+    limit: int = 20,
+) -> ToolResult:
+    """Get compact status and a bounded result page for an owned execution."""
+    status_code, data = await call_rest(
+        context,
+        "GET",
+        f"/api/mcp/gateway/executions/{execution_id}",
+        params={
+            "result_path": result_path,
+            "offset": offset,
+            "limit": limit,
+        },
+    )
+    if status_code != 200 or not isinstance(data, dict):
+        return _rest_error("Execution lookup", status_code, data)
+    return success_result(
+        f"Execution {execution_id} is {data['status']}.",
+        data,
+    )
 
 
 TOOLS = [
@@ -183,29 +202,25 @@ TOOLS = [
         "guidance when applicable; continue normally when none is returned.",
     ),
     (
-        "bifrost_find_agents",
-        "Find Bifrost Agents",
-        "Search accessible live Bifrost agents for capabilities relevant to a task. "
-        "Call this first instead of guessing an agent.",
-    ),
-    (
-        "bifrost_get_agent",
-        "Get Bifrost Agent",
-        "Load one accessible agent's current instructions and compact tool catalog. "
-        "Tool schemas are intentionally omitted; inspect the selected tool next.",
-    ),
-    (
-        "bifrost_get_tool_schema",
-        "Get Bifrost Tool Schema",
-        "Load the exact live input schema for one tool reference returned by "
-        "bifrost_get_agent.",
+        "bifrost_search_capabilities",
+        "Search Bifrost Capabilities",
+        "Search accessible agents and tools through one bounded, progressive "
+        "surface. Results explicitly disclose omitted tools. Reuse this tool with "
+        "agent_id to load instructions and tool_ref to load one exact schema.",
     ),
     (
         "bifrost_execute_tool",
         "Execute Bifrost Tool",
         "Execute a tool reference through its selected agent after inspecting its "
         "live schema. Arguments are strictly validated and authorization is "
-        "rechecked on every call. Returns the selected tool's result directly.",
+        "rechecked on every call. Sync is the default; async=true immediately "
+        "returns an execution ID for workflow-backed tools.",
+    ),
+    (
+        "bifrost_get_execution",
+        "Get Bifrost Execution",
+        "Get ownership-checked status and a bounded result page for an execution "
+        "ID returned by async tool execution.",
     ),
     (
         "bifrost_search_memory",
@@ -235,10 +250,9 @@ def register_tools(mcp: Any, get_context_fn: Any) -> None:
     """Register the stable gateway tools with FastMCP."""
     functions = {
         "bifrost_get_required_instructions": bifrost_get_required_instructions,
-        "bifrost_find_agents": bifrost_find_agents,
-        "bifrost_get_agent": bifrost_get_agent,
-        "bifrost_get_tool_schema": bifrost_get_tool_schema,
+        "bifrost_search_capabilities": bifrost_search_capabilities,
         "bifrost_execute_tool": bifrost_execute_tool,
+        "bifrost_get_execution": bifrost_get_execution,
         "bifrost_search_memory": bifrost_search_memory,
         "bifrost_save_memory": bifrost_save_memory,
         "bifrost_remove_memory": bifrost_remove_memory,

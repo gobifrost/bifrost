@@ -127,7 +127,7 @@ class TestOnListTools:
         from src.services.mcp_server.middleware import ToolFilterMiddleware
 
         middleware = ToolFilterMiddleware()
-        all_tools = [mock_tool("bifrost_find_agents")]
+        all_tools = [mock_tool("bifrost_search_capabilities")]
         call_next = AsyncMock(return_value=all_tools)
         context = MagicMock()
         token = mock_access_token()
@@ -145,7 +145,7 @@ class TestOnListTools:
         ):
             result = await middleware.on_list_tools(context, call_next)
 
-        assert [tool.name for tool in result] == ["bifrost_find_agents"]
+        assert [tool.name for tool in result] == ["bifrost_search_capabilities"]
         mock_db_context.assert_not_called()
 
 

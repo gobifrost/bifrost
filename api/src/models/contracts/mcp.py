@@ -7,7 +7,7 @@ Pydantic models for MCP configuration API requests and responses.
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class MCPConfigResponse(BaseModel):
@@ -82,70 +82,82 @@ class MCPRunInfoResponse(BaseModel):
     )
 
 
-class MCPGatewayAgentSummary(BaseModel):
-    """Compact agent metadata returned by gateway discovery."""
+class MCPGatewayToolSummary(BaseModel):
+    """A matching agent-bound tool, optionally hydrated with its schema."""
+
+    tool_ref: str
+    name: str
+    description: str
+    source: str
+    input_schema: dict[str, Any] | None = None
+    schema_included: bool = False
+
+
+class MCPGatewayCapabilityAgent(BaseModel):
+    """One agent and the bounded subset of tools relevant to the search."""
 
     id: str
     name: str
     description: str | None = None
+    instructions: str | None = None
+    instructions_included: bool = False
+    matching_tools: list[MCPGatewayToolSummary]
+    total_tools: int
+    returned_tools: int
+    complete: bool
+    total_matching_tools: int
+    has_more_matches: bool
+    search_again: str | None = None
 
 
-class MCPGatewayFindAgentsResponse(BaseModel):
-    """Search results for agents visible to the caller."""
+class MCPGatewayCapabilitySearchRequest(BaseModel):
+    """Progressively search or hydrate the live agent capability catalog."""
+
+    query: str | None = Field(default=None, max_length=500)
+    agent_id: str | None = None
+    tool_ref: str | None = None
+    limit: int = Field(default=10, ge=1, le=20)
+
+    @model_validator(mode="after")
+    def validate_scope(self) -> "MCPGatewayCapabilitySearchRequest":
+        if self.tool_ref and not self.agent_id:
+            raise ValueError("tool_ref requires agent_id")
+        if not self.agent_id and not (self.query and self.query.strip()):
+            raise ValueError("query is required unless agent_id is provided")
+        return self
+
+
+class MCPGatewayCapabilitySearchResponse(BaseModel):
+    """Bounded search results with explicit disclosure completeness."""
 
     query: str | None = None
-    agents: list[MCPGatewayAgentSummary]
-    count: int
+    agent_id: str | None = None
+    tool_ref: str | None = None
+    agents: list[MCPGatewayCapabilityAgent]
+    returned_matches: int
     total_matches: int
-    has_more: bool
-
-
-class MCPGatewayAgentDetail(MCPGatewayAgentSummary):
-    """Live task instructions for a selected agent."""
-
-    instructions: str | None = None
-
-
-class MCPGatewayToolSummary(BaseModel):
-    """Schema-free tool metadata returned with an agent."""
-
-    tool_ref: str
-    name: str
-    description: str
-    source: str
-
-
-class MCPGatewayAgentResponse(BaseModel):
-    """Selected agent instructions and compact tool catalog."""
-
-    agent: MCPGatewayAgentDetail
-    tools: list[MCPGatewayToolSummary]
-    tool_count: int
-
-
-class MCPGatewayToolSchemaResponse(BaseModel):
-    """Live schema for one agent-bound tool reference."""
-
-    agent_id: str
-    tool_ref: str
-    name: str
-    description: str
-    source: str
-    input_schema: dict[str, Any]
+    has_more_matches: bool
+    response_complete: bool
+    guidance: str
 
 
 class MCPGatewayExecuteRequest(BaseModel):
     """Arguments passed to an agent-bound tool."""
 
+    model_config = ConfigDict(populate_by_name=True)
+
     arguments: dict[str, Any] = Field(default_factory=dict)
+    async_: bool = Field(default=False, alias="async")
 
 
 class MCPGatewayExecuteResponse(BaseModel):
     """Internal REST envelope for an auditable gateway tool call.
 
-    The public MCP execute tool returns ``result`` directly; the remaining
-    fields support the REST bridge and server-side diagnostics.
+    Synchronous public MCP calls return ``result`` directly. Async calls return
+    this compact receipt so the caller can poll ``bifrost_get_execution``.
     """
+
+    model_config = ConfigDict(populate_by_name=True)
 
     agent_id: str
     agent_name: str
@@ -153,4 +165,24 @@ class MCPGatewayExecuteResponse(BaseModel):
     tool_name: str
     source: str
     duration_ms: int
-    result: Any
+    async_: bool = Field(default=False, alias="async")
+    execution_id: str | None = None
+    status: str | None = None
+    result: Any = None
+
+
+class MCPGatewayExecutionResponse(BaseModel):
+    """Compact, ownership-checked execution status and paged result."""
+
+    execution_id: str
+    workflow_id: str | None = None
+    workflow_name: str | None = None
+    status: str
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    duration_ms: int | None = None
+    error: str | None = None
+    result_available: bool
+    result: Any = None
+    result_page: dict[str, Any] | None = None
