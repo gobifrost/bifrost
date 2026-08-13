@@ -25,6 +25,11 @@ from src.routers.endpoints import router as endpoints_router
 from src.routers.cli import router as cli_router, install_router as cli_install_router
 from src.routers.notifications import router as notifications_router
 from src.routers.profile import router as profile_router
+from src.routers.memory import admin_router as memory_admin_router, router as memory_router
+from src.routers.required_instructions import (
+    admin_router as required_instructions_admin_router,
+    router as required_instructions_router,
+)
 from src.routers.agents import router as agents_router
 from src.routers.agent_runs import router as agent_runs_router
 from src.routers.agent_tuning import router as agent_tuning_router
@@ -101,6 +106,10 @@ __all__ = [
     "cli_install_router",
     "notifications_router",
     "profile_router",
+    "memory_router",
+    "memory_admin_router",
+    "required_instructions_router",
+    "required_instructions_admin_router",
     "agents_router",
     "agent_runs_router",
     "agent_tuning_router",

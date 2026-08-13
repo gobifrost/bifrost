@@ -7,7 +7,7 @@ Uses FastMCP to expose tools via Streamable HTTP transport with Bearer token aut
 Architecture:
     - FastMCP server is mounted as an ASGI sub-application at /mcp
     - JWT Bearer token authentication using Bifrost's existing auth system
-    - /mcp exposes four stable agent discovery and dispatch tools
+    - /mcp exposes stable agent discovery, dispatch, instruction, and memory tools
     - /mcp/{agent_id} preserves the native agent-scoped tool surface
 
 Authentication:

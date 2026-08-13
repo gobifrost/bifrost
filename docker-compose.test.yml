@@ -157,6 +157,7 @@ services:
       BIFROST_S3_REGION: us-east-1
       # Enable registration for E2E tests
       BIFROST_ALLOW_REGISTRATION: "true"
+      EMBEDDING_ALLOWED_HOSTS: scheduler-fixtures
     # No ports exposed - all access via Docker network (test-runner connects to api:8000)
     volumes:
       - ./api/src:/app/src

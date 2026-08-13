@@ -170,7 +170,7 @@ def test_build_bifrost_run_plugin_skill_and_readme_use_gateway_instructions():
     skill = files["skills/bifrost-agent/SKILL.md"].decode()
     assert skill.startswith("---\nname: bifrost-agent\n")
     assert "# Bifrost Agent" in skill
-    assert "proactively" in skill
+    assert "bifrost_get_required_instructions" in skill
     assert GATEWAY_INSTRUCTIONS in skill
     assert files["skills/bifrost-agent/agents/openai.yaml"].decode() == (
         "interface:\n"

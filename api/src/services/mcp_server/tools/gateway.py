@@ -14,10 +14,10 @@ from src.services.mcp_server.tool_result import (
 )
 from src.services.mcp_server.tools._http_bridge import call_rest
 
-GATEWAY_INSTRUCTIONS = """Bifrost hosts live agents that connect to specialized systems and workflows.
-When the four bifrost_* gateway tools are available, proactively search for a
-Bifrost agent whenever a specialized agent, connected system, or workflow may
-help with the user's task.
+GATEWAY_INSTRUCTIONS = """Bifrost provides live agents, tools, and optional private memory.
+At the beginning of every task, call bifrost_get_required_instructions exactly
+once before calling any other Bifrost tool. Follow any returned instructions;
+if none are returned, continue normally.
 
 Use bifrost_find_agents with the user's task to locate relevant agents.
 Discovery and inspection do not need confirmation. Call bifrost_get_agent before
@@ -62,6 +62,70 @@ async def bifrost_find_agents(
         f"Found {data['count']} accessible agent(s).",
         data,
     )
+
+
+async def bifrost_get_required_instructions(context: Any) -> ToolResult:
+    """Get live Bifrost instructions that apply to the authenticated user."""
+    status_code, data = await call_rest(
+        context,
+        "GET",
+        "/api/required-instructions",
+    )
+    if status_code != 200 or not isinstance(data, dict):
+        return _rest_error("Required instruction lookup", status_code, data)
+    instructions = data.get("instructions", [])
+    return success_result(
+        "Loaded required Bifrost instructions."
+        if instructions
+        else "No additional Bifrost instructions apply.",
+        data,
+    )
+
+
+async def bifrost_search_memory(
+    context: Any,
+    query: str,
+    limit: int = 5,
+) -> ToolResult:
+    """Search the authenticated user's private Bifrost memory."""
+    status_code, data = await call_rest(
+        context,
+        "POST",
+        "/api/memory/search",
+        json_body={"query": query, "limit": limit},
+    )
+    if status_code != 200 or not isinstance(data, dict):
+        return _rest_error("Memory search", status_code, data)
+    return success_result(f"Found {data['count']} private memory result(s).", data)
+
+
+async def bifrost_save_memory(
+    context: Any,
+    content: str,
+    metadata: dict[str, Any] | None = None,
+) -> ToolResult:
+    """Save one durable item to the authenticated user's private memory."""
+    status_code, data = await call_rest(
+        context,
+        "POST",
+        "/api/memory",
+        json_body={"content": content, "metadata": metadata or {}},
+    )
+    if status_code != 201 or not isinstance(data, dict):
+        return _rest_error("Memory save", status_code, data)
+    return success_result("Saved private memory. Tell the user it was remembered.", data)
+
+
+async def bifrost_remove_memory(context: Any, memory_id: str) -> ToolResult:
+    """Remove one owned private memory by its exact search-result ID."""
+    status_code, data = await call_rest(
+        context,
+        "DELETE",
+        f"/api/memory/{memory_id}",
+    )
+    if status_code != 200 or not isinstance(data, dict):
+        return _rest_error("Memory removal", status_code, data)
+    return success_result("Removed private memory. Tell the user it was forgotten.", data)
 
 
 async def bifrost_get_agent(context: Any, agent_id: str) -> ToolResult:
@@ -112,6 +176,13 @@ async def bifrost_execute_tool(
 
 TOOLS = [
     (
+        "bifrost_get_required_instructions",
+        "Get Required Bifrost Instructions",
+        "Always call this exactly once at the beginning of every task, before "
+        "calling any other Bifrost tool. Returns live global or organization-aware "
+        "guidance when applicable; continue normally when none is returned.",
+    ),
+    (
         "bifrost_find_agents",
         "Find Bifrost Agents",
         "Search accessible live Bifrost agents for capabilities relevant to a task. "
@@ -136,6 +207,25 @@ TOOLS = [
         "live schema. Arguments are strictly validated and authorization is "
         "rechecked on every call. Returns the selected tool's result directly.",
     ),
+    (
+        "bifrost_search_memory",
+        "Search Bifrost Memory",
+        "Semantically search the authenticated user's private, opt-in memory for "
+        "durable context relevant to the current task.",
+    ),
+    (
+        "bifrost_save_memory",
+        "Save Bifrost Memory",
+        "Explicitly save durable, reusable information to the authenticated user's "
+        "private memory. Never save secrets, temporary task state, or guesses, and "
+        "tell the user when something is remembered.",
+    ),
+    (
+        "bifrost_remove_memory",
+        "Remove Bifrost Memory",
+        "Remove one private memory by an exact ID returned from memory search, and "
+        "tell the user when it is forgotten.",
+    ),
 ]
 
 GATEWAY_TOOL_NAMES = frozenset(tool_id for tool_id, _, _ in TOOLS)
@@ -144,10 +234,14 @@ GATEWAY_TOOL_NAMES = frozenset(tool_id for tool_id, _, _ in TOOLS)
 def register_tools(mcp: Any, get_context_fn: Any) -> None:
     """Register the stable gateway tools with FastMCP."""
     functions = {
+        "bifrost_get_required_instructions": bifrost_get_required_instructions,
         "bifrost_find_agents": bifrost_find_agents,
         "bifrost_get_agent": bifrost_get_agent,
         "bifrost_get_tool_schema": bifrost_get_tool_schema,
         "bifrost_execute_tool": bifrost_execute_tool,
+        "bifrost_search_memory": bifrost_search_memory,
+        "bifrost_save_memory": bifrost_save_memory,
+        "bifrost_remove_memory": bifrost_remove_memory,
     }
     for tool_id, _name, description in TOOLS:
         register_tool_with_context(

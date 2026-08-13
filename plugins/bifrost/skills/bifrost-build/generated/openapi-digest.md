@@ -17,6 +17,12 @@
 | GET | `/api/admin/llm/models` |
 | POST | `/api/admin/llm/test` |
 | POST | `/api/admin/llm/test-saved` |
+| GET | `/api/admin/memory/settings` |
+| PUT | `/api/admin/memory/settings` |
+| GET | `/api/admin/required-instructions` |
+| PUT | `/api/admin/required-instructions` |
+| GET | `/api/admin/required-instructions/organizations/{organization_id}` |
+| PUT | `/api/admin/required-instructions/organizations/{organization_id}` |
 | GET | `/api/admin/roi/settings` |
 | POST | `/api/admin/roi/settings` |
 | GET | `/api/agent-runs` |
@@ -293,6 +299,12 @@
 | GET | `/api/me/mcp-connections` |
 | DELETE | `/api/me/mcp-connections/{connection_id}` |
 | GET | `/api/me/mcp-connections/{connection_id}/connect` |
+| GET | `/api/memory` |
+| POST | `/api/memory` |
+| POST | `/api/memory/search` |
+| GET | `/api/memory/settings` |
+| PUT | `/api/memory/settings` |
+| DELETE | `/api/memory/{memory_id}` |
 | GET | `/api/metrics` |
 | GET | `/api/metrics/executions/daily` |
 | GET | `/api/metrics/executions/timeseries` |
@@ -354,6 +366,7 @@
 | GET | `/api/reports/roi/summary` |
 | GET | `/api/reports/roi/trends` |
 | GET | `/api/reports/usage` |
+| GET | `/api/required-instructions` |
 | GET | `/api/roles` |
 | POST | `/api/roles` |
 | DELETE | `/api/roles/{role_id}` |
