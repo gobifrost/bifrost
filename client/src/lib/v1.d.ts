@@ -1273,8 +1273,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List all organizations
-         * @description Get all organizations (Platform admin only)
+         * List organizations
+         * @description Get active organizations, optionally including inactive ones (Platform admin only)
          */
         get: operations["list_organizations_api_organizations_get"];
         put?: never;
@@ -27267,7 +27267,10 @@ export interface operations {
     };
     list_organizations_api_organizations_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Include inactive (disabled) organizations */
+                include_inactive?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -27281,6 +27284,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrganizationPublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

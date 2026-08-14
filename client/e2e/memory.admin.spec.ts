@@ -129,8 +129,8 @@ test.describe("Private memory", () => {
 		await page
 			.getByRole("row")
 			.filter({ hasText: organizationId })
-			.getByRole("button", { name: "Edit required instructions" })
 			.click();
+		await page.getByRole("tab", { name: "Instructions" }).click();
 		const organizationEditor = page.locator(
 			'[aria-label="Organization Instructions editor"]',
 		);

@@ -9,13 +9,22 @@ import { getErrorMessage } from "@/lib/api-error";
 import { toast } from "sonner";
 
 /**
- * Fetch all organizations visible to the current user
+ * Fetch active organizations visible to the current user, optionally including inactive ones
  */
-export function useOrganizations(options?: { enabled?: boolean }) {
+export function useOrganizations(options?: {
+	enabled?: boolean;
+	includeInactive?: boolean;
+}) {
 	return $api.useQuery(
 		"get",
 		"/api/organizations",
-		{},
+		{
+			params: {
+				query: {
+					include_inactive: options?.includeInactive ?? false,
+				},
+			},
+		},
 		{ enabled: options?.enabled ?? true },
 	);
 }
@@ -86,29 +95,6 @@ export function useUpdateOrganization() {
 		},
 		onError: (error) => {
 			toast.error("Failed to update organization", {
-				description: getErrorMessage(error, "Unknown error occurred"),
-			});
-		},
-	});
-}
-
-/**
- * Delete an organization
- */
-export function useDeleteOrganization() {
-	const queryClient = useQueryClient();
-
-	return $api.useMutation("delete", "/api/organizations/{org_id}", {
-		onSuccess: () => {
-			queryClient.invalidateQueries({
-				queryKey: ["get", "/api/organizations"],
-			});
-			toast.success("Organization deleted", {
-				description: "The organization has been successfully deleted",
-			});
-		},
-		onError: (error) => {
-			toast.error("Failed to delete organization", {
 				description: getErrorMessage(error, "Unknown error occurred"),
 			});
 		},
