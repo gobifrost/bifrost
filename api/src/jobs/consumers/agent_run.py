@@ -244,8 +244,10 @@ class AgentRunConsumer(BaseConsumer):
                     await r.lpush(result_key, json.dumps({  # pyright: ignore[reportGeneralTypeIssues]
                         "output": run_result.get("output"),
                         "status": run_result.get("status", "completed"),
+                        "error": run_result.get("error"),
                         "iterations_used": run_result.get("iterations_used", 0),
                         "tokens_used": run_result.get("tokens_used", 0),
+                        "llm_model": run_result.get("llm_model"),
                     }))
                     await r.expire(result_key, 300)
 

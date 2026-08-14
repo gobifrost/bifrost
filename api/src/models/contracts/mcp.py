@@ -5,7 +5,7 @@ Pydantic models for MCP configuration API requests and responses.
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -89,6 +89,8 @@ class MCPGatewayToolSummary(BaseModel):
     name: str
     description: str
     source: str
+    supports_async: bool
+    default_async: bool
     input_schema: dict[str, Any] | None = None
     schema_included: bool = False
 
@@ -147,7 +149,14 @@ class MCPGatewayExecuteRequest(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     arguments: dict[str, Any] = Field(default_factory=dict)
-    async_: bool = Field(default=False, alias="async")
+    async_: bool | None = Field(
+        default=None,
+        alias="async",
+        description=(
+            "Override the capability's default execution mode. When omitted, "
+            "delegations run asynchronously and other tools run synchronously."
+        ),
+    )
 
 
 class MCPGatewayExecuteResponse(BaseModel):
@@ -167,6 +176,7 @@ class MCPGatewayExecuteResponse(BaseModel):
     duration_ms: int
     async_: bool = Field(default=False, alias="async")
     execution_id: str | None = None
+    execution_type: Literal["workflow", "agent_run"] | None = None
     status: str | None = None
     result: Any = None
 
@@ -175,8 +185,11 @@ class MCPGatewayExecutionResponse(BaseModel):
     """Compact, ownership-checked execution status and paged result."""
 
     execution_id: str
+    execution_type: Literal["workflow", "agent_run"]
     workflow_id: str | None = None
     workflow_name: str | None = None
+    agent_id: str | None = None
+    agent_name: str | None = None
     status: str
     created_at: datetime | None = None
     started_at: datetime | None = None

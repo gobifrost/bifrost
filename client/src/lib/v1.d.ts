@@ -18501,9 +18501,9 @@ export interface components {
             };
             /**
              * Async
-             * @default false
+             * @description Override the capability's default execution mode. When omitted, delegations run asynchronously and other tools run synchronously.
              */
-            async: boolean;
+            async?: boolean | null;
         };
         /**
          * MCPGatewayExecuteResponse
@@ -18532,6 +18532,8 @@ export interface components {
             async: boolean;
             /** Execution Id */
             execution_id?: string | null;
+            /** Execution Type */
+            execution_type?: ("workflow" | "agent_run") | null;
             /** Status */
             status?: string | null;
             /** Result */
@@ -18544,10 +18546,19 @@ export interface components {
         MCPGatewayExecutionResponse: {
             /** Execution Id */
             execution_id: string;
+            /**
+             * Execution Type
+             * @enum {string}
+             */
+            execution_type: "workflow" | "agent_run";
             /** Workflow Id */
             workflow_id?: string | null;
             /** Workflow Name */
             workflow_name?: string | null;
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Agent Name */
+            agent_name?: string | null;
             /** Status */
             status: string;
             /** Created At */
@@ -18582,6 +18593,10 @@ export interface components {
             description: string;
             /** Source */
             source: string;
+            /** Supports Async */
+            supports_async: boolean;
+            /** Default Async */
+            default_async: boolean;
             /** Input Schema */
             input_schema?: {
                 [key: string]: unknown;
