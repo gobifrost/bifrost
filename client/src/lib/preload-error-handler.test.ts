@@ -17,6 +17,7 @@ describe("handleVitePreloadError", () => {
 	let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
 
 	beforeEach(() => {
+		vi.useFakeTimers();
 		sessionStorage.clear();
 
 		// Mirror the VersionUpdateBanner test pattern: replace window.location
@@ -28,15 +29,11 @@ describe("handleVitePreloadError", () => {
 			configurable: true,
 			value: { ...originalLocation, reload },
 		});
-		vi.spyOn(window, "setTimeout").mockImplementation((handler) => {
-			if (typeof handler === "function") handler();
-			return 1;
-		});
-
 		consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 	});
 
 	afterEach(() => {
+		vi.useRealTimers();
 		Object.defineProperty(window, "location", {
 			configurable: true,
 			value: originalLocation,
@@ -50,6 +47,7 @@ describe("handleVitePreloadError", () => {
 		const before = Date.now();
 		const event = new Event("vite:preloadError", { cancelable: true });
 		handleVitePreloadError(event);
+		vi.runOnlyPendingTimers();
 		const after = Date.now();
 
 		expect(reload).toHaveBeenCalledTimes(1);
@@ -79,6 +77,7 @@ describe("handleVitePreloadError", () => {
 		sessionStorage.setItem(RELOAD_KEY, String(Date.now() - 6000));
 
 		handleVitePreloadError();
+		vi.runOnlyPendingTimers();
 
 		expect(reload).toHaveBeenCalledTimes(1);
 	});

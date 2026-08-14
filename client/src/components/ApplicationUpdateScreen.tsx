@@ -1,5 +1,5 @@
-import { RefreshCw } from "lucide-react";
-import { type ReactNode, useSyncExternalStore } from "react";
+import { Loader2 } from "lucide-react";
+import { type ReactNode, useState, useSyncExternalStore } from "react";
 
 import {
 	getApplicationUpdateInProgress,
@@ -10,9 +10,21 @@ interface ApplicationUpdateScreenProps {
 	fullScreen?: boolean;
 }
 
+const DEFAULT_LOGO_URL = "/logo.svg";
+
+function getAppliedSquareLogoUrl(): string {
+	const cssUrl = document.documentElement.style
+		.getPropertyValue("--logo-square-url")
+		.trim();
+	const match = cssUrl.match(/^url\((['"]?)(.*)\1\)$/);
+	return match?.[2] || DEFAULT_LOGO_URL;
+}
+
 export function ApplicationUpdateScreen({
 	fullScreen = false,
 }: ApplicationUpdateScreenProps) {
+	const [logoUrl, setLogoUrl] = useState(getAppliedSquareLogoUrl);
+
 	return (
 		<div
 			className={
@@ -24,15 +36,19 @@ export function ApplicationUpdateScreen({
 			aria-live="polite"
 		>
 			<div className="flex max-w-sm flex-col items-center text-center">
-				<div className="mb-5 rounded-2xl bg-primary/10 p-4 text-primary ring-1 ring-primary/15">
-					<RefreshCw className="h-7 w-7 animate-spin" aria-hidden="true" />
-				</div>
+				<img
+					src={logoUrl}
+					alt="Application logo"
+					className="mb-5 h-16 w-16 object-contain"
+					onError={() => setLogoUrl(DEFAULT_LOGO_URL)}
+				/>
 				<h1 className="text-xl font-semibold tracking-tight">
 					Application updated
 				</h1>
-				<p className="mt-2 text-sm text-muted-foreground">
-					Loading the latest version…
-				</p>
+				<div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+					<Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+					<span>Loading the latest version…</span>
+				</div>
 			</div>
 		</div>
 	);
