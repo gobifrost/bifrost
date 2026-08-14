@@ -5,7 +5,7 @@ resolves it from the instance (``npm install`` against /api/sdk/download), so th
 SAME mechanism works on a developer laptop (``npm run dev``) and in the platform's
 server-side build. This module produces the npm-installable tarball on the fly,
 version-stamped to the running instance — directly analogous to the CLI's
-``/api/cli/download`` (a Python tarball).
+``/api/cli/download/bifrost-cli.tar.gz`` (a Python tarball).
 
 The SDK source (provider, tables, hooks) lives in ``client/src/lib/app-sdk`` and
 is copied into the api image at ``sdk_src/`` (see Dockerfile). It is bundled with

@@ -12,7 +12,7 @@
 // =============================================================================
 
 export function getSdkDownloadUrl(): string {
-	return "/api/cli/download";
+	return "/api/cli/download/bifrost-cli.tar.gz";
 }
 
 // =============================================================================

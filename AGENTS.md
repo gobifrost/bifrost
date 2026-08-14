@@ -63,7 +63,7 @@ Use this whenever you need a running Bifrost instance to exercise — clicking a
    cd /tmp/bifrost-cli-<name>
    python3 -m venv .venv
    .venv/bin/pip install --quiet --upgrade pip
-   .venv/bin/pip install --quiet "<API_URL>/api/cli/download"
+   .venv/bin/pip install --quiet "<API_URL>/api/cli/download/bifrost-cli.tar.gz"
    ```
    The download endpoint serves the build matching the running API; installing this version avoids the version-mismatch warning that otherwise short-circuits subcommand output.
 

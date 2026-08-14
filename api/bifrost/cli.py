@@ -272,7 +272,7 @@ def _check_cli_version() -> None:
                 f"Your CLI is incompatible with this server "
                 f"(CLI contract v{CONTRACT_VERSION}, server contract "
                 f"v{server_contract}). You must upgrade:\n"
-                f"  pipx install --force {api_url}/api/cli/download"
+                f"  pipx install --force {api_url}/api/cli/download/bifrost-cli.tar.gz"
             )
             sys.exit(1)
         # Gate 2 — build drift (SOFT, deduped). Contract is fine; just nudge.
@@ -284,7 +284,7 @@ def _check_cli_version() -> None:
                     f"A newer Bifrost CLI is available "
                     f"({installed} → {server_version}); your current CLI is still "
                     f"compatible. Update when convenient:\n"
-                    f"  pipx install --force {api_url}/api/cli/download"
+                    f"  pipx install --force {api_url}/api/cli/download/bifrost-cli.tar.gz"
                 )
                 _version_notice.mark_notified(api_url, server_version)
         return
@@ -897,7 +897,7 @@ Examples:
         return 1
 
     resolved_url = resolved_url.rstrip("/")
-    download_url = f"{resolved_url}/api/cli/download"
+    download_url = f"{resolved_url}/api/cli/download/bifrost-cli.tar.gz"
     try:
         command = _update_install_command(download_url)
     except RuntimeError as exc:

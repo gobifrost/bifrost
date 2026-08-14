@@ -36,6 +36,7 @@ RUN pip install --no-cache-dir --require-hashes -r requirements.lock \
 FROM python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6
 
 WORKDIR /app
+ARG BIFROST_VERSION=unknown
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -104,6 +105,17 @@ COPY client/src/lib/app-sdk/index.v2.ts /app/src/services/sdk_package/sdk_src/in
 COPY client/src/lib/app-sdk/sdk-contract.json /app/src/services/sdk_package/sdk_src/sdk-contract.json
 RUN chmod -R a+rX /app/src/services/sdk_package
 
+# Source is bind-mounted at runtime in development, but the downloadable CLI
+# is deliberately frozen at image-build time just as it is in production.
+COPY api/bifrost/ /tmp/cli-build/bifrost/
+COPY api/shared/cli_artifact.py /tmp/cli-build/shared/cli_artifact.py
+COPY api/scripts/build_cli_artifact.py /tmp/cli-build/build_cli_artifact.py
+RUN PYTHONPATH=/tmp/cli-build python /tmp/cli-build/build_cli_artifact.py \
+      --source /tmp/cli-build/bifrost \
+      --output /app/artifacts \
+      --version "${BIFROST_VERSION}" \
+    && rm -rf /tmp/cli-build
+
 # Copy entrypoint script
 COPY api/entrypoint.sh /entrypoint.sh
 COPY assets/ /app/assets/
@@ -119,7 +131,6 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-ARG BIFROST_VERSION=unknown
 ENV BIFROST_VERSION=${BIFROST_VERSION}
 
 # No default CMD - let docker-compose specify the command per service

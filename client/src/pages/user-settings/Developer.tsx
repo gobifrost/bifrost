@@ -48,6 +48,8 @@ function CopyButton({ text }: { text: string }) {
 }
 
 export function DeveloperSettings() {
+	const cliDownloadUrl = `${window.location.origin}${sdkService.getSdkDownloadUrl()}`;
+
 	return (
 		<div className="space-y-6">
 			{/* SDK Setup Instructions */}
@@ -75,8 +77,8 @@ export function DeveloperSettings() {
 								<div className="flex-1">
 									<p>Install the SDK:</p>
 									<code className="flex items-center mt-1 p-2 bg-muted rounded-md text-xs">
-										<span>pipx install --force {window.location.origin}/api/cli/download</span>
-										<CopyButton text={`pipx install --force ${window.location.origin}/api/cli/download`} />
+										<span>pipx install --force {cliDownloadUrl}</span>
+										<CopyButton text={`pipx install --force ${cliDownloadUrl}`} />
 									</code>
 								</div>
 							</div>

@@ -4790,10 +4790,50 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Download CLI package
-         * @description Download the Bifrost CLI as a pip-installable tarball
+         * Legacy CLI download URL
+         * @description Redirect to the installer-compatible CLI download URL
          */
         get: operations["download_cli_api_cli_download_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cli/download/bifrost-cli.tar.gz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download CLI package
+         * @description Redirect to the versioned, pip-installable CLI artifact
+         */
+        get: operations["download_cli_alias_api_cli_download_bifrost_cli_tar_gz_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cli/artifacts/{filename}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Serve a versioned CLI artifact
+         * @description Serve the immutable CLI artifact bundled into the API image
+         */
+        get: operations["download_cli_artifact_api_cli_artifacts__filename__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -34026,6 +34066,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    download_cli_alias_api_cli_download_bifrost_cli_tar_gz_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    download_cli_artifact_api_cli_artifacts__filename__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                filename: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

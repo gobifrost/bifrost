@@ -42,17 +42,16 @@ Note: File operations have been moved to /api/files router.
 """
 
 import asyncio
-import io
 import json
 import logging
-import tarfile
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -109,13 +108,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sdk", tags=["SDK"])
 
-# /api/cli/download is the permanent home for the CLI install
-# endpoint. It lives at /api/cli/ (not /api/sdk/) because users type
-# the URL — `pip install <SERVER_URL>/api/cli/download` — so the path
-# is intentionally "the CLI." Not a legacy shim; not a compat carve-out.
+# /api/cli/download/bifrost-cli.tar.gz is the permanent, installer-compatible
+# home for the CLI install endpoint. The extensionless /api/cli/download path
+# remains a compatibility redirect for clients that actually make the request.
+# These live at /api/cli/ (not /api/sdk/) because users type the URL.
 # The rest of /api/cli/* moved to /api/sdk/* in the 2026-05 overhaul
 # because those endpoints are the SDK execution surface, not the CLI.
 install_router = APIRouter(prefix="/api/cli", tags=["CLI Install"])
+
+CLI_DOWNLOAD_ALIAS = "bifrost-cli.tar.gz"
+CLI_ARTIFACT_DIR = Path(os.environ.get("BIFROST_CLI_ARTIFACT_DIR", "/app/artifacts"))
 
 
 # =============================================================================
@@ -2568,159 +2570,65 @@ async def cli_knowledge_get(
 # =============================================================================
 
 
-def _to_pep440(version: str) -> str:
-    """Coerce `git describe --tags --always --dirty` output to a PEP 440 version.
-
-    Examples:
-        "v0.6-219-g24b8acb9-dirty" -> "0.6.post219+g24b8acb9.dirty"
-        "v1.2.3"                   -> "1.2.3"
-        "v1.2.3-dirty"             -> "1.2.3+dirty"
-        "abc1234"                  -> "0.0.0+gabc1234"   (no-tag fallback)
-        "unknown"                  -> "0.0.0"
-    """
-    import re as _re
-
-    if not version or version == "unknown":
-        return "0.0.0"
-
-    # Strip leading 'v' from tag prefix
-    v = version[1:] if version.startswith("v") else version
-
-    dirty = v.endswith("-dirty")
-    if dirty:
-        v = v[: -len("-dirty")]
-
-    # Bifrost release tags use a semver-ish dev release shape
-    # (e.g. "1.0.8-dev.11"). Preserve the actual release instead of treating it
-    # as a no-tag git hash fallback, which makes package tools report
-    # "0.0.0+g1.0.8.dev.11".
-    m = _re.match(r"^(\d+(?:\.\d+)*)-dev\.(\d+)$", v)
-    if m:
-        base, n = m.group(1), m.group(2)
-        pep = f"{base}.dev{n}"
-        return f"{pep}+dirty" if dirty else pep
-
-    # Shape: <tag>-<N>-g<sha>
-    m = _re.match(r"^(.+)-(\d+)-(g[0-9a-f]+)$", v)
-    if m:
-        tag, n, sha = m.group(1), m.group(2), m.group(3)
-        local = f"{sha}.dirty" if dirty else sha
-        return f"{tag}.post{n}+{local}"
-
-    # Clean tag (e.g. "1.2.3")
-    if _re.match(r"^\d+(\.\d+)*$", v):
-        return f"{v}+dirty" if dirty else v
-
-    # No-tag fallback: bare sha from `git describe --always`
-    local = f"g{v}.dirty" if dirty else f"g{v}"
-    return f"0.0.0+{local}"
+@install_router.get(
+    "/download",
+    summary="Legacy CLI download URL",
+    description="Redirect to the installer-compatible CLI download URL",
+)
+async def download_cli() -> RedirectResponse:
+    """Preserve the historical URL for HTTP clients that follow redirects."""
+    return RedirectResponse(
+        url=f"/api/cli/download/{CLI_DOWNLOAD_ALIAS}",
+        status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+    )
 
 
 @install_router.get(
-    "/download",
+    f"/download/{CLI_DOWNLOAD_ALIAS}",
     summary="Download CLI package",
-    description="Download the Bifrost CLI as a pip-installable tarball",
+    description="Redirect to the versioned, pip-installable CLI artifact",
 )
-async def download_cli() -> Response:
-    """
-    Serve CLI as installable package.
-
-    Returns a tarball that can be installed with:
-    pip install https://your-bifrost-instance.com/api/cli/download
-    """
+async def download_cli_alias() -> RedirectResponse:
+    """Give uv/pipx a suffix-bearing URL before any network request occurs."""
+    from shared.cli_artifact import cli_artifact_filename
     from shared.version import get_version
 
-    package_dir = Path(__file__).parent.parent.parent / "bifrost"
+    filename = cli_artifact_filename(get_version())
+    return RedirectResponse(
+        url=f"/api/cli/artifacts/{filename}",
+        status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+    )
 
-    if not package_dir.exists():
+
+@install_router.get(
+    "/artifacts/{filename}",
+    summary="Serve a versioned CLI artifact",
+    description="Serve the immutable CLI artifact bundled into the API image",
+)
+async def download_cli_artifact(filename: str) -> FileResponse:
+    """Serve only the artifact matching this API build."""
+    from shared.cli_artifact import cli_artifact_filename
+    from shared.version import get_version
+
+    expected_filename = cli_artifact_filename(get_version())
+    if filename != expected_filename:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="CLI package not found",
+            detail="CLI artifact not found",
         )
 
-    buffer = io.BytesIO()
+    artifact_path = CLI_ARTIFACT_DIR / expected_filename
+    if not artifact_path.is_file():
+        logger.error("Bundled CLI artifact is missing: %s", artifact_path)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="CLI artifact unavailable",
+        )
 
-    # Files to exclude (platform-only internal files)
-    exclude_files = {
-        "_internal.py",     # Platform-only permission checks
-        "_write_buffer.py", # Platform-only, requires Redis
-        "_logging.py",      # Platform-only logging
-        "_sync.py",         # Platform-only sync utilities
-    }
-
-    def _generate_tarball():
-        """Generate tarball synchronously in thread."""
-        import re as _re
-        import io as _io
-        live_version = get_version()
-        pep440_version = _to_pep440(live_version)
-
-        with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-            # Add pyproject.toml at root level with PEP 440 version stamped
-            # (setuptools validates project.version against PEP 440; git describe
-            # output like "v0.6-219-gabc1234-dirty" must be coerced first)
-            pyproject_path = package_dir / "pyproject.toml"
-            if pyproject_path.exists():
-                content = pyproject_path.read_text()
-                content = _re.sub(
-                    r'^version\s*=\s*"[^"]*"',
-                    f'version = "{pep440_version}"',
-                    content,
-                    flags=_re.MULTILINE,
-                )
-                data = content.encode()
-                info = tarfile.TarInfo(name="pyproject.toml")
-                info.size = len(data)
-                tar.addfile(info, fileobj=_io.BytesIO(data))
-
-            # Add all Python files from bifrost/
-            for file_path in package_dir.rglob("*"):
-                if not file_path.is_file():
-                    continue
-                if "__pycache__" in str(file_path):
-                    continue
-                if file_path.name in exclude_files:
-                    continue
-                # Ship .py + .toml, PLUS the data files the CLI reads at runtime.
-                # lucide_icon_names.json is the snapshot `bifrost migrate-imports`
-                # uses to classify lucide icons; excluding it ships a CLI that
-                # silently leaves icon imports in "bifrost" and breaks a v1→v2
-                # app migration (battle-test 2026-06-13).
-                _data_files = {"lucide_icon_names.json"}
-                if file_path.suffix not in (".py", ".toml") and file_path.name not in _data_files:
-                    continue
-                if file_path.name == "pyproject.toml":
-                    continue  # Already added above
-
-                arcname = f"bifrost/{file_path.relative_to(package_dir)}"
-
-                # Stamp __version__ in __init__.py
-                if file_path.name == "__init__.py" and file_path.parent == package_dir:
-                    content = file_path.read_text()
-                    content = _re.sub(
-                        r"^__version__\s*=\s*_compute_version\(\)",
-                        f'__version__ = "{live_version}"',
-                        content,
-                        flags=_re.MULTILINE,
-                    )
-                    data = content.encode()
-                    info = tarfile.TarInfo(name=arcname)
-                    info.size = len(data)
-                    tar.addfile(info, fileobj=_io.BytesIO(data))
-                else:
-                    tar.add(file_path, arcname=arcname)
-
-    await asyncio.to_thread(_generate_tarball)
-
-    # Get the complete tarball content after it's fully finalized
-    tarball_content = buffer.getvalue()
-
-    return Response(
-        content=tarball_content,
+    return FileResponse(
+        path=artifact_path,
         media_type="application/gzip",
-        headers={
-            "Content-Disposition": f"attachment; filename=bifrost-cli-{get_version()}.tar.gz",
-        },
+        filename=expected_filename,
     )
 
 
@@ -2737,9 +2645,10 @@ async def download_cli() -> Response:
 async def download_sdk() -> Response:
     """Build + serve the installable ``bifrost`` SDK package (npm tarball).
 
-    Mirrors ``/api/cli/download`` (the Python CLI tarball): the package is built
-    on the fly from the SDK source shipped in the api image and version-stamped
-    to the running instance, so dev and deploy use one resolution mechanism.
+    Like ``/api/cli/download/bifrost-cli.tar.gz`` (the Python CLI tarball), this
+    package is tied to the API build. The web SDK remains bundled on demand from
+    source shipped in the image, while the Python CLI artifact is built into the
+    image ahead of time.
     """
     from shared.version import get_version
     from src.services.sdk_package import build_sdk_tarball
