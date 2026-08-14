@@ -285,6 +285,20 @@ export function useTable(
     const offset = Math.max(0, (page - 1) * pageSize);
     const limit = pageSize;
 
+    async function loadSnapshot() {
+      const snap = await tables.query(
+        name,
+        { where, limit, offset, order_by, order_dir },
+        scope,
+      );
+      if (cancelled) return null;
+      setRows(snap.documents.map(flattenDocument));
+      setTotal(snap.total);
+      setError(null);
+      setLoading(false);
+      return snap;
+    }
+
     async function init() {
       try {
         // Compile the filter once, before issuing the snapshot — if the
@@ -295,15 +309,8 @@ export function useTable(
           ? compileFilterToExpr(where)
           : null;
 
-        const snap = await tables.query(
-          name,
-          { where, limit, offset, order_by, order_dir },
-          scope,
-        );
-        if (cancelled) return;
-        setRows(snap.documents.map(flattenDocument));
-        setTotal(snap.total);
-        setLoading(false);
+        const snap = await loadSnapshot();
+        if (!snap) return;
 
         // Subscribe by the canonical table UUID resolved server-side in the
         // requested scope. This sidesteps the cross-org name ambiguity that
@@ -325,6 +332,16 @@ export function useTable(
               return;
             }
             applyPagedEvent(evt, pageSize, setRows, setTotal);
+          },
+          () => {
+            // Events can be missed while the transport is down. Once the
+            // server acknowledges the replacement subscription, replace the
+            // visible window with a fresh authoritative snapshot.
+            void loadSnapshot().catch((e) => {
+              if (!cancelled) {
+                setError(e instanceof Error ? e : new Error(String(e)));
+              }
+            });
           },
         );
       } catch (e) {

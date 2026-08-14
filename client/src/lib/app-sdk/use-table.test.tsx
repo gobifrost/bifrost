@@ -6,17 +6,21 @@ const subscribeMock = vi.fn();
 let lastOnEvent:
   | ((evt: Record<string, unknown>) => void)
   | null = null;
+let lastOnReconnect: (() => void) | null = null;
 
 vi.mock("./ws-client", () => ({
   subscribeToTable: (
     _tableId: string,
     _filter: unknown,
     cb: (evt: Record<string, unknown>) => void,
+    onReconnect?: () => void,
   ) => {
     lastOnEvent = cb;
+    lastOnReconnect = onReconnect ?? null;
     subscribeMock(_tableId, _filter, cb);
     return () => {
       lastOnEvent = null;
+      lastOnReconnect = null;
     };
   },
 }));
@@ -28,6 +32,7 @@ describe("useTable", () => {
     vi.restoreAllMocks();
     subscribeMock.mockClear();
     lastOnEvent = null;
+    lastOnReconnect = null;
   });
 
   it("returns initial snapshot flattened to match the ws event shape", async () => {
@@ -92,6 +97,31 @@ describe("useTable", () => {
     expect(result.current.rows).toHaveLength(1);
     expect(result.current.rows[0]?.id).toBe("r1");
     expect((result.current.rows[0] as { x?: unknown }).x).toBe(1);
+  });
+
+  it("refreshes the authoritative page snapshot after a reconnect", async () => {
+    const response = (id: string, value: number) =>
+      new Response(
+        JSON.stringify({
+          documents: [{ id, data: { value } }],
+          table_id: "tbl-uuid",
+          total: 1,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(response("before", 1))
+      .mockResolvedValueOnce(response("after", 2));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() => useTable("t1"));
+    await waitFor(() => expect(result.current.rows[0]?.id).toBe("before"));
+
+    act(() => lastOnReconnect?.());
+
+    await waitFor(() => expect(result.current.rows[0]?.id).toBe("after"));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it("applies updates by replacing the row with matching id", async () => {

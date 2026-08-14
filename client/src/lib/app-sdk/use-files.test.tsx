@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const subscribeMock = vi.fn();
 let lastOnEvent: ((evt: Record<string, unknown>) => void) | null = null;
 let lastUnsubscribe: ReturnType<typeof vi.fn> | null = null;
+let lastOnReconnect: (() => void) | null = null;
 
 vi.mock("./ws-client", () => ({
 	subscribeToFiles: (
@@ -11,10 +12,13 @@ vi.mock("./ws-client", () => ({
 		prefix: string,
 		scope: string | null | undefined,
 		cb: (evt: Record<string, unknown>) => void,
+		onReconnect?: () => void,
 	) => {
 		lastOnEvent = cb;
+		lastOnReconnect = onReconnect ?? null;
 		lastUnsubscribe = vi.fn(() => {
 			lastOnEvent = null;
+			lastOnReconnect = null;
 		});
 		subscribeMock(location, prefix, scope, cb);
 		return lastUnsubscribe;
@@ -37,6 +41,7 @@ describe("useFiles", () => {
 		subscribeMock.mockClear();
 		lastOnEvent = null;
 		lastUnsubscribe = null;
+		lastOnReconnect = null;
 	});
 
 	// Unstub the global `fetch` after the last test too, so the stub does not
@@ -142,6 +147,26 @@ describe("useFiles", () => {
 
 		await waitFor(() =>
 			expect(result.current.files).toEqual(["a.txt", "b.txt"]),
+		);
+		expect(fetchMock).toHaveBeenCalledTimes(2);
+	});
+
+	it("refetches the list after a subscription reconnect", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValueOnce(okJson({ files: ["a.txt"], files_metadata: [] }))
+			.mockResolvedValueOnce(
+				okJson({ files: ["a.txt", "missed.txt"], files_metadata: [] }),
+			);
+		vi.stubGlobal("fetch", fetchMock);
+
+		const { result } = renderHook(() => useFiles(""));
+		await waitFor(() => expect(result.current.files).toEqual(["a.txt"]));
+
+		act(() => lastOnReconnect?.());
+
+		await waitFor(() =>
+			expect(result.current.files).toEqual(["a.txt", "missed.txt"]),
 		);
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
