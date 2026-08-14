@@ -36,6 +36,7 @@ from src.models.contracts.executions import (
 from src.models.orm.ai_usage import AIUsage
 
 from bifrost._logging import read_logs_from_stream
+from shared.pending_execution import get_pending_execution_fallback
 from src.core.auth import Context, RequirePlatformAdmin
 from src.core.principal import UserPrincipal
 from src.core.log_safety import log_safe
@@ -815,11 +816,13 @@ async def get_execution(
     execution, error = await repo.get_execution(execution_id, ctx.user)
 
     if error == "NotFound":
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Execution {execution_id} not found",
+        execution, error = await get_pending_execution_fallback(
+            execution_id,
+            ctx.user,
+            ctx.db,
         )
-    elif error == "Forbidden":
+
+    if error == "Forbidden":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to view this execution",
