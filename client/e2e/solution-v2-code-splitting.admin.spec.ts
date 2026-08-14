@@ -277,7 +277,7 @@ test.describe("Apps v2 code splitting", () => {
 	test("a stale deployed entry refreshes the manifest and mounts the new styled bundle", async ({
 		page,
 		api,
-	}, testInfo) => {
+	}) => {
 		test.setTimeout(180_000);
 		const stale = await buildFixture("stale-build");
 		const fresh = await buildFixture("recovered-build");
@@ -333,9 +333,13 @@ test.describe("Apps v2 code splitting", () => {
 			let documentLoads = 0;
 			let resolveFirstManifest!: () => void;
 			let rejectFirstManifest!: (reason?: unknown) => void;
+			let releaseRecoveryManifest!: () => void;
 			const firstManifestHandled = new Promise<void>((resolve, reject) => {
 				resolveFirstManifest = resolve;
 				rejectFirstManifest = reject;
+			});
+			const recoveryManifestCanContinue = new Promise<void>((resolve) => {
+				releaseRecoveryManifest = resolve;
 			});
 			page.on("load", () => {
 				documentLoads += 1;
@@ -349,6 +353,7 @@ test.describe("Apps v2 code splitting", () => {
 				async (route) => {
 					manifestRequests += 1;
 					if (manifestRequests !== 1) {
+						await recoveryManifestCanContinue;
 						await route.continue();
 						return;
 					}
@@ -375,6 +380,14 @@ test.describe("Apps v2 code splitting", () => {
 
 			await page.goto(`/apps/${APP_SLUG}`);
 			await firstManifestHandled;
+			await expect(
+				page.getByRole("heading", { name: "Application updated" }),
+			).toBeVisible();
+			await page.screenshot({
+				path: "playwright-results/application-update-transition.png",
+				fullPage: true,
+			});
+			releaseRecoveryManifest();
 			await expect(page.getByTestId("fixture-build")).toHaveText(
 				"recovered-build",
 			);
@@ -393,7 +406,7 @@ test.describe("Apps v2 code splitting", () => {
 			expect(manifestRequests).toBe(2);
 			expect(documentLoads).toBe(1);
 			await page.screenshot({
-				path: testInfo.outputPath("stale-asset-recovered.png"),
+				path: "playwright-results/stale-asset-recovered.png",
 				fullPage: true,
 			});
 		} finally {

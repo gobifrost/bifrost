@@ -221,7 +221,12 @@ describe("StandaloneV2App", () => {
 
 	it("recovers a stale JavaScript asset from a fresh manifest without reloading", async () => {
 		localStorage.setItem("bifrost_access_token", "tok-1");
-		mockAuthFetch.mockResolvedValueOnce(manifest("fresh"));
+		let resolveManifest!: (value: ReturnType<typeof manifest>) => void;
+		mockAuthFetch.mockReturnValueOnce(
+			new Promise((resolve) => {
+				resolveManifest = resolve;
+			}),
+		);
 		const mount = vi.fn<StandaloneV2Module["mount"]>(() => vi.fn());
 		render(<StandaloneV2App {...props("stale")} />);
 
@@ -230,7 +235,12 @@ describe("StandaloneV2App", () => {
 			stale = moduleScript("stale");
 		});
 		act(() => stale.dispatchEvent(new Event("error")));
+		expect(
+			await screen.findByRole("heading", { name: "Application updated" }),
+		).toBeInTheDocument();
+		expect(screen.getByText("Loading the latest version…")).toBeInTheDocument();
 
+		await act(async () => resolveManifest(manifest("fresh")));
 		await finishModuleLoad("fresh", mount);
 		await waitFor(() => expect(mount).toHaveBeenCalledTimes(1));
 		expect(mockAuthFetch).toHaveBeenCalledWith(

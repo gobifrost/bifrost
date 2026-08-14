@@ -8,6 +8,7 @@
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 
+import { ApplicationUpdateScreen } from "@/components/ApplicationUpdateScreen";
 import { useOrgScope } from "@/hooks/useOrgScope";
 import { authFetch } from "@/lib/api-client";
 import { clearAuthTokens, getActiveToken } from "@/lib/auth-token";
@@ -248,6 +249,7 @@ export function StandaloneV2App({
 }: StandaloneV2AppProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [loadError, setLoadError] = useState<string | null>(null);
+	const [isRecovering, setIsRecovering] = useState(false);
 	const sourceAssets = useMemo<StandaloneAssets>(
 		() => ({ entry, css, baseUrl, runtimeContract }),
 		[entry, css, baseUrl, runtimeContract],
@@ -336,6 +338,7 @@ export function StandaloneV2App({
 				return;
 			}
 			recoveryAttempts.current.add(recoveryAttemptKey);
+			setIsRecovering(true);
 
 			try {
 				const mode = isPreview ? "draft" : "live";
@@ -364,9 +367,13 @@ export function StandaloneV2App({
 						? value
 						: new Error("The latest application assets are unavailable.");
 				}
-				if (!cancelled) setRecovery({ sourceKey, assets: refreshed });
+				if (!cancelled) {
+					setRecovery({ sourceKey, assets: refreshed });
+					setIsRecovering(false);
+				}
 			} catch (recoveryError) {
 				if (!cancelled) {
+					setIsRecovering(false);
 					setLoadError(
 						recoveryError instanceof Error
 							? recoveryError.message
@@ -459,6 +466,8 @@ export function StandaloneV2App({
 			</div>
 		);
 	}
+
+	if (isRecovering) return <ApplicationUpdateScreen />;
 
 	return (
 		<div

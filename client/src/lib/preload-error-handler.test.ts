@@ -28,6 +28,10 @@ describe("handleVitePreloadError", () => {
 			configurable: true,
 			value: { ...originalLocation, reload },
 		});
+		vi.spyOn(window, "setTimeout").mockImplementation((handler) => {
+			if (typeof handler === "function") handler();
+			return 1;
+		});
 
 		consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 	});
@@ -38,15 +42,18 @@ describe("handleVitePreloadError", () => {
 			value: originalLocation,
 		});
 		consoleErrorSpy.mockRestore();
+		vi.restoreAllMocks();
 		sessionStorage.clear();
 	});
 
 	it("first preload error reloads and stores timestamp", () => {
 		const before = Date.now();
-		handleVitePreloadError();
+		const event = new Event("vite:preloadError", { cancelable: true });
+		handleVitePreloadError(event);
 		const after = Date.now();
 
 		expect(reload).toHaveBeenCalledTimes(1);
+		expect(event.defaultPrevented).toBe(true);
 
 		const stored = sessionStorage.getItem(RELOAD_KEY);
 		expect(stored).not.toBeNull();
