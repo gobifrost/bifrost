@@ -6,6 +6,7 @@ from uuid import uuid4
 import redis.asyncio as aioredis
 
 from src.core.cache.redis_client import get_redis
+from src.core.log_safety import log_safe
 from src.jobs.rabbitmq import publish_message
 
 logger = logging.getLogger(__name__)
@@ -80,7 +81,7 @@ async def get_pending_agent_run_context(run_id: str) -> dict | None:
     try:
         context = json.loads(raw_context)
     except (TypeError, json.JSONDecodeError):
-        logger.warning("Invalid pending agent-run context for %s", run_id)
+        logger.warning("Invalid pending agent-run context for %s", log_safe(run_id))
         return None
     return context if isinstance(context, dict) else None
 

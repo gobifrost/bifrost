@@ -1,4 +1,5 @@
 import json
+import logging
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -127,3 +128,19 @@ class TestGetPendingAgentRunContext:
         result = await get_pending_agent_run_context(str(uuid4()))
 
         assert result is None
+
+    @pytest.mark.asyncio
+    @patch("src.services.execution.agent_run_service.get_redis")
+    async def test_invalid_context_sanitizes_run_id_in_warning(self, mock_get_redis, caplog):
+        mock_redis = AsyncMock()
+        mock_redis.get.return_value = "not-json"
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_redis)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_get_redis.return_value = mock_ctx
+
+        with caplog.at_level(logging.WARNING):
+            result = await get_pending_agent_run_context("bad\nforged")
+
+        assert result is None
+        assert caplog.messages == ["Invalid pending agent-run context for bad\\nforged"]
