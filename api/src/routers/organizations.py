@@ -6,9 +6,10 @@ CRUD operations for client organizations.
 
 import logging
 from datetime import datetime, timezone
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
 from src.core.auth import CurrentSuperuser
@@ -35,24 +36,29 @@ router = APIRouter(prefix="/api/organizations", tags=["Organizations"])
 @router.get(
     "",
     response_model=list[OrganizationPublic],
-    summary="List all organizations",
-    description="Get all organizations (Platform admin only)",
+    summary="List organizations",
+    description="Get active organizations, optionally including inactive ones (Platform admin only)",
 )
 async def list_organizations(
     user: CurrentSuperuser,
     db: DbSession,
+    include_inactive: Annotated[
+        bool,
+        Query(description="Include inactive (disabled) organizations"),
+    ] = False,
 ) -> list[OrganizationPublic]:
-    """List all organizations.
+    """List organizations.
 
-    Provider organization is always listed first, followed by other orgs alphabetically.
+    Provider organization is always listed first, followed by active and inactive
+    organizations alphabetically.
     """
-    query = (
-        select(OrganizationORM)
-        .where(OrganizationORM.is_active)
-        .order_by(
-            OrganizationORM.is_provider.desc(),  # Provider org first
-            OrganizationORM.name,
-        )
+    query = select(OrganizationORM)
+    if not include_inactive:
+        query = query.where(OrganizationORM.is_active)
+    query = query.order_by(
+        OrganizationORM.is_provider.desc(),  # Provider org first
+        OrganizationORM.is_active.desc(),
+        OrganizationORM.name,
     )
     result = await db.execute(query)
     orgs = result.scalars().all()
@@ -157,6 +163,12 @@ async def update_organization(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Organization not found",
+        )
+
+    if org.is_provider and request.is_active is False:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Provider organization cannot be disabled",
         )
 
     if request.name is not None:
