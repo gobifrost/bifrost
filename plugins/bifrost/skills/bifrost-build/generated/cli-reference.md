@@ -1770,7 +1770,7 @@ Commands:
   bind          Bind this local Solution workspace to an existing install.
   capture       Adopt loose _repo/ entities into an install (migration).
   create        Create a Solution workspace and remote install.
-  deploy        Deploy the current Solution workspace (full replace).
+  deploy        Non-interactive full-replace deploy of the current...
   export        Download a Solution's workspace zip (shareable or full...
   init          Alias for `solution create`: scaffold and create a remote...
   install       Install a Solution from a workspace zip (drag-and-drop...
@@ -1853,8 +1853,8 @@ Options:
 ```
 Usage: solution deploy [OPTIONS] [PATH]
 
-  Deploy the current Solution workspace (full replace). If no install matches,
-  --org or --global is required before one is created.
+  Non-interactive full-replace deploy of the current Solution workspace. If no
+  install matches, --org or --global is required before one is created.
 
 Options:
   --solution TEXT                 Install id or unique slug.

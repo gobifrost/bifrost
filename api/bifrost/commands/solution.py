@@ -2087,8 +2087,8 @@ def _vendor_repo_reader(client, failures: dict[str, str]):
 @solution_group.command(
     name="deploy",
     help=(
-        "Deploy the current Solution workspace (full replace). If no install "
-        "matches, --org or --global is required before one is created."
+        "Non-interactive full-replace deploy of the current Solution workspace. "
+        "If no install matches, --org or --global is required before one is created."
     ),
 )
 @click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
