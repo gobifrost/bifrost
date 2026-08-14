@@ -352,12 +352,12 @@ against the authenticated principal and pass the user's actual
 privileges (`is_superuser=user.is_superuser`) to the repository so
 role-based filters fire.
 
-**`/api/cli/download` is a deliberate exception.** It serves the
-`pip install` URL for the Bifrost CLI itself and stays at its current
-path because the URL IS the install command users type. Served by a
-separate `install_router` in `routers/cli.py` so its semantics are
-explicit, not a router-prefix carve-out. This is the only path under
-`/api/cli/*` that survives the 2026-05 rename.
+**`/api/cli/download/bifrost-cli.tar.gz` is a deliberate exception.** It is
+the installer-compatible URL for the Bifrost CLI itself; the suffix is required
+by uv-backed pipx before it makes an HTTP request. The historical extensionless
+`/api/cli/download` path redirects for compatibility with HTTP clients that do
+fetch it. Both are served by a separate `install_router` in `routers/cli.py` so
+their semantics are explicit, not a router-prefix carve-out.
 
 ---
 

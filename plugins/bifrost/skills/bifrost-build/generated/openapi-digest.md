@@ -111,7 +111,9 @@
 | DELETE | `/api/claims/{name}` |
 | GET | `/api/claims/{name}` |
 | PATCH | `/api/claims/{name}` |
+| GET | `/api/cli/artifacts/{filename}` |
 | GET | `/api/cli/download` |
+| GET | `/api/cli/download/bifrost-cli.tar.gz` |
 | GET | `/api/config` |
 | POST | `/api/config` |
 | DELETE | `/api/config/{config_id}` |

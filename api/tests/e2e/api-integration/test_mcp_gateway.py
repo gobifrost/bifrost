@@ -106,6 +106,20 @@ class TestMCPAgentGateway:
         assert register_response.status_code == 201, register_response.text
         workflow_id = register_response.json()["id"]
 
+        delegated_agent_name = f"Gateway Delegate {suffix}"
+        delegated_agent_response = requests.post(
+            f"{TEST_API_URL}/api/agents",
+            headers=headers,
+            json={
+                "name": delegated_agent_name,
+                "description": "Agent used to prove async MCP delegation.",
+                "system_prompt": "Return a concise result without using tools.",
+                "channels": ["chat"],
+            },
+        )
+        assert delegated_agent_response.status_code == 201, delegated_agent_response.text
+        delegated_agent_id = delegated_agent_response.json()["id"]
+
         agent_name = f"Gateway Proof {suffix}"
         prompt = f"Live gateway instructions {suffix}"
         agent_response = requests.post(
@@ -118,6 +132,7 @@ class TestMCPAgentGateway:
                 "channels": ["chat"],
                 "tool_ids": [workflow_id],
                 "system_tools": ["get_docs"],
+                "delegated_agent_ids": [delegated_agent_id],
             },
         )
         assert agent_response.status_code == 201, agent_response.text
@@ -129,11 +144,17 @@ class TestMCPAgentGateway:
         request.cls.agent_name = agent_name
         request.cls.prompt = prompt
         request.cls.function_name = function_name
+        request.cls.delegated_agent_id = delegated_agent_id
+        request.cls.delegated_agent_name = delegated_agent_name
 
         yield
 
         requests.delete(
             f"{TEST_API_URL}/api/agents/{agent_id}",
+            headers=headers,
+        )
+        requests.delete(
+            f"{TEST_API_URL}/api/agents/{delegated_agent_id}",
             headers=headers,
         )
         requests.delete(
@@ -172,6 +193,7 @@ class TestMCPAgentGateway:
         )
         assert "async" in execute_schema["properties"]
         assert "async_" not in execute_schema["properties"]
+        assert "async" not in execute_schema.get("required", [])
 
         scoped_tools = _mcp_request(
             self.token,
@@ -306,7 +328,7 @@ class TestMCPAgentGateway:
         selected_agent = loaded["agents"][0]
         assert selected_agent["instructions"] == self.prompt
         assert selected_agent["matching_tools"] == []
-        assert selected_agent["total_tools"] == 2
+        assert selected_agent["total_tools"] == 3
         assert selected_agent["returned_tools"] == 0
         assert selected_agent["complete"] is False
 
@@ -321,6 +343,21 @@ class TestMCPAgentGateway:
             if tool["source"] == "workflow"
         )
         tool_ref = workflow_tool["tool_ref"]
+        assert workflow_tool["supports_async"] is True
+        assert workflow_tool["default_async"] is False
+
+        delegation_search = _call_gateway(
+            self.token,
+            "bifrost_search_capabilities",
+            {"agent_id": self.agent_id, "query": self.delegated_agent_name},
+        )
+        delegation_tool = next(
+            tool
+            for tool in delegation_search["agents"][0]["matching_tools"]
+            if tool["source"] == "delegation"
+        )
+        assert delegation_tool["supports_async"] is True
+        assert delegation_tool["default_async"] is True
 
         system_search = _call_gateway(
             self.token,
@@ -370,6 +407,7 @@ class TestMCPAgentGateway:
             },
         )
         assert async_receipt["async"] is True
+        assert async_receipt["execution_type"] == "workflow"
         assert async_receipt["status"] == "Pending"
         assert async_receipt["execution_id"]
 
@@ -385,8 +423,39 @@ class TestMCPAgentGateway:
             assert time.monotonic() < deadline, async_result
             time.sleep(0.1)
         assert async_result["status"] == "Success"
+        assert async_result["execution_type"] == "workflow"
         assert async_result["result"] == [{"echo": "later"}]
         assert async_result["result_page"]["has_more"] is False
+
+        delegation_receipt = _call_gateway(
+            self.token,
+            "bifrost_execute_tool",
+            {
+                "agent_id": self.agent_id,
+                "tool_ref": delegation_tool["tool_ref"],
+                "arguments": {"task": "Return a concise gateway proof."},
+            },
+        )
+        assert delegation_receipt["async"] is True
+        assert delegation_receipt["execution_type"] == "agent_run"
+        assert delegation_receipt["status"] == "Pending"
+        assert delegation_receipt["execution_id"]
+
+        deadline = time.monotonic() + 15
+        while True:
+            delegation_result = _call_gateway(
+                self.token,
+                "bifrost_get_execution",
+                {"execution_id": delegation_receipt["execution_id"]},
+            )
+            if delegation_result["status"] not in {"Pending", "Running"}:
+                break
+            assert time.monotonic() < deadline, delegation_result
+            time.sleep(0.1)
+        assert delegation_result["execution_type"] == "agent_run"
+        assert delegation_result["agent_id"] == self.delegated_agent_id
+        assert delegation_result["status"] == "Failed"
+        assert delegation_result["error"]
 
         unsupported_async = _call_gateway(
             self.token,

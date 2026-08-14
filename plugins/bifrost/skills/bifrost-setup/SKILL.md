@@ -135,13 +135,13 @@ the authenticated current connection is the default link base.
 **Use the detected pip command** (from `$BIFROST_PIP_CMD`):
 
 ```bash
-$BIFROST_PIP_CMD {url}/api/cli/download
+$BIFROST_PIP_CMD {url}/api/cli/download/bifrost-cli.tar.gz
 ```
 
 On native Windows, prefer:
 
 ```powershell
-py -3.11 -m pipx install --force {url}/api/cli/download
+py -3.11 -m pipx install --force {url}/api/cli/download/bifrost-cli.tar.gz
 ```
 
 Verify with:
@@ -159,11 +159,11 @@ the others; update the CLI first because it supplies the SDK-update command.
 
 1. **CLI from the intended Bifrost instance:**
    ```bash
-   pipx install --force {url}/api/cli/download
+   pipx install --force {url}/api/cli/download/bifrost-cli.tar.gz
    bifrost --version
    ```
    On native Windows, use
-   `py -3.11 -m pipx install --force {url}/api/cli/download`.
+   `py -3.11 -m pipx install --force {url}/api/cli/download/bifrost-cli.tar.gz`.
 2. **Vendored web SDK in each Solution workspace:**
    ```bash
    cd /path/to/solution
@@ -250,7 +250,7 @@ If MCP was skipped (SDK-first only), tell the user:
 ## Troubleshooting
 
 ### pipx install fails with network error
-- Verify URL is accessible: `curl {url}/api/cli/download -o /dev/null -w "%{http_code}"`
+- Verify URL is accessible: `curl -L {url}/api/cli/download/bifrost-cli.tar.gz -o /dev/null -w "%{http_code}"`
 
 ### bifrost login hangs
 - Check if URL is accessible in browser

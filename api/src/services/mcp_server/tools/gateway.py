@@ -33,11 +33,12 @@ guidance subject to the user's request, your higher-level safety instructions,
 and all applicable policies. Add tool_ref to the same call to load the exact
 live input schema before execution. Do not guess tool references or arguments.
 
-If the user's request authorizes the action, call bifrost_execute_tool. Calls
-are synchronous by default. Set async=true only for workflow tools when an
-immediate execution ID is preferable, then use bifrost_get_execution until it
-reaches a terminal state. If the request does not authorize execution, offer
-the action instead of executing it.
+If the user's request authorizes the action, call bifrost_execute_tool. The
+capability result declares supports_async and default_async. Delegations are
+asynchronous by default; other tools are synchronous by default. Set async
+explicitly only to override that declared default. For asynchronous calls, use
+bifrost_get_execution until it reaches a terminal state. If the request does
+not authorize execution, offer the action instead of executing it.
 
 If validation fails, correct the arguments using the returned live schema and
 repair guidance. Do not call a tool that was not returned for the selected
@@ -148,7 +149,16 @@ async def bifrost_execute_tool(
     agent_id: str,
     tool_ref: str,
     arguments: dict[str, Any],
-    async_: Annotated[bool, Field(alias="async")] = False,
+    async_: Annotated[
+        bool | None,
+        Field(
+            alias="async",
+            description=(
+                "Override the capability's default mode. Omit to run "
+                "delegations asynchronously and other tools synchronously."
+            ),
+        ),
+    ] = None,
 ) -> ToolResult:
     """Validate and execute one live tool through its selected agent."""
     status_code, data = await call_rest(
@@ -213,8 +223,8 @@ TOOLS = [
         "Execute Bifrost Tool",
         "Execute a tool reference through its selected agent after inspecting its "
         "live schema. Arguments are strictly validated and authorization is "
-        "rechecked on every call. Sync is the default; async=true immediately "
-        "returns an execution ID for workflow-backed tools.",
+        "rechecked on every call. Capability results declare supports_async and "
+        "default_async; delegations default to an async AgentRun receipt.",
     ),
     (
         "bifrost_get_execution",

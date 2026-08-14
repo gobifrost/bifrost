@@ -4790,10 +4790,50 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Download CLI package
-         * @description Download the Bifrost CLI as a pip-installable tarball
+         * Legacy CLI download URL
+         * @description Redirect to the installer-compatible CLI download URL
          */
         get: operations["download_cli_api_cli_download_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cli/download/bifrost-cli.tar.gz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download CLI package
+         * @description Redirect to the versioned, pip-installable CLI artifact
+         */
+        get: operations["download_cli_alias_api_cli_download_bifrost_cli_tar_gz_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cli/artifacts/{filename}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Serve a versioned CLI artifact
+         * @description Serve the immutable CLI artifact bundled into the API image
+         */
+        get: operations["download_cli_artifact_api_cli_artifacts__filename__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -18461,9 +18501,9 @@ export interface components {
             };
             /**
              * Async
-             * @default false
+             * @description Override the capability's default execution mode. When omitted, delegations run asynchronously and other tools run synchronously.
              */
-            async: boolean;
+            async?: boolean | null;
         };
         /**
          * MCPGatewayExecuteResponse
@@ -18492,6 +18532,8 @@ export interface components {
             async: boolean;
             /** Execution Id */
             execution_id?: string | null;
+            /** Execution Type */
+            execution_type?: ("workflow" | "agent_run") | null;
             /** Status */
             status?: string | null;
             /** Result */
@@ -18504,10 +18546,19 @@ export interface components {
         MCPGatewayExecutionResponse: {
             /** Execution Id */
             execution_id: string;
+            /**
+             * Execution Type
+             * @enum {string}
+             */
+            execution_type: "workflow" | "agent_run";
             /** Workflow Id */
             workflow_id?: string | null;
             /** Workflow Name */
             workflow_name?: string | null;
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Agent Name */
+            agent_name?: string | null;
             /** Status */
             status: string;
             /** Created At */
@@ -18542,6 +18593,10 @@ export interface components {
             description: string;
             /** Source */
             source: string;
+            /** Supports Async */
+            supports_async: boolean;
+            /** Default Async */
+            default_async: boolean;
             /** Input Schema */
             input_schema?: {
                 [key: string]: unknown;
@@ -34028,6 +34083,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    download_cli_alias_api_cli_download_bifrost_cli_tar_gz_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    download_cli_artifact_api_cli_artifacts__filename__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                filename: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

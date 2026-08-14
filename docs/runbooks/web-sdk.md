@@ -27,8 +27,8 @@ dependencies. The `/api/sdk/download` endpoint returns a gzip npm tarball with:
 - package entry: `dist/index.mjs`
 - peer dependencies: React, React DOM, and lucide-react
 
-This mirrors `/api/cli/download`: the SDK is tied to the instance that served
-it.
+This mirrors `/api/cli/download/bifrost-cli.tar.gz`: the SDK is tied to the
+instance that served it.
 
 ## Local Apps
 

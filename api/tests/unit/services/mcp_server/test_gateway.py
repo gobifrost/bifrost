@@ -231,6 +231,18 @@ def test_exact_tool_hydration_includes_only_the_selected_live_schema():
     assert found_tool["tool_ref"] == tool.tool_ref
     assert found_tool["schema_included"] is True
     assert found_tool["input_schema"] == tool.definition.parameters
+    assert found_tool["supports_async"] is True
+    assert found_tool["default_async"] is False
+
+
+def test_delegation_capability_declares_async_default():
+    tool = replace(_resolved_tool(), source="delegation")
+
+    compact = tool.compact()
+
+    assert compact["source"] == "delegation"
+    assert compact["supports_async"] is True
+    assert compact["default_async"] is True
 
 
 def test_execution_result_pages_large_values_without_invalid_json_truncation():
@@ -263,6 +275,28 @@ def test_execution_result_path_can_hydrate_an_omitted_value():
     assert result == [10, 11, 12, 13, 14]
     assert page["next_offset"] == 15
     assert page["has_more"] is True
+
+
+@pytest.mark.parametrize(
+    ("agent_status", "gateway_status"),
+    [
+        ("queued", "Pending"),
+        ("running", "Running"),
+        ("completed", "Success"),
+        ("failed", "Failed"),
+        ("timeout", "Timeout"),
+        ("cancelled", "Cancelled"),
+        ("budget_exceeded", "BudgetExceeded"),
+    ],
+)
+def test_agent_run_status_uses_gateway_execution_vocabulary(
+    agent_status,
+    gateway_status,
+):
+    assert (
+        MCPAgentGatewayService._agent_run_gateway_status(agent_status)
+        == gateway_status
+    )
 
 
 @pytest.mark.asyncio
@@ -321,6 +355,101 @@ async def test_get_execution_hides_another_users_redis_only_receipt():
     ):
         with pytest.raises(GatewayError) as exc_info:
             await service.get_execution(execution_id)
+
+    assert exc_info.value.code == "EXECUTION_NOT_FOUND_OR_FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_get_execution_returns_owned_pending_agent_run_receipt():
+    context = _context()
+    service = MCPAgentGatewayService(context)
+    execution_id = str(uuid4())
+    db = AsyncMock()
+    missing = MagicMock()
+    missing.scalar_one_or_none.return_value = None
+    db.execute.return_value = missing
+    db_context = MagicMock()
+    db_context.__aenter__ = AsyncMock(return_value=db)
+    db_context.__aexit__ = AsyncMock(return_value=None)
+    redis = MagicMock()
+    redis.get_pending_execution = AsyncMock(return_value=None)
+
+    with (
+        patch("src.core.database.get_db_context", return_value=db_context),
+        patch("src.core.redis_client.get_redis_client", return_value=redis),
+        patch(
+            "src.services.execution.agent_run_service.get_pending_agent_run_context",
+            new=AsyncMock(
+                return_value={
+                    "agent_id": str(uuid4()),
+                    "caller": {"user_id": str(context.user_id)},
+                }
+            ),
+        ),
+    ):
+        result = await service.get_execution(execution_id)
+
+    assert result["execution_id"] == execution_id
+    assert result["execution_type"] == "agent_run"
+    assert result["status"] == "Pending"
+    assert result["result_available"] is False
+
+
+@pytest.mark.asyncio
+async def test_get_execution_returns_completed_owned_agent_run():
+    context = _context()
+    service = MCPAgentGatewayService(context)
+    execution_id = uuid4()
+    workflow_result = MagicMock()
+    workflow_result.scalar_one_or_none.return_value = None
+    agent_run_result = MagicMock()
+    agent_run = MagicMock()
+    agent_run.id = execution_id
+    agent_run.agent_id = uuid4()
+    agent_run.agent.name = "Process Agent"
+    agent_run.caller_user_id = str(context.user_id)
+    agent_run.status = "completed"
+    agent_run.output = {"text": "Done"}
+    agent_run.created_at = None
+    agent_run.started_at = None
+    agent_run.completed_at = None
+    agent_run.duration_ms = 125
+    agent_run.error = None
+    agent_run_result.scalar_one_or_none.return_value = agent_run
+    db = AsyncMock()
+    db.execute.side_effect = [workflow_result, agent_run_result]
+    db_context = MagicMock()
+    db_context.__aenter__ = AsyncMock(return_value=db)
+    db_context.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("src.core.database.get_db_context", return_value=db_context):
+        result = await service.get_execution(str(execution_id))
+
+    assert result["execution_type"] == "agent_run"
+    assert result["agent_id"] == str(agent_run.agent_id)
+    assert result["agent_name"] == "Process Agent"
+    assert result["status"] == "Success"
+    assert result["result"] == {"text": "Done"}
+
+
+@pytest.mark.asyncio
+async def test_get_execution_hides_another_users_agent_run():
+    service = MCPAgentGatewayService(_context())
+    workflow_result = MagicMock()
+    workflow_result.scalar_one_or_none.return_value = None
+    agent_run_result = MagicMock()
+    agent_run = MagicMock()
+    agent_run.caller_user_id = str(uuid4())
+    agent_run_result.scalar_one_or_none.return_value = agent_run
+    db = AsyncMock()
+    db.execute.side_effect = [workflow_result, agent_run_result]
+    db_context = MagicMock()
+    db_context.__aenter__ = AsyncMock(return_value=db)
+    db_context.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("src.core.database.get_db_context", return_value=db_context):
+        with pytest.raises(GatewayError) as exc_info:
+            await service.get_execution(str(uuid4()))
 
     assert exc_info.value.code == "EXECUTION_NOT_FOUND_OR_FORBIDDEN"
 
@@ -422,6 +551,62 @@ async def test_execute_returns_auditable_envelope():
 
 
 @pytest.mark.asyncio
+async def test_delegation_defaults_to_async_execution():
+    service = MCPAgentGatewayService(_context())
+    agent = _agent()
+    tool = replace(_resolved_tool(), source="delegation")
+    snapshot = AgentToolSnapshot(agent=agent, tools=[tool])
+    execution_id = str(uuid4())
+
+    with patch.object(
+        service,
+        "_dispatch",
+        new=AsyncMock(
+            return_value={
+                "execution_id": execution_id,
+                "execution_type": "agent_run",
+                "status": "Pending",
+            }
+        ),
+    ) as dispatch:
+        result = await service.execute_tool(
+            snapshot,
+            tool,
+            {"ticket_id": 42},
+        )
+
+    assert dispatch.await_args.kwargs["async_execution"] is True
+    assert result["async"] is True
+    assert result["execution_id"] == execution_id
+    assert result["execution_type"] == "agent_run"
+    assert result["result"] is None
+
+
+@pytest.mark.asyncio
+async def test_delegation_allows_explicit_synchronous_execution():
+    service = MCPAgentGatewayService(_context())
+    agent = _agent()
+    tool = replace(_resolved_tool(), source="delegation")
+    snapshot = AgentToolSnapshot(agent=agent, tools=[tool])
+
+    with patch.object(
+        service,
+        "_dispatch",
+        new=AsyncMock(return_value={"text": "Done"}),
+    ) as dispatch:
+        result = await service.execute_tool(
+            snapshot,
+            tool,
+            {"ticket_id": 42},
+            async_execution=False,
+        )
+
+    assert dispatch.await_args.kwargs["async_execution"] is False
+    assert result["async"] is False
+    assert result["result"] == {"text": "Done"}
+
+
+@pytest.mark.asyncio
 async def test_workflow_dispatch_returns_only_the_workflow_result():
     service = MCPAgentGatewayService(_context())
     tool = _resolved_tool()
@@ -465,12 +650,16 @@ async def test_async_workflow_dispatch_returns_immediate_execution_receipt():
             async_execution=True,
         )
 
-    assert result == {"execution_id": execution_id, "status": "Pending"}
+    assert result == {
+        "execution_id": execution_id,
+        "execution_type": "workflow",
+        "status": "Pending",
+    }
     assert execute.await_args.kwargs["sync"] is False
 
 
 @pytest.mark.asyncio
-async def test_async_rejects_non_workflow_sources_without_dispatching():
+async def test_async_rejects_unsupported_sources_without_dispatching():
     service = MCPAgentGatewayService(_context())
     agent = _agent()
     tool = replace(_resolved_tool(), source="system")
@@ -487,6 +676,125 @@ async def test_async_rejects_non_workflow_sources_without_dispatching():
 
     assert exc_info.value.code == "ASYNC_NOT_SUPPORTED"
     dispatch.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_async_delegation_enqueues_agent_run():
+    context = _context()
+    service = MCPAgentGatewayService(context)
+    parent = _agent()
+    delegated = _agent()
+    delegated.name = "Process Agent"
+    delegated.is_active = True
+    tool = replace(
+        _resolved_tool(
+            name="delegate_to_process_agent",
+            parameters={
+                "type": "object",
+                "properties": {"task": {"type": "string"}},
+                "required": ["task"],
+            },
+        ),
+        source="delegation",
+        source_id=delegated.id,
+    )
+    db_context = MagicMock()
+    db_context.__aenter__ = AsyncMock(return_value=AsyncMock())
+    db_context.__aexit__ = AsyncMock(return_value=None)
+    repository = MagicMock()
+    repository.get_agent = AsyncMock(return_value=delegated)
+    execution_id = str(uuid4())
+
+    with (
+        patch("src.core.database.get_db_context", return_value=db_context),
+        patch(
+            "src.services.mcp_server.gateway.AgentRepository",
+            return_value=repository,
+        ),
+        patch(
+            "src.services.execution.agent_run_service.enqueue_agent_run",
+            new=AsyncMock(return_value=execution_id),
+        ) as enqueue,
+    ):
+        result = await service._dispatch_delegation(
+            parent,
+            tool,
+            {"task": "Assemble the customer report"},
+            async_execution=True,
+        )
+
+    assert result == {
+        "execution_id": execution_id,
+        "execution_type": "agent_run",
+        "status": "Pending",
+    }
+    assert enqueue.await_args.kwargs["sync"] is False
+    assert enqueue.await_args.kwargs["trigger_type"] == "delegation"
+    assert enqueue.await_args.kwargs["caller_user_id"] == str(context.user_id)
+
+
+@pytest.mark.asyncio
+async def test_sync_delegation_waits_for_queued_agent_run_result():
+    service = MCPAgentGatewayService(_context())
+    parent = _agent()
+    delegated = _agent()
+    delegated.name = "Process Agent"
+    delegated.is_active = True
+    delegated.max_run_timeout = 240
+    tool = replace(
+        _resolved_tool(
+            name="delegate_to_process_agent",
+            parameters={
+                "type": "object",
+                "properties": {"task": {"type": "string"}},
+                "required": ["task"],
+            },
+        ),
+        source="delegation",
+        source_id=delegated.id,
+    )
+    db_context = MagicMock()
+    db_context.__aenter__ = AsyncMock(return_value=AsyncMock())
+    db_context.__aexit__ = AsyncMock(return_value=None)
+    repository = MagicMock()
+    repository.get_agent = AsyncMock(return_value=delegated)
+    execution_id = str(uuid4())
+
+    with (
+        patch("src.core.database.get_db_context", return_value=db_context),
+        patch(
+            "src.services.mcp_server.gateway.AgentRepository",
+            return_value=repository,
+        ),
+        patch(
+            "src.services.execution.agent_run_service.enqueue_agent_run",
+            new=AsyncMock(return_value=execution_id),
+        ) as enqueue,
+        patch(
+            "src.services.execution.agent_run_service.wait_for_agent_run_result",
+            new=AsyncMock(
+                return_value={
+                    "status": "completed",
+                    "output": {"text": "Done"},
+                    "iterations_used": 1,
+                }
+            ),
+        ) as wait_for_result,
+    ):
+        result = await service._dispatch_delegation(
+            parent,
+            tool,
+            {"task": "Assemble the customer report"},
+            async_execution=False,
+        )
+
+    assert result == {
+        "status": "completed",
+        "output": {"text": "Done"},
+        "iterations_used": 1,
+    }
+    assert enqueue.await_args.kwargs["sync"] is True
+    wait_for_result.assert_awaited_once_with(execution_id, timeout=240)
 
 
 @pytest.mark.asyncio

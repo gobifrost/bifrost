@@ -35,6 +35,7 @@ RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 FROM python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6
 
 WORKDIR /app
+ARG BIFROST_VERSION=unknown
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -69,6 +70,13 @@ COPY api/bifrost.py /app/
 COPY api/scripts/ /app/scripts/
 COPY assets/ /app/assets/
 RUN chmod -R a+rX /app/assets
+
+# Build the CLI once as an immutable image artifact. The API serves this file;
+# it never packages the live source tree in a request handler.
+RUN PYTHONPATH=/app python /app/scripts/build_cli_artifact.py \
+      --source /app/bifrost \
+      --output /app/artifacts \
+      --version "${BIFROST_VERSION}"
 
 # Install app compiler Node.js dependencies
 COPY api/src/services/app_compiler/package.json api/src/services/app_compiler/package-lock.json* /app/src/services/app_compiler/
@@ -125,7 +133,6 @@ ENTRYPOINT ["/entrypoint.sh"]
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
-ARG BIFROST_VERSION=unknown
 ENV BIFROST_VERSION=${BIFROST_VERSION}
 
 # No default CMD - let docker-compose specify the command per service
