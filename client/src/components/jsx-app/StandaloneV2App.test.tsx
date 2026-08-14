@@ -8,10 +8,13 @@ import {
 	type StandaloneV2Module,
 } from "./StandaloneV2App";
 
-vi.mock("@/hooks/useOrgScope", () => {
-	const scope = { type: "global" as const, orgId: null };
-	return { useOrgScope: () => ({ scope }) };
-});
+const orgScopeState = vi.hoisted(() => ({
+	scope: { type: "global" as "global" | "organization", orgId: null as string | null },
+}));
+
+vi.mock("@/hooks/useOrgScope", () => ({
+	useOrgScope: () => ({ scope: orgScopeState.scope }),
+}));
 
 function props(entry: string) {
 	return {
@@ -52,6 +55,8 @@ async function finishModuleLoad(
 beforeEach(() => {
 	appendedScripts = [];
 	localStorage.clear();
+	sessionStorage.clear();
+	orgScopeState.scope = { type: "global", orgId: null };
 	delete window.__BIFROST_APP__;
 	delete window.__BIFROST_APP_MODULES__;
 	vi.spyOn(console, "error").mockImplementation(() => {});
@@ -125,6 +130,30 @@ describe("StandaloneV2App", () => {
 
 		view.unmount();
 		expect(teardown).toHaveBeenCalledTimes(1);
+	});
+
+	it("mounts with the serving session and installed scope, not stale realm state", async () => {
+		localStorage.setItem("bifrost_access_token", "stale-musick-token");
+		sessionStorage.setItem("bifrost_embed_token", "local-serving-token");
+		orgScopeState.scope = { type: "organization", orgId: "stale-musick-org" };
+		const mount = vi.fn<StandaloneV2Module["mount"]>(() => vi.fn());
+
+		render(
+			<StandaloneV2App
+				{...props("instance-bound-bootstrap")}
+				appOrgId="local-install-org"
+			/>,
+		);
+		await finishModuleLoad("instance-bound-bootstrap", mount);
+		await waitFor(() => expect(mount).toHaveBeenCalledTimes(1));
+
+		expect(mount.mock.calls[0][1]).toMatchObject({
+			baseUrl: window.location.origin,
+			token: "local-serving-token",
+			orgScope: "local-install-org",
+			appId: "app-1",
+			basename: "/apps/dash",
+		});
 	});
 
 	it("uses the preview basename when requested", async () => {

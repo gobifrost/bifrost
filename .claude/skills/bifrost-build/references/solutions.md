@@ -2,11 +2,17 @@
 
 A Solution is a portable definition installed on a Bifrost instance. Apps, workflows, forms, agents, tables, configs, claims, and declared file locations owned by an install are deploy-managed: edit local source and deploy rather than mutating their live records.
 
-## Definition, install, and binding
+## Definition and install selection
 
 `bifrost.solution.yaml` defines the portable Solution: slug, name, version, `global_repo_access`, and optional git/logo fields. It carries neither an install ID nor install scope.
 
-`.env` binds this checkout to one concrete install and instance:
+The CLI selects an instance through `--url`, `BIFROST_API_URL` in the local
+`.env`, or the selected default profile. It resolves an install from the
+portable slug. When multiple accessible installs share that slug, it stops and
+prints the valid `--solution <id>` choices.
+
+An explicit `solution bind` may remember one install in `.env` for repeated
+work, but creation does not bind automatically. Optional local selectors are:
 
 - `BIFROST_API_URL`
 - `BIFROST_SOLUTION_ID`
@@ -14,27 +20,27 @@ A Solution is a portable definition installed on a Bifrost instance. Apps, workf
 - `BIFROST_SOLUTION_ORG_ID`
 - `BIFROST_SOLUTION_SCOPE`
 
-Do not commit `.env`. Confirm this binding before local preview, capture, pull, or deploy.
+Do not commit `.env`. It is local command selection, not portable source.
 
-Create and bind a new workspace:
+Create a new workspace and install:
 
 ```bash
 bifrost solution create . --slug dispatch --name "Dispatch"
 ```
 
-`solution init` is an alias. For a cloned workspace, bind an existing install:
+`solution init` is an alias. To explicitly remember one existing install:
 
 ```bash
 bifrost solution bind --solution <install-id-or-unique-slug>
 ```
 
-Omit org targeting to create/install in the caller's home org, use `--org <ref>` for another org, or `--global` for a global install. `solution start` and `solution deploy` use the bound install; they do not select scope with `--org`.
+`solution create` and `solution install` use the standard org targeting behavior: omit targeting for the caller's home org, use `--org <ref>` for another org, or `--global` for a global install. `solution start` resolves a unique existing install or requires `--solution` when several are visible. Deploy also reuses a unique existing install; when none exists it refuses to guess the new install's scope and requires `--org <ref>` or `--global`.
 
 ## Source layout and ownership
 
 ```text
 bifrost.solution.yaml
-.env                         # local binding; uncommitted
+.env                         # optional local selectors; uncommitted
 .bifrost/
 ├── apps.yaml
 ├── workflows.yaml
@@ -109,7 +115,7 @@ bifrost solution start operations --port 3000
 
 Open the proxy origin printed by the command. The Vite server runs behind it on another port. App and local workflow changes hot-reload without deploy.
 
-The preview is connected to the bound live instance:
+The preview is connected to the selected live instance and resolved install:
 
 - local workflow execution is transient;
 - tables, runtime files, configs, integrations, and knowledge use real environment state;
@@ -123,9 +129,11 @@ Test boundary-sensitive behavior both through `solution start` and a deployed in
 ```bash
 bifrost solution deploy
 bifrost solution deploy --solution <install-id>
+bifrost solution deploy --org "Customer Org"  # creates there when missing
+bifrost solution deploy --global               # creates globally when missing
 ```
 
-Deploy is a full replacement of managed definitions and requires an existing install. It preserves environment data according to each resource's contract, but removed managed entities are reconciled as deletions. Review the diff, captured/pulled state, policies, and production impact first.
+Deploy is a full replacement of managed definitions. A unique slug match is reused automatically. With no match, deploy requires an explicit org/global target, creates the install there, and then deploys; it never chooses the new scope implicitly. It preserves environment data according to each resource's contract, but removed managed entities are reconciled as deletions. Review the diff, captured/pulled state, policies, and production impact first.
 
 For a sealed Solution (`global_repo_access: false`), deploy vendors imported instance `_repo` Python modules into the bundle. Runtime is self-contained, but the selected instance remains a build-time source. If the Solution should own and version a module, move it into local `modules/`; local source is bundled directly and is not vendored. With shared fallback enabled, deploy skips vendoring and resolves eligible `_repo` modules at runtime.
 
@@ -133,7 +141,7 @@ Live create/update commands against Solution-managed records return a deploy-own
 
 ## One definition, many installs
 
-Use one slug/repository for the same product installed in several organizations. Each install has its own ID, scope, entity rows, config values, and runtime data; bind the checkout to the install being developed or pass an explicit install ID.
+Use one slug/repository for the same product installed in several organizations. Each install has its own ID, scope, entity rows, config values, and runtime data. A unique slug match is selected automatically; otherwise choose from the printed options with `--solution <id>`, or explicitly bind one for repeated work.
 
 Fork to a new slug only when the product source genuinely diverges. If a slug is ambiguous on one instance, target the install ID.
 
@@ -152,7 +160,7 @@ Full exports are backups. Use a password for encrypted secrets; `--include-data`
 
 ## Pre-deploy checklist
 
-- Confirm instance, install ID, and install scope from `.env` and `bifrost auth default`.
+- Confirm the selected instance with `bifrost auth default` or `--url`, and confirm the resolved install shown by the command.
 - Confirm every new workflow has a manifest row and portable references.
 - Pull after every capture and review manifest identity/content changes.
 - Run tests, app build/type checks, and connected preview.

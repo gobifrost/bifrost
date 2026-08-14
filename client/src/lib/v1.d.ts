@@ -4725,7 +4725,7 @@ export interface paths {
         };
         /**
          * Download the bifrost web SDK package
-         * @description Serve the `bifrost` web SDK as an npm-installable tarball. A standalone_v2 app declares `"bifrost": "<instance>/api/sdk/download"` and resolves it identically on a dev laptop (`npm run dev`) and in the platform's server-side build.
+         * @description Serve the `bifrost` web SDK as an npm-installable tarball. The Solution CLI installs it transiently from the selected instance for local development; the platform vendors its local SDK into server-side builds.
          */
         get: operations["download_sdk_api_sdk_download_get"];
         put?: never;
@@ -24793,6 +24793,8 @@ export interface components {
         VersionResponse: {
             /** Version */
             version: string;
+            /** Min Cli Version */
+            min_cli_version: string;
             /** Contract Version */
             contract_version: number;
             /** Sdk Fingerprint */

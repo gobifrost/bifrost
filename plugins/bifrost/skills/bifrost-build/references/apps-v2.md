@@ -6,7 +6,7 @@ Read `app-quality.md` before designing user-visible UI and `web-sdk-v2.md` when 
 
 ## Scaffold first
 
-From a bound Solution root:
+From a Solution root:
 
 ```bash
 bifrost solution scaffold-app operations
@@ -79,6 +79,8 @@ Enforce authorization and integration access in the workflow. Client-side hiding
 ## Dependencies and components
 
 Use the app's normal package manifest for browser dependencies. Install shadcn components into the app and import their local source; the platform does not inject the host client's private component tree into v2 apps.
+
+The scaffold intentionally omits an instance-specific `bifrost` dependency. `bifrost solution start` installs the selected instance's SDK transiently without changing `package.json`; deployed builds inject the SDK shipped by the serving instance.
 
 Prefer dependencies that are actively maintained, browser-safe, and compatible with the app's React version. Do not introduce a library for behavior that the platform or browser already provides simply because an old example used it.
 

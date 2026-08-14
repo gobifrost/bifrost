@@ -74,7 +74,7 @@ Do ONE app at a time, fully, before the next. Each step gates the following.
 
 ### Fast path — `bifrost solution migrate-app` does steps 2–5 deterministically
 
-`migrate-app` (and `scaffold-app`) MUST run from inside a Solution workspace — so create and bind one
+`migrate-app` (and `scaffold-app`) MUST run from inside a Solution workspace — so create one
 FIRST with `solution create` (or its `init` alias), then run `migrate-app` from that dir. The SOURCE argument is a real
 filesystem path to the v1 app's source (pull it locally first with `bifrost pull`, or point at a
 local checkout) — NOT a `_repo/...` URL.
@@ -82,7 +82,7 @@ local checkout) — NOT a `_repo/...` URL.
 ```bash
 mkdir <new-slug>-workspace && cd <new-slug>-workspace
 bifrost solution create . --slug <solution-slug> --name "<Title>"
-bifrost solution migrate-app /path/to/v1/apps/<old-slug> <new-slug> --title "<Title>" --api-url <debug-url>
+bifrost solution migrate-app /path/to/v1/apps/<old-slug> <new-slug> --title "<Title>"
 ```
 This scaffolds the v2 app, ports the v1 `pages/`+`components/` (all source files, incl. `.ts`
 helpers + `_layout.tsx`), runs the deterministic v2
@@ -99,11 +99,11 @@ shape is non-standard enough that you'd rather drive each step).
 ### 2. Scaffold the v2 app
 
 ```bash
-bifrost solution scaffold-app <new-slug> --path apps/<new-slug> --api-url <debug-url>
+bifrost solution scaffold-app <new-slug> --path apps/<new-slug>
 ```
 Use a TEMPORARY slug (e.g. `<oldslug>-v2`); the live slug is swapped in at cutover (step 7). The
-scaffold writes a working `standalone_v2` skeleton: `package.json` (depends on `bifrost` from the
-instance), `vite.config.ts` (tokenless local dev), `main.tsx` (BifrostProvider + BrowserRouter +
+scaffold writes a working `standalone_v2` skeleton: portable `package.json` (the CLI supplies the
+selected instance's `bifrost` SDK at start), `vite.config.ts` (tokenless local dev), `main.tsx` (BifrostProvider + BrowserRouter +
 basename, reads platform boot or dev env), `App.tsx` (imports `BifrostHeader`, `useWorkflow`).
 
 ### 3. Port the pages

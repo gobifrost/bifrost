@@ -7,14 +7,14 @@ from bifrost.commands.solution import (
 
 
 def test_main_tsx_has_vite_app_id_fallback():
-    files = _v2_scaffold_files("dash", "http://localhost:8000")
+    files = _v2_scaffold_files("dash")
     main = files["src/main.tsx"]
     assert "import.meta.env.VITE_BIFROST_APP_ID" in main
     assert "import.meta.env.VITE_BIFROST_ORG_ID" in main
 
 
 def test_vite_config_injects_app_id_and_org_on_serve():
-    files = _v2_scaffold_files("dash", "http://localhost:8000")
+    files = _v2_scaffold_files("dash")
     vite = files["vite.config.ts"]
     assert "VITE_BIFROST_APP_ID" in vite
     assert "VITE_BIFROST_ORG_ID" in vite
@@ -26,7 +26,7 @@ def test_sample_workflow_ref_matches_app_tsx():
     # scaffold_app_cmd (not in the app-relative file dict), so it is NOT in
     # _v2_scaffold_files — that placement (root vs app dir) is what makes the
     # root-relative ref resolve under `solution start`.
-    files = _v2_scaffold_files("dash", "http://localhost:8000")
+    files = _v2_scaffold_files("dash")
     app = files["src/App.tsx"]
     assert "useWorkflow" in app
     assert _SAMPLE_WORKFLOW_REF in app
@@ -51,7 +51,7 @@ def test_scaffold_app_writes_sample_at_solution_root(tmp_path, monkeypatch):
     # scaffold-app anchors at the descriptor root, so the workspace must exist.
     (tmp_path / "bifrost.solution.yaml").write_text("slug: s\nname: S\nscope: org\n")
     result = CliRunner().invoke(
-        solution_group, ["scaffold-app", "dashboard", "--api-url", "http://localhost:8000"]
+        solution_group, ["scaffold-app", "dashboard"]
     )
     assert result.exit_code == 0, result.output
     # The sample is at the solution root, runnable, and matches the App.tsx ref.

@@ -563,7 +563,12 @@ class BifrostClient:
         return self._http
 
     @classmethod
-    def get_instance(cls, require_auth: bool = False) -> "BifrostClient":
+    def get_instance(
+        cls,
+        require_auth: bool = False,
+        *,
+        api_url: str | None = None,
+    ) -> "BifrostClient":
         """
         Get thread-local singleton client instance.
 
@@ -577,6 +582,8 @@ class BifrostClient:
         Args:
             require_auth: If True, trigger interactive login when no credentials found
                          (default: False for backward compatibility)
+            api_url: Explicit instance whose URL-keyed credentials must be used.
+                     This bypasses ambient directory/default-profile selection.
 
         Returns:
             BifrostClient instance
@@ -586,14 +593,22 @@ class BifrostClient:
         """
         # Use thread-local storage instead of class-level singleton
         # This ensures each thread gets its own client with httpx bound to its event loop
+        selected_api_url = api_url.rstrip("/") if api_url else None
         instance = getattr(_thread_local, 'bifrost_client', None)
+        if instance is not None and (
+            selected_api_url is None or instance.api_url == selected_api_url
+        ):
+            return instance
 
-        if instance is None:
+        if instance is None or selected_api_url is not None:
             # Try credentials file from CLI login
-            creds = get_credentials(prompt_for_default=require_auth)
+            creds = get_credentials(
+                selected_api_url,
+                prompt_for_default=require_auth and selected_api_url is None,
+            )
 
             # Check if token needs refresh
-            if creds and is_token_expired():
+            if creds and is_token_expired(api_url=creds["api_url"]):
                 # Try to refresh
                 access_token = _refresh_connection_access_token_sync(
                     creds["api_url"], creds["access_token"]
@@ -614,7 +629,8 @@ class BifrostClient:
             # No credentials - trigger login flow if required
             if require_auth:
                 selected_url, _selected_source = resolve_current_connection(
-                    prompt_for_default=True
+                    selected_api_url,
+                    prompt_for_default=selected_api_url is None,
                 )
                 if selected_url is None:
                     stored_urls = []
@@ -637,7 +653,7 @@ class BifrostClient:
                     # No running loop, safe to use asyncio.run()
                     if asyncio.run(login_flow(selected_url)):
                         # Login successful, load credentials
-                        creds = get_credentials()
+                        creds = get_credentials(selected_url)
                         if creds:
                             instance = cls(creds["api_url"], creds["access_token"])
                             _thread_local.bifrost_client = instance

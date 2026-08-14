@@ -1,18 +1,18 @@
-"""Contract-version gate tripwire.
+"""CLI compatibility contract tripwire.
 
 Two jobs:
 
-1. **Sync check** — the CLI-baked ``CONTRACT_VERSION`` must equal the
-   server-side ``CONTRACT_VERSION``. They are two hand-maintained integers
-   (one shipped in the CLI wheel, one in the server) and the runtime gate
-   compares them across the wire, so they must agree at the source.
+1. **Legacy bridge sync** — the CLI and server copies of the frozen version-10
+   transition marker must agree while ``GET /api/version`` exposes it for CLIs
+   released before minimum-version gating was restored.
 
 2. **Tripwire** — a fingerprint over the contract surface the CLI actually
    depends on (the request/response DTOs it sends + the routes it calls). Any
    change to that surface flips the fingerprint, failing this test until the
-   author makes an explicit decision: bump ``CONTRACT_VERSION`` (breaking) or
-   just refresh the fingerprint (cosmetic/additive). This is what makes a
-   missed bump a red test instead of a production incident.
+   author makes an explicit decision: raise ``MIN_CLI_VERSION`` to the release
+   containing a CLI-impacting/breaking change, or just refresh the fingerprint
+   for a compatible additive/cosmetic change. This makes a missed compatibility
+   decision a red test instead of a production incident.
 
 The fingerprint is computed live, in-process, and only ever compared to a
 constant committed in THIS file — never shipped or compared across machines —
@@ -150,8 +150,8 @@ CONTRACT_FINGERPRINT_MODELS: list[type] = _COMMAND_DTOS + _SDK_DTOS
 CLI_ROUTES: tuple[str, ...] = ("/api/version",)
 
 #: Committed fingerprint of the contract surface above. If a code change flips
-#: the live fingerprint, this test fails — update this value, and bump
-#: CONTRACT_VERSION (both sides) IF the change is breaking. See module docstring.
+#: the live fingerprint, this test fails — update this value, and raise the
+#: server's MIN_CLI_VERSION IF the change requires a new CLI. See module docstring.
 EXPECTED_CONTRACT_FINGERPRINT = (
     # ApplicationCreate.app_model default flipped inline_v1 → standalone_v2
     # (2026-06-13). CONTRACT_VERSION bumped to 3: an old CLI would default a new
@@ -204,6 +204,10 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # PlatformJobStatus gained `waiting` for durable parent jobs (2026-08-07).
     # CONTRACT_VERSION bumped to 9 because an older CLI cannot parse the new
     # enum value while polling PlatformJobPublic.
+    #
+    # The server-controlled minimum CLI gate was restored (2026-08-14).
+    # CONTRACT_VERSION bumped to 10 as a one-time bridge because CLIs released
+    # while min_cli_version was absent cannot honor that floor themselves.
     "12c65f3865127c0dbbdbb4237943169bf6a1fb79ad566b68ef1a45a1fbfc1854"
 )
 
@@ -220,12 +224,12 @@ def _fingerprint(models: list[type], routes: tuple[str, ...]) -> str:
 
 
 def test_cli_and_server_contract_version_agree() -> None:
-    """The two hand-maintained integers must match at the source."""
+    """The two copies of the frozen transition marker must match."""
     assert CLI_CONTRACT_VERSION == SERVER_CONTRACT_VERSION, (
         f"CONTRACT_VERSION drift: CLI={CLI_CONTRACT_VERSION} "
         f"(api/bifrost/contract_version.py) vs "
         f"server={SERVER_CONTRACT_VERSION} (api/shared/contract_version.py). "
-        f"When you bump one, bump the other."
+        "The legacy transition marker must remain synchronized."
     )
 
 
@@ -235,12 +239,12 @@ def test_contract_fingerprint_tripwire() -> None:
     assert current == EXPECTED_CONTRACT_FINGERPRINT, (
         "A CLI-consumed contract (DTO schema) changed.\n"
         f"  current fingerprint: {current}\n"
-        "  - BREAKING change (field removed/renamed/retyped, "
-        "response shape the CLI parses changed): bump CONTRACT_VERSION in BOTH "
-        "api/shared/contract_version.py AND api/bifrost/contract_version.py, "
+        "  - CLI-IMPACTING/BREAKING change (field removed/renamed/retyped, "
+        "response shape the CLI parses changed): raise MIN_CLI_VERSION in "
+        "api/shared/version.py to the release containing the compatible CLI, "
         "then update EXPECTED_CONTRACT_FINGERPRINT below.\n"
         "  - COSMETIC/ADDITIVE (description tweak, new optional field the CLI "
-        "ignores): just update EXPECTED_CONTRACT_FINGERPRINT, leave "
-        "CONTRACT_VERSION.\n"
+        "ignores): just update EXPECTED_CONTRACT_FINGERPRINT; leave the frozen "
+        "legacy contract marker and MIN_CLI_VERSION unchanged.\n"
         "See test_contract_version.py module docstring."
     )

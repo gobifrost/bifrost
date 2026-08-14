@@ -262,6 +262,32 @@ class TestCredentialProvenance:
         assert result["access_token"] == "stored-local-access"
         assert result["refresh_token"] == "stored-local-refresh"
 
+    def test_environment_url_can_read_an_explicit_workspace_directory(
+        self, isolated_store, monkeypatch
+    ):
+        invocation_dir = isolated_store / "invocation"
+        workspace = isolated_store / "solution"
+        invocation_dir.mkdir()
+        workspace.mkdir()
+        (invocation_dir / ".env").write_text(
+            "BIFROST_API_URL=https://invocation.example\n"
+        )
+        (workspace / ".env").write_text(
+            "BIFROST_API_URL=https://workspace.example/\n"
+        )
+        monkeypatch.chdir(invocation_dir)
+
+        assert (
+            creds_mod.resolve_environment_url(workspace)
+            == "https://workspace.example"
+        )
+
+        monkeypatch.setenv("BIFROST_API_URL", "https://process.example/")
+        assert (
+            creds_mod.resolve_environment_url(workspace)
+            == "https://process.example"
+        )
+
     def test_child_url_only_dotenv_uses_persistent_credentials_not_parent_tokens(
         self, isolated_store, monkeypatch
     ):

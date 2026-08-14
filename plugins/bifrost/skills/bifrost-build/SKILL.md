@@ -13,6 +13,10 @@ Follow the process below for every task. Load only the references routed for the
 
 ## Prerequisites
 
+This Solution workflow requires Bifrost CLI 1.2.2 or newer. The selected
+instance may enforce a newer minimum through `/api/version`; when the CLI gate
+blocks, install the CLI served by that instance before continuing.
+
 Confirm the CLI exists and inspect the connection from the directory where commands will run:
 
 ```bash
@@ -40,7 +44,7 @@ Use `bifrost.solution.yaml` at the project root as the ownership marker. If it e
 
 For net-new work, confirm the model with the user before scaffolding. Prefer a Solution for a new product or package that should be portable and lifecycle-managed. Use the Workspace for deliberately loose, shared, or existing v1 content. Enable Workspace support for a Solution only when the shared dependencies are intentional and understood, never as a default convenience.
 
-Then establish the exact instance and, for either Solution model, the bound install. Read `.env` in the intended CLI invocation directory, normally the project or Solution root. Parent-directory `.env` files are not selected implicitly. Inspect these fields when present:
+Then establish the exact instance and, for either Solution model, the install that the CLI resolves. Read `.env` in the intended CLI invocation directory, normally the project or Solution root. Parent-directory `.env` files are not selected implicitly. Inspect these optional fields when present:
 
 - `BIFROST_API_URL`
 - `BIFROST_SOLUTION_ID`
@@ -48,17 +52,17 @@ Then establish the exact instance and, for either Solution model, the bound inst
 - `BIFROST_SOLUTION_ORG_ID`
 - `BIFROST_SOLUTION_SCOPE`
 
-Treat `.env` as local instance/install selection, not portable source. Do not commit it. A normal Bifrost project `.env` should not contain access or refresh tokens; report only the selector and binding fields above.
+Treat `.env` as optional local instance/install selection, not portable source. Do not commit it. A normal Bifrost project `.env` should not contain access or refresh tokens; report only the selector and binding fields above. Without an explicit install binding, Solution commands resolve a unique install by portable slug and print `--solution <id>` choices when several are available. If deploy finds no install, it requires `--org <ref>` or `--global` before creating one.
 
 Compare `Current connection` and `Default connection` from `bifrost auth default`:
 
 - If `.env` selects a non-default instance, tell the user which instance and install are selected and offer the saved default before material work.
-- Removing `BIFROST_API_URL` from `.env` returns that directory to the saved default connection. A Solution binding belongs to its instance; rebind it when changing instances.
+- Removing `BIFROST_API_URL` from `.env` returns that directory to the saved default connection. Use `--url` for a one-command override; use `solution bind` only when intentionally remembering one install.
 - Never change the user's saved default merely to target one project.
 
 ### 2. Understand and plan the change
 
-If this is a Solution, state its name/slug, bound install, instance, and install scope. Then confirm the requested outcome and intended users.
+If this is a Solution, state its name/slug, selected instance, resolved install, and install scope. Then confirm the requested outcome and intended users.
 
 For every material change, present a concise plan and get confirmation before editing. A small, well-bounded bug fix does not need ceremony. The plan must identify:
 

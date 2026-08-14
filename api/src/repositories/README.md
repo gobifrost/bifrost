@@ -517,7 +517,8 @@ scope has exactly one derivation chain — enforced by
   deprecated body-field compat tiers (body `solution_id` > `form_id` >
   `app_id`). Routers call these; they never parse signals themselves.
 - **Body fields on `/api/workflows/execute` are DEPRECATED compat.** Live
-  SDKs still send them; removing them is a CONTRACT_VERSION bump.
+  SDKs still send them; removing them requires raising `MIN_CLI_VERSION` to
+  the release containing the compatible CLI/SDK.
 - **The worker path derives scope from the workflow's own DB row**
   (`jobs/consumers/workflow_execution.py` → `workflow_data["solution_id"]`),
   NOT from request signals — execution identity is the row's, by design.
