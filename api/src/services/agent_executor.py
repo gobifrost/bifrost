@@ -408,16 +408,6 @@ class AgentExecutor:
             messages = self._fix_interleaved_messages(messages)
             messages = self._fix_dangling_tool_calls(messages)
 
-            # 5b. Enhance system prompt with tool-use instructions if tools available
-            if tool_definitions and messages and messages[0].role == "system":
-                tool_instruction = """
-
-When a tool can fulfill the request, call it directly. Respond with text only when clarification is required or no tool applies."""
-                messages[0] = LLMMessage(
-                    role="system",
-                    content=(messages[0].content or "") + tool_instruction,
-                )
-
             # 6. Get LLM client
             async with self._db() as session:
                 llm_client = await get_llm_client(session)
