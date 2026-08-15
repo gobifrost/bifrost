@@ -60,6 +60,7 @@ dependencies = [
     "pydantic",
     "pydantic-settings",
     "python-dotenv",
+    "packaging",  # PEP 440/SemVer-compatible CLI minimum-version comparisons
     "keyring>=24.0",  # OS-native credential storage; SecretStorage pulled in transitively on Linux
     "email-validator",  # Required by Pydantic for email validation
 

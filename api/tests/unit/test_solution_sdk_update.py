@@ -65,6 +65,7 @@ def _sdk_update_workspace(
     monkeypatch.chdir(tmp_path)
     (tmp_path / "bifrost.solution.yaml").write_text("slug: s\nname: S\nscope: org\n")
     (tmp_path / ".env").write_text(
+        "BIFROST_API_URL=http://localhost:8000\n"
         "BIFROST_SOLUTION_ID=11111111-1111-1111-1111-111111111111\n"
         "BIFROST_SOLUTION_SLUG=s\n"
         "BIFROST_SOLUTION_ORG_ID=org-1\n"
@@ -96,6 +97,19 @@ def _sdk_update_workspace(
         _access_token = "tok"
 
         async def get(self, path, **kwargs):
+            if path == "/api/solutions":
+                class _SolutionsResp:
+                    status_code = 200
+                    text = ""
+
+                    def json(self):
+                        return {"solutions": [{
+                            "id": "11111111-1111-1111-1111-111111111111",
+                            "slug": "s",
+                            "organization_id": "org-1",
+                        }]}
+
+                return _SolutionsResp()
             assert path == "/api/version"
             return _VersionResp()
 
@@ -109,6 +123,21 @@ class _VersionResp:
 
     def json(self):
         return {"sdk_fingerprint": "newnewnewnewnew1"}
+
+
+def _solutions_response():
+    class _Response:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"solutions": [{
+                "id": "11111111-1111-1111-1111-111111111111",
+                "slug": "s",
+                "organization_id": "org-1",
+            }]}
+
+    return _Response()
 
 
 def test_sdk_update_skips_when_current(tmp_path, monkeypatch):
@@ -156,6 +185,8 @@ def test_sdk_update_reinstalls_and_verifies(tmp_path, monkeypatch):
     argv = spawned[0]
     assert argv[0].endswith("npm")  # resolved via shutil.which, so may be a full path
     assert argv[1:3] == ["install", "--force"]
+    assert "--no-save" in argv
+    assert "--package-lock=false" in argv
     assert "bifrost@http://localhost:8000/api/sdk/download" in argv
 
 
@@ -242,6 +273,8 @@ def test_sdk_update_continues_unverified_when_field_missing(tmp_path, monkeypatc
         _access_token = "tok"
 
         async def get(self, path, **kwargs):
+            if path == "/api/solutions":
+                return _solutions_response()
             assert path == "/api/version"
             return _NoFieldVersionResp()
 
@@ -280,6 +313,8 @@ def test_sdk_update_continues_unverified_when_unavailable(tmp_path, monkeypatch)
         _access_token = "tok"
 
         async def get(self, path, **kwargs):
+            if path == "/api/solutions":
+                return _solutions_response()
             assert path == "/api/version"
             return _UnavailableVersionResp()
 

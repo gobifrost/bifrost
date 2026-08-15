@@ -1,7 +1,7 @@
 """Build the installable ``bifrost`` web SDK package served by /api/sdk/download.
 
-A ``standalone_v2`` Solution app declares ``"bifrost"`` as a dependency and
-resolves it from the instance (``npm install`` against /api/sdk/download), so the
+A ``standalone_v2`` Solution app imports ``"bifrost"`` while the CLI installs it
+transiently from the selected instance (``npm install`` against /api/sdk/download), so the
 SAME mechanism works on a developer laptop (``npm run dev``) and in the platform's
 server-side build. This module produces the npm-installable tarball on the fly,
 version-stamped to the running instance — directly analogous to the CLI's
@@ -100,9 +100,8 @@ def sdk_fingerprint(version: str) -> str:
 def sdk_contract_version() -> int:
     """The SDK<->server wire contract version (see ``sdk-contract.json``).
 
-    Bumped only on a DECIDED breaking change to the SDK's wire surface —
-    mirrors the CLI's ``CONTRACT_VERSION`` two-tier model (content
-    fingerprint = automatic, contract version = manual/tripwire-forced).
+    Bumped only on a DECIDED breaking change to the standalone app SDK's wire
+    surface (content fingerprint = automatic, contract version = manual).
     The JSON file is baked into the image alongside the SDK source (see
     Dockerfile), so this resolves identically in dev and in the built image.
     """

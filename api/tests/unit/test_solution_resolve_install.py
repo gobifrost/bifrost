@@ -125,7 +125,7 @@ def test_deploy_fails_loudly_when_install_list_fetch_fails(tmp_path, monkeypatch
     assert "Failed to create install" not in result.output
 
 
-def test_deploy_requires_bound_workspace(tmp_path, monkeypatch):
+def test_deploy_unbound_workspace_lists_ambiguous_install_options(tmp_path, monkeypatch):
     from click.testing import CliRunner
 
     import bifrost.client as client_mod
@@ -136,7 +136,16 @@ def test_deploy_requires_bound_workspace(tmp_path, monkeypatch):
 
     class _FakeClient:
         async def get(self, path, **kwargs):
-            raise AssertionError(f"unexpected GET {path}")
+            assert path == "/api/solutions"
+            return _Resp(
+                200,
+                body={
+                    "solutions": [
+                        {"id": "org-install", "slug": "s", "organization_id": "org-1"},
+                        {"id": "global-install", "slug": "s", "organization_id": None},
+                    ]
+                },
+            )
 
         async def post(self, path, **kwargs):
             raise AssertionError(f"unexpected POST {path}")
@@ -148,7 +157,107 @@ def test_deploy_requires_bound_workspace(tmp_path, monkeypatch):
     result = CliRunner().invoke(solution_group, ["deploy"])
 
     assert result.exit_code != 0
-    assert "not bound to an install" in result.output
+    assert "matches multiple installs" in result.output
+    assert "--solution org-install  (org org-1)" in result.output
+    assert "--solution global-install  (global)" in result.output
+
+
+class _MissingInstallDeployClient:
+    organization = {"id": "home-org"}
+    api_url = "https://selected.example"
+
+    def __init__(self):
+        self.create_body: dict | None = None
+        self.deploy_target: str | None = None
+
+    async def get(self, path, **kwargs):
+        if path == "/api/solutions":
+            return _Resp(200, body={"solutions": []})
+        if path == "/api/solutions/deploy-jobs/job-1":
+            return _Resp(200, body={"status": "succeeded", "error": None})
+        raise AssertionError(f"unexpected GET {path}")
+
+    async def post(self, path, **kwargs):
+        if path == "/api/solutions":
+            self.create_body = kwargs.get("json")
+            return _Resp(
+                201,
+                body={
+                    "id": "created-install",
+                    "slug": "s",
+                    "organization_id": self.create_body.get("organization_id"),
+                },
+            )
+        if path == "/api/solutions/created-install/deploy":
+            self.deploy_target = path
+            return _Resp(202, body={"deploy_job_id": "job-1"})
+        raise AssertionError(f"unexpected POST {path}")
+
+
+def _missing_install_deploy(tmp_path, monkeypatch, fake, *args):
+    from click.testing import CliRunner
+
+    import bifrost.client as client_mod
+    from bifrost.commands.solution import solution_group
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "bifrost.solution.yaml").write_text("slug: s\nname: S\n")
+    monkeypatch.setattr(
+        client_mod.BifrostClient, "get_instance", staticmethod(lambda **k: fake)
+    )
+    return CliRunner().invoke(solution_group, ["deploy", *args])
+
+
+def test_deploy_zero_matches_requires_explicit_install_scope(tmp_path, monkeypatch):
+    fake = _MissingInstallDeployClient()
+
+    result = _missing_install_deploy(tmp_path, monkeypatch, fake)
+
+    assert result.exit_code != 0
+    assert "No install found for Solution slug 's'" in result.output
+    assert "--org <id-or-name> or --global" in result.output
+    assert fake.create_body is None
+
+
+def test_deploy_zero_matches_creates_in_explicit_org(tmp_path, monkeypatch):
+    fake = _MissingInstallDeployClient()
+    org_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+
+    result = _missing_install_deploy(tmp_path, monkeypatch, fake, "--org", org_id)
+
+    assert result.exit_code == 0, result.output
+    assert fake.create_body is not None
+    assert fake.create_body["organization_id"] == org_id
+    assert fake.deploy_target == "/api/solutions/created-install/deploy"
+    assert "Created Solution install created-install." in result.output
+
+
+def test_deploy_zero_matches_creates_global_install(tmp_path, monkeypatch):
+    fake = _MissingInstallDeployClient()
+
+    result = _missing_install_deploy(tmp_path, monkeypatch, fake, "--global")
+
+    assert result.exit_code == 0, result.output
+    assert fake.create_body is not None
+    assert fake.create_body["organization_id"] is None
+    assert fake.deploy_target == "/api/solutions/created-install/deploy"
+
+
+def test_deploy_rejects_solution_and_scope_together(tmp_path, monkeypatch):
+    fake = _MissingInstallDeployClient()
+
+    result = _missing_install_deploy(
+        tmp_path,
+        monkeypatch,
+        fake,
+        "--solution",
+        "some-install",
+        "--global",
+    )
+
+    assert result.exit_code != 0
+    assert "--solution cannot be combined with --org or --global" in result.output
+    assert fake.create_body is None
 
 
 # ── deploy version + --force (Task 21) ──────────────────────────────────────
@@ -226,12 +335,6 @@ def _deploy_workspace(tmp_path, monkeypatch, fake, descriptor_text: str):
 
     monkeypatch.chdir(tmp_path)
     (tmp_path / "bifrost.solution.yaml").write_text(descriptor_text)
-    (tmp_path / ".env").write_text(
-        "BIFROST_SOLUTION_ID=inst-1\n"
-        "BIFROST_SOLUTION_SLUG=s\n"
-        "BIFROST_SOLUTION_ORG_ID=org-1\n"
-        "BIFROST_SOLUTION_SCOPE=org\n"
-    )
     monkeypatch.setattr(
         client_mod.BifrostClient, "get_instance", staticmethod(lambda **k: fake)
     )

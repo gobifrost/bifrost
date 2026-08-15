@@ -36,6 +36,45 @@ class TestOrganizationCRUD:
         assert "Bifrost Dev Org" in org_names
         assert "Second Test Org" in org_names
 
+    def test_list_organizations_can_include_inactive(
+        self,
+        e2e_client,
+        platform_admin,
+        org2,
+    ):
+        """Inactive organizations are hidden by default and available on request."""
+        update_response = e2e_client.patch(
+            f"/api/organizations/{org2['id']}",
+            headers=platform_admin.headers,
+            json={"is_active": False},
+        )
+        assert update_response.status_code == 200
+
+        active_response = e2e_client.get(
+            "/api/organizations",
+            headers=platform_admin.headers,
+        )
+        assert active_response.status_code == 200
+        assert org2["id"] not in {org["id"] for org in active_response.json()}
+
+        all_response = e2e_client.get(
+            "/api/organizations",
+            params={"include_inactive": True},
+            headers=platform_admin.headers,
+        )
+        assert all_response.status_code == 200
+        inactive_org = next(
+            org for org in all_response.json() if org["id"] == org2["id"]
+        )
+        assert inactive_org["is_active"] is False
+
+        restore_response = e2e_client.patch(
+            f"/api/organizations/{org2['id']}",
+            headers=platform_admin.headers,
+            json={"is_active": True},
+        )
+        assert restore_response.status_code == 200
+
     def test_get_organization_by_id(self, e2e_client, platform_admin, org1):
         """Platform admin can get specific organization."""
         response = e2e_client.get(
@@ -46,6 +85,28 @@ class TestOrganizationCRUD:
         org = response.json()
         assert org["id"] == org1["id"]
         assert org["name"] == "Bifrost Dev Org"
+
+    def test_provider_organization_cannot_be_disabled(
+        self,
+        e2e_client,
+        platform_admin,
+    ):
+        """The provider organization remains active when updated directly."""
+        list_response = e2e_client.get(
+            "/api/organizations",
+            headers=platform_admin.headers,
+        )
+        assert list_response.status_code == 200
+        provider = next(org for org in list_response.json() if org["is_provider"])
+
+        response = e2e_client.patch(
+            f"/api/organizations/{provider['id']}",
+            headers=platform_admin.headers,
+            json={"is_active": False},
+        )
+
+        assert response.status_code == 403
+        assert response.json()["detail"] == "Provider organization cannot be disabled"
 
 
 @pytest.mark.e2e

@@ -5,11 +5,11 @@ the disconnected-install writer and are **non-interactive by contract**:
 ``deploy`` always applies the full bundle, so the whole create → deploy → run
 loop runs headless (criterion 17).
 
-* ``bifrost solution create`` — scaffold a descriptor, create an install, bind ``.env``.
+* ``bifrost solution create`` — scaffold a descriptor and create an install.
 * ``bifrost solution init`` — alias for ``create``.
 * ``bifrost solution deploy`` (alias: top-level ``bifrost deploy``) — read the
-  descriptor, require a bound install, zip the workspace, and POST it to
-  ``/api/solutions/{bound_id}/deploy``.
+  descriptor, resolve an install on the selected instance, zip the workspace,
+  and POST it to ``/api/solutions/{id}/deploy``.
 
 Apps/forms/agents/tables bundling joins in their sub-plans; Sub-plan 1 wires the
 load-bearing workflow path.
@@ -126,7 +126,7 @@ async def _post_create_install_for_descriptor(
     return create
 
 
-def _create_and_bind_solution_workspace(
+def _create_solution_workspace(
     path: str,
     slug: str,
     name: str | None,
@@ -134,6 +134,7 @@ def _create_and_bind_solution_workspace(
     global_repo_access: bool,
     org: str | None,
     is_global: bool,
+    api_url: str | None,
 ) -> None:
     workspace = pathlib.Path(path)
     descriptor_path = _write_solution_descriptor(
@@ -144,29 +145,27 @@ def _create_and_bind_solution_workspace(
 
     async def _run() -> None:
         nonlocal remote_created
-        client = BifrostClient.get_instance(require_auth=True)
+        selected_url = api_url or resolve_environment_url(workspace)
+        client = BifrostClient.get_instance(
+            require_auth=True,
+            api_url=selected_url,
+        )
         target_org_id = await _resolve_install_org(client, org, is_global)
         create = await _post_create_install_for_descriptor(client, descriptor, target_org_id)
         remote_created = True
         try:
             install = create.json()
-            binding = binding_from_install(install, descriptor_slug=descriptor.slug)
+            binding = binding_from_install(
+                install,
+                descriptor_slug=descriptor.slug,
+            )
         except (ValueError, SolutionBindingError) as exc:
             raise click.ClickException(
-                "Created Solution install, but failed to read its binding from the "
-                f"response: {exc}. Use `bifrost solution bind --solution <id>` "
-                "once you have the install id."
-            ) from exc
-        try:
-            write_solution_binding(workspace, binding)
-        except Exception as exc:
-            raise click.ClickException(
-                f"Created Solution install {binding.solution_id}, but failed to bind "
-                f"workspace in .env: {exc}"
+                "Created Solution install, but failed to read its identity from the "
+                f"response: {exc}."
             ) from exc
         click.echo(f"Wrote {descriptor_path}")
         click.echo(f"Created Solution install {binding.solution_id}.")
-        click.echo("Bound workspace in .env.")
 
     try:
         asyncio.run(_run())
@@ -176,13 +175,14 @@ def _create_and_bind_solution_workspace(
         raise
 
 
-@solution_group.command(name="create", help="Create and bind a new Solution workspace.")
+@solution_group.command(name="create", help="Create a Solution workspace and remote install.")
 @click.argument("path", type=click.Path(file_okay=False), default=".")
 @click.option("--slug", required=True, help="Solution slug (definition identity).")
 @click.option("--name", default=None, help="Display name (defaults to slug).")
 @click.option("--version", "version", default="0.1.0", show_default=True,
               help="Bundle version recorded on the install at deploy time.")
 @click.option("--global-repo-access/--no-global-repo-access", default=False, show_default=True)
+@click.option("--url", "api_url", default=None, help="Bifrost instance URL (default: current profile).")
 @org_option
 def create_cmd(
     path: str,
@@ -192,16 +192,17 @@ def create_cmd(
     global_repo_access: bool,
     org: str | None,
     is_global: bool,
+    api_url: str | None,
 ) -> None:
-    """Create a local descriptor and an empty remote install, then bind them."""
-    _create_and_bind_solution_workspace(
-        path, slug, name, version, global_repo_access, org, is_global
+    """Create a local descriptor and an empty remote install."""
+    _create_solution_workspace(
+        path, slug, name, version, global_repo_access, org, is_global, api_url
     )
 
 
 @solution_group.command(
     name="init",
-    help="Alias for `solution create`: scaffold, create remote install, and bind .env.",
+    help="Alias for `solution create`: scaffold and create a remote install.",
 )
 @click.argument("path", type=click.Path(file_okay=False), default=".")
 @click.option("--slug", required=True, help="Solution slug (definition identity).")
@@ -209,6 +210,7 @@ def create_cmd(
 @click.option("--version", "version", default="0.1.0", show_default=True,
               help="Bundle version recorded on the install at deploy time.")
 @click.option("--global-repo-access/--no-global-repo-access", default=False, show_default=True)
+@click.option("--url", "api_url", default=None, help="Bifrost instance URL (default: current profile).")
 @org_option
 def init_cmd(
     path: str,
@@ -218,10 +220,11 @@ def init_cmd(
     global_repo_access: bool,
     org: str | None,
     is_global: bool,
+    api_url: str | None,
 ) -> None:
     """Backward-compatible alias for ``bifrost solution create``."""
-    _create_and_bind_solution_workspace(
-        path, slug, name, version, global_repo_access, org, is_global
+    _create_solution_workspace(
+        path, slug, name, version, global_repo_access, org, is_global, api_url
     )
 
 
@@ -239,13 +242,23 @@ def _workspace_from_path_arg(path: str) -> pathlib.Path:
     return pathlib.Path(path).resolve()
 
 
+def _client_for_solution_workspace(
+    workspace: pathlib.Path,
+    api_url: str | None,
+) -> BifrostClient:
+    """Use --url, the workspace selector, or the normal default profile."""
+    selected_url = api_url or resolve_environment_url(workspace)
+    return BifrostClient.get_instance(require_auth=True, api_url=selected_url)
+
+
 @solution_group.command(
     name="bind",
     help="Bind this local Solution workspace to an existing install.",
 )
 @click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
 @click.option("--solution", "solution_ref", required=True, help="Install id or unique slug.")
-def bind_cmd(path: str, solution_ref: str) -> None:
+@click.option("--url", "api_url", default=None, help="Bifrost instance URL (default: current profile).")
+def bind_cmd(path: str, solution_ref: str, api_url: str | None) -> None:
     """Bind a local descriptor to an existing remote install without creating one."""
     workspace = _workspace_from_path_arg(path)
     if not is_solution_workspace(workspace):
@@ -256,7 +269,7 @@ def bind_cmd(path: str, solution_ref: str) -> None:
     descriptor = load_descriptor(workspace)
 
     async def _run() -> None:
-        client = BifrostClient.get_instance(require_auth=True)
+        client = _client_for_solution_workspace(workspace, api_url)
         resp = await client.get("/api/solutions")
         if resp.status_code != 200:
             raise click.ClickException(
@@ -284,42 +297,19 @@ def bind_cmd(path: str, solution_ref: str) -> None:
 @click.argument("slug")
 @click.option("--path", "path", default=None,
               help="App dir inside the solution workspace (default: apps/<slug> under the solution root).")
-@click.option("--api-url", default=None,
-              help="Instance URL the app resolves `bifrost` from (default: $BIFROST_API_URL).")
-def scaffold_app_cmd(slug: str, path: str | None, api_url: str | None) -> None:
+def scaffold_app_cmd(slug: str, path: str | None) -> None:
     """Write a working v2 app skeleton wired for the CLI-login dev loop."""
-    app_dir = _scaffold_app(slug, path, api_url)
+    app_dir = _scaffold_app(slug, path)
     click.echo("Next: run `bifrost solution start` from the solution root — it serves the")
     click.echo("app and runs your local workflows behind one origin (no deploy needed).")
     click.echo("Deploy with `bifrost deploy` from the solution root.")
     _ = app_dir
 
 
-def _scaffold_api_url(api_url: str | None) -> str:
-    """Resolve the instance URL to bake into a scaffolded app.
-
-    Explicit flag > workspace env > the authenticated client's URL. The bare
-    localhost:8000 fallback is a last resort for logged-out offline scaffolds —
-    baking it while logged in against a real instance broke the app's
-    `npm install` (the SDK dependency pointed at a dead port; drive finding,
-    2026-07-02)."""
-    resolved = api_url or resolve_environment_url()
-    if resolved:
-        return resolved
-    try:
-        return BifrostClient.get_instance(require_auth=True).api_url
-    except RuntimeError:
-        # Not logged in — offline scaffold; main.tsx surfaces the
-        # unauthenticated state at dev time rather than failing here.
-        return "http://localhost:8000"
-
-
-def _scaffold_app(slug: str, path: str | None, api_url: str | None) -> pathlib.Path:
+def _scaffold_app(slug: str, path: str | None) -> pathlib.Path:
     """Scaffold a standalone_v2 app skeleton; return its dir. Shared by
     ``scaffold-app`` and ``migrate-app`` so the two never drift."""
     import uuid as _uuid
-
-    url = _scaffold_api_url(api_url)
 
     # Anchor everything at the SOLUTION ROOT (the dir holding the descriptor),
     # found by walking up from cwd. Guessing the root from the app dir
@@ -343,7 +333,7 @@ def _scaffold_app(slug: str, path: str | None, api_url: str | None) -> pathlib.P
 
     if app_dir.exists() and any(app_dir.iterdir()):
         raise click.ClickException(f"{app_dir} already exists and is not empty")
-    for rel, content in _v2_scaffold_files(slug, url).items():
+    for rel, content in _v2_scaffold_files(slug).items():
         dest = app_dir / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_text(content)
@@ -399,7 +389,7 @@ def _scaffold_app(slug: str, path: str | None, api_url: str | None) -> pathlib.P
     return app_dir
 
 
-def _v2_scaffold_files(slug: str, api_url: str) -> dict[str, str]:
+def _v2_scaffold_files(slug: str) -> dict[str, str]:
     """The files for a working standalone_v2 app skeleton.
 
     Designed so a developer's local ``npm run dev`` works with ZERO token
@@ -414,13 +404,12 @@ def _v2_scaffold_files(slug: str, api_url: str) -> dict[str, str]:
         "private": True,
         "type": "module",
         "scripts": {"dev": "vite", "build": "vite build", "preview": "vite preview"},
-        # `bifrost` resolves from THIS instance (same mechanism as the server
-        # build) — no public-npm publish, no token pasting. Tailwind v4 +
-        # clsx/tailwind-merge/cva ship by default so shadcn components (added via
-        # `npx shadcn add`) are styled out of the box — a v2 app with no Tailwind
-        # renders unstyled, which is never what you want.
+        # The instance-specific `bifrost` SDK is deliberately absent here.
+        # `solution start` installs it transiently from the selected instance;
+        # deployed builds inject the serving instance's local SDK tarball.
+        # Tailwind v4 + clsx/tailwind-merge/cva ship by default so shadcn
+        # components are styled out of the box.
         "dependencies": {
-            "bifrost": f"{api_url.rstrip('/')}/api/sdk/download",
             "react": "^18.2.0",
             "react-dom": "^18.2.0",
             "react-router-dom": "^6.22.0",
@@ -447,12 +436,10 @@ import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
-// Tokenless local dev — three sources, in order:
-//   1. process env (the CLI exported BIFROST_API_URL/BIFROST_ACCESS_TOKEN), then
-//   2. a BIFROST_API_URL selector from .env in this exact invocation directory,
-//      then
-//   3. the CLI credential store via `bifrost auth token` — device-code login
-//      and password-grant login store tokens globally by URL, never in .env.
+// Tokenless local dev follows the normal CLI profile selection:
+//   1. process env (set by `bifrost solution start`), then
+//   2. BIFROST_API_URL from .env in this exact invocation directory, then
+//   3. the CLI's selected default profile.
 // Deployed, the platform passes these values to the app's mount() lifecycle.
 function readBifrostEnv() {
   const out = {
@@ -469,7 +456,8 @@ function readBifrostEnv() {
       }
     }
   }
-  // Fall back to the CLI credential store (keyring / credentials.json).
+  // Fall back to the selected CLI profile, or credentials keyed by the
+  // explicit URL above when one is present.
   if (!out.token) {
     try {
       const args = ["auth", "token"];
@@ -651,9 +639,8 @@ export default function App() {
 }
 """
     env_example = """\
-# OPTIONAL. You normally DON'T need this file: `npm run dev` uses the CLI's
-# saved default connection. Create .env here only to override the instance URL
-# for this app; credentials remain in the CLI's global URL-keyed store.
+# OPTIONAL. Direct `npm run dev` uses the CLI's selected default profile when
+# this app directory has no URL override.
 # BIFROST_API_URL=http://localhost:8000
 """
     readme = f"""\
@@ -661,15 +648,18 @@ export default function App() {
 
 ## Local dev (no token pasting)
 
-You only need to be logged in with the CLI once — `npm run dev` reads the token
-from an explicit process/current-directory override or the CLI's saved default.
-So from your logged-in solution workspace:
+`bifrost solution start` supplies its selected instance and token to Vite.
+Direct `npm run dev` uses the CLI's selected default profile unless this app
+directory contains a BIFROST_API_URL override.
 
-    npm install     # resolves `bifrost` from {api_url}
-    npm run dev     # http://localhost:5173 — already authenticated
+    bifrost solution start
 
-(To override the saved default for this app, copy `.env.example` to `.env` in
-the directory where you run Vite and set BIFROST_API_URL. Authenticate that URL
+The command installs the `bifrost` SDK transiently from the selected instance
+without writing that instance into package.json. After the first start, you can
+also run `npm run dev` directly at http://localhost:5173.
+
+(To override the selected default for this app, copy `.env.example` to `.env`
+in the directory where you run Vite and set BIFROST_API_URL. Authenticate that URL
 once with the CLI; its credentials remain in the global credential store.)
 
 ## Deploy
@@ -1416,7 +1406,7 @@ def _run_local_vite_build(
 ) -> None:
     """Install dependencies and compile one app with the local Node toolchain."""
     subprocess.run(  # noqa: S603 - executable resolved by shutil.which
-        [npm, "install", "--no-audit", "--no-fund"],
+        [npm, "install", "--no-audit", "--no-fund", "--package-lock=false"],
         cwd=str(workdir),
         check=True,
         capture_output=True,
@@ -1674,42 +1664,96 @@ def resolve_install_id_for_workspace(client, solution_root) -> str | None:
         return None
 
 
-async def _resolve_bound_solution(
+async def _resolve_solution_install(
     client,
     workspace: pathlib.Path,
     descriptor: SolutionDescriptor,
     solution_ref: str | None,
+    *,
+    org_ref: str | None = None,
+    is_global: bool = False,
+    create_scoped_missing: bool = False,
+    require_scope_for_missing: bool = False,
 ):
-    if solution_ref is not None:
-        resp = await client.get("/api/solutions")
-        if resp.status_code != 200:
-            raise click.ClickException(
-                f"Failed to list installs ({resp.status_code}): {resp.text[:200]}"
-            )
-        installs = resp.json().get("solutions", [])
-        try:
-            return resolve_install_ref(
-                installs,
-                solution_ref,
-                descriptor_slug=descriptor.slug,
-            )
-        except SolutionBindingError as exc:
-            raise click.ClickException(str(exc)) from exc
-
     binding = read_solution_binding(workspace)
-    if binding is None:
-        raise click.ClickException(
-            "This Solution workspace is not bound to an install. "
-            "Run `bifrost solution create` to create and bind one, or "
-            "`bifrost solution bind --solution <id-or-slug>` to bind an existing install."
+    scope_selected = org_ref is not None or is_global
+    if scope_selected and solution_ref is not None:
+        raise click.UsageError(
+            "--solution cannot be combined with --org or --global"
         )
-    if binding.slug != descriptor.slug:
+    if not scope_selected and binding is not None and binding.slug != descriptor.slug:
         raise click.ClickException(
             f"Workspace is bound to Solution slug {binding.slug!r}, but "
             f"{DESCRIPTOR_FILENAME} declares {descriptor.slug!r}. "
             "Re-run `bifrost solution bind --solution <id-or-slug>`."
         )
-    return binding
+
+    resp = await client.get("/api/solutions")
+    if resp.status_code != 200:
+        raise click.ClickException(
+            f"Failed to list installs ({resp.status_code}): {resp.text[:200]}"
+        )
+    installs = resp.json().get("solutions", [])
+
+    if scope_selected:
+        target_org_id = await _resolve_install_org(client, org_ref, is_global)
+        try:
+            target_id = _resolve_target_install(
+                installs, descriptor.slug, target_org_id
+            )
+        except _AmbiguousInstall as exc:
+            raise click.ClickException(str(exc)) from exc
+        if target_id is not None:
+            return resolve_install_ref(
+                installs,
+                target_id,
+                descriptor_slug=descriptor.slug,
+            )
+        if not create_scoped_missing:
+            scope_label = (
+                "global scope" if target_org_id is None else f"org {target_org_id}"
+            )
+            raise click.ClickException(
+                f"No install found for Solution slug {descriptor.slug!r} in {scope_label}."
+            )
+        create = await _post_create_install_for_descriptor(
+            client, descriptor, target_org_id
+        )
+        try:
+            created = binding_from_install(
+                create.json(), descriptor_slug=descriptor.slug
+            )
+        except (ValueError, SolutionBindingError) as exc:
+            raise click.ClickException(
+                "Created Solution install, but failed to read its identity from the "
+                f"response: {exc}."
+            ) from exc
+        click.echo(f"Created Solution install {created.solution_id}.")
+        return created
+
+    if (
+        require_scope_for_missing
+        and solution_ref is None
+        and binding is None
+        and not any(item.get("slug") == descriptor.slug for item in installs)
+    ):
+        raise click.ClickException(
+            f"No install found for Solution slug {descriptor.slug!r} on the selected "
+            "instance. Re-run with --org <id-or-name> or --global to choose where "
+            "the new install should be created."
+        )
+
+    target_ref = solution_ref or (
+        binding.solution_id if binding is not None else descriptor.slug
+    )
+    try:
+        return resolve_install_ref(
+            installs,
+            target_ref,
+            descriptor_slug=descriptor.slug,
+        )
+    except SolutionBindingError as exc:
+        raise click.ClickException(str(exc)) from exc
 
 
 # Map a pending-capture entity_type to its `.bifrost/*.yaml` manifest file and the
@@ -2040,13 +2084,26 @@ def _vendor_repo_reader(client, failures: dict[str, str]):
     return _read
 
 
-@solution_group.command(name="deploy", help="Deploy the current Solution workspace (full replace, non-interactive).")
+@solution_group.command(
+    name="deploy",
+    help=(
+        "Non-interactive full-replace deploy of the current Solution workspace. "
+        "If no install matches, --org or --global is required before one is created."
+    ),
+)
 @click.argument("path", type=click.Path(exists=True, file_okay=False), default=".")
 @click.option("--solution", "solution_ref", default=None, help="Install id or unique slug.")
+@click.option("--url", "api_url", default=None, help="Bifrost instance URL (default: current profile).")
 @click.option("--force", is_flag=True, default=False,
               help="Apply even if the bundle version is older than the installed version (downgrade).")
+@org_option
 def deploy_cmd(
-    path: str, solution_ref: str | None, force: bool
+    path: str,
+    solution_ref: str | None,
+    api_url: str | None,
+    force: bool,
+    org: str | None,
+    is_global: bool,
 ) -> None:
     workspace = _workspace_from_path_arg(path)
     if not is_solution_workspace(workspace):
@@ -2077,9 +2134,16 @@ def deploy_cmd(
         )
 
     async def _run() -> int:
-        client = BifrostClient.get_instance(require_auth=True)
-        binding = await _resolve_bound_solution(
-            client, workspace, descriptor, solution_ref
+        client = _client_for_solution_workspace(workspace, api_url)
+        binding = await _resolve_solution_install(
+            client,
+            workspace,
+            descriptor,
+            solution_ref,
+            org_ref=org,
+            is_global=is_global,
+            create_scoped_missing=True,
+            require_scope_for_missing=True,
         )
         target_id = binding.solution_id
 
@@ -2485,6 +2549,7 @@ def _vite_child_env(
 )
 @click.argument("app_slug", required=False)
 @click.option("--solution", "solution_ref", default=None, help="Install id or unique slug.")
+@click.option("--url", "api_url", default=None, help="Bifrost instance URL (default: current profile).")
 @click.option(
     "--port",
     default=3000,
@@ -2499,13 +2564,13 @@ def _vite_child_env(
 def start_cmd(
     app_slug: str | None,
     solution_ref: str | None,
+    api_url: str | None,
     port: int,
     bind_host: str,
     public_url: str | None,
 ) -> None:
     import shutil
 
-    from bifrost.client import BifrostClient
     from bifrost.solution_dev.app_select import AppSelectionError, select_app
     from bifrost.solution_dev.function_host import FunctionHost, set_dev_execution_context
     from bifrost.solution_dev.scaffold_check import (
@@ -2527,9 +2592,9 @@ def start_cmd(
         )
     descriptor = load_descriptor(workspace)
 
-    client = BifrostClient.get_instance(require_auth=True)
+    client = _client_for_solution_workspace(workspace, api_url)
     binding = asyncio.run(
-        _resolve_bound_solution(client, workspace, descriptor, solution_ref)
+        _resolve_solution_install(client, workspace, descriptor, solution_ref)
     )
     org_info = (
         {"id": binding.organization_id}
@@ -2577,29 +2642,38 @@ def start_cmd(
     _ensure_port_free(port)
     _ensure_port_free(vite_port)
 
-    original_sdk_spec = _heal_sdk_dep(chosen.app_dir, client.api_url)
-    if original_sdk_spec is not None:
+    legacy_sdk_url = _legacy_sdk_url_for_other_instance(
+        chosen.app_dir, client.api_url
+    )
+    if legacy_sdk_url is not None:
         click.echo(
-            "Repointed the app's `bifrost` SDK dependency at this instance "
-            "(package.json froze the scaffold-time URL) — reinstalling."
+            "Ignoring the app's legacy instance-specific `bifrost` dependency "
+            "and installing the SDK from the selected instance without rewriting "
+            "package.json."
         )
     have_node_modules = (chosen.app_dir / "node_modules").is_dir()
-    if original_sdk_spec is not None or not have_node_modules:
-        click.echo("Installing app dependencies (npm install)…")
+    have_sdk = (chosen.app_dir / "node_modules" / "bifrost").is_dir()
+    if legacy_sdk_url is not None or not have_node_modules or not have_sdk:
+        click.echo("Installing app dependencies and the selected instance's SDK…")
+        dep_spec = f"bifrost@{client.api_url.rstrip('/')}{_SDK_DOWNLOAD_SUFFIX}"
         try:
-            subprocess.run([npm, "install"], cwd=chosen.app_dir, check=True)
+            subprocess.run(
+                [
+                    npm,
+                    "install",
+                    "--no-save",
+                    "--package-lock=false",
+                    dep_spec,
+                ],
+                cwd=chosen.app_dir,
+                check=True,
+            )
         except subprocess.CalledProcessError as exc:
-            if original_sdk_spec is not None:
-                # Keep the retry signal alive: a healed manifest with a failed
-                # install would otherwise read as "already correct" next run
-                # and the stale SDK would never be replaced.
-                _restore_sdk_dep(chosen.app_dir, client.api_url, original_sdk_spec)
-            if original_sdk_spec is not None and have_node_modules:
-                # The pre-heal state was a WORKING install (possibly offline):
-                # keep the dev server usable rather than hard-failing; the next
-                # start retries the heal + reinstall.
+            if have_node_modules and have_sdk:
+                # Preserve a working offline install. Nothing in the workspace
+                # was rewritten, so the next start naturally retries.
                 click.echo(
-                    "  warning: reinstall after repointing the SDK failed — "
+                    "  warning: installing the selected instance's SDK failed — "
                     "continuing with the previously installed dependencies "
                     "(the SDK may be stale until npm install succeeds).",
                     err=True,
@@ -2943,8 +3017,7 @@ export function Combobox({
 @click.argument("source", type=click.Path(exists=True, file_okay=False))
 @click.argument("v2_slug")
 @click.option("--title", default=None, help="App display title (default: the v2 slug).")
-@click.option("--api-url", default=None, help="Instance URL the app resolves `bifrost` from.")
-def migrate_app_cmd(source: str, v2_slug: str, title: str | None, api_url: str | None) -> None:
+def migrate_app_cmd(source: str, v2_slug: str, title: str | None) -> None:
     """Deterministic 80% of a v1→v2 app migration. The judgment 20% (multi-route
     wiring, unresolved imports, no-v2-equivalent hooks, in-browser design check,
     deploy/cutover/capture) is PRINTED as a checklist, never silently done.
@@ -2960,7 +3033,7 @@ def migrate_app_cmd(source: str, v2_slug: str, title: str | None, api_url: str |
     title = title or v2_slug
 
     # 1. Scaffold the v2 skeleton (Tailwind v4 + radix-rhea + theme already wired).
-    app_dir = _scaffold_app(v2_slug, None, api_url)
+    app_dir = _scaffold_app(v2_slug, None)
 
     # 2. Port v1 source. v1 layout = pages/ + components/ (+ _layout.tsx). Copy
     #    what exists; report anything unexpected rather than guessing.
@@ -3141,31 +3214,20 @@ def swap_slugs_cmd(app_a: str, app_b: str) -> None:
 _SDK_DOWNLOAD_SUFFIX = "/api/sdk/download"
 
 
-def _heal_sdk_dep(app_dir: pathlib.Path, api_url: str) -> str | None:
-    """Repoint the scaffolded ``bifrost`` SDK dependency at the CURRENT instance.
+def _legacy_sdk_url_for_other_instance(
+    app_dir: pathlib.Path,
+    api_url: str,
+) -> str | None:
+    """Return a legacy scaffold's stale SDK URL without rewriting user source.
 
-    scaffold freezes ``<api_url>/api/sdk/download`` into package.json at
-    scaffold time; against a dead debug-stack port (or the offline
-    localhost:8000 fallback) ``npm install`` fails days later with nothing
-    connecting the error back to the frozen URL (issue #464). ``start`` knows
-    the bound instance's URL — heal before installing. Only the
-    scaffold-written download-URL shape is touched: a user-pinned ``file:``
-    path or registry range is their choice.
-
-    The rewrite is a single-occurrence text replacement, not a JSON re-dump —
-    the file is the USER'S manifest and a one-dep heal must not reformat it or
-    escape their non-ASCII content. Heal is best-effort: unreadable, malformed,
-    or ambiguous manifests are left alone (npm's own error is the message).
-
-    Returns the ORIGINAL dependency spec when the file was changed (the caller
-    reverts it if the reinstall fails, keeping the retry signal alive), else
-    None.
+    Older scaffolds persisted ``<instance>/api/sdk/download`` in package.json.
+    New scaffolds omit the instance-specific SDK dependency entirely. Start
+    recognizes the old shape so it can pass the selected instance's SDK as a
+    transient ``npm install --no-save`` argument.
     """
     pkg_file = app_dir / "package.json"
     try:
-        # utf-8-sig: Windows editors BOM-prefix manifests npm happily accepts.
-        text = pkg_file.read_text(encoding="utf-8-sig")
-        pkg = json.loads(text)
+        pkg = json.loads(pkg_file.read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return None
     deps = pkg.get("dependencies")
@@ -3177,31 +3239,9 @@ def _heal_sdk_dep(app_dir: pathlib.Path, api_url: str) -> str | None:
         not isinstance(current, str)
         or not current.endswith(_SDK_DOWNLOAD_SUFFIX)
         or current == expected
-        or text.count(current) != 1
     ):
         return None
-    try:
-        pkg_file.write_text(text.replace(current, expected), encoding="utf-8")
-    except OSError:
-        return None
     return current
-
-
-def _restore_sdk_dep(app_dir: pathlib.Path, api_url: str, original: str) -> None:
-    """Undo a heal whose reinstall failed, so the NEXT start retries both.
-
-    Leaving the healed URL in place with a failed install permanently consumes
-    the reinstall signal: the next run sees a correct manifest plus an existing
-    node_modules and never replaces the stale SDK tarball.
-    """
-    pkg_file = app_dir / "package.json"
-    expected = f"{api_url.rstrip('/')}{_SDK_DOWNLOAD_SUFFIX}"
-    try:
-        text = pkg_file.read_text(encoding="utf-8-sig")
-        if text.count(expected) == 1:
-            pkg_file.write_text(text.replace(expected, original), encoding="utf-8")
-    except OSError:
-        pass  # best-effort: worst case the user re-heals on a later start
 
 
 def installed_sdk_fingerprint(app_dir: pathlib.Path) -> str | None:
@@ -3299,7 +3339,8 @@ solution_group.add_command(sdk_group)
     default=None,
     help="standalone_v2 app slug (required when the Solution has multiple apps).",
 )
-def sdk_update_cmd(path: str, app_slug: str | None) -> None:
+@click.option("--url", "api_url", default=None, help="Bifrost instance URL (default: current profile).")
+def sdk_update_cmd(path: str, app_slug: str | None, api_url: str | None) -> None:
     import shutil
 
     from bifrost.solution_dev.app_select import AppSelectionError, select_app
@@ -3312,9 +3353,9 @@ def sdk_update_cmd(path: str, app_slug: str | None) -> None:
         )
     descriptor = load_descriptor(workspace)
 
-    client = BifrostClient.get_instance(require_auth=True)
+    client = _client_for_solution_workspace(workspace, api_url)
     binding = asyncio.run(
-        _resolve_bound_solution(client, workspace, descriptor, None)
+        _resolve_solution_install(client, workspace, descriptor, None)
     )
     click.echo(f"Using Solution install id: {binding.solution_id}")
 
@@ -3372,7 +3413,18 @@ def sdk_update_cmd(path: str, app_slug: str | None) -> None:
     dep_spec = f"bifrost@{client.api_url.rstrip('/')}{_SDK_DOWNLOAD_SUFFIX}"
     click.echo(f"Reinstalling {dep_spec}...")
     try:
-        subprocess.run([npm, "install", "--force", dep_spec], cwd=chosen.app_dir, check=True)
+        subprocess.run(
+            [
+                npm,
+                "install",
+                "--force",
+                "--no-save",
+                "--package-lock=false",
+                dep_spec,
+            ],
+            cwd=chosen.app_dir,
+            check=True,
+        )
     except subprocess.CalledProcessError as exc:
         raise click.ClickException(
             f"npm install failed in {chosen.app_dir} (exit {exc.returncode}) "

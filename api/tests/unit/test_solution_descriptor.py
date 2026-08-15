@@ -172,7 +172,7 @@ def test_init_scope_flag_targets_global_install_without_descriptor_scope(
     tmp_path: pathlib.Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """`--scope global` remains an org-option synonym but is not serialized."""
+    """`--scope global` targets creation without serializing instance state."""
     from click.testing import CliRunner
 
     import bifrost.client as client_mod
@@ -208,7 +208,7 @@ def test_init_scope_flag_targets_global_install_without_descriptor_scope(
     assert payloads[0]["organization_id"] is None
     text = (ws / DESCRIPTOR_FILENAME).read_text()
     assert "scope:" not in text
-    assert "BIFROST_SOLUTION_SCOPE=global" in (ws / ".env").read_text()
+    assert not (ws / ".env").exists()
 
 
 def test_init_writes_explicit_version(

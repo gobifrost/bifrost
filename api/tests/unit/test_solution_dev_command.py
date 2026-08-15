@@ -6,7 +6,24 @@ from click.testing import CliRunner
 from bifrost.commands.solution import handle_solution, solution_group
 
 
-def test_solution_init_creates_remote_install_and_env(tmp_path, monkeypatch):
+class _SolutionListResponse:
+    status_code = 200
+    text = ""
+
+    def json(self):
+        return {"solutions": [{
+            "id": "11111111-1111-1111-1111-111111111111",
+            "slug": "s",
+            "organization_id": "org-1",
+        }]}
+
+
+async def _get_bound_solution(_self, path, **_kwargs):
+    assert path == "/api/solutions"
+    return _SolutionListResponse()
+
+
+def test_solution_init_creates_remote_install_without_binding(tmp_path, monkeypatch):
     import bifrost.client as client_mod
 
     monkeypatch.chdir(tmp_path)
@@ -25,6 +42,7 @@ def test_solution_init_creates_remote_install_and_env(tmp_path, monkeypatch):
             }
 
     class _FakeClient:
+        api_url = "http://localhost:8000"
         organization = {"id": "22222222-2222-2222-2222-222222222222"}
 
         async def post(self, path, json=None, **kwargs):
@@ -45,8 +63,7 @@ def test_solution_init_creates_remote_install_and_env(tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert (tmp_path / "bifrost.solution.yaml").is_file()
-    env = (tmp_path / ".env").read_text()
-    assert "BIFROST_SOLUTION_ID=11111111-1111-1111-1111-111111111111" in env
+    assert not (tmp_path / ".env").exists()
     assert created_payloads[0]["slug"] == "dispatch"
     assert (
         created_payloads[0]["organization_id"]
@@ -54,7 +71,7 @@ def test_solution_init_creates_remote_install_and_env(tmp_path, monkeypatch):
     )
 
 
-def test_solution_create_creates_remote_install_and_env(tmp_path, monkeypatch):
+def test_solution_create_creates_remote_install_without_binding(tmp_path, monkeypatch):
     import bifrost.client as client_mod
 
     monkeypatch.chdir(tmp_path)
@@ -72,6 +89,7 @@ def test_solution_create_creates_remote_install_and_env(tmp_path, monkeypatch):
             }
 
     class _FakeClient:
+        api_url = "http://localhost:8000"
         organization = {"id": "22222222-2222-2222-2222-222222222222"}
 
         async def post(self, path, json=None, **kwargs):
@@ -92,8 +110,7 @@ def test_solution_create_creates_remote_install_and_env(tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert (tmp_path / "bifrost.solution.yaml").is_file()
-    env = (tmp_path / ".env").read_text()
-    assert "BIFROST_SOLUTION_ID=11111111-1111-1111-1111-111111111111" in env
+    assert not (tmp_path / ".env").exists()
     assert created_payloads[0]["slug"] == "dispatch"
 
 
@@ -115,6 +132,7 @@ def test_solution_create_global_scope(tmp_path, monkeypatch):
             }
 
     class _FakeClient:
+        api_url = "http://localhost:8000"
         organization = {"id": "22222222-2222-2222-2222-222222222222"}
 
         async def post(self, path, json=None, **kwargs):
@@ -134,8 +152,7 @@ def test_solution_create_global_scope(tmp_path, monkeypatch):
 
     assert result.exit_code == 0, result.output
     assert created_payloads[0]["organization_id"] is None
-    env = (tmp_path / ".env").read_text()
-    assert "BIFROST_SOLUTION_SCOPE=global" in env
+    assert not (tmp_path / ".env").exists()
 
 
 def test_solution_create_remote_failure_removes_new_descriptor(tmp_path, monkeypatch):
@@ -148,6 +165,7 @@ def test_solution_create_remote_failure_removes_new_descriptor(tmp_path, monkeyp
         text = "boom"
 
     class _FakeClient:
+        api_url = "http://localhost:8000"
         organization = {"id": "22222222-2222-2222-2222-222222222222"}
 
         async def post(self, path, json=None, **kwargs):
@@ -169,7 +187,7 @@ def test_solution_create_remote_failure_removes_new_descriptor(tmp_path, monkeyp
     assert not (tmp_path / "bifrost.solution.yaml").exists()
 
 
-def test_solution_create_binding_failure_keeps_descriptor(tmp_path, monkeypatch):
+def test_solution_create_url_option_selects_instance(tmp_path, monkeypatch):
     import bifrost.client as client_mod
 
     monkeypatch.chdir(tmp_path)
@@ -186,30 +204,36 @@ def test_solution_create_binding_failure_keeps_descriptor(tmp_path, monkeypatch)
             }
 
     class _FakeClient:
+        api_url = "http://localhost:8000"
         organization = {"id": "22222222-2222-2222-2222-222222222222"}
 
         async def post(self, path, json=None, **kwargs):
             return _Resp()
 
+    selected_urls: list[str | None] = []
+
+    def _get_instance(**kwargs):
+        selected_urls.append(kwargs.get("api_url"))
+        return _FakeClient()
+
     monkeypatch.setattr(
         client_mod.BifrostClient,
         "get_instance",
-        staticmethod(lambda **kwargs: _FakeClient()),
-    )
-    monkeypatch.setattr(
-        "bifrost.commands.solution.write_solution_binding",
-        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("readonly")),
+        staticmethod(_get_instance),
     )
 
     result = CliRunner().invoke(
         solution_group,
-        ["create", ".", "--slug", "dispatch", "--name", "Dispatch"],
+        [
+            "create", ".", "--slug", "dispatch", "--name", "Dispatch",
+            "--url", "https://selected.example",
+        ],
     )
 
-    assert result.exit_code != 0
-    assert "Created Solution install 11111111-1111-1111-1111-111111111111" in result.output
-    assert "failed to bind workspace in .env" in result.output
+    assert result.exit_code == 0, result.output
+    assert selected_urls == ["https://selected.example"]
     assert (tmp_path / "bifrost.solution.yaml").is_file()
+    assert not (tmp_path / ".env").exists()
 
 
 def test_solution_create_malformed_success_keeps_descriptor(tmp_path, monkeypatch):
@@ -225,6 +249,7 @@ def test_solution_create_malformed_success_keeps_descriptor(tmp_path, monkeypatc
             raise ValueError("bad json")
 
     class _FakeClient:
+        api_url = "http://localhost:8000"
         organization = {"id": "22222222-2222-2222-2222-222222222222"}
 
         async def post(self, path, json=None, **kwargs):
@@ -242,7 +267,7 @@ def test_solution_create_malformed_success_keeps_descriptor(tmp_path, monkeypatc
     )
 
     assert result.exit_code != 0
-    assert "Created Solution install, but failed to read its binding" in result.output
+    assert "Created Solution install, but failed to read its identity" in result.output
     assert (tmp_path / "bifrost.solution.yaml").is_file()
 
 
@@ -268,6 +293,7 @@ def test_solution_bind_by_id_writes_env(tmp_path, monkeypatch):
             }
 
     class _FakeClient:
+        api_url = "http://localhost:8000"
         async def get(self, path, **kwargs):
             assert path == "/api/solutions"
             return _Resp()
@@ -319,6 +345,7 @@ def test_solution_bind_by_slug_writes_env(tmp_path, monkeypatch):
             }
 
     class _FakeClient:
+        api_url = "http://localhost:8000"
         async def get(self, path, **kwargs):
             assert path == "/api/solutions"
             return _Resp()
@@ -365,6 +392,7 @@ def test_solution_bind_refuses_slug_mismatch(tmp_path, monkeypatch):
             }
 
     class _FakeClient:
+        api_url = "http://localhost:8000"
         async def get(self, path, **kwargs):
             assert path == "/api/solutions"
             return _Resp()
@@ -396,6 +424,8 @@ def test_solution_bind_list_failure_is_surfaced(tmp_path, monkeypatch):
         text = "unavailable"
 
     class _FakeClient:
+        api_url = "http://localhost:8000"
+
         async def get(self, path, **kwargs):
             assert path == "/api/solutions"
             return _Resp()
@@ -423,15 +453,28 @@ def test_start_refuses_outside_solution_workspace(tmp_path: Path, monkeypatch):
     assert "Solution workspace" in result.output or "solution init" in result.output
 
 
-def test_start_refuses_unbound_solution_workspace(tmp_path: Path, monkeypatch):
+def test_start_unbound_workspace_reports_missing_install(tmp_path: Path, monkeypatch):
     import bifrost.client as client_mod
 
     monkeypatch.chdir(tmp_path)
     (tmp_path / "bifrost.solution.yaml").write_text("slug: dispatch\nname: Dispatch\n")
 
     class _FakeClient:
+        api_url = "http://localhost:8000"
         organization = {"id": "org-1"}
         user = {"id": "u", "is_superuser": True}
+
+        async def get(self, path, **kwargs):
+            assert path == "/api/solutions"
+
+            class _Resp:
+                status_code = 200
+                text = ""
+
+                def json(self):
+                    return {"solutions": []}
+
+            return _Resp()
 
     monkeypatch.setattr(
         client_mod.BifrostClient,
@@ -442,8 +485,7 @@ def test_start_refuses_unbound_solution_workspace(tmp_path: Path, monkeypatch):
     result = CliRunner().invoke(solution_group, ["start"])
 
     assert result.exit_code != 0
-    assert "not bound to an install" in result.output
-    assert "bifrost solution bind --solution" in result.output
+    assert "No solution install found for 'dispatch'" in result.output
 
 
 def test_set_dev_execution_context_sets_org(monkeypatch):
@@ -475,10 +517,7 @@ def test_start_spawns_npm_via_resolved_path(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "bifrost.solution.yaml").write_text("slug: s\nname: S\nscope: org\n")
     (tmp_path / ".env").write_text(
-        "BIFROST_SOLUTION_ID=11111111-1111-1111-1111-111111111111\n"
-        "BIFROST_SOLUTION_SLUG=s\n"
-        "BIFROST_SOLUTION_ORG_ID=org-1\n"
-        "BIFROST_SOLUTION_SCOPE=org\n"
+        "BIFROST_API_URL=http://localhost:8000\n"
     )
     (tmp_path / ".bifrost").mkdir()
     (tmp_path / ".bifrost" / "apps.yaml").write_text(
@@ -489,12 +528,23 @@ def test_start_spawns_npm_via_resolved_path(tmp_path: Path, monkeypatch):
     (tmp_path / "apps" / "dash").mkdir(parents=True)
 
     class _FakeClient:
+        get = _get_bound_solution
+        api_url = "http://localhost:8000"
         organization = {"id": "org-1"}
         user = {"id": "u", "is_superuser": True}
-        api_url = "http://localhost:8000"
         _access_token = "tok"
 
-    monkeypatch.setattr(client_mod.BifrostClient, "get_instance", staticmethod(lambda **k: _FakeClient()))
+    selected_urls: list[str | None] = []
+
+    def _get_instance(**kwargs):
+        selected_urls.append(kwargs.get("api_url"))
+        return _FakeClient()
+
+    monkeypatch.setattr(
+        client_mod.BifrostClient,
+        "get_instance",
+        staticmethod(_get_instance),
+    )
     monkeypatch.setattr(function_host, "set_dev_execution_context", lambda **k: None)
 
     class _FakeHost:
@@ -546,6 +596,7 @@ def test_start_spawns_npm_via_resolved_path(tmp_path: Path, monkeypatch):
 
     result = CliRunner().invoke(solution_group, ["start"])
     assert result.exit_code == 0, result.output
+    assert selected_urls == ["http://localhost:8000"]
     # Both spawns (npm install + npm run dev) ran, each with the RESOLVED path.
     assert len(spawned) == 2
     for argv in spawned:
@@ -563,6 +614,7 @@ def test_start_public_url_does_not_change_same_origin_browser_transport(tmp_path
     monkeypatch.chdir(tmp_path)
     (tmp_path / "bifrost.solution.yaml").write_text("slug: s\nname: S\nscope: org\n")
     (tmp_path / ".env").write_text(
+        "BIFROST_API_URL=http://localhost:8000\n"
         "BIFROST_SOLUTION_ID=11111111-1111-1111-1111-111111111111\n"
         "BIFROST_SOLUTION_SLUG=s\n"
         "BIFROST_SOLUTION_ORG_ID=org-1\n"
@@ -575,12 +627,13 @@ def test_start_public_url_does_not_change_same_origin_browser_transport(tmp_path
         }})
     )
     (tmp_path / "apps" / "dash").mkdir(parents=True)
-    (tmp_path / "apps" / "dash" / "node_modules").mkdir()
+    (tmp_path / "apps" / "dash" / "node_modules" / "bifrost").mkdir(parents=True)
 
     class _FakeClient:
+        get = _get_bound_solution
+        api_url = "http://localhost:8000"
         organization = {"id": "org-1"}
         user = {"id": "u", "is_superuser": True}
-        api_url = "http://localhost:8000"
         _access_token = "tok"
 
     monkeypatch.setattr(client_mod.BifrostClient, "get_instance", staticmethod(lambda **k: _FakeClient()))
@@ -676,6 +729,7 @@ def test_handle_solution_renders_clickexception_not_traceback(tmp_path, monkeypa
     monkeypatch.chdir(tmp_path)
     (tmp_path / "bifrost.solution.yaml").write_text("slug: s\nname: S\nscope: org\n")
     (tmp_path / ".env").write_text(
+        "BIFROST_API_URL=http://localhost:8000\n"
         "BIFROST_SOLUTION_ID=11111111-1111-1111-1111-111111111111\n"
         "BIFROST_SOLUTION_SLUG=s\n"
         "BIFROST_SOLUTION_ORG_ID=org-1\n"
@@ -694,6 +748,8 @@ def test_handle_solution_renders_clickexception_not_traceback(tmp_path, monkeypa
     import bifrost.client as client_mod
 
     class _FakeClient:
+        get = _get_bound_solution
+        api_url = "http://localhost:8000"
         organization = {"id": "org-1"}
         user = {"id": "u", "is_superuser": True}
 
@@ -749,6 +805,7 @@ def test_start_finds_solution_root_from_subdirectory(tmp_path, monkeypatch):
 
     (tmp_path / "bifrost.solution.yaml").write_text("slug: s\nname: S\nscope: org\n")
     (tmp_path / ".env").write_text(
+        "BIFROST_API_URL=http://localhost:8000\n"
         "BIFROST_SOLUTION_ID=11111111-1111-1111-1111-111111111111\n"
         "BIFROST_SOLUTION_SLUG=s\n"
         "BIFROST_SOLUTION_ORG_ID=org-1\n"
@@ -764,12 +821,23 @@ def test_start_finds_solution_root_from_subdirectory(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path / "apps" / "dash")
 
     class _FakeClient:
+        get = _get_bound_solution
         organization = {"id": "org-1"}
         user = {"id": "u", "is_superuser": True}
         api_url = "http://localhost:8000"
         _access_token = "tok"
 
-    monkeypatch.setattr(client_mod.BifrostClient, "get_instance", staticmethod(lambda **k: _FakeClient()))
+    selected_urls: list[str | None] = []
+
+    def _get_instance(**kwargs):
+        selected_urls.append(kwargs.get("api_url"))
+        return _FakeClient()
+
+    monkeypatch.setattr(
+        client_mod.BifrostClient,
+        "get_instance",
+        staticmethod(_get_instance),
+    )
     monkeypatch.setattr(function_host, "set_dev_execution_context", lambda **k: None)
 
     class _FakeHost:
@@ -814,6 +882,7 @@ def test_start_finds_solution_root_from_subdirectory(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     # The host was rooted at the SOLUTION ROOT, not the subdirectory cwd.
     assert hosts and str(hosts[0].workspace) == str(tmp_path.resolve())
+    assert selected_urls == ["http://localhost:8000"]
 
 
 def test_workspace_from_path_arg_walks_up_only_for_default(tmp_path, monkeypatch):
@@ -842,6 +911,7 @@ def _start_workspace(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "bifrost.solution.yaml").write_text("slug: s\nname: S\nscope: org\n")
     (tmp_path / ".env").write_text(
+        "BIFROST_API_URL=http://localhost:8000\n"
         "BIFROST_SOLUTION_ID=11111111-1111-1111-1111-111111111111\n"
         "BIFROST_SOLUTION_SLUG=s\n"
         "BIFROST_SOLUTION_ORG_ID=org-1\n"
@@ -856,6 +926,7 @@ def _start_workspace(tmp_path, monkeypatch):
     (tmp_path / "apps" / "dash").mkdir(parents=True)
 
     class _FakeClient:
+        get = _get_bound_solution
         organization = {"id": "org-1"}
         user = {"id": "u", "is_superuser": True}
         api_url = "http://localhost:8000"
@@ -1012,13 +1083,10 @@ def test_ensure_port_free_passes_a_free_port():
     _ensure_port_free(port)  # must not raise
 
 
-def test_heal_sdk_dep_repoints_stale_download_url(tmp_path):
-    """scaffold freezes `<api_url>/api/sdk/download` into package.json; against
-    a dead debug-stack port npm install fails days later with no clue back to
-    the scaffold-time URL (issue #464). start knows the right URL — heal it."""
+def test_legacy_sdk_url_is_detected_without_rewriting_package_json(tmp_path):
     import json as _json
 
-    from bifrost.commands.solution import _heal_sdk_dep
+    from bifrost.commands.solution import _legacy_sdk_url_for_other_instance
 
     pkg = tmp_path / "package.json"
     pkg.write_text(_json.dumps({
@@ -1029,18 +1097,17 @@ def test_heal_sdk_dep_repoints_stale_download_url(tmp_path):
         },
     }, indent=2))
 
-    original = _heal_sdk_dep(tmp_path, "http://localhost:30399/")
-    assert original == "http://localhost:39999/api/sdk/download"
-    data = _json.loads(pkg.read_text())
-    assert data["dependencies"]["bifrost"] == "http://localhost:30399/api/sdk/download"
-    assert data["dependencies"]["react"] == "^18.2.0"  # untouched
-    assert data["name"] == "app"
+    before = pkg.read_text()
+    assert _legacy_sdk_url_for_other_instance(
+        tmp_path, "http://localhost:30399/"
+    ) == "http://localhost:39999/api/sdk/download"
+    assert pkg.read_text() == before
 
 
-def test_heal_sdk_dep_noop_when_url_already_current(tmp_path):
+def test_legacy_sdk_url_is_none_when_url_already_current(tmp_path):
     import json as _json
 
-    from bifrost.commands.solution import _heal_sdk_dep
+    from bifrost.commands.solution import _legacy_sdk_url_for_other_instance
 
     pkg = tmp_path / "package.json"
     pkg.write_text(_json.dumps({
@@ -1048,40 +1115,36 @@ def test_heal_sdk_dep_noop_when_url_already_current(tmp_path):
     }))
     before = pkg.read_text()
 
-    assert _heal_sdk_dep(tmp_path, "http://localhost:30399") is None
-    assert pkg.read_text() == before  # no rewrite, no reformat
+    assert _legacy_sdk_url_for_other_instance(tmp_path, "http://localhost:30399") is None
+    assert pkg.read_text() == before
 
 
-def test_heal_sdk_dep_leaves_custom_dep_specs_alone(tmp_path):
-    """Only the scaffold-written download-URL shape is healed — a user-pinned
-    file: path or registry range is their choice, not ours to rewrite."""
+def test_legacy_sdk_url_leaves_custom_dep_specs_alone(tmp_path):
     import json as _json
 
-    from bifrost.commands.solution import _heal_sdk_dep
+    from bifrost.commands.solution import _legacy_sdk_url_for_other_instance
 
     for spec in ("file:../sdk/bifrost.tgz", "^2.0.0"):
         pkg = tmp_path / "package.json"
         pkg.write_text(_json.dumps({"dependencies": {"bifrost": spec}}))
-        assert _heal_sdk_dep(tmp_path, "http://localhost:30399") is None
+        assert _legacy_sdk_url_for_other_instance(tmp_path, "http://localhost:30399") is None
         assert _json.loads(pkg.read_text())["dependencies"]["bifrost"] == spec
 
 
-def test_heal_sdk_dep_tolerates_missing_or_malformed_manifest(tmp_path):
-    from bifrost.commands.solution import _heal_sdk_dep
+def test_legacy_sdk_url_tolerates_missing_or_malformed_manifest(tmp_path):
+    from bifrost.commands.solution import _legacy_sdk_url_for_other_instance
 
-    assert _heal_sdk_dep(tmp_path, "http://localhost:30399") is None  # absent
+    assert _legacy_sdk_url_for_other_instance(tmp_path, "http://localhost:30399") is None
     (tmp_path / "package.json").write_text("{not json")
-    assert _heal_sdk_dep(tmp_path, "http://localhost:30399") is None  # malformed
+    assert _legacy_sdk_url_for_other_instance(tmp_path, "http://localhost:30399") is None
 
 
-def test_start_reinstalls_after_healing_even_with_node_modules(tmp_path, monkeypatch):
-    """A healed SDK URL must trigger npm install even when node_modules exists
-    — the stale tarball is exactly what needs replacing."""
+def test_start_installs_selected_sdk_without_rewriting_legacy_manifest(tmp_path, monkeypatch):
     import json as _json
 
     subprocess = _start_workspace(tmp_path, monkeypatch)
     app_dir = tmp_path / "apps" / "dash"
-    (app_dir / "node_modules").mkdir(parents=True)
+    (app_dir / "node_modules" / "bifrost").mkdir(parents=True)
     (app_dir / "package.json").write_text(_json.dumps({
         "dependencies": {"bifrost": "http://localhost:39999/api/sdk/download"},
     }))
@@ -1104,73 +1167,34 @@ def test_start_reinstalls_after_healing_even_with_node_modules(tmp_path, monkeyp
 
     result = CliRunner().invoke(solution_group, ["start"])
     assert result.exit_code == 0, result.output
-    assert any("install" in argv for argv in spawned), spawned
-    healed = _json.loads((app_dir / "package.json").read_text())
-    assert healed["dependencies"]["bifrost"] == "http://localhost:8000/api/sdk/download"
+    install = next(argv for argv in spawned if "install" in argv)
+    assert "--no-save" in install
+    assert "--package-lock=false" in install
+    assert "bifrost@http://localhost:8000/api/sdk/download" in install
+    unchanged = _json.loads((app_dir / "package.json").read_text())
+    assert unchanged["dependencies"]["bifrost"] == "http://localhost:39999/api/sdk/download"
 
 
-def test_heal_sdk_dep_preserves_user_formatting_and_unicode(tmp_path):
-    """The manifest is the USER'S file: healing one dep must not reformat it
-    or escape their non-ASCII content (review finding on the json re-dump)."""
-    from bifrost.commands.solution import _heal_sdk_dep
-
-    pkg = tmp_path / "package.json"
-    pkg.write_text(
-        '{\n'
-        '    "name": "app",\n'
-        '    "author": "Jos\u00e9 \U0001f389",\n'
-        '    "dependencies": {\n'
-        '        "bifrost": "http://localhost:39999/api/sdk/download"\n'
-        '    }\n'
-        '}\n',
-        encoding="utf-8",
-    )
-
-    assert _heal_sdk_dep(tmp_path, "http://localhost:30399") is not None
-    text = pkg.read_text(encoding="utf-8")
-    assert '    "name": "app",' in text          # 4-space indent survives
-    assert "Jos\u00e9 \U0001f389" in text            # unicode NOT escaped
-    assert "http://localhost:30399/api/sdk/download" in text
-
-
-def test_heal_sdk_dep_reads_bom_prefixed_manifests(tmp_path):
-    """Windows editors BOM-prefix package.json; npm tolerates it, so must we
-    — silently skipping the heal leaves the exact #464 symptom unfixed."""
+def test_legacy_sdk_url_reads_bom_prefixed_manifests(tmp_path):
     import json as _json
 
-    from bifrost.commands.solution import _heal_sdk_dep
+    from bifrost.commands.solution import _legacy_sdk_url_for_other_instance
 
     pkg = tmp_path / "package.json"
     body = _json.dumps({"dependencies": {"bifrost": "http://localhost:39999/api/sdk/download"}})
     pkg.write_bytes(b"\xef\xbb\xbf" + body.encode("utf-8"))
 
-    assert _heal_sdk_dep(tmp_path, "http://localhost:30399") is not None
-    assert "30399" in pkg.read_text(encoding="utf-8-sig")
+    assert _legacy_sdk_url_for_other_instance(
+        tmp_path, "http://localhost:30399"
+    ) == "http://localhost:39999/api/sdk/download"
 
 
-def test_restore_sdk_dep_reverts_a_heal(tmp_path):
-    import json as _json
-
-    from bifrost.commands.solution import _heal_sdk_dep, _restore_sdk_dep
-
-    pkg = tmp_path / "package.json"
-    pkg.write_text(_json.dumps({"dependencies": {"bifrost": "http://localhost:39999/api/sdk/download"}}))
-    original = _heal_sdk_dep(tmp_path, "http://localhost:30399")
-    assert original is not None
-
-    _restore_sdk_dep(tmp_path, "http://localhost:30399", original)
-    assert _json.loads(pkg.read_text())["dependencies"]["bifrost"] == original
-
-
-def test_start_failed_reinstall_after_heal_reverts_and_continues(tmp_path, monkeypatch):
-    """Install failure after a heal must (a) restore the original spec so the
-    NEXT start retries heal+reinstall, and (b) keep a previously-working
-    node_modules usable (offline starts worked before the heal existed)."""
+def test_start_failed_transient_sdk_install_keeps_working_modules(tmp_path, monkeypatch):
     import json as _json
 
     subprocess = _start_workspace(tmp_path, monkeypatch)
     app_dir = tmp_path / "apps" / "dash"
-    (app_dir / "node_modules").mkdir(parents=True)
+    (app_dir / "node_modules" / "bifrost").mkdir(parents=True)
     (app_dir / "package.json").write_text(_json.dumps({
         "dependencies": {"bifrost": "http://localhost:39999/api/sdk/download"},
     }))
@@ -1196,8 +1220,8 @@ def test_start_failed_reinstall_after_heal_reverts_and_continues(tmp_path, monke
     result = CliRunner().invoke(solution_group, ["start"])
     assert result.exit_code == 0, result.output  # continues with old modules
     assert "may be stale" in result.output
-    reverted = _json.loads((app_dir / "package.json").read_text())
-    assert reverted["dependencies"]["bifrost"] == "http://localhost:39999/api/sdk/download"
+    unchanged = _json.loads((app_dir / "package.json").read_text())
+    assert unchanged["dependencies"]["bifrost"] == "http://localhost:39999/api/sdk/download"
 
 
 def test_start_port_conflict_is_reported_before_any_npm_work(tmp_path, monkeypatch):

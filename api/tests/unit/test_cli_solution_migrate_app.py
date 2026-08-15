@@ -55,8 +55,7 @@ def _run(tmp: pathlib.Path, source: pathlib.Path):
             os.chdir(tmp)
             return runner.invoke(
                 solution_group,
-                ["migrate-app", str(source), "csp-v2", "--title", "CSP",
-                 "--api-url", "http://x"],
+                ["migrate-app", str(source), "csp-v2", "--title", "CSP"],
             )
 
 

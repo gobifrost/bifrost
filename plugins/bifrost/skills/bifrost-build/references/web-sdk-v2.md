@@ -2,6 +2,16 @@
 
 The instance-served `bifrost` package is the runtime SDK for `standalone_v2` Solution apps. Use `../generated/web-sdk-surface.md` for the exact export/type surface. Read `apps-v2.md` for project structure and `app-quality.md` for UI completion.
 
+## Keeping an existing app current
+
+The web SDK is vendored into each app. A platform deployment does not update an existing app's installed SDK automatically. When a reported behavior is fixed in the web SDK, or an app predates the SDK behavior it now relies on, refresh that app before rebuilding it:
+
+```bash
+bifrost solution sdk update [PATH] --app <app-slug>
+```
+
+Omit `--app` for a single-app Solution. This command downloads the SDK from the connected Bifrost instance and reinstalls the vendored package; do not hand-edit the generated SDK files. After updating, run the app's typecheck, tests, and production build, then redeploy it. API-only execution fixes and host-shell asset fixes do not require an app SDK update.
+
 ## Provider and context
 
 Keep the scaffolded `BifrostProvider` wiring in `src/main.tsx`. The host supplies the API URL, viewer token, org scope, app ID, theme, logout handler, and mount basename.

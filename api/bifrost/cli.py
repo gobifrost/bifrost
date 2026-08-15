@@ -36,6 +36,7 @@ if TYPE_CHECKING:
 from uuid import uuid4
 
 import httpx
+from packaging.version import InvalidVersion, Version
 
 # Import credentials module directly (it's standalone)
 import bifrost.credentials as credentials
@@ -199,24 +200,22 @@ def _warn(message: str) -> None:
 
 
 def _check_cli_version() -> None:
-    """Gate the command against the deployed server. Two independent gates:
+    """Gate commands using the server's minimum supported CLI version.
 
-    1. **Contract (HARD).** The server reports ``contract_version`` at
-       ``GET /api/version``. If it differs from the CLI's baked
-       ``CONTRACT_VERSION``, the CLI is contract-incompatible → ``sys.exit(1)``
-       with the upgrade message, for every command. ``CONTRACT_VERSION`` is
-       bumped only on breaking changes to the contract surface the CLI consumes
-       (enforced by ``tests/unit/test_contract_version.py``), so an unrelated
-       server release no longer force-reinstalls every CLI.
+    1. **Minimum CLI version (HARD).** The server reports ``min_cli_version``.
+       An older CLI exits with upgrade instructions even when its wire contract
+       still matches. An exact server/CLI development build is allowed so the
+       stable release floor does not block matching pre-release builds.
 
-    2. **Build drift (SOFT).** ``contract_version`` matches but the build
+    2. **Build drift (SOFT).** The hard gate passes but the build
        ``version`` differs → a one-line stderr notice, deduped per (url,
        version). Never blocks.
 
-    **Old server** (response lacks ``contract_version``): we can't verify the
-    contract. Rather than hard-block on build-version equality — a rollout
-    footgun, since a fresh CLI almost always differs from a not-yet-upgraded
-    server — we emit a soft warning and continue.
+    ``contract_version`` remains in the response only as a one-release bridge:
+    CLIs shipped while minimum gating was absent hard-block on the bridge value
+    and upgrade into this policy. New CLIs deliberately do not use it as a
+    second runtime compatibility system. The API fingerprint tripwire in CI is
+    what tells developers when ``MIN_CLI_VERSION`` needs to advance.
 
     **Un-reachable verdict** (network/parse error, missing ``version``): emit a
     visible warning instead of silently skipping, so a stale CLI proceeding
@@ -225,8 +224,6 @@ def _check_cli_version() -> None:
     import httpx
 
     from bifrost import __version__
-    from bifrost.contract_version import CONTRACT_VERSION
-
     installed = __version__.lstrip("v")
     if installed in ("unknown", "0.0.0+source"):
         return  # dev/source install — nothing to compare against
@@ -263,33 +260,36 @@ def _check_cli_version() -> None:
         return
 
     server_version = (data.get("version") or "").lstrip("v")
-    server_contract = data.get("contract_version")
+    min_cli_version = (data.get("min_cli_version") or "").lstrip("v")
 
-    # Gate 1 — contract (HARD). Only when the server actually reports one.
-    if server_contract is not None:
-        if server_contract != CONTRACT_VERSION:
-            _warn(
-                f"Your CLI is incompatible with this server "
-                f"(CLI contract v{CONTRACT_VERSION}, server contract "
-                f"v{server_contract}). You must upgrade:\n"
-                f"  pipx install --force {api_url}/api/cli/download/bifrost-cli.tar.gz"
+    # Gate 1 — minimum supported CLI (HARD). An exact matching pre-release
+    # build remains usable while its future stable floor is staged; a stable
+    # build below the floor is blocked even if the server reports that build.
+    if min_cli_version:
+        try:
+            installed_version = Version(installed)
+            below_minimum = installed_version < Version(min_cli_version)
+            matching_development_build = installed == server_version and (
+                installed_version.is_prerelease or installed_version.is_devrelease
             )
-            sys.exit(1)
-        # Gate 2 — build drift (SOFT, deduped). Contract is fine; just nudge.
-        if server_version and server_version != installed:
-            from bifrost import _version_notice
-
-            if _version_notice.should_notify(api_url, server_version):
+        except InvalidVersion:
+            _warn(
+                f"Could not compare CLI version {installed!r} with the server's "
+                f"minimum {min_cli_version!r}. Continuing because the server "
+                "did not establish that this CLI is unsupported."
+            )
+        else:
+            if below_minimum and not matching_development_build:
                 _warn(
-                    f"A newer Bifrost CLI is available "
-                    f"({installed} → {server_version}); your current CLI is still "
-                    f"compatible. Update when convenient:\n"
-                    f"  pipx install --force {api_url}/api/cli/download/bifrost-cli.tar.gz"
+                    f"Your Bifrost CLI {installed} is below this server's "
+                    f"minimum supported version {min_cli_version}. You must "
+                    f"upgrade:\n  pipx install --force "
+                    f"{api_url}/api/cli/download/bifrost-cli.tar.gz"
                 )
-                _version_notice.mark_notified(api_url, server_version)
-        return
+                sys.exit(1)
 
-    # Old server: no contract_version to compare against.
+    # Gate 2 — build drift (SOFT, deduped). The server did not place this CLI
+    # below its support floor; a different build is only an update notice.
     if not server_version:
         _warn(
             f"Could not verify CLI compatibility with {api_url} "
@@ -297,11 +297,17 @@ def _check_cli_version() -> None:
         )
         return
     if server_version != installed:
-        _warn(
-            f"Could not verify contract compatibility — {api_url} predates "
-            f"contract versioning (CLI {installed}, server {server_version}). "
-            f"Continuing; consider upgrading the server."
-        )
+        from bifrost import _version_notice
+
+        if _version_notice.should_notify(api_url, server_version):
+            _warn(
+                f"A newer Bifrost CLI is available "
+                f"({installed} → {server_version}); your current CLI is still "
+                f"compatible. Update when convenient:\n"
+                f"  pipx install --force "
+                f"{api_url}/api/cli/download/bifrost-cli.tar.gz"
+            )
+            _version_notice.mark_notified(api_url, server_version)
 
 
 async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool:

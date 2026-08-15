@@ -15,6 +15,7 @@ import { EditorOverlay } from "@/components/editor/EditorOverlay";
 import { UnifiedDock } from "@/components/layout/UnifiedDock";
 import { QuickAccess } from "@/components/quick-access/QuickAccess";
 import { PageLoader } from "@/components/PageLoader";
+import { ApplicationUpdateGate } from "@/components/ApplicationUpdateScreen";
 import { RouteTransitionProgress } from "@/components/layout/RouteTransitionProgress";
 import { useEditorStore } from "@/stores/editorStore";
 import { useQuickAccessStore } from "@/stores/quickAccessStore";
@@ -792,18 +793,20 @@ function AppRoutes() {
 
 function App() {
 	return (
-		<ErrorBoundary>
-			<BrowserRouter>
-				<RouteTransitionProgress />
-				<AuthProvider>
-					<OrgScopeProvider>
-						<KeyboardProvider>
-							<AppRoutes />
-						</KeyboardProvider>
-					</OrgScopeProvider>
-				</AuthProvider>
-			</BrowserRouter>
-		</ErrorBoundary>
+		<ApplicationUpdateGate>
+			<ErrorBoundary>
+				<BrowserRouter>
+					<RouteTransitionProgress />
+					<AuthProvider>
+						<OrgScopeProvider>
+							<KeyboardProvider>
+								<AppRoutes />
+							</KeyboardProvider>
+						</OrgScopeProvider>
+					</AuthProvider>
+				</BrowserRouter>
+			</ErrorBoundary>
+		</ApplicationUpdateGate>
 	);
 }
 

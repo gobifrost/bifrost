@@ -1273,8 +1273,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List all organizations
-         * @description Get all organizations (Platform admin only)
+         * List organizations
+         * @description Get active organizations, optionally including inactive ones (Platform admin only)
          */
         get: operations["list_organizations_api_organizations_get"];
         put?: never;
@@ -4725,7 +4725,7 @@ export interface paths {
         };
         /**
          * Download the bifrost web SDK package
-         * @description Serve the `bifrost` web SDK as an npm-installable tarball. A standalone_v2 app declares `"bifrost": "<instance>/api/sdk/download"` and resolves it identically on a dev laptop (`npm run dev`) and in the platform's server-side build.
+         * @description Serve the `bifrost` web SDK as an npm-installable tarball. The Solution CLI installs it transiently from the selected instance for local development; the platform vendors its local SDK into server-side builds.
          */
         get: operations["download_sdk_api_sdk_download_get"];
         put?: never;
@@ -24848,6 +24848,8 @@ export interface components {
         VersionResponse: {
             /** Version */
             version: string;
+            /** Min Cli Version */
+            min_cli_version: string;
             /** Contract Version */
             contract_version: number;
             /** Sdk Fingerprint */
@@ -27322,7 +27324,10 @@ export interface operations {
     };
     list_organizations_api_organizations_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Include inactive (disabled) organizations */
+                include_inactive?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -27336,6 +27341,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrganizationPublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
