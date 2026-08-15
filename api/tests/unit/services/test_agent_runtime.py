@@ -129,6 +129,26 @@ def test_budget_is_enforced_before_requests_and_warns_before_hard_stop() -> None
     assert warner.warning_threshold == 0.7
 
 
+def test_unconfigured_budget_disables_run_limits_but_keeps_context_governance() -> None:
+    budget = AgentRunBudget()
+
+    limits = budget.usage_limits()
+    capabilities = build_runtime_capabilities(budget)
+
+    assert limits.request_limit is None
+    assert limits.total_tokens_limit is None
+    assert limits.count_tokens_before_request is False
+    assert not budget.should_wind_down(
+        RunUsage(requests=1_000, input_tokens=1_000_000)
+    )
+    assert any(isinstance(item, OverflowingToolOutput) for item in capabilities)
+    assert any(isinstance(item, TieredCompaction) for item in capabilities)
+    warner = next(item for item in capabilities if isinstance(item, LimitWarner))
+    assert warner.max_iterations is None
+    assert warner.max_total_tokens is None
+    assert warner.max_context_tokens == budget.context_target_tokens
+
+
 @pytest.mark.asyncio
 async def test_total_token_ceiling_rejects_the_next_request_before_provider_call() -> None:
     model = GuardedTestModel(custom_output_text="must not be called")
@@ -184,6 +204,38 @@ def test_delegated_subtree_shares_parent_ledger_and_keeps_local_cap() -> None:
     assert child.max_total_tokens == 85_000
     assert constrained_child.max_requests == 20
     assert constrained_child.max_total_tokens == 100_000
+
+
+def test_delegated_subtree_preserves_optional_parent_and_child_limits() -> None:
+    unbounded_parent = AgentRunBudget()
+    unbounded_child = unbounded_parent.child_subtree(
+        current_requests=7,
+        current_total_tokens=60_000,
+        child_max_requests=None,
+        child_max_total_tokens=None,
+    )
+    locally_bounded_child = unbounded_parent.child_subtree(
+        current_requests=7,
+        current_total_tokens=60_000,
+        child_max_requests=5,
+        child_max_total_tokens=25_000,
+    )
+    bounded_parent_child = AgentRunBudget(
+        max_requests=20,
+        max_total_tokens=100_000,
+    ).child_subtree(
+        current_requests=7,
+        current_total_tokens=60_000,
+        child_max_requests=None,
+        child_max_total_tokens=None,
+    )
+
+    assert unbounded_child.max_requests is None
+    assert unbounded_child.max_total_tokens is None
+    assert locally_bounded_child.max_requests == 12
+    assert locally_bounded_child.max_total_tokens == 85_000
+    assert bounded_parent_child.max_requests == 20
+    assert bounded_parent_child.max_total_tokens == 100_000
 
 
 def test_legacy_llm_contract_uses_pydantic_for_all_providers_and_preserves_tools() -> None:

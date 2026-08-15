@@ -37,11 +37,8 @@ async def test_index_agent_raises_on_missing_system_prompt(db_session):
 #
 # On re-import the on-conflict-update OMITS the limit keys when the manifest
 # lacks them (symmetric with the insert branch) rather than coalescing an
-# absent value to 50/100000. NOTE: a genuine NULL is not reachable through the
-# ORM create/update paths (the column's python-side default=50 fires on a None
-# insert), so the NULL-preservation case can't be set up via the ORM
-# constructor — the symmetric-omit fix is defensive (raw-SQL / future
-# server_default) and is verified by review + the present-value round trip here.
+# absent value to a platform default. Limits are optional, so a missing value
+# remains NULL and the runtime leaves that dimension unbounded.
 # ---------------------------------------------------------------------------
 
 
@@ -67,3 +64,19 @@ async def test_index_agent_persists_limits_when_present(db_session):
     assert agent is not None
     assert agent.max_iterations == 7
     assert agent.max_token_budget == 8888
+
+
+@pytest.mark.asyncio
+async def test_index_agent_without_limits_remains_unbounded(db_session):
+    aid = "33333333-3333-3333-3333-333333333333"
+    indexer = AgentIndexer(db_session)
+
+    await indexer.index_agent(
+        "agents/unbounded.agent.yaml",
+        _yaml(id=aid, name="Unbounded", system_prompt="p"),
+    )
+
+    agent = await _get_agent(db_session, aid)
+    assert agent is not None
+    assert agent.max_iterations is None
+    assert agent.max_token_budget is None

@@ -109,9 +109,6 @@ def _serialize_tool_result_for_history(tool_result: ToolResult) -> str:
     return _serialize_for_json(tool_result.result)
 
 
-# Maximum tool call iterations to prevent infinite loops
-MAX_TOOL_ITERATIONS = 10
-
 # Fallback system prompt (used if no config set)
 FALLBACK_SYSTEM_PROMPT = """You are a helpful AI assistant. You can help users with a variety of tasks including answering questions, providing information, and having general conversations.
 
@@ -377,15 +374,9 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
             model_override = agent.llm_model if agent else None
             max_tokens_override = agent.llm_max_tokens if agent else None
             model_name = model_override or llm_client.model_name
-            max_requests = min(
-                agent.max_iterations or MAX_TOOL_ITERATIONS
-                if agent
-                else MAX_TOOL_ITERATIONS,
-                MAX_TOOL_ITERATIONS,
-            )
             budget = AgentRunBudget(
-                max_requests=max_requests,
-                max_total_tokens=(agent.max_token_budget or 100_000) if agent else 100_000,
+                max_requests=agent.max_iterations if agent else None,
+                max_total_tokens=agent.max_token_budget if agent else None,
             )
             usage = RunUsage()
             self._active_usage = usage

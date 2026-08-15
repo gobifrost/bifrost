@@ -109,8 +109,8 @@ Agents are AI-powered assistants with access to workflows as tools, knowledge ba
 - `delegated_agent_ids`: Other agent UUIDs it can delegate to
 - `knowledge_sources`: Knowledge namespace names for RAG search
 - `system_tools`: Built-in tools (`http`, etc.)
-- `max_iterations`: Max LLM iterations for autonomous runs (default 50)
-- `max_token_budget`: Max token budget for autonomous runs (default 100000)
+- `max_iterations`: Optional maximum LLM requests for a run (unset means no request limit)
+- `max_token_budget`: Optional cumulative token budget for a run (unset means no token limit)
 - Scope: `organization_id=None` for global (all orgs) or `organization_id=UUID` for org-scoped
 
 ### Autonomous Agent Runs

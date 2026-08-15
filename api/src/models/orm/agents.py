@@ -71,8 +71,8 @@ class Agent(Base):
     # LLM configuration overrides (null = use global config)
     llm_model: Mapped[str | None] = mapped_column(String(100), default=None)
     llm_max_tokens: Mapped[int | None] = mapped_column(Integer, default=None)
-    max_iterations: Mapped[int | None] = mapped_column(Integer, default=50)
-    max_token_budget: Mapped[int | None] = mapped_column(Integer, default=100000)
+    max_iterations: Mapped[int | None] = mapped_column(Integer, default=None)
+    max_token_budget: Mapped[int | None] = mapped_column(Integer, default=None)
     max_run_timeout: Mapped[int | None] = mapped_column(Integer, default=None)
     created_by: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(

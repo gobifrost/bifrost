@@ -39,15 +39,15 @@ MIN_WIND_DOWN_FRACTION = 0.4
 class AgentRunBudget:
     """One shared budget expressed in the units Pydantic AI actually enforces."""
 
-    max_requests: int
-    max_total_tokens: int
+    max_requests: int | None = None
+    max_total_tokens: int | None = None
     context_target_tokens: int = DEFAULT_CONTEXT_TARGET_TOKENS
     warning_threshold: float = 0.7
     initial_requests: int = 0
     initial_total_tokens: int = 0
 
     @property
-    def wind_down_total_tokens(self) -> int:
+    def wind_down_total_tokens(self) -> int | None:
         """Absolute cumulative usage at which finalization must begin.
 
         A percentage-only warning can arrive too late when one request consumes
@@ -57,6 +57,9 @@ class AgentRunBudget:
         which they started, so inherited parent spend cannot wind them down
         immediately.
         """
+
+        if self.max_total_tokens is None:
+            return None
 
         allowance = max(1, self.max_total_tokens - self.initial_total_tokens)
         desired_reserve = self.context_target_tokens + FINAL_RESPONSE_RESERVE_TOKENS
@@ -72,19 +75,27 @@ class AgentRunBudget:
     def wind_down_warning_threshold(self) -> float:
         """LimitWarner threshold aligned with the absolute finalization boundary."""
 
+        if self.max_total_tokens is None:
+            return self.warning_threshold
+        wind_down_total_tokens = self.wind_down_total_tokens
+        assert wind_down_total_tokens is not None
         return max(
             1 / self.max_total_tokens,
-            self.wind_down_total_tokens / self.max_total_tokens,
+            wind_down_total_tokens / self.max_total_tokens,
         )
 
     def should_wind_down(self, usage: RunUsage) -> bool:
         """Return true while the next request must be reserved for a handoff."""
 
-        request_boundary = self.max_requests
-        return (
-            usage.requests >= request_boundary
-            or usage.total_tokens >= self.wind_down_total_tokens
+        request_limit_reached = (
+            self.max_requests is not None and usage.requests >= self.max_requests
         )
+        wind_down_total_tokens = self.wind_down_total_tokens
+        token_limit_reached = (
+            wind_down_total_tokens is not None
+            and usage.total_tokens >= wind_down_total_tokens
+        )
+        return request_limit_reached or token_limit_reached
 
     def usage_limits(self) -> UsageLimits:
         """Return pre-request-enforced limits for the full agentic loop."""
@@ -92,7 +103,7 @@ class AgentRunBudget:
         return UsageLimits(
             request_limit=self.max_requests,
             total_tokens_limit=self.max_total_tokens,
-            count_tokens_before_request=True,
+            count_tokens_before_request=self.max_total_tokens is not None,
         )
 
     def child_subtree(
@@ -100,8 +111,8 @@ class AgentRunBudget:
         *,
         current_requests: int,
         current_total_tokens: int,
-        child_max_requests: int,
-        child_max_total_tokens: int,
+        child_max_requests: int | None,
+        child_max_total_tokens: int | None,
     ) -> "AgentRunBudget":
         """Bound a delegated subtree by both child and inherited ceilings.
 
@@ -111,14 +122,32 @@ class AgentRunBudget:
         run's remaining budget.
         """
 
+        def subtree_ceiling(
+            inherited_ceiling: int | None,
+            current_usage: int,
+            child_allowance: int | None,
+        ) -> int | None:
+            child_ceiling = (
+                current_usage + child_allowance
+                if child_allowance is not None
+                else None
+            )
+            if inherited_ceiling is None:
+                return child_ceiling
+            if child_ceiling is None:
+                return inherited_ceiling
+            return min(inherited_ceiling, child_ceiling)
+
         return AgentRunBudget(
-            max_requests=min(
+            max_requests=subtree_ceiling(
                 self.max_requests,
-                current_requests + child_max_requests,
+                current_requests,
+                child_max_requests,
             ),
-            max_total_tokens=min(
+            max_total_tokens=subtree_ceiling(
                 self.max_total_tokens,
-                current_total_tokens + child_max_total_tokens,
+                current_total_tokens,
+                child_max_total_tokens,
             ),
             context_target_tokens=self.context_target_tokens,
             warning_threshold=self.warning_threshold,

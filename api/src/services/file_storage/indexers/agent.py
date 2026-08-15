@@ -125,10 +125,9 @@ class AgentIndexer:
             llm_model=agent_data.get("llm_model"),
             llm_max_tokens=agent_data.get("llm_max_tokens"),
             # Autonomous-run limits are portable agent CONTENT (ManifestAgent
-            # fields). Without persisting them here the indexer would reset them
-            # to the column defaults (50 / 100000) on every git-sync import — a
-            # silent drop the round-trip harness surfaced. Omit when absent so
-            # the column default still applies to agents that never set them.
+            # fields). Persist configured values, but omit absent values so a
+            # new agent remains unbounded and an existing agent keeps its
+            # environment's current limit.
             **(
                 {"max_iterations": agent_data["max_iterations"]}
                 if agent_data.get("max_iterations") is not None
@@ -155,10 +154,8 @@ class AgentIndexer:
                 "llm_max_tokens": agent_data.get("llm_max_tokens"),
                 # Limits are portable content; persist them on update too, but
                 # ONLY when the manifest carries them (same omit-when-absent rule
-                # as the insert branch) — coalescing an absent value to the
-                # default would rewrite a previously-NULL agent's limit to 50/
-                # 100000 on the first sync, a silent state mutation. Omitting the
-                # key leaves the existing column value untouched.
+                # as the insert branch). Omitting the key leaves the existing
+                # column value untouched.
                 **(
                     {"max_iterations": agent_data["max_iterations"]}
                     if agent_data.get("max_iterations") is not None

@@ -1192,7 +1192,7 @@ export function AgentSettingsTab({
 										<FormControl>
 											<Input
 												type="number"
-												placeholder="50"
+												placeholder="No limit"
 												value={field.value ?? ""}
 												onChange={(e) =>
 													field.onChange(
@@ -1203,7 +1203,9 @@ export function AgentSettingsTab({
 												}
 											/>
 										</FormControl>
-										<FormDescription>LLM round-trips (1–200).</FormDescription>
+										<FormDescription>
+											Optional LLM request limit (1–200).
+										</FormDescription>
 										<FormMessage />
 									</FormItem>
 								)}
@@ -1217,7 +1219,7 @@ export function AgentSettingsTab({
 										<FormControl>
 											<Input
 												type="number"
-												placeholder="100000"
+												placeholder="No limit"
 												value={field.value ?? ""}
 												onChange={(e) =>
 													field.onChange(
@@ -1228,7 +1230,9 @@ export function AgentSettingsTab({
 												}
 											/>
 										</FormControl>
-										<FormDescription>Total tokens (1k–1M).</FormDescription>
+										<FormDescription>
+											Optional cumulative limit (1k–1M tokens).
+										</FormDescription>
 										<FormMessage />
 									</FormItem>
 								)}

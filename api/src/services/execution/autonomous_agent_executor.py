@@ -65,7 +65,6 @@ from src.services.mcp_client.errors import (
 
 logger = logging.getLogger(__name__)
 
-MAX_ITERATIONS = 50  # Hard ceiling
 MAX_DELEGATION_DEPTH = 5  # Prevent infinite delegation chains
 DELEGATION_TIMEOUT_SECONDS = 600  # 10 minutes per delegation
 
@@ -200,8 +199,8 @@ class AutonomousAgentExecutor:
             }
 
         step_number = 0
-        configured_iterations = min(agent.max_iterations or 50, MAX_ITERATIONS)
-        configured_tokens = agent.max_token_budget or 100000
+        configured_iterations = agent.max_iterations
+        configured_tokens = agent.max_token_budget
         usage = _shared_usage or RunUsage()
         usage_start_requests = usage.requests
         usage_start_tokens = usage.total_tokens
