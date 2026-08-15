@@ -223,6 +223,8 @@ async def test_non_interruptible_handler_rejects_running_cancel(
     job = await _enqueue(db_session)
     job.status = "running"
     job.lease_token = uuid4()
+    job.lease_owner = "scheduler-a"
+    job.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=1)
     await db_session.commit()
     job, accepted = await service.request_platform_job_cancel(db_session, job)
     assert accepted is False
@@ -290,6 +292,8 @@ async def test_stale_runner_cannot_defer_job(
     job = await _enqueue(db_session)
     job.status = "running"
     job.lease_token = uuid4()
+    job.lease_owner = "scheduler-a"
+    job.lease_expires_at = datetime.now(timezone.utc) + timedelta(minutes=1)
     await db_session.commit()
 
     @asynccontextmanager
