@@ -135,6 +135,7 @@ async def test_tuning_uses_override_when_set(db_session, llm_config_cleanup):
 async def test_provider_always_comes_from_default_config(db_session, llm_config_cleanup):
     """Override only affects model name, not provider or API key."""
     from src.services.execution.model_selection import get_summarization_client
+    from src.services.llm.pydantic_client import PydanticAIClient
 
     await _seed_llm_config(
         db_session,
@@ -142,6 +143,9 @@ async def test_provider_always_comes_from_default_config(db_session, llm_config_
         model="claude-sonnet-4-6",
         summarization_model="claude-haiku-4-5",
     )
-    client, _ = await get_summarization_client(db_session)
-    cls_name = type(client).__name__
-    assert "Anthropic" in cls_name, f"expected Anthropic client, got {cls_name}"
+    client, resolved = await get_summarization_client(db_session)
+    assert isinstance(client, PydanticAIClient)
+    assert client.provider_name == "anthropic"
+    assert client.config.api_key == "test-key"
+    assert client.model_name == "claude-sonnet-4-6"
+    assert resolved == "claude-haiku-4-5"
