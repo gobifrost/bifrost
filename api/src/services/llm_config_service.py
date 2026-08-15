@@ -19,6 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config import get_settings
 from src.core.log_safety import log_safe
 from src.models.orm import SystemConfig
+from src.models.contracts.artifacts import ModelCapabilities
+from src.services.model_capabilities import model_fingerprint, normalize_capabilities
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,9 @@ class LLMProviderConfig:
     chat_balanced_model: str | None = None
     chat_pro_label: str = "Pro"
     chat_pro_model: str | None = None
+    chat_fast_capabilities: ModelCapabilities | None = None
+    chat_balanced_capabilities: ModelCapabilities | None = None
+    chat_pro_capabilities: ModelCapabilities | None = None
     is_configured: bool = False
     api_key_set: bool = False  # Indicates if API key is configured (never return actual key)
 
@@ -60,6 +65,22 @@ class LLMProviderConfig:
         if not model:
             raise ValueError(f"The {tier} Chat model tier is not enabled.")
         return model
+
+    def resolve_chat_capabilities(
+        self, tier: Literal["fast", "balanced", "pro"]
+    ) -> ModelCapabilities:
+        model = self.resolve_chat_model(tier)
+        capabilities = {
+            "fast": self.chat_fast_capabilities,
+            "balanced": self.chat_balanced_capabilities,
+            "pro": self.chat_pro_capabilities,
+        }[tier]
+        return normalize_capabilities(
+            capabilities,
+            provider=self.provider,
+            model=model,
+            endpoint=self.endpoint,
+        )
 
 
 @dataclass
@@ -128,6 +149,10 @@ class LLMConfigService:
         if provider == "custom":
             provider = "openai"
 
+        def stored_capabilities(key: str) -> ModelCapabilities | None:
+            value = config_data.get(key)
+            return ModelCapabilities.model_validate(value) if value else None
+
         return LLMProviderConfig(
             provider=provider,
             model=config_data.get("model", ""),
@@ -142,6 +167,9 @@ class LLMConfigService:
             chat_balanced_model=config_data.get("chat_balanced_model"),
             chat_pro_label=config_data.get("chat_pro_label", "Pro"),
             chat_pro_model=config_data.get("chat_pro_model"),
+            chat_fast_capabilities=stored_capabilities("chat_fast_capabilities"),
+            chat_balanced_capabilities=stored_capabilities("chat_balanced_capabilities"),
+            chat_pro_capabilities=stored_capabilities("chat_pro_capabilities"),
             is_configured=True,
             api_key_set=bool(config_data.get("encrypted_api_key")),
         )
@@ -162,6 +190,9 @@ class LLMConfigService:
         chat_balanced_model: str | None = None,
         chat_pro_label: str = "Pro",
         chat_pro_model: str | None = None,
+        chat_fast_capabilities: ModelCapabilities | None = None,
+        chat_balanced_capabilities: ModelCapabilities | None = None,
+        chat_pro_capabilities: ModelCapabilities | None = None,
         updated_by: str = "system",
     ) -> None:
         """
@@ -200,6 +231,36 @@ class LLMConfigService:
         else:
             raise ValueError("API key is required for initial configuration")
 
+        def prepare_capabilities(
+            capabilities: ModelCapabilities | None, selected_model: str | None
+        ) -> ModelCapabilities | None:
+            if not selected_model or capabilities is None:
+                return None
+            fingerprint = model_fingerprint(
+                provider=provider,
+                model=selected_model,
+                endpoint=endpoint,
+            )
+            if capabilities.source == "manual":
+                return capabilities.model_copy(
+                    update={
+                        "fingerprint": fingerprint,
+                        "checked_at": capabilities.checked_at or datetime.now(timezone.utc),
+                    }
+                )
+            return normalize_capabilities(
+                capabilities,
+                provider=provider,
+                model=selected_model,
+                endpoint=endpoint,
+            )
+
+        prepared_fast = prepare_capabilities(chat_fast_capabilities, chat_fast_model)
+        prepared_balanced = prepare_capabilities(
+            chat_balanced_capabilities, chat_balanced_model or model
+        )
+        prepared_pro = prepare_capabilities(chat_pro_capabilities, chat_pro_model)
+
         config_data = {
             "provider": provider,
             "model": model,
@@ -215,6 +276,21 @@ class LLMConfigService:
             "chat_balanced_model": chat_balanced_model,
             "chat_pro_label": chat_pro_label,
             "chat_pro_model": chat_pro_model,
+            "chat_fast_capabilities": (
+                prepared_fast.model_dump(mode="json")
+                if prepared_fast
+                else None
+            ),
+            "chat_balanced_capabilities": (
+                prepared_balanced.model_dump(mode="json")
+                if prepared_balanced
+                else None
+            ),
+            "chat_pro_capabilities": (
+                prepared_pro.model_dump(mode="json")
+                if prepared_pro
+                else None
+            ),
         }
 
         if existing:

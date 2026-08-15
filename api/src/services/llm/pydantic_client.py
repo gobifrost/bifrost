@@ -60,6 +60,7 @@ class PydanticAIClient(BaseLLMClient):
         *,
         max_tokens: int | None = None,
         model: str | None = None,
+        require_tool_call: bool = False,
     ) -> LLMResponse:
         # Consume the provider's streaming transport and return one assembled
         # response. Anthropic rejects high-output non-streaming requests that
@@ -69,7 +70,9 @@ class PydanticAIClient(BaseLLMClient):
             create_agent_model(self.config, model=model),
             self.convert_messages(messages),
             model_settings=self._model_settings(max_tokens),
-            model_request_parameters=self._request_parameters(tools),
+            model_request_parameters=self._request_parameters(
+                tools, require_tool_call=require_tool_call
+            ),
         ) as stream:
             async for _ in stream:
                 pass
@@ -128,6 +131,8 @@ class PydanticAIClient(BaseLLMClient):
     @staticmethod
     def _request_parameters(
         tools: list[ToolDefinition] | None,
+        *,
+        require_tool_call: bool = False,
     ) -> ModelRequestParameters:
         return ModelRequestParameters(
             function_tools=[
@@ -138,7 +143,8 @@ class PydanticAIClient(BaseLLMClient):
                     sequential=True,
                 )
                 for tool in tools or []
-            ]
+            ],
+            allow_text_output=not require_tool_call,
         )
 
     @staticmethod

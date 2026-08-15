@@ -79,6 +79,9 @@ dependencies = [
     "defusedxml>=0.7.1",  # Safe XML/SVG parsing — strips scripts/event-handlers from uploads
     "Pillow",  # Decode, resize, and encode bounded entity-logo thumbnails
     "CairoSVG",  # Rasterize sanitized SVG logos before thumbnail encoding
+    "reportlab>=4.4.0",  # Typed PDF artifacts through Platypus flow layout
+    "python-docx>=1.2.0",  # Typed DOCX artifacts
+    "openpyxl>=3.1.5",  # Typed XLSX artifacts
 
     # =========================================================================
     # Code Transformation

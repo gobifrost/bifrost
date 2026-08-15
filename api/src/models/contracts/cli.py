@@ -368,6 +368,14 @@ class SDKIntegrationsRefreshTokenResponse(BaseModel):
 # ==================== SDK AI MODELS ====================
 
 
+class CLIAIInputFile(BaseModel):
+    """Base64 binary input for an SDK AI request."""
+
+    filename: str
+    content_type: str
+    data_base64: str
+
+
 class CLIAICompleteRequest(BaseModel):
     """Request for AI completion via CLI."""
     messages: list[dict[str, str]] = Field(..., description="List of messages with role and content")
@@ -375,6 +383,7 @@ class CLIAICompleteRequest(BaseModel):
     org_id: str | None = Field(default=None, description="Organization ID for knowledge search")
     model: str | None = Field(default=None, description="Override model (e.g., 'gpt-4o', 'claude-sonnet-4-20250514')")
     execution_id: str | None = Field(default=None, description="Execution ID for AI usage tracking")
+    input_files: list[CLIAIInputFile] = Field(default_factory=list, max_length=5)
 
     model_config = ConfigDict(from_attributes=True)
 

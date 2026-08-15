@@ -5,6 +5,7 @@ Tests chat conversation and message operations.
 Requires LLM configuration to be set for message sending tests.
 """
 
+import base64
 import logging
 
 import pytest
@@ -200,6 +201,33 @@ class TestChatAttachments:
         assert discard.status_code == 204
         missing = e2e_client.get(content_url, headers=platform_admin.headers)
         assert missing.status_code == 404
+
+    def test_sdk_document_artifact_renders_valid_pdf(
+        self,
+        e2e_client,
+        platform_admin,
+    ):
+        response = e2e_client.post(
+            "/api/sdk/artifacts/document",
+            json={
+                "filename": "e2e-brief",
+                "format": "pdf",
+                "title": "E2E brief",
+                "sections": [
+                    {
+                        "heading": "Decision",
+                        "paragraphs": ["Ship the artifact path."],
+                    }
+                ],
+            },
+            headers=platform_admin.headers,
+        )
+
+        assert response.status_code == 200, response.text
+        artifact = response.json()
+        assert artifact["filename"] == "e2e-brief.pdf"
+        assert artifact["content_type"] == "application/pdf"
+        assert base64.b64decode(artifact["content_base64"]).startswith(b"%PDF-")
 
 
 # =============================================================================

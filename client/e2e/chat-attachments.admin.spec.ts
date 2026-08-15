@@ -1,7 +1,9 @@
 import { expect, test } from "@playwright/test";
 
 test.describe("Chat attachments and model tiers", () => {
-	test("uploads a file with the selected tier and previews it", async ({ page }) => {
+	test("uploads a file with the selected tier and previews it", async ({
+		page,
+	}) => {
 		await page.route("**/api/admin/llm/config", async (route) => {
 			await route.fulfill({
 				json: {
@@ -14,17 +16,34 @@ test.describe("Chat attachments and model tiers", () => {
 			});
 		});
 		await page.route("**/api/chat/model-tiers", async (route) => {
+			const capabilities = {
+				image_input: true,
+				pdf_input: true,
+				tool_calling: true,
+				native_image_output: false,
+				source: "verified",
+				fingerprint: "e2e",
+			};
 			await route.fulfill({
 				json: {
 					tiers: [
-						{ id: "fast", label: "Fast" },
-						{ id: "balanced", label: "Balanced" },
-						{ id: "pro", label: "Pro" },
+						{ id: "fast", label: "Fast", capabilities },
+						{ id: "balanced", label: "Balanced", capabilities },
+						{ id: "pro", label: "Pro", capabilities },
 					],
 					default_tier: "balanced",
 				},
 			});
 		});
+		await page.route(
+			"**/attachments/generated-artifact/content*",
+			async (route) => {
+				await route.fulfill({
+					contentType: "text/markdown",
+					body: "# Generated report\n\nReady to download.",
+				});
+			},
+		);
 
 		let resolveChat!: (payload: Record<string, unknown>) => void;
 		const chatPayload = new Promise<Record<string, unknown>>((resolve) => {
@@ -32,9 +51,43 @@ test.describe("Chat attachments and model tiers", () => {
 		});
 		await page.routeWebSocket(/\/ws\/connect/, (socket) => {
 			socket.onMessage((raw) => {
-				const payload = JSON.parse(String(raw)) as Record<string, unknown>;
-				if (payload.type === "chat") resolveChat(payload);
-				if (payload.type === "ping") socket.send(JSON.stringify({ type: "pong" }));
+				const payload = JSON.parse(String(raw)) as Record<
+					string,
+					unknown
+				>;
+				if (payload.type === "chat") {
+					resolveChat(payload);
+					const conversationId = String(payload.conversation_id);
+					socket.send(
+						JSON.stringify({
+							type: "tool_call",
+							conversation_id: conversationId,
+							message_id: "artifact-tool-message",
+							tool_call: {
+								id: "artifact-tool-call",
+								name: "create_text_artifact",
+								arguments: { filename: "generated-report.md" },
+							},
+						}),
+					);
+					socket.send(
+						JSON.stringify({
+							type: "artifact_ready",
+							conversation_id: conversationId,
+							message_id: "artifact-tool-message",
+							artifact: {
+								type: "bifrost_artifact",
+								filename: "generated-report.md",
+								content_type: "text/markdown",
+								size_bytes: 40,
+								attachment_id: "generated-artifact",
+								conversation_id: conversationId,
+							},
+						}),
+					);
+				}
+				if (payload.type === "ping")
+					socket.send(JSON.stringify({ type: "pong" }));
 			});
 		});
 
@@ -44,7 +97,9 @@ test.describe("Chat attachments and model tiers", () => {
 
 		const chooser = page.waitForEvent("filechooser");
 		await page.getByRole("button", { name: "Attach files" }).click();
-		await (await chooser).setFiles({
+		await (
+			await chooser
+		).setFiles({
 			name: "notes.txt",
 			mimeType: "text/plain",
 			buffer: Buffer.from("attachment preview"),
@@ -59,17 +114,29 @@ test.describe("Chat attachments and model tiers", () => {
 		expect(payload.model_tier).toBe("pro");
 		expect(payload.attachment_ids).toEqual([expect.any(String)]);
 
-		await page
-			.getByRole("button", { name: /^notes\.txt \d+ B$/ })
-			.click();
-		await expect(page.getByRole("dialog")).toContainText("attachment preview");
-		await expect(page.getByRole("link", { name: "Download" })).toHaveAttribute(
-			"href",
-			/\/content\?download=true$/,
+		await page.getByRole("button", { name: /^notes\.txt \d+ B$/ }).click();
+		await expect(page.getByRole("dialog")).toContainText(
+			"attachment preview",
 		);
+		await expect(
+			page.getByRole("button", { name: "Download" }),
+		).toBeVisible();
+		await page.getByRole("button", { name: /close/i }).click();
+
+		await page
+			.getByRole("button", { name: /generated-report\.md/i })
+			.click();
+		await expect(page.getByRole("dialog")).toContainText(
+			"Generated report",
+		);
+		await expect(
+			page.getByRole("button", { name: "Download" }),
+		).toBeVisible();
 
 		await page.setViewportSize({ width: 390, height: 844 });
 		await expect(page.getByRole("dialog")).toBeVisible();
-		await expect(page.getByRole("link", { name: "Download" })).toBeVisible();
+		await expect(
+			page.getByRole("button", { name: "Download" }),
+		).toBeVisible();
 	});
 });

@@ -14,6 +14,8 @@
 | POST | `/api/admin/llm/embedding-config` |
 | POST | `/api/admin/llm/embedding-reindex` |
 | POST | `/api/admin/llm/embedding-test` |
+| POST | `/api/admin/llm/model-capabilities` |
+| POST | `/api/admin/llm/model-capabilities/verify` |
 | GET | `/api/admin/llm/models` |
 | POST | `/api/admin/llm/test` |
 | POST | `/api/admin/llm/test-saved` |
@@ -402,6 +404,9 @@
 | POST | `/api/sdk/ai/complete` |
 | GET | `/api/sdk/ai/info` |
 | POST | `/api/sdk/ai/stream` |
+| POST | `/api/sdk/artifacts/document` |
+| POST | `/api/sdk/artifacts/spreadsheet` |
+| POST | `/api/sdk/artifacts/text` |
 | POST | `/api/sdk/config/delete` |
 | POST | `/api/sdk/config/get` |
 | POST | `/api/sdk/config/list` |

@@ -7,8 +7,9 @@
 
 import { useEffect, useRef, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bot, MessageSquare } from "lucide-react";
+import { Bot, Loader2, MessageSquare } from "lucide-react";
 import { ChatMessage } from "./ChatMessage";
+import { ChatAttachmentList } from "./ChatAttachmentList";
 import { ChatInput } from "./ChatInput";
 import { ToolExecutionCard } from "./ToolExecutionCard";
 import { ToolExecutionBadge } from "./ToolExecutionBadge";
@@ -63,12 +64,7 @@ function MessageWithToolCards({
 	// Check if this message has tool calls
 	const hasToolCalls = message.tool_calls && message.tool_calls.length > 0;
 	if (!hasToolCalls) {
-		return (
-			<ChatMessage
-				message={message}
-				isStreaming={isStreaming}
-			/>
-		);
+		return <ChatMessage message={message} isStreaming={isStreaming} />;
 	}
 
 	// Determine if these are SDK tools (no workflow execution) or workflow tools
@@ -178,10 +174,7 @@ interface ChatWindowProps {
 // Threshold in pixels - if within this distance from bottom, consider "at bottom"
 const SCROLL_THRESHOLD = 100;
 
-export function ChatWindow({
-	conversationId,
-	agentName,
-}: ChatWindowProps) {
+export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 	const navigate = useNavigate();
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -229,7 +222,18 @@ export function ChatWindow({
 	const [selectedModelTier, setSelectedModelTier] =
 		useState<ChatModelTierId>("balanced");
 	const modelTiers = modelTierData?.tiers ?? [
-		{ id: "balanced" as const, label: "Balanced" },
+		{
+			id: "balanced" as const,
+			label: "Balanced",
+			capabilities: {
+				image_input: false,
+				pdf_input: false,
+				tool_calling: false,
+				native_image_output: false,
+				source: "unknown" as const,
+				fingerprint: "",
+			},
+		},
 	];
 	const effectiveModelTier = modelTiers.some(
 		(tier) => tier.id === selectedModelTier,
@@ -372,12 +376,17 @@ export function ChatWindow({
 				const cleanupConversationId = targetConversationId;
 				await Promise.allSettled(
 					uploaded.map((attachment) =>
-						deleteUnboundChatAttachment(cleanupConversationId, attachment.id),
+						deleteUnboundChatAttachment(
+							cleanupConversationId,
+							attachment.id,
+						),
 					),
 				);
 			}
 			const description =
-				error instanceof Error ? error.message : "Could not send this message.";
+				error instanceof Error
+					? error.message
+					: "Could not send this message.";
 			toast.error("Message not sent", { description });
 			throw error;
 		}
@@ -394,7 +403,8 @@ export function ChatWindow({
 					</h3>
 					<p className="text-sm text-center max-w-sm">
 						Send a message to start a new conversation. If you need
-						specialized capabilities, I'll find the right tools to help.
+						specialized capabilities, I'll find the right tools to
+						help.
 					</p>
 				</div>
 				<ChatInput
@@ -492,30 +502,81 @@ export function ChatWindow({
 											<ToolExecutionBadge
 												key={tc.id}
 												toolCall={{
-													id: tc.tool_call_id || tc.id,
-													name: tc.tool_name || "unknown",
-													arguments: tc.tool_input || {},
+													id:
+														tc.tool_call_id ||
+														tc.id,
+													name:
+														tc.tool_name ||
+														"unknown",
+													arguments:
+														tc.tool_input || {},
 												}}
 												status={
-													tc.tool_state === "completed"
+													tc.tool_state ===
+													"completed"
 														? "success"
-														: tc.tool_state === "error"
+														: tc.tool_state ===
+															  "error"
 															? "failed"
 															: "pending"
 												}
 												result={tc.tool_result}
 												error={
 													tc.tool_state === "error"
-														? (tc.tool_result as { error?: string })?.error
+														? (
+																tc.tool_result as {
+																	error?: string;
+																}
+															)?.error
 														: undefined
 												}
-												durationMs={tc.duration_ms || undefined}
+												durationMs={
+													tc.duration_ms || undefined
+												}
 											/>
 										))}
 									</ToolExecutionGroup>
+									{item.data.map((toolMessage) =>
+										(toolMessage.attachments ?? []).length >
+										0 ? (
+											<ChatAttachmentList
+												key={`artifacts-${toolMessage.id}`}
+												conversationId={conversationId}
+												attachments={
+													toolMessage.attachments ??
+													[]
+												}
+												variant="artifact"
+											/>
+										) : null,
+									)}
+									{item.data.map((toolMessage) =>
+										toolMessage.tool_state === "running" &&
+										toolMessage.tool_name?.startsWith(
+											"create_",
+										) &&
+										toolMessage.tool_name.endsWith(
+											"_artifact",
+										) ? (
+											<div
+												key={`artifact-loading-${toolMessage.id}`}
+												className="mx-4 mb-2 flex items-center gap-2 text-xs text-muted-foreground"
+											>
+												<Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
+												Preparing{" "}
+												{String(
+													toolMessage.tool_input
+														?.filename ||
+														"generated file",
+												)}
+											</div>
+										) : null,
+									)}
 									{/* Inline reconnect prompts for any needs_reauth result. */}
 									{item.data.map((tc) => {
-										const reauth = extractNeedsReauth(tc.tool_result);
+										const reauth = extractNeedsReauth(
+											tc.tool_result,
+										);
 										if (!reauth) return null;
 										return (
 											<NeedsReauthCard

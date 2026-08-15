@@ -25,9 +25,9 @@ async def test_model_tiers_expose_labels_without_provider_model_ids() -> None:
 
     assert response.model_dump() == {
         "tiers": [
-            {"id": "fast", "label": "Quick"},
-            {"id": "balanced", "label": "Everyday"},
-            {"id": "pro", "label": "Deep"},
+            {"id": "fast", "label": "Quick", "capabilities": config.resolve_chat_capabilities("fast").model_dump()},
+            {"id": "balanced", "label": "Everyday", "capabilities": config.resolve_chat_capabilities("balanced").model_dump()},
+            {"id": "pro", "label": "Deep", "capabilities": config.resolve_chat_capabilities("pro").model_dump()},
         ],
         "default_tier": "balanced",
     }

@@ -52,7 +52,9 @@ export function useChatStream({
 	onAgentSwitch,
 }: UseChatStreamOptions): UseChatStreamReturn {
 	const queryClient = useQueryClient();
-	const [isConnected, setIsConnected] = useState(() => webSocketService.isConnected());
+	const [isConnected, setIsConnected] = useState(() =>
+		webSocketService.isConnected(),
+	);
 	const [pendingQuestion, setPendingQuestion] =
 		useState<PendingQuestion | null>(null);
 
@@ -127,10 +129,16 @@ export function useChatStream({
 						// Map localId to server ID for future dedup
 						useChatStore
 							.getState()
-							.mapLocalIdToServerId(convId, localId, chunk.user_message_id);
+							.mapLocalIdToServerId(
+								convId,
+								localId,
+								chunk.user_message_id,
+							);
 
 						const messages =
-							useChatStore.getState().messagesByConversation[convId] || [];
+							useChatStore.getState().messagesByConversation[
+								convId
+							] || [];
 						const optimistic = messages.find(
 							(m) =>
 								(m as UnifiedMessage).localId === localId &&
@@ -151,7 +159,9 @@ export function useChatStream({
 									? confirmed
 									: m,
 							);
-							useChatStore.getState().setMessages(convId, updated);
+							useChatStore
+								.getState()
+								.setMessages(convId, updated);
 						}
 					}
 
@@ -198,7 +208,8 @@ export function useChatStream({
 						const convId = currentConversationIdRef.current;
 						if (!convId) break;
 
-						const streamingId = useChatStore.getState().streamingMessageIds[convId];
+						const streamingId =
+							useChatStore.getState().streamingMessageIds[convId];
 
 						// If no streaming message exists (after assistant_message_end), create new one
 						if (!streamingId) {
@@ -214,14 +225,28 @@ export function useChatStream({
 								isOptimistic: false,
 							};
 							addMessage(convId, newAssistantMessage);
-							useChatStore.getState().setStreamingMessageIdForConversation(convId, newMessageId);
+							useChatStore
+								.getState()
+								.setStreamingMessageIdForConversation(
+									convId,
+									newMessageId,
+								);
 						} else {
 							// Append to existing streaming message
-							const currentMessages = useChatStore.getState().messagesByConversation[convId] || [];
-							const currentMsg = currentMessages.find((m) => m.id === streamingId);
-							useChatStore.getState().updateMessage(convId, streamingId, {
-								content: (currentMsg?.content || "") + chunk.content,
-							});
+							const currentMessages =
+								useChatStore.getState().messagesByConversation[
+									convId
+								] || [];
+							const currentMsg = currentMessages.find(
+								(m) => m.id === streamingId,
+							);
+							useChatStore
+								.getState()
+								.updateMessage(convId, streamingId, {
+									content:
+										(currentMsg?.content || "") +
+										chunk.content,
+								});
 						}
 					}
 					break;
@@ -249,6 +274,64 @@ export function useChatStream({
 					}
 					break;
 
+				case "artifact_ready": {
+					const convId = currentConversationIdRef.current;
+					const artifact = chunk.artifact;
+					if (
+						!convId ||
+						!chunk.message_id ||
+						!artifact?.attachment_id
+					)
+						break;
+					const messages =
+						useChatStore.getState().messagesByConversation[
+							convId
+						] || [];
+					const message = messages.find(
+						(item) => item.id === chunk.message_id,
+					);
+					const attachments = message?.attachments ?? [];
+					if (
+						!attachments.some(
+							(item) => item.id === artifact.attachment_id,
+						)
+					) {
+						useChatStore
+							.getState()
+							.updateMessage(convId, chunk.message_id, {
+								attachments: [
+									...attachments,
+									{
+										id: artifact.attachment_id,
+										filename: artifact.filename,
+										content_type: artifact.content_type,
+										size_bytes: artifact.size_bytes,
+										kind: "artifact",
+									},
+								],
+							});
+					}
+					queryClient.invalidateQueries({
+						queryKey: [
+							"get",
+							"/api/chat/conversations/{conversation_id}/messages",
+							{ params: { path: { conversation_id: convId } } },
+						],
+					});
+					break;
+				}
+
+				case "artifact_failed":
+					toast.error("File generation failed", {
+						description:
+							chunk.content ||
+							"The artifact could not be created.",
+					});
+					break;
+
+				case "artifact_started":
+					break;
+
 				case "tool_progress":
 					// Tool progress events are handled via the tool execution persistence system
 					// They update toolExecutionsByConversation directly
@@ -259,13 +342,17 @@ export function useChatStream({
 						const convId = currentConversationIdRef.current;
 						if (convId) {
 							// Update the TOOL_CALL message with result
-							useChatStore.getState().updateMessage(convId, chunk.message_id, {
-								tool_state: chunk.tool_result.error ? "error" : "completed",
-								tool_result: chunk.tool_result.error
-									? { error: chunk.tool_result.error }
-									: chunk.tool_result.result,
-								duration_ms: chunk.tool_result.duration_ms,
-							});
+							useChatStore
+								.getState()
+								.updateMessage(convId, chunk.message_id, {
+									tool_state: chunk.tool_result.error
+										? "error"
+										: "completed",
+									tool_result: chunk.tool_result.error
+										? { error: chunk.tool_result.error }
+										: chunk.tool_result.result,
+									duration_ms: chunk.tool_result.duration_ms,
+								});
 						}
 					}
 					break;
@@ -279,13 +366,21 @@ export function useChatStream({
 					// Next delta will create a NEW message
 					const convId = currentConversationIdRef.current;
 					if (convId) {
-						const streamingId = useChatStore.getState().streamingMessageIds[convId];
+						const streamingId =
+							useChatStore.getState().streamingMessageIds[convId];
 						if (streamingId) {
-							useChatStore.getState().updateMessage(convId, streamingId, {
-								isStreaming: false,
-								isFinal: true,
-							});
-							useChatStore.getState().setStreamingMessageIdForConversation(convId, null);
+							useChatStore
+								.getState()
+								.updateMessage(convId, streamingId, {
+									isStreaming: false,
+									isFinal: true,
+								});
+							useChatStore
+								.getState()
+								.setStreamingMessageIdForConversation(
+									convId,
+									null,
+								);
 						}
 					}
 					break;
@@ -299,13 +394,17 @@ export function useChatStream({
 
 					// Mark message as no longer streaming and apply usage metadata
 					if (convId && streamingId) {
-						useChatStore.getState().updateMessage(convId, streamingId, {
-							isStreaming: false,
-							isFinal: true,
-							token_count_input: chunk.token_count_input ?? undefined,
-							token_count_output: chunk.token_count_output ?? undefined,
-							duration_ms: chunk.duration_ms ?? undefined,
-						});
+						useChatStore
+							.getState()
+							.updateMessage(convId, streamingId, {
+								isStreaming: false,
+								isFinal: true,
+								token_count_input:
+									chunk.token_count_input ?? undefined,
+								token_count_output:
+									chunk.token_count_output ?? undefined,
+								duration_ms: chunk.duration_ms ?? undefined,
+							});
 
 						// Clear streaming ID
 						useChatStore
@@ -423,7 +522,8 @@ export function useChatStream({
 			attachments: AttachmentPublic[] = [],
 			modelTier: ChatModelTierId = "balanced",
 		) => {
-			const targetConversationId = conversationIdOverride ?? conversationId;
+			const targetConversationId =
+				conversationIdOverride ?? conversationId;
 			if (!targetConversationId) {
 				toast.error("No conversation selected");
 				return;
@@ -485,7 +585,13 @@ export function useChatStream({
 				}
 			}
 		},
-		[conversationId, addMessage, startStreaming, setStreamError, resetStream],
+		[
+			conversationId,
+			addMessage,
+			startStreaming,
+			setStreamError,
+			resetStream,
+		],
 	);
 
 	// Auto-connect when conversation changes - single subscription path

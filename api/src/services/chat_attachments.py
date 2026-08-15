@@ -119,6 +119,22 @@ class ChatAttachmentService:
         safe_name = filename.replace("/", "_").replace("\\", "_")
         return f"_attachments/{conversation_id}/{attachment_id}_{safe_name}"
 
+    @staticmethod
+    def _artifact_storage_key(conversation_id: UUID, attachment_id: UUID, filename: str) -> str:
+        safe_name = filename.replace("/", "_").replace("\\", "_")
+        return f"_artifacts/{conversation_id}/{attachment_id}_{safe_name}"
+
+    async def _ensure_conversation_capacity(
+        self, conversation_id: UUID, content_size: int
+    ) -> None:
+        total_result = await self.db.execute(
+            select(func.coalesce(func.sum(MessageAttachment.size_bytes), 0)).where(
+                MessageAttachment.conversation_id == conversation_id
+            )
+        )
+        if int(total_result.scalar() or 0) + content_size > MAX_CONVERSATION_BYTES:
+            raise ChatAttachmentError("This conversation's 500 MB file limit was reached.")
+
     async def store(
         self,
         *,
@@ -147,13 +163,7 @@ class ChatAttachmentService:
         if content_type in PDF_CONTENT_TYPES and not content.startswith(b"%PDF-"):
             raise ChatAttachmentError("Attachment is not a valid PDF.")
 
-        total_result = await self.db.execute(
-            select(func.coalesce(func.sum(MessageAttachment.size_bytes), 0)).where(
-                MessageAttachment.conversation_id == conversation_id
-            )
-        )
-        if int(total_result.scalar() or 0) + len(content) > MAX_CONVERSATION_BYTES:
-            raise ChatAttachmentError("This conversation's 500 MB file limit was reached.")
+        await self._ensure_conversation_capacity(conversation_id, len(content))
 
         attachment_id = uuid4()
         s3_key = self._storage_key(conversation_id, attachment_id, filename)
@@ -163,6 +173,50 @@ class ChatAttachmentService:
         attachment = MessageAttachment(
             id=attachment_id,
             message_id=None,
+            conversation_id=conversation_id,
+            s3_key=s3_key,
+            filename=filename,
+            content_type=content_type,
+            size_bytes=len(content),
+            extracted_text=_extract_text(content, content_type),
+        )
+        try:
+            self.db.add(attachment)
+            await self.db.flush()
+        except Exception:
+            await storage.delete_raw_from_s3(s3_key)
+            raise
+        return attachment
+
+    async def store_generated(
+        self,
+        *,
+        conversation_id: UUID,
+        message_id: UUID,
+        filename: str,
+        content_type: str,
+        content: bytes,
+    ) -> MessageAttachment:
+        """Store a validated generated file using the same durable model as uploads."""
+        from shared.artifact_generation import validate_artifact_content
+
+        try:
+            validate_artifact_content(
+                filename=filename,
+                content_type=content_type,
+                content=content,
+            )
+        except ValueError as exc:
+            raise ChatAttachmentError(str(exc)) from exc
+        await self._ensure_conversation_capacity(conversation_id, len(content))
+
+        attachment_id = uuid4()
+        s3_key = self._artifact_storage_key(conversation_id, attachment_id, filename)
+        storage = get_file_storage_service(self.db)
+        await storage.write_raw_to_s3(s3_key, content)
+        attachment = MessageAttachment(
+            id=attachment_id,
+            message_id=message_id,
             conversation_id=conversation_id,
             s3_key=s3_key,
             filename=filename,

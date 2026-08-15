@@ -47,18 +47,54 @@ from __future__ import annotations
 
 import json
 import logging
+import base64
 from collections.abc import AsyncGenerator
 from typing import Any, TypeVar
 
 from pydantic import BaseModel
 
 from .client import get_client
-from .models import AIResponse, AIStreamChunk
+from .models import AIInputFile, AIResponse, AIStreamChunk, ArtifactRef
 
 logger = logging.getLogger(__name__)
 
 # Type variable for structured outputs
 T = TypeVar("T", bound=BaseModel)
+
+
+async def _encode_input_files(
+    input_files: list[AIInputFile | ArtifactRef | dict[str, Any]] | None,
+) -> list[dict[str, str]]:
+    """Resolve portable artifact refs and encode bounded provider inputs."""
+    if not input_files:
+        return []
+    if len(input_files) > 5:
+        raise ValueError("Attach no more than 5 files to one AI request.")
+
+    from .artifacts import artifacts
+
+    encoded: list[dict[str, str]] = []
+    for item in input_files:
+        if isinstance(item, AIInputFile):
+            file_input = item
+        else:
+            artifact = item if isinstance(item, ArtifactRef) else ArtifactRef.model_validate(item)
+            data = await artifacts.read(artifact)
+            file_input = AIInputFile(
+                filename=artifact.filename,
+                content_type=artifact.content_type,
+                data=data,
+            )
+        if len(file_input.data) > 25 * 1024 * 1024:
+            raise ValueError(f"{file_input.filename} is too large (maximum 25 MB).")
+        encoded.append(
+            {
+                "filename": file_input.filename,
+                "content_type": file_input.content_type,
+                "data_base64": base64.b64encode(file_input.data).decode("ascii"),
+            }
+        )
+    return encoded
 
 
 def _build_messages(
@@ -250,6 +286,7 @@ class ai:
         org_id: str | None = None,
         model: str | None = None,
         timeout: float | None = None,
+        files: list[AIInputFile | ArtifactRef | dict[str, Any]] | None = None,
     ) -> AIResponse | T:
         """
         Generate an AI completion.
@@ -267,6 +304,7 @@ class ai:
             org_id: Organization scope for knowledge search
             model: Override default model (must be compatible with configured provider)
             timeout: Override default HTTP timeout in seconds (default: 30s)
+            files: Up to five binary inputs or portable ArtifactRef objects.
 
         Returns:
             AIResponse with content, or parsed Pydantic model if response_format provided
@@ -323,6 +361,7 @@ class ai:
                 "org_id": org_id,
                 "model": model,
                 "execution_id": execution_id,
+                "input_files": await _encode_input_files(files),
             },
             timeout=timeout,
         )
@@ -357,6 +396,7 @@ class ai:
         max_tokens: int | None = None,
         org_id: str | None = None,
         model: str | None = None,
+        files: list[AIInputFile | ArtifactRef | dict[str, Any]] | None = None,
     ) -> AsyncGenerator[AIStreamChunk, None]:
         """
         Generate a streaming AI completion.
@@ -371,6 +411,7 @@ class ai:
             max_tokens: Override default max tokens
             org_id: Organization scope for knowledge search
             model: Override default model (must be compatible with configured provider)
+            files: Up to five binary inputs or portable ArtifactRef objects.
 
         Yields:
             AIStreamChunk objects with content deltas
@@ -414,6 +455,7 @@ class ai:
                 "org_id": org_id,
                 "model": model,
                 "execution_id": execution_id,
+                "input_files": await _encode_input_files(files),
             }
         ) as response:
             async for line in response.aiter_lines():

@@ -211,7 +211,10 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     #
     # LLM configuration provider enums gained `google` (2026-08-14). ADDITIVE:
     # old clients can keep selecting OpenAI-compatible or Anthropic providers.
-    "a2a6462848ccee6773a71834fadb6952f6c6b0ebebe44eb2125637df1649a84a"
+    #
+    # SDK AI completion requests gained optional file inputs (2026-08-15).
+    # ADDITIVE: old SDK clients omit the field and keep text-only behavior.
+    "aedcecc04849f529fb42278841f5ff3edea769d40b8ba39c131162033dc96ceb"
 )
 
 

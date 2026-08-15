@@ -7,6 +7,7 @@ import {
 	MAX_ATTACHMENT_SIZE_BYTES,
 	attachmentContentUrl,
 	deleteUnboundChatAttachment,
+	formatBytes,
 	isImageAttachment,
 	uploadChatAttachments,
 	validateAttachment,
@@ -40,9 +41,17 @@ describe("chatAttachments", () => {
 			"/api/chat/conversations/conversation/attachments/attachment/content",
 		);
 		expect(
-			attachmentContentUrl("conversation", "attachment", { download: true }),
+			attachmentContentUrl("conversation", "attachment", {
+				download: true,
+			}),
 		).toMatch(/download=true$/);
+		expect(
+			attachmentContentUrl("conversation", "attachment", {
+				preview: true,
+			}),
+		).toMatch(/preview=true$/);
 		expect(isImageAttachment("image/webp")).toBe(true);
+		expect(formatBytes(1024)).toBe("1 KB");
 	});
 
 	it("uploads files as multipart and discards unbound uploads", async () => {

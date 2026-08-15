@@ -8,6 +8,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from src.models.contracts.artifacts import ModelCapabilities
+
 
 class LLMConfigResponse(BaseModel):
     """LLM configuration response (API key is never returned)."""
@@ -25,6 +27,9 @@ class LLMConfigResponse(BaseModel):
     chat_balanced_model: str | None = None
     chat_pro_label: str = "Pro"
     chat_pro_model: str | None = None
+    chat_fast_capabilities: ModelCapabilities | None = None
+    chat_balanced_capabilities: ModelCapabilities | None = None
+    chat_pro_capabilities: ModelCapabilities | None = None
     is_configured: bool = True
     api_key_set: bool = False
 
@@ -82,6 +87,9 @@ class LLMConfigRequest(BaseModel):
         default=None,
         description="Optional model exposed as the Pro Chat tier.",
     )
+    chat_fast_capabilities: ModelCapabilities | None = None
+    chat_balanced_capabilities: ModelCapabilities | None = None
+    chat_pro_capabilities: ModelCapabilities | None = None
 
 
 class LLMTestRequest(BaseModel):

@@ -56,9 +56,9 @@ def gen_python_sdk_signatures() -> str:
     lines.append("> Regenerate: `python api/scripts/skill-truth/generate.py`. CI enforces freshness.\n")
 
     sdk_modules = [
-        "agents", "ai", "config", "events", "executions", "files", "forms",
-        "integrations", "knowledge", "organizations", "roles", "tables",
-        "users", "workflows",
+        "agents", "ai", "artifacts", "config", "events", "executions",
+        "files", "forms", "integrations", "knowledge", "organizations",
+        "roles", "tables", "users", "workflows",
     ]
     for mod_name in sorted(sdk_modules):
         try:

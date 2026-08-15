@@ -8,7 +8,7 @@ All SDK types are defined here and used consistently across:
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel
 
@@ -248,6 +248,29 @@ class AIStreamChunk(BaseModel):
     done: bool
     input_tokens: int | None = None
     output_tokens: int | None = None
+
+
+class AIInputFile(BaseModel):
+    """Binary input passed to ``bifrost.ai.complete`` or ``stream``."""
+
+    filename: str
+    content_type: str
+    data: bytes
+
+
+class ArtifactRef(BaseModel):
+    """Portable generated-file reference accepted by Bifrost and MCP tools."""
+
+    type: Literal["bifrost_artifact"] = "bifrost_artifact"
+    filename: str
+    content_type: str
+    size_bytes: int
+    path: str | None = None
+    location: str | None = None
+    scope: str | None = None
+    attachment_id: str | None = None
+    conversation_id: str | None = None
+    created_at: datetime | None = None
 
 
 class KnowledgeDocument(BaseModel):

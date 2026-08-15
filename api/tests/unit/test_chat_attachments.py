@@ -106,6 +106,30 @@ async def test_store_removes_s3_object_when_persistence_fails() -> None:
 
 
 @pytest.mark.asyncio
+async def test_store_generated_uses_artifact_prefix_and_binds_message() -> None:
+    db = _db_with_total()
+    storage = AsyncMock()
+    conversation_id = uuid4()
+    message_id = uuid4()
+
+    with patch(
+        "src.services.chat_attachments.get_file_storage_service",
+        return_value=storage,
+    ):
+        attachment = await ChatAttachmentService(db).store_generated(
+            conversation_id=conversation_id,
+            message_id=message_id,
+            filename="brief.pdf",
+            content_type="application/pdf",
+            content=b"%PDF-generated",
+        )
+
+    assert attachment.message_id == message_id
+    assert attachment.s3_key.startswith(f"_artifacts/{conversation_id}/")
+    storage.write_raw_to_s3.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_bind_rejects_cross_conversation_attachment() -> None:
     attachment = MessageAttachment(
         id=uuid4(),

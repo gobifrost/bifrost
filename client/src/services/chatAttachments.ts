@@ -38,6 +38,12 @@ export function isImageAttachment(contentType: string): boolean {
 	return contentType.startsWith("image/");
 }
 
+export function formatBytes(bytes: number): string {
+	if (bytes < 1024) return `${bytes} B`;
+	if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+	return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+}
+
 export function validateAttachment(file: File): string | null {
 	if (file.size <= 0) return `${file.name} is empty.`;
 	if (file.size > MAX_ATTACHMENT_SIZE_BYTES) {
@@ -95,8 +101,11 @@ export async function deleteUnboundChatAttachment(
 export function attachmentContentUrl(
 	conversationId: string,
 	attachmentId: string,
-	options?: { download?: boolean },
+	options?: { download?: boolean; preview?: boolean },
 ): string {
 	const base = `/api/chat/conversations/${conversationId}/attachments/${attachmentId}/content`;
-	return options?.download ? `${base}?download=true` : base;
+	const query = new URLSearchParams();
+	if (options?.download) query.set("download", "true");
+	if (options?.preview) query.set("preview", "true");
+	return query.size > 0 ? `${base}?${query.toString()}` : base;
 }

@@ -82,6 +82,10 @@ import {
 } from "@/services/ai-pricing";
 import { MemorySettings } from "@/pages/settings/MemorySettings";
 import { RequiredInstructionsSettings } from "@/pages/settings/RequiredInstructionsSettings";
+import {
+	ModelCapabilityEditor,
+	type ModelCapabilities,
+} from "@/pages/settings/ModelCapabilityEditor";
 
 type Provider = "openai" | "anthropic" | "google";
 
@@ -121,6 +125,12 @@ export function LLMConfig() {
 	const [chatBalancedModel, setChatBalancedModel] = useState("");
 	const [chatProLabel, setChatProLabel] = useState("Pro");
 	const [chatProModel, setChatProModel] = useState("");
+	const [chatFastCapabilities, setChatFastCapabilities] =
+		useState<ModelCapabilities | null>(null);
+	const [chatBalancedCapabilities, setChatBalancedCapabilities] =
+		useState<ModelCapabilities | null>(null);
+	const [chatProCapabilities, setChatProCapabilities] =
+		useState<ModelCapabilities | null>(null);
 
 	// Models state (loaded dynamically after test)
 	const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
@@ -156,7 +166,8 @@ export function LLMConfig() {
 
 	// Update form when config loads. Adjust during render with a previous-
 	// reference sentinel to avoid setState-in-effect.
-	const [prevConfigRef, setPrevConfigRef] = useState<typeof config>(undefined);
+	const [prevConfigRef, setPrevConfigRef] =
+		useState<typeof config>(undefined);
 	if (config && prevConfigRef !== config) {
 		setPrevConfigRef(config);
 		const p = config.provider as Provider;
@@ -164,7 +175,9 @@ export function LLMConfig() {
 		setModel(config.model);
 		setMaxTokens(config.max_tokens);
 		setDefaultSystemPrompt(config.default_system_prompt ?? "");
-		setEndpoint(config.endpoint || DEFAULT_ENDPOINTS[p] || DEFAULT_ENDPOINTS.openai);
+		setEndpoint(
+			config.endpoint || DEFAULT_ENDPOINTS[p] || DEFAULT_ENDPOINTS.openai,
+		);
 		setSummarizationModel(config.summarization_model ?? "");
 		setTuningModel(config.tuning_model ?? "");
 		setChatFastLabel(config.chat_fast_label ?? "Fast");
@@ -173,6 +186,9 @@ export function LLMConfig() {
 		setChatBalancedModel(config.chat_balanced_model ?? "");
 		setChatProLabel(config.chat_pro_label ?? "Pro");
 		setChatProModel(config.chat_pro_model ?? "");
+		setChatFastCapabilities(config.chat_fast_capabilities ?? null);
+		setChatBalancedCapabilities(config.chat_balanced_capabilities ?? null);
+		setChatProCapabilities(config.chat_pro_capabilities ?? null);
 	}
 
 	// Track if we've already fetched models for this config
@@ -215,6 +231,9 @@ export function LLMConfig() {
 		setTestResult(null);
 		setAvailableModels([]);
 		setModelsLoaded(false);
+		setChatFastCapabilities(null);
+		setChatBalancedCapabilities(null);
+		setChatProCapabilities(null);
 	};
 
 	// Test connection with current form values
@@ -231,13 +250,16 @@ export function LLMConfig() {
 			let result;
 			// If we have a new API key, test with that
 			if (apiKey) {
-				const isDefaultEndpoint = endpoint === DEFAULT_ENDPOINTS[provider];
+				const isDefaultEndpoint =
+					endpoint === DEFAULT_ENDPOINTS[provider];
 				result = await testMutation.mutateAsync({
 					body: {
 						provider,
 						model: model || DEFAULT_MODELS[provider],
 						api_key: apiKey,
-						endpoint: isDefaultEndpoint ? undefined : endpoint || undefined,
+						endpoint: isDefaultEndpoint
+							? undefined
+							: endpoint || undefined,
 					},
 				});
 			} else {
@@ -299,7 +321,9 @@ export function LLMConfig() {
 					provider,
 					model,
 					api_key: apiKey || undefined,
-					endpoint: isDefaultEndpoint ? undefined : endpoint || undefined,
+					endpoint: isDefaultEndpoint
+						? undefined
+						: endpoint || undefined,
 					max_tokens: maxTokens,
 					default_system_prompt: defaultSystemPrompt || null,
 					summarization_model: summarizationModel || null,
@@ -310,6 +334,9 @@ export function LLMConfig() {
 					chat_balanced_model: chatBalancedModel.trim() || null,
 					chat_pro_label: chatProLabel.trim() || "Pro",
 					chat_pro_model: chatProModel.trim() || null,
+					chat_fast_capabilities: chatFastCapabilities,
+					chat_balanced_capabilities: chatBalancedCapabilities,
+					chat_pro_capabilities: chatProCapabilities,
 				},
 			});
 
@@ -356,6 +383,9 @@ export function LLMConfig() {
 			setChatBalancedModel("");
 			setChatProLabel("Pro");
 			setChatProModel("");
+			setChatFastCapabilities(null);
+			setChatBalancedCapabilities(null);
+			setChatProCapabilities(null);
 			setTestResult(null);
 			setAvailableModels([]);
 			setModelsLoaded(false);
@@ -392,10 +422,7 @@ export function LLMConfig() {
 	const isNewApiKey = apiKey.length > 0;
 	const isVerified = testResult?.success === true;
 	const hasValidConfig = config?.api_key_set && !isNewApiKey;
-	const canSave =
-		!saving &&
-		model &&
-		(isVerified || hasValidConfig);
+	const canSave = !saving && model && (isVerified || hasValidConfig);
 
 	return (
 		<div className="space-y-6">
@@ -481,7 +508,8 @@ export function LLMConfig() {
 							onChange={(e) => setEndpoint(e.target.value)}
 						/>
 						<p className="text-xs text-muted-foreground">
-							Change this to use a compatible provider (Azure OpenAI, Ollama, etc.)
+							Change this to use a compatible provider (Azure
+							OpenAI, Ollama, etc.)
 						</p>
 					</div>
 
@@ -606,7 +634,10 @@ export function LLMConfig() {
 									options={availableModels.map((m) => ({
 										value: m.id,
 										label: m.display_name,
-										description: m.id !== m.display_name ? m.id : undefined,
+										description:
+											m.id !== m.display_name
+												? m.id
+												: undefined,
 									}))}
 								/>
 							) : (
@@ -654,9 +685,8 @@ export function LLMConfig() {
 								}
 							/>
 							<p className="text-xs text-muted-foreground">
-								Maximum tokens per response. Most models
-								default to 4,096 but can generate up to
-								32K+.
+								Maximum tokens per response. Most models default
+								to 4,096 but can generate up to 32K+.
 							</p>
 						</div>
 
@@ -684,11 +714,14 @@ export function LLMConfig() {
 
 						<div className="space-y-3 rounded-lg border p-4">
 							<div>
-								<h5 className="text-sm font-medium">Chat model choices</h5>
+								<h5 className="text-sm font-medium">
+									Chat model choices
+								</h5>
 								<p className="mt-1 text-xs text-muted-foreground">
-									Choose the models users may select in Chat. Balanced uses the
-									primary model when left blank; blank Fast or Pro models hide
-									those choices.
+									Choose the models users may select in Chat.
+									Balanced uses the primary model when left
+									blank; blank Fast or Pro models hide those
+									choices.
 								</p>
 							</div>
 							{[
@@ -698,6 +731,8 @@ export function LLMConfig() {
 									setLabel: setChatFastLabel,
 									model: chatFastModel,
 									setModel: setChatFastModel,
+									capabilities: chatFastCapabilities,
+									setCapabilities: setChatFastCapabilities,
 									placeholder: "Optional fast model",
 								},
 								{
@@ -706,6 +741,9 @@ export function LLMConfig() {
 									setLabel: setChatBalancedLabel,
 									model: chatBalancedModel,
 									setModel: setChatBalancedModel,
+									capabilities: chatBalancedCapabilities,
+									setCapabilities:
+										setChatBalancedCapabilities,
 									placeholder: `Primary model (${model})`,
 								},
 								{
@@ -714,51 +752,100 @@ export function LLMConfig() {
 									setLabel: setChatProLabel,
 									model: chatProModel,
 									setModel: setChatProModel,
+									capabilities: chatProCapabilities,
+									setCapabilities: setChatProCapabilities,
 									placeholder: "Optional pro model",
 								},
 							].map((tier) => (
-								<div key={tier.id} className="grid gap-2 sm:grid-cols-[10rem_1fr]">
-									<div className="space-y-1">
-										<Label htmlFor={`chat-${tier.id}-label`}>
-											{tier.id[0].toUpperCase() + tier.id.slice(1)} label
-										</Label>
-										<Input
-											id={`chat-${tier.id}-label`}
-											value={tier.label}
-											onChange={(event) => tier.setLabel(event.target.value)}
-											maxLength={30}
-										/>
-									</div>
-									<div className="space-y-1">
-										<Label htmlFor={`chat-${tier.id}-model`}>
-											{tier.id[0].toUpperCase() + tier.id.slice(1)} model
-										</Label>
-										{hasModels ? (
-											<Combobox
-												id={`chat-${tier.id}-model`}
-												value={tier.model}
-												onValueChange={tier.setModel}
-												placeholder={tier.placeholder}
-												searchPlaceholder="Search models..."
-												emptyText="No models found."
-												options={availableModels.map((availableModel) => ({
-													value: availableModel.id,
-													label: availableModel.display_name,
-													description:
-														availableModel.id !== availableModel.display_name
-															? availableModel.id
-															: undefined,
-												}))}
-											/>
-										) : (
+								<div
+									key={tier.id}
+									className="space-y-2 border-b pb-4 last:border-b-0 last:pb-0"
+								>
+									<div className="grid gap-2 sm:grid-cols-[10rem_1fr]">
+										<div className="space-y-1">
+											<Label
+												htmlFor={`chat-${tier.id}-label`}
+											>
+												{tier.id[0].toUpperCase() +
+													tier.id.slice(1)}{" "}
+												label
+											</Label>
 											<Input
-												id={`chat-${tier.id}-model`}
-												value={tier.model}
-												onChange={(event) => tier.setModel(event.target.value)}
-												placeholder={tier.placeholder}
+												id={`chat-${tier.id}-label`}
+												value={tier.label}
+												onChange={(event) =>
+													tier.setLabel(
+														event.target.value,
+													)
+												}
+												maxLength={30}
 											/>
-										)}
+										</div>
+										<div className="space-y-1">
+											<Label
+												htmlFor={`chat-${tier.id}-model`}
+											>
+												{tier.id[0].toUpperCase() +
+													tier.id.slice(1)}{" "}
+												model
+											</Label>
+											{hasModels ? (
+												<Combobox
+													id={`chat-${tier.id}-model`}
+													value={tier.model}
+													onValueChange={
+														tier.setModel
+													}
+													placeholder={
+														tier.placeholder
+													}
+													searchPlaceholder="Search models..."
+													emptyText="No models found."
+													options={availableModels.map(
+														(availableModel) => ({
+															value: availableModel.id,
+															label: availableModel.display_name,
+															description:
+																availableModel.id !==
+																availableModel.display_name
+																	? availableModel.id
+																	: undefined,
+														}),
+													)}
+												/>
+											) : (
+												<Input
+													id={`chat-${tier.id}-model`}
+													value={tier.model}
+													onChange={(event) =>
+														tier.setModel(
+															event.target.value,
+														)
+													}
+													placeholder={
+														tier.placeholder
+													}
+												/>
+											)}
+										</div>
 									</div>
+									<ModelCapabilityEditor
+										provider={provider}
+										model={
+											tier.id === "balanced"
+												? tier.model.trim() || model
+												: tier.model
+										}
+										endpoint={
+											endpoint ===
+											DEFAULT_ENDPOINTS[provider]
+												? ""
+												: endpoint
+										}
+										apiKey={apiKey}
+										value={tier.capabilities}
+										onChange={tier.setCapabilities}
+									/>
 								</div>
 							))}
 						</div>
@@ -777,8 +864,9 @@ export function LLMConfig() {
 								}
 							/>
 							<p className="text-xs text-muted-foreground">
-								Override the model used for post-run summarization.
-								Uses the primary provider and API key.
+								Override the model used for post-run
+								summarization. Uses the primary provider and API
+								key.
 							</p>
 						</div>
 
@@ -791,13 +879,12 @@ export function LLMConfig() {
 								id="tuning-model"
 								placeholder="Leave blank to use primary model"
 								value={tuningModel}
-								onChange={(e) =>
-									setTuningModel(e.target.value)
-								}
+								onChange={(e) => setTuningModel(e.target.value)}
 							/>
 							<p className="text-xs text-muted-foreground">
-								Override the model used for agent tuning chat and
-								dry-runs. Uses the primary provider and API key.
+								Override the model used for agent tuning chat
+								and dry-runs. Uses the primary provider and API
+								key.
 							</p>
 						</div>
 					</div>
@@ -863,13 +950,19 @@ export function LLMConfig() {
 			</Card>
 
 			{/* Delete Confirmation Dialog */}
-			<AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
+			<AlertDialog
+				open={showDeleteConfirm}
+				onOpenChange={setShowDeleteConfirm}
+			>
 				<AlertDialogContent>
 					<AlertDialogHeader>
-						<AlertDialogTitle>Remove AI Configuration</AlertDialogTitle>
+						<AlertDialogTitle>
+							Remove AI Configuration
+						</AlertDialogTitle>
 						<AlertDialogDescription>
-							Are you sure you want to remove the AI provider configuration?
-							This will disable AI chat functionality until reconfigured.
+							Are you sure you want to remove the AI provider
+							configuration? This will disable AI chat
+							functionality until reconfigured.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -909,7 +1002,10 @@ const DEFAULT_OPENAI_ENDPOINT = "https://api.openai.com/v1";
 
 function isDefaultOpenAIEndpoint(value: string | null | undefined): boolean {
 	if (!value) return true;
-	return value.replace(/\/+$/, "") === DEFAULT_OPENAI_ENDPOINT.replace(/\/+$/, "");
+	return (
+		value.replace(/\/+$/, "") ===
+		DEFAULT_OPENAI_ENDPOINT.replace(/\/+$/, "")
+	);
 }
 
 /**
@@ -989,7 +1085,8 @@ function EmbeddingConfigCard({
 	);
 
 	const needsDedicatedKey = llmProvider === "anthropic";
-	const hasSavedConfig = config?.is_configured === true && !config?.uses_llm_key;
+	const hasSavedConfig =
+		config?.is_configured === true && !config?.uses_llm_key;
 	// Inheritance is available iff the LLM provider is OpenAI-compatible
 	// (i.e. provider === "openai"). Anthropic has no embeddings endpoint.
 	const inheritAvailable = llmProvider === "openai";
@@ -1003,7 +1100,8 @@ function EmbeddingConfigCard({
 
 	// Sync local state from loaded config — runs whenever the config object
 	// identity changes (so refetch() after save resets the form).
-	const [prevConfigRef, setPrevConfigRef] = useState<typeof config>(undefined);
+	const [prevConfigRef, setPrevConfigRef] =
+		useState<typeof config>(undefined);
 	if (config && prevConfigRef !== config) {
 		setPrevConfigRef(config);
 		setModel(config.model ?? "");
@@ -1018,7 +1116,9 @@ function EmbeddingConfigCard({
 	// a saved dedicated config. Fires on mount and whenever the credential
 	// surface changes.
 	const canAutoLoadModels =
-		(inheritActive || (hasSavedConfig && !override)) && !modelsLoaded && !testing;
+		(inheritActive || (hasSavedConfig && !override)) &&
+		!modelsLoaded &&
+		!testing;
 	if (canAutoLoadModels) {
 		// Trigger via the test mutation; backend resolves to inherited or saved key.
 		void (async () => {
@@ -1084,7 +1184,9 @@ function EmbeddingConfigCard({
 				setModelsLoaded(false);
 			}
 		} catch (error) {
-			toast.error("Test failed", { description: extractErrorMessage(error) });
+			toast.error("Test failed", {
+				description: extractErrorMessage(error),
+			});
 			setModelsLoaded(false);
 		} finally {
 			setTesting(false);
@@ -1163,9 +1265,12 @@ function EmbeddingConfigCard({
 	const handleReindex = async () => {
 		setReindexing(true);
 		try {
-			const response = await authFetch("/api/admin/llm/embedding-reindex", {
-				method: "POST",
-			});
+			const response = await authFetch(
+				"/api/admin/llm/embedding-reindex",
+				{
+					method: "POST",
+				},
+			);
 			if (!response.ok) {
 				const errorData = await response.json().catch(() => ({}));
 				throw new Error(errorData.detail ?? "Reindex failed");
@@ -1244,7 +1349,8 @@ function EmbeddingConfigCard({
 	// - We have credentials available (inherited via LLM, or typed/saved).
 	// The backend's POST runs the real embed test before persisting, so we
 	// don't need to gate Save on a separate Test click here.
-	const haveCredentials = inheritActive || apiKey.length > 0 || (hasSavedConfig && !override);
+	const haveCredentials =
+		inheritActive || apiKey.length > 0 || (hasSavedConfig && !override);
 	const canSave = !saving && model.length > 0 && haveCredentials;
 
 	const reindexInFlight = hasActiveReindexNotification || reindexing;
@@ -1257,8 +1363,8 @@ function EmbeddingConfigCard({
 					<CardTitle>Embedding Configuration</CardTitle>
 				</div>
 				<CardDescription>
-					Configure embeddings for the Knowledge Store (RAG). Works with
-					any OpenAI-compatible endpoint.
+					Configure embeddings for the Knowledge Store (RAG). Works
+					with any OpenAI-compatible endpoint.
 					{needsDedicatedKey && (
 						<span className="block mt-1 text-amber-600 dark:text-amber-400">
 							Anthropic doesn't provide embeddings — a dedicated
@@ -1308,9 +1414,7 @@ function EmbeddingConfigCard({
 								<Button
 									variant="ghost"
 									size="sm"
-									onClick={() =>
-										setShowDeleteConfirm(true)
-									}
+									onClick={() => setShowDeleteConfirm(true)}
 									className="w-full justify-center text-destructive hover:text-destructive sm:w-auto"
 								>
 									<Trash2 className="h-4 w-4 mr-1" />
@@ -1345,9 +1449,9 @@ function EmbeddingConfigCard({
 				{inheritActive && (
 					<div className="flex flex-col gap-3 rounded-md bg-muted/50 px-3 py-2 ring-1 ring-foreground/5 sm:flex-row sm:items-start sm:justify-between">
 						<p className="text-sm text-muted-foreground">
-							Inheriting endpoint and key from your LLM
-							provider. Pick an embedding model below — Save
-							runs a real embedding to confirm it works.
+							Inheriting endpoint and key from your LLM provider.
+							Pick an embedding model below — Save runs a real
+							embedding to confirm it works.
 						</p>
 						<Button
 							variant="outline"
@@ -1379,7 +1483,8 @@ function EmbeddingConfigCard({
 								? endpoint
 								: inheritActive
 									? (llmEndpoint ?? DEFAULT_OPENAI_ENDPOINT)
-									: (config?.endpoint ?? DEFAULT_OPENAI_ENDPOINT)
+									: (config?.endpoint ??
+										DEFAULT_OPENAI_ENDPOINT)
 						}
 						onChange={(e) => {
 							setEndpoint(e.target.value);
@@ -1390,7 +1495,8 @@ function EmbeddingConfigCard({
 					/>
 					{editingCredentials && (
 						<p className="text-xs text-muted-foreground">
-							Leave blank or set to {DEFAULT_OPENAI_ENDPOINT} for the default OpenAI endpoint.
+							Leave blank or set to {DEFAULT_OPENAI_ENDPOINT} for
+							the default OpenAI endpoint.
 						</p>
 					)}
 				</div>
@@ -1475,7 +1581,8 @@ function EmbeddingConfigCard({
 					)}
 					{modelsLoaded && availableModels.length === 0 && (
 						<p className="text-xs text-muted-foreground">
-							Endpoint didn't return a model list. Enter the model id manually.
+							Endpoint didn't return a model list. Enter the model
+							id manually.
 						</p>
 					)}
 				</div>
@@ -1551,11 +1658,15 @@ function EmbeddingConfigCard({
 							<DialogTitle>Re-embed knowledge store?</DialogTitle>
 							<DialogDescription>
 								{reindexConfirm?.row_count ?? 0} existing row
-								{reindexConfirm?.row_count === 1 ? "" : "s"}{" "}
+								{reindexConfirm?.row_count === 1
+									? ""
+									: "s"}{" "}
 								{reindexConfirm?.row_count === 1 ? "is" : "are"}{" "}
 								embedded with vectors that don't match the new
 								model's{" "}
-								<strong>{reindexConfirm?.new_dim ?? "?"}-dim</strong>{" "}
+								<strong>
+									{reindexConfirm?.new_dim ?? "?"}-dim
+								</strong>{" "}
 								output
 								{reindexConfirm?.old_model
 									? ` (previously ${reindexConfirm.old_model})`

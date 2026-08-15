@@ -1,129 +1,93 @@
-import { useEffect, useState } from "react";
-import { Download, FileText, Loader2 } from "lucide-react";
+import { FileSpreadsheet, FileText, Image, Presentation } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogHeader,
-	DialogTitle,
-} from "@/components/ui/dialog";
-import { authFetch } from "@/lib/api-client";
+import { cn } from "@/lib/utils";
 import {
 	attachmentContentUrl,
+	formatBytes,
 	isImageAttachment,
 	type AttachmentPublic,
 } from "@/services/chatAttachments";
+import { FilePreviewSheet } from "./FilePreviewSheet";
+import { useState } from "react";
 
-function formatBytes(bytes: number): string {
-	if (bytes < 1024) return `${bytes} B`;
-	if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
-	return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-}
-
-function TextPreview({ url }: { url: string }) {
-	const [text, setText] = useState<string | null>(null);
-	const [error, setError] = useState(false);
-
-	useEffect(() => {
-		let cancelled = false;
-		authFetch(url)
-			.then((response) => {
-				if (!response.ok) throw new Error("Preview failed");
-				return response.text();
-			})
-			.then((content) => {
-				if (!cancelled) setText(content);
-			})
-			.catch(() => {
-				if (!cancelled) setError(true);
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [url]);
-
-	if (error) {
-		return <p className="p-6 text-sm text-muted-foreground">Preview unavailable.</p>;
-	}
-	if (text === null) {
-		return (
-			<div className="flex min-h-48 items-center justify-center">
-				<Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-			</div>
-		);
-	}
-	return (
-		<pre className="max-h-[65vh] overflow-auto whitespace-pre-wrap p-4 text-xs">
-			{text}
-		</pre>
-	);
-}
-
-function AttachmentPreview({
-	conversationId,
-	attachment,
-}: {
-	conversationId: string;
-	attachment: AttachmentPublic;
-}) {
-	const url = attachmentContentUrl(conversationId, attachment.id);
+function FileIcon({ attachment }: { attachment: AttachmentPublic }) {
 	if (isImageAttachment(attachment.content_type)) {
-		return (
-			<div className="flex max-h-[70vh] items-center justify-center overflow-auto bg-muted/30 p-3">
-				<img
-					src={url}
-					alt={attachment.filename}
-					className="max-h-[65vh] max-w-full rounded-lg object-contain"
-				/>
-			</div>
-		);
+		return <Image className="h-5 w-5" />;
 	}
-	if (attachment.content_type === "application/pdf") {
-		return <iframe title={attachment.filename} src={url} className="h-[70vh] w-full" />;
+	if (attachment.content_type.includes("spreadsheet")) {
+		return <FileSpreadsheet className="h-5 w-5" />;
 	}
-	return <TextPreview url={url} />;
+	if (attachment.content_type.includes("presentation")) {
+		return <Presentation className="h-5 w-5" />;
+	}
+	return <FileText className="h-5 w-5" />;
 }
 
 export function ChatAttachmentList({
 	conversationId,
 	attachments,
+	variant = "attachment",
 }: {
 	conversationId: string;
 	attachments: AttachmentPublic[];
+	variant?: "attachment" | "artifact";
 }) {
 	const [preview, setPreview] = useState<AttachmentPublic | null>(null);
 	if (attachments.length === 0) return null;
 
 	return (
 		<>
-			<div className="mb-2 flex flex-wrap justify-end gap-2">
+			<div
+				className={cn(
+					"mb-2 flex flex-wrap gap-2",
+					variant === "attachment"
+						? "justify-end"
+						: "justify-start px-4",
+				)}
+			>
 				{attachments.map((attachment) => {
-					const previewUrl = attachmentContentUrl(conversationId, attachment.id);
+					const previewUrl = attachmentContentUrl(
+						conversationId,
+						attachment.id,
+					);
 					return (
 						<button
 							type="button"
 							key={attachment.id}
 							onClick={() => setPreview(attachment)}
-							className="flex max-w-64 items-center gap-2 rounded-xl border border-primary-foreground/20 bg-primary-foreground/10 p-2 text-left transition-colors hover:bg-primary-foreground/15"
+							className={cn(
+								"group/file flex max-w-72 items-center gap-2.5 rounded-xl border p-2.5 text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 motion-reduce:transition-none",
+								variant === "attachment"
+									? "border-primary-foreground/20 bg-primary-foreground/10 hover:bg-primary-foreground/15"
+									: "animate-in fade-in-0 slide-in-from-bottom-1 border-border bg-card text-card-foreground shadow-sm hover:bg-accent/60 motion-reduce:animate-none",
+							)}
 						>
 							{isImageAttachment(attachment.content_type) ? (
 								<img
 									src={previewUrl}
 									alt=""
-									className="h-12 w-12 rounded-lg object-cover"
+									className="h-11 w-11 rounded-lg object-cover"
 								/>
 							) : (
-								<span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-foreground/10">
-									<FileText className="h-5 w-5" />
+								<span
+									className={cn(
+										"flex h-10 w-10 shrink-0 items-center justify-center rounded-lg",
+										variant === "attachment"
+											? "bg-primary-foreground/10"
+											: "bg-primary/10 text-primary",
+									)}
+								>
+									<FileIcon attachment={attachment} />
 								</span>
 							)}
 							<span className="min-w-0">
 								<span className="block truncate text-xs font-medium">
 									{attachment.filename}
 								</span>
-								<span className="block text-[10px] opacity-70">
+								<span className="block text-[11px] opacity-65">
+									{variant === "artifact"
+										? "Generated file · "
+										: ""}
 									{formatBytes(attachment.size_bytes)}
 								</span>
 							</span>
@@ -132,31 +96,11 @@ export function ChatAttachmentList({
 				})}
 			</div>
 
-			<Dialog open={preview !== null} onOpenChange={(open) => !open && setPreview(null)}>
-				<DialogContent className="max-w-4xl overflow-hidden p-0">
-					{preview && (
-						<>
-							<DialogHeader className="flex-row items-center justify-between gap-4 border-b px-5 py-4 text-left">
-								<div className="min-w-0">
-									<DialogTitle className="truncate">{preview.filename}</DialogTitle>
-									<DialogDescription>{formatBytes(preview.size_bytes)}</DialogDescription>
-								</div>
-								<Button asChild variant="outline" size="sm" className="mr-7 shrink-0">
-									<a
-										href={attachmentContentUrl(conversationId, preview.id, {
-											download: true,
-										})}
-									>
-										<Download className="mr-2 h-4 w-4" />
-										Download
-									</a>
-								</Button>
-							</DialogHeader>
-							<AttachmentPreview conversationId={conversationId} attachment={preview} />
-						</>
-					)}
-				</DialogContent>
-			</Dialog>
+			<FilePreviewSheet
+				conversationId={conversationId}
+				attachment={preview}
+				onOpenChange={(open) => !open && setPreview(null)}
+			/>
 		</>
 	);
 }

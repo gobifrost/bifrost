@@ -9,7 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 from src.models.contracts.agent_stats import AgentStatsResponse
-
+from src.models.contracts.artifacts import ArtifactRef, ModelCapabilities
 from src.models.contracts.refs import WorkflowRef
 from src.models.enums import AgentAccessLevel, AgentChannel, MessageRole
 
@@ -336,6 +336,7 @@ class AttachmentPublic(BaseModel):
     filename: str
     content_type: str
     size_bytes: int
+    kind: Literal["attachment", "artifact"] = "attachment"
 
     @field_serializer("id")
     def serialize_id(self, value: UUID) -> str:
@@ -356,6 +357,7 @@ class ChatModelTierPublic(BaseModel):
 
     id: ChatModelTierId
     label: str
+    capabilities: ModelCapabilities
 
 
 class ChatModelTiersResponse(BaseModel):
@@ -420,6 +422,7 @@ class ChatResponse(BaseModel):
     message_id: UUID
     content: str
     tool_calls: list[ToolCall] | None = None
+    artifacts: list[ArtifactRef] = Field(default_factory=list)
     token_count_input: int | None = None
     token_count_output: int | None = None
     duration_ms: int | None = None
@@ -473,6 +476,9 @@ class ChatStreamChunk(BaseModel):
         "tool_call",
         "tool_progress",
         "tool_result",
+        "artifact_started",
+        "artifact_ready",
+        "artifact_failed",
         "agent_switch",
         "context_warning",
         "title_update",
@@ -487,6 +493,7 @@ class ChatStreamChunk(BaseModel):
     tool_call: ToolCall | None = None
     tool_progress: ToolProgress | None = None
     tool_result: ToolResult | None = None
+    artifact: ArtifactRef | None = None
     execution_id: str | None = Field(default=None, description="Execution ID for tool_call chunks")
 
     # Agent switch and context warning

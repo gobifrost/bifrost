@@ -132,6 +132,7 @@ class BaseLLMClient(ABC):
         *,
         max_tokens: int | None = None,
         model: str | None = None,
+        require_tool_call: bool = False,
     ) -> LLMResponse:
         """
         Non-streaming completion.
@@ -141,6 +142,7 @@ class BaseLLMClient(ABC):
             tools: Optional list of tools the model can call
             max_tokens: Override default max tokens
             model: Override default model (must be compatible with configured provider)
+            require_tool_call: Reject text-only output so the provider must call a tool
 
         Returns:
             LLMResponse with content and/or tool calls

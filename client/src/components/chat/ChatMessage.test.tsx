@@ -53,6 +53,7 @@ describe("ChatMessage — user messages", () => {
 							filename: "notes.txt",
 							content_type: "text/plain",
 							size_bytes: 12,
+							kind: "attachment",
 						},
 					],
 				})}

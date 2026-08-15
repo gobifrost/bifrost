@@ -44,7 +44,20 @@ vi.mock("@/hooks/useChat", () => ({
 	useCreateConversation: () => createConversationRef,
 	useChatModelTiers: () => ({
 		data: {
-			tiers: [{ id: "balanced", label: "Balanced" }],
+			tiers: [
+				{
+					id: "balanced",
+					label: "Balanced",
+					capabilities: {
+						image_input: false,
+						pdf_input: false,
+						tool_calling: true,
+						native_image_output: false,
+						source: "verified",
+						fingerprint: "test",
+					},
+				},
+			],
 			default_tier: "balanced",
 		},
 	}),
@@ -73,19 +86,18 @@ vi.mock("@/stores/chatStore", () => ({
 
 const mockNavigate = vi.fn();
 vi.mock("react-router-dom", async () => {
-	const actual = await vi.importActual<typeof import("react-router-dom")>(
-		"react-router-dom",
-	);
+	const actual =
+		await vi.importActual<typeof import("react-router-dom")>(
+			"react-router-dom",
+		);
 	return { ...actual, useNavigate: () => mockNavigate };
 });
 
 // Child components we don't need to exercise — stub to simple markers.
 vi.mock("./ChatMessage", () => ({
-	ChatMessage: ({
-		message,
-	}: {
-		message: { content?: string | null };
-	}) => <div data-marker="chat-message">{message.content}</div>,
+	ChatMessage: ({ message }: { message: { content?: string | null } }) => (
+		<div data-marker="chat-message">{message.content}</div>
+	),
 }));
 
 vi.mock("./ChatInput", () => ({
@@ -102,7 +114,11 @@ vi.mock("./ChatInput", () => ({
 				placeholder={placeholder}
 				onKeyDown={(e) => {
 					if (e.key === "Enter") {
-						onSend((e.target as HTMLInputElement).value, [], "balanced");
+						onSend(
+							(e.target as HTMLInputElement).value,
+							[],
+							"balanced",
+						);
 					}
 				}}
 			/>
@@ -188,9 +204,9 @@ describe("ChatWindow — loading state", () => {
 		const { container } = renderWithProviders(
 			<ChatWindow conversationId="c-1" />,
 		);
-		expect(container.querySelectorAll(".animate-pulse").length).toBeGreaterThan(
-			0,
-		);
+		expect(
+			container.querySelectorAll(".animate-pulse").length,
+		).toBeGreaterThan(0);
 	});
 });
 
@@ -230,9 +246,7 @@ describe("ChatWindow — messages render & send", () => {
 
 		renderWithProviders(<ChatWindow conversationId="c-1" />);
 
-		const input = screen.getByLabelText(
-			/chat input/i,
-		) as HTMLInputElement;
+		const input = screen.getByLabelText(/chat input/i) as HTMLInputElement;
 		fireEvent.change(input, { target: { value: "hello" } });
 		fireEvent.keyDown(input, { key: "Enter" });
 
@@ -254,9 +268,7 @@ describe("ChatWindow — messages render & send", () => {
 
 		renderWithProviders(<ChatWindow conversationId={undefined} />);
 
-		const input = screen.getByLabelText(
-			/chat input/i,
-		) as HTMLInputElement;
+		const input = screen.getByLabelText(/chat input/i) as HTMLInputElement;
 		fireEvent.change(input, { target: { value: "hello from draft" } });
 		fireEvent.keyDown(input, { key: "Enter" });
 

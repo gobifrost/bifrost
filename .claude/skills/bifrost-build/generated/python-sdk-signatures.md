@@ -13,11 +13,30 @@ Agent execution operations.
 
 
 
-**`ai.complete(prompt: str | None = None, messages: list[dict[str, str]] | None = None, system: str | None = None, response_format: type[T] | None = None, knowledge: list[str] | None = None, max_tokens: int | None = None, org_id: str | None = None, model: str | None = None, timeout: float | None = None) -> AIResponse | T`**
+**`ai.complete(prompt: str | None = None, messages: list[dict[str, str]] | None = None, system: str | None = None, response_format: type[T] | None = None, knowledge: list[str] | None = None, max_tokens: int | None = None, org_id: str | None = None, model: str | None = None, timeout: float | None = None, files: list[AIInputFile | ArtifactRef | dict[str, Any]] | None = None) -> AIResponse | T`**
 
 **`ai.get_model_info() -> dict[str, Any]`**
 
-**`ai.stream(prompt: str | None = None, messages: list[dict[str, str]] | None = None, system: str | None = None, knowledge: list[str] | None = None, max_tokens: int | None = None, org_id: str | None = None, model: str | None = None) -> AsyncGenerator[AIStreamChunk, None]`**
+**`ai.stream(prompt: str | None = None, messages: list[dict[str, str]] | None = None, system: str | None = None, knowledge: list[str] | None = None, max_tokens: int | None = None, org_id: str | None = None, model: str | None = None, files: list[AIInputFile | ArtifactRef | dict[str, Any]] | None = None) -> AsyncGenerator[AIStreamChunk, None]`**
+
+### artifacts
+
+Create, read, and share generated files from workflows.
+
+**`artifacts.create_document(filename: str, format: Literal['pdf', 'docx'], title: str, sections: list[dict[str, Any]], subtitle: str | None = None, page_size: Literal['letter', 'a4'] = 'letter', location: str = 'temp', scope: str | None = None) -> ArtifactRef`**
+  Create a flowing PDF or DOCX document and return its reference.
+
+**`artifacts.create_spreadsheet(filename: str, sheets: list[dict[str, Any]], location: str = 'temp', scope: str | None = None) -> ArtifactRef`**
+  Create a styled XLSX workbook and return its reference.
+
+**`artifacts.create_text(filename: str, format: Literal['csv', 'html', 'markdown', 'text', 'json'], content: str, location: str = 'temp', scope: str | None = None) -> ArtifactRef`**
+  Create a text-family artifact and return its reference.
+
+**`artifacts.get_download_url(ref: ArtifactRef | dict[str, Any]) -> str`**
+  Create a short-lived download URL for a managed ArtifactRef.
+
+**`artifacts.read(ref: ArtifactRef | dict[str, Any]) -> bytes`**
+  Read an ArtifactRef received as workflow or MCP tool input.
 
 ### config
 

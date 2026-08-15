@@ -574,6 +574,69 @@ if HAS_FASTMCP:
                 if isinstance(result, dict):
                     if result.get("error"):
                         return error_result(str(result["error"]), result)
+                    from src.services.chat_artifacts import find_artifact_refs
+
+                    artifact_refs = find_artifact_refs(result)
+                    if artifact_refs:
+                        import base64
+
+                        from mcp.types import ImageContent, ResourceLink, TextContent
+
+                        from shared.file_paths import resolve_s3_key
+                        from src.core.database import get_db_context
+                        from src.services.file_storage.service import (
+                            get_file_storage_service,
+                        )
+
+                        content_blocks: list[Any] = [
+                            TextContent(
+                                type="text",
+                                text=f"Created {len(artifact_refs)} artifact(s).",
+                            )
+                        ]
+                        async with get_db_context() as db:
+                            storage = get_file_storage_service(db)
+                            for ref in artifact_refs:
+                                if not ref.path or not ref.location or not ref.scope:
+                                    return error_result(
+                                        "ArtifactRef output must include path, location, and scope.",
+                                        result,
+                                    )
+                                if (
+                                    not context.is_platform_admin
+                                    and ref.scope not in {"global", str(context.org_id)}
+                                ):
+                                    return error_result(
+                                        "ArtifactRef output belongs to another organization scope.",
+                                        result,
+                                    )
+                                s3_key = resolve_s3_key(ref.location, ref.scope, ref.path)
+                                if ref.content_type.startswith("image/"):
+                                    data = await storage.read_uploaded_file(s3_key)
+                                    content_blocks.append(
+                                        ImageContent(
+                                            type="image",
+                                            data=base64.b64encode(data).decode("ascii"),
+                                            mimeType=ref.content_type,
+                                        )
+                                    )
+                                else:
+                                    url = await storage.generate_presigned_download_url(
+                                        s3_key
+                                    )
+                                    content_blocks.append(
+                                        ResourceLink(
+                                            type="resource_link",
+                                            name=ref.filename,
+                                            uri=url,
+                                            mimeType=ref.content_type,
+                                            size=ref.size_bytes,
+                                        )
+                                    )
+                        return ToolResult(
+                            content=content_blocks,
+                            structured_content=result,
+                        )
                     # Format as pretty JSON for display
                     display = json.dumps(result, indent=2, default=str)
                     return success_result(display, result)

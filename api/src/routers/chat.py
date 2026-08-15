@@ -9,6 +9,7 @@ For real-time streaming, use the WebSocket endpoint at /ws/connect
 """
 
 import json
+import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import Literal, cast
@@ -61,10 +62,28 @@ async def get_model_tiers(db: DbSession, user: CurrentActiveUser) -> ChatModelTi
 
     tiers: list[ChatModelTierPublic] = []
     if config.chat_fast_model:
-        tiers.append(ChatModelTierPublic(id="fast", label=config.chat_fast_label))
-    tiers.append(ChatModelTierPublic(id="balanced", label=config.chat_balanced_label))
+        tiers.append(
+            ChatModelTierPublic(
+                id="fast",
+                label=config.chat_fast_label,
+                capabilities=config.resolve_chat_capabilities("fast"),
+            )
+        )
+    tiers.append(
+        ChatModelTierPublic(
+            id="balanced",
+            label=config.chat_balanced_label,
+            capabilities=config.resolve_chat_capabilities("balanced"),
+        )
+    )
     if config.chat_pro_model:
-        tiers.append(ChatModelTierPublic(id="pro", label=config.chat_pro_label))
+        tiers.append(
+            ChatModelTierPublic(
+                id="pro",
+                label=config.chat_pro_label,
+                capabilities=config.resolve_chat_capabilities("pro"),
+            )
+        )
     return ChatModelTiersResponse(tiers=tiers, default_tier="balanced")
 
 
@@ -357,6 +376,7 @@ async def get_attachment_content(
     db: DbSession,
     user: CurrentActiveUser,
     download: bool = False,
+    preview: bool = False,
 ) -> Response:
     """Preview or download an attachment after enforcing conversation ownership."""
     attachment = (
@@ -374,6 +394,23 @@ async def get_attachment_content(
     from src.services.file_storage.service import get_file_storage_service
 
     content = await get_file_storage_service(db).read_uploaded_file(attachment.s3_key)
+    if preview:
+        from shared.artifact_preview import preview_office_artifact
+
+        preview_html = await asyncio.to_thread(
+            preview_office_artifact, content, attachment.content_type
+        )
+        if preview_html is not None:
+            return Response(
+                content=preview_html,
+                media_type="text/html",
+                headers={
+                    "Content-Security-Policy": (
+                        "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+                    ),
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
     disposition = "attachment" if download else "inline"
     encoded_filename = quote(attachment.filename, safe="")
     return Response(
@@ -444,7 +481,17 @@ async def get_messages(
             role=m.role,
             content=m.content,
             attachments=[
-                AttachmentPublic.model_validate(attachment)
+                AttachmentPublic(
+                    id=attachment.id,
+                    filename=attachment.filename,
+                    content_type=attachment.content_type,
+                    size_bytes=attachment.size_bytes,
+                    kind=(
+                        "artifact"
+                        if attachment.s3_key.startswith("_artifacts/")
+                        else "attachment"
+                    ),
+                )
                 for attachment in attachments_by_message.get(m.id, [])
             ],
             tool_calls=[
@@ -523,6 +570,7 @@ async def send_message(
     final_input_tokens = None
     final_output_tokens = None
     final_duration_ms = None
+    final_artifacts = []
 
     async for chunk in executor.chat(
         agent=conversation.agent,  # May be None for agentless chat
@@ -537,6 +585,8 @@ async def send_message(
             final_content += chunk.content
         elif chunk.type == "tool_call" and chunk.tool_call:
             final_tool_calls.append(chunk.tool_call)
+        elif chunk.type == "artifact_ready" and chunk.artifact:
+            final_artifacts.append(chunk.artifact)
         elif chunk.type == "done":
             # For non-streaming, content is sent in the done chunk
             if chunk.content:
@@ -555,6 +605,7 @@ async def send_message(
         message_id=UUID(final_message_id) if final_message_id else uuid4(),
         content=final_content,
         tool_calls=final_tool_calls if final_tool_calls else None,
+        artifacts=final_artifacts,
         token_count_input=final_input_tokens,
         token_count_output=final_output_tokens,
         duration_ms=final_duration_ms,

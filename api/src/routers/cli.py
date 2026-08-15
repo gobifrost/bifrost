@@ -101,6 +101,12 @@ from src.models.contracts.cli import (
     SDKTableListRequest,
     SDKTableInfo,
 )
+from src.models.contracts.artifacts import (
+    ArtifactRenderResponse,
+    DocumentArtifactSpec,
+    SpreadsheetArtifactSpec,
+    TextArtifactSpec,
+)
 from src.core.pubsub import publish_cli_session_update, publish_execution_log, publish_execution_update, publish_history_update
 from src.repositories.cli_sessions import CLISessionRepository
 
@@ -1982,6 +1988,66 @@ async def post_cli_result(
 # =============================================================================
 
 
+@router.post("/artifacts/document")
+async def sdk_render_document_artifact(
+    request: DocumentArtifactSpec,
+    current_user: CurrentUser,
+) -> ArtifactRenderResponse:
+    """Render a trusted PDF or DOCX payload for SDK-managed persistence."""
+    del current_user
+    import base64
+
+    from shared.artifact_generation import generate_document
+
+    artifact = await asyncio.to_thread(generate_document, request)
+    return ArtifactRenderResponse(
+        filename=artifact.filename,
+        content_type=artifact.content_type,
+        size_bytes=artifact.size_bytes,
+        content_base64=base64.b64encode(artifact.content).decode("ascii"),
+    )
+
+
+@router.post("/artifacts/spreadsheet")
+async def sdk_render_spreadsheet_artifact(
+    request: SpreadsheetArtifactSpec,
+    current_user: CurrentUser,
+) -> ArtifactRenderResponse:
+    """Render a trusted XLSX payload for SDK-managed persistence."""
+    del current_user
+    import base64
+
+    from shared.artifact_generation import generate_spreadsheet
+
+    artifact = await asyncio.to_thread(generate_spreadsheet, request)
+    return ArtifactRenderResponse(
+        filename=artifact.filename,
+        content_type=artifact.content_type,
+        size_bytes=artifact.size_bytes,
+        content_base64=base64.b64encode(artifact.content).decode("ascii"),
+    )
+
+
+@router.post("/artifacts/text")
+async def sdk_render_text_artifact(
+    request: TextArtifactSpec,
+    current_user: CurrentUser,
+) -> ArtifactRenderResponse:
+    """Render a trusted text-family payload for SDK-managed persistence."""
+    del current_user
+    import base64
+
+    from shared.artifact_generation import generate_text
+
+    artifact = await asyncio.to_thread(generate_text, request)
+    return ArtifactRenderResponse(
+        filename=artifact.filename,
+        content_type=artifact.content_type,
+        size_bytes=artifact.size_bytes,
+        content_base64=base64.b64encode(artifact.content).decode("ascii"),
+    )
+
+
 @router.post(
     "/ai/complete",
     summary="Generate AI completion",
@@ -1993,7 +2059,9 @@ async def cli_ai_complete(
 ) -> "CLIAICompleteResponse":
     """Generate an AI completion using platform-configured LLM."""
     from src.models.contracts.cli import CLIAICompleteResponse
-    from src.services.llm import get_llm_client, LLMMessage
+    import base64
+
+    from src.services.llm import LLMInputFile, LLMMessage, get_llm_client
 
     try:
         client = await get_llm_client(db)
@@ -2003,6 +2071,21 @@ async def cli_ai_complete(
             LLMMessage(role=msg["role"], content=msg["content"])  # type: ignore[arg-type]
             for msg in request.messages
         ]
+        if request.input_files:
+            user_message = next(
+                (message for message in reversed(llm_messages) if message.role == "user"),
+                None,
+            )
+            if user_message is None:
+                raise ValueError("AI file inputs require a user message.")
+            user_message.input_files = [
+                LLMInputFile(
+                    filename=item.filename,
+                    media_type=item.content_type,
+                    data=base64.b64decode(item.data_base64, validate=True),
+                )
+                for item in request.input_files
+            ]
 
         response = await client.complete(
             messages=llm_messages,
@@ -2075,7 +2158,9 @@ async def cli_ai_stream(
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """Generate a streaming AI completion using SSE."""
-    from src.services.llm import get_llm_client, LLMMessage
+    import base64
+
+    from src.services.llm import LLMInputFile, LLMMessage, get_llm_client
 
     # Capture context for usage recording. Resolve scope upfront against
     # the authenticated user so the streaming closure doesn't have to
@@ -2093,6 +2178,21 @@ async def cli_ai_stream(
                 LLMMessage(role=msg["role"], content=msg["content"])  # type: ignore[arg-type]
                 for msg in request.messages
             ]
+            if request.input_files:
+                user_message = next(
+                    (message for message in reversed(llm_messages) if message.role == "user"),
+                    None,
+                )
+                if user_message is None:
+                    raise ValueError("AI file inputs require a user message.")
+                user_message.input_files = [
+                    LLMInputFile(
+                        filename=item.filename,
+                        media_type=item.content_type,
+                        data=base64.b64decode(item.data_base64, validate=True),
+                    )
+                    for item in request.input_files
+                ]
 
             async for chunk in client.stream(
                 messages=llm_messages,

@@ -74,6 +74,48 @@ return {"download_url": signed["url"]}
 ```
 """
 
+_ARTIFACT_DOCS = """## Artifact inputs and outputs
+
+`bifrost.artifacts` renders PDF, DOCX, XLSX, CSV, HTML, Markdown, JSON, and
+plain-text files through trusted platform generators. Every create method
+returns an `ArtifactRef`, a JSON-safe object with the marker
+`type="bifrost_artifact"`, MIME type, filename, size, and managed-file path.
+
+Return an `ArtifactRef` (or nest it in a result dictionary) from a custom tool
+to make Chat attach it and to make MCP return an image content block or a
+resource link automatically:
+
+```python
+from bifrost import ArtifactRef, artifacts, tool
+
+@tool
+async def build_report(title: str) -> dict:
+    report = await artifacts.create_document(
+        "report.pdf",
+        format="pdf",
+        title=title,
+        sections=[{"heading": "Summary", "paragraphs": ["Ready for review."]}],
+    )
+    return {"artifact": report.model_dump(mode="json")}
+```
+
+MCP tool arguments remain JSON Schema. To accept a file from another custom
+tool or workflow, accept the canonical ArtifactRef object and read it through
+the SDK; do not accept an S3 key or trust a caller-supplied filesystem path:
+
+```python
+@tool
+async def inspect_report(artifact: dict) -> dict:
+    ref = ArtifactRef.model_validate(artifact)
+    content = await artifacts.read(ref)
+    return {"filename": ref.filename, "size": len(content)}
+```
+
+MCP image outputs are emitted as `ImageContent`. Other generated files are
+emitted as short-lived `ResourceLink` values. MCP Apps/widgets are a separate
+UI resource surface and are not required for file transport.
+"""
+
 
 def _extract_class_methods(cls: type) -> list[dict[str, Any]]:
     """Extract method signatures and docstrings from a class."""
@@ -359,6 +401,7 @@ async def get_sdk_schema(context: Any) -> ToolResult:  # noqa: ARG001
         # Import SDK modules
         from bifrost import (
             ai,
+            artifacts,
             config,
             executions,
             files,
@@ -397,6 +440,7 @@ async def get_sdk_schema(context: Any) -> ToolResult:  # noqa: ARG001
 
         modules = [
             ("ai", ai),
+            ("artifacts", artifacts),
             ("config", config),
             ("executions", executions),
             ("files", files),
@@ -416,6 +460,7 @@ async def get_sdk_schema(context: Any) -> ToolResult:  # noqa: ARG001
                 lines.append(doc)
 
         lines.append(_FILE_LOCATIONS_DOCS)
+        lines.append(_ARTIFACT_DOCS)
 
         # Generate models docs
         lines.append(_generate_models_docs())

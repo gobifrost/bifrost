@@ -4516,6 +4516,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sdk/artifacts/document": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sdk Render Document Artifact
+         * @description Render a trusted PDF or DOCX payload for SDK-managed persistence.
+         */
+        post: operations["sdk_render_document_artifact_api_sdk_artifacts_document_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/artifacts/spreadsheet": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sdk Render Spreadsheet Artifact
+         * @description Render a trusted XLSX payload for SDK-managed persistence.
+         */
+        post: operations["sdk_render_spreadsheet_artifact_api_sdk_artifacts_spreadsheet_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/artifacts/text": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sdk Render Text Artifact
+         * @description Render a trusted text-family payload for SDK-managed persistence.
+         */
+        post: operations["sdk_render_text_artifact_api_sdk_artifacts_text_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sdk/ai/complete": {
         parameters: {
             query?: never;
@@ -6031,6 +6091,46 @@ export interface paths {
          *     Requires platform admin access.
          */
         delete: operations["delete_llm_config_api_admin_llm_config_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/llm/model-capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Discover Model Capabilities
+         * @description Look up model features without trusting provider model-list labels.
+         */
+        post: operations["discover_model_capabilities_api_admin_llm_model_capabilities_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/llm/model-capabilities/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify Model Capability Support
+         * @description Run a bounded, one-time provider conformance check for an unknown model.
+         */
+        post: operations["verify_model_capability_support_api_admin_llm_model_capabilities_verify_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -11467,6 +11567,60 @@ export interface components {
             affected_run_ids: string[];
         };
         /**
+         * ArtifactRef
+         * @description Portable reference returned by Bifrost tools and accepted as tool input.
+         */
+        ArtifactRef: {
+            /**
+             * Type
+             * @default bifrost_artifact
+             * @constant
+             */
+            type: "bifrost_artifact";
+            /** Filename */
+            filename: string;
+            /** Content Type */
+            content_type: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Path */
+            path?: string | null;
+            /** Location */
+            location?: string | null;
+            /** Scope */
+            scope?: string | null;
+            /** Attachment Id */
+            attachment_id?: string | null;
+            /** Conversation Id */
+            conversation_id?: string | null;
+            /** Created At */
+            created_at?: string | null;
+        };
+        /**
+         * ArtifactRenderResponse
+         * @description Rendered binary returned to the SDK before managed-file persistence.
+         */
+        ArtifactRenderResponse: {
+            /** Filename */
+            filename: string;
+            /** Content Type */
+            content_type: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Content Base64 */
+            content_base64: string;
+        };
+        /**
+         * ArtifactTable
+         * @description A bounded table that can be rendered into a document.
+         */
+        ArtifactTable: {
+            /** Columns */
+            columns: string[];
+            /** Rows */
+            rows?: unknown[][];
+        };
+        /**
          * AssignAgentsToRoleRequest
          * @description Request for assigning agents to a role.
          */
@@ -11560,6 +11714,12 @@ export interface components {
             content_type: string;
             /** Size Bytes */
             size_bytes: number;
+            /**
+             * Kind
+             * @default attachment
+             * @enum {string}
+             */
+            kind: "attachment" | "artifact";
         };
         /**
          * AttachmentUploadResponse
@@ -12170,6 +12330,8 @@ export interface components {
              * @description Execution ID for AI usage tracking
              */
             execution_id?: string | null;
+            /** Input Files */
+            input_files?: components["schemas"]["CLIAIInputFile"][];
         };
         /**
          * CLIAICompleteResponse
@@ -12217,6 +12379,18 @@ export interface components {
              * @description Default max tokens
              */
             max_tokens: number;
+        };
+        /**
+         * CLIAIInputFile
+         * @description Base64 binary input for an SDK AI request.
+         */
+        CLIAIInputFile: {
+            /** Filename */
+            filename: string;
+            /** Content Type */
+            content_type: string;
+            /** Data Base64 */
+            data_base64: string;
         };
         /**
          * CLIConfigDeleteRequest
@@ -12713,6 +12887,7 @@ export interface components {
             id: "fast" | "balanced" | "pro";
             /** Label */
             label: string;
+            capabilities: components["schemas"]["ModelCapabilities"];
         };
         /**
          * ChatModelTiersResponse
@@ -12763,6 +12938,8 @@ export interface components {
             content: string;
             /** Tool Calls */
             tool_calls?: components["schemas"]["ToolCall"][] | null;
+            /** Artifacts */
+            artifacts?: components["schemas"]["ArtifactRef"][];
             /** Token Count Input */
             token_count_input?: number | null;
             /** Token Count Output */
@@ -13907,6 +14084,31 @@ export interface components {
             message?: string | null;
         };
         /**
+         * DocumentArtifactSpec
+         * @description Schema-first payload for a flowing PDF or DOCX document.
+         */
+        DocumentArtifactSpec: {
+            /** Filename */
+            filename: string;
+            /**
+             * Format
+             * @enum {string}
+             */
+            format: "pdf" | "docx";
+            /** Title */
+            title: string;
+            /** Subtitle */
+            subtitle?: string | null;
+            /** Sections */
+            sections: components["schemas"]["DocumentSection"][];
+            /**
+             * Page Size
+             * @default letter
+             * @enum {string}
+             */
+            page_size: "letter" | "a4";
+        };
+        /**
          * DocumentBatchCreate
          * @description Input for inserting or upserting multiple documents.
          */
@@ -14127,6 +14329,19 @@ export interface components {
              * @default false
              */
             skip_count: boolean;
+        };
+        /**
+         * DocumentSection
+         * @description One flowing section in a PDF or DOCX artifact.
+         */
+        DocumentSection: {
+            /** Heading */
+            heading?: string | null;
+            /** Paragraphs */
+            paragraphs?: string[];
+            /** Bullets */
+            bullets?: string[];
+            table?: components["schemas"]["ArtifactTable"] | null;
         };
         /**
          * DocumentUpdate
@@ -18186,6 +18401,9 @@ export interface components {
              * @description Optional model exposed as the Pro Chat tier.
              */
             chat_pro_model?: string | null;
+            chat_fast_capabilities?: components["schemas"]["ModelCapabilities"] | null;
+            chat_balanced_capabilities?: components["schemas"]["ModelCapabilities"] | null;
+            chat_pro_capabilities?: components["schemas"]["ModelCapabilities"] | null;
         };
         /**
          * LLMConfigResponse
@@ -18233,6 +18451,9 @@ export interface components {
             chat_pro_label: string;
             /** Chat Pro Model */
             chat_pro_model?: string | null;
+            chat_fast_capabilities?: components["schemas"]["ModelCapabilities"] | null;
+            chat_balanced_capabilities?: components["schemas"]["ModelCapabilities"] | null;
+            chat_pro_capabilities?: components["schemas"]["ModelCapabilities"] | null;
             /**
              * Is Configured
              * @default true
@@ -19498,6 +19719,89 @@ export interface components {
              * @default common
              */
             tenant_id: string;
+        };
+        /**
+         * ModelCapabilities
+         * @description Persisted, fingerprinted model features used by Chat at runtime.
+         */
+        ModelCapabilities: {
+            /**
+             * Image Input
+             * @default false
+             */
+            image_input: boolean;
+            /**
+             * Pdf Input
+             * @default false
+             */
+            pdf_input: boolean;
+            /**
+             * Tool Calling
+             * @default false
+             */
+            tool_calling: boolean;
+            /**
+             * Native Image Output
+             * @default false
+             */
+            native_image_output: boolean;
+            /**
+             * Source
+             * @default unknown
+             * @enum {string}
+             */
+            source: "openrouter" | "verified" | "manual" | "unknown";
+            /** Checked At */
+            checked_at?: string | null;
+            /**
+             * Fingerprint
+             * @default
+             */
+            fingerprint: string;
+        };
+        /**
+         * ModelCapabilityLookupRequest
+         * @description Identify a configured model for deterministic catalog lookup.
+         */
+        ModelCapabilityLookupRequest: {
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "openai" | "anthropic" | "google";
+            /** Model */
+            model: string;
+            /** Endpoint */
+            endpoint?: string | null;
+        };
+        /**
+         * ModelCapabilityLookupResponse
+         * @description Capability lookup result plus an explanation suitable for settings UI.
+         */
+        ModelCapabilityLookupResponse: {
+            capabilities: components["schemas"]["ModelCapabilities"];
+            /** Message */
+            message: string;
+        };
+        /**
+         * ModelCapabilityVerifyRequest
+         * @description Run a one-time conformance check against the configured provider.
+         */
+        ModelCapabilityVerifyRequest: {
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "openai" | "anthropic" | "google";
+            /** Model */
+            model: string;
+            /** Endpoint */
+            endpoint?: string | null;
+            /**
+             * Api Key
+             * @description New unsaved API key; omit to use the saved provider key.
+             */
+            api_key?: string | null;
         };
         /**
          * NotificationCategory
@@ -24128,6 +24432,38 @@ export interface components {
             solutions?: components["schemas"]["Solution"][];
         };
         /**
+         * SpreadsheetArtifactSpec
+         * @description Schema-first payload for an XLSX workbook.
+         */
+        SpreadsheetArtifactSpec: {
+            /** Filename */
+            filename: string;
+            /** Sheets */
+            sheets: components["schemas"]["SpreadsheetSheetSpec"][];
+        };
+        /**
+         * SpreadsheetSheetSpec
+         * @description One worksheet with a header row and tabular data.
+         */
+        SpreadsheetSheetSpec: {
+            /** Name */
+            name: string;
+            /** Columns */
+            columns: string[];
+            /** Rows */
+            rows?: unknown[][];
+            /**
+             * Freeze Header
+             * @default true
+             */
+            freeze_header: boolean;
+            /**
+             * Auto Filter
+             * @default true
+             */
+            auto_filter: boolean;
+        };
+        /**
          * StuckExecutionsResponse
          * @description Response model for stuck executions query
          */
@@ -24362,6 +24698,21 @@ export interface components {
             } | null;
             /** @description Optional row-level access policies. See docs/superpowers/specs/2026-04-30-table-policies-design.md. */
             policies?: components["schemas"]["TablePolicies"] | null;
+        };
+        /**
+         * TextArtifactSpec
+         * @description Schema-first payload for a text, HTML, CSV, Markdown, or JSON file.
+         */
+        TextArtifactSpec: {
+            /** Filename */
+            filename: string;
+            /**
+             * Format
+             * @enum {string}
+             */
+            format: "csv" | "html" | "markdown" | "text" | "json";
+            /** Content */
+            content: string;
         };
         /**
          * Token
@@ -33973,6 +34324,105 @@ export interface operations {
             };
         };
     };
+    sdk_render_document_artifact_api_sdk_artifacts_document_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DocumentArtifactSpec"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactRenderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_render_spreadsheet_artifact_api_sdk_artifacts_spreadsheet_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpreadsheetArtifactSpec"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactRenderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_render_text_artifact_api_sdk_artifacts_text_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TextArtifactSpec"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactRenderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     cli_ai_complete_api_sdk_ai_complete_post: {
         parameters: {
             query?: never;
@@ -36493,6 +36943,7 @@ export interface operations {
         parameters: {
             query?: {
                 download?: boolean;
+                preview?: boolean;
             };
             header?: never;
             path: {
@@ -36660,6 +37111,72 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    discover_model_capabilities_api_admin_llm_model_capabilities_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelCapabilityLookupRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelCapabilityLookupResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verify_model_capability_support_api_admin_llm_model_capabilities_verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelCapabilityVerifyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelCapabilityLookupResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };
