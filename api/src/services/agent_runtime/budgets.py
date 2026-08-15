@@ -1,10 +1,18 @@
 """Run-budget and context-management policy for Bifrost agents."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
-
-from pydantic_ai.capabilities import AgentCapability
-from pydantic_ai.usage import UsageLimits
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.tools import RunContext, ToolDefinition
+from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.compaction import (
     ClampOversizedMessages,
     ClearToolResults,
@@ -20,6 +28,12 @@ DEFAULT_CONTEXT_TARGET_TOKENS = 24_000
 This is a cost-control target, not a claim about a model's maximum context size.
 """
 
+FINAL_RESPONSE_RESERVE_TOKENS = 4_000
+"""Output allowance reserved after the active context for a graceful handoff."""
+
+MIN_WIND_DOWN_FRACTION = 0.4
+"""Never force wind-down before this fraction of the configured local allowance."""
+
 
 @dataclass(frozen=True)
 class AgentRunBudget:
@@ -29,6 +43,48 @@ class AgentRunBudget:
     max_total_tokens: int
     context_target_tokens: int = DEFAULT_CONTEXT_TARGET_TOKENS
     warning_threshold: float = 0.7
+    initial_requests: int = 0
+    initial_total_tokens: int = 0
+
+    @property
+    def wind_down_total_tokens(self) -> int:
+        """Absolute cumulative usage at which finalization must begin.
+
+        A percentage-only warning can arrive too late when one request consumes
+        most of the remaining budget. Reserve one compacted context plus a
+        bounded final answer, while capping that reserve for small local
+        allowances. Delegated children calculate this boundary from the usage at
+        which they started, so inherited parent spend cannot wind them down
+        immediately.
+        """
+
+        allowance = max(1, self.max_total_tokens - self.initial_total_tokens)
+        desired_reserve = self.context_target_tokens + FINAL_RESPONSE_RESERVE_TOKENS
+        maximum_reserve = int(allowance * (1 - MIN_WIND_DOWN_FRACTION))
+        reserve = min(desired_reserve, maximum_reserve)
+        configured_threshold = self.initial_total_tokens + int(
+            allowance * self.warning_threshold
+        )
+        reserved_threshold = self.max_total_tokens - reserve
+        return min(configured_threshold, reserved_threshold)
+
+    @property
+    def wind_down_warning_threshold(self) -> float:
+        """LimitWarner threshold aligned with the absolute finalization boundary."""
+
+        return max(
+            1 / self.max_total_tokens,
+            self.wind_down_total_tokens / self.max_total_tokens,
+        )
+
+    def should_wind_down(self, usage: RunUsage) -> bool:
+        """Return true while the next request must be reserved for a handoff."""
+
+        request_boundary = self.max_requests
+        return (
+            usage.requests >= request_boundary
+            or usage.total_tokens >= self.wind_down_total_tokens
+        )
 
     def usage_limits(self) -> UsageLimits:
         """Return pre-request-enforced limits for the full agentic loop."""
@@ -66,7 +122,93 @@ class AgentRunBudget:
             ),
             context_target_tokens=self.context_target_tokens,
             warning_threshold=self.warning_threshold,
+            initial_requests=current_requests,
+            initial_total_tokens=current_total_tokens,
         )
+
+
+@dataclass
+class BudgetWindDown(AbstractCapability[object]):
+    """Reserve one tool-free request and turn stale tool intent into a handoff."""
+
+    budget: AgentRunBudget
+
+    @staticmethod
+    def _display_tool_name(tool_name: str) -> str:
+        normalized = tool_name.removeprefix("wf_").removeprefix("delegate_to_")
+        return normalized.replace("_", " ").strip().title()
+
+    @classmethod
+    def _handoff_text(
+        cls,
+        *,
+        request_context: ModelRequestContext,
+        pending_calls: list[ToolCallPart],
+    ) -> str:
+        completed_names: list[str] = []
+        for message in request_context.messages:
+            if not isinstance(message, ModelRequest):
+                continue
+            for part in message.parts:
+                if isinstance(part, ToolReturnPart):
+                    name = cls._display_tool_name(part.tool_name)
+                    if name and name not in completed_names:
+                        completed_names.append(name)
+
+        pending_names: list[str] = []
+        for call in pending_calls:
+            name = cls._display_tool_name(call.tool_name)
+            if name and name not in pending_names:
+                pending_names.append(name)
+
+        lines = [
+            "I've reached the configured run budget, so I'm stopping cleanly here."
+        ]
+        if completed_names:
+            lines.append(f"Completed before the limit: {'; '.join(completed_names)}.")
+        if pending_names:
+            lines.append(f"Not completed: {'; '.join(pending_names)}.")
+        lines.append(
+            "The completed steps and tool results are preserved in this run. "
+            "No remaining tool actions were run."
+        )
+        return "\n\n".join(lines)
+
+    async def prepare_tools(
+        self,
+        ctx: RunContext[object],
+        tool_defs: list[ToolDefinition],
+    ) -> list[ToolDefinition]:
+        if self.budget.should_wind_down(ctx.usage):
+            return []
+        return tool_defs
+
+    async def after_model_request(
+        self,
+        ctx: RunContext[object],
+        *,
+        request_context: ModelRequestContext,
+        response: ModelResponse,
+    ) -> ModelResponse:
+        if not self.budget.should_wind_down(ctx.usage):
+            return response
+
+        pending_calls = [
+            part for part in response.parts if isinstance(part, ToolCallPart)
+        ]
+        if not pending_calls:
+            return response
+        parts = [part for part in response.parts if not isinstance(part, ToolCallPart)]
+        handoff = self._handoff_text(
+            request_context=request_context,
+            pending_calls=pending_calls,
+        )
+        text_parts = [part for part in parts if isinstance(part, TextPart)]
+        if text_parts:
+            text_parts[-1].content = f"{text_parts[-1].content.rstrip()}\n\n{handoff}"
+        else:
+            parts.append(TextPart(content=handoff))
+        return replace(response, parts=parts, finish_reason="stop")
 
 
 def build_runtime_capabilities(budget: AgentRunBudget) -> list[AgentCapability[object]]:
@@ -76,6 +218,8 @@ def build_runtime_capabilities(budget: AgentRunBudget) -> list[AgentCapability[o
     Oversized tool output is spilled once when produced, so it is not re-sent in
     full on every later request. LimitWarner gives the model time to finish notes
     and communicate partial progress before the hard guard rejects a request.
+    BudgetWindDown then removes every function tool for the reserved final
+    request and normalizes any stale provider tool call into a final response.
     """
 
     target = budget.context_target_tokens
@@ -108,7 +252,8 @@ def build_runtime_capabilities(budget: AgentRunBudget) -> list[AgentCapability[o
             max_iterations=budget.max_requests,
             max_context_tokens=target,
             max_total_tokens=budget.max_total_tokens,
-            warning_threshold=budget.warning_threshold,
+            warning_threshold=budget.wind_down_warning_threshold,
             critical_remaining_iterations=2,
         ),
+        BudgetWindDown(budget),
     ]

@@ -902,8 +902,8 @@ class TestAutonomousAgentExecutor:
     @pytest.mark.asyncio
     @patch("src.services.execution.autonomous_agent_executor.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
-    async def test_run_respects_iteration_budget(self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent):
-        """Run stops when max_iterations is exceeded."""
+    async def test_run_reserves_final_iteration_for_handoff(self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent):
+        """The final allowed request completes without executing another tool."""
         mock_agent.max_iterations = 2
         mock_resolve_tools.return_value = (
             [_tool("my_tool")],
@@ -930,9 +930,9 @@ class TestAutonomousAgentExecutor:
                 run_id=str(uuid4()),
             )
 
-        assert result["status"] == "budget_exceeded"
+        assert result["status"] == "completed"
         assert result["iterations_used"] == 2
-        assert result["output"]
+        assert "configured run budget" in str(result["output"])
 
     @pytest.mark.asyncio
     @patch("src.services.execution.autonomous_agent_executor.create_agent_model")
