@@ -14,7 +14,9 @@ import httpx
 from src.models.contracts.artifacts import ModelCapabilities
 from src.services.llm import LLMInputFile, LLMMessage, ToolDefinition
 
-OPENROUTER_MODEL_URL = "https://openrouter.ai/api/v1/model"
+OPENROUTER_MODELS_URL = (
+    "https://openrouter.ai/api/v1/models?output_modalities=all"
+)
 
 _ONE_PIXEL_PNG = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
@@ -201,15 +203,25 @@ async def lookup_model_capabilities(
     owns_client = client is None
     http = client or httpx.AsyncClient(timeout=8.0, follow_redirects=True)
     try:
-        response = await http.get(f"{OPENROUTER_MODEL_URL}/{model}")
-        if response.status_code == 404:
+        response = await http.get(OPENROUTER_MODELS_URL)
+        response.raise_for_status()
+        body: dict[str, Any] = response.json()
+        records = body.get("data")
+        if not isinstance(records, list):
+            raise TypeError("OpenRouter model catalog did not contain a model list.")
+        data = next(
+            (
+                record
+                for record in records
+                if isinstance(record, dict) and record.get("id") == model
+            ),
+            None,
+        )
+        if data is None:
             return (
                 ModelCapabilities(source="unknown", fingerprint=fingerprint),
                 "OpenRouter did not return a catalog record for this model. Set the flags manually.",
             )
-        response.raise_for_status()
-        body: dict[str, Any] = response.json()
-        data = body.get("data") if isinstance(body.get("data"), dict) else body
         architecture = data.get("architecture") or {}
         input_modalities = set(architecture.get("input_modalities") or [])
         output_modalities = set(architecture.get("output_modalities") or [])

@@ -14,17 +14,21 @@ from src.services.model_capabilities import (
 @pytest.mark.asyncio
 async def test_openrouter_catalog_maps_modalities_and_tools() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        assert request.url.path.endswith("/model/deepseek/deepseek-v4-pro")
+        assert request.url.path.endswith("/models")
+        assert request.url.params["output_modalities"] == "all"
         return httpx.Response(
             200,
             json={
-                "data": {
-                    "architecture": {
-                        "input_modalities": ["text"],
-                        "output_modalities": ["text"],
-                    },
-                    "supported_parameters": ["tools", "tool_choice"],
-                }
+                "data": [
+                    {
+                        "id": "deepseek/deepseek-v4-pro",
+                        "architecture": {
+                            "input_modalities": ["text"],
+                            "output_modalities": ["text"],
+                        },
+                        "supported_parameters": ["tools", "tool_choice"],
+                    }
+                ]
             },
         )
 
@@ -42,6 +46,25 @@ async def test_openrouter_catalog_maps_modalities_and_tools() -> None:
     assert capabilities.pdf_input is False
     assert capabilities.native_image_output is False
     assert "OpenRouter" in message
+
+
+@pytest.mark.asyncio
+async def test_openrouter_lookup_never_places_model_id_in_request_url() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.host == "openrouter.ai"
+        assert request.url.path == "/api/v1/models"
+        assert "evil.test" not in str(request.url)
+        return httpx.Response(200, json={"data": []})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        capabilities, _ = await lookup_model_capabilities(
+            provider="openai",
+            model="../../private?redirect=https://evil.test",
+            endpoint="https://openrouter.ai/api/v1",
+            client=client,
+        )
+
+    assert capabilities.source == "unknown"
 
 
 @pytest.mark.asyncio
