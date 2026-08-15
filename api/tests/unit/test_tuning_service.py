@@ -16,6 +16,7 @@ from sqlalchemy import delete, select
 from src.models.orm.agent_run_flag_conversations import AgentRunFlagConversation
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.ai_usage import AIUsage
+from src.services.llm import LLMResponse
 from src.services.execution.tuning_service import (
     append_user_message_and_reply,
     get_or_create_conversation,
@@ -57,13 +58,13 @@ def _build_mock_llm_response(
     output_tokens: int = 50,
     model: str = "claude-sonnet-4-6",
 ):
-    """Construct a mock that quacks like an LLMResponse."""
-    response = MagicMock()
-    response.content = content
-    response.input_tokens = input_tokens
-    response.output_tokens = output_tokens
-    response.model = model
-    return response
+    """Construct the real stable response contract used by all providers."""
+    return LLMResponse(
+        content=content,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        model=model,
+    )
 
 
 def _build_mock_client(response):

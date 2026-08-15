@@ -32,6 +32,40 @@ ToolEventHandler = Callable[[ToolEvent], Awaitable[None]]
 
 _ARGS_VALIDATOR = SchemaValidator(schema=core_schema.any_schema())
 
+MAX_MODEL_TOOL_RESULT_CHARS = 32_000
+"""Maximum serialized characters one fresh tool result may add to context."""
+
+_TOOL_RESULT_HEAD_CHARS = 16_000
+_TOOL_RESULT_TAIL_CHARS = 8_000
+
+
+def bound_tool_result_for_model(value: Any) -> Any:
+    """Bound a tool result without adding a model-visible recovery protocol.
+
+    The complete result remains available to Bifrost's execution/event storage;
+    only the copy entering LLM history is shortened. Keeping both ends preserves
+    headers and terminal errors while the marker makes the loss explicit.
+    """
+
+    if isinstance(value, str):
+        serialized = value
+    else:
+        import pydantic_core
+
+        serialized = pydantic_core.to_json(value, fallback=str).decode()
+    if len(serialized) <= MAX_MODEL_TOOL_RESULT_CHARS:
+        return value
+    removed = len(serialized) - _TOOL_RESULT_HEAD_CHARS - _TOOL_RESULT_TAIL_CHARS
+    marker = (
+        f"\n\n[tool result truncated: {removed} of {len(serialized)} characters omitted "
+        "from model context]\n\n"
+    )
+    return (
+        serialized[:_TOOL_RESULT_HEAD_CHARS]
+        + marker
+        + serialized[-_TOOL_RESULT_TAIL_CHARS:]
+    )
+
 
 class BifrostToolset(AbstractToolset[object]):
     """Expose already-resolved Bifrost tools without regenerating their schemas."""
@@ -112,4 +146,4 @@ class BifrostToolset(AbstractToolset[object]):
                     duration_ms=int((time.monotonic() - started) * 1_000),
                 )
             )
-        return result
+        return bound_tool_result_for_model(result)

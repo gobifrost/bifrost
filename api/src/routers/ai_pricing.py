@@ -86,6 +86,8 @@ async def list_pricing(
                 model=entry.model,
                 input_price_per_million=entry.input_price_per_million,
                 output_price_per_million=entry.output_price_per_million,
+                cache_read_price_per_million=entry.cache_read_price_per_million,
+                cache_write_price_per_million=entry.cache_write_price_per_million,
                 effective_date=entry.effective_date,
                 created_at=entry.created_at,
                 updated_at=entry.updated_at,
@@ -138,6 +140,8 @@ async def create_pricing(
         model=data.model,
         input_price_per_million=data.input_price_per_million,
         output_price_per_million=data.output_price_per_million,
+        cache_read_price_per_million=data.cache_read_price_per_million,
+        cache_write_price_per_million=data.cache_write_price_per_million,
         effective_date=data.effective_date or datetime.now(timezone.utc).date(),
     )
     db.add(pricing)
@@ -157,6 +161,16 @@ async def create_pricing(
             model=data.model,
             input_price_per_million=Decimal(str(data.input_price_per_million)),
             output_price_per_million=Decimal(str(data.output_price_per_million)),
+            cache_read_price_per_million=(
+                Decimal(str(data.cache_read_price_per_million))
+                if data.cache_read_price_per_million is not None
+                else None
+            ),
+            cache_write_price_per_million=(
+                Decimal(str(data.cache_write_price_per_million))
+                if data.cache_write_price_per_million is not None
+                else None
+            ),
         )
         if backfilled_count > 0:
             logger.info(
@@ -200,6 +214,10 @@ async def update_pricing(
         pricing.input_price_per_million = data.input_price_per_million
     if data.output_price_per_million is not None:
         pricing.output_price_per_million = data.output_price_per_million
+    if data.cache_read_price_per_million is not None:
+        pricing.cache_read_price_per_million = data.cache_read_price_per_million
+    if data.cache_write_price_per_million is not None:
+        pricing.cache_write_price_per_million = data.cache_write_price_per_million
     if data.effective_date is not None:
         pricing.effective_date = data.effective_date
 

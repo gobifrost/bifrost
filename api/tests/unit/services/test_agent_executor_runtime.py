@@ -1,10 +1,11 @@
 """Chat contract coverage for the Pydantic AI loop."""
 
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
@@ -28,6 +29,22 @@ class CountingTestModel(TestModel):
         model_request_parameters: ModelRequestParameters,
     ) -> RequestUsage:
         return RequestUsage(input_tokens=10)
+
+
+class CapturingTestModel(CountingTestModel):
+    """Capture the exact request after Pydantic has applied instructions."""
+
+    requests: list[list[ModelMessage]]
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.requests = []
+
+    @asynccontextmanager
+    async def request_stream(self, messages, *args, **kwargs):
+        self.requests.append(messages)
+        async with super().request_stream(messages, *args, **kwargs) as response:
+            yield response
 
 
 @pytest.fixture
@@ -100,6 +117,53 @@ async def test_chat_stream_contract_is_driven_by_pydantic_runtime(
     done = next(chunk for chunk in chunks if chunk.type == "done")
     assert done.content == "Hello from Pydantic"
     executor._record_ai_usage.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_chat_reapplies_agent_instructions_when_stored_history_exists(
+    executor: AgentExecutor,
+    conversation,
+) -> None:
+    executor._save_message = AsyncMock(side_effect=_saved_message)
+    executor._record_ai_usage = AsyncMock()
+    executor._build_message_history = AsyncMock(
+        return_value=[
+            LLMMessage(role="system", content="Stable triage instructions"),
+            LLMMessage(role="user", content="Prior ticket"),
+            LLMMessage(role="assistant", content="Prior response"),
+            LLMMessage(role="user", content="Current ticket"),
+        ]
+    )
+    client = PydanticAIClient(
+        LLMConfig(provider="openai", model="test-model", api_key="test-key")
+    )
+    model = CapturingTestModel(custom_output_text="Current response")
+
+    with patch(
+        "src.services.agent_executor.get_llm_client",
+        new_callable=AsyncMock,
+        return_value=client,
+    ), patch(
+        "src.services.agent_executor.create_agent_model",
+        return_value=model,
+    ):
+        _ = [
+            chunk
+            async for chunk in executor.chat(
+                None,
+                conversation,
+                "Current ticket",
+                stream=False,
+                enable_routing=False,
+            )
+        ]
+
+    instructions = [
+        message.instructions
+        for message in model.requests[0]
+        if isinstance(message, ModelRequest) and message.instructions
+    ]
+    assert instructions == ["Stable triage instructions"]
 
 
 @pytest.mark.asyncio

@@ -7,6 +7,7 @@ Abstract base class and data types for LLM providers.
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, Literal
 
 
@@ -68,6 +69,9 @@ class LLMResponse:
     # Token usage
     input_tokens: int | None = None
     output_tokens: int | None = None
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    provider_cost: Decimal | None = None
 
     # Model info
     model: str | None = None
@@ -89,6 +93,9 @@ class LLMStreamChunk:
     finish_reason: str | None = None
     input_tokens: int | None = None
     output_tokens: int | None = None
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    provider_cost: Decimal | None = None
 
     # For error chunks
     error: str | None = None

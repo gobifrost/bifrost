@@ -1,7 +1,6 @@
 """Run-budget and context-management policy for Bifrost agents."""
 
 from dataclasses import dataclass, replace
-from datetime import timedelta
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability
 from pydantic_ai.messages import (
     ModelRequest,
@@ -20,7 +19,7 @@ from pydantic_ai_harness.compaction import (
     SlidingWindow,
     TieredCompaction,
 )
-from pydantic_ai_harness.overflowing_tool_output import LocalFileStore, OverflowingToolOutput
+from pydantic_ai_harness.cache_stability import CacheStabilityMonitor
 
 DEFAULT_CONTEXT_TARGET_TOKENS = 24_000
 """Keep the active request well below typical provider context windows.
@@ -244,19 +243,17 @@ def build_runtime_capabilities(budget: AgentRunBudget) -> list[AgentCapability[o
     """Build the standard context and wind-down policy.
 
     Cheap, deterministic compaction runs before lossy sliding-window trimming.
-    Oversized tool output is spilled once when produced, so it is not re-sent in
-    full on every later request. LimitWarner gives the model time to finish notes
-    and communicate partial progress before the hard guard rejects a request.
-    BudgetWindDown then removes every function tool for the reserved final
-    request and normalizes any stale provider tool call into a final response.
+    Tool output is bounded at the Bifrost tool boundary, before it enters model
+    history. LimitWarner gives the model time to finish notes and communicate
+    partial progress before the hard guard rejects a request. BudgetWindDown
+    then removes every function tool for the reserved final request and
+    normalizes any stale provider tool call into a final response.
     """
 
     target = budget.context_target_tokens
     retained_tail = max(4_000, int(target * 0.75))
     return [
-        OverflowingToolOutput(
-            store=LocalFileStore(cleanup_after=timedelta(hours=6)),
-        ),
+        CacheStabilityMonitor(min_prefix_tokens=1_024),
         TieredCompaction(
             tiers=[
                 ClampOversizedMessages(

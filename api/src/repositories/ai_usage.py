@@ -73,6 +73,8 @@ class AIPricingRepository(BaseRepository[AIModelPricing]):
         model: str,
         input_price_per_million: Decimal,
         output_price_per_million: Decimal,
+        cache_read_price_per_million: Decimal | None = None,
+        cache_write_price_per_million: Decimal | None = None,
         effective_date: datetime | None = None,
     ) -> AIModelPricing:
         """
@@ -93,6 +95,8 @@ class AIPricingRepository(BaseRepository[AIModelPricing]):
             model=model,
             input_price_per_million=input_price_per_million,
             output_price_per_million=output_price_per_million,
+            cache_read_price_per_million=cache_read_price_per_million,
+            cache_write_price_per_million=cache_write_price_per_million,
         )
         if effective_date:
             pricing.effective_date = effective_date  # type: ignore[assignment]
@@ -109,6 +113,8 @@ class AIPricingRepository(BaseRepository[AIModelPricing]):
         pricing_id: int,
         input_price_per_million: Decimal | None = None,
         output_price_per_million: Decimal | None = None,
+        cache_read_price_per_million: Decimal | None = None,
+        cache_write_price_per_million: Decimal | None = None,
         effective_date: datetime | None = None,
     ) -> AIModelPricing | None:
         """
@@ -135,6 +141,10 @@ class AIPricingRepository(BaseRepository[AIModelPricing]):
             pricing.input_price_per_million = input_price_per_million
         if output_price_per_million is not None:
             pricing.output_price_per_million = output_price_per_million
+        if cache_read_price_per_million is not None:
+            pricing.cache_read_price_per_million = cache_read_price_per_million
+        if cache_write_price_per_million is not None:
+            pricing.cache_write_price_per_million = cache_write_price_per_million
         if effective_date is not None:
             pricing.effective_date = effective_date  # type: ignore[assignment]
 
@@ -170,6 +180,9 @@ class AIUsageRepository(BaseRepository[AIUsage]):
         model: str,
         input_tokens: int,
         output_tokens: int,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
+        provider_cost: Decimal | None = None,
         execution_id: UUID | None = None,
         conversation_id: UUID | None = None,
         message_id: UUID | None = None,
@@ -204,6 +217,9 @@ class AIUsageRepository(BaseRepository[AIUsage]):
             model=model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+            provider_cost=provider_cost,
             execution_id=execution_id,
             conversation_id=conversation_id,
             message_id=message_id,
@@ -287,6 +303,9 @@ class AIUsageRepository(BaseRepository[AIUsage]):
             select(
                 func.coalesce(func.sum(AIUsage.input_tokens), 0).label("total_input"),
                 func.coalesce(func.sum(AIUsage.output_tokens), 0).label("total_output"),
+                func.coalesce(func.sum(AIUsage.cache_read_tokens), 0).label("total_cache_read"),
+                func.coalesce(func.sum(AIUsage.cache_write_tokens), 0).label("total_cache_write"),
+                func.coalesce(func.sum(AIUsage.provider_cost), Decimal("0")).label("total_provider_cost"),
                 func.coalesce(func.sum(AIUsage.cost), Decimal("0")).label("total_cost"),
                 func.coalesce(func.sum(AIUsage.duration_ms), 0).label("total_duration"),
                 func.count().label("call_count"),
@@ -297,6 +316,9 @@ class AIUsageRepository(BaseRepository[AIUsage]):
         return AIUsageTotals(
             total_input_tokens=row.total_input,
             total_output_tokens=row.total_output,
+            total_cache_read_tokens=row.total_cache_read,
+            total_cache_write_tokens=row.total_cache_write,
+            total_provider_cost=row.total_provider_cost,
             total_cost=row.total_cost,
             total_duration_ms=row.total_duration,
             call_count=row.call_count,
@@ -319,6 +341,9 @@ class AIUsageRepository(BaseRepository[AIUsage]):
             select(
                 func.coalesce(func.sum(AIUsage.input_tokens), 0).label("total_input"),
                 func.coalesce(func.sum(AIUsage.output_tokens), 0).label("total_output"),
+                func.coalesce(func.sum(AIUsage.cache_read_tokens), 0).label("total_cache_read"),
+                func.coalesce(func.sum(AIUsage.cache_write_tokens), 0).label("total_cache_write"),
+                func.coalesce(func.sum(AIUsage.provider_cost), Decimal("0")).label("total_provider_cost"),
                 func.coalesce(func.sum(AIUsage.cost), Decimal("0")).label("total_cost"),
                 func.coalesce(func.sum(AIUsage.duration_ms), 0).label("total_duration"),
                 func.count().label("call_count"),
@@ -329,6 +354,9 @@ class AIUsageRepository(BaseRepository[AIUsage]):
         return AIUsageTotals(
             total_input_tokens=row.total_input,
             total_output_tokens=row.total_output,
+            total_cache_read_tokens=row.total_cache_read,
+            total_cache_write_tokens=row.total_cache_write,
+            total_provider_cost=row.total_provider_cost,
             total_cost=row.total_cost,
             total_duration_ms=row.total_duration,
             call_count=row.call_count,
@@ -358,6 +386,9 @@ class AIUsageRepository(BaseRepository[AIUsage]):
             AIUsage.model,
             func.sum(AIUsage.input_tokens).label("input_tokens"),
             func.sum(AIUsage.output_tokens).label("output_tokens"),
+            func.sum(AIUsage.cache_read_tokens).label("cache_read_tokens"),
+            func.sum(AIUsage.cache_write_tokens).label("cache_write_tokens"),
+            func.coalesce(func.sum(AIUsage.provider_cost), Decimal("0")).label("provider_cost"),
             func.coalesce(func.sum(AIUsage.cost), Decimal("0")).label("cost"),
             func.count().label("call_count"),
         ).group_by(AIUsage.provider, AIUsage.model)
@@ -378,6 +409,9 @@ class AIUsageRepository(BaseRepository[AIUsage]):
                 model=row.model,
                 input_tokens=row.input_tokens,
                 output_tokens=row.output_tokens,
+                cache_read_tokens=row.cache_read_tokens,
+                cache_write_tokens=row.cache_write_tokens,
+                provider_cost=row.provider_cost,
                 cost=row.cost,
                 call_count=row.call_count,
             )

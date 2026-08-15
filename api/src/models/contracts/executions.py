@@ -52,6 +52,9 @@ class AIUsagePublicSimple(BaseModel):
     model: str
     input_tokens: int
     output_tokens: int
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    provider_cost: str | None = None
     cost: str | None = None  # Decimal as string
     duration_ms: int | None = None
     timestamp: str  # ISO datetime string
@@ -62,6 +65,9 @@ class AIUsageTotalsSimple(BaseModel):
     """Aggregated AI usage totals for embedding in execution responses."""
     total_input_tokens: int = 0
     total_output_tokens: int = 0
+    total_cache_read_tokens: int = 0
+    total_cache_write_tokens: int = 0
+    total_provider_cost: str = "0"
     total_cost: str = "0"  # Decimal as string
     total_duration_ms: int = 0
     call_count: int = 0
@@ -275,5 +281,4 @@ class ExecutionPublic(ExecutionBase):
     @field_serializer("created_at", "started_at", "completed_at")
     def serialize_dt(self, dt: datetime | None) -> str | None:
         return dt.isoformat() if dt else None
-
 

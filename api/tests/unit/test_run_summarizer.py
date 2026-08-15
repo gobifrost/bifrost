@@ -16,6 +16,7 @@ from sqlalchemy import delete, select
 
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.ai_usage import AIUsage
+from src.services.llm import LLMResponse
 from src.services.execution.run_summarizer import (
     _clamp_confidence,
     _extract_json_object,
@@ -81,13 +82,13 @@ def _build_mock_llm_response(
     output_tokens: int = 40,
     model: str = "claude-haiku-4-5",
 ):
-    """Construct a non-async mock that quacks like a real LLMResponse."""
-    response = MagicMock()
-    response.content = content
-    response.input_tokens = input_tokens
-    response.output_tokens = output_tokens
-    response.model = model
-    return response
+    """Construct the real stable response contract used by all providers."""
+    return LLMResponse(
+        content=content,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        model=model,
+    )
 
 
 def _build_mock_client(response):

@@ -135,16 +135,35 @@ async def set_llm_config(
     if request.endpoint:
         try:
             from src.services.llm.factory import get_llm_config as get_decrypted_config
+            from src.services.model_pricing import canonical_provider, configured_models
 
             llm_config = await get_decrypted_config(db)
+            models = configured_models(
+                request.model,
+                request.chat_fast_model,
+                request.chat_balanced_model,
+                request.chat_pro_model,
+                request.summarization_model,
+                request.tuning_model,
+            )
             count = await service.sync_provider_pricing(
-                provider=request.provider,
-                model=request.model,
+                provider=canonical_provider(request.provider, request.endpoint),
+                models=models,
                 api_key=llm_config.api_key,
                 endpoint=request.endpoint,
             )
             await db.commit()
             if count:
+                from src.core.cache import get_shared_redis
+                from src.services.ai_usage_service import invalidate_pricing_cache
+
+                redis_client = await get_shared_redis()
+                for model in models:
+                    await invalidate_pricing_cache(
+                        redis_client,
+                        canonical_provider(request.provider, request.endpoint),
+                        model,
+                    )
                 logger.info(f"Synced pricing for {count} models from {log_safe(request.endpoint)}")
         except Exception as e:
             await db.rollback()

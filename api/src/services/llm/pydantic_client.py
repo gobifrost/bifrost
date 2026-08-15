@@ -29,7 +29,11 @@ from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import ToolDefinition as PydanticToolDefinition
 
-from src.services.agent_runtime.model_factory import create_agent_model
+from src.services.agent_runtime.model_factory import (
+    create_agent_model,
+    provider_name_for_config,
+)
+from src.services.agent_runtime.usage import provider_reported_cost
 from src.services.llm.base import (
     BaseLLMClient,
     LLMMessage,
@@ -47,7 +51,7 @@ class PydanticAIClient(BaseLLMClient):
 
     @property
     def provider_name(self) -> str:
-        return self.config.provider
+        return provider_name_for_config(self.config)
 
     async def complete(
         self,
@@ -110,6 +114,9 @@ class PydanticAIClient(BaseLLMClient):
                     finish_reason=response.finish_reason,
                     input_tokens=response.usage.input_tokens,
                     output_tokens=response.usage.output_tokens,
+                    cache_read_tokens=response.usage.cache_read_tokens,
+                    cache_write_tokens=response.usage.cache_write_tokens,
+                    provider_cost=provider_reported_cost(response),
                 )
         except Exception as exc:
             logger.error("Pydantic AI streaming error: %s", exc)
@@ -212,5 +219,8 @@ class PydanticAIClient(BaseLLMClient):
             finish_reason=response.finish_reason,
             input_tokens=response.usage.input_tokens,
             output_tokens=response.usage.output_tokens,
+            cache_read_tokens=response.usage.cache_read_tokens,
+            cache_write_tokens=response.usage.cache_write_tokens,
+            provider_cost=provider_reported_cost(response),
             model=response.model_name,
         )

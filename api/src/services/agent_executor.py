@@ -17,6 +17,7 @@ import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -60,8 +61,11 @@ from src.services.agent_runtime import (
     BifrostToolset,
     ModelCallEvent,
     ObservedModel,
+    agent_model_settings,
     build_runtime_capabilities,
+    bound_tool_result_for_model,
     create_agent_model,
+    provider_reported_cost,
 )
 from src.services.execution.agent_helpers import (
     find_delegated_agent,
@@ -107,8 +111,8 @@ def _serialize_for_json(value: Any) -> str:
 def _serialize_tool_result_for_history(tool_result: ToolResult) -> str:
     """Serialize what the parent model sees, with failures taking precedence."""
     if tool_result.error:
-        return tool_result.error
-    return _serialize_for_json(tool_result.result)
+        return bound_tool_result_for_model(tool_result.error)
+    return bound_tool_result_for_model(_serialize_for_json(tool_result.result))
 
 
 # Fallback system prompt (used if no config set)
@@ -364,12 +368,9 @@ class AgentExecutor:
 
             # 5b. Enhance system prompt with tool-use instructions if tools available
             if tool_definitions and messages and messages[0].role == "system":
-                tool_names = [t.name for t in tool_definitions]
-                tool_instruction = f"""
+                tool_instruction = """
 
-You have access to the following tools: {', '.join(tool_names)}
-
-IMPORTANT: When the user's request can be fulfilled using one of your tools, you MUST call the tool immediately. Do not describe what you would do or say "Let me..." - instead, actually invoke the tool to perform the action. Only respond with text if you need clarification or if no tool is applicable."""
+When a tool can fulfill the request, call it directly. Respond with text only when clarification is required or no tool applies."""
                 messages[0] = LLMMessage(
                     role="system",
                     content=(messages[0].content or "") + tool_instruction,
@@ -394,14 +395,26 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
             self._active_budget = budget
             total_input_tokens = 0
             total_output_tokens = 0
+            total_cache_read_tokens = 0
+            total_cache_write_tokens = 0
+            total_provider_cost = Decimal("0")
+            provider_cost_seen = False
 
             async def record_model_event(event: ModelCallEvent) -> None:
                 nonlocal total_input_tokens, total_output_tokens, model_name
+                nonlocal total_cache_read_tokens, total_cache_write_tokens
+                nonlocal total_provider_cost, provider_cost_seen
                 if event.type != "response" or event.response is None:
                     return
                 response_usage = event.response.usage
                 total_input_tokens += response_usage.input_tokens
                 total_output_tokens += response_usage.output_tokens
+                total_cache_read_tokens += response_usage.cache_read_tokens
+                total_cache_write_tokens += response_usage.cache_write_tokens
+                request_provider_cost = provider_reported_cost(event.response)
+                if request_provider_cost is not None:
+                    total_provider_cost += request_provider_cost
+                    provider_cost_seen = True
                 if event.response.model_name:
                     model_name = event.response.model_name
 
@@ -494,12 +507,18 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
             )
             runtime = PydanticAgent(
                 observed_model,
-                system_prompt=system_prompt,
+                # Stored chat history intentionally excludes the agent's
+                # system message. Pydantic's `instructions` are prepended on
+                # every fresh run, whereas `system_prompt` assumes an existing
+                # history already contains its original system part.
+                instructions=system_prompt,
                 toolsets=[toolset] if tool_definitions else [],
                 capabilities=build_runtime_capabilities(budget),
-                model_settings={
-                    "max_tokens": max_tokens_override or llm_client.config.max_tokens,
-                },
+                model_settings=agent_model_settings(
+                    llm_client.config,
+                    max_tokens=max_tokens_override or llm_client.config.max_tokens,
+                    session_id=str(conversation.id),
+                ),
                 # Permit one schema/tool-name correction. It is charged to the
                 # same pre-request budget, so a malformed provider response can
                 # recover once without opening an unbounded retry loop.
@@ -636,6 +655,9 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                     model=model_name,
                     input_tokens=total_input_tokens,
                     output_tokens=total_output_tokens,
+                    cache_read_tokens=total_cache_read_tokens,
+                    cache_write_tokens=total_cache_write_tokens,
+                    provider_cost=(total_provider_cost if provider_cost_seen else None),
                     duration_ms=duration_ms,
                     conversation_id=conversation.id,
                     message_id=assistant_msg.id,
@@ -1677,6 +1699,9 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
         model: str,
         input_tokens: int,
         output_tokens: int,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
+        provider_cost: Decimal | None = None,
         duration_ms: int | None = None,
         conversation_id: UUID | None = None,
         message_id: UUID | None = None,
@@ -1709,6 +1734,9 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                 model=model,
                 input_tokens=input_tokens,
                 output_tokens=output_tokens,
+                cache_read_tokens=cache_read_tokens,
+                cache_write_tokens=cache_write_tokens,
+                provider_cost=provider_cost,
                 duration_ms=duration_ms,
                 conversation_id=conversation_id,
                 message_id=message_id,

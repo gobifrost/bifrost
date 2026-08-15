@@ -8,8 +8,7 @@ Follows the same pattern as GitHubConfigService for SystemConfig storage.
 import base64
 import logging
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
-from decimal import Decimal
+from datetime import datetime, timezone
 from typing import Literal
 from uuid import uuid4
 
@@ -20,7 +19,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config import get_settings
 from src.core.log_safety import log_safe
 from src.models.orm import SystemConfig
-from src.models.orm.ai_usage import AIModelPricing
 
 logger = logging.getLogger(__name__)
 
@@ -547,101 +545,28 @@ class LLMConfigService:
     async def sync_provider_pricing(
         self,
         provider: str,
-        model: str,
-        api_key: str,
+        models: set[str],
+        api_key: str | None,
         endpoint: str,
     ) -> int:
-        """
-        Fetch pricing from a provider's /models endpoint and update AIModelPricing
-        for the selected model and any existing pricing rows.
+        """Sync every selected model plus previously used models from ``/models``."""
 
-        Only creates a new pricing row for the selected model. Updates existing rows
-        that match models returned by the provider.
+        from src.services.model_pricing import (
+            canonical_provider,
+            fetch_pricing_catalog,
+            is_openrouter_endpoint,
+            sync_published_pricing,
+        )
 
-        Returns:
-            Number of models with pricing synced.
-        """
-        import httpx
-
+        pricing_provider = canonical_provider(provider, endpoint)
         models_url = f"{endpoint.rstrip('/')}/models"
-        async with httpx.AsyncClient(timeout=30) as http:
-            resp = await http.get(
-                models_url,
-                headers={"Authorization": f"Bearer {api_key}"},
-            )
-            resp.raise_for_status()
-            body = resp.json()
-
-        # Build a lookup of model_id -> (input_per_million, output_per_million)
-        provider_pricing: dict[str, tuple[Decimal, Decimal]] = {}
-        quantize_to = Decimal("0.0001")
-        max_price = Decimal("999999.9999")
-
-        for item in body.get("data", []):
-            model_id = item.get("id", "")
-            pricing = item.get("pricing")
-            if not model_id or not pricing:
-                continue
-
-            prompt_price = pricing.get("prompt")
-            completion_price = pricing.get("completion")
-            if not prompt_price or not completion_price:
-                continue
-
-            try:
-                input_pm = (Decimal(prompt_price) * 1_000_000).quantize(quantize_to)
-                output_pm = (Decimal(completion_price) * 1_000_000).quantize(quantize_to)
-            except Exception:
-                continue
-
-            if input_pm > max_price or output_pm > max_price:
-                continue
-
-            provider_pricing[model_id] = (input_pm, output_pm)
-
-        if not provider_pricing:
-            return 0
-
-        synced = 0
-        today = date.today()
-
-        # Update existing pricing rows that have a match in the provider data
-        existing_result = await self.session.execute(
-            select(AIModelPricing).where(AIModelPricing.provider == provider)
+        catalog = await fetch_pricing_catalog(
+            models_url,
+            api_key=None if is_openrouter_endpoint(endpoint) else api_key,
         )
-        priced_models: set[str] = set()
-        for row in existing_result.scalars().all():
-            priced_models.add(row.model)
-            if row.model in provider_pricing:
-                input_pm, output_pm = provider_pricing[row.model]
-                row.input_price_per_million = input_pm
-                row.output_price_per_million = output_pm
-                row.updated_at = datetime.now(timezone.utc)
-                synced += 1
-
-        # Find models that have been used but don't have pricing yet
-        from src.models.orm.ai_usage import AIUsage
-
-        used_result = await self.session.execute(
-            select(AIUsage.model).where(AIUsage.provider == provider).distinct()
+        return await sync_published_pricing(
+            self.session,
+            provider=pricing_provider,
+            selected_models=models,
+            catalog=catalog,
         )
-        used_models = {row[0] for row in used_result.all()}
-
-        # Create pricing for: selected model + used models without pricing
-        models_to_add = ({model} | used_models) - priced_models
-        for model_id in models_to_add:
-            if model_id in provider_pricing:
-                input_pm, output_pm = provider_pricing[model_id]
-                self.session.add(
-                    AIModelPricing(
-                        provider=provider,
-                        model=model_id,
-                        input_price_per_million=input_pm,
-                        output_price_per_million=output_pm,
-                        effective_date=today,
-                    )
-                )
-                synced += 1
-
-        await self.session.flush()
-        return synced

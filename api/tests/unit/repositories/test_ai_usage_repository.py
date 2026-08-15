@@ -119,6 +119,8 @@ class TestAIPricingRepository:
         mock_pricing_1.model = "gpt-4o"
         mock_pricing_1.input_price_per_million = Decimal("5.00")
         mock_pricing_1.output_price_per_million = Decimal("15.00")
+        mock_pricing_1.cache_read_price_per_million = None
+        mock_pricing_1.cache_write_price_per_million = None
         mock_pricing_1.effective_date = date(2025, 1, 1)
         mock_pricing_1.created_at = datetime(2025, 1, 1, 0, 0, 0)
         mock_pricing_1.updated_at = datetime(2025, 1, 1, 0, 0, 0)
@@ -129,6 +131,8 @@ class TestAIPricingRepository:
         mock_pricing_2.model = "claude-sonnet-4-20250514"
         mock_pricing_2.input_price_per_million = Decimal("3.00")
         mock_pricing_2.output_price_per_million = Decimal("15.00")
+        mock_pricing_2.cache_read_price_per_million = None
+        mock_pricing_2.cache_write_price_per_million = None
         mock_pricing_2.effective_date = date(2025, 1, 1)
         mock_pricing_2.created_at = datetime(2025, 1, 1, 0, 0, 0)
         mock_pricing_2.updated_at = datetime(2025, 1, 1, 0, 0, 0)
@@ -263,7 +267,10 @@ class TestAIUsageRepository:
         mock_usage.model = "gpt-4o"
         mock_usage.input_tokens = 1000
         mock_usage.output_tokens = 500
+        mock_usage.cache_read_tokens = 0
+        mock_usage.cache_write_tokens = 0
         mock_usage.cost = Decimal("0.0125")
+        mock_usage.provider_cost = None
         mock_usage.duration_ms = 150
         mock_usage.execution_id = execution_id
         mock_usage.conversation_id = None
@@ -298,7 +305,10 @@ class TestAIUsageRepository:
         mock_usage.model = "claude-sonnet-4-20250514"
         mock_usage.input_tokens = 2000
         mock_usage.output_tokens = 1000
+        mock_usage.cache_read_tokens = 0
+        mock_usage.cache_write_tokens = 0
         mock_usage.cost = Decimal("0.025")
+        mock_usage.provider_cost = None
         mock_usage.duration_ms = 200
         mock_usage.execution_id = None
         mock_usage.conversation_id = conversation_id
@@ -329,7 +339,10 @@ class TestAIUsageRepository:
         mock_row = MagicMock()
         mock_row.total_input = 3000
         mock_row.total_output = 1500
+        mock_row.total_cache_read = 0
+        mock_row.total_cache_write = 0
         mock_row.total_cost = Decimal("0.0375")
+        mock_row.total_provider_cost = Decimal("0")
         mock_row.total_duration = 450
         mock_row.call_count = 3
 
@@ -355,7 +368,10 @@ class TestAIUsageRepository:
         mock_row = MagicMock()
         mock_row.total_input = 5000
         mock_row.total_output = 2500
+        mock_row.total_cache_read = 0
+        mock_row.total_cache_write = 0
         mock_row.total_cost = Decimal("0.0625")
+        mock_row.total_provider_cost = Decimal("0")
         mock_row.total_duration = 750
         mock_row.call_count = 5
 
@@ -380,7 +396,10 @@ class TestAIUsageRepository:
                 model="gpt-4o",
                 input_tokens=2000,
                 output_tokens=1000,
+                cache_read_tokens=0,
+                cache_write_tokens=0,
                 cost=Decimal("0.025"),
+                provider_cost=Decimal("0"),
                 call_count=2,
             ),
             MagicMock(
@@ -388,7 +407,10 @@ class TestAIUsageRepository:
                 model="claude-sonnet-4-20250514",
                 input_tokens=1000,
                 output_tokens=500,
+                cache_read_tokens=0,
+                cache_write_tokens=0,
                 cost=Decimal("0.0125"),
+                provider_cost=Decimal("0"),
                 call_count=1,
             ),
         ]

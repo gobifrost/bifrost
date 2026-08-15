@@ -129,6 +129,18 @@ class ObservedModel(WrapperModel):
             "messages_serialized_bytes": len(serialized_messages),
             "tool_schema_sha256": hashlib.sha256(tool_schema).hexdigest(),
         }
+        result["provider_cache_prefix_bytes"] = (
+            categories["system_prompt_bytes"] + len(tool_schema)
+        )
+        result["replayed_history_bytes"] = sum(
+            categories[key]
+            for key in (
+                "user_history_bytes",
+                "assistant_history_bytes",
+                "tool_result_bytes",
+                "other_history_bytes",
+            )
+        )
         result["estimated_input_tokens"] = ObservedModel._estimated_input_tokens(
             messages_serialized_bytes=len(serialized_messages),
             tool_schema_bytes=len(tool_schema),
@@ -234,6 +246,12 @@ class ObservedModel(WrapperModel):
                 run_context,
             ) as response_stream:
                 yield response_stream
+                # Agent graphs can stop consuming after a final-result event,
+                # before OpenAI-compatible providers send their trailing
+                # usage-only chunk. Resume the same iterator so actual usage
+                # and cost are captured before persistence.
+                async for _ in response_stream:
+                    pass
             response = response_stream.get()
         except Exception as exc:
             await self._observer(

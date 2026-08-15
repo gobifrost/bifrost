@@ -10083,6 +10083,16 @@ export interface components {
              */
             output_price_per_million: number | string;
             /**
+             * Cache Read Price Per Million
+             * @description Cost per million cached input tokens read
+             */
+            cache_read_price_per_million?: number | string | null;
+            /**
+             * Cache Write Price Per Million
+             * @description Cost per million cached input tokens written
+             */
+            cache_write_price_per_million?: number | string | null;
+            /**
              * Effective Date
              * @description Date pricing takes effect
              */
@@ -10107,12 +10117,22 @@ export interface components {
              * Input Price Per Million
              * @description Cost per million input tokens
              */
-            input_price_per_million: string;
+            input_price_per_million: string | null;
             /**
              * Output Price Per Million
              * @description Cost per million output tokens
              */
-            output_price_per_million: string;
+            output_price_per_million: string | null;
+            /**
+             * Cache Read Price Per Million
+             * @description Cost per million cached input tokens read
+             */
+            cache_read_price_per_million?: string | null;
+            /**
+             * Cache Write Price Per Million
+             * @description Cost per million cached input tokens written
+             */
+            cache_write_price_per_million?: string | null;
             /** Id */
             id: number;
             /** Effective Date */
@@ -10160,12 +10180,22 @@ export interface components {
              * Input Price Per Million
              * @description Cost per million input tokens
              */
-            input_price_per_million: string;
+            input_price_per_million: string | null;
             /**
              * Output Price Per Million
              * @description Cost per million output tokens
              */
-            output_price_per_million: string;
+            output_price_per_million: string | null;
+            /**
+             * Cache Read Price Per Million
+             * @description Cost per million cached input tokens read
+             */
+            cache_read_price_per_million?: string | null;
+            /**
+             * Cache Write Price Per Million
+             * @description Cost per million cached input tokens written
+             */
+            cache_write_price_per_million?: string | null;
             /** Id */
             id: number;
             /** Effective Date */
@@ -10191,6 +10221,16 @@ export interface components {
              */
             output_price_per_million?: number | string | null;
             /**
+             * Cache Read Price Per Million
+             * @description Cost per million cached input tokens read
+             */
+            cache_read_price_per_million?: number | string | null;
+            /**
+             * Cache Write Price Per Million
+             * @description Cost per million cached input tokens written
+             */
+            cache_write_price_per_million?: number | string | null;
+            /**
              * Effective Date
              * @description Date pricing takes effect
              */
@@ -10209,6 +10249,18 @@ export interface components {
             input_tokens: number;
             /** Output Tokens */
             output_tokens: number;
+            /**
+             * Cache Read Tokens
+             * @default 0
+             */
+            cache_read_tokens: number;
+            /**
+             * Cache Write Tokens
+             * @default 0
+             */
+            cache_write_tokens: number;
+            /** Provider Cost */
+            provider_cost?: string | null;
             /** Cost */
             cost?: string | null;
             /** Duration Ms */
@@ -10236,6 +10288,21 @@ export interface components {
              * @default 0
              */
             total_output_tokens: number;
+            /**
+             * Total Cache Read Tokens
+             * @default 0
+             */
+            total_cache_read_tokens: number;
+            /**
+             * Total Cache Write Tokens
+             * @default 0
+             */
+            total_cache_write_tokens: number;
+            /**
+             * Total Provider Cost
+             * @default 0
+             */
+            total_provider_cost: string;
             /**
              * Total Cost
              * @default 0

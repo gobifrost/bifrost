@@ -48,6 +48,10 @@ async def record_ai_usage(
     model: str,
     input_tokens: int,
     output_tokens: int,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
+    provider_cost: Decimal | None = None,
+    sequence: int = 1,
     duration_ms: int | None = None,
     execution_id: UUID | None = None,
     conversation_id: UUID | None = None,
@@ -88,19 +92,51 @@ async def record_ai_usage(
     from src.services.model_registry import get_display_name
 
     try:
-        # 1. Convert model ID to display name for consistent pricing and reporting
-        display_name = await get_display_name(redis_client, provider, model, api_key)
-
-        # 2. Get pricing from cache or DB (using display name)
-        input_price, output_price = await get_cached_price(
-            redis_client, session, provider, display_name
+        from src.services.model_pricing import (
+            OPENROUTER_PROVIDER,
+            canonical_provider,
+            discover_openrouter_pricing,
         )
 
-        # 3. Calculate cost
-        cost = calculate_cost(input_tokens, output_tokens, input_price, output_price)
+        provider = canonical_provider(provider)
+        # OpenRouter catalog and response IDs use stable slugs. Native providers
+        # retain the existing display-name normalization contract.
+        display_name = (
+            model
+            if provider == OPENROUTER_PROVIDER
+            else await get_display_name(redis_client, provider, model, api_key)
+        )
 
-        # Notify admins if pricing is missing (deduplicated per model per day)
-        if cost is None:
+        pricing = await get_cached_pricing(
+            redis_client, session, provider, display_name
+        )
+        pricing_missing = pricing[0] is None and pricing[1] is None
+        if pricing_missing and provider == OPENROUTER_PROVIDER:
+            discovered = await discover_openrouter_pricing(
+                session,
+                redis_client,
+                display_name,
+            )
+            if discovered:
+                await invalidate_pricing_cache(redis_client, provider, display_name)
+                pricing = await get_cached_pricing(
+                    redis_client, session, provider, display_name
+                )
+                pricing_missing = pricing[0] is None and pricing[1] is None
+
+        calculated_cost = calculate_cost(
+            input_tokens,
+            output_tokens,
+            pricing[0],
+            pricing[1],
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+            cache_read_price_per_million=pricing[2],
+            cache_write_price_per_million=pricing[3],
+        )
+        cost = provider_cost if provider_cost is not None else calculated_cost
+
+        if pricing_missing:
             await _notify_missing_pricing(redis_client, provider, display_name)
 
         # 4. Insert to ai_usage table (using display name for consistency)
@@ -109,6 +145,9 @@ async def record_ai_usage(
             model=display_name,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+            provider_cost=provider_cost,
             cost=cost,
             duration_ms=duration_ms,
             execution_id=execution_id,
@@ -117,6 +156,7 @@ async def record_ai_usage(
             message_id=message_id,
             organization_id=organization_id,
             user_id=user_id,
+            sequence=sequence,
         )
         session.add(usage)
         await session.flush()
@@ -153,6 +193,18 @@ async def get_cached_price(
     Cache key: ai_pricing:{provider}:{model}
     TTL: 1 hour
     """
+    pricing = await get_cached_pricing(redis_client, session, provider, model)
+    return pricing[0], pricing[1]
+
+
+async def get_cached_pricing(
+    redis_client: redis.Redis,
+    session: AsyncSession,
+    provider: str,
+    model: str,
+) -> tuple[Decimal | None, Decimal | None, Decimal | None, Decimal | None]:
+    """Get input, output, cache-read, and cache-write prices per million."""
+
     cache_key = f"{PRICING_KEY_PREFIX}{provider}:{model}"
 
     try:
@@ -160,9 +212,27 @@ async def get_cached_price(
         cached = await redis_client.get(cache_key)
         if cached:
             data = json.loads(cached)
-            input_price = Decimal(data["input_price"]) if data.get("input_price") else None
-            output_price = Decimal(data["output_price"]) if data.get("output_price") else None
-            return input_price, output_price
+            input_price = (
+                Decimal(data["input_price"])
+                if data.get("input_price") is not None
+                else None
+            )
+            output_price = (
+                Decimal(data["output_price"])
+                if data.get("output_price") is not None
+                else None
+            )
+            cache_read_price = (
+                Decimal(data["cache_read_price"])
+                if data.get("cache_read_price") is not None
+                else None
+            )
+            cache_write_price = (
+                Decimal(data["cache_write_price"])
+                if data.get("cache_write_price") is not None
+                else None
+            )
+            return input_price, output_price, cache_read_price, cache_write_price
 
     except Exception as e:
         logger.warning(f"Redis cache read failed for pricing: {e}")
@@ -182,31 +252,44 @@ async def get_cached_price(
         if pricing:
             input_price = pricing.input_price_per_million
             output_price = pricing.output_price_per_million
+            cache_read_price = pricing.cache_read_price_per_million
+            cache_write_price = pricing.cache_write_price_per_million
 
             # Cache the result
             try:
                 cache_data = {
-                    "input_price": str(input_price) if input_price else None,
-                    "output_price": str(output_price) if output_price else None,
+                    "input_price": str(input_price) if input_price is not None else None,
+                    "output_price": str(output_price) if output_price is not None else None,
+                    "cache_read_price": (
+                        str(cache_read_price) if cache_read_price is not None else None
+                    ),
+                    "cache_write_price": (
+                        str(cache_write_price) if cache_write_price is not None else None
+                    ),
                 }
                 await redis_client.setex(cache_key, PRICING_TTL, json.dumps(cache_data))
             except Exception as e:
                 logger.warning(f"Redis cache write failed for pricing: {e}")
 
-            return input_price, output_price
+            return input_price, output_price, cache_read_price, cache_write_price
 
         # Cache the "not found" result to avoid repeated DB lookups
         try:
-            cache_data = {"input_price": None, "output_price": None}
+            cache_data = {
+                "input_price": None,
+                "output_price": None,
+                "cache_read_price": None,
+                "cache_write_price": None,
+            }
             await redis_client.setex(cache_key, PRICING_TTL, json.dumps(cache_data))
         except Exception as e:
             logger.warning(f"Redis cache write failed for empty pricing: {e}")
 
-        return None, None
+        return None, None, None, None
 
     except Exception as e:
         logger.warning(f"Failed to get pricing from DB: {e}")
-        return None, None
+        return None, None, None, None
 
 
 def calculate_cost(
@@ -214,6 +297,11 @@ def calculate_cost(
     output_tokens: int,
     input_price_per_million: Decimal | None,
     output_price_per_million: Decimal | None,
+    *,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
+    cache_read_price_per_million: Decimal | None = None,
+    cache_write_price_per_million: Decimal | None = None,
 ) -> Decimal | None:
     """
     Calculate total cost based on token counts and pricing.
@@ -227,13 +315,37 @@ def calculate_cost(
     Returns:
         Total cost as Decimal, or None if pricing not available
     """
-    if input_price_per_million is None and output_price_per_million is None:
+    if all(
+        price is None
+        for price in (
+            input_price_per_million,
+            output_price_per_million,
+            cache_read_price_per_million,
+            cache_write_price_per_million,
+        )
+    ):
         return None
 
     total = Decimal(0)
 
+    regular_input_tokens = input_tokens
+    if cache_read_price_per_million is not None:
+        priced_cache_reads = min(cache_read_tokens, regular_input_tokens)
+        regular_input_tokens -= priced_cache_reads
+        total += _calculate_partial_cost(
+            priced_cache_reads, cache_read_price_per_million
+        )
+    if cache_write_price_per_million is not None:
+        priced_cache_writes = min(cache_write_tokens, regular_input_tokens)
+        regular_input_tokens -= priced_cache_writes
+        total += _calculate_partial_cost(
+            priced_cache_writes, cache_write_price_per_million
+        )
+
     if input_price_per_million is not None:
-        total += _calculate_partial_cost(input_tokens, input_price_per_million)
+        total += _calculate_partial_cost(
+            regular_input_tokens, input_price_per_million
+        )
 
     if output_price_per_million is not None:
         total += _calculate_partial_cost(output_tokens, output_price_per_million)
@@ -271,7 +383,15 @@ async def get_usage_totals(
     No TTL - invalidate on new AI call
     """
     if not execution_id and not conversation_id and not agent_run_id:
-        return {"input_tokens": 0, "output_tokens": 0, "total_cost": None, "call_count": 0}
+        return {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "provider_cost": None,
+            "total_cost": None,
+            "call_count": 0,
+        }
 
     # Build cache key
     if execution_id:
@@ -289,6 +409,8 @@ async def get_usage_totals(
             # Convert cost back to Decimal if present
             if data.get("total_cost") is not None:
                 data["total_cost"] = Decimal(data["total_cost"])
+            if data.get("provider_cost") is not None:
+                data["provider_cost"] = Decimal(data["provider_cost"])
             return data
     except Exception as e:
         logger.warning(f"Redis cache read failed for usage totals: {e}")
@@ -299,6 +421,9 @@ async def get_usage_totals(
     query = select(
         func.sum(AIUsage.input_tokens).label("input_tokens"),
         func.sum(AIUsage.output_tokens).label("output_tokens"),
+        func.sum(AIUsage.cache_read_tokens).label("cache_read_tokens"),
+        func.sum(AIUsage.cache_write_tokens).label("cache_write_tokens"),
+        func.sum(AIUsage.provider_cost).label("provider_cost"),
         func.sum(AIUsage.cost).label("total_cost"),
         func.count(AIUsage.id).label("call_count"),
     )
@@ -317,17 +442,30 @@ async def get_usage_totals(
         totals = {
             "input_tokens": row.input_tokens or 0,
             "output_tokens": row.output_tokens or 0,
+            "cache_read_tokens": row.cache_read_tokens or 0,
+            "cache_write_tokens": row.cache_write_tokens or 0,
+            "provider_cost": row.provider_cost,
             "total_cost": row.total_cost,
             "call_count": row.call_count or 0,
         }
     else:
-        totals = {"input_tokens": 0, "output_tokens": 0, "total_cost": None, "call_count": 0}
+        totals = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
+            "provider_cost": None,
+            "total_cost": None,
+            "call_count": 0,
+        }
 
     # Cache the result (no TTL - invalidate on write)
     try:
         cache_data = totals.copy()
         if cache_data.get("total_cost") is not None:
             cache_data["total_cost"] = str(cache_data["total_cost"])
+        if cache_data.get("provider_cost") is not None:
+            cache_data["provider_cost"] = str(cache_data["provider_cost"])
         await redis_client.set(cache_key, json.dumps(cache_data))
     except Exception as e:
         logger.warning(f"Redis cache write failed for usage totals: {e}")
@@ -509,6 +647,8 @@ async def backfill_model_costs(
     model: str,
     input_price_per_million: Decimal,
     output_price_per_million: Decimal,
+    cache_read_price_per_million: Decimal | None = None,
+    cache_write_price_per_million: Decimal | None = None,
 ) -> int:
     """
     Backfill costs for historical AI usage records that have cost=NULL.
@@ -535,6 +675,26 @@ async def backfill_model_costs(
     try:
         # Find all records for this model with NULL cost
         # Use a batch update query for efficiency
+        regular_input_tokens = AIUsage.input_tokens
+        input_cost = Decimal(0)
+        if cache_read_price_per_million is not None:
+            regular_input_tokens = regular_input_tokens - AIUsage.cache_read_tokens
+            input_cost = input_cost + (
+                AIUsage.cache_read_tokens
+                * cache_read_price_per_million
+                / Decimal(1_000_000)
+            )
+        if cache_write_price_per_million is not None:
+            regular_input_tokens = regular_input_tokens - AIUsage.cache_write_tokens
+            input_cost = input_cost + (
+                AIUsage.cache_write_tokens
+                * cache_write_price_per_million
+                / Decimal(1_000_000)
+            )
+        input_cost = input_cost + (
+            regular_input_tokens * input_price_per_million / Decimal(1_000_000)
+        )
+
         result = await session.execute(
             update(AIUsage)
             .where(
@@ -544,7 +704,7 @@ async def backfill_model_costs(
             )
             .values(
                 cost=(
-                    (AIUsage.input_tokens * input_price_per_million / Decimal(1_000_000))
+                    input_cost
                     + (AIUsage.output_tokens * output_price_per_million / Decimal(1_000_000))
                 )
             )

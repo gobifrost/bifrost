@@ -15,6 +15,7 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -44,8 +45,10 @@ from src.services.agent_runtime import (
     ModelCallEvent,
     ObservedModel,
     ToolEvent,
+    agent_model_settings,
     build_runtime_capabilities,
     create_agent_model,
+    provider_reported_cost,
 )
 from src.services.llm import ToolCallRequest
 from src.services.llm.factory import get_llm_config
@@ -283,6 +286,9 @@ class AutonomousAgentExecutor:
                 model=response.model_name or model_name,
                 input_tokens=request_usage.input_tokens,
                 output_tokens=request_usage.output_tokens,
+                cache_read_tokens=request_usage.cache_read_tokens,
+                cache_write_tokens=request_usage.cache_write_tokens,
+                provider_cost=provider_reported_cost(response),
                 duration_ms=event.duration_ms or 0,
             )
             step_number += 1
@@ -297,6 +303,17 @@ class AutonomousAgentExecutor:
                         for call in response.tool_calls
                     ],
                     "finish_reason": response.finish_reason,
+                    "usage": {
+                        "input_tokens": request_usage.input_tokens,
+                        "output_tokens": request_usage.output_tokens,
+                        "cache_read_tokens": request_usage.cache_read_tokens,
+                        "cache_write_tokens": request_usage.cache_write_tokens,
+                        "provider_cost": (
+                            str(cost)
+                            if (cost := provider_reported_cost(response)) is not None
+                            else None
+                        ),
+                    },
                 },
                 tokens_used=request_usage.total_tokens,
                 duration_ms=event.duration_ms,
@@ -362,7 +379,11 @@ class AutonomousAgentExecutor:
             ),
             toolsets=[toolset] if tool_definitions else [],
             capabilities=build_runtime_capabilities(budget),
-            model_settings={"max_tokens": agent.llm_max_tokens or llm_config.max_tokens},
+            model_settings=agent_model_settings(
+                llm_config,
+                max_tokens=agent.llm_max_tokens or llm_config.max_tokens,
+                session_id=run_id,
+            ),
             # One bounded correction for malformed tool names/arguments. The
             # shared UsageLimits ledger charges the retry to the parent run.
             retries=1,
@@ -1104,6 +1125,9 @@ class AutonomousAgentExecutor:
         model: str,
         input_tokens: int,
         output_tokens: int,
+        cache_read_tokens: int = 0,
+        cache_write_tokens: int = 0,
+        provider_cost: Decimal | None = None,
         duration_ms: int | None = None,
     ) -> None:
         """Buffer an AI usage entry for later DB flush."""
@@ -1114,6 +1138,9 @@ class AutonomousAgentExecutor:
             "model": model,
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
+            "cache_read_tokens": cache_read_tokens,
+            "cache_write_tokens": cache_write_tokens,
+            "provider_cost": provider_cost,
             "duration_ms": duration_ms,
             "agent_run_id": UUID(run_id),
             "organization_id": agent.organization_id,
