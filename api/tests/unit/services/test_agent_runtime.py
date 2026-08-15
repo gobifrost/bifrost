@@ -2,9 +2,11 @@
 
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from openai.types.chat import ChatCompletion
 from pydantic_ai import Agent as PydanticAgent
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai_harness.compaction import LimitWarner, TieredCompaction
@@ -110,6 +112,63 @@ def test_create_agent_model_supports_every_configured_provider(
 
     assert model.model_name == "test-model"
     assert model.system == expected_system
+
+
+def test_create_agent_model_uses_native_openrouter_adapter() -> None:
+    from pydantic_ai.models.openrouter import OpenRouterModel, OpenRouterModelSettings
+
+    config = LLMConfig(
+        provider="openai",
+        model="~deepseek/deepseek-v4-flash-latest",
+        api_key="test-key",
+        endpoint="https://openrouter.ai/api/v1",
+    )
+
+    model = create_agent_model(config)
+
+    assert isinstance(model, OpenRouterModel)
+    assert model.model_name == "~deepseek/deepseek-v4-flash-latest"
+    assert model.system == "openrouter"
+    settings = cast(OpenRouterModelSettings, model.settings)
+    assert settings.get("openrouter_usage") == {"include": True}
+
+
+def test_native_openrouter_adapter_preserves_provider_reported_usage() -> None:
+    config = LLMConfig(
+        provider="openai",
+        model="~deepseek/deepseek-v4-flash-latest",
+        api_key="test-key",
+        endpoint="https://openrouter.ai/api/v1",
+    )
+    model = create_agent_model(config)
+    provider_response = ChatCompletion.model_validate(
+        {
+            "id": "generation-123",
+            "object": "chat.completion",
+            "created": 0,
+            "model": "deepseek/deepseek-v4-flash-0731",
+            "provider": "DeepSeek",
+            "choices": [
+                {
+                    "index": 0,
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": "done"},
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 12_345,
+                "completion_tokens": 678,
+                "total_tokens": 13_023,
+            },
+        }
+    )
+
+    validated_response = model._validate_completion(provider_response)  # type: ignore[attr-defined]
+    response = model._process_response(validated_response)  # type: ignore[attr-defined]
+
+    assert response.provider_response_id == "generation-123"
+    assert response.usage.input_tokens == 12_345
+    assert response.usage.output_tokens == 678
 
 
 def test_budget_is_enforced_before_requests_and_warns_before_hard_stop() -> None:
@@ -438,7 +497,7 @@ def test_request_observability_breaks_down_context_without_recording_contents() 
 
 
 @pytest.mark.asyncio
-async def test_missing_provider_usage_is_backfilled_for_requests_and_streams() -> None:
+async def test_missing_provider_usage_is_not_replaced_by_safety_estimates() -> None:
     messages = [ModelRequest(parts=[UserPromptPart(content="hello")])]
     parameters = ModelRequestParameters()
     observer = AsyncMock()
@@ -449,14 +508,14 @@ async def test_missing_provider_usage_is_backfilled_for_requests_and_streams() -
 
     response = await model.request(messages, None, parameters)
 
-    assert response.usage.input_tokens > 0
-    assert response.usage.output_tokens > 0
-    assert response.usage.details["bifrost_usage_estimated"] == 1
+    assert response.usage.input_tokens == 0
+    assert response.usage.output_tokens == 0
+    assert "bifrost_usage_estimated" not in response.usage.details
 
     async with model.request_stream(messages, None, parameters) as response_stream:
         async for _event in response_stream:
             pass
 
-    assert response_stream.usage.input_tokens > 0
-    assert response_stream.usage.output_tokens > 0
-    assert response_stream.usage.details["bifrost_usage_estimated"] == 1
+    assert response_stream.usage.input_tokens == 0
+    assert response_stream.usage.output_tokens == 0
+    assert "bifrost_usage_estimated" not in response_stream.usage.details

@@ -5,7 +5,7 @@ import math
 import time
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Literal
 
 import pydantic_core
@@ -157,29 +157,6 @@ class ObservedModel(WrapperModel):
                 input_tokens=int(breakdown["estimated_input_tokens"]),
             )
 
-    @staticmethod
-    def _usage_with_fallback(
-        usage: RequestUsage,
-        *,
-        context_breakdown: dict[str, int | str],
-        response: ModelResponse,
-    ) -> RequestUsage:
-        """Backfill only token fields omitted by an upstream provider."""
-
-        if usage.input_tokens > 0 and usage.output_tokens > 0:
-            return usage
-        estimated_output_tokens = max(
-            1,
-            math.ceil(len(pydantic_core.to_json(response.parts, fallback=str)) / 2),
-        )
-        return replace(
-            usage,
-            input_tokens=usage.input_tokens
-            or int(context_breakdown["estimated_input_tokens"]),
-            output_tokens=usage.output_tokens or estimated_output_tokens,
-            details={**usage.details, "bifrost_usage_estimated": 1},
-        )
-
     async def request(
         self,
         messages: list[ModelMessage],
@@ -215,14 +192,6 @@ class ObservedModel(WrapperModel):
                 )
             )
             raise
-
-        fallback_usage = self._usage_with_fallback(
-            response.usage,
-            context_breakdown=context_breakdown,
-            response=response,
-        )
-        if fallback_usage is not response.usage:
-            response = replace(response, usage=fallback_usage)
 
         await self._observer(
             ModelCallEvent(
@@ -266,18 +235,6 @@ class ObservedModel(WrapperModel):
             ) as response_stream:
                 yield response_stream
             response = response_stream.get()
-            fallback_usage = self._usage_with_fallback(
-                response.usage,
-                context_breakdown=context_breakdown,
-                response=response,
-            )
-            if fallback_usage is not response.usage:
-                # Pydantic exposes stream usage read-only. The pinned runtime's
-                # StreamedResponse stores that public value in `_usage`; update it
-                # before our context exits so the agent ledger receives the same
-                # conservative fallback as non-streaming requests.
-                response_stream._usage = fallback_usage
-                response = replace(response, usage=fallback_usage)
         except Exception as exc:
             await self._observer(
                 ModelCallEvent(

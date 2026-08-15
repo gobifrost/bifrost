@@ -51,7 +51,7 @@ The shared runtime is divided into narrow boundaries:
 - `agent_runtime/model_factory.py` selects native OpenAI/OpenAI-compatible, Anthropic, or Google Pydantic models. OpenRouter remains an OpenAI-compatible endpoint and model name.
 - `agent_runtime/toolset.py` exposes Bifrost's stored JSON schemas without regenerating them and delegates execution back to Bifrost's existing authorization-aware tool paths.
 - `agent_runtime/budgets.py` creates pre-request usage limits, a shared parent/child ledger, proactive wind-down warnings, oversized-tool spillover, deterministic tool-result clearing, and a sliding context window.
-- `agent_runtime/observed_model.py` records a privacy-safe request composition breakdown, uses native provider token counting when available, and conservatively estimates missing preflight or response usage without replacing nonzero provider usage.
+- `agent_runtime/observed_model.py` records a privacy-safe request composition breakdown, uses native provider token counting when available, and conservatively estimates the next request only for preflight budget protection.
 - `llm/pydantic_client.py` adapts the existing `BaseLLMClient` contract so non-agent consumers migrate provider transport without changing SDK or API contracts.
 - `agent_executor.py` and `execution/autonomous_agent_executor.py` now use Pydantic's native loop and event stream instead of maintaining independent model/tool loops.
 
@@ -59,7 +59,7 @@ The shared runtime is divided into narrow boundaries:
 
 The configured token budget is cumulative input plus output across the root run and every delegated descendant. Pydantic's `RunUsage` object is shared through the delegation tree. A child also receives a local ceiling derived from its own configured allowance, but that ceiling can never exceed the inherited parent ceiling.
 
-Limits are evaluated before a provider request with token counting enabled. When a provider cannot count locally, the observed-model boundary estimates serialized messages and tool schemas at two bytes per token plus structural overhead; this intentionally fails closed for ordinary prose and JSON. A provider's eventual output cannot be known in advance, so the preflight check counts accumulated usage plus the next input; the returned output is then charged before any later request. If an upstream route omits response usage, missing input/output fields are conservatively backfilled and tagged in usage details while any nonzero provider fields remain authoritative. Request count, the one allowed malformed-tool correction, and delegated model calls all consume the same ledger.
+Limits are evaluated before a provider request with token counting enabled. When a provider cannot count locally, the observed-model boundary estimates serialized messages and tool schemas at two bytes per token plus structural overhead; this intentionally fails closed for ordinary prose and JSON. The estimate is predictive only: it can trigger wind-down or prevent the next request, but it is never persisted as actual usage. A provider's eventual output cannot be known in advance, so the preflight check counts accumulated provider usage plus the estimated next input; the returned provider input and output counts are then charged before any later request. Request count, the one allowed malformed-tool correction, and delegated model calls all consume the same ledger.
 
 At 70% of either request or total-token budget, the model receives a wind-down instruction. With two requests remaining, the instruction becomes critical. The intended experience is a technician-style handoff: state what was tried, identify remaining blockers, finish notes, and leave resumable progress. If the hard guard still fires, chat returns a context warning and a resumable handoff rather than silently disappearing.
 
@@ -88,7 +88,7 @@ The Coding Agent branch can consume the same model factory, shared budget, obser
 4. Gate wider rollout on lower cumulative input per successful run, zero parent-budget escapes, preserved tool success rate, and no increase in incomplete handoffs.
 5. Merge the shared runtime into the Coding Agent worktree, then implement its coding capability profile there.
 
-The local OpenRouter gate completed against `deepseek/deepseek-v4-flash`: one Bifrost tool call completed across two model requests. That route omitted native token usage, exercising the fallback ledger, which recorded 3,074 input and 401 output tokens. The credential was injected transiently from the work 1Password vault and was not stored in source or runtime configuration.
+The original local OpenRouter gate completed against `deepseek/deepseek-v4-flash`, but its 3,074 input and 401 output totals were conservative Bifrost estimates rather than provider usage. A follow-up live trace proved that OpenRouter returned exact usage while Pydantic AI's generic usage extractor silently reduced it to zero. Bifrost now requests OpenRouter usage explicitly and preserves those returned fields directly. The patched factory's live canary recorded 9 input and 22 output tokens; the old local input estimate for the same request was 131 tokens. The credential was injected transiently from the work 1Password vault and was not stored in source or runtime configuration.
 
 Required production telemetry per model request:
 
