@@ -15,6 +15,7 @@ from src.services.agent_executor import AgentExecutor
 from src.services.llm import LLMMessage, ToolDefinition
 from src.services.llm.base import LLMConfig
 from src.services.llm.pydantic_client import PydanticAIClient
+from src.services.llm_config_service import LLMProviderConfig
 
 
 class CountingTestModel(TestModel):
@@ -32,6 +33,17 @@ class CountingTestModel(TestModel):
 @pytest.fixture
 def executor() -> AgentExecutor:
     return AgentExecutor(MagicMock())
+
+
+@pytest.fixture(autouse=True)
+def configured_chat_model():
+    """Keep these runtime-contract tests focused on the Pydantic event loop."""
+    config = LLMProviderConfig(provider="openai", model="test-model")
+    with patch(
+        "src.services.llm_config_service.LLMConfigService.get_config",
+        new=AsyncMock(return_value=config),
+    ):
+        yield
 
 
 @pytest.fixture

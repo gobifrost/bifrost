@@ -104,8 +104,12 @@
 | POST | `/api/chat/conversations` |
 | DELETE | `/api/chat/conversations/{conversation_id}` |
 | GET | `/api/chat/conversations/{conversation_id}` |
+| POST | `/api/chat/conversations/{conversation_id}/attachments` |
+| DELETE | `/api/chat/conversations/{conversation_id}/attachments/{attachment_id}` |
+| GET | `/api/chat/conversations/{conversation_id}/attachments/{attachment_id}/content` |
 | GET | `/api/chat/conversations/{conversation_id}/messages` |
 | POST | `/api/chat/conversations/{conversation_id}/messages` |
+| GET | `/api/chat/model-tiers` |
 | GET | `/api/claims` |
 | POST | `/api/claims` |
 | DELETE | `/api/claims/{name}` |
