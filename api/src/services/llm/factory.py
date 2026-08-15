@@ -21,9 +21,10 @@ logger = logging.getLogger(__name__)
 
 
 # Default configuration values
-DEFAULT_PROVIDER: Literal["openai", "anthropic"] = "openai"
+DEFAULT_PROVIDER: Literal["openai", "anthropic", "google"] = "openai"
 DEFAULT_OPENAI_MODEL = "gpt-4o"
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
+DEFAULT_GOOGLE_MODEL = "gemini-2.5-flash"
 DEFAULT_MAX_TOKENS = 16384
 
 # SystemConfig keys (follows GitHub integration pattern)
@@ -38,7 +39,7 @@ async def get_llm_config(session: AsyncSession) -> LLMConfig:
     - category: "llm"
     - key: "provider_config"
     - value_json: {
-        "provider": "openai" | "anthropic",
+        "provider": "openai" | "anthropic" | "google",
         "model": "gpt-4o" | "claude-sonnet-4-20250514",
         "encrypted_api_key": "<fernet-encrypted-key>",
         "endpoint": null,  # For custom OpenAI-compatible providers
@@ -75,13 +76,18 @@ async def get_llm_config(session: AsyncSession) -> LLMConfig:
     provider_str = config_data.get("provider", DEFAULT_PROVIDER)
     if provider_str == "custom":
         provider_str = "openai"
-    if provider_str not in ("openai", "anthropic"):
+    if provider_str not in ("openai", "anthropic", "google"):
         logger.warning(f"Invalid provider '{provider_str}', defaulting to {DEFAULT_PROVIDER}")
         provider_str = DEFAULT_PROVIDER
-    provider: Literal["openai", "anthropic"] = provider_str  # type: ignore[assignment]
+    provider: Literal["openai", "anthropic", "google"] = provider_str  # type: ignore[assignment]
 
     # Get model based on provider
-    default_model = DEFAULT_OPENAI_MODEL if provider == "openai" else DEFAULT_ANTHROPIC_MODEL
+    default_models = {
+        "openai": DEFAULT_OPENAI_MODEL,
+        "anthropic": DEFAULT_ANTHROPIC_MODEL,
+        "google": DEFAULT_GOOGLE_MODEL,
+    }
+    default_model = default_models[provider]
     model = config_data.get("model", default_model)
 
     # Decrypt API key (same pattern as GitHub token encryption)
@@ -121,32 +127,22 @@ async def get_llm_client(session: AsyncSession) -> BaseLLMClient:
         session: Database session for reading configuration
 
     Returns:
-        Configured LLM client (OpenAI or Anthropic)
+        Provider-neutral Pydantic AI client.
 
     Raises:
         ValueError: If configuration is invalid or missing
     """
     config = await get_llm_config(session)
 
-    if config.provider == "openai":
-        # Imported lazily so the openai SDK stays out of the worker/scheduler
-        # import closure (tests/unit/test_import_hygiene.py).
-        from src.services.llm.openai_client import OpenAIClient
+    # Imported lazily so provider SDKs remain outside worker/scheduler import
+    # closure until an LLM request is actually made.
+    from src.services.llm.pydantic_client import PydanticAIClient
 
-        return OpenAIClient(config)
-    elif config.provider == "anthropic":
-        # Imported lazily so the anthropic SDK stays out of the worker/scheduler
-        # import closure (tests/unit/test_import_hygiene.py).
-        from src.services.llm.anthropic_client import AnthropicClient
-
-        return AnthropicClient(config)
-    else:
-        # This shouldn't happen due to validation in get_llm_config
-        raise ValueError(f"Unknown LLM provider: {config.provider}")
+    return PydanticAIClient(config)
 
 
 def create_llm_client(
-    provider: Literal["openai", "anthropic"],
+    provider: Literal["openai", "anthropic", "google"],
     api_key: str,
     model: str | None = None,
     endpoint: str | None = None,
@@ -158,7 +154,7 @@ def create_llm_client(
     Use this for testing or when you need to override platform config.
 
     Args:
-        provider: "openai" or "anthropic"
+        provider: "openai", "anthropic", or "google"
         api_key: API key for the provider
         model: Model identifier (uses defaults if not provided)
         endpoint: Custom API endpoint URL
@@ -168,7 +164,11 @@ def create_llm_client(
         Configured LLM client
     """
     if model is None:
-        model = DEFAULT_OPENAI_MODEL if provider == "openai" else DEFAULT_ANTHROPIC_MODEL
+        model = {
+            "openai": DEFAULT_OPENAI_MODEL,
+            "anthropic": DEFAULT_ANTHROPIC_MODEL,
+            "google": DEFAULT_GOOGLE_MODEL,
+        }[provider]
 
     config = LLMConfig(
         provider=provider,
@@ -178,17 +178,6 @@ def create_llm_client(
         max_tokens=max_tokens,
     )
 
-    if provider == "openai":
-        # Imported lazily so the openai SDK stays out of the worker/scheduler
-        # import closure (tests/unit/test_import_hygiene.py).
-        from src.services.llm.openai_client import OpenAIClient
+    from src.services.llm.pydantic_client import PydanticAIClient
 
-        return OpenAIClient(config)
-    elif provider == "anthropic":
-        # Imported lazily so the anthropic SDK stays out of the worker/scheduler
-        # import closure (tests/unit/test_import_hygiene.py).
-        from src.services.llm.anthropic_client import AnthropicClient
-
-        return AnthropicClient(config)
-    else:
-        raise ValueError(f"Unknown LLM provider: {provider}")
+    return PydanticAIClient(config)

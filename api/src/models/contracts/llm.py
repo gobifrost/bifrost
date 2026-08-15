@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 class LLMConfigResponse(BaseModel):
     """LLM configuration response (API key is never returned)."""
 
-    provider: Literal["openai", "anthropic"]
+    provider: Literal["openai", "anthropic", "google"]
     model: str
     endpoint: str | None = None
     max_tokens: int = 16384
@@ -26,14 +26,14 @@ class LLMConfigResponse(BaseModel):
 class LLMConfigRequest(BaseModel):
     """Request to set LLM configuration."""
 
-    provider: Literal["openai", "anthropic"] = Field(
+    provider: Literal["openai", "anthropic", "google"] = Field(
         ...,
         description="LLM provider type",
     )
     model: str = Field(
         ...,
         min_length=1,
-        description="Model identifier (e.g., 'gpt-4o', 'claude-sonnet-4-20250514')",
+        description="Model identifier (for example 'gpt-4o', 'claude-sonnet-4-20250514', or 'gemini-2.5-flash')",
     )
     api_key: str | None = Field(
         None,
@@ -66,7 +66,7 @@ class LLMConfigRequest(BaseModel):
 class LLMTestRequest(BaseModel):
     """Request to test LLM configuration before saving."""
 
-    provider: Literal["openai", "anthropic"] = Field(
+    provider: Literal["openai", "anthropic", "google"] = Field(
         ...,
         description="LLM provider type",
     )

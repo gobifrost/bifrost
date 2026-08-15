@@ -22,6 +22,9 @@ import redis.asyncio as aioredis
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
+from pydantic_ai import Agent as PydanticAgent
+from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.usage import RunUsage
 
 from src.models.orm.agents import Agent, AgentDelegation
 from src.models.orm.agent_runs import AgentRun, AgentRunStep
@@ -34,7 +37,18 @@ from src.services.execution.agent_helpers import (
     parse_mcp_tool_name,
     resolve_agent_tools,
 )
-from src.services.llm import LLMMessage, ToolCallRequest, get_llm_client
+from src.services.agent_runtime import (
+    AgentRunBudget,
+    AgentRunCancelled,
+    BifrostToolset,
+    ModelCallEvent,
+    ObservedModel,
+    ToolEvent,
+    build_runtime_capabilities,
+    create_agent_model,
+)
+from src.services.llm import ToolCallRequest
+from src.services.llm.factory import get_llm_config
 from src.services.knowledge.search_budget import (
     KnowledgeSearchBudget,
     clamp_knowledge_result_limit,
@@ -115,6 +129,11 @@ class AutonomousAgentExecutor:
         self._pending_steps: list[dict[str, Any]] = []
         self._pending_ai_usage: list[dict[str, Any]] = []
         self._knowledge_search_budget = KnowledgeSearchBudget()
+        # Delegated executors receive these same objects. Pydantic AI mutates
+        # RunUsage in place, so every model request in the delegation tree is
+        # charged to the root run instead of giving each child a fresh budget.
+        self._active_usage: RunUsage | None = None
+        self._active_budget: AgentRunBudget | None = None
 
     async def run(
         self,
@@ -124,6 +143,8 @@ class AutonomousAgentExecutor:
         output_schema: dict | None = None,
         run_id: str | None = None,
         _caller: dict | None = None,
+        _shared_usage: RunUsage | None = None,
+        _shared_budget: AgentRunBudget | None = None,
     ) -> dict:
         """Execute an autonomous agent run.
 
@@ -133,6 +154,9 @@ class AutonomousAgentExecutor:
             output_schema: Optional JSON Schema the agent should conform its output to.
             run_id: External run ID (generates one if not provided).
             _caller: Optional caller metadata for context.
+            _shared_usage: Internal cumulative usage ledger inherited from a
+                parent run during delegation.
+            _shared_budget: Internal hard ceiling inherited from a parent run.
 
         Returns:
             Dict with keys: output, iterations_used, tokens_used, status, llm_model
@@ -176,260 +200,244 @@ class AutonomousAgentExecutor:
             }
 
         step_number = 0
-        iterations_used = 0
-        tokens_used = 0
-        max_iterations = min(agent.max_iterations or 50, MAX_ITERATIONS)
-        max_tokens = agent.max_token_budget or 100000
+        configured_iterations = min(agent.max_iterations or 50, MAX_ITERATIONS)
+        configured_tokens = agent.max_token_budget or 100000
+        usage = _shared_usage or RunUsage()
+        usage_start_requests = usage.requests
+        usage_start_tokens = usage.total_tokens
 
-        # Resolve tools and get LLM client (brief DB reads, then release).
-        # ``caller_user_id`` controls MCP-tool inclusion at planning:
-        # autonomous runs (None) only see MCP tools whose connection
-        # is flagged ``available_to_autonomous`` AND has a usable
-        # service token. Chat-claim webhooks that pass a user_id see
-        # all enabled MCP tools in the agent's org.
+        # A child gets at most its own configured allowance, but never escapes
+        # the ceiling inherited from its parent. Grandchildren inherit the
+        # child's effective subtree ceiling. The root starts at zero, so these
+        # are simply its configured limits there.
+        if _shared_budget is None:
+            budget = AgentRunBudget(
+                max_requests=configured_iterations,
+                max_total_tokens=configured_tokens,
+            )
+        else:
+            budget = _shared_budget.child_subtree(
+                current_requests=usage_start_requests,
+                current_total_tokens=usage_start_tokens,
+                child_max_requests=configured_iterations,
+                child_max_total_tokens=configured_tokens,
+            )
+        max_iterations = budget.max_requests
+        max_tokens = budget.max_total_tokens
+        self._active_usage = usage
+        self._active_budget = budget
+
+        # Resolve tools and provider configuration in one short DB lease. No DB
+        # connection is held across model requests or tool execution.
         async with self._session_factory() as db:
             tool_definitions, self._tool_workflow_id_map = await resolve_agent_tools(
-                agent, db, caller_user_id=caller_user_id
+                agent,
+                db,
+                caller_user_id=caller_user_id,
             )
-            llm_client = await get_llm_client(db)
+            llm_config = await get_llm_config(db)
 
-        # Build initial messages
-        system_prompt = build_agent_system_prompt(agent, execution_context={"mode": "autonomous"})
+        model_name = agent.llm_model or llm_config.model
+        last_response_content = ""
+
+        async def record_model_event(event: ModelCallEvent) -> None:
+            nonlocal step_number, model_name, last_response_content
+            if event.type == "request":
+                if await self._check_cancelled(run_id):
+                    raise AgentRunCancelled("Cancelled by user")
+                step_number += 1
+                await self._record_step(
+                    run_id,
+                    step_number,
+                    "llm_request",
+                    {
+                        "messages_count": event.messages_count,
+                        "tools_count": event.tools_count,
+                        "model": model_name,
+                        "context_breakdown": event.context_breakdown,
+                    },
+                )
+                return
+
+            if event.type == "error":
+                step_number += 1
+                await self._record_step(
+                    run_id,
+                    step_number,
+                    "error",
+                    {"error": event.error or "Model request failed", "phase": "llm_call"},
+                    duration_ms=event.duration_ms,
+                )
+                return
+
+            response = event.response
+            assert response is not None
+            request_usage = response.usage
+            if response.model_name:
+                model_name = response.model_name
+            if response.text:
+                last_response_content = response.text
+            self._buffer_ai_usage(
+                agent=agent,
+                run_id=run_id,
+                provider=response.provider_name or llm_config.provider,
+                model=response.model_name or model_name,
+                input_tokens=request_usage.input_tokens,
+                output_tokens=request_usage.output_tokens,
+                duration_ms=event.duration_ms or 0,
+            )
+            step_number += 1
+            await self._record_step(
+                run_id,
+                step_number,
+                "llm_response",
+                {
+                    "content": (response.text or "")[:20000],
+                    "tool_calls": [
+                        {"name": call.tool_name, "arguments": call.args_as_dict()}
+                        for call in response.tool_calls
+                    ],
+                    "finish_reason": response.finish_reason,
+                },
+                tokens_used=request_usage.total_tokens,
+                duration_ms=event.duration_ms,
+            )
+
+        async def execute_tool(name: str, arguments: dict[str, Any], tool_call_id: str) -> Any:
+            if await self._check_cancelled(run_id):
+                raise AgentRunCancelled("Cancelled by user during tool execution")
+            self._last_workflow_execution_id = None
+            self._last_workflow_execution_is_error = False
+            if name.startswith("delegate_to_"):
+                self._last_delegation_run_id = None
+            return await self._execute_tool(
+                ToolCallRequest(id=tool_call_id, name=name, arguments=arguments),
+                agent,
+            )
+
+        async def record_tool_event(event: ToolEvent) -> None:
+            nonlocal step_number
+            step_number += 1
+            if event.type == "tool_call":
+                await self._record_step(
+                    run_id,
+                    step_number,
+                    "tool_call",
+                    {"tool_name": event.tool_name, "arguments": event.arguments},
+                )
+                return
+
+            content: dict[str, Any] = {
+                "tool_name": event.tool_name,
+                "is_error": event.type == "tool_error" or self._last_workflow_execution_is_error,
+            }
+            if event.type == "tool_error":
+                content["error"] = event.error
+            else:
+                content["result"] = str(event.result)[:20000]
+            if event.tool_name.startswith("delegate_to_") and self._last_delegation_run_id:
+                content["child_run_id"] = self._last_delegation_run_id
+            if self._last_workflow_execution_id:
+                content["execution_id"] = self._last_workflow_execution_id
+            await self._record_step(
+                run_id,
+                step_number,
+                event.type,
+                content,
+                duration_ms=event.duration_ms,
+            )
+
+        base_model = create_agent_model(llm_config, model=model_name)
+        observed_model = ObservedModel(base_model, record_model_event)
+        toolset = BifrostToolset(
+            tool_definitions,
+            execute_tool,
+            event_handler=record_tool_event,
+            toolset_id=f"bifrost-{agent.id}",
+        )
+        runtime = PydanticAgent(
+            observed_model,
+            system_prompt=build_agent_system_prompt(
+                agent,
+                execution_context={"mode": "autonomous"},
+            ),
+            toolsets=[toolset] if tool_definitions else [],
+            capabilities=build_runtime_capabilities(budget),
+            model_settings={"max_tokens": agent.llm_max_tokens or llm_config.max_tokens},
+            # One bounded correction for malformed tool names/arguments. The
+            # shared UsageLimits ledger charges the retry to the parent run.
+            retries=1,
+            end_strategy="exhaustive",
+        )
+
         user_content = json.dumps(input_data) if input_data else "Run your task."
         if output_schema:
             user_content += f"\n\nRespond with JSON matching this schema:\n{json.dumps(output_schema)}"
 
-        messages: list[LLMMessage] = [
-            LLMMessage(role="system", content=system_prompt),
-            LLMMessage(role="user", content=user_content),
-        ]
-
-        model = agent.llm_model
-
-        # Record initial request step
-        step_number += 1
-        await self._record_step(run_id, step_number, "llm_request", {
-            "messages_count": len(messages),
-            "tools_count": len(tool_definitions),
-            "model": model,
-        })
-
-        # Main loop
-        final_content = ""
         status = "completed"
-
-        while iterations_used < max_iterations:
-            # Check for cancellation before each iteration (Layer 2: graceful)
-            if await self._check_cancelled(run_id):
-                status = "cancelled"
-                step_number += 1
-                await self._record_step(run_id, step_number, "cancelled", {
-                    "reason": "Cancelled by user",
-                    "iterations_used": iterations_used,
-                })
-                break
-
-            iterations_used += 1
-            start_time = time.time()
-
-            # Budget warning at 80%
-            if iterations_used == int(max_iterations * 0.8):
-                messages.append(LLMMessage(
-                    role="system",
-                    content="You are approaching your iteration budget. "
-                            "Please wrap up your work and provide your final output.",
-                ))
-                step_number += 1
-                await self._record_step(run_id, step_number, "budget_warning", {
-                    "iterations_used": iterations_used,
-                    "max_iterations": max_iterations,
-                })
-
-            # Call LLM — NO DB connection held during this call
-            try:
-                response = await llm_client.complete(
-                    messages=messages,
-                    tools=tool_definitions if tool_definitions else None,
-                    model=model,
-                    max_tokens=agent.llm_max_tokens,
-                )
-            except Exception as e:
-                logger.error(f"LLM call failed in run {run_id}: {e}", exc_info=True)
-                step_number += 1
-                await self._record_step(run_id, step_number, "error", {
-                    "error": str(e),
-                    "phase": "llm_call",
-                })
-                return {
-                    "output": None,
-                    "iterations_used": iterations_used,
-                    "tokens_used": tokens_used,
-                    "status": "failed",
-                    "llm_model": model,
-                    "error": str(e),
-                }
-
-            duration_ms = int((time.time() - start_time) * 1000)
-            chunk_tokens = (response.input_tokens or 0) + (response.output_tokens or 0)
-            tokens_used += chunk_tokens
-
-            # Capture the actual model name from the first LLM response
-            if not model and response.model:
-                model = response.model
-
-            # Buffer AI usage for later DB flush
-            self._buffer_ai_usage(
-                agent=agent,
-                run_id=run_id,
-                provider=llm_client.provider_name,
-                model=response.model or model or "",
-                input_tokens=response.input_tokens or 0,
-                output_tokens=response.output_tokens or 0,
-                duration_ms=duration_ms,
+        final_content = ""
+        error: str | None = None
+        try:
+            result = await runtime.run(
+                user_content,
+                usage_limits=budget.usage_limits(),
+                usage=usage,
+                conversation_id=run_id,
             )
-
-            # Record LLM response step
+            final_content = result.output
+        except AgentRunCancelled as exc:
+            status = "cancelled"
+            error = str(exc)
             step_number += 1
-            await self._record_step(run_id, step_number, "llm_response", {
-                "content": (response.content or "")[:20000],
-                "tool_calls": [
-                    {"name": tc.name, "arguments": tc.arguments}
-                    for tc in (response.tool_calls or [])
-                ],
-                "finish_reason": response.finish_reason,
-            }, tokens_used=chunk_tokens, duration_ms=duration_ms)
-
-            # No tool calls = done
-            if not response.tool_calls:
-                final_content = response.content or ""
-                break
-
-            # Add assistant message with tool calls to history
-            messages.append(LLMMessage(
-                role="assistant",
-                content=response.content if response.content else None,
-                tool_calls=response.tool_calls,
-            ))
-
-            # Execute tools
-            cancelled_during_tools = False
-            for tc in response.tool_calls:
-                # Check for cancellation between tool calls
-                if await self._check_cancelled(run_id):
-                    cancelled_during_tools = True
-                    break
-
-                step_number += 1
-                await self._record_step(run_id, step_number, "tool_call", {
-                    "tool_name": tc.name,
-                    "arguments": tc.arguments,
-                })
-
-                tool_start = time.time()
-                try:
-                    # Workflow execution IDs are captured as transient
-                    # per-invocation metadata by _execute_tool. Reset before
-                    # every dispatch so non-workflow calls cannot inherit the
-                    # previous workflow's execution ID.
-                    self._last_workflow_execution_id = None
-                    self._last_workflow_execution_is_error = False
-                    if tc.name.startswith("delegate_to_"):
-                        self._last_delegation_run_id = None
-                    result = await self._execute_tool(tc, agent)
-                    tool_duration = int((time.time() - tool_start) * 1000)
-
-                    step_content: dict = {
-                        "tool_name": tc.name,
-                        "result": str(result)[:20000],
-                        "is_error": self._last_workflow_execution_is_error,
-                    }
-                    # Include child_run_id for delegation steps
-                    if tc.name.startswith("delegate_to_") and self._last_delegation_run_id:
-                        step_content["child_run_id"] = self._last_delegation_run_id
-                    if self._last_workflow_execution_id:
-                        step_content["execution_id"] = self._last_workflow_execution_id
-
-                    step_number += 1
-                    await self._record_step(run_id, step_number, "tool_result", step_content, duration_ms=tool_duration)
-
-                    messages.append(LLMMessage(
-                        role="tool",
-                        content=str(result),
-                        tool_call_id=tc.id,
-                        tool_name=tc.name,
-                    ))
-                except Exception as e:
-                    tool_duration = int((time.time() - tool_start) * 1000)
-                    step_content = {
-                        "tool_name": tc.name,
-                        "error": str(e),
-                        "is_error": True,
-                    }
-                    if tc.name.startswith("delegate_to_") and self._last_delegation_run_id:
-                        step_content["child_run_id"] = self._last_delegation_run_id
-                    step_number += 1
-                    await self._record_step(
-                        run_id,
-                        step_number,
-                        "tool_error",
-                        step_content,
-                        duration_ms=tool_duration,
-                    )
-
-                    messages.append(LLMMessage(
-                        role="tool",
-                        content=f"Error: {e}",
-                        tool_call_id=tc.id,
-                        tool_name=tc.name,
-                    ))
-
-            # Check if cancelled during tool execution
-            if cancelled_during_tools:
-                status = "cancelled"
-                step_number += 1
-                await self._record_step(run_id, step_number, "cancelled", {
-                    "reason": "Cancelled by user during tool execution",
-                    "iterations_used": iterations_used,
-                })
-                break
-
-            if self._knowledge_search_budget.exhausted:
-                tool_definitions = [
-                    tool
-                    for tool in tool_definitions
-                    if tool.name != "search_knowledge"
-                ]
-
-            # Check token budget
-            if tokens_used >= max_tokens:
-                status = "budget_exceeded"
-                step_number += 1
-                await self._record_step(run_id, step_number, "budget_warning", {
-                    "tokens_used": tokens_used,
-                    "max_tokens": max_tokens,
-                    "reason": "token_budget_exceeded",
-                })
-                break
-        else:
-            # Loop exhausted without breaking — iteration budget exceeded
+            await self._record_step(
+                run_id,
+                step_number,
+                "cancelled",
+                {"reason": error, "iterations_used": usage.requests},
+            )
+        except UsageLimitExceeded as exc:
             status = "budget_exceeded"
+            error = str(exc)
+            final_content = last_response_content or (
+                "I reached this run's limit before I could finish. Completed "
+                "tool results and run steps were preserved so the work can "
+                "resume without starting over."
+            )
+            step_number += 1
+            await self._record_step(
+                run_id,
+                step_number,
+                "budget_warning",
+                {
+                    "tokens_used": usage.total_tokens,
+                    "max_tokens": max_tokens,
+                    "iterations_used": usage.requests - usage_start_requests,
+                    "max_iterations": max_iterations,
+                    "reason": "runtime_budget_exceeded",
+                },
+            )
+        except Exception as exc:
+            logger.error("Agent runtime failed in run %s: %s", run_id, exc, exc_info=True)
+            status = "failed"
+            error = str(exc)
 
-        # Parse output
         output: str | dict = final_content
         if output_schema and final_content:
             try:
                 output = json.loads(final_content)
-            except json.JSONDecodeError as e:
-                # Agent didn't return valid JSON for the schema — return raw content
-                logger.debug(f"final agent output is not JSON, returning raw string: {e}")
+            except json.JSONDecodeError as exc:
+                logger.debug("final agent output is not JSON, returning raw string: %s", exc)
 
-        return {
-            "output": output,
-            "iterations_used": iterations_used,
-            "tokens_used": tokens_used,
+        response = {
+            "output": output or None,
+            "iterations_used": usage.requests - usage_start_requests,
+            "tokens_used": usage.total_tokens - usage_start_tokens,
             "status": status,
-            "llm_model": model,
+            "llm_model": model_name,
         }
+        if error and status == "failed":
+            response["error"] = error
+        return response
 
     # ------------------------------------------------------------------
     # DB flush (called by consumer after run completes)
@@ -706,6 +714,8 @@ class AutonomousAgentExecutor:
         parent_run_id: str | None = None,
         conversation_id: UUID | None = None,
         caller: dict[str, Any] | None = None,
+        _shared_usage: RunUsage | None = None,
+        _shared_budget: AgentRunBudget | None = None,
     ) -> DelegationOutcome:
         """Run one delegated child with a durable, caller-neutral lifecycle."""
         if parent_run_id and await self._check_cancelled(parent_run_id):
@@ -824,6 +834,8 @@ class AutonomousAgentExecutor:
 
         sub_start = time.time()
         cancellation: asyncio.CancelledError | None = None
+        shared_usage = _shared_usage or self._active_usage
+        shared_budget = _shared_budget or self._active_budget
         try:
             sub_result = await asyncio.wait_for(
                 sub_executor.run(
@@ -834,6 +846,8 @@ class AutonomousAgentExecutor:
                     },
                     run_id=str(sub_run_id),
                     _caller=caller,
+                    _shared_usage=shared_usage,
+                    _shared_budget=shared_budget,
                 ),
                 timeout=DELEGATION_TIMEOUT_SECONDS,
             )

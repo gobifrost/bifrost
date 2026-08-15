@@ -11,7 +11,7 @@ Handles the chat completion loop for AI agents, including:
 - Agent delegation
 """
 
-import json
+import asyncio
 import logging
 import time
 from collections.abc import AsyncIterator
@@ -20,6 +20,16 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID, uuid4
 
+from pydantic_ai import Agent as PydanticAgent, AgentRunResultEvent
+from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.messages import (
+    FunctionToolCallEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPart,
+    TextPartDelta,
+)
+from pydantic_ai.usage import RunUsage
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
@@ -41,6 +51,15 @@ from src.services.llm import (
     ToolCallRequest,
     ToolDefinition,
     get_llm_client,
+)
+from src.services.llm.pydantic_client import PydanticAIClient
+from src.services.agent_runtime import (
+    AgentRunBudget,
+    BifrostToolset,
+    ModelCallEvent,
+    ObservedModel,
+    build_runtime_capabilities,
+    create_agent_model,
 )
 from src.services.execution.agent_helpers import (
     find_delegated_agent,
@@ -93,13 +112,6 @@ def _serialize_tool_result_for_history(tool_result: ToolResult) -> str:
 # Maximum tool call iterations to prevent infinite loops
 MAX_TOOL_ITERATIONS = 10
 
-# Context window management thresholds
-# Claude models have ~200K context, we use conservative limits
-CONTEXT_MAX_TOKENS = 120_000  # Prune when exceeding this
-CONTEXT_WARNING_TOKENS = 100_000  # Warn when approaching this
-CONTEXT_KEEP_RECENT = 20  # Keep this many recent messages when pruning
-TOOL_OUTPUT_PROTECT_TOKENS = 10_000  # Protect this many tokens of recent tool outputs
-
 # Fallback system prompt (used if no config set)
 FALLBACK_SYSTEM_PROMPT = """You are a helpful AI assistant. You can help users with a variety of tasks including answering questions, providing information, and having general conversations.
 
@@ -122,6 +134,8 @@ class AgentExecutor:
         self._session_factory = session_factory
         self._tool_workflow_id_map: dict[str, UUID] = {}  # normalized tool name → workflow UUID
         self._knowledge_search_budget = KnowledgeSearchBudget()
+        self._active_usage: RunUsage | None = None
+        self._active_budget: AgentRunBudget | None = None
 
     @asynccontextmanager
     async def _db(self):
@@ -356,264 +370,237 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
             async with self._db() as session:
                 llm_client = await get_llm_client(session)
 
-            # 7. Check context size and prune if needed
-            estimated_tokens = self._estimate_tokens(messages)
-
-            if estimated_tokens > CONTEXT_WARNING_TOKENS:
-                if estimated_tokens > CONTEXT_MAX_TOKENS:
-                    # Prune and notify
-                    messages, original_tokens = await self._prune_context(
-                        messages, llm_client
-                    )
-                    new_tokens = self._estimate_tokens(messages)
-                    yield ChatStreamChunk(
-                        type="context_warning",
-                        context_warning=ContextWarning(
-                            current_tokens=original_tokens,
-                            max_tokens=CONTEXT_MAX_TOKENS,
-                            action="compacted",
-                            message=(
-                                f"Conversation history was summarized to stay within "
-                                f"context limits. Original: ~{original_tokens:,} tokens, "
-                                f"now: ~{new_tokens:,} tokens."
-                            ),
-                        ),
-                    )
-                else:
-                    # Just warn - approaching limit
-                    yield ChatStreamChunk(
-                        type="context_warning",
-                        context_warning=ContextWarning(
-                            current_tokens=estimated_tokens,
-                            max_tokens=CONTEXT_MAX_TOKENS,
-                            action="warning",
-                            message=(
-                                f"Approaching context limit (~{estimated_tokens:,} of "
-                                f"{CONTEXT_MAX_TOKENS:,} tokens). Consider starting a "
-                                f"new conversation soon."
-                            ),
-                        ),
-                    )
-
-            # 8. Run completion loop with tool calling
-            iteration = 0
-            final_content = ""
-            final_tool_calls: list[ToolCall] = []
+            # 7. Hand the full loop to Pydantic AI. Bifrost remains responsible
+            # for authorization, persistence, and its stable stream contract;
+            # the runtime owns history replay, tool/result sequencing, context
+            # compaction, and budget enforcement.
+            model_override = agent.llm_model if agent else None
+            max_tokens_override = agent.llm_max_tokens if agent else None
+            model_name = model_override or llm_client.model_name
+            max_requests = min(
+                agent.max_iterations or MAX_TOOL_ITERATIONS
+                if agent
+                else MAX_TOOL_ITERATIONS,
+                MAX_TOOL_ITERATIONS,
+            )
+            budget = AgentRunBudget(
+                max_requests=max_requests,
+                max_total_tokens=(agent.max_token_budget or 100_000) if agent else 100_000,
+            )
+            usage = RunUsage()
+            self._active_usage = usage
+            self._active_budget = budget
             total_input_tokens = 0
             total_output_tokens = 0
 
-            # Extract agent LLM overrides
-            model_override = agent.llm_model if agent else None
-            max_tokens_override = agent.llm_max_tokens if agent else None
+            async def record_model_event(event: ModelCallEvent) -> None:
+                nonlocal total_input_tokens, total_output_tokens, model_name
+                if event.type != "response" or event.response is None:
+                    return
+                response_usage = event.response.usage
+                total_input_tokens += response_usage.input_tokens
+                total_output_tokens += response_usage.output_tokens
+                if event.response.model_name:
+                    model_name = event.response.model_name
 
-            # Track tool_call IDs across iterations to handle providers
-            # (e.g. Minimax) that reuse the same IDs across turns.
-            seen_tc_ids: set[str] = set()
-            # Also collect IDs from message history (loaded from DB)
-            for m in messages:
-                if m.role == "assistant" and m.tool_calls:
-                    for tc in m.tool_calls:
-                        seen_tc_ids.add(tc.id)
+            seen_tc_ids = {
+                call.id
+                for message in messages
+                if message.role == "assistant"
+                for call in message.tool_calls or []
+            }
+            tool_calls: dict[str, ToolCall] = {}
+            tool_message_ids: dict[str, UUID] = {}
+            tool_execution_ids: dict[str, str] = {}
+            pending_tool_chunks: list[ChatStreamChunk] = []
 
-            while iteration < MAX_TOOL_ITERATIONS:
-                iteration += 1
-
-                # Stream LLM response
-                collected_content = ""
-                collected_tool_calls: list[ToolCallRequest] = []
-                chunk_input_tokens = 0
-                chunk_output_tokens = 0
-
-                async for chunk in llm_client.stream(
-                    messages=messages,
-                    tools=tool_definitions if tool_definitions else None,
-                    model=model_override,
-                    max_tokens=max_tokens_override,
-                ):
-                    if chunk.type == "delta" and chunk.content:
-                        collected_content += chunk.content
-                        if stream:
-                            yield ChatStreamChunk(
-                                type="delta",
-                                content=chunk.content,
-                            )
-
-                    elif chunk.type == "tool_call" and chunk.tool_call:
-                        collected_tool_calls.append(chunk.tool_call)
-                        if stream:
-                            yield ChatStreamChunk(
-                                type="tool_call",
-                                tool_call=ToolCall(
-                                    id=chunk.tool_call.id,
-                                    name=chunk.tool_call.name,
-                                    arguments=chunk.tool_call.arguments,
-                                ),
-                            )
-
-                    elif chunk.type == "done":
-                        chunk_input_tokens = chunk.input_tokens or 0
-                        chunk_output_tokens = chunk.output_tokens or 0
-                        total_input_tokens += chunk_input_tokens
-                        total_output_tokens += chunk_output_tokens
-
-                    elif chunk.type == "error":
-                        yield ChatStreamChunk(
-                            type="error",
-                            error=chunk.error,
-                        )
-                        return
-
-                # If no tool calls, we're done
-                if not collected_tool_calls:
-                    final_content = collected_content
-                    break
-
-                # Deduplicate tool_call IDs — some providers (e.g. Minimax)
-                # reuse the same IDs across turns within a single request.
-                for tc in collected_tool_calls:
-                    if tc.id in seen_tc_ids:
-                        old_id = tc.id
-                        tc.id = f"{tc.id}_iter{iteration}"
-                        logger.debug("Remapped duplicate tool_call ID %s -> %s", old_id, tc.id)
-                    seen_tc_ids.add(tc.id)
-
-                # Save text content as its own message BEFORE tools (no tool_calls embedded)
-                # This ensures text appears before tools in timeline after refresh
-                if collected_content:
-                    text_msg = await self._save_message(
-                        conversation_id=conversation.id,
-                        role=MessageRole.ASSISTANT,
-                        content=collected_content,
-                        token_count_input=chunk_input_tokens,
-                        token_count_output=chunk_output_tokens,
-                        model=llm_client.model_name,
-                    )
-                    if stream:
-                        yield ChatStreamChunk(
-                            type="assistant_message_end",
-                            message_id=str(text_msg.id),
-                        )
-
-                # Add assistant message to history (text + tool_calls for LLM context)
-                messages.append(
-                    LLMMessage(
-                        role="assistant",
-                        content=collected_content if collected_content else None,
-                        tool_calls=collected_tool_calls,
-                    )
+            async def execute_runtime_tool(
+                name: str,
+                arguments: dict[str, Any],
+                tool_call_id: str,
+            ) -> str:
+                tool_call = tool_calls[tool_call_id]
+                execution_id = tool_execution_ids[tool_call_id]
+                message_id = tool_message_ids[tool_call_id]
+                request = ToolCallRequest(
+                    id=tool_call.id,
+                    name=name,
+                    arguments=arguments,
                 )
-
-                # Execute tools and add results to history
-                for tc in collected_tool_calls:
-                    tool_call = ToolCall(
-                        id=tc.id,
-                        name=tc.name,
-                        arguments=tc.arguments,
-                    )
-                    final_tool_calls.append(tool_call)
-
-                    # Generate execution_id for this tool call (for log streaming)
-                    execution_id = str(uuid4())
-
-                    # Save TOOL_CALL message with state "running"
-                    tool_call_msg = await self._save_message(
-                        conversation_id=conversation.id,
-                        role=MessageRole.TOOL_CALL,
-                        tool_name=tc.name,
-                        tool_input=tc.arguments,
-                        tool_state="running",
-                        tool_call_id=tc.id,
-                        execution_id=execution_id,
-                    )
-
-                    # Emit tool_call event with message ID
-                    if stream:
-                        yield ChatStreamChunk(
-                            type="tool_call",
-                            tool_call=tool_call,
-                            execution_id=execution_id,
-                            message_id=str(tool_call_msg.id),
-                        )
-
-                    # Emit running status
-                    if stream:
-                        yield ChatStreamChunk(
-                            type="tool_progress",
-                            tool_progress=ToolProgress(
-                                tool_call_id=tc.id,
-                                execution_id=execution_id,
-                                status="running",
-                            ),
-                        )
-
-                    # Execute the tool with pre-generated execution_id
-                    tool_result = await self._execute_tool(
-                        tc,
-                        agent,
-                        conversation,
-                        execution_id=execution_id,
-                        caller_user_id=caller_user_id,
-                        caller=caller,
-                    )
-
-                    # Update TOOL_CALL message with result and state
-                    persisted_tool_result = (
-                        tool_result.result
-                        if not tool_result.error
-                        else {
-                            "error": tool_result.error,
-                            **(tool_result.metadata or {}),
-                        }
-                    )
-                    await self._update_tool_call_message(
-                        message_id=tool_call_msg.id,
-                        tool_state="completed" if not tool_result.error else "error",
-                        tool_result=persisted_tool_result,
-                        duration_ms=tool_result.duration_ms,
-                    )
-
-                    if stream:
-                        yield ChatStreamChunk(
+                tool_result = await self._execute_tool(
+                    request,
+                    agent,
+                    conversation,
+                    execution_id=execution_id,
+                    caller_user_id=caller_user_id,
+                    caller=caller,
+                )
+                if stream:
+                    pending_tool_chunks.append(
+                        ChatStreamChunk(
                             type="tool_result",
                             tool_result=tool_result,
-                            message_id=str(tool_call_msg.id),
-                        )
-
-                    # Errors take precedence when a tool happens to return both
-                    # a partial result and an error.
-                    tool_history_content = _serialize_tool_result_for_history(
-                        tool_result
-                    )
-
-                    # Still save TOOL message for Anthropic API compatibility (history reconstruction)
-                    await self._save_message(
-                        conversation_id=conversation.id,
-                        role=MessageRole.TOOL,
-                        content=tool_history_content,
-                        tool_call_id=tc.id,
-                        tool_name=tc.name,
-                        execution_id=execution_id,
-                        duration_ms=tool_result.duration_ms,
-                    )
-
-                    # Add tool result to message history for LLM
-                    messages.append(
-                        LLMMessage(
-                            role="tool",
-                            content=tool_history_content,
-                            tool_call_id=tc.id,
-                            tool_name=tc.name,
+                            message_id=str(message_id),
                         )
                     )
+                persisted_tool_result = (
+                    tool_result.result
+                    if not tool_result.error
+                    else {"error": tool_result.error, **(tool_result.metadata or {})}
+                )
+                await self._update_tool_call_message(
+                    message_id=message_id,
+                    tool_state="completed" if not tool_result.error else "error",
+                    tool_result=persisted_tool_result,
+                    duration_ms=tool_result.duration_ms,
+                )
+                tool_history_content = _serialize_tool_result_for_history(tool_result)
+                await self._save_message(
+                    conversation_id=conversation.id,
+                    role=MessageRole.TOOL,
+                    content=tool_history_content,
+                    tool_call_id=tool_call.id,
+                    tool_name=name,
+                    execution_id=execution_id,
+                    duration_ms=tool_result.duration_ms,
+                )
+                return tool_history_content
 
-                if self._knowledge_search_budget.exhausted:
-                    tool_definitions = [
-                        tool
-                        for tool in tool_definitions
-                        if tool.name != "search_knowledge"
-                    ]
+            system_prompt = messages[0].content or FALLBACK_SYSTEM_PROMPT
+            history_messages = messages[1:]
+            current_prompt = user_message
+            if history_messages and history_messages[-1].role == "user":
+                current_prompt = history_messages.pop().content or user_message
 
-                # Continue loop to get LLM response with tool results
+            observed_model = ObservedModel(
+                create_agent_model(llm_client.config, model=model_name),
+                record_model_event,
+            )
+            toolset = BifrostToolset(
+                tool_definitions,
+                execute_runtime_tool,
+                toolset_id=f"bifrost-chat-{agent.id if agent else 'default'}",
+            )
+            runtime = PydanticAgent(
+                observed_model,
+                system_prompt=system_prompt,
+                toolsets=[toolset] if tool_definitions else [],
+                capabilities=build_runtime_capabilities(budget),
+                model_settings={
+                    "max_tokens": max_tokens_override or llm_client.config.max_tokens,
+                },
+                # Permit one schema/tool-name correction. It is charged to the
+                # same pre-request budget, so a malformed provider response can
+                # recover once without opening an unbounded retry loop.
+                retries=1,
+                # A provider may return final text and tool calls together.
+                # Bifrost must finish every accepted side effect and persist its
+                # result before closing the stable chat stream.
+                end_strategy="exhaustive",
+            )
+
+            final_content = ""
+            current_response_content = ""
+            current_text_persisted = False
+            try:
+                async with runtime.run_stream_events(
+                    current_prompt,
+                    message_history=PydanticAIClient.convert_messages(history_messages),
+                    usage_limits=budget.usage_limits(),
+                    usage=usage,
+                    conversation_id=str(conversation.id),
+                ) as events:
+                    async for event in events:
+                        if pending_tool_chunks:
+                            for pending_chunk in pending_tool_chunks:
+                                yield pending_chunk
+                            pending_tool_chunks.clear()
+                            current_response_content = ""
+                            current_text_persisted = False
+                        if isinstance(event, PartStartEvent) and isinstance(
+                            event.part, TextPart
+                        ):
+                            current_response_content += event.part.content
+                            if stream and event.part.content:
+                                yield ChatStreamChunk(type="delta", content=event.part.content)
+                        elif isinstance(event, PartDeltaEvent) and isinstance(
+                            event.delta, TextPartDelta
+                        ):
+                            current_response_content += event.delta.content_delta
+                            if stream and event.delta.content_delta:
+                                yield ChatStreamChunk(type="delta", content=event.delta.content_delta)
+                        elif isinstance(event, FunctionToolCallEvent):
+                            part = event.part
+                            if current_response_content and not current_text_persisted:
+                                text_msg = await self._save_message(
+                                    conversation_id=conversation.id,
+                                    role=MessageRole.ASSISTANT,
+                                    content=current_response_content,
+                                    model=model_name,
+                                )
+                                current_text_persisted = True
+                                if stream:
+                                    yield ChatStreamChunk(
+                                        type="assistant_message_end",
+                                        message_id=str(text_msg.id),
+                                    )
+                            display_id = part.tool_call_id
+                            if display_id in seen_tc_ids:
+                                display_id = f"{display_id}_run{usage.requests}"
+                            seen_tc_ids.add(display_id)
+                            tool_call = ToolCall(
+                                id=display_id,
+                                name=part.tool_name,
+                                arguments=part.args_as_dict(),
+                            )
+                            execution_id = str(uuid4())
+                            tool_call_msg = await self._save_message(
+                                conversation_id=conversation.id,
+                                role=MessageRole.TOOL_CALL,
+                                tool_name=tool_call.name,
+                                tool_input=tool_call.arguments,
+                                tool_state="running",
+                                tool_call_id=display_id,
+                                execution_id=execution_id,
+                            )
+                            tool_calls[part.tool_call_id] = tool_call
+                            tool_message_ids[part.tool_call_id] = tool_call_msg.id
+                            tool_execution_ids[part.tool_call_id] = execution_id
+                            if stream:
+                                yield ChatStreamChunk(
+                                    type="tool_call",
+                                    tool_call=tool_call,
+                                    execution_id=execution_id,
+                                    message_id=str(tool_call_msg.id),
+                                )
+                                yield ChatStreamChunk(
+                                    type="tool_progress",
+                                    tool_progress=ToolProgress(
+                                        tool_call_id=display_id,
+                                        execution_id=execution_id,
+                                        status="running",
+                                    ),
+                                )
+                        elif isinstance(event, AgentRunResultEvent):
+                            final_content = str(event.result.output or "")
+                    for pending_chunk in pending_tool_chunks:
+                        yield pending_chunk
+                    pending_tool_chunks.clear()
+            except UsageLimitExceeded:
+                final_content = current_response_content or (
+                    "I reached this run's limit before I could finish. I preserved "
+                    "the completed tool results and progress above so the work can "
+                    "continue without starting over."
+                )
+                yield ChatStreamChunk(
+                    type="context_warning",
+                    context_warning=ContextWarning(
+                        current_tokens=usage.total_tokens,
+                        max_tokens=budget.max_total_tokens,
+                        action="warning",
+                        message="The agent reached its run budget and left a resumable handoff.",
+                    ),
+                )
 
             # 9. Save final assistant message (using pre-generated ID)
             duration_ms = int((time.time() - start_time) * 1000)
@@ -623,7 +610,7 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                 content=final_content,
                 token_count_input=total_input_tokens,
                 token_count_output=total_output_tokens,
-                model=llm_client.model_name,
+                model=model_name,
                 duration_ms=duration_ms,
                 message_id=assistant_message_id,
             )
@@ -632,7 +619,7 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
             try:
                 await self._record_ai_usage(
                     provider=llm_client.provider_name,
-                    model=llm_client.model_name,
+                    model=model_name,
                     input_tokens=total_input_tokens,
                     output_tokens=total_output_tokens,
                     duration_ms=duration_ms,
@@ -643,6 +630,15 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                 )
             except Exception as e:
                 logger.warning(f"Failed to record AI usage: {e}")
+
+            # Pydantic's stream context can finish its graph while the final
+            # persistence awaits above give the completed tool callbacks their
+            # last scheduling turn. Drain immediately before `done` so the
+            # compatibility terminator remains the final chunk.
+            await asyncio.sleep(0)
+            for pending_chunk in pending_tool_chunks:
+                yield pending_chunk
+            pending_tool_chunks.clear()
 
             # 10. Yield done chunk with final content (for non-streaming mode)
             yield ChatStreamChunk(
@@ -866,84 +862,6 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
 
         return messages
 
-    def _estimate_tokens(self, messages: list[LLMMessage]) -> int:
-        """
-        Estimate token count for a list of messages.
-
-        Uses a simple heuristic of ~4 characters per token, which is
-        reasonably accurate for English text and provides a conservative
-        estimate for context management purposes.
-        """
-        total = 0
-        for msg in messages:
-            if msg.content:
-                total += len(msg.content) // 4
-            if msg.tool_calls:
-                # Estimate tokens for tool call JSON
-                tool_json = json.dumps([
-                    {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
-                    for tc in msg.tool_calls
-                ])
-                total += len(tool_json) // 4
-        return total
-
-    def _find_turn_boundaries(self, messages: list[LLMMessage]) -> list[int]:
-        """Find indices where new conversation turns start.
-
-        A turn is either a single message, or an assistant message with tool_calls
-        grouped together with the following tool result messages.
-        """
-        boundaries = []
-        i = 0
-        while i < len(messages):
-            boundaries.append(i)
-            if messages[i].role == "assistant" and messages[i].tool_calls:
-                i += 1
-                while i < len(messages) and messages[i].role == "tool":
-                    i += 1
-            else:
-                i += 1
-        return boundaries
-
-    def _compact_tool_outputs(self, messages: list[LLMMessage]) -> list[LLMMessage]:
-        """Replace old tool result content with placeholder, keeping recent ones.
-
-        Walks backward through messages, protecting the most recent tool outputs
-        up to TOOL_OUTPUT_PROTECT_TOKENS. Older large tool outputs get replaced
-        with a short placeholder. This preserves all message structure (tool_use/
-        tool_result pairs stay intact) while reducing token count.
-        """
-        protected_tokens = 0
-        protect_indices: set[int] = set()
-
-        for i in range(len(messages) - 1, -1, -1):
-            content = messages[i].content
-            if messages[i].role == "tool" and content:
-                tokens = len(content) // 4
-                if protected_tokens + tokens <= TOOL_OUTPUT_PROTECT_TOKENS:
-                    protected_tokens += tokens
-                    protect_indices.add(i)
-
-        result = []
-        for i, msg in enumerate(messages):
-            if (
-                msg.role == "tool"
-                and i not in protect_indices
-                and msg.content
-                and len(msg.content) > 200
-            ):
-                result.append(
-                    LLMMessage(
-                        role=msg.role,
-                        content="[Tool output cleared for context management]",
-                        tool_call_id=msg.tool_call_id,
-                        tool_name=msg.tool_name,
-                    )
-                )
-            else:
-                result.append(msg)
-        return result
-
     def _fix_interleaved_messages(
         self, messages: list[LLMMessage]
     ) -> list[LLMMessage]:
@@ -1020,175 +938,6 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                     j += 1
             i += 1
         return result
-
-    async def _summarize_messages(
-        self,
-        messages: list[LLMMessage],
-        llm_client: Any,
-    ) -> str:
-        """
-        Summarize a batch of messages into a concise context string.
-
-        Used when pruning context to preserve important information
-        from older messages that are being removed.
-        """
-        # Build a text representation of the messages to summarize
-        message_texts = []
-        for msg in messages:
-            if msg.content:
-                role_label = msg.role.upper()
-                message_texts.append(f"{role_label}: {msg.content}")
-            if msg.tool_calls:
-                for tc in msg.tool_calls:
-                    message_texts.append(f"TOOL_CALL: {tc.name}({json.dumps(tc.arguments)})")
-            if msg.role == "tool" and msg.tool_name:
-                message_texts.append(f"TOOL_RESULT ({msg.tool_name}): {msg.content}")
-
-        conversation_text = "\n\n".join(message_texts)
-
-        summary_prompt = [
-            LLMMessage(
-                role="system",
-                content=(
-                    "Summarize this conversation history concisely. "
-                    "Include key facts, decisions made, and important outcomes. "
-                    "Focus on information that would be useful context for continuing "
-                    "the conversation. Keep your summary under 1000 words."
-                ),
-            ),
-            LLMMessage(
-                role="user",
-                content=conversation_text,
-            ),
-        ]
-
-        response = await llm_client.complete(messages=summary_prompt)
-        return response.content or ""
-
-    async def _prune_context(
-        self,
-        messages: list[LLMMessage],
-        llm_client: Any,
-        keep_recent: int = CONTEXT_KEEP_RECENT,
-    ) -> tuple[list[LLMMessage], int]:
-        """
-        Prune messages if context is too large, preserving tool_use/tool_result pairs.
-
-        Two-phase strategy:
-        1. **Tool output compaction**: Replace old, large tool outputs with short
-           placeholders while keeping message structure intact (pairs stay paired).
-        2. **Turn-boundary summarization**: If still over limit, summarize older
-           messages but only cut at turn boundaries so tool_use+tool_result groups
-           are never split.
-
-        Also fixes dangling tool_calls (tool_use without matching tool_result)
-        before returning.
-
-        Args:
-            messages: Full message history
-            llm_client: LLM client for summarization
-            keep_recent: Number of recent messages to preserve
-
-        Returns:
-            Tuple of (pruned_messages, original_token_estimate)
-        """
-        original_tokens = self._estimate_tokens(messages)
-
-        if original_tokens <= CONTEXT_MAX_TOKENS:
-            return messages, original_tokens
-
-        logger.info(
-            f"Context pruning triggered: {original_tokens:,} tokens exceeds "
-            f"{CONTEXT_MAX_TOKENS:,} limit"
-        )
-
-        # Phase 1: Compact old tool outputs (preserves all message structure)
-        messages = self._compact_tool_outputs(messages)
-        compacted_tokens = self._estimate_tokens(messages)
-        if compacted_tokens <= CONTEXT_MAX_TOKENS:
-            logger.info(
-                f"Tool output compaction sufficient: {original_tokens:,} -> "
-                f"{compacted_tokens:,} tokens"
-            )
-            messages = self._fix_dangling_tool_calls(messages)
-            return messages, original_tokens
-
-        # Phase 2: Summarize middle messages at turn boundaries
-        boundaries = self._find_turn_boundaries(messages)
-
-        # Keep system prompt (always first)
-        system_msg = messages[0]
-
-        # Find first user message
-        first_user_idx = next(
-            (i for i, m in enumerate(messages) if m.role == "user"),
-            None,
-        )
-        first_user_msg = messages[first_user_idx] if first_user_idx else None
-
-        # Determine where to start summarizing
-        if first_user_idx is not None:
-            middle_start = first_user_idx + 1
-        else:
-            middle_start = 1  # After system message
-
-        # Snap the cut point to the nearest turn boundary
-        target_cut = len(messages) - keep_recent
-        cut_idx = boundaries[0]
-        for b in boundaries:
-            if b <= target_cut:
-                cut_idx = b
-            else:
-                break
-
-        # Ensure cut_idx is at least past middle_start
-        if cut_idx < middle_start:
-            cut_idx = middle_start
-
-        middle_end = cut_idx
-
-        if middle_end <= middle_start:
-            logger.info("Not enough middle messages to summarize, keeping original")
-            messages = self._fix_dangling_tool_calls(messages)
-            return messages, original_tokens
-
-        to_summarize = messages[middle_start:middle_end]
-        recent_messages = messages[cut_idx:]
-        logger.info(
-            f"Summarizing {len(to_summarize)} messages from the middle of "
-            f"conversation (turn-boundary cut at index {cut_idx})"
-        )
-
-        # Generate summary
-        summary = await self._summarize_messages(to_summarize, llm_client)
-
-        # Build pruned message list
-        pruned: list[LLMMessage] = [system_msg]
-
-        if first_user_msg:
-            pruned.append(first_user_msg)
-
-        # Add summary as a user context message
-        pruned.append(
-            LLMMessage(
-                role="user",
-                content=f"[Previous conversation summary]\n{summary}",
-            )
-        )
-
-        # Add recent messages (guaranteed to start at a turn boundary)
-        pruned.extend(recent_messages)
-
-        # Fix any dangling tool calls in the final result
-        pruned = self._fix_dangling_tool_calls(pruned)
-
-        new_tokens = self._estimate_tokens(pruned)
-        logger.info(
-            f"Context pruned: {original_tokens:,} -> {new_tokens:,} tokens "
-            f"({len(messages)} -> {len(pruned)} messages)"
-        )
-
-        return pruned, original_tokens
 
     async def _save_message(
         self,
@@ -1729,6 +1478,8 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                 tool_call=tool_call,
                 conversation_id=conversation.id if conversation else None,
                 caller=caller,
+                _shared_usage=self._active_usage,
+                _shared_budget=self._active_budget,
             )
             metadata = {
                 "child_run_id": str(outcome.child_run_id),

@@ -88,7 +88,7 @@ class LLMStreamChunk:
 class LLMConfig:
     """Configuration for LLM client."""
 
-    provider: Literal["openai", "anthropic"]
+    provider: Literal["openai", "anthropic", "google"]
     model: str
     api_key: str
     endpoint: str | None = None

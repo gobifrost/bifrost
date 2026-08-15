@@ -262,7 +262,7 @@ async def list_llm_models(
     """
     List available models from the configured LLM provider.
 
-    Works with OpenAI and Anthropic (both support model listing).
+    Works with OpenAI, Anthropic, and Google.
     Requires platform admin access.
     """
     service = LLMConfigService(db)
@@ -964,7 +964,7 @@ async def _cache_model_mapping_from_result(
     can look up display names without making provider API calls.
 
     Args:
-        provider: LLM provider ("openai" or "anthropic")
+        provider: LLM provider ("openai", "anthropic", or "google")
         models: List of LLMModelInfo dataclasses from test result
     """
     from src.core.cache import get_shared_redis
@@ -976,4 +976,3 @@ async def _cache_model_mapping_from_result(
         await cache_model_mapping(redis_client, provider, mapping)
     except Exception as e:
         logger.warning(f"Failed to cache model mapping for {log_safe(provider)}: {log_safe(e)}")
-

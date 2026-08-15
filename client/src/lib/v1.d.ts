@@ -17876,10 +17876,10 @@ export interface components {
              * @description LLM provider type
              * @enum {string}
              */
-            provider: "openai" | "anthropic";
+            provider: "openai" | "anthropic" | "google";
             /**
              * Model
-             * @description Model identifier (e.g., 'gpt-4o', 'claude-sonnet-4-20250514')
+             * @description Model identifier (for example 'gpt-4o', 'claude-sonnet-4-20250514', or 'gemini-2.5-flash')
              */
             model: string;
             /**
@@ -17923,7 +17923,7 @@ export interface components {
              * Provider
              * @enum {string}
              */
-            provider: "openai" | "anthropic";
+            provider: "openai" | "anthropic" | "google";
             /** Model */
             model: string;
             /** Endpoint */
@@ -17980,7 +17980,7 @@ export interface components {
              * @description LLM provider type
              * @enum {string}
              */
-            provider: "openai" | "anthropic";
+            provider: "openai" | "anthropic" | "google";
             /**
              * Model
              * @description Model identifier

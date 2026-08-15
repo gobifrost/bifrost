@@ -1,7 +1,7 @@
 /**
  * LLM Configuration Settings
  *
- * Configure the AI provider (OpenAI, Anthropic, or custom) for chat functionality.
+ * Configure the AI provider (OpenAI, Anthropic, Google, or compatible endpoint).
  * Flow: Provider → Endpoint (if custom) → API Key → Test → Model (loaded dynamically)
  */
 
@@ -83,7 +83,7 @@ import {
 import { MemorySettings } from "@/pages/settings/MemorySettings";
 import { RequiredInstructionsSettings } from "@/pages/settings/RequiredInstructionsSettings";
 
-type Provider = "openai" | "anthropic";
+type Provider = "openai" | "anthropic" | "google";
 
 // Model info with both ID and display name
 interface ModelInfo {
@@ -95,12 +95,14 @@ interface ModelInfo {
 const DEFAULT_MODELS: Record<Provider, string> = {
 	openai: "gpt-4o",
 	anthropic: "claude-sonnet-4-20250514",
+	google: "gemini-2.5-flash",
 };
 
 // Default API endpoints for each provider
 const DEFAULT_ENDPOINTS: Record<Provider, string> = {
 	openai: "https://api.openai.com/v1",
 	anthropic: "https://api.anthropic.com",
+	google: "https://generativelanguage.googleapis.com",
 };
 
 export function LLMConfig() {
@@ -440,6 +442,7 @@ export function LLMConfig() {
 								<SelectItem value="anthropic">
 									Anthropic
 								</SelectItem>
+								<SelectItem value="google">Google</SelectItem>
 							</SelectContent>
 						</Select>
 					</div>
@@ -471,7 +474,9 @@ export function LLMConfig() {
 										? "API key saved - enter new key to change"
 										: provider === "openai"
 											? "sk-..."
-											: "sk-ant-..."
+											: provider === "anthropic"
+												? "sk-ant-..."
+												: "AIza..."
 								}
 								value={apiKey}
 								onChange={(e) => {
@@ -537,6 +542,19 @@ export function LLMConfig() {
 									className="underline hover:text-foreground"
 								>
 									console.anthropic.com
+								</a>
+							</p>
+						)}
+						{provider === "google" && (
+							<p className="text-xs text-muted-foreground">
+								Get your API key from{" "}
+								<a
+									href="https://aistudio.google.com/app/apikey"
+									target="_blank"
+									rel="noopener noreferrer"
+									className="underline hover:text-foreground"
+								>
+									Google AI Studio
 								</a>
 							</p>
 						)}
@@ -1987,6 +2005,9 @@ function ModelPricingCard({ refreshKey = 0 }: { refreshKey?: number }) {
 									</SelectItem>
 									<SelectItem value="anthropic">
 										Anthropic
+									</SelectItem>
+									<SelectItem value="google">
+										Google
 									</SelectItem>
 									<SelectItem value="custom">
 										Custom

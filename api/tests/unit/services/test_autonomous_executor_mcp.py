@@ -18,12 +18,13 @@ from uuid import uuid4
 
 import pytest
 
+from tests.unit.services.agent_runtime_fakes import LegacyMockModel
 from src.services.execution.agent_helpers import MCP_TOOL_PREFIX
 from src.services.execution.autonomous_agent_executor import (
     AutonomousAgentExecutor,
     ToolError,
 )
-from src.services.llm.base import LLMResponse, ToolCallRequest
+from src.services.llm.base import LLMConfig, LLMResponse, ToolCallRequest
 from src.services.mcp_client.errors import (
     MisconfigError,
     NeedsReauthError,
@@ -56,6 +57,20 @@ def mock_session_factory():
     factory._fake_connection = fake_connection
     factory._fake_session = session
     return factory
+
+
+@pytest.fixture(autouse=True)
+def mock_runtime_config():
+    with patch(
+        "src.services.execution.autonomous_agent_executor.get_llm_config",
+        new_callable=AsyncMock,
+        return_value=LLMConfig(
+            provider="openai",
+            model="test-model",
+            api_key="test-key",
+        ),
+    ):
+        yield
 
 
 @pytest.fixture
@@ -282,7 +297,7 @@ async def test_execute_tool_routes_mcp_prefix(mock_session_factory):
 
 @pytest.mark.asyncio
 @patch(
-    "src.services.execution.autonomous_agent_executor.get_llm_client"
+    "src.services.execution.autonomous_agent_executor.create_agent_model"
 )
 @patch(
     "src.services.execution.autonomous_agent_executor.resolve_agent_tools"
@@ -304,7 +319,7 @@ async def test_run_threads_user_id_from_caller(
         )
     )
     mock_llm.provider_name = "openai"
-    mock_get_llm.return_value = mock_llm
+    mock_get_llm.return_value = LegacyMockModel(mock_llm)
 
     user_id = uuid4()
     executor = AutonomousAgentExecutor(mock_session_factory)
@@ -326,7 +341,7 @@ async def test_run_threads_user_id_from_caller(
 
 @pytest.mark.asyncio
 @patch(
-    "src.services.execution.autonomous_agent_executor.get_llm_client"
+    "src.services.execution.autonomous_agent_executor.create_agent_model"
 )
 @patch(
     "src.services.execution.autonomous_agent_executor.resolve_agent_tools"
@@ -348,7 +363,7 @@ async def test_run_treats_missing_caller_as_autonomous(
         )
     )
     mock_llm.provider_name = "openai"
-    mock_get_llm.return_value = mock_llm
+    mock_get_llm.return_value = LegacyMockModel(mock_llm)
 
     executor = AutonomousAgentExecutor(mock_session_factory)
     await executor.run(
@@ -365,7 +380,7 @@ async def test_run_treats_missing_caller_as_autonomous(
 
 @pytest.mark.asyncio
 @patch(
-    "src.services.execution.autonomous_agent_executor.get_llm_client"
+    "src.services.execution.autonomous_agent_executor.create_agent_model"
 )
 @patch(
     "src.services.execution.autonomous_agent_executor.resolve_agent_tools"
@@ -388,7 +403,7 @@ async def test_run_treats_caller_without_user_id_as_autonomous(
         )
     )
     mock_llm.provider_name = "openai"
-    mock_get_llm.return_value = mock_llm
+    mock_get_llm.return_value = LegacyMockModel(mock_llm)
 
     executor = AutonomousAgentExecutor(mock_session_factory)
     await executor.run(
@@ -405,7 +420,7 @@ async def test_run_treats_caller_without_user_id_as_autonomous(
 
 @pytest.mark.asyncio
 @patch(
-    "src.services.execution.autonomous_agent_executor.get_llm_client"
+    "src.services.execution.autonomous_agent_executor.create_agent_model"
 )
 @patch(
     "src.services.execution.autonomous_agent_executor.resolve_agent_tools"
@@ -428,7 +443,7 @@ async def test_run_invalid_user_id_falls_back_to_autonomous(
         )
     )
     mock_llm.provider_name = "openai"
-    mock_get_llm.return_value = mock_llm
+    mock_get_llm.return_value = LegacyMockModel(mock_llm)
 
     executor = AutonomousAgentExecutor(mock_session_factory)
     result = await executor.run(

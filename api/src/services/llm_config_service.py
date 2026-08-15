@@ -33,7 +33,7 @@ LLM_CONFIG_KEY = "provider_config"
 class LLMProviderConfig:
     """LLM provider configuration (API key masked for responses)."""
 
-    provider: Literal["openai", "anthropic"]
+    provider: Literal["openai", "anthropic", "google"]
     model: str
     endpoint: str | None = None  # For custom OpenAI-compatible providers
     max_tokens: int = 16384
@@ -124,7 +124,7 @@ class LLMConfigService:
 
     async def save_config(
         self,
-        provider: Literal["openai", "anthropic"],
+        provider: Literal["openai", "anthropic", "google"],
         model: str,
         api_key: str | None = None,
         endpoint: str | None = None,
@@ -246,6 +246,8 @@ class LLMConfigService:
                 return await self._list_openai(config.api_key, config.endpoint)
             elif config.provider == "anthropic":
                 return await self._list_anthropic(config.api_key, config.endpoint)
+            elif config.provider == "google":
+                return await self._list_google(config.api_key, config.endpoint)
             else:
                 return LLMTestResult(
                     success=False,
@@ -278,6 +280,10 @@ class LLMConfigService:
                 )
             elif config.provider == "anthropic":
                 return await self._complete_anthropic(
+                    config.api_key, config.model, config.endpoint
+                )
+            elif config.provider == "google":
+                return await self._complete_google(
                     config.api_key, config.model, config.endpoint
                 )
             else:
@@ -375,6 +381,38 @@ class LLMConfigService:
         except Exception as e:
             return LLMTestResult(success=False, message=f"Anthropic connection failed: {e}")
 
+    async def _list_google(self, api_key: str, endpoint: str | None = None) -> LLMTestResult:
+        """List models from the Gemini Developer API."""
+        try:
+            from google import genai
+            from google.genai import types
+
+            client = genai.Client(
+                api_key=api_key,
+                http_options=types.HttpOptions(base_url=endpoint) if endpoint else None,
+            )
+            try:
+                pager = await client.aio.models.list(config={"page_size": 100})
+                model_infos = [
+                    LLMModelInfo(
+                        id=(item.name or "").removeprefix("models/"),
+                        display_name=item.display_name or item.name or "Unknown model",
+                    )
+                    for item in pager.page
+                    if item.name
+                ]
+            finally:
+                await client.aio.aclose()
+
+            return LLMTestResult(
+                success=True,
+                message=f"Connected to Google. Listed {len(model_infos)} model(s).",
+                models=model_infos,
+            )
+        except Exception as e:
+            logger.error("Google connection test failed: %s", e)
+            return LLMTestResult(success=False, message=f"Google connection failed: {e}")
+
     async def _complete_openai(
         self, api_key: str, model: str, endpoint: str | None = None
     ) -> LLMTestResult:
@@ -423,6 +461,36 @@ class LLMConfigService:
                 message=f"Completion succeeded on {endpoint_label} with model '{model}'.",
             )
         except Exception as e:
+            return LLMTestResult(
+                success=False,
+                message=f"Model '{model}' rejected a test completion: {e}.",
+            )
+
+    async def _complete_google(
+        self,
+        api_key: str,
+        model: str,
+        endpoint: str | None = None,
+    ) -> LLMTestResult:
+        """Issue a minimal Gemini completion through the shared runtime adapter."""
+        try:
+            from src.services.llm.base import LLMMessage
+            from src.services.llm.factory import create_llm_client
+
+            client = create_llm_client(
+                "google",
+                api_key,
+                model=model,
+                endpoint=endpoint,
+                max_tokens=1,
+            )
+            await client.complete([LLMMessage(role="user", content="Reply OK")], max_tokens=1)
+            return LLMTestResult(
+                success=True,
+                message=f"Completion succeeded with Google model '{model}'.",
+            )
+        except Exception as e:
+            logger.error("Google completion verify failed: %s", e)
             return LLMTestResult(
                 success=False,
                 message=f"Model '{model}' rejected a test completion: {e}.",

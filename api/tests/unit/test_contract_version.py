@@ -204,7 +204,10 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # PlatformJobStatus gained `waiting` for durable parent jobs (2026-08-07).
     # CONTRACT_VERSION bumped to 9 because an older CLI cannot parse the new
     # enum value while polling PlatformJobPublic.
-    "12c65f3865127c0dbbdbb4237943169bf6a1fb79ad566b68ef1a45a1fbfc1854"
+    #
+    # LLM configuration provider enums gained `google` (2026-08-14). ADDITIVE:
+    # old clients can keep selecting OpenAI-compatible or Anthropic providers.
+    "a2a6462848ccee6773a71834fadb6952f6c6b0ebebe44eb2125637df1649a84a"
 )
 
 

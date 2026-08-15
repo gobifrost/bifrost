@@ -391,7 +391,7 @@ class CLIAICompleteResponse(BaseModel):
 
 class CLIAIInfoResponse(BaseModel):
     """Response with AI model information."""
-    provider: str = Field(..., description="LLM provider (openai, anthropic)")
+    provider: str = Field(..., description="LLM provider (openai, anthropic, google)")
     model: str = Field(..., description="Model identifier")
     max_tokens: int = Field(..., description="Default max tokens")
 

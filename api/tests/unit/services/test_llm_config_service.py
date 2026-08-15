@@ -209,6 +209,26 @@ class TestLLMConfigService:
         assert decrypted == test_api_key
 
     @pytest.mark.asyncio
+    async def test_save_config_accepts_google_provider(
+        self, mock_session, mock_settings
+    ):
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.first.return_value = None
+        mock_session.execute.return_value = mock_result
+
+        with patch("src.services.llm_config_service.get_settings", return_value=mock_settings):
+            service = LLMConfigService(mock_session)
+            await service.save_config(
+                provider="google",
+                model="gemini-2.5-flash",
+                api_key="google-test-key",
+            )
+
+        added_config = mock_session.add.call_args[0][0]
+        assert added_config.value_json["provider"] == "google"
+        assert added_config.value_json["model"] == "gemini-2.5-flash"
+
+    @pytest.mark.asyncio
     async def test_delete_config_returns_true_when_deleted(
         self, mock_session, mock_settings, mock_system_config
     ):
@@ -332,6 +352,36 @@ class TestLLMConfigServiceTestConnection:
         assert result.success is True
         assert "api.anthropic.com" in result.message
         assert result.models is not None
+
+    @pytest.mark.asyncio
+    async def test_test_connection_google_success(
+        self, mock_session, mock_settings
+    ):
+        mock_llm_config = MagicMock(
+            provider="google",
+            api_key="google-test-key",
+            model="gemini-2.5-flash",
+            endpoint=None,
+        )
+        model = MagicMock()
+        model.name = "models/gemini-2.5-flash"
+        model.display_name = "Gemini 2.5 Flash"
+        pager = MagicMock(page=[model])
+        google_client = MagicMock()
+        google_client.aio.models.list = AsyncMock(return_value=pager)
+        google_client.aio.aclose = AsyncMock()
+
+        with patch("src.services.llm_config_service.get_settings", return_value=mock_settings), patch(
+            "src.services.llm.factory.get_llm_config",
+            return_value=mock_llm_config,
+        ), patch("google.genai.Client", return_value=google_client):
+            result = await LLMConfigService(mock_session).test_connection()
+
+        assert result.success is True
+        assert result.models == [
+            LLMModelInfo(id="gemini-2.5-flash", display_name="Gemini 2.5 Flash")
+        ]
+        google_client.aio.aclose.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_test_connection_handles_api_error(

@@ -2,7 +2,7 @@
 LLM Provider Abstraction Layer
 
 Provides a unified interface for interacting with different LLM providers
-(OpenAI, Anthropic) for AI agent chat completions.
+(OpenAI, Anthropic, Google, and compatible endpoints) for AI agent completions.
 
 Usage:
     from src.services.llm import get_llm_client, LLMMessage
