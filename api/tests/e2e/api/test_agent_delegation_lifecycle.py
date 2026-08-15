@@ -5,6 +5,17 @@ from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
 import pytest
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
+from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models.test import TestModel
+from pydantic_ai.settings import ModelSettings
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
@@ -14,10 +25,51 @@ from src.models.orm.agent_runs import AgentRun
 from src.services.agent_executor import AgentExecutor
 from src.services.execution.agent_helpers import agent_delegation_slug
 from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
-from src.services.llm.base import LLMResponse, LLMStreamChunk, ToolCallRequest
+from src.services.llm.base import LLMConfig, ToolCallRequest
+from src.services.llm.pydantic_client import PydanticAIClient
 
 
 pytestmark = pytest.mark.asyncio
+
+
+class DelegatingTestModel(TestModel):
+    """Emit one explicit delegation followed by the parent's final answer."""
+
+    def __init__(self, tool_name: str) -> None:
+        super().__init__(model_name="test-parent")
+        self._tool_name = tool_name
+
+    def _request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        del model_settings, model_request_parameters
+        delegation_completed = any(
+            isinstance(message, ModelRequest)
+            and any(
+                isinstance(part, ToolReturnPart)
+                and part.tool_call_id == "parent-delegation-call"
+                for part in message.parts
+            )
+            for message in messages
+        )
+        if not delegation_completed:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        self._tool_name,
+                        {"task": "Return the durable callback"},
+                        tool_call_id="parent-delegation-call",
+                    )
+                ],
+                model_name="test-parent",
+            )
+        return ModelResponse(
+            parts=[TextPart("Parent received the durable callback.")],
+            model_name="test-parent",
+        )
 
 
 def _session_factory_for(session):
@@ -239,53 +291,8 @@ async def test_chat_executor_receives_durable_child_callback(
     )
     await db_session.commit()
 
-    parent_llm = AsyncMock()
-    parent_llm.provider_name = "openai"
-    parent_llm.model_name = "test-parent"
-    parent_stream_calls = 0
-
-    async def parent_stream(**_kwargs):
-        nonlocal parent_stream_calls
-        parent_stream_calls += 1
-        if parent_stream_calls == 1:
-            yield LLMStreamChunk(
-                type="tool_call",
-                tool_call=ToolCallRequest(
-                    id="parent-delegation-call",
-                    name=agent_delegation_slug(child["name"]),
-                    arguments={"task": "Return the durable callback"},
-                ),
-            )
-            yield LLMStreamChunk(
-                type="done",
-                finish_reason="tool_calls",
-                input_tokens=10,
-                output_tokens=5,
-            )
-            return
-
-        yield LLMStreamChunk(
-            type="delta",
-            content="Parent received the durable callback.",
-        )
-        yield LLMStreamChunk(
-            type="done",
-            finish_reason="stop",
-            input_tokens=12,
-            output_tokens=6,
-        )
-
-    parent_llm.stream = parent_stream
-    child_llm = AsyncMock()
-    child_llm.provider_name = "openai"
-    child_llm.complete = AsyncMock(
-        return_value=LLMResponse(
-            content="Durable child answer",
-            finish_reason="stop",
-            input_tokens=8,
-            output_tokens=4,
-            model="test-child",
-        )
+    parent_llm = PydanticAIClient(
+        LLMConfig(provider="openai", model="test-parent", api_key="test-key")
     )
 
     try:
@@ -296,9 +303,23 @@ async def test_chat_executor_receives_durable_child_callback(
                 return_value=parent_llm,
             ),
             patch(
-                "src.services.execution.autonomous_agent_executor.get_llm_client",
+                "src.services.agent_executor.create_agent_model",
+                return_value=DelegatingTestModel(
+                    agent_delegation_slug(child["name"])
+                ),
+            ),
+            patch(
+                "src.services.execution.autonomous_agent_executor.create_agent_model",
+                return_value=TestModel(custom_output_text="Durable child answer"),
+            ),
+            patch(
+                "src.services.execution.autonomous_agent_executor.get_llm_config",
                 new_callable=AsyncMock,
-                return_value=child_llm,
+                return_value=LLMConfig(
+                    provider="openai",
+                    model="test-child",
+                    api_key="test-key",
+                ),
             ),
             patch(
                 "src.services.execution.run_summarizer.enqueue_summarize",
@@ -341,6 +362,21 @@ async def test_chat_executor_receives_durable_child_callback(
 
         assert final_content == "Parent received the durable callback."
 
+        messages_response = e2e_client.get(
+            f"/api/chat/conversations/{conversation_id}/messages",
+            headers=platform_admin.headers,
+        )
+        assert messages_response.status_code == 200, messages_response.text
+        tool_call_messages = [
+            message
+            for message in messages_response.json()
+            if message["role"] == "tool_call"
+        ]
+        assert len(tool_call_messages) == 1, messages_response.json()
+        assert tool_call_messages[0]["tool_state"] == "completed", (
+            tool_call_messages[0]
+        )
+
         result = await db_session.execute(
             select(AgentRun).where(
                 AgentRun.conversation_id == conversation_id,
@@ -352,26 +388,12 @@ async def test_chat_executor_receives_durable_child_callback(
         assert child_run.output == {"text": "Durable child answer"}
         assert child_run.caller_user_id == str(platform_admin.user_id)
 
-        messages_response = e2e_client.get(
-            f"/api/chat/conversations/{conversation_id}/messages",
-            headers=platform_admin.headers,
-        )
-        assert messages_response.status_code == 200, messages_response.text
-        tool_call_messages = [
-            message
-            for message in messages_response.json()
-            if message["role"] == "tool_call"
-        ]
-        assert len(tool_call_messages) == 1
-        assert tool_call_messages[0]["tool_state"] == "completed"
         assert tool_call_messages[0]["tool_result"]["child_run_id"] == str(
             child_run.id
         )
         assert tool_call_messages[0]["tool_result"]["response"] == (
             "Durable child answer"
         )
-        assert parent_stream_calls == 2
-        child_llm.complete.assert_awaited_once()
     finally:
         e2e_client.delete(
             f"/api/chat/conversations/{conversation_id}",

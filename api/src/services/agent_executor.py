@@ -403,6 +403,7 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
             tool_calls: dict[str, ToolCall] = {}
             tool_message_ids: dict[str, UUID] = {}
             tool_execution_ids: dict[str, str] = {}
+            tool_call_ready: dict[str, asyncio.Event] = {}
             pending_tool_chunks: list[ChatStreamChunk] = []
 
             async def execute_runtime_tool(
@@ -410,6 +411,12 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                 arguments: dict[str, Any],
                 tool_call_id: str,
             ) -> str:
+                # Pydantic AI may schedule the tool coroutine before the
+                # corresponding FunctionToolCallEvent has reached this stream
+                # consumer. Wait for that event to persist the compatibility
+                # message and register its IDs instead of racing the maps below.
+                ready = tool_call_ready.setdefault(tool_call_id, asyncio.Event())
+                await ready.wait()
                 tool_call = tool_calls[tool_call_id]
                 execution_id = tool_execution_ids[tool_call_id]
                 message_id = tool_message_ids[tool_call_id]
@@ -557,6 +564,9 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                             tool_calls[part.tool_call_id] = tool_call
                             tool_message_ids[part.tool_call_id] = tool_call_msg.id
                             tool_execution_ids[part.tool_call_id] = execution_id
+                            tool_call_ready.setdefault(
+                                part.tool_call_id, asyncio.Event()
+                            ).set()
                             if stream:
                                 yield ChatStreamChunk(
                                     type="tool_call",
