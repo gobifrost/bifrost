@@ -11,6 +11,7 @@ from collections.abc import AsyncGenerator
 
 from pydantic_ai.direct import model_request_stream
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -22,6 +23,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
+    UserContent,
 )
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.settings import ModelSettings
@@ -133,7 +135,26 @@ class PydanticAIClient(BaseLLMClient):
         )
 
     @staticmethod
-    def convert_messages(messages: list[LLMMessage]) -> list[ModelMessage]:
+    def convert_user_content(message: LLMMessage) -> str | list[UserContent]:
+        """Convert one Bifrost user message into Pydantic multimodal content."""
+        if not message.input_files:
+            return message.content or ""
+        parts: list[UserContent] = []
+        if message.content:
+            parts.append(message.content)
+        for input_file in message.input_files:
+            parts.append(f"Attached file: {input_file.filename}")
+            parts.append(
+                BinaryContent(
+                    data=input_file.data,
+                    media_type=input_file.media_type,
+                    identifier=input_file.filename,
+                )
+            )
+        return parts
+
+    @classmethod
+    def convert_messages(cls, messages: list[LLMMessage]) -> list[ModelMessage]:
         """Convert Bifrost's stable message DTOs to provider-neutral history."""
         converted: list[ModelMessage] = []
         for message in messages:
@@ -171,7 +192,7 @@ class PydanticAIClient(BaseLLMClient):
                     continue
                 request_parts = [tool_return]
             else:
-                request_parts = [UserPromptPart(message.content or "")]
+                request_parts = [UserPromptPart(cls.convert_user_content(message))]
             converted.append(ModelRequest(parts=request_parts))
         return converted
 

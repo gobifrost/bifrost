@@ -19,6 +19,12 @@ class LLMConfigResponse(BaseModel):
     default_system_prompt: str | None = None
     summarization_model: str | None = None
     tuning_model: str | None = None
+    chat_fast_label: str = "Fast"
+    chat_fast_model: str | None = None
+    chat_balanced_label: str = "Balanced"
+    chat_balanced_model: str | None = None
+    chat_pro_label: str = "Pro"
+    chat_pro_model: str | None = None
     is_configured: bool = True
     api_key_set: bool = False
 
@@ -60,6 +66,21 @@ class LLMConfigRequest(BaseModel):
     tuning_model: str | None = Field(
         default=None,
         description="Model override for tuning chat + dry-run. Falls back to primary model if unset.",
+    )
+    chat_fast_label: str = Field(default="Fast", min_length=1, max_length=30)
+    chat_fast_model: str | None = Field(
+        default=None,
+        description="Optional model exposed as the Fast Chat tier.",
+    )
+    chat_balanced_label: str = Field(default="Balanced", min_length=1, max_length=30)
+    chat_balanced_model: str | None = Field(
+        default=None,
+        description="Optional Balanced model; the primary model is used when unset.",
+    )
+    chat_pro_label: str = Field(default="Pro", min_length=1, max_length=30)
+    chat_pro_model: str | None = Field(
+        default=None,
+        description="Optional model exposed as the Pro Chat tier.",
     )
 
 

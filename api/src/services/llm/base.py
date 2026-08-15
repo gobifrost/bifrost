@@ -28,6 +28,15 @@ class ToolCallRequest:
     arguments: dict[str, Any]
 
 
+@dataclass(frozen=True)
+class LLMInputFile:
+    """Binary user input kept provider-neutral until the Pydantic adapter."""
+
+    filename: str
+    media_type: str
+    data: bytes
+
+
 @dataclass
 class LLMMessage:
     """
@@ -38,6 +47,7 @@ class LLMMessage:
 
     role: Literal["user", "assistant", "system", "tool"]
     content: str | None = None
+    input_files: list[LLMInputFile] = field(default_factory=list)
 
     # For assistant messages that request tool calls
     tool_calls: list[ToolCallRequest] | None = None

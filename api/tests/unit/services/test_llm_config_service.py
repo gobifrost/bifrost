@@ -117,6 +117,24 @@ class TestLLMConfigService:
         # API key should NOT be returned
         assert not hasattr(result, "api_key") or result.api_key_set is True
 
+    def test_chat_model_tiers_are_governed_by_configuration(self):
+        config = LLMProviderConfig(
+            provider="openai",
+            model="balanced-default",
+            chat_fast_model="fast-model",
+            chat_pro_model="pro-model",
+        )
+
+        assert config.resolve_chat_model("fast") == "fast-model"
+        assert config.resolve_chat_model("balanced") == "balanced-default"
+        assert config.resolve_chat_model("pro") == "pro-model"
+
+    def test_disabled_optional_chat_tier_is_rejected(self):
+        config = LLMProviderConfig(provider="openai", model="balanced-default")
+
+        with pytest.raises(ValueError, match="fast Chat model tier is not enabled"):
+            config.resolve_chat_model("fast")
+
     @pytest.mark.asyncio
     async def test_save_config_creates_new_config(
         self, mock_session, mock_settings

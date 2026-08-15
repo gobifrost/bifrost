@@ -37,6 +37,7 @@ from sqlalchemy.orm import selectinload
 from src.core.principal import UserPrincipal
 from src.models.contracts.agents import (
     AgentSwitch,
+    ChatModelTierId,
     ChatStreamChunk,
     ContextWarning,
     ToolCall,
@@ -48,6 +49,7 @@ from src.models.orm import Agent, Conversation, Message, Workflow
 from src.repositories.agents import AgentRepository
 from src.services.llm import (
     LLMMessage,
+    LLMInputFile,
     ToolCallRequest,
     ToolDefinition,
     get_llm_client,
@@ -221,6 +223,8 @@ class AgentExecutor:
         enable_routing: bool = True,
         local_id: str | None = None,
         user: UserPrincipal | None = None,
+        attachment_ids: list[UUID] | None = None,
+        model_tier: ChatModelTierId = "balanced",
     ) -> AsyncIterator[ChatStreamChunk]:
         """
         Process a user message and generate a response.
@@ -240,6 +244,7 @@ class AgentExecutor:
             ChatStreamChunk objects with response content, tool calls, etc.
         """
         from src.services.agent_router import AgentRouter
+        from src.services.llm_config_service import LLMConfigService
 
         start_time = time.time()
         self._knowledge_search_budget.reset()
@@ -252,6 +257,12 @@ class AgentExecutor:
         )
 
         try:
+            async with self._db() as session:
+                llm_config = await LLMConfigService(session).get_config()
+            if llm_config is None:
+                raise ValueError("LLM provider is not configured.")
+            model_override = llm_config.resolve_chat_model(model_tier)
+
             # 1. Check for @mention agent switching
             if enable_routing:
                 mentioned_agent = await router.parse_mention(user_message)
@@ -295,6 +306,7 @@ class AgentExecutor:
                 role=MessageRole.USER,
                 content=user_message,
                 local_id=local_id,
+                attachment_ids=attachment_ids,
             )
 
             # 3b. Generate assistant message ID upfront and send message_start
@@ -371,9 +383,8 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
             # for authorization, persistence, and its stable stream contract;
             # the runtime owns history replay, tool/result sequencing, context
             # compaction, and budget enforcement.
-            model_override = agent.llm_model if agent else None
             max_tokens_override = agent.llm_max_tokens if agent else None
-            model_name = model_override or llm_client.model_name
+            model_name = model_override
             budget = AgentRunBudget(
                 max_requests=agent.max_iterations if agent else None,
                 max_total_tokens=agent.max_token_budget if agent else None,
@@ -468,7 +479,9 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
             history_messages = messages[1:]
             current_prompt = user_message
             if history_messages and history_messages[-1].role == "user":
-                current_prompt = history_messages.pop().content or user_message
+                current_prompt = PydanticAIClient.convert_user_content(
+                    history_messages.pop()
+                )
 
             observed_model = ObservedModel(
                 create_agent_model(llm_client.config, model=model_name),
@@ -757,10 +770,43 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
         async with self._db() as session:
             result = await session.execute(
                 select(Message)
+                .options(selectinload(Message.attachments))
                 .where(Message.conversation_id == conversation.id)
                 .order_by(Message.sequence)
             )
             db_messages = result.scalars().all()
+
+            from src.services.chat_attachments import (
+                ChatAttachmentService,
+                is_binary_model_input,
+            )
+
+            attachment_service = ChatAttachmentService(session)
+            user_inputs: dict[UUID, tuple[str | None, list[LLMInputFile]]] = {}
+            for db_message in db_messages:
+                if db_message.role != MessageRole.USER or not db_message.attachments:
+                    continue
+                text_parts = [db_message.content] if db_message.content else []
+                input_files: list[LLMInputFile] = []
+                for attachment in db_message.attachments:
+                    if is_binary_model_input(attachment.content_type):
+                        loaded = await attachment_service.load_binary_input(attachment)
+                        input_files.append(
+                            LLMInputFile(
+                                filename=loaded.filename,
+                                media_type=loaded.content_type,
+                                data=loaded.data,
+                            )
+                        )
+                    elif attachment.extracted_text:
+                        text_parts.append(
+                            f"[Attached file: {attachment.filename}]\n"
+                            f"{attachment.extracted_text}"
+                        )
+                user_inputs[db_message.id] = (
+                    "\n\n".join(text_parts) if text_parts else None,
+                    input_files,
+                )
 
         # Track seen tool_call IDs to handle providers (e.g. Minimax) that
         # reuse the same IDs across turns. When a collision is detected, remap
@@ -770,10 +816,14 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
 
         for msg in db_messages:
             if msg.role == MessageRole.USER:
+                content, input_files = user_inputs.get(
+                    msg.id, (msg.content, [])
+                )
                 messages.append(
                     LLMMessage(
                         role="user",
-                        content=msg.content,
+                        content=content,
+                        input_files=input_files,
                     )
                 )
             elif msg.role == MessageRole.ASSISTANT:
@@ -960,6 +1010,7 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
         tool_input: dict[str, Any] | None = None,
         # Client-generated ID for optimistic update reconciliation
         local_id: str | None = None,
+        attachment_ids: list[UUID] | None = None,
     ) -> Message:
         """Save a message to the conversation."""
         msg_id = message_id if message_id else uuid4()
@@ -995,6 +1046,14 @@ IMPORTANT: When the user's request can be fulfilled using one of your tools, you
                 local_id=local_id,
             )
             session.add(message)
+            if attachment_ids:
+                from src.services.chat_attachments import ChatAttachmentService
+
+                await ChatAttachmentService(session).bind(
+                    attachment_ids=attachment_ids,
+                    message_id=message.id,
+                    conversation_id=conversation_id,
+                )
 
             # Update conversation updated_at
             conversation_result = await session.execute(

@@ -16,6 +16,8 @@ import {
 	type AskUserQuestion,
 } from "@/services/websocket";
 import { generateMessageId, type UnifiedMessage } from "@/lib/chat-utils";
+import type { AttachmentPublic } from "@/services/chatAttachments";
+import type { ChatModelTierId } from "@/services/chatModels";
 
 export interface PendingQuestion {
 	questions: AskUserQuestion[];
@@ -29,7 +31,12 @@ export interface UseChatStreamOptions {
 }
 
 export interface UseChatStreamReturn {
-	sendMessage: (message: string, conversationIdOverride?: string) => void;
+	sendMessage: (
+		message: string,
+		conversationIdOverride?: string,
+		attachments?: AttachmentPublic[],
+		modelTier?: ChatModelTierId,
+	) => Promise<void>;
 	isConnected: boolean;
 	isStreaming: boolean;
 	// AskUserQuestion support
@@ -410,7 +417,12 @@ export function useChatStream({
 
 	// Send message via WebSocket
 	const sendMessage = useCallback(
-		async (message: string, conversationIdOverride?: string) => {
+		async (
+			message: string,
+			conversationIdOverride?: string,
+			attachments: AttachmentPublic[] = [],
+			modelTier: ChatModelTierId = "balanced",
+		) => {
 			const targetConversationId = conversationIdOverride ?? conversationId;
 			if (!targetConversationId) {
 				toast.error("No conversation selected");
@@ -432,6 +444,7 @@ export function useChatStream({
 				conversation_id: targetConversationId,
 				role: "user",
 				content: message,
+				attachments,
 				sequence: Date.now(),
 				created_at: now,
 				isOptimistic: true,
@@ -447,15 +460,20 @@ export function useChatStream({
 				targetConversationId,
 				message,
 				userMessageId,
+				attachments.map((attachment) => attachment.id),
+				modelTier,
 			);
 			if (!sent) {
 				try {
 					await webSocketService.connectToChat(targetConversationId);
-					webSocketService.sendChatMessage(
+					const retried = webSocketService.sendChatMessage(
 						targetConversationId,
 						message,
 						userMessageId,
+						attachments.map((attachment) => attachment.id),
+						modelTier,
 					);
+					if (!retried) throw new Error("WebSocket is not connected");
 				} catch (error) {
 					console.error(
 						"[useChatStream] Failed to send message:",
@@ -463,6 +481,7 @@ export function useChatStream({
 					);
 					setStreamError("Failed to send message");
 					resetStream();
+					throw error;
 				}
 			}
 		},

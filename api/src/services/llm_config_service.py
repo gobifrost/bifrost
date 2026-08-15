@@ -40,8 +40,28 @@ class LLMProviderConfig:
     default_system_prompt: str | None = None  # Default system prompt for agentless chat
     summarization_model: str | None = None  # Override for post-run summarization
     tuning_model: str | None = None  # Override for tuning chat + dry-run
+    chat_fast_label: str = "Fast"
+    chat_fast_model: str | None = None
+    chat_balanced_label: str = "Balanced"
+    chat_balanced_model: str | None = None
+    chat_pro_label: str = "Pro"
+    chat_pro_model: str | None = None
     is_configured: bool = False
     api_key_set: bool = False  # Indicates if API key is configured (never return actual key)
+
+    def resolve_chat_model(
+        self, tier: Literal["fast", "balanced", "pro"]
+    ) -> str:
+        """Resolve an enabled Chat tier without exposing provider model IDs."""
+        if tier == "balanced":
+            return self.chat_balanced_model or self.model
+        model = {
+            "fast": self.chat_fast_model,
+            "pro": self.chat_pro_model,
+        }[tier]
+        if not model:
+            raise ValueError(f"The {tier} Chat model tier is not enabled.")
+        return model
 
 
 @dataclass
@@ -118,6 +138,12 @@ class LLMConfigService:
             default_system_prompt=config_data.get("default_system_prompt"),
             summarization_model=config_data.get("summarization_model"),
             tuning_model=config_data.get("tuning_model"),
+            chat_fast_label=config_data.get("chat_fast_label", "Fast"),
+            chat_fast_model=config_data.get("chat_fast_model"),
+            chat_balanced_label=config_data.get("chat_balanced_label", "Balanced"),
+            chat_balanced_model=config_data.get("chat_balanced_model"),
+            chat_pro_label=config_data.get("chat_pro_label", "Pro"),
+            chat_pro_model=config_data.get("chat_pro_model"),
             is_configured=True,
             api_key_set=bool(config_data.get("encrypted_api_key")),
         )
@@ -132,6 +158,12 @@ class LLMConfigService:
         default_system_prompt: str | None = None,
         summarization_model: str | None = None,
         tuning_model: str | None = None,
+        chat_fast_label: str = "Fast",
+        chat_fast_model: str | None = None,
+        chat_balanced_label: str = "Balanced",
+        chat_balanced_model: str | None = None,
+        chat_pro_label: str = "Pro",
+        chat_pro_model: str | None = None,
         updated_by: str = "system",
     ) -> None:
         """
@@ -179,6 +211,12 @@ class LLMConfigService:
             "default_system_prompt": default_system_prompt,
             "summarization_model": summarization_model,
             "tuning_model": tuning_model,
+            "chat_fast_label": chat_fast_label,
+            "chat_fast_model": chat_fast_model,
+            "chat_balanced_label": chat_balanced_label,
+            "chat_balanced_model": chat_balanced_model,
+            "chat_pro_label": chat_pro_label,
+            "chat_pro_model": chat_pro_model,
         }
 
         if existing:

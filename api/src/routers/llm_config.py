@@ -68,6 +68,12 @@ async def get_llm_config(
         default_system_prompt=config.default_system_prompt,
         summarization_model=config.summarization_model,
         tuning_model=config.tuning_model,
+        chat_fast_label=config.chat_fast_label,
+        chat_fast_model=config.chat_fast_model,
+        chat_balanced_label=config.chat_balanced_label,
+        chat_balanced_model=config.chat_balanced_model,
+        chat_pro_label=config.chat_pro_label,
+        chat_pro_model=config.chat_pro_model,
         is_configured=config.is_configured,
         api_key_set=config.api_key_set,
     )
@@ -97,6 +103,12 @@ async def set_llm_config(
             default_system_prompt=request.default_system_prompt,
             summarization_model=request.summarization_model,
             tuning_model=request.tuning_model,
+            chat_fast_label=request.chat_fast_label,
+            chat_fast_model=request.chat_fast_model,
+            chat_balanced_label=request.chat_balanced_label,
+            chat_balanced_model=request.chat_balanced_model,
+            chat_pro_label=request.chat_pro_label,
+            chat_pro_model=request.chat_pro_model,
             updated_by=user.email,
         )
     except ValueError as e:
@@ -150,6 +162,12 @@ async def set_llm_config(
         default_system_prompt=request.default_system_prompt,
         summarization_model=request.summarization_model,
         tuning_model=request.tuning_model,
+        chat_fast_label=request.chat_fast_label,
+        chat_fast_model=request.chat_fast_model,
+        chat_balanced_label=request.chat_balanced_label,
+        chat_balanced_model=request.chat_balanced_model,
+        chat_pro_label=request.chat_pro_label,
+        chat_pro_model=request.chat_pro_model,
         is_configured=True,
         api_key_set=api_key_set,
     )

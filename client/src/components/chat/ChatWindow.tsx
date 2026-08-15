@@ -18,11 +18,22 @@ import { AskUserQuestionCard } from "./AskUserQuestionCard";
 import { NeedsReauthCard, extractNeedsReauth } from "./NeedsReauthCard";
 import { TodoList } from "./TodoList";
 import { useChatStore, useTodos } from "@/stores/chatStore";
-import { useCreateConversation, useMessages } from "@/hooks/useChat";
+import {
+	useChatModelTiers,
+	useCreateConversation,
+	useMessages,
+} from "@/hooks/useChat";
 import { useChatStream } from "@/hooks/useChatStream";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { components } from "@/lib/v1";
 import { integrateMessages, type UnifiedMessage } from "@/lib/chat-utils";
+import {
+	deleteUnboundChatAttachment,
+	uploadChatAttachments,
+	type AttachmentPublic,
+} from "@/services/chatAttachments";
+import type { ChatModelTierId } from "@/services/chatModels";
+import { toast } from "sonner";
 
 type MessagePublic = components["schemas"]["MessagePublic"];
 
@@ -214,6 +225,17 @@ export function ChatWindow({
 	);
 	const setActiveAgent = useChatStore((state) => state.setActiveAgent);
 	const createConversation = useCreateConversation();
+	const { data: modelTierData } = useChatModelTiers();
+	const [selectedModelTier, setSelectedModelTier] =
+		useState<ChatModelTierId>("balanced");
+	const modelTiers = modelTierData?.tiers ?? [
+		{ id: "balanced" as const, label: "Balanced" },
+	];
+	const effectiveModelTier = modelTiers.some(
+		(tier) => tier.id === selectedModelTier,
+	)
+		? selectedModelTier
+		: (modelTierData?.default_tier ?? "balanced");
 
 	// Use WebSocket streaming
 	const {
@@ -316,25 +338,49 @@ export function ChatWindow({
 	}, [messages, systemEvents, pendingQuestion, isAtBottom]);
 
 	// Handle send message
-	const handleSendMessage = (message: string) => {
-		if (!conversationId) {
-			createConversation.mutate(
-				{
+	const handleSendMessage = async (
+		message: string,
+		files: File[],
+		modelTier: ChatModelTierId,
+	) => {
+		let uploaded: AttachmentPublic[] = [];
+		let targetConversationId = conversationId;
+		try {
+			if (!targetConversationId) {
+				const data = await createConversation.mutateAsync({
 					body: { channel: "chat" },
-				},
-				{
-					onSuccess: (data) => {
-						setActiveConversation(data.id);
-						setActiveAgent(data.agent_id ?? null);
-						navigate(`/chat/${data.id}`);
-						sendMessage(message, data.id);
-					},
-				},
-			);
-			return;
-		}
+				});
+				targetConversationId = data.id;
+				setActiveConversation(data.id);
+				setActiveAgent(data.agent_id ?? null);
+				navigate(`/chat/${data.id}`);
+			}
 
-		sendMessage(message);
+			if (files.length > 0) {
+				uploaded = (
+					await uploadChatAttachments(targetConversationId, files)
+				).attachments;
+			}
+			await sendMessage(
+				message,
+				targetConversationId,
+				uploaded,
+				modelTier,
+			);
+		} catch (error) {
+			if (targetConversationId && uploaded.length > 0) {
+				const cleanupConversationId = targetConversationId;
+				await Promise.allSettled(
+					uploaded.map((attachment) =>
+						deleteUnboundChatAttachment(cleanupConversationId, attachment.id),
+					),
+				);
+			}
+			const description =
+				error instanceof Error ? error.message : "Could not send this message.";
+			toast.error("Message not sent", { description });
+			throw error;
+		}
 	};
 
 	// Empty state
@@ -355,6 +401,9 @@ export function ChatWindow({
 					onSend={handleSendMessage}
 					disabled={createConversation.isPending}
 					placeholder="Send a message..."
+					modelTiers={modelTiers}
+					modelTier={effectiveModelTier}
+					onModelTierChange={setSelectedModelTier}
 				/>
 			</div>
 		);
@@ -375,7 +424,13 @@ export function ChatWindow({
 						</div>
 					))}
 				</div>
-				<ChatInput onSend={handleSendMessage} disabled />
+				<ChatInput
+					onSend={handleSendMessage}
+					disabled
+					modelTiers={modelTiers}
+					modelTier={effectiveModelTier}
+					onModelTierChange={setSelectedModelTier}
+				/>
 			</div>
 		);
 	}
@@ -401,6 +456,9 @@ export function ChatWindow({
 				<ChatInput
 					onSend={handleSendMessage}
 					placeholder="Send a message..."
+					modelTiers={modelTiers}
+					modelTier={effectiveModelTier}
+					onModelTierChange={setSelectedModelTier}
 				/>
 			</div>
 		);
@@ -513,6 +571,9 @@ export function ChatWindow({
 				placeholder={
 					agentName ? `Message ${agentName}...` : "Send a message..."
 				}
+				modelTiers={modelTiers}
+				modelTier={effectiveModelTier}
+				onModelTierChange={setSelectedModelTier}
 			/>
 		</div>
 	);

@@ -41,6 +41,26 @@ describe("ChatMessage — user messages", () => {
 		expect(container.querySelector(".justify-end")).not.toBeNull();
 	});
 
+	it("renders attached files as preview controls", () => {
+		renderWithProviders(
+			<ChatMessage
+				message={makeMessage({
+					role: "user",
+					content: "Review this",
+					attachments: [
+						{
+							id: "attachment-1",
+							filename: "notes.txt",
+							content_type: "text/plain",
+							size_bytes: 12,
+						},
+					],
+				})}
+			/>,
+		);
+		expect(screen.getByRole("button", { name: /notes.txt/i })).toBeInTheDocument();
+	});
+
 	it("renders @[AgentName] mentions as an inline badge for user messages", () => {
 		renderWithProviders(
 			<ChatMessage

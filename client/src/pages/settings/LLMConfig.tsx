@@ -115,6 +115,12 @@ export function LLMConfig() {
 	const [defaultSystemPrompt, setDefaultSystemPrompt] = useState("");
 	const [summarizationModel, setSummarizationModel] = useState("");
 	const [tuningModel, setTuningModel] = useState("");
+	const [chatFastLabel, setChatFastLabel] = useState("Fast");
+	const [chatFastModel, setChatFastModel] = useState("");
+	const [chatBalancedLabel, setChatBalancedLabel] = useState("Balanced");
+	const [chatBalancedModel, setChatBalancedModel] = useState("");
+	const [chatProLabel, setChatProLabel] = useState("Pro");
+	const [chatProModel, setChatProModel] = useState("");
 
 	// Models state (loaded dynamically after test)
 	const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);
@@ -161,6 +167,12 @@ export function LLMConfig() {
 		setEndpoint(config.endpoint || DEFAULT_ENDPOINTS[p] || DEFAULT_ENDPOINTS.openai);
 		setSummarizationModel(config.summarization_model ?? "");
 		setTuningModel(config.tuning_model ?? "");
+		setChatFastLabel(config.chat_fast_label ?? "Fast");
+		setChatFastModel(config.chat_fast_model ?? "");
+		setChatBalancedLabel(config.chat_balanced_label ?? "Balanced");
+		setChatBalancedModel(config.chat_balanced_model ?? "");
+		setChatProLabel(config.chat_pro_label ?? "Pro");
+		setChatProModel(config.chat_pro_model ?? "");
 	}
 
 	// Track if we've already fetched models for this config
@@ -292,6 +304,12 @@ export function LLMConfig() {
 					default_system_prompt: defaultSystemPrompt || null,
 					summarization_model: summarizationModel || null,
 					tuning_model: tuningModel || null,
+					chat_fast_label: chatFastLabel.trim() || "Fast",
+					chat_fast_model: chatFastModel.trim() || null,
+					chat_balanced_label: chatBalancedLabel.trim() || "Balanced",
+					chat_balanced_model: chatBalancedModel.trim() || null,
+					chat_pro_label: chatProLabel.trim() || "Pro",
+					chat_pro_model: chatProModel.trim() || null,
 				},
 			});
 
@@ -332,6 +350,12 @@ export function LLMConfig() {
 			setDefaultSystemPrompt("");
 			setSummarizationModel("");
 			setTuningModel("");
+			setChatFastLabel("Fast");
+			setChatFastModel("");
+			setChatBalancedLabel("Balanced");
+			setChatBalancedModel("");
+			setChatProLabel("Pro");
+			setChatProModel("");
 			setTestResult(null);
 			setAvailableModels([]);
 			setModelsLoaded(false);
@@ -656,6 +680,87 @@ export function LLMConfig() {
 								specific agent. Leave empty to use the built-in
 								default.
 							</p>
+						</div>
+
+						<div className="space-y-3 rounded-lg border p-4">
+							<div>
+								<h5 className="text-sm font-medium">Chat model choices</h5>
+								<p className="mt-1 text-xs text-muted-foreground">
+									Choose the models users may select in Chat. Balanced uses the
+									primary model when left blank; blank Fast or Pro models hide
+									those choices.
+								</p>
+							</div>
+							{[
+								{
+									id: "fast",
+									label: chatFastLabel,
+									setLabel: setChatFastLabel,
+									model: chatFastModel,
+									setModel: setChatFastModel,
+									placeholder: "Optional fast model",
+								},
+								{
+									id: "balanced",
+									label: chatBalancedLabel,
+									setLabel: setChatBalancedLabel,
+									model: chatBalancedModel,
+									setModel: setChatBalancedModel,
+									placeholder: `Primary model (${model})`,
+								},
+								{
+									id: "pro",
+									label: chatProLabel,
+									setLabel: setChatProLabel,
+									model: chatProModel,
+									setModel: setChatProModel,
+									placeholder: "Optional pro model",
+								},
+							].map((tier) => (
+								<div key={tier.id} className="grid gap-2 sm:grid-cols-[10rem_1fr]">
+									<div className="space-y-1">
+										<Label htmlFor={`chat-${tier.id}-label`}>
+											{tier.id[0].toUpperCase() + tier.id.slice(1)} label
+										</Label>
+										<Input
+											id={`chat-${tier.id}-label`}
+											value={tier.label}
+											onChange={(event) => tier.setLabel(event.target.value)}
+											maxLength={30}
+										/>
+									</div>
+									<div className="space-y-1">
+										<Label htmlFor={`chat-${tier.id}-model`}>
+											{tier.id[0].toUpperCase() + tier.id.slice(1)} model
+										</Label>
+										{hasModels ? (
+											<Combobox
+												id={`chat-${tier.id}-model`}
+												value={tier.model}
+												onValueChange={tier.setModel}
+												placeholder={tier.placeholder}
+												searchPlaceholder="Search models..."
+												emptyText="No models found."
+												options={availableModels.map((availableModel) => ({
+													value: availableModel.id,
+													label: availableModel.display_name,
+													description:
+														availableModel.id !== availableModel.display_name
+															? availableModel.id
+															: undefined,
+												}))}
+											/>
+										) : (
+											<Input
+												id={`chat-${tier.id}-model`}
+												value={tier.model}
+												onChange={(event) => tier.setModel(event.target.value)}
+												placeholder={tier.placeholder}
+											/>
+										)}
+									</div>
+								</div>
+							))}
 						</div>
 
 						{/* Summarization Model Override */}

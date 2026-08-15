@@ -60,7 +60,7 @@ describe("ChatInput — send behavior", () => {
 		// Press Enter to submit.
 		await user.type(textarea, "{Enter}");
 
-		expect(onSend).toHaveBeenCalledWith("hello world");
+		expect(onSend).toHaveBeenCalledWith("hello world", [], "balanced");
 		// Textarea is cleared post-send.
 		expect(textarea.value).toBe("");
 	});
@@ -139,7 +139,23 @@ describe("ChatInput — @ mentions", () => {
 		await user.click(textarea);
 		await user.keyboard("{Enter}");
 
-		expect(onSend).toHaveBeenCalledWith("@[SupportBot]");
+		expect(onSend).toHaveBeenCalledWith("@[SupportBot]", [], "balanced");
+	});
+});
+
+describe("ChatInput — attachments and model tier", () => {
+	it("sends a staged file without requiring message text", async () => {
+		const onSend = vi.fn();
+		const { user, container } = renderWithProviders(
+			<ChatInput onSend={onSend} />,
+		);
+		const file = new File(["hello"], "notes.txt", { type: "text/plain" });
+		const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+		fireEvent.change(input, { target: { files: [file] } });
+
+		expect(screen.getByText("notes.txt")).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: /send message/i }));
+		expect(onSend).toHaveBeenCalledWith("", [file], "balanced");
 	});
 });
 

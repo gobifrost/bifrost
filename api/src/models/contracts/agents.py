@@ -321,6 +321,44 @@ class ConversationSummary(BaseModel):
 # ==================== MESSAGE MODELS ====================
 
 
+class AttachmentPublic(BaseModel):
+    """Metadata for a file attached to a chat message."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    filename: str
+    content_type: str
+    size_bytes: int
+
+    @field_serializer("id")
+    def serialize_id(self, value: UUID) -> str:
+        return str(value)
+
+
+class AttachmentUploadResponse(BaseModel):
+    """Files accepted for the next message in a conversation."""
+
+    attachments: list[AttachmentPublic]
+
+
+ChatModelTierId = Literal["fast", "balanced", "pro"]
+
+
+class ChatModelTierPublic(BaseModel):
+    """One administrator-governed model choice exposed in Chat."""
+
+    id: ChatModelTierId
+    label: str
+
+
+class ChatModelTiersResponse(BaseModel):
+    """Enabled Chat model tiers and the default selection."""
+
+    tiers: list[ChatModelTierPublic]
+    default_tier: ChatModelTierId
+
+
 class MessagePublic(BaseModel):
     """Message output for API responses."""
     model_config = ConfigDict(from_attributes=True)
@@ -329,6 +367,7 @@ class MessagePublic(BaseModel):
     conversation_id: UUID
     role: MessageRole
     content: str | None = None
+    attachments: list[AttachmentPublic] = Field(default_factory=list)
     tool_calls: list[ToolCall] | None = None
     tool_call_id: str | None = None
     tool_name: str | None = None
@@ -358,8 +397,16 @@ class MessagePublic(BaseModel):
 
 class ChatRequest(BaseModel):
     """Request for sending a chat message."""
-    message: str = Field(..., min_length=1, max_length=100000)
+    message: str = Field(default="", max_length=100000)
     stream: bool = Field(default=True, description="Whether to stream the response")
+    attachment_ids: list[UUID] = Field(default_factory=list, max_length=5)
+    model_tier: ChatModelTierId = "balanced"
+
+    @model_validator(mode="after")
+    def require_content(self):
+        if not self.message.strip() and not self.attachment_ids:
+            raise ValueError("A message or attachment is required")
+        return self
 
 
 class ChatResponse(BaseModel):

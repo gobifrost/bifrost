@@ -14,6 +14,7 @@ import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
 import { oneDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { ChatAttachmentList } from "./ChatAttachmentList";
 
 type MessagePublic = components["schemas"]["MessagePublic"];
 
@@ -90,6 +91,10 @@ export function ChatMessage({
 		return (
 			<div className="flex justify-end py-2 px-4">
 				<div className="max-w-[80%] bg-primary text-primary-foreground rounded-2xl px-4 py-2.5 overflow-x-auto break-words">
+					<ChatAttachmentList
+						conversationId={message.conversation_id}
+						attachments={message.attachments ?? []}
+					/>
 					<div className="prose prose-invert prose-sm max-w-none prose-p:my-1 prose-p:leading-relaxed prose-p:text-primary-foreground prose-headings:text-primary-foreground prose-strong:text-primary-foreground prose-code:text-primary-foreground prose-pre:my-2 prose-pre:p-0 prose-pre:bg-transparent">
 						<ReactMarkdown
 							remarkPlugins={[remarkGfm]}

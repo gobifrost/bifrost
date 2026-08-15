@@ -10,6 +10,7 @@ from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai_harness.compaction import LimitWarner, TieredCompaction
 from pydantic_ai_harness.overflowing_tool_output import OverflowingToolOutput
 from pydantic_ai.messages import (
+    BinaryContent,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -32,7 +33,7 @@ from src.services.agent_runtime import (
     build_runtime_capabilities,
     create_agent_model,
 )
-from src.services.llm.base import LLMConfig, ToolDefinition
+from src.services.llm.base import LLMConfig, LLMInputFile, ToolDefinition
 from src.services.llm.base import LLMMessage, ToolCallRequest
 from src.services.llm.factory import create_llm_client
 from src.services.llm.pydantic_client import PydanticAIClient
@@ -301,6 +302,34 @@ def test_legacy_history_groups_consecutive_tool_results_for_provider_compatibili
     assert len(messages) == 2
     assert isinstance(messages[1], ModelRequest)
     assert [part.tool_call_id for part in messages[1].parts] == ["call-1", "call-2"]
+
+
+def test_legacy_history_preserves_multimodal_user_files() -> None:
+    messages = PydanticAIClient.convert_messages(
+        [
+            LLMMessage(
+                role="user",
+                content="Describe this image",
+                input_files=[
+                    LLMInputFile(
+                        filename="diagram.png",
+                        media_type="image/png",
+                        data=b"image-bytes",
+                    )
+                ],
+            )
+        ]
+    )
+
+    assert isinstance(messages[0], ModelRequest)
+    prompt = messages[0].parts[0]
+    assert isinstance(prompt, UserPromptPart)
+    assert isinstance(prompt.content, list)
+    assert prompt.content[0] == "Describe this image"
+    assert prompt.content[1] == "Attached file: diagram.png"
+    assert isinstance(prompt.content[2], BinaryContent)
+    assert prompt.content[2].data == b"image-bytes"
+    assert prompt.content[2].media_type == "image/png"
 
 
 @pytest.mark.asyncio

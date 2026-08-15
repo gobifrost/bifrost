@@ -5846,6 +5846,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/chat/model-tiers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Model Tiers
+         * @description Return only the administrator-governed model choices available in Chat.
+         */
+        get: operations["get_model_tiers_api_chat_model_tiers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/chat/conversations": {
         parameters: {
             query?: never;
@@ -5889,6 +5909,66 @@ export interface paths {
          * @description Delete a conversation (soft delete).
          */
         delete: operations["delete_conversation_api_chat_conversations__conversation_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat/conversations/{conversation_id}/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload Attachments
+         * @description Validate and store files for the next message in this conversation.
+         */
+        post: operations["upload_attachments_api_chat_conversations__conversation_id__attachments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat/conversations/{conversation_id}/attachments/{attachment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Unbound Attachment
+         * @description Delete an uploaded attachment that was never bound to a message.
+         */
+        delete: operations["delete_unbound_attachment_api_chat_conversations__conversation_id__attachments__attachment_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat/conversations/{conversation_id}/attachments/{attachment_id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Attachment Content
+         * @description Preview or download an attachment after enforcing conversation ownership.
+         */
+        get: operations["get_attachment_content_api_chat_conversations__conversation_id__attachments__attachment_id__content_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -6016,7 +6096,7 @@ export interface paths {
          * List Llm Models
          * @description List available models from the configured LLM provider.
          *
-         *     Works with OpenAI and Anthropic (both support model listing).
+         *     Works with OpenAI, Anthropic, and Google.
          *     Requires platform admin access.
          */
         get: operations["list_llm_models_api_admin_llm_models_get"];
@@ -11399,6 +11479,28 @@ export interface components {
             at?: string;
         };
         /**
+         * AttachmentPublic
+         * @description Metadata for a file attached to a chat message.
+         */
+        AttachmentPublic: {
+            /** Id */
+            id: string;
+            /** Filename */
+            filename: string;
+            /** Content Type */
+            content_type: string;
+            /** Size Bytes */
+            size_bytes: number;
+        };
+        /**
+         * AttachmentUploadResponse
+         * @description Files accepted for the next message in a conversation.
+         */
+        AttachmentUploadResponse: {
+            /** Attachments */
+            attachments: components["schemas"]["AttachmentPublic"][];
+        };
+        /**
          * AuditLogActor
          * @description Who performed the action.
          */
@@ -11819,6 +11921,11 @@ export interface components {
              */
             file: string;
         };
+        /** Body_upload_attachments_api_chat_conversations__conversation_id__attachments_post */
+        Body_upload_attachments_api_chat_conversations__conversation_id__attachments_post: {
+            /** Files */
+            files: string[];
+        };
         /** Body_upload_avatar_api_profile_avatar_post */
         Body_upload_avatar_api_profile_avatar_post: {
             /** File */
@@ -12028,7 +12135,7 @@ export interface components {
         CLIAIInfoResponse: {
             /**
              * Provider
-             * @description LLM provider (openai, anthropic)
+             * @description LLM provider (openai, anthropic, google)
              */
             provider: string;
             /**
@@ -12526,11 +12633,40 @@ export interface components {
             logs?: components["schemas"]["CLISessionLogRequest"][];
         };
         /**
+         * ChatModelTierPublic
+         * @description One administrator-governed model choice exposed in Chat.
+         */
+        ChatModelTierPublic: {
+            /**
+             * Id
+             * @enum {string}
+             */
+            id: "fast" | "balanced" | "pro";
+            /** Label */
+            label: string;
+        };
+        /**
+         * ChatModelTiersResponse
+         * @description Enabled Chat model tiers and the default selection.
+         */
+        ChatModelTiersResponse: {
+            /** Tiers */
+            tiers: components["schemas"]["ChatModelTierPublic"][];
+            /**
+             * Default Tier
+             * @enum {string}
+             */
+            default_tier: "fast" | "balanced" | "pro";
+        };
+        /**
          * ChatRequest
          * @description Request for sending a chat message.
          */
         ChatRequest: {
-            /** Message */
+            /**
+             * Message
+             * @default
+             */
             message: string;
             /**
              * Stream
@@ -12538,6 +12674,14 @@ export interface components {
              * @default true
              */
             stream: boolean;
+            /** Attachment Ids */
+            attachment_ids?: string[];
+            /**
+             * Model Tier
+             * @default balanced
+             * @enum {string}
+             */
+            model_tier: "fast" | "balanced" | "pro";
         };
         /**
          * ChatResponse
@@ -17943,6 +18087,36 @@ export interface components {
              * @description Model override for tuning chat + dry-run. Falls back to primary model if unset.
              */
             tuning_model?: string | null;
+            /**
+             * Chat Fast Label
+             * @default Fast
+             */
+            chat_fast_label: string;
+            /**
+             * Chat Fast Model
+             * @description Optional model exposed as the Fast Chat tier.
+             */
+            chat_fast_model?: string | null;
+            /**
+             * Chat Balanced Label
+             * @default Balanced
+             */
+            chat_balanced_label: string;
+            /**
+             * Chat Balanced Model
+             * @description Optional Balanced model; the primary model is used when unset.
+             */
+            chat_balanced_model?: string | null;
+            /**
+             * Chat Pro Label
+             * @default Pro
+             */
+            chat_pro_label: string;
+            /**
+             * Chat Pro Model
+             * @description Optional model exposed as the Pro Chat tier.
+             */
+            chat_pro_model?: string | null;
         };
         /**
          * LLMConfigResponse
@@ -17969,6 +18143,27 @@ export interface components {
             summarization_model?: string | null;
             /** Tuning Model */
             tuning_model?: string | null;
+            /**
+             * Chat Fast Label
+             * @default Fast
+             */
+            chat_fast_label: string;
+            /** Chat Fast Model */
+            chat_fast_model?: string | null;
+            /**
+             * Chat Balanced Label
+             * @default Balanced
+             */
+            chat_balanced_label: string;
+            /** Chat Balanced Model */
+            chat_balanced_model?: string | null;
+            /**
+             * Chat Pro Label
+             * @default Pro
+             */
+            chat_pro_label: string;
+            /** Chat Pro Model */
+            chat_pro_model?: string | null;
             /**
              * Is Configured
              * @default true
@@ -19144,6 +19339,8 @@ export interface components {
             role: components["schemas"]["MessageRole"];
             /** Content */
             content?: string | null;
+            /** Attachments */
+            attachments?: components["schemas"]["AttachmentPublic"][];
             /** Tool Calls */
             tool_calls?: components["schemas"]["ToolCall"][] | null;
             /** Tool Call Id */
@@ -36009,6 +36206,26 @@ export interface operations {
             };
         };
     };
+    get_model_tiers_api_chat_model_tiers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatModelTiersResponse"];
+                };
+            };
+        };
+    };
     list_conversations_api_chat_conversations_get: {
         parameters: {
             query?: {
@@ -36124,6 +36341,105 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_attachments_api_chat_conversations__conversation_id__attachments_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_attachments_api_chat_conversations__conversation_id__attachments_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttachmentUploadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_unbound_attachment_api_chat_conversations__conversation_id__attachments__attachment_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_attachment_content_api_chat_conversations__conversation_id__attachments__attachment_id__content_get: {
+        parameters: {
+            query?: {
+                download?: boolean;
+            };
+            header?: never;
+            path: {
+                conversation_id: string;
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
             };
             /** @description Validation Error */
             422: {

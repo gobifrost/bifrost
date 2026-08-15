@@ -12,9 +12,10 @@ import json
 import logging
 from datetime import datetime, timezone
 from typing import Literal, cast
+from urllib.parse import quote
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 
@@ -23,18 +24,48 @@ from src.core.db_deps import DbSession
 from src.models.contracts.agents import (
     ChatRequest,
     ChatResponse,
+    ChatModelTierPublic,
+    ChatModelTiersResponse,
     ConversationCreate,
     ConversationPublic,
     ConversationSummary,
     MessagePublic,
+    AttachmentPublic,
+    AttachmentUploadResponse,
     ToolCall,
 )
-from src.models.orm import Agent, Conversation, Message
+from src.models.orm import Agent, Conversation, Message, MessageAttachment
 from src.services.agent_executor import AgentExecutor
+from src.services.chat_attachments import (
+    MAX_FILES_PER_MESSAGE,
+    ChatAttachmentError,
+    ChatAttachmentService,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
+
+
+@router.get("/model-tiers")
+async def get_model_tiers(db: DbSession, user: CurrentActiveUser) -> ChatModelTiersResponse:
+    """Return only the administrator-governed model choices available in Chat."""
+    from src.services.llm_config_service import LLMConfigService
+
+    config = await LLMConfigService(db).get_config()
+    if config is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="LLM provider is not configured",
+        )
+
+    tiers: list[ChatModelTierPublic] = []
+    if config.chat_fast_model:
+        tiers.append(ChatModelTierPublic(id="fast", label=config.chat_fast_label))
+    tiers.append(ChatModelTierPublic(id="balanced", label=config.chat_balanced_label))
+    if config.chat_pro_model:
+        tiers.append(ChatModelTierPublic(id="pro", label=config.chat_pro_label))
+    return ChatModelTiersResponse(tiers=tiers, default_tier="balanced")
 
 
 # =============================================================================
@@ -240,6 +271,123 @@ async def delete_conversation(
 # =============================================================================
 
 
+@router.post("/conversations/{conversation_id}/attachments")
+async def upload_attachments(
+    conversation_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+    files: list[UploadFile] = File(...),
+) -> AttachmentUploadResponse:
+    """Validate and store files for the next message in this conversation."""
+    conversation = (
+        await db.execute(
+            select(Conversation)
+            .where(Conversation.id == conversation_id)
+            .where(Conversation.user_id == user.user_id)
+        )
+    ).scalar_one_or_none()
+    if conversation is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
+    if len(files) > MAX_FILES_PER_MESSAGE:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Attach no more than {MAX_FILES_PER_MESSAGE} files per message.",
+        )
+
+    service = ChatAttachmentService(db)
+    stored: list[MessageAttachment] = []
+    try:
+        for upload in files:
+            stored.append(
+                await service.store(
+                    conversation_id=conversation_id,
+                    filename=upload.filename or "attachment",
+                    content_type=upload.content_type or "application/octet-stream",
+                    content=await upload.read(),
+                )
+            )
+    except ChatAttachmentError as exc:
+        from src.services.file_storage.service import get_file_storage_service
+
+        storage = get_file_storage_service(db)
+        for attachment in stored:
+            await storage.delete_raw_from_s3(attachment.s3_key)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return AttachmentUploadResponse(
+        attachments=[AttachmentPublic.model_validate(attachment) for attachment in stored]
+    )
+
+
+@router.delete(
+    "/conversations/{conversation_id}/attachments/{attachment_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+async def delete_unbound_attachment(
+    conversation_id: UUID,
+    attachment_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> Response:
+    """Delete an uploaded attachment that was never bound to a message."""
+    attachment = (
+        await db.execute(
+            select(MessageAttachment)
+            .join(Conversation, Conversation.id == MessageAttachment.conversation_id)
+            .where(MessageAttachment.id == attachment_id)
+            .where(MessageAttachment.conversation_id == conversation_id)
+            .where(MessageAttachment.message_id.is_(None))
+            .where(Conversation.user_id == user.user_id)
+        )
+    ).scalar_one_or_none()
+    if attachment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+
+    from src.services.file_storage.service import get_file_storage_service
+
+    await get_file_storage_service(db).delete_raw_from_s3(attachment.s3_key)
+    await db.delete(attachment)
+    await db.flush()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/conversations/{conversation_id}/attachments/{attachment_id}/content")
+async def get_attachment_content(
+    conversation_id: UUID,
+    attachment_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+    download: bool = False,
+) -> Response:
+    """Preview or download an attachment after enforcing conversation ownership."""
+    attachment = (
+        await db.execute(
+            select(MessageAttachment)
+            .join(Conversation, Conversation.id == MessageAttachment.conversation_id)
+            .where(MessageAttachment.id == attachment_id)
+            .where(MessageAttachment.conversation_id == conversation_id)
+            .where(Conversation.user_id == user.user_id)
+        )
+    ).scalar_one_or_none()
+    if attachment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+
+    from src.services.file_storage.service import get_file_storage_service
+
+    content = await get_file_storage_service(db).read_uploaded_file(attachment.s3_key)
+    disposition = "attachment" if download else "inline"
+    encoded_filename = quote(attachment.filename, safe="")
+    return Response(
+        content=content,
+        media_type=attachment.content_type,
+        headers={
+            "Content-Disposition": (
+                f"{disposition}; filename*=UTF-8''{encoded_filename}"
+            ),
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
 @router.get("/conversations/{conversation_id}/messages")
 async def get_messages(
     conversation_id: UUID,
@@ -277,12 +425,28 @@ async def get_messages(
     result = await db.execute(stmt)
     messages = result.scalars().all()
 
+    attachments_by_message: dict[UUID, list[MessageAttachment]] = {}
+    message_ids = [message.id for message in messages]
+    if message_ids:
+        attachment_result = await db.execute(
+            select(MessageAttachment)
+            .where(MessageAttachment.message_id.in_(message_ids))
+            .order_by(MessageAttachment.created_at)
+        )
+        for attachment in attachment_result.scalars().all():
+            if attachment.message_id is not None:
+                attachments_by_message.setdefault(attachment.message_id, []).append(attachment)
+
     return [
         MessagePublic(
             id=m.id,
             conversation_id=m.conversation_id,
             role=m.role,
             content=m.content,
+            attachments=[
+                AttachmentPublic.model_validate(attachment)
+                for attachment in attachments_by_message.get(m.id, [])
+            ],
             tool_calls=[
                 ToolCall(
                     id=tc["id"],
@@ -366,6 +530,8 @@ async def send_message(
         user_message=request.message,
         stream=False,
         user=user,
+        attachment_ids=request.attachment_ids,
+        model_tier=request.model_tier,
     ):
         if chunk.type == "delta" and chunk.content:
             final_content += chunk.content

@@ -13,6 +13,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { $api, apiClient } from "@/lib/api-client";
 import { toast } from "sonner";
 import type { components } from "@/lib/v1";
+import type { ChatModelTierId } from "@/services/chatModels";
 import { useChatStore } from "@/stores/chatStore";
 
 // Re-export types for convenience
@@ -129,12 +130,19 @@ export async function getMessages(
 export async function sendMessage(
 	conversationId: string,
 	message: string,
+	attachmentIds: string[] = [],
+	modelTier: ChatModelTierId = "balanced",
 ): Promise<ChatResponse> {
 	const { data, error } = await apiClient.POST(
 		"/api/chat/conversations/{conversation_id}/messages",
 		{
 			params: { path: { conversation_id: conversationId } },
-			body: { message, stream: false },
+			body: {
+				message,
+				stream: false,
+				attachment_ids: attachmentIds,
+				model_tier: modelTier,
+			},
 		},
 	);
 	if (error)
@@ -182,6 +190,13 @@ export function useMessages(conversationId: string | undefined) {
 		{ params: { path: { conversation_id: conversationId ?? "" } } },
 		{ enabled: !!conversationId },
 	);
+}
+
+/** Hook to fetch the administrator-governed Chat model choices. */
+export function useChatModelTiers() {
+	return $api.useQuery("get", "/api/chat/model-tiers", undefined, {
+		staleTime: 5 * 60 * 1000,
+	});
 }
 
 // ==================== Mutation Hooks ====================

@@ -153,6 +153,55 @@ class TestConversationsCRUD:
         assert test_conversation["id"] not in conv_ids
 
 
+class TestChatAttachments:
+    """Files can be uploaded, previewed, downloaded, and remain owner-scoped."""
+
+    def test_attachment_upload_and_content_access(
+        self,
+        e2e_client,
+        platform_admin,
+        org1_user,
+        test_conversation,
+    ):
+        auth_headers = {"Authorization": platform_admin.headers["Authorization"]}
+        upload = e2e_client.post(
+            f"/api/chat/conversations/{test_conversation['id']}/attachments",
+            files=[("files", ("notes.txt", b"attachment preview", "text/plain"))],
+            headers=auth_headers,
+        )
+        assert upload.status_code == 200, upload.text
+        attachment = upload.json()["attachments"][0]
+        assert attachment["filename"] == "notes.txt"
+        assert attachment["content_type"] == "text/plain"
+
+        content_url = (
+            f"/api/chat/conversations/{test_conversation['id']}"
+            f"/attachments/{attachment['id']}/content"
+        )
+        preview = e2e_client.get(content_url, headers=platform_admin.headers)
+        assert preview.status_code == 200
+        assert preview.content == b"attachment preview"
+        assert preview.headers["content-disposition"].startswith("inline;")
+
+        download = e2e_client.get(
+            f"{content_url}?download=true", headers=platform_admin.headers
+        )
+        assert download.status_code == 200
+        assert download.headers["content-disposition"].startswith("attachment;")
+
+        forbidden = e2e_client.get(content_url, headers=org1_user.headers)
+        assert forbidden.status_code == 404
+
+        discard = e2e_client.delete(
+            f"/api/chat/conversations/{test_conversation['id']}"
+            f"/attachments/{attachment['id']}",
+            headers=platform_admin.headers,
+        )
+        assert discard.status_code == 204
+        missing = e2e_client.get(content_url, headers=platform_admin.headers)
+        assert missing.status_code == 404
+
+
 # =============================================================================
 # Conversation Access Control Tests
 # =============================================================================

@@ -14,7 +14,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent } from "@/test-utils";
+import { renderWithProviders, screen, fireEvent, waitFor } from "@/test-utils";
 
 // --- mocks --------------------------------------------------------------
 
@@ -32,7 +32,7 @@ const streamRef = {
 };
 
 const createConversationRef = {
-	mutate: vi.fn(),
+	mutateAsync: vi.fn(),
 	isPending: false,
 };
 
@@ -42,6 +42,12 @@ vi.mock("@/hooks/useChat", () => ({
 		isLoading: messagesRef.isLoading,
 	}),
 	useCreateConversation: () => createConversationRef,
+	useChatModelTiers: () => ({
+		data: {
+			tiers: [{ id: "balanced", label: "Balanced" }],
+			default_tier: "balanced",
+		},
+	}),
 }));
 
 vi.mock("@/hooks/useChatStream", () => ({
@@ -87,7 +93,7 @@ vi.mock("./ChatInput", () => ({
 		onSend,
 		placeholder,
 	}: {
-		onSend: (m: string) => void;
+		onSend: (m: string, files: File[], tier: "balanced") => void;
 		placeholder?: string;
 	}) => (
 		<div>
@@ -96,7 +102,7 @@ vi.mock("./ChatInput", () => ({
 				placeholder={placeholder}
 				onKeyDown={(e) => {
 					if (e.key === "Enter") {
-						onSend((e.target as HTMLInputElement).value);
+						onSend((e.target as HTMLInputElement).value, [], "balanced");
 					}
 				}}
 			/>
@@ -144,7 +150,7 @@ beforeEach(() => {
 	streamRef.isStreaming = false;
 	streamRef.pendingQuestion = null;
 	streamRef.stopStreaming = vi.fn();
-	createConversationRef.mutate = vi.fn();
+	createConversationRef.mutateAsync = vi.fn();
 	createConversationRef.isPending = false;
 	storeSelectors.setActiveConversation.mockReset();
 	storeSelectors.setActiveAgent.mockReset();
@@ -212,7 +218,7 @@ describe("ChatWindow — messages render & send", () => {
 		expect(screen.getByText("pong")).toBeInTheDocument();
 	});
 
-	it("forwards a typed message to the stream's sendMessage", () => {
+	it("forwards a typed message to the stream's sendMessage", async () => {
 		messagesRef.data = [
 			{
 				id: "m-1",
@@ -230,12 +236,20 @@ describe("ChatWindow — messages render & send", () => {
 		fireEvent.change(input, { target: { value: "hello" } });
 		fireEvent.keyDown(input, { key: "Enter" });
 
-		expect(streamRef.sendMessage).toHaveBeenCalledWith("hello");
+		await waitFor(() =>
+			expect(streamRef.sendMessage).toHaveBeenCalledWith(
+				"hello",
+				"c-1",
+				[],
+				"balanced",
+			),
+		);
 	});
 
-	it("creates a conversation from the blank draft and sends the first message", () => {
-		createConversationRef.mutate.mockImplementation((_variables, options) => {
-			options?.onSuccess?.({ id: "new-conversation-id" });
+	it("creates a conversation from the blank draft and sends the first message", async () => {
+		createConversationRef.mutateAsync.mockResolvedValue({
+			id: "new-conversation-id",
+			agent_id: null,
 		});
 
 		renderWithProviders(<ChatWindow conversationId={undefined} />);
@@ -246,9 +260,10 @@ describe("ChatWindow — messages render & send", () => {
 		fireEvent.change(input, { target: { value: "hello from draft" } });
 		fireEvent.keyDown(input, { key: "Enter" });
 
-		expect(createConversationRef.mutate).toHaveBeenCalledWith(
-			{ body: { channel: "chat" } },
-			expect.objectContaining({ onSuccess: expect.any(Function) }),
+		await waitFor(() =>
+			expect(createConversationRef.mutateAsync).toHaveBeenCalledWith({
+				body: { channel: "chat" },
+			}),
 		);
 		expect(storeSelectors.setActiveConversation).toHaveBeenCalledWith(
 			"new-conversation-id",
@@ -258,6 +273,8 @@ describe("ChatWindow — messages render & send", () => {
 		expect(streamRef.sendMessage).toHaveBeenCalledWith(
 			"hello from draft",
 			"new-conversation-id",
+			[],
+			"balanced",
 		);
 	});
 });

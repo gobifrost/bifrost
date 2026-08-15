@@ -12,7 +12,7 @@ from src.models.orm.agent_run_flag_conversations import AgentRunFlagConversation
 from src.models.orm.agent_run_verdict_history import AgentRunVerdictHistory
 from src.models.orm.agent_runs import AgentRun, AgentRunStep
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
-from src.models.orm.agents import Agent, AgentDelegation, AgentRole, AgentTool, Conversation, Message
+from src.models.orm.agents import Agent, AgentDelegation, AgentRole, AgentTool, Conversation, Message, MessageAttachment
 from src.models.orm.ai_usage import AIModelPricing, AIUsage
 from src.models.orm.app_embed_secrets import AppEmbedSecret
 from src.models.orm.platform_jobs import PlatformJob
@@ -110,6 +110,7 @@ __all__ = [
     "AgentRole",
     "Conversation",
     "Message",
+    "MessageAttachment",
     # AI Usage
     "AIModelPricing",
     "AIUsage",
