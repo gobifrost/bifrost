@@ -66,9 +66,6 @@ function AuthenticatedBinaryPreview({
 	useEffect(() => {
 		let objectUrl: string | null = null;
 		let cancelled = false;
-		setBlobUrl(null);
-		setLoaded(false);
-		setError(false);
 		authFetch(url)
 			.then((response) => {
 				if (!response.ok) throw new Error("Preview failed");
@@ -87,7 +84,16 @@ function AuthenticatedBinaryPreview({
 	}, [url, attempt]);
 
 	if (error) {
-		return <PreviewError onRetry={() => setAttempt((value) => value + 1)} />;
+		return (
+			<PreviewError
+				onRetry={() => {
+					setBlobUrl(null);
+					setLoaded(false);
+					setError(false);
+					setAttempt((value) => value + 1);
+				}}
+			/>
+		);
 	}
 	if (!blobUrl) return <LoadingPreview />;
 
@@ -136,8 +142,6 @@ function AuthenticatedTextPreview({
 
 	useEffect(() => {
 		let cancelled = false;
-		setContent(null);
-		setError(false);
 		authFetch(url)
 			.then((response) => {
 				if (!response.ok) throw new Error("Preview failed");
@@ -151,7 +155,15 @@ function AuthenticatedTextPreview({
 	}, [url, attempt]);
 
 	if (error) {
-		return <PreviewError onRetry={() => setAttempt((value) => value + 1)} />;
+		return (
+			<PreviewError
+				onRetry={() => {
+					setContent(null);
+					setError(false);
+					setAttempt((value) => value + 1);
+				}}
+			/>
+		);
 	}
 	if (content === null) return <LoadingPreview />;
 	if (richPreview) {
