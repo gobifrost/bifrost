@@ -80,6 +80,7 @@ def _svg_aspect_ratio(data: bytes) -> float:
             if width > 0 and height > 0:
                 return width / height
         except (TypeError, ValueError):
+            # Fall through to explicit width/height attributes when viewBox is malformed.
             pass
 
     def length(name: str) -> float | None:
