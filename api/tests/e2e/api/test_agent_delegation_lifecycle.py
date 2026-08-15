@@ -27,6 +27,7 @@ from src.services.execution.agent_helpers import agent_delegation_slug
 from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
 from src.services.llm.base import LLMConfig, ToolCallRequest
 from src.services.llm.pydantic_client import PydanticAIClient
+from src.services.llm_config_service import LLMProviderConfig
 
 
 pytestmark = pytest.mark.asyncio
@@ -301,6 +302,15 @@ async def test_chat_executor_receives_durable_child_callback(
                 "src.services.agent_executor.get_llm_client",
                 new_callable=AsyncMock,
                 return_value=parent_llm,
+            ),
+            patch(
+                "src.services.llm_config_service.LLMConfigService.get_config",
+                new=AsyncMock(
+                    return_value=LLMProviderConfig(
+                        provider="openai",
+                        model="test-parent",
+                    )
+                ),
             ),
             patch(
                 "src.services.agent_executor.create_agent_model",

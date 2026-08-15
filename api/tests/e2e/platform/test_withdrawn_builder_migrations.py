@@ -13,7 +13,7 @@ async def test_fresh_database_does_not_install_withdrawn_builder_schema(
     revision = (
         await db_session.execute(text("SELECT version_num FROM alembic_version"))
     ).scalar_one()
-    assert revision == "20260815_optional_agent_limits"
+    assert revision == "20260815_chat_attachments"
 
     builder_tables = (
         await db_session.execute(
