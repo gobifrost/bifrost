@@ -23,6 +23,7 @@ from src.services.mcp_server.tools import events as events_tool
 
 def _ctx(*, is_platform_admin=False, is_external=False, org_id=...):
     session = AsyncMock()
+    session.add = MagicMock()
     session.execute = AsyncMock()
     result = MagicMock()
     result.scalars.return_value.all.return_value = []

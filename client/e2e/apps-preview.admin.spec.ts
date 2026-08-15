@@ -125,78 +125,94 @@ test.describe("Apps Preview", () => {
 		if (appId) await api.delete(`/api/applications/${appId}`);
 	});
 
-	test("hot-reloads preview on push, navigates pages, and publishes to live", async ({
-		page,
-		api,
-	}) => {
-		const tracker = trackPageErrors(page);
+	test(
+		"hot-reloads preview on push, navigates pages, and publishes to live",
+		{ tag: "@smoke" },
+		async ({ page, api }) => {
+			const tracker = trackPageErrors(page);
 
-		// --- Step 1: preview shows V1 ---
-		await page.goto(`/apps/${APP_SLUG}/preview`);
-		await expect(page.getByTestId("demo-heading")).toHaveText("HELLO V1", {
-			timeout: 15_000,
-		});
-		await expect(page.getByTestId("location-path")).toHaveText("/");
+			// --- Step 1: preview shows V1 ---
+			await page.goto(`/apps/${APP_SLUG}/preview`);
+			await expect(page.getByTestId("demo-heading")).toHaveText(
+				"HELLO V1",
+				{
+					timeout: 15_000,
+				},
+			);
+			await expect(page.getByTestId("location-path")).toHaveText("/");
 
-		// --- Step 2: push V2, preview updates WITHOUT reload ---
-		const writeResp = await api.post("/api/files/write", {
-			data: writeBody(
-				`apps/${APP_SLUG}/pages/index.tsx`,
-				indexTsx("HELLO V2"),
-			),
-		});
-		expect(writeResp.ok(), await writeResp.text()).toBe(true);
+			// --- Step 2: push V2, preview updates WITHOUT reload ---
+			const writeResp = await api.post("/api/files/write", {
+				data: writeBody(
+					`apps/${APP_SLUG}/pages/index.tsx`,
+					indexTsx("HELLO V2"),
+				),
+			});
+			expect(writeResp.ok(), await writeResp.text()).toBe(true);
 
-		await expect(page.getByTestId("demo-heading")).toHaveText("HELLO V2", {
-			timeout: 15_000,
-		});
-		await expect(page.getByTestId("location-path")).toHaveText("/");
+			await expect(page.getByTestId("demo-heading")).toHaveText(
+				"HELLO V2",
+				{
+					timeout: 15_000,
+				},
+			);
+			await expect(page.getByTestId("location-path")).toHaveText("/");
 
-		// --- Step 3: navigate to /other via in-app Link, then back ---
-		await page.getByTestId("to-other").click();
-		await expect(page).toHaveURL(
-			new RegExp(`/apps/${APP_SLUG}/preview/other/?$`),
-		);
-		await expect(page.getByTestId("other-heading")).toHaveText(
-			"OTHER PAGE",
-		);
-		await expect(page.getByTestId("location-path")).toHaveText("/other");
+			// --- Step 3: navigate to /other via in-app Link, then back ---
+			await page.getByTestId("to-other").click();
+			await expect(page).toHaveURL(
+				new RegExp(`/apps/${APP_SLUG}/preview/other/?$`),
+			);
+			await expect(page.getByTestId("other-heading")).toHaveText(
+				"OTHER PAGE",
+			);
+			await expect(page.getByTestId("location-path")).toHaveText(
+				"/other",
+			);
 
-		await page.getByTestId("to-home").click();
-		await expect(page).toHaveURL(
-			new RegExp(`/apps/${APP_SLUG}/preview/?$`),
-		);
-		await expect(page.getByTestId("demo-heading")).toHaveText("HELLO V2");
-		await expect(page.getByTestId("location-path")).toHaveText("/");
+			await page.getByTestId("to-home").click();
+			await expect(page).toHaveURL(
+				new RegExp(`/apps/${APP_SLUG}/preview/?$`),
+			);
+			await expect(page.getByTestId("demo-heading")).toHaveText(
+				"HELLO V2",
+			);
+			await expect(page.getByTestId("location-path")).toHaveText("/");
 
-		// No console errors / pageerrors during the hot-reload + navigation
-		// flow. This also catches "provider context missing" regressions, which
-		// surface as console.error from React but don't throw.
-		expect(tracker.errors, tracker.errors.join("\n")).toEqual([]);
+			// No console errors / pageerrors during the hot-reload + navigation
+			// flow. This also catches "provider context missing" regressions, which
+			// surface as console.error from React but don't throw.
+			expect(tracker.errors, tracker.errors.join("\n")).toEqual([]);
 
-		// --- Step 4: publish, live path shows V2 ---
-		await publishAppAndWait(api, appId);
+			// --- Step 4: publish, live path shows V2 ---
+			await publishAppAndWait(api, appId);
 
-		// Reset the tracker before the next navigation so prior-step noise
-		// doesn't cross-contaminate the live-path assertion.
-		tracker.errors.length = 0;
+			// Reset the tracker before the next navigation so prior-step noise
+			// doesn't cross-contaminate the live-path assertion.
+			tracker.errors.length = 0;
 
-		await page.goto(`/apps/${APP_SLUG}`);
-		await expect(page.getByTestId("demo-heading")).toHaveText("HELLO V2", {
-			timeout: 15_000,
-		});
-		await expect(page.getByTestId("location-path")).toHaveText("/");
+			await page.goto(`/apps/${APP_SLUG}`);
+			await expect(page.getByTestId("demo-heading")).toHaveText(
+				"HELLO V2",
+				{
+					timeout: 15_000,
+				},
+			);
+			await expect(page.getByTestId("location-path")).toHaveText("/");
 
-		// Also verify navigation works in live mode.
-		await page.getByTestId("to-other").click();
-		await expect(page).toHaveURL(
-			new RegExp(`/apps/${APP_SLUG}/other/?$`),
-		);
-		await expect(page.getByTestId("other-heading")).toHaveText(
-			"OTHER PAGE",
-		);
-		await expect(page.getByTestId("location-path")).toHaveText("/other");
+			// Also verify navigation works in live mode.
+			await page.getByTestId("to-other").click();
+			await expect(page).toHaveURL(
+				new RegExp(`/apps/${APP_SLUG}/other/?$`),
+			);
+			await expect(page.getByTestId("other-heading")).toHaveText(
+				"OTHER PAGE",
+			);
+			await expect(page.getByTestId("location-path")).toHaveText(
+				"/other",
+			);
 
-		expect(tracker.errors, tracker.errors.join("\n")).toEqual([]);
-	});
+			expect(tracker.errors, tracker.errors.join("\n")).toEqual([]);
+		},
+	);
 });

@@ -261,8 +261,9 @@ export async function authenticateInBrowser(
 	});
 	console.log(`Navigation response status: ${response?.status()}`);
 
-	// Give React time to render
-	await page.waitForTimeout(2000);
+	// The form becoming visible is the readiness contract; a fixed delay only
+	// hides rendering and routing regressions.
+	await expect(page.getByLabel("Email")).toBeVisible({ timeout: 15000 });
 
 	// Debug: capture what's on the page
 	console.log(`Page title: ${await page.title()}`);
@@ -275,16 +276,13 @@ export async function authenticateInBrowser(
 	await page.screenshot({ path: screenshotPath });
 	console.log(`Screenshot saved to ${screenshotPath}`);
 
-	// Wait for login form
-	await expect(page.getByLabel("Email")).toBeVisible({ timeout: 15000 });
-
 	// Fill credentials
 	await page.getByLabel("Email").fill(credentials.email);
 	await page.getByLabel("Password").fill(credentials.password);
-	await page.getByRole("button", { name: "Sign In" }).click();
+	await page.getByRole("button", { name: "Sign In", exact: true }).click();
 
-	// Wait briefly for response
-	await page.waitForTimeout(1000);
+	const mfaInput = page.getByLabel(/code|totp|verification/i);
+	await expect(mfaInput).toBeVisible();
 
 	// Debug: Check for error messages after login attempt
 	const bodyTextAfterLogin = await page.locator("body").textContent();
@@ -312,28 +310,12 @@ export async function authenticateInBrowser(
 		console.log(`Login error detected: ${errorContent}`);
 	}
 
-	// Handle MFA if required
-	// Look for MFA code input (might be labeled "Code", "TOTP", "Verification code", etc.)
-	const mfaInput = page.getByLabel(/code|totp|verification/i);
-
-	try {
-		await mfaInput.waitFor({ state: "visible", timeout: 5000 });
-		console.log("MFA input found, entering TOTP code...");
-
-		// Generate and enter TOTP code
-		const totpCode = generateTOTP(credentials.totpSecret);
-		console.log(`Generated TOTP code: ${totpCode.substring(0, 3)}***`);
-		await mfaInput.fill(totpCode);
-
-		// Look for verify/submit button
-		const verifyButton = page.getByRole("button", {
-			name: /verify|submit|continue/i,
-		});
-		await verifyButton.click();
-		console.log("Clicked MFA verify button");
-	} catch {
-		console.log("MFA input not found or not required");
-	}
+	console.log("MFA input found, entering TOTP code...");
+	const totpCode = generateTOTP(credentials.totpSecret);
+	console.log(`Generated TOTP code: ${totpCode.substring(0, 3)}***`);
+	await mfaInput.fill(totpCode);
+	await page.getByRole("button", { name: /verify|submit|continue/i }).click();
+	console.log("Clicked MFA verify button");
 
 	// Wait for redirect away from login page (authenticated)
 	// Could be / (dashboard), /forms (org users), or other authenticated routes
@@ -348,11 +330,9 @@ export async function authenticateInBrowser(
 	await page.waitForLoadState("networkidle");
 
 	// Verify we're logged in (Sign In button should not be visible)
-	await expect(page.getByRole("button", { name: "Sign In" })).not.toBeVisible(
-		{
-			timeout: 5000,
-		},
-	);
+	await expect(
+		page.getByRole("button", { name: "Sign In", exact: true }),
+	).not.toBeVisible({ timeout: 5000 });
 }
 
 /**

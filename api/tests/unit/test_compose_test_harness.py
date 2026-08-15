@@ -24,6 +24,7 @@ import re
 
 import yaml
 
+
 def _find_compose() -> pathlib.Path:
     """Locate docker-compose.test.yml in-container (mounted at /app) or on host.
 
@@ -136,3 +137,53 @@ def test_api_quality_script_runs_pyright_without_ci_venv_config():
     assert 'Path("pyrightconfig.docker.json")' in script
     assert "pyright --project pyrightconfig.docker.json --pythonpath /usr/local/bin/python" in script
     assert "ruff check ." in script
+
+
+def test_state_reset_reloads_the_mounted_scheduler_fixture_server():
+    """A fixture edit must not leave a stale long-lived HTTP process running."""
+    script = _find_repo_file("test.sh").read_text()
+    reset_state = script.split("reset_state() {", 1)[1].split("\n}", 1)[0]
+    stop_block = reset_state.split("docker compose", 1)[1].split("2>/dev/null", 1)[0]
+    assert "scheduler-fixtures" in stop_block
+
+
+def test_playwright_uses_the_production_client_image():
+    """Browser gates must cover compiled assets and nginx, not Vite transforms."""
+    compose = yaml.safe_load(_COMPOSE.read_text())
+    client = compose["services"]["client"]
+    assert client["image"] == "bifrost-test-client-e2e:latest"
+    assert client["build"]["dockerfile"] == "Dockerfile"
+    assert client["build"]["target"] == "production"
+    assert "volumes" not in client
+
+
+def test_product_and_docs_browser_commands_start_the_client():
+    """Moving client startup out of stack_up must not break docs capture."""
+    script = _find_repo_file("test.sh").read_text()
+    product = script.split("client_e2e() {", 1)[1].split("\n}", 1)[0]
+    docs = script.split("client_docs() {", 1)[1].split("\n}", 1)[0]
+    assert "start_test_client" in product
+    assert "start_test_client" in docs
+
+
+def test_embed_csp_is_not_lost_to_an_internal_index_redirect():
+    """The final embedded SPA document must retain its computed frame policy."""
+    nginx = _find_repo_file("client/nginx.conf").read_text()
+    public_location = nginx.split(
+        "location ~ ^/embedded/forms/public/", 1
+    )[1].split("location = /_public_form_frame_policy", 1)[0]
+    hmac_location = nginx.split(
+        'location ~ "^/embedded/forms/hmac/', 1
+    )[1].split("location = /_hmac_form_frame_policy", 1)[0]
+
+    for location in (public_location, hmac_location):
+        assert "try_files /index.html =404;" in location
+        assert "try_files $uri /index.html;" not in location
+        assert "add_header Content-Security-Policy" in location
+
+
+def test_production_client_assets_are_world_readable():
+    """Nginx workers must be able to serve assets regardless of source modes."""
+    dockerfile = _find_repo_file("client/Dockerfile").read_text()
+    assert "find dist -type d -exec chmod 755 {} +" in dockerfile
+    assert "find dist -type f -exec chmod 644 {} +" in dockerfile

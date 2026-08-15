@@ -17,6 +17,7 @@ from src.services.agent_runtime import AgentRunBudget
 from src.services.execution.agent_helpers import find_delegated_agent
 from src.services.execution.autonomous_agent_executor import (
     AutonomousAgentExecutor,
+    DELEGATION_TIMEOUT_SECONDS,
     DelegationOutcome,
     MAX_DELEGATION_DEPTH,
     ToolError,
@@ -1395,10 +1396,15 @@ class TestAutonomousAgentExecutor:
 
         executor = AutonomousAgentExecutor(mock_session)
 
-        # Patch asyncio.wait_for to simulate timeout
-        async def mock_wait_for(coro, *, timeout):  # noqa: ARG001
-            coro.close()  # Clean up the coroutine
-            raise asyncio.TimeoutError()
+        # Patch only the delegation deadline. Patching every asyncio.wait_for
+        # call also intercepts Redis transport waits and leaks their coroutine.
+        original_wait_for = asyncio.wait_for
+
+        async def mock_wait_for(coro, timeout):
+            if timeout == DELEGATION_TIMEOUT_SECONDS:
+                coro.close()
+                raise asyncio.TimeoutError()
+            return await original_wait_for(coro, timeout)
 
         with patch("src.services.execution.autonomous_agent_executor.asyncio.wait_for", mock_wait_for):
             result = await executor.run(

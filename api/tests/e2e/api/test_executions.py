@@ -4,6 +4,7 @@ E2E tests for workflow execution.
 Tests sync/async execution, polling, cancellation, and execution history.
 """
 
+import json
 import uuid
 
 import pytest
@@ -129,10 +130,13 @@ class TestAsyncExecution:
         platform_admin,
     ):
         """A receipt is readable before the worker creates its database row."""
-        from src.core.redis_client import get_redis_client
+        from src.core.redis_client import RedisClient
 
         execution_id = str(uuid.uuid4())
-        redis_client = get_redis_client()
+        # This in-process test owns its client. The application singleton is
+        # production-lifetime state and may be bound to another pytest event
+        # loop after a broad ordered run.
+        redis_client = RedisClient()
         await redis_client.set_pending_execution(
             execution_id=execution_id,
             workflow_id=None,
@@ -150,6 +154,7 @@ class TestAsyncExecution:
             )
         finally:
             await redis_client.delete_pending_execution(execution_id)
+            await redis_client.close()
 
         assert response.status_code == 200, response.text
         data = response.json()
@@ -1352,7 +1357,8 @@ def get_data():
         1. The requirements cache in Redis is populated
         2. The cached content includes the installed package
         """
-        from src.core.requirements_cache import get_requirements
+        from src.core.redis_client import RedisClient
+        from src.core.requirements_cache import REQUIREMENTS_KEY
 
         package_name = "humanize"
 
@@ -1399,8 +1405,16 @@ def get_data():
         installed = poll_until(check_package_installed, max_wait=60.0)
         assert installed, f"Package '{package_name}' not installed within timeout"
 
-        # Check Redis cache
-        cached = await get_requirements()
+        # Check the actual Redis boundary with a client owned by this pytest
+        # loop. Calling the production-lifetime get_requirements() singleton
+        # from the test process couples this assertion to an earlier test loop.
+        redis_client = RedisClient()
+        try:
+            cached_json = await redis_client.get(REQUIREMENTS_KEY)
+        finally:
+            await redis_client.close()
+
+        cached = json.loads(cached_json) if cached_json else None
         assert cached is not None, "requirements.txt should be cached in Redis"
         assert package_name in cached["content"].lower(), (
             f"Redis cache should contain '{package_name}', got: {cached['content']}"

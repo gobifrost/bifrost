@@ -712,6 +712,54 @@ class TestGetCommit:
             )
 
 
+class TestCreateRepository:
+    """Repository creation contract without mutating a real GitHub account."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("organization", "endpoint"),
+        [
+            (None, "/user/repos"),
+            ("gobifrost", "/orgs/gobifrost/repos"),
+        ],
+    )
+    async def test_routes_and_shapes_repository_creation(
+        self,
+        organization: str | None,
+        endpoint: str,
+    ):
+        client = GitHubAPIClient(token="test-token")
+        client._request = AsyncMock(
+            return_value={
+                "full_name": "gobifrost/example",
+                "html_url": "https://github.com/gobifrost/example",
+                "clone_url": "https://github.com/gobifrost/example.git",
+            }
+        )
+
+        result = await client.create_repository(
+            "example",
+            description="Repository contract",
+            private=True,
+            organization=organization,
+        )
+
+        client._request.assert_awaited_once_with(
+            "POST",
+            endpoint,
+            json_data={
+                "name": "example",
+                "description": "Repository contract",
+                "private": True,
+            },
+        )
+        assert result == {
+            "full_name": "gobifrost/example",
+            "url": "https://github.com/gobifrost/example",
+            "clone_url": "https://github.com/gobifrost/example.git",
+        }
+
+
 class TestExceptionClasses:
     """Tests for exception classes."""
 

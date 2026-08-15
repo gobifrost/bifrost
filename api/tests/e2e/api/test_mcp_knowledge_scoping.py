@@ -24,6 +24,7 @@ Skipped without ``EMBEDDINGS_AI_TEST_KEY`` since search_knowledge calls
 the embedding provider.
 """
 
+import json
 import logging
 import os
 import uuid
@@ -113,7 +114,12 @@ def _gateway_call(
         arguments,
     )
     assert "result" in payload, payload
-    return payload["result"]["structuredContent"]
+    result = payload["result"]
+    structured = result.get("structuredContent")
+    if structured is not None:
+        return structured
+    assert len(result.get("content", [])) == 1, result
+    return json.loads(result["content"][0]["text"])
 
 
 @pytest.fixture(scope="module")

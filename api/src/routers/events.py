@@ -16,6 +16,7 @@ from sqlalchemy.orm import joinedload
 from src.core.auth import Context, CurrentSuperuser
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
+from shared.event_deliveries import can_retry_delivery_status
 from src.models.contracts.events import (
     CreateDeliveryRequest,
     DynamicValuesRequest,
@@ -1426,7 +1427,7 @@ async def retry_delivery(
         )
 
     # Only retry failed deliveries
-    if delivery.status not in (EventDeliveryStatus.FAILED, EventDeliveryStatus.SKIPPED):
+    if not can_retry_delivery_status(delivery.status):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Cannot retry delivery with status: {delivery.status}",

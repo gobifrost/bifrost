@@ -1,23 +1,29 @@
 """RabbitMQ consumer for autonomous agent runs."""
+
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
 import time
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from src.config import get_settings
-from src.core.pubsub import publish_agent_run_update
 from src.core.cache.keys import agent_run_steps_stream_key
 from src.core.cache.redis_client import get_redis
 from src.core.database import get_session_factory
+from src.core.pubsub import publish_agent_run_update
 from src.jobs.rabbitmq import BaseConsumer
 from src.models.orm.agents import Agent
 from src.models.orm.agent_runs import AgentRun
-from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
+
+if TYPE_CHECKING:
+    from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +129,17 @@ class AgentRunConsumer(BaseConsumer):
             run_timeout = agent.max_run_timeout or DEFAULT_RUN_TIMEOUT
 
             async with get_redis() as redis_for_executor:
-                executor = AutonomousAgentExecutor(self._session_factory, redis_client=redis_for_executor)
+                # Agent/MCP provider clients are heavyweight and unused until an
+                # agent message is actually processed. Keep them out of the
+                # worker's import-time closure and pay the cost at this boundary.
+                from src.services.execution.autonomous_agent_executor import (
+                    AutonomousAgentExecutor,
+                )
+
+                executor = AutonomousAgentExecutor(
+                    self._session_factory,
+                    redis_client=redis_for_executor,
+                )
 
                 # Create executor task so cancel watcher can cancel it
                 executor_task = asyncio.ensure_future(executor.run(

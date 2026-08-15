@@ -20,6 +20,8 @@
 # Client tests:
 #   ./test.sh client unit               Vitest on the host (no stack).
 #   ./test.sh client e2e                Playwright in the stack's client container.
+#   ./test.sh client smoke              Critical zero-retry Playwright merge gate.
+#   ./test.sh client nightly            Full product Playwright (docs capture excluded).
 #   ./test.sh client e2e --screenshots  Capture a screenshot for every test (UX review).
 #   ./test.sh client e2e e2e/auth.unauth.spec.ts   Pass through to playwright.
 #
@@ -49,6 +51,8 @@ mkdir -p "$LOG_DIR"
 # e2e tests stage file:// git repos here). Creating it host-side first means Docker
 # binds an existing host-owned dir instead of auto-creating a root-owned mountpoint.
 mkdir -p "$LOG_DIR/solution-repo-fixtures"
+mkdir -p "$SCRIPT_DIR/client/playwright-results"
+chmod 777 "$SCRIPT_DIR/client/playwright-results" 2>/dev/null || true
 export LOG_DIR
 
 # Load .env.test for optional secrets (GitHub PAT, LLM keys, etc.). Since the
@@ -100,7 +104,11 @@ require_stack_up() {
 reset_state() {
     echo "Resetting state..."
 
-    docker compose -f "$COMPOSE_FILE" stop api worker scheduler pgbouncer 2>/dev/null || true
+    # Reload scheduler-fixtures too: its source is bind-mounted but its simple
+    # HTTP server has no hot reloader. Without this, a changed deterministic
+    # fixture can keep serving its pre-edit behavior for an entire broad run.
+    docker compose -f "$COMPOSE_FILE" stop \
+        api worker scheduler scheduler-fixtures pgbouncer 2>/dev/null || true
 
     docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U bifrost -d postgres -c \
         "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'bifrost_test' AND pid <> pg_backend_pid();" \
@@ -174,9 +182,9 @@ stack_up() {
     docker compose -f "$COMPOSE_FILE" up -d pgbouncer
     wait_for_service "$COMPOSE_FILE" pgbouncer pg_isready -h localhost -p 5432 -U bifrost
 
-    # CI pre-builds the dev images via docker/build-push-action with GHA cache
-    # and tags them as bifrost-test-api-dev:latest / bifrost-test-client-dev:latest
-    # before calling stack up. Setting BIFROST_SKIP_BUILD=1 tells compose to
+    # CI pre-builds the API dev image via docker/build-push-action with GHA cache
+    # and tags it as bifrost-test-api-dev:latest before calling stack up.
+    # Setting BIFROST_SKIP_BUILD=1 tells compose to
     # use those local images directly instead of building. Local dev leaves
     # this unset so `--build` continues to apply (image layer cache makes the
     # rebuilds fast after the first one).
@@ -193,25 +201,6 @@ stack_up() {
     docker compose -f "$COMPOSE_FILE" --profile e2e up -d "$build_flag"
     echo "Waiting for API to be serving traffic on /health/ready..."
     wait_for_api_ready "$COMPOSE_FILE"
-
-    echo "Starting client..."
-    docker compose -f "$COMPOSE_FILE" --profile client up -d "$build_flag" client
-    echo "Waiting for client to be healthy..."
-    for i in {1..120}; do
-        cid=$(docker compose -f "$COMPOSE_FILE" ps -q client 2>/dev/null)
-        if [ -n "$cid" ]; then
-            status=$(docker inspect -f '{{.State.Health.Status}}' "$cid" 2>/dev/null || echo unknown)
-            if [ "$status" = "healthy" ]; then
-                echo "Client ready."
-                break
-            fi
-        fi
-        if [ $i -eq 120 ]; then
-            echo "ERROR: client not healthy after 120s" >&2
-            exit 1
-        fi
-        sleep 1
-    done
 
     echo ""
     echo "Stack is up. Project: $COMPOSE_PROJECT_NAME"
@@ -315,9 +304,11 @@ cmd_client() {
     case "$sub" in
         unit) client_unit "$@" ;;
         e2e) client_e2e "$@" ;;
+        smoke) client_smoke "$@" ;;
+        nightly) client_nightly "$@" ;;
         docs) client_docs "$@" ;;
         *)
-            echo "Usage: ./test.sh client {unit|e2e|docs} [args]" >&2
+            echo "Usage: ./test.sh client {unit|e2e|smoke|nightly|docs} [args]" >&2
             exit 2
             ;;
     esac
@@ -326,6 +317,35 @@ cmd_client() {
 client_unit() {
     echo "Running vitest on host..."
     (cd client && npm test "$@")
+}
+
+start_test_client() {
+    # Playwright runs against the production client image. Keep frontend
+    # startup out of stack_up so backend-only lanes never build or boot a
+    # client they do not use. Both product and documentation browser projects
+    # call this helper before starting the Playwright runner.
+    if [ "${BIFROST_SKIP_BUILD:-0}" != "1" ]; then
+        docker compose -f "$COMPOSE_FILE" build client
+    fi
+    docker compose -f "$COMPOSE_FILE" --profile client up -d --no-build --no-deps client
+    echo "Waiting for production client to be healthy..."
+    for i in {1..120}; do
+        local client_cid
+        client_cid=$(docker compose -f "$COMPOSE_FILE" ps -q client 2>/dev/null)
+        if [ -n "$client_cid" ]; then
+            local client_status
+            client_status=$(docker inspect -f '{{.State.Health.Status}}' "$client_cid" 2>/dev/null || echo unknown)
+            if [ "$client_status" = "healthy" ]; then
+                echo "Production client ready."
+                return
+            fi
+        fi
+        if [ "$i" -eq 120 ]; then
+            echo "ERROR: production client not healthy after 120s" >&2
+            exit 1
+        fi
+        sleep 1
+    done
 }
 
 client_e2e() {
@@ -340,18 +360,33 @@ client_e2e() {
 
     reset_state
 
+    start_test_client
+
     local env_args=()
     if [ "$screenshots_all" = true ]; then
         env_args=(-e PLAYWRIGHT_SCREENSHOT_ALL=1)
     fi
 
     if [ ${#passthrough[@]} -gt 0 ]; then
-        docker compose -f "$COMPOSE_FILE" --profile client run --rm "${env_args[@]}" \
-            playwright-runner npx playwright test "${passthrough[@]}"
+        docker compose -f "$COMPOSE_FILE" --profile client run --rm --no-deps "${env_args[@]}" \
+            playwright-runner node e2e/support/run-playwright.mjs "${passthrough[@]}"
     else
-        docker compose -f "$COMPOSE_FILE" --profile client run --rm "${env_args[@]}" \
-            playwright-runner
+        docker compose -f "$COMPOSE_FILE" --profile client run --rm --no-deps "${env_args[@]}" \
+            playwright-runner node e2e/support/run-playwright.mjs
     fi
+}
+
+client_smoke() {
+    client_e2e --grep @smoke "$@"
+}
+
+client_nightly() {
+    client_e2e \
+        --project=platform-admin \
+        --project=org-user \
+        --project=unauthenticated \
+        --project=chromium \
+        "$@"
 }
 
 client_docs() {
@@ -372,6 +407,7 @@ client_docs() {
     done
 
     reset_state
+    start_test_client
 
     export DOCS_REPO_PATH
     docker compose \
@@ -380,7 +416,7 @@ client_docs() {
         --profile client run --rm \
         -e "DOCS_CAPTURE_IDS=$capture_ids" \
         playwright-runner \
-        npx playwright test --project=docs "${passthrough[@]}"
+        node e2e/support/run-playwright.mjs --project=docs "${passthrough[@]}"
 }
 
 cmd_ci() {

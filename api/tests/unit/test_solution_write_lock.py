@@ -6,21 +6,13 @@ from uuid import uuid4
 
 import pytest
 
+from src.core.cache.redis_client import get_redis
 from src.services.solutions.write_lock import (
     SolutionWriteLockHeld,
     _LOCK_TTL_S,
     _lock_key,
     solution_write_lock,
 )
-
-
-@pytest.fixture(autouse=True)
-def _reset_redis_singleton():
-    import src.core.redis_client as rc
-
-    rc._redis_client = None
-    yield
-    rc._redis_client = None
 
 
 @pytest.mark.e2e
@@ -52,25 +44,21 @@ class TestSolutionWriteLock:
         """Codex #13: a stale holder must not release a SUCCESSOR's lock. Acquire
         as A, simulate A losing it + B acquiring (overwrite the key with B's
         token), then exit A's context — A's release must NOT delete B's key."""
-        import src.core.redis_client as rc
-
         sid = uuid4()
-        redis = await rc.get_redis_client()._get_redis()
         key = _lock_key(sid)
-        async with solution_write_lock(sid):
-            # Simulate: A's TTL lapsed and B acquired with its OWN token.
-            await redis.set(key, "B-successor-token", ex=_LOCK_TTL_S)
-        # A's finally ran release(compare-by-token) — B's key must survive.
-        assert await redis.get(key) == "B-successor-token"
-        await redis.delete(key)  # cleanup
+        async with get_redis() as redis:
+            async with solution_write_lock(sid):
+                # Simulate: A's TTL lapsed and B acquired with its OWN token.
+                await redis.set(key, "B-successor-token", ex=_LOCK_TTL_S)
+            # A's finally ran release(compare-by-token) — B's key must survive.
+            assert await redis.get(key) == "B-successor-token"
+            await redis.delete(key)  # cleanup
 
     async def test_holds_a_live_ttl_that_renews(self) -> None:
         """While held, the key carries a positive TTL (it's the renewable lock,
         not a permanent key) so a crashed holder still self-heals."""
-        import src.core.redis_client as rc
-
         sid = uuid4()
-        async with solution_write_lock(sid):
-            redis = await rc.get_redis_client()._get_redis()
-            ttl = await redis.ttl(_lock_key(sid))
-            assert 0 < ttl <= _LOCK_TTL_S
+        async with get_redis() as redis:
+            async with solution_write_lock(sid):
+                ttl = await redis.ttl(_lock_key(sid))
+                assert 0 < ttl <= _LOCK_TTL_S

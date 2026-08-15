@@ -25,6 +25,10 @@ def _repository_root() -> Path:
 REPO_ROOT = _repository_root()
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 CI_NOOP_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci-noop.yml"
+NIGHTLY_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "nightly.yml"
+PLAYWRIGHT_CONFIG = REPO_ROOT / "client" / "playwright.config.ts"
+TEST_SCRIPT = REPO_ROOT / "test.sh"
+TEST_COMPOSE = REPO_ROOT / "docker-compose.test.yml"
 
 
 def _load_workflow(path: Path) -> dict[str, Any]:
@@ -56,6 +60,8 @@ def test_full_suite_gates_exact_merge_candidate_before_dev_image() -> None:
     assert set(jobs["test-e2e-gate"]["needs"]) == {
         "test-e2e",
         "test-client-unit",
+        "test-client-smoke",
+        "build-dev-candidate",
     }
     assert jobs["test-e2e-gate"]["name"] == "E2E Tests"
 
@@ -70,6 +76,100 @@ def test_full_suite_gates_exact_merge_candidate_before_dev_image() -> None:
     )
     assert "needs" not in build_dev
     assert jobs["deploy-dev"]["needs"] == ["build-dev"]
+
+
+def test_critical_browser_smoke_strengthens_only_exact_candidate_events() -> None:
+    jobs = _load_workflow(CI_WORKFLOW)["jobs"]
+    smoke = jobs["test-client-smoke"]
+    condition = _normalized(smoke["if"])
+
+    assert "github.event_name == 'merge_group'" in condition
+    assert "github.event_name == 'workflow_dispatch'" in condition
+    assert "startsWith(github.ref, 'refs/tags/v')" in condition
+    assert "pull_request" not in condition
+    assert smoke["needs"] == ["build-dev-candidate"]
+
+    run_steps = [step.get("run", "") for step in smoke["steps"]]
+    assert any("./test.sh client smoke" in step for step in run_steps)
+
+    client_build = next(
+        step for step in smoke["steps"]
+        if step.get("name") == "Build production client under test (cached)"
+    )
+    assert client_build["with"]["file"] == "./client/Dockerfile"
+    assert client_build["with"]["target"] == "production"
+    assert client_build["with"]["tags"] == "bifrost-test-client-e2e:latest"
+
+    compose = yaml.safe_load(TEST_COMPOSE.read_text())
+    client = compose["services"]["client"]
+    assert client["image"] == "bifrost-test-client-e2e:latest"
+    assert client["build"]["dockerfile"] == "Dockerfile"
+    assert client["build"]["target"] == "production"
+    assert "volumes" not in client
+
+    playwright_config = PLAYWRIGHT_CONFIG.read_text()
+    assert "retries: 0" in playwright_config
+    assert "retain-on-failure" in playwright_config
+    assert "on-first-retry" not in playwright_config
+
+    smoke_specs = {
+        "setup/global.setup.ts",
+        "auth.unauth.spec.ts",
+        "forms-public.unauth.spec.ts",
+        "apps-preview.admin.spec.ts",
+    }
+    for relative_path in smoke_specs:
+        source = (REPO_ROOT / "client" / "e2e" / relative_path).read_text()
+        assert 'tag: "@smoke"' in source, relative_path
+
+
+def test_dev_artifact_is_built_on_merge_candidate_and_promoted_without_rebuild() -> None:
+    jobs = _load_workflow(CI_WORKFLOW)["jobs"]
+    candidate = jobs["build-dev-candidate"]
+    promotion = jobs["build-dev"]
+
+    assert _normalized(candidate["if"]) == "github.event_name == 'merge_group'"
+    assert candidate["name"] == "Build Dev Candidate"
+    assert candidate["permissions"]["packages"] == "write"
+
+    candidate_steps = candidate["steps"]
+    candidate_builds = [
+        step for step in candidate_steps
+        if str(step.get("uses", "")).startswith("docker/build-push-action@")
+    ]
+    assert len(candidate_builds) == 2
+    assert all(step["with"]["push"] == "true" for step in candidate_builds)
+    assert {
+        step["with"]["tags"] for step in candidate_builds
+    } == {
+        "ghcr.io/${{ env.API_IMAGE }}:candidate-${{ github.sha }}",
+        "ghcr.io/${{ env.CLIENT_IMAGE }}:candidate-${{ github.sha }}",
+    }
+    candidate_source = "\n".join(
+        step.get("run", "") for step in candidate_steps
+    )
+    assert "docker run --rm" in candidate_source
+    assert "from src.main import app" in candidate_source
+    assert "get_version() == os.environ['EXPECTED_VERSION']" in candidate_source
+
+    assert promotion["name"] == "Promote Dev Images"
+    assert not any(
+        str(step.get("uses", "")).startswith("docker/build-push-action@")
+        for step in promotion["steps"]
+    )
+    promotion_source = "\n".join(
+        step.get("run", "") for step in promotion["steps"]
+    )
+    assert "candidate-${GITHUB_SHA}" in promotion_source
+    assert "docker buildx imagetools create" in promotion_source
+    assert "Digest mismatch" in promotion_source
+    assert "fallback" not in promotion_source.lower()
+
+    deploy = jobs["deploy-dev"]
+    assert deploy["needs"] == ["build-dev"]
+    deploy_source = "\n".join(step.get("run", "") for step in deploy["steps"])
+    assert "http://127.0.0.1:18000/health/ready" in deploy_source
+    assert "http://127.0.0.1:18080/" in deploy_source
 
 
 def test_pull_request_reports_required_e2e_context_without_running_full_suite() -> None:
@@ -110,3 +210,36 @@ def test_release_tags_still_require_the_complete_suite() -> None:
     assert set(jobs["build-api"]["needs"]) == release_prerequisites
     assert set(jobs["build-client"]["needs"]) == release_prerequisites
     assert set(jobs["create-release"]["needs"]) == {"build-api", "build-client"}
+
+
+def test_nightly_owns_full_browser_slow_and_clean_build_discovery() -> None:
+    workflow = _load_workflow(NIGHTLY_WORKFLOW)
+    triggers = workflow["on"]
+    jobs = workflow["jobs"]
+
+    assert {"schedule", "workflow_dispatch"} <= triggers.keys()
+    assert set(jobs) == {
+        "product-browser",
+        "slow-unit-contracts",
+        "clean-production-build",
+    }
+
+    browser_steps = [
+        step.get("run", "") for step in jobs["product-browser"]["steps"]
+    ]
+    assert any("./test.sh client nightly" in step for step in browser_steps)
+    assert all("client docs" not in step for step in browser_steps)
+
+    slow_steps = [
+        step.get("run", "") for step in jobs["slow-unit-contracts"]["steps"]
+    ]
+    assert any("-m slow" in step for step in slow_steps)
+
+    build_steps = jobs["clean-production-build"]["steps"]
+    docker_builds = [step for step in build_steps if "with" in step]
+    assert len(docker_builds) == 2
+    assert all(step["with"]["no-cache"] == "true" for step in docker_builds)
+
+    test_script = TEST_SCRIPT.read_text()
+    assert "client_e2e --grep @smoke" in test_script
+    assert "--project=docs" not in test_script.split("client_nightly()", 1)[1].split("}", 1)[0]

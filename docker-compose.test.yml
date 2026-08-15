@@ -393,6 +393,11 @@ services:
       - ./client/src:/client/src:ro  # Read-only — the drift test in
                                       # tests/unit/test_platform_names_match_runtime.py
                                       # parses app-code-runtime.ts to detect new platform exports.
+      - ./client/e2e:/app/client/e2e:ro  # Browser smoke selection is part of
+                                      # the repository-controlled CI safety contract.
+      - ./client/playwright.config.ts:/app/client/playwright.config.ts:ro
+      - ./client/nginx.conf:/app/client/nginx.conf:ro  # Production routing contract.
+      - ./client/Dockerfile:/app/client/Dockerfile:ro  # Production asset-mode contract.
       - ./.claude/skills:/.claude/skills:ro  # Read-only — the drift test in
                                       # tests/unit/test_platform_api_docs.py reads
                                       # bifrost-build/platform-api.md to enforce docs
@@ -428,28 +433,19 @@ services:
   # Client E2E Testing Services (started with --profile client)
   # =============================================================================
 
-  # Client frontend (Vite dev server)
-  # Serves the React app for Playwright browser tests
+  # Production client frontend used by Playwright.
+  #
+  # Browser tests exercise the same compiled assets and nginx routing shipped
+  # in the real client image. A Vite dev server made full-suite timing depend
+  # on cold, on-demand module transforms and never tested the production build.
   client:
-    image: bifrost-test-client-dev:latest
+    image: bifrost-test-client-e2e:latest
     build:
       context: ./client
-      dockerfile: Dockerfile.dev
-    environment:
-      # API_URL and WS_URL are used by Vite's proxy config (server-side)
-      API_URL: http://api:8000
-      WS_URL: ws://api:8000
-    volumes:
-      - ./client/src:/app/src:ro
-      - ./client/public:/app/public:ro
-      - ./client/index.html:/app/index.html:ro
-      - ./client/vite.config.ts:/app/vite.config.ts:ro
-      - ./client/tailwind.config.ts:/app/tailwind.config.ts:ro
-      - ./client/tsconfig.json:/app/tsconfig.json:ro
-      - ./client/tsconfig.app.json:/app/tsconfig.app.json:ro
-      - ./client/tsconfig.node.json:/app/tsconfig.node.json:ro
-      - ./client/components.json:/app/components.json:ro
-      - ./client/postcss.config.js:/app/postcss.config.js:ro
+      dockerfile: Dockerfile
+      target: production
+      args:
+        VITE_BIFROST_VERSION: test
     depends_on:
       api:
         condition: service_healthy
@@ -459,7 +455,7 @@ services:
           - allowed-origin
           - blocked-origin
     healthcheck:
-      test: ["CMD-SHELL", "node -e \"fetch('http://localhost:80/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:80/"]
       interval: 5s
       timeout: 5s
       retries: 30
@@ -469,11 +465,16 @@ services:
   # Playwright E2E test runner
   # Runs browser tests against the client service
   playwright-runner:
+    image: bifrost-test-playwright:latest
     build:
       context: ./client
       dockerfile: Dockerfile.playwright
     environment:
-      TEST_BASE_URL: http://client:80
+      # Chromium grants WebCrypto to localhost HTTP just as it does to deployed
+      # HTTPS. The runner proxies these loopback origins to the client service.
+      TEST_BASE_URL: http://localhost:3000
+      TEST_ALLOWED_ORIGIN: http://localhost:3001
+      TEST_BLOCKED_ORIGIN: http://localhost:3002
       TEST_API_URL: http://api:8000
       CI: "true"
     volumes:
@@ -483,7 +484,7 @@ services:
       - ./client/tsconfig.json:/app/tsconfig.json:ro
       - ./client/tsconfig.app.json:/app/tsconfig.app.json:ro
       - ./client/tsconfig.node.json:/app/tsconfig.node.json:ro
-      - playwright-results:/app/playwright-results
+      - ./client/playwright-results:/app/playwright-results
     depends_on:
       client:
         condition: service_healthy
@@ -494,4 +495,3 @@ services:
 volumes:
   test-mounts:  # File storage for uploads, branding, etc.
   test-coverage:  # Shared coverage data across test phases
-  playwright-results:  # Playwright test results (HTML reports, screenshots, videos)

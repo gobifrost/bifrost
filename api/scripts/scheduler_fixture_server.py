@@ -83,7 +83,11 @@ class FixtureHandler(BaseHTTPRequestHandler):
                         {
                             "object": "embedding",
                             "index": index,
-                            "embedding": [1.0, 0.0, 0.0],
+                            # Match OpenAI's default embedding dimension so this
+                            # deterministic fixture does not force an unrelated
+                            # global reindex when earlier tests created real
+                            # text-embedding-3-small rows.
+                            "embedding": [1.0] + [0.0] * 1535,
                         }
                         for index, _text in enumerate(inputs)
                     ],

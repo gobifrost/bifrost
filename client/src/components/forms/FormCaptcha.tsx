@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { CheckCircle2, Loader2, ShieldCheck } from "lucide-react";
 import {
+	pbkdf2 as altchaPbkdf2,
 	solveChallenge,
 	type Challenge,
 	type DeriveKeyFunction,
 } from "altcha/lib";
-import { createSHA256, pbkdf2 } from "hash-wasm";
+import { createSHA256, pbkdf2 as wasmPbkdf2 } from "hash-wasm";
 
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -19,6 +20,35 @@ interface FormCaptchaProps {
 
 type VerificationState =
 	"loading" | "ready" | "verifying" | "verified" | "error";
+
+export const deriveFormCaptchaKey: DeriveKeyFunction = async (
+	parameters,
+	salt,
+	password,
+) => {
+	if (parameters.algorithm !== "PBKDF2/SHA-256") {
+		throw new Error("Unsupported verification algorithm");
+	}
+
+	// HTTPS production pages have native WebCrypto, which is substantially
+	// faster than evaluating the proof through WASM. Keep the existing WASM
+	// implementation for HTTP development origins where subtle crypto is not
+	// exposed by the browser.
+	if (globalThis.crypto?.subtle) {
+		return altchaPbkdf2.deriveKey(parameters, salt, password);
+	}
+
+	return {
+		derivedKey: await wasmPbkdf2({
+			password,
+			salt,
+			iterations: parameters.cost,
+			hashLength: parameters.keyLength ?? 32,
+			hashFunction: createSHA256(),
+			outputType: "binary",
+		}),
+	};
+};
 
 export function FormCaptcha({ formId, onPayloadChange }: FormCaptchaProps) {
 	const solveControllerRef = useRef<AbortController | null>(null);
@@ -70,26 +100,6 @@ export function FormCaptcha({ formId, onPayloadChange }: FormCaptchaProps) {
 	const verify = async () => {
 		if (!challenge || state !== "ready") return;
 		const controller = new AbortController();
-		const hashFunction = createSHA256();
-		const deriveKey: DeriveKeyFunction = async (
-			parameters,
-			salt,
-			password,
-		) => {
-			if (parameters.algorithm !== "PBKDF2/SHA-256") {
-				throw new Error("Unsupported verification algorithm");
-			}
-			return {
-				derivedKey: await pbkdf2({
-					password,
-					salt,
-					iterations: parameters.cost,
-					hashLength: parameters.keyLength ?? 32,
-					hashFunction,
-					outputType: "binary",
-				}),
-			};
-		};
 		solveControllerRef.current = controller;
 		setState("verifying");
 		setError(null);
@@ -98,7 +108,7 @@ export function FormCaptcha({ formId, onPayloadChange }: FormCaptchaProps) {
 			const solution = await solveChallenge({
 				challenge,
 				controller,
-				deriveKey,
+				deriveKey: deriveFormCaptchaKey,
 				timeout: 90_000,
 			});
 			if (!solution) throw new Error("Verification timed out");
