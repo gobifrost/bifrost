@@ -313,7 +313,14 @@ async def create_application(
 
     try:
         application = await repo.create_application(data, created_by=user.email)
-        return await application_to_public(application, repo)
+        response = await application_to_public(application, repo)
+        # The default request-scoped database dependency commits during
+        # teardown, after the response may already have been sent.  A caller
+        # that immediately uses the returned ID can therefore race that commit
+        # and observe a 404.  A successful create response must only leave this
+        # command boundary once the row is durable.
+        await ctx.db.commit()
+        return response
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
