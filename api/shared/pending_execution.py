@@ -6,6 +6,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 
+from src.core.log_safety import log_safe
 from src.core.principal import UserPrincipal
 from src.core.redis_client import get_redis_client
 from src.models import WorkflowExecution
@@ -29,7 +30,7 @@ async def get_pending_execution_fallback(
     except Exception:
         logger.warning(
             "Could not check Redis for pending execution %s",
-            execution_id,
+            log_safe(execution_id),
             exc_info=True,
         )
         return None, "NotFound"
