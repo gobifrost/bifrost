@@ -238,14 +238,21 @@ jobs:
   # bin-packed first, then round-robin in sorted order — adding a file only
   # moves files in shards downstream of the insertion point.
   #
+  # The complete suite intentionally runs on merge_group rather than ordinary
+  # pull_request events. The merge queue's synthetic ref is the exact candidate
+  # that can reach main and trigger shared :dev image publication. Tag and
+  # workflow_dispatch runs remain complete as well.
+  #
   # The internal matrix job (test-e2e) uses shard names like
   # "E2E Tests (shard 1/2)". The aggregate gate job below (test-e2e-gate)
   # is named EXACTLY "E2E Tests" to match the required status check name —
   # no ruleset edits needed.
   # =============================================================================
   test-e2e:
-    # Skip on push: main — covered by the merge_group run.
-    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+    if: >-
+      github.event_name == 'merge_group' ||
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     name: E2E Tests (shard ${{ matrix.shard }}/2)
     strategy:
@@ -295,21 +302,50 @@ jobs:
           ./test.sh "${shard_files[@]}" -v --durations=50
 
   # Aggregate gate — required check named "E2E Tests" (matches ruleset 15329014).
-  # Fails if any shard failed or was cancelled. Runs even when shards fail
-  # (if: always()) so branch protection always sees a conclusive result.
+  # Fails if either E2E shard or the client unit suite failed/cancelled. Client
+  # unit has its own visible job but is folded into this required context because
+  # the repository ruleset does not require "Client Unit Tests" directly.
+  # Runs even when dependencies fail (if: always()) so branch protection always
+  # sees a conclusive result.
   test-e2e-gate:
-    if: always() && (github.event_name != 'push' || github.ref != 'refs/heads/main')
-    needs: [test-e2e]
+    if: >-
+      always() && (
+        github.event_name == 'merge_group' ||
+        github.event_name == 'workflow_dispatch' ||
+        startsWith(github.ref, 'refs/tags/v')
+      )
+    needs: [test-e2e, test-client-unit]
     runs-on: ubuntu-latest
     name: E2E Tests
     steps:
       - name: Check shard results
         run: |
-          if [ "${{ needs.test-e2e.result }}" != "success" ]; then
-            echo "One or more e2e shards failed or were cancelled (result: ${{ needs.test-e2e.result }})"
+          if [ "${{ needs.test-e2e.result }}" != "success" ] || \
+             [ "${{ needs.test-client-unit.result }}" != "success" ]; then
+            echo "E2E matrix result: ${{ needs.test-e2e.result }}"
+            echo "Client unit result: ${{ needs.test-client-unit.result }}"
             exit 1
           fi
-          echo "All e2e shards passed."
+          echo "All e2e shards and client unit tests passed."
+
+  # Ordinary PRs retain the existing required check name while deferring the
+  # complete E2E suite to merge_group. Lint, backend unit, and client unit tests
+  # still run on the PR. The static workflow contract exercised by Unit Tests
+  # prevents this check from being used without the full exact-candidate gate.
+  test-e2e-pr:
+    if: always() && github.event_name == 'pull_request'
+    needs: [test-client-unit]
+    runs-on: ubuntu-latest
+    name: E2E Tests
+    steps:
+      - name: Report exact-candidate E2E gate
+        run: |
+          if [ "${{ needs.test-client-unit.result }}" != "success" ]; then
+            echo "Client unit tests failed or were cancelled (result: ${{ needs.test-client-unit.result }})"
+            exit 1
+          fi
+          echo "Full E2E is deferred to the merge queue's exact merge candidate."
+          echo "A successful merge_group E2E Tests check is required before main and :dev images."
 
   # =============================================================================
   # Dev Build - Every push to main, gated by unit tests only

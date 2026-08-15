@@ -383,6 +383,7 @@ services:
       - ./api/pyproject.toml:/app/pyproject.toml:ro
       - ./api/pyrightconfig.json:/app/pyrightconfig.json:ro
       - ./api/Dockerfile.dev:/app/api/Dockerfile.dev:ro
+      - ./.github/workflows:/app/.github/workflows:ro  # CI topology contract tests
       - ./test.sh:/app/test.sh:ro
       - ./docker-compose.test.yml:/app/docker-compose.test.yml:ro  # Read-only —
                                       # the harness guard in
