@@ -10401,9 +10401,19 @@ export interface components {
             max_token_budget?: number | null;
             /**
              * Logo
-             * @description Inline logo as a data URL, or null when no logo is set.
+             * @description Inline presentation logo as a data URL on single-agent responses.
              */
             logo?: string | null;
+            /**
+             * Logo Url
+             * @description Versioned presentation-logo URL, or null when no logo is set.
+             */
+            logo_url?: string | null;
+            /**
+             * Logo Version
+             * @description Presentation-logo content hash.
+             */
+            logo_version?: string | null;
         };
         /**
          * AgentRunChildResponse
@@ -10768,9 +10778,19 @@ export interface components {
             mcp_connection_count: number;
             /**
              * Logo
-             * @description Inline logo as a data URL, or null when no logo is set. Avoids an N+1 GET per card in list views.
+             * @description Inline presentation logo as a data URL when explicitly requested.
              */
             logo?: string | null;
+            /**
+             * Logo Url
+             * @description Versioned presentation-logo URL, or null when no logo is set.
+             */
+            logo_url?: string | null;
+            /**
+             * Logo Version
+             * @description Presentation-logo content hash.
+             */
+            logo_version?: string | null;
             /**
              * Is Solution Managed
              * @description True if managed by a deployed Solution (read-only on platform)
@@ -11156,9 +11176,19 @@ export interface components {
             repo_path: string;
             /**
              * Logo
-             * @description Inline logo as a data URL, or null when no logo is set. Avoids an N+1 GET per card in list views.
+             * @description Inline presentation logo as a data URL on single-application responses.
              */
             logo?: string | null;
+            /**
+             * Logo Url
+             * @description Versioned presentation-logo URL, or null when no logo is set.
+             */
+            logo_url?: string | null;
+            /**
+             * Logo Version
+             * @description Presentation-logo content hash.
+             */
+            logo_version?: string | null;
         };
         /**
          * ApplicationPublishRequest
@@ -22952,6 +22982,10 @@ export interface components {
              */
             status: string;
             entity_counts?: components["schemas"]["SolutionEntityCounts"];
+            /** Logo Url */
+            logo_url?: string | null;
+            /** Logo Version */
+            logo_version?: string | null;
             /**
              * Scope
              * @enum {string}
@@ -23480,6 +23514,10 @@ export interface components {
             is_active?: boolean | null;
             /** Logo */
             logo?: string | null;
+            /** Logo Url */
+            logo_url?: string | null;
+            /** Logo Version */
+            logo_version?: string | null;
             /** Source Table */
             source_table?: string | null;
             /** Select */
@@ -35179,6 +35217,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                    "image/webp": unknown;
                     "image/png": unknown;
                     "image/jpeg": unknown;
                     "image/svg+xml": unknown;
@@ -39800,6 +39839,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                    "image/webp": unknown;
                     "image/png": unknown;
                     "image/jpeg": unknown;
                     "image/svg+xml": unknown;
@@ -41543,6 +41583,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                    "image/webp": unknown;
                     "image/png": unknown;
                     "image/jpeg": unknown;
                     "image/svg+xml": unknown;

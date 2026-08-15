@@ -8,6 +8,7 @@ Agents are virtual entities stored only in the database.
 Git sync serializes agents on-the-fly from the database.
 """
 
+import asyncio
 import base64
 import logging
 from datetime import datetime, timezone
@@ -43,7 +44,11 @@ from src.models.orm import (
     Role,
     Workflow,
 )
-from shared.svg_sanitizer import SvgSanitizationError, sanitize_svg
+from shared.logo_processing import (
+    LogoProcessingError,
+    is_logo_thumbnail_version,
+    process_logo,
+)
 from src.repositories.agents import AgentRepository
 from src.services.solutions.guard import assert_not_solution_managed
 from src.routers.tools import get_system_tool_ids
@@ -53,10 +58,6 @@ from src.services.workflow_role_service import sync_agent_roles_to_workflows
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agents", tags=["Agents"])
-
-LOGO_ALLOWED_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/svg+xml"}
-LOGO_MAX_SIZE = 5 * 1024 * 1024  # 5 MB
-
 
 async def _validate_agent_references(
     db: DbSession,
@@ -208,6 +209,13 @@ def _logo_data_url(data: bytes | None, content_type: str | None) -> str | None:
     return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
 
 
+def _agent_logo_url(agent: Agent) -> str | None:
+    """Return a cache-busted URL only after a presentation copy exists."""
+    if not is_logo_thumbnail_version(agent.logo_thumbnail_version):
+        return None
+    return f"/api/agents/{agent.id}/logo?v={agent.logo_thumbnail_version}"
+
+
 def _agent_to_public(agent: Agent) -> AgentPublic:
     """Convert Agent ORM to AgentPublic with relationships."""
     valid_system_tool_ids = set(get_system_tool_ids())
@@ -240,7 +248,16 @@ def _agent_to_public(agent: Agent) -> AgentPublic:
         llm_max_tokens=agent.llm_max_tokens,
         max_iterations=agent.max_iterations,
         max_token_budget=agent.max_token_budget,
-        logo=_logo_data_url(agent.logo_data, agent.logo_content_type),
+        logo=_logo_data_url(
+            agent.logo_thumbnail_data or agent.logo_data,
+            agent.logo_thumbnail_content_type or agent.logo_content_type,
+        ),
+        logo_url=_agent_logo_url(agent),
+        logo_version=(
+            agent.logo_thumbnail_version
+            if is_logo_thumbnail_version(agent.logo_thumbnail_version)
+            else None
+        ),
         is_solution_managed=agent.solution_id is not None,
         solution_id=agent.solution_id,
     )
@@ -329,7 +346,13 @@ async def list_agents(
         summary = AgentSummary.model_validate(a)
         summary.dependency_count = dep_counts.get(a.id, 0)
         summary.mcp_connection_count = mcp_counts.get(a.id, 0)
-        summary.logo = _logo_data_url(a.logo_data, a.logo_content_type)
+        summary.logo = None
+        summary.logo_url = _agent_logo_url(a)
+        summary.logo_version = (
+            a.logo_thumbnail_version
+            if is_logo_thumbnail_version(a.logo_thumbnail_version)
+            else None
+        )
         result.append(summary)
 
     return result
@@ -1053,7 +1076,13 @@ async def get_agent_delegations(
     summaries = []
     for a in agent.delegated_agents:
         s = AgentSummary.model_validate(a)
-        s.logo = _logo_data_url(a.logo_data, a.logo_content_type)
+        s.logo = None
+        s.logo_url = _agent_logo_url(a)
+        s.logo_version = (
+            a.logo_thumbnail_version
+            if is_logo_thumbnail_version(a.logo_thumbnail_version)
+            else None
+        )
         summaries.append(s)
     return summaries
 
@@ -1082,30 +1111,20 @@ async def upload_agent_logo(
         )
     assert_not_solution_managed(agent)
 
-    if file.content_type not in LOGO_ALLOWED_CONTENT_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid file type. Allowed: {', '.join(sorted(LOGO_ALLOWED_CONTENT_TYPES))}",
-        )
-
     content = await file.read()
-    if len(content) > LOGO_MAX_SIZE:
+    try:
+        processed = await asyncio.to_thread(process_logo, content, file.content_type or "")
+    except LogoProcessingError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File too large. Maximum size: {LOGO_MAX_SIZE // 1024 // 1024} MB",
-        )
+            detail=str(exc),
+        ) from exc
 
-    if file.content_type == "image/svg+xml":
-        try:
-            content = sanitize_svg(content)
-        except SvgSanitizationError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid SVG: {exc}",
-            )
-
-    agent.logo_data = content
-    agent.logo_content_type = file.content_type
+    agent.logo_data = processed.original_data
+    agent.logo_content_type = processed.original_content_type
+    agent.logo_thumbnail_data = processed.thumbnail_data
+    agent.logo_thumbnail_content_type = processed.thumbnail_content_type
+    agent.logo_thumbnail_version = processed.thumbnail_version
     await db.commit()
     return {"ok": True}
 
@@ -1113,7 +1132,14 @@ async def upload_agent_logo(
 @router.get(
     "/{agent_id}/logo",
     responses={
-        200: {"content": {"image/png": {}, "image/jpeg": {}, "image/svg+xml": {}}},
+        200: {
+            "content": {
+                "image/webp": {},
+                "image/png": {},
+                "image/jpeg": {},
+                "image/svg+xml": {},
+            }
+        },
         404: {"description": "No logo set"},
     },
 )
@@ -1136,9 +1162,23 @@ async def get_agent_logo(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Logo not set",
         )
+    thumbnail_ready = bool(agent.logo_thumbnail_data and agent.logo_thumbnail_version)
+    headers = (
+        {
+            "Cache-Control": "private, max-age=31536000, immutable",
+            "ETag": f'"{agent.logo_thumbnail_version}"',
+        }
+        if thumbnail_ready
+        else {"Cache-Control": "no-store"}
+    )
     return Response(
-        content=agent.logo_data,
-        media_type=agent.logo_content_type or "application/octet-stream",
+        content=agent.logo_thumbnail_data or agent.logo_data,
+        media_type=(
+            agent.logo_thumbnail_content_type
+            or agent.logo_content_type
+            or "application/octet-stream"
+        ),
+        headers=headers,
     )
 
 
@@ -1165,5 +1205,8 @@ async def delete_agent_logo(
     assert_not_solution_managed(agent)
     agent.logo_data = None
     agent.logo_content_type = None
+    agent.logo_thumbnail_data = None
+    agent.logo_thumbnail_content_type = None
+    agent.logo_thumbnail_version = None
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

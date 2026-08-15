@@ -484,6 +484,7 @@ export function Solutions() {
 										<EntityLogo
 											entityType="solution"
 											entityId={sol.id}
+											logo={sol.logo_url ?? null}
 											fallback={
 												<Boxes className="h-4 w-4 shrink-0 text-muted-foreground" />
 											}
@@ -547,6 +548,7 @@ export function Solutions() {
 											<EntityLogo
 												entityType="solution"
 												entityId={sol.id}
+												logo={sol.logo_url ?? null}
 												fallback={
 													<Boxes className="h-4 w-4 shrink-0 text-muted-foreground" />
 												}

@@ -495,10 +495,8 @@ function AgentGridCard({
 						<EntityLogo
 							entityType="agent"
 							entityId={agent.id}
-							logo={agent.logo ?? null}
-							fallback={
-								<Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-							}
+							logo={agent.logo_url ?? null}
+							fallback={<Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
 							size={20}
 							className="h-5 w-5 rounded shrink-0 object-cover"
 						/>

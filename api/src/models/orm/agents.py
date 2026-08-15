@@ -34,6 +34,9 @@ class Agent(Base):
     description: Mapped[str | None] = mapped_column(Text, default=None)
     logo_data: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
     logo_content_type: Mapped[str | None] = mapped_column(String(50), default=None)
+    logo_thumbnail_data: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
+    logo_thumbnail_content_type: Mapped[str | None] = mapped_column(String(50), default=None)
+    logo_thumbnail_version: Mapped[str | None] = mapped_column(String(64), default=None)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     channels: Mapped[list] = mapped_column(JSONB, default=["chat"])
     access_level: Mapped[AgentAccessLevel] = mapped_column(

@@ -77,6 +77,8 @@ dependencies = [
     "croniter",  # CRON expression parsing
     "tzdata",  # IANA timezone data for zoneinfo in slim runtime images
     "defusedxml>=0.7.1",  # Safe XML/SVG parsing — strips scripts/event-handlers from uploads
+    "Pillow",  # Decode, resize, and encode bounded entity-logo thumbnails
+    "CairoSVG",  # Rasterize sanitized SVG logos before thumbnail encoding
 
     # =========================================================================
     # Code Transformation

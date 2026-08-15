@@ -54,20 +54,16 @@ from src.models.orm.workflows import Workflow
 from src.services.solution_deploy_preflight import preflight_workflows
 from src.services.solutions.storage import SolutionStorage
 from src.services.sync_ops import Upsert
+from shared.logo_processing import ProcessedLogo, process_logo
 
 logger = logging.getLogger(__name__)
 
-# App-logo limits — mirror the upload endpoint (applications.py).
-_LOGO_ALLOWED_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/svg+xml"}
-_LOGO_MAX_SIZE = 5 * 1024 * 1024  # 5 MB
-
-
 def _decode_logo(
     label: str, b64: str | None, content_type: str | None
-) -> tuple[bytes | None, str | None]:
-    """Validate + decode a manifest-declared logo into (data, content_type).
+) -> ProcessedLogo | None:
+    """Decode and normalize a manifest-declared platform logo.
 
-    Returns (None, None) when no logo is declared — deploy then CLEARS any
+    Returns ``None`` when no logo is declared — deploy then clears any
     prior logo (deploy is the publish, so a logo dropped from the manifest is
     dropped from the row). Applies the same content-type allow-list, size cap,
     and SVG sanitization as the interactive upload endpoint, so a bundle can't
@@ -75,27 +71,14 @@ def _decode_logo(
     solution-level icon.
     """
     if not b64:
-        return None, None
-    if content_type not in _LOGO_ALLOWED_CONTENT_TYPES:
-        raise SolutionDeployConflict(
-            f"{label}: logo content type {content_type!r} not allowed "
-            f"(png, jpeg, or svg)"
-        )
+        return None
     import base64 as _b64
 
-    data = _b64.b64decode(b64)
-    if len(data) > _LOGO_MAX_SIZE:
-        raise SolutionDeployConflict(
-            f"{label}: logo exceeds {_LOGO_MAX_SIZE // 1024 // 1024} MB"
-        )
-    if content_type == "image/svg+xml":
-        from shared.svg_sanitizer import SvgSanitizationError, sanitize_svg
-
-        try:
-            data = sanitize_svg(data)
-        except SvgSanitizationError as exc:
-            raise SolutionDeployConflict(f"{label}: invalid SVG logo: {exc}")
-    return data, content_type
+    try:
+        data = _b64.b64decode(b64, validate=True)
+        return process_logo(data, content_type or "")
+    except ValueError as exc:
+        raise SolutionDeployConflict(f"{label}: {exc}") from exc
 
 
 def solution_entity_id(install_id: UUID, manifest_id: UUID) -> UUID:
@@ -451,11 +434,16 @@ class SolutionDeployer:
 
         # ── Solution-level icon — deploy-owned exactly like the app logo:
         # declared in the bundle => set, absent => cleared.
-        sol_logo, sol_logo_ct = _decode_logo(
+        sol_logo = _decode_logo(
             f"solution '{solution.slug}'", bundle.logo_b64, bundle.logo_content_type
         )
-        solution.logo_data = sol_logo
-        solution.logo_content_type = sol_logo_ct
+        solution.logo_data = sol_logo.original_data if sol_logo else None
+        solution.logo_content_type = sol_logo.original_content_type if sol_logo else None
+        solution.logo_thumbnail_data = sol_logo.thumbnail_data if sol_logo else None
+        solution.logo_thumbnail_content_type = (
+            sol_logo.thumbnail_content_type if sol_logo else None
+        )
+        solution.logo_thumbnail_version = sol_logo.thumbnail_version if sol_logo else None
 
         # ── README — repo-sourced markdown, deploy-owned full-replace (absent
         # => cleared), same lifecycle as the logo above.
@@ -1153,11 +1141,22 @@ class SolutionDeployer:
             # like the upload endpoint, then stamp the row. Deploy is the publish,
             # so the logo is deploy-owned: present => set, absent => cleared,
             # keeping deploy idempotent/round-tripping.
-            logo_data, logo_ct = _decode_logo(
+            processed_logo = _decode_logo(
                 f"app '{slug}'", mapp.get("logo_b64"), mapp.get("logo_content_type")
             )
-            values["logo_data"] = logo_data
-            values["logo_content_type"] = logo_ct
+            values["logo_data"] = processed_logo.original_data if processed_logo else None
+            values["logo_content_type"] = (
+                processed_logo.original_content_type if processed_logo else None
+            )
+            values["logo_thumbnail_data"] = (
+                processed_logo.thumbnail_data if processed_logo else None
+            )
+            values["logo_thumbnail_content_type"] = (
+                processed_logo.thumbnail_content_type if processed_logo else None
+            )
+            values["logo_thumbnail_version"] = (
+                processed_logo.thumbnail_version if processed_logo else None
+            )
 
             await Upsert(
                 model=Application, id=app_id, values=values, match_on="id"
