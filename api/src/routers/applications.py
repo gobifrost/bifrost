@@ -12,6 +12,7 @@ Applications use code-based files (TSX/TypeScript) stored in app_files table.
 File operations are handled through the app_files router.
 """
 
+import asyncio
 import base64
 import logging
 import re
@@ -52,7 +53,11 @@ from src.services.platform_jobs import (
 )
 from src.services.solutions.guard import assert_entity_id_not_solution_managed
 from src.core.exceptions import AccessDeniedError
-from shared.svg_sanitizer import SvgSanitizationError, sanitize_svg
+from shared.logo_processing import (
+    LogoProcessingError,
+    is_logo_thumbnail_version,
+    process_logo,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -113,9 +118,18 @@ def _logo_data_url(data: bytes | None, content_type: str | None) -> str | None:
     return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
 
 
+def _application_logo_url(application: Application) -> str | None:
+    """Return a cache-busted URL only after a presentation copy exists."""
+    if not is_logo_thumbnail_version(application.logo_thumbnail_version):
+        return None
+    return f"/api/applications/{application.id}/logo?v={application.logo_thumbnail_version}"
+
+
 async def application_to_public(
     application: Application,
     repo: "ApplicationRepository",
+    *,
+    include_inline_logo: bool = True,
 ) -> ApplicationPublic:
     """Convert Application ORM to ApplicationPublic with role_ids."""
     role_ids = await repo.get_role_ids(application.id)
@@ -136,7 +150,20 @@ async def application_to_public(
         app_model=application.app_model,
         role_ids=role_ids,
         repo_path=application.repo_path,
-        logo=_logo_data_url(application.logo_data, application.logo_content_type),
+        logo=(
+            _logo_data_url(
+                application.logo_thumbnail_data or application.logo_data,
+                application.logo_thumbnail_content_type or application.logo_content_type,
+            )
+            if include_inline_logo
+            else None
+        ),
+        logo_url=_application_logo_url(application),
+        logo_version=(
+            application.logo_thumbnail_version
+            if is_logo_thumbnail_version(application.logo_thumbnail_version)
+            else None
+        ),
         is_solution_managed=application.solution_id is not None,
         solution_id=application.solution_id,
     )
@@ -254,10 +281,6 @@ async def get_application_by_id_or_404(
         )
 
 
-LOGO_ALLOWED_CONTENT_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/svg+xml"}
-LOGO_MAX_SIZE = 5 * 1024 * 1024  # 5 MB
-
-
 # =============================================================================
 # CRUD Endpoints
 # =============================================================================
@@ -341,7 +364,10 @@ async def list_applications(
         applications = await repo.list_applications()
 
     # Convert each application with role_ids
-    public_apps = [await application_to_public(app, repo) for app in applications]
+    public_apps = [
+        await application_to_public(app, repo, include_inline_logo=False)
+        for app in applications
+    ]
 
     return ApplicationListResponse(
         applications=public_apps,
@@ -989,30 +1015,20 @@ async def upload_application_logo(
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
     application = await get_application_by_id_or_404(ctx, app_id)
 
-    if file.content_type not in LOGO_ALLOWED_CONTENT_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid file type. Allowed: {', '.join(sorted(LOGO_ALLOWED_CONTENT_TYPES))}",
-        )
-
     content = await file.read()
-    if len(content) > LOGO_MAX_SIZE:
+    try:
+        processed = await asyncio.to_thread(process_logo, content, file.content_type or "")
+    except LogoProcessingError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File too large. Maximum size: {LOGO_MAX_SIZE // 1024 // 1024} MB",
-        )
+            detail=str(exc),
+        ) from exc
 
-    if file.content_type == "image/svg+xml":
-        try:
-            content = sanitize_svg(content)
-        except SvgSanitizationError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid SVG: {exc}",
-            )
-
-    application.logo_data = content
-    application.logo_content_type = file.content_type
+    application.logo_data = processed.original_data
+    application.logo_content_type = processed.original_content_type
+    application.logo_thumbnail_data = processed.thumbnail_data
+    application.logo_thumbnail_content_type = processed.thumbnail_content_type
+    application.logo_thumbnail_version = processed.thumbnail_version
     await ctx.db.commit()
     return {"ok": True}
 
@@ -1021,7 +1037,14 @@ async def upload_application_logo(
     "/{app_id}/logo",
     summary="Get application logo",
     responses={
-        200: {"content": {"image/png": {}, "image/jpeg": {}, "image/svg+xml": {}}},
+        200: {
+            "content": {
+                "image/webp": {},
+                "image/png": {},
+                "image/jpeg": {},
+                "image/svg+xml": {},
+            }
+        },
         404: {"description": "No logo set"},
     },
 )
@@ -1043,9 +1066,25 @@ async def get_application_logo(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Logo not set",
         )
+    thumbnail_ready = bool(
+        application.logo_thumbnail_data and application.logo_thumbnail_version
+    )
+    headers = (
+        {
+            "Cache-Control": "private, max-age=31536000, immutable",
+            "ETag": f'"{application.logo_thumbnail_version}"',
+        }
+        if thumbnail_ready
+        else {"Cache-Control": "no-store"}
+    )
     return Response(
-        content=application.logo_data,
-        media_type=application.logo_content_type or "application/octet-stream",
+        content=application.logo_thumbnail_data or application.logo_data,
+        media_type=(
+            application.logo_thumbnail_content_type
+            or application.logo_content_type
+            or "application/octet-stream"
+        ),
+        headers=headers,
     )
 
 
@@ -1062,5 +1101,8 @@ async def delete_application_logo(
     application = await get_application_by_id_or_404(ctx, app_id)
     application.logo_data = None
     application.logo_content_type = None
+    application.logo_thumbnail_data = None
+    application.logo_thumbnail_content_type = None
+    application.logo_thumbnail_version = None
     await ctx.db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -91,6 +91,9 @@ class _FakeAppRow:
         self.repo_path = "apps/my-app"
         self.logo_data = None
         self.logo_content_type = None
+        self.logo_thumbnail_data = None
+        self.logo_thumbnail_content_type = None
+        self.logo_thumbnail_version = None
         self.solution_id = solution_id
 
 

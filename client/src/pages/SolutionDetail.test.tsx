@@ -132,7 +132,7 @@ function makeEntities(statusOverride = "active") {
 					app_model: "standalone_v2",
 					is_published: true,
 					has_unpublished_changes: false,
-					logo: "data:image/svg+xml;base64,PHN2Zy8+",
+					logo_url: "/api/applications/app-1/logo?v=thumb-v1",
 				},
 			],
 			forms: [
@@ -591,7 +591,7 @@ describe("SolutionDetail", () => {
 			expect(screen.queryByText(/open published/i)).not.toBeInTheDocument();
 			expect(screen.getByTestId("entity-logo")).toHaveAttribute(
 				"src",
-				"data:image/svg+xml;base64,PHN2Zy8+",
+				"/api/applications/app-1/logo?v=thumb-v1",
 			);
 			await user.click(screen.getByRole("button", { name: /solution app/i }));
 

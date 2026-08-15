@@ -1,16 +1,18 @@
 """Solution-level icon: ``logo:`` in bifrost.solution.yaml → deploy → install.
 
 ``_decode_logo`` is the shared validator (apps + the solution icon): content
-type allow-list, 5 MB cap, SVG sanitization, and (None, None) when no logo is
+type allow-list, 5 MB cap, SVG sanitization, and ``None`` when no logo is
 declared. Deploy stamps the decoded icon on the install — deploy-owned, so a
 bundle WITHOUT a logo clears any prior one.
 """
 from __future__ import annotations
 
 import base64
+import io
 from uuid import uuid4
 
 import pytest
+from PIL import Image
 
 from src.models.orm.solutions import Solution
 from src.services.solutions.deploy import (
@@ -20,19 +22,24 @@ from src.services.solutions.deploy import (
     _decode_logo,
 )
 
-PNG = b"\x89PNG\r\n\x1a\nfakepngbytes"
+_png_buffer = io.BytesIO()
+Image.new("RGBA", (1, 1), (255, 0, 0, 255)).save(_png_buffer, "PNG")
+PNG = _png_buffer.getvalue()
 PNG_B64 = base64.b64encode(PNG).decode("ascii")
 
 
 class TestDecodeLogo:
     def test_absent_logo_decodes_to_none(self) -> None:
-        assert _decode_logo("solution 'x'", None, None) == (None, None)
-        assert _decode_logo("solution 'x'", "", "image/png") == (None, None)
+        assert _decode_logo("solution 'x'", None, None) is None
+        assert _decode_logo("solution 'x'", "", "image/png") is None
 
     def test_png_roundtrip(self) -> None:
-        data, ct = _decode_logo("solution 'x'", PNG_B64, "image/png")
-        assert data == PNG
-        assert ct == "image/png"
+        processed = _decode_logo("solution 'x'", PNG_B64, "image/png")
+        assert processed is not None
+        assert processed.original_data == PNG
+        assert processed.original_content_type == "image/png"
+        assert processed.thumbnail_content_type == "image/webp"
+        assert len(processed.thumbnail_data) <= 20 * 1024
 
     def test_disallowed_content_type_raises_with_label(self) -> None:
         with pytest.raises(SolutionDeployConflict) as exc:
@@ -43,16 +50,17 @@ class TestDecodeLogo:
         big = base64.b64encode(b"x" * (5 * 1024 * 1024 + 1)).decode("ascii")
         with pytest.raises(SolutionDeployConflict) as exc:
             _decode_logo("solution 'x'", big, "image/png")
-        assert "exceeds" in str(exc.value)
+        assert "too large" in str(exc.value).lower()
 
     def test_svg_is_sanitized(self) -> None:
         svg = b'<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script><rect/></svg>'
-        data, ct = _decode_logo(
+        processed = _decode_logo(
             "solution 'x'", base64.b64encode(svg).decode("ascii"), "image/svg+xml"
         )
-        assert ct == "image/svg+xml"
-        assert data is not None
-        assert b"<script" not in data
+        assert processed is not None
+        assert processed.original_content_type == "image/svg+xml"
+        assert b"<script" not in processed.original_data
+        assert processed.thumbnail_content_type == "image/webp"
 
 
 @pytest.fixture(autouse=True)
@@ -103,6 +111,9 @@ class TestSolutionLogoDeploy:
         await db.flush()
         assert sol.logo_data == PNG
         assert sol.logo_content_type == "image/png"
+        assert sol.logo_thumbnail_data is not None
+        assert sol.logo_thumbnail_content_type == "image/webp"
+        assert sol.logo_thumbnail_version is not None
 
     async def test_logoless_bundle_clears_prior_logo(self, db_session) -> None:
         """Deploy is the publish: a logo dropped from the manifest is dropped
@@ -116,6 +127,9 @@ class TestSolutionLogoDeploy:
         await db.flush()
         assert sol.logo_data is None
         assert sol.logo_content_type is None
+        assert sol.logo_thumbnail_data is None
+        assert sol.logo_thumbnail_content_type is None
+        assert sol.logo_thumbnail_version is None
 
     async def test_invalid_logo_fails_the_deploy(self, db_session) -> None:
         db = db_session

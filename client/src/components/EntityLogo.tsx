@@ -9,8 +9,9 @@ export type EntityLogoProps = {
 	cacheKey?: string;
 	className?: string;
 	/**
-	 * Inline logo (data URL) from the list/detail response. When provided as a
-	 * string, renders directly — no extra GET. When explicitly `null`, renders
+	 * Logo source (data URL or versioned endpoint URL) from the list/detail
+	 * response. When provided as a string, renders it directly. When explicitly
+	 * `null`, renders
 	 * the fallback without hitting the per-entity endpoint. When `undefined`,
 	 * falls back to fetching /api/{type}/{id}/logo (preserves the upload
 	 * dialog's live-preview behavior).

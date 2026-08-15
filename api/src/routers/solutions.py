@@ -11,7 +11,6 @@ what end users see (the Solution is invisible to them — criterion 16).
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import logging
 import os
@@ -28,13 +27,14 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import noload
+from sqlalchemy.orm import defer, noload
 from starlette.background import BackgroundTask
 
 from bifrost.solution_jobs import (
     DEPLOY_JOB_TIMEOUT_ERROR,
     DEPLOY_JOB_TIMEOUT_SECONDS,
 )
+from shared.logo_processing import is_logo_thumbnail_version
 from src.core.auth import Context, CurrentSuperuser
 from src.models.contracts.solutions import (
     Solution as SolutionDTO,
@@ -279,13 +279,32 @@ async def _solution_entity_counts(
 
 @router.get("", response_model=SolutionsList, summary="List Solution installs (admin only)")
 async def list_solutions(ctx: Context, user: CurrentSuperuser) -> SolutionsList:
-    rows = (await ctx.db.execute(select(SolutionORM).order_by(SolutionORM.slug))).scalars().all()
+    rows = (
+        (
+            await ctx.db.execute(
+                select(SolutionORM)
+                .options(
+                    defer(SolutionORM.logo_data),
+                    defer(SolutionORM.logo_thumbnail_data),
+                )
+                .order_by(SolutionORM.slug)
+            )
+        )
+        .scalars()
+        .all()
+    )
     ids = [row.id for row in rows]
     counts = await _solution_entity_counts(ctx, ids)
     return SolutionsList(
         solutions=[
             SolutionDTO.model_validate(row).model_copy(
-                update={"entity_counts": counts.get(row.id, SolutionEntityCounts())}
+                update={
+                    "entity_counts": counts.get(row.id, SolutionEntityCounts()),
+                    "logo_url": _entity_logo_url(
+                        "solutions", row.id, row.logo_thumbnail_version
+                    ),
+                    "logo_version": _entity_logo_version(row.logo_thumbnail_version),
+                }
             )
             for row in rows
         ]
@@ -297,14 +316,28 @@ async def get_solution(solution_id: UUID, ctx: Context, user: CurrentSuperuser) 
     row = await ctx.db.get(SolutionORM, solution_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
-    return SolutionDTO.model_validate(row)
+    return SolutionDTO.model_validate(row).model_copy(
+        update={
+            "logo_url": _entity_logo_url(
+                "solutions", row.id, row.logo_thumbnail_version
+            ),
+            "logo_version": _entity_logo_version(row.logo_thumbnail_version),
+        }
+    )
 
 
 @router.get(
     "/{solution_id}/logo",
     summary="Get Solution icon",
     responses={
-        200: {"content": {"image/png": {}, "image/jpeg": {}, "image/svg+xml": {}}},
+        200: {
+            "content": {
+                "image/webp": {},
+                "image/png": {},
+                "image/jpeg": {},
+                "image/svg+xml": {},
+            }
+        },
         404: {"description": "No icon set"},
     },
 )
@@ -317,9 +350,23 @@ async def get_solution_logo(
     row = await ctx.db.get(SolutionORM, solution_id)
     if row is None or not row.logo_data:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Icon not set")
+    thumbnail_ready = bool(row.logo_thumbnail_data and row.logo_thumbnail_version)
+    headers = (
+        {
+            "Cache-Control": "private, max-age=31536000, immutable",
+            "ETag": f'"{row.logo_thumbnail_version}"',
+        }
+        if thumbnail_ready
+        else {"Cache-Control": "no-store"}
+    )
     return Response(
-        content=row.logo_data,
-        media_type=row.logo_content_type or "application/octet-stream",
+        content=row.logo_thumbnail_data or row.logo_data,
+        media_type=(
+            row.logo_thumbnail_content_type
+            or row.logo_content_type
+            or "application/octet-stream"
+        ),
+        headers=headers,
     )
 
 
@@ -759,12 +806,16 @@ def _enum_to_str(value: object) -> str | None:
     return str(getattr(value, "value", value))
 
 
-def _logo_data_url(data: bytes | None, content_type: str | None) -> str | None:
-    """Encode a binary entity logo as a data URL for list-card rendering."""
-    if not data:
+def _entity_logo_url(
+    entity_type: str, entity_id: UUID, version: str | None
+) -> str | None:
+    if not is_logo_thumbnail_version(version):
         return None
-    mime = content_type or "application/octet-stream"
-    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+    return f"/api/{entity_type}/{entity_id}/logo?v={version}"
+
+
+def _entity_logo_version(version: str | None) -> str | None:
+    return version if is_logo_thumbnail_version(version) else None
 
 
 async def _access_details_by_entity(
@@ -850,7 +901,17 @@ async def _workflow_summaries(ctx: Context, *where) -> list[SolutionEntitySummar
 
 
 async def _app_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
-    rows = (await ctx.db.execute(select(Application).where(*where).order_by(Application.name))).scalars().all()
+    rows = (
+        await ctx.db.execute(
+            select(Application)
+            .options(
+                defer(Application.logo_data),
+                defer(Application.logo_thumbnail_data),
+            )
+            .where(*where)
+            .order_by(Application.name)
+        )
+    ).scalars().all()
     access = await _access_details_by_entity(ctx, AppRole, "app_id", [row.id for row in rows])
     summaries: list[SolutionEntitySummary] = []
     for row in rows:
@@ -865,7 +926,11 @@ async def _app_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
                 path=row.repo_path,
                 access_level=row.access_level,
                 app_model=row.app_model,
-                logo=_logo_data_url(row.logo_data, row.logo_content_type),
+                logo=None,
+                logo_url=_entity_logo_url(
+                    "applications", row.id, row.logo_thumbnail_version
+                ),
+                logo_version=_entity_logo_version(row.logo_thumbnail_version),
                 created_at=row.created_at,
                 role_ids=role_ids,
                 role_names=role_names,
@@ -901,7 +966,17 @@ async def _form_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
 
 
 async def _agent_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
-    rows = (await ctx.db.execute(select(Agent).where(*where).order_by(Agent.name))).scalars().all()
+    rows = (
+        await ctx.db.execute(
+            select(Agent)
+            .options(
+                defer(Agent.logo_data),
+                defer(Agent.logo_thumbnail_data),
+            )
+            .where(*where)
+            .order_by(Agent.name)
+        )
+    ).scalars().all()
     access = await _access_details_by_entity(ctx, AgentRole, "agent_id", [row.id for row in rows])
     summaries: list[SolutionEntitySummary] = []
     for row in rows:
@@ -914,6 +989,11 @@ async def _agent_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
                 organization_id=row.organization_id,
                 access_level=_enum_to_str(row.access_level),
                 is_active=row.is_active,
+                logo=None,
+                logo_url=_entity_logo_url(
+                    "agents", row.id, row.logo_thumbnail_version
+                ),
+                logo_version=_entity_logo_version(row.logo_thumbnail_version),
                 created_at=row.created_at,
                 role_ids=role_ids,
                 role_names=role_names,

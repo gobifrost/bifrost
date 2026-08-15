@@ -173,8 +173,13 @@ class AgentPublic(BaseModel):
     max_token_budget: int | None = None
     logo: str | None = Field(
         default=None,
-        description="Inline logo as a data URL, or null when no logo is set.",
+        description="Inline presentation logo as a data URL on single-agent responses.",
     )
+    logo_url: str | None = Field(
+        default=None,
+        description="Versioned presentation-logo URL, or null when no logo is set.",
+    )
+    logo_version: str | None = Field(default=None, description="Presentation-logo content hash.")
 
     @field_serializer("id")
     def serialize_id(self, v: UUID) -> str:
@@ -210,8 +215,13 @@ class AgentSummary(BaseModel):
     )
     logo: str | None = Field(
         default=None,
-        description="Inline logo as a data URL, or null when no logo is set. Avoids an N+1 GET per card in list views.",
+        description="Inline presentation logo as a data URL when explicitly requested.",
     )
+    logo_url: str | None = Field(
+        default=None,
+        description="Versioned presentation-logo URL, or null when no logo is set.",
+    )
+    logo_version: str | None = Field(default=None, description="Presentation-logo content hash.")
     is_solution_managed: bool = Field(default=False, description="True if managed by a deployed Solution (read-only on platform)")
     solution_id: UUID | None = Field(default=None, description="UUID of the owning Solution install (null if not solution-managed)")
 

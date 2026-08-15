@@ -293,7 +293,7 @@ export function ApplicationListSurface({
 									<EntityLogo
 										entityType="app"
 										entityId={app.id}
-										logo={app.logo ?? null}
+										logo={app.logo_url ?? null}
 										fallback={
 											<AppWindow className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
 										}

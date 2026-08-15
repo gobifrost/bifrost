@@ -266,6 +266,22 @@ class Scheduler:
         )
         logger.info("Deferred execution promoter scheduled (every 60s)")
 
+        # Legacy entity-logo normalization — bounded batches, immediate at startup.
+        from src.jobs.schedulers.logo_thumbnail_backfill import (
+            backfill_logo_thumbnails,
+        )
+
+        scheduler.add_job(
+            backfill_logo_thumbnails,
+            IntervalTrigger(minutes=1),
+            id="logo_thumbnail_backfill",
+            name="Backfill bounded entity-logo thumbnails",
+            replace_existing=True,
+            next_run_time=datetime.now(timezone.utc),
+            **misfire_options,
+        )
+        logger.info("Logo thumbnail backfill scheduled (every 60s)")
+
         # Execution cleanup - every 5 minutes (run immediately at startup)
         scheduler.add_job(
             self._run_scheduled_task,

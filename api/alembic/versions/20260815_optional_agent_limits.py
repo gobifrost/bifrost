@@ -1,7 +1,7 @@
 """make agent run limits optional
 
 Revision ID: 20260815_optional_agent_limits
-Revises: 20260812_private_memory
+Revises: 20260814_logo_thumbnails
 Create Date: 2026-08-15
 """
 
@@ -11,7 +11,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "20260815_optional_agent_limits"
-down_revision: str | None = "20260812_private_memory"
+down_revision: str | None = "20260814_logo_thumbnails"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

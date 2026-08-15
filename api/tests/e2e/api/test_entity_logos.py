@@ -1,17 +1,16 @@
 """E2E tests for app and agent logo upload/fetch/delete."""
 
+import base64
+import io
 import uuid
 
 import pytest
+from PIL import Image
 
 
-CLEAN_PNG = (
-    b"\x89PNG\r\n\x1a\n"
-    b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
-    b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
-    b"\x00\x00\x00\rIDATx\x9cc\xfa\xcf\x00\x00\x00\x02\x00\x01\xe5'\xde\xfc"
-    b"\x00\x00\x00\x00IEND\xaeB`\x82"
-)
+_png_buffer = io.BytesIO()
+Image.new("RGBA", (1, 1), (255, 0, 0, 255)).save(_png_buffer, "PNG")
+CLEAN_PNG = _png_buffer.getvalue()
 
 
 def _create_app(e2e_client, headers, slug, name=None):
@@ -62,8 +61,31 @@ class TestApplicationLogo:
                 headers=platform_admin.headers,
             )
             assert got.status_code == 200
-            assert got.content == CLEAN_PNG
-            assert got.headers["content-type"].startswith("image/png")
+            assert got.headers["content-type"].startswith("image/webp")
+            assert len(got.content) <= 20 * 1024
+            assert got.headers["cache-control"] == "private, max-age=31536000, immutable"
+
+            detail = e2e_client.get(
+                f"/api/applications/{slug}",
+                headers=platform_admin.headers,
+            )
+            assert detail.status_code == 200
+            detail_body = detail.json()
+            assert detail_body["logo"].startswith("data:image/webp;base64,")
+            assert len(
+                base64.b64decode(detail_body["logo"].split(",", 1)[1])
+            ) <= 20 * 1024
+
+            listed = e2e_client.get(
+                "/api/applications", headers=platform_admin.headers
+            )
+            listed_app = next(
+                row for row in listed.json()["applications"] if row["id"] == app_id
+            )
+            assert listed_app["logo"] is None
+            assert listed_app["logo_url"].startswith(
+                f"/api/applications/{app_id}/logo?v="
+            )
 
             # Delete
             deleted = e2e_client.delete(
@@ -110,7 +132,7 @@ class TestApplicationLogo:
                 headers=platform_admin.headers,
             )
             assert got.status_code == 200
-            assert b"script" not in got.content.lower()
+            assert got.headers["content-type"].startswith("image/webp")
         finally:
             _delete_app(e2e_client, platform_admin.headers, app["id"])
 
@@ -159,8 +181,18 @@ class TestAgentLogo:
                 headers=platform_admin.headers,
             )
             assert got.status_code == 200
-            assert got.content == CLEAN_PNG
-            assert got.headers["content-type"].startswith("image/png")
+            assert got.headers["content-type"].startswith("image/webp")
+            assert len(got.content) <= 20 * 1024
+            assert got.headers["cache-control"] == "private, max-age=31536000, immutable"
+
+            listed = e2e_client.get("/api/agents", headers=platform_admin.headers)
+            listed_agent = next(
+                row for row in listed.json() if row["id"] == agent_id
+            )
+            assert listed_agent["logo"] is None
+            assert listed_agent["logo_url"].startswith(
+                f"/api/agents/{agent_id}/logo?v="
+            )
 
             deleted = e2e_client.delete(
                 f"/api/agents/{agent_id}/logo",
@@ -197,6 +229,6 @@ class TestAgentLogo:
                 headers=platform_admin.headers,
             )
             assert got.status_code == 200
-            assert b"script" not in got.content.lower()
+            assert got.headers["content-type"].startswith("image/webp")
         finally:
             _delete_agent(e2e_client, platform_admin.headers, agent["id"])

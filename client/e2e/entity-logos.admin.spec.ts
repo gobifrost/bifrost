@@ -11,12 +11,15 @@
  */
 
 import { test, expect, grantWorkspaceAppPolicy } from "./fixtures/api-fixture";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const FIXTURE_PNG = path.join(__dirname, "fixtures", "test-logo.png");
+const FIXTURE_PNG = {
+	name: "test-logo.png",
+	mimeType: "image/png",
+	buffer: Buffer.from(
+		"iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFUlEQVR4nGOUm/D/PwMDAwMTAxQAACgXArDsKm8qAAAAAElFTkSuQmCC",
+		"base64",
+	),
+};
 
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 
@@ -48,7 +51,9 @@ test.describe("Entity logos", () => {
 			if (appId) await api.delete(`/api/applications/${appId}`);
 		});
 
-		test("uploads via the app settings dialog and renders on the card", async ({ page }) => {
+		test("uploads via the app settings dialog and renders on the card", async ({
+			page,
+		}) => {
 			await page.goto(`/apps/${APP_SLUG}/edit`);
 			await page.getByRole("button", { name: /^settings$/i }).click();
 			await expect(
@@ -56,8 +61,9 @@ test.describe("Entity logos", () => {
 			).toBeVisible();
 
 			// The hidden file input lives inside the logo drop zone.
-			const fileInput = page
-				.locator('[data-testid="logo-drop-zone"] input[type="file"]');
+			const fileInput = page.locator(
+				'[data-testid="logo-drop-zone"] input[type="file"]',
+			);
 			await fileInput.setInputFiles(FIXTURE_PNG);
 
 			// Confirmation toast appears
@@ -67,10 +73,17 @@ test.describe("Entity logos", () => {
 			await page.keyboard.press("Escape");
 			await page.goto("/apps");
 
-			const card = page.getByRole("button", { name: new RegExp(APP_NAME) });
+			const card = page.getByRole("button", {
+				name: new RegExp(APP_NAME),
+			});
 			const logo = card.getByTestId("entity-logo");
 			await expect(logo).toBeVisible();
-			await expect(logo).toHaveAttribute("src", /^data:image\/png;base64,/);
+			await expect(logo).toHaveAttribute(
+				"src",
+				new RegExp(
+					`^/api/applications/${appId}/logo\\?v=[0-9a-f]{64}$`,
+				),
+			);
 		});
 	});
 
@@ -96,25 +109,33 @@ test.describe("Entity logos", () => {
 			if (agentId) await api.delete(`/api/agents/${agentId}`);
 		});
 
-		test("uploads via the drop zone and renders on the fleet card", async ({ page }) => {
+		test("uploads via the drop zone and renders on the fleet card", async ({
+			page,
+		}) => {
 			await page.goto(`/agents/${agentId}`);
 
 			// Wait for the drop zone to be present (it only renders once agent data loads).
 			await page.waitForSelector('[data-testid="logo-drop-zone"]');
 
 			// The hidden file input lives inside the drop zone.
-			const fileInput = page
-				.locator('[data-testid="logo-drop-zone"] input[type="file"]');
+			const fileInput = page.locator(
+				'[data-testid="logo-drop-zone"] input[type="file"]',
+			);
 			await fileInput.setInputFiles(FIXTURE_PNG);
 
 			await expect(page.getByText("Image updated")).toBeVisible();
 
 			await page.goto("/agents");
 
-			const card = page.getByRole("link", { name: new RegExp(AGENT_NAME) });
+			const card = page.getByRole("link", {
+				name: new RegExp(AGENT_NAME),
+			});
 			const logo = card.getByTestId("entity-logo");
 			await expect(logo).toBeVisible();
-			await expect(logo).toHaveAttribute("src", /^data:image\/png;base64,/);
+			await expect(logo).toHaveAttribute(
+				"src",
+				new RegExp(`^/api/agents/${agentId}/logo\\?v=[0-9a-f]{64}$`),
+			);
 		});
 	});
 });

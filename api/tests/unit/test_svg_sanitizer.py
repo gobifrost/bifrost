@@ -44,6 +44,51 @@ def test_xlink_javascript_href_removed():
     assert b"javascript:" not in out.lower()
 
 
+@pytest.mark.parametrize(
+    "reference",
+    [
+        "https://attacker.invalid/image.png",
+        "file:///etc/passwd",
+        "//attacker.invalid/image.png",
+        "relative/image.png",
+    ],
+)
+def test_external_resource_references_removed(reference: str):
+    payload = (
+        f'<svg xmlns="http://www.w3.org/2000/svg"><image href="{reference}" '
+        'width="10" height="10"/></svg>'
+    ).encode()
+
+    out = sanitize_svg(payload)
+
+    assert reference.encode() not in out
+
+
+def test_local_fragment_and_embedded_raster_references_are_retained():
+    payload = (
+        b'<svg xmlns="http://www.w3.org/2000/svg"><use href="#mark"/>'
+        b'<image href="data:image/png;base64,iVBORw0KGgo="/></svg>'
+    )
+
+    out = sanitize_svg(payload)
+
+    assert b'href="#mark"' in out
+    assert b"data:image/png;base64," in out
+
+
+def test_external_css_resources_are_removed():
+    payload = (
+        b'<svg xmlns="http://www.w3.org/2000/svg"><style>'
+        b'@import url("https://attacker.invalid/logo.css");</style>'
+        b'<rect style="fill:url(https://attacker.invalid/fill.svg)" '
+        b'filter="url(https://attacker.invalid/filter.svg)"/></svg>'
+    )
+
+    out = sanitize_svg(payload)
+
+    assert b"attacker.invalid" not in out
+
+
 def test_xxe_blocked():
     payload = (
         b'<?xml version="1.0"?>'
