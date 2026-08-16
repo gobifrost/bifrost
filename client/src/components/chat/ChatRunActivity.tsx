@@ -85,7 +85,7 @@ export function ChatRunActivity({
 				)}
 			</button>
 			{hasDetails && detailsExpanded && (
-				<div className="mt-1 border-l border-border/70 pl-3">{children}</div>
+				<div className="mt-1 w-full">{children}</div>
 			)}
 		</div>
 	);

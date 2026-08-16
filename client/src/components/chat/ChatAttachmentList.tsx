@@ -39,10 +39,10 @@ export function ChatAttachmentList({
 		<>
 			<div
 				className={cn(
-					"mb-2 flex flex-wrap gap-2",
+					"mb-2 flex gap-2",
 					variant === "attachment"
-						? "justify-end"
-						: "justify-start px-4",
+						? "flex-wrap justify-end"
+						: "w-full flex-col items-stretch px-4",
 				)}
 			>
 				{attachments.map((attachment) => {
@@ -56,10 +56,10 @@ export function ChatAttachmentList({
 							key={attachment.id}
 							onClick={() => setPreview(attachment)}
 							className={cn(
-								"group/file flex max-w-72 items-center gap-2.5 rounded-xl border p-2.5 text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 motion-reduce:transition-none",
+								"group/file flex items-center gap-2.5 rounded-xl border p-2.5 text-left outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 motion-reduce:transition-none",
 								variant === "attachment"
-									? "border-primary-foreground/20 bg-primary-foreground/10 hover:bg-primary-foreground/15"
-									: "animate-in fade-in-0 slide-in-from-bottom-1 border-border bg-card text-card-foreground shadow-sm hover:bg-accent/60 motion-reduce:animate-none",
+									? "max-w-72 border-primary-foreground/20 bg-primary-foreground/10 hover:bg-primary-foreground/15"
+									: "w-full max-w-none animate-in fade-in-0 slide-in-from-bottom-1 border-border bg-card text-card-foreground shadow-sm hover:bg-accent/60 motion-reduce:animate-none",
 							)}
 						>
 							{isImageAttachment(attachment.content_type) ? (

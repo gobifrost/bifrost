@@ -169,6 +169,12 @@ test.describe("Chat attachments and model tiers", () => {
 		await expect(page.getByRole("dialog")).not.toBeVisible();
 
 		await expect(page.getByText("Worked for 1s")).toBeVisible();
+		await page.getByRole("button", { name: /Worked for 1s/i }).click();
+		await page
+			.getByRole("button", { name: /create_text_artifact/i })
+			.click();
+		await expect(page.getByRole("heading", { name: "Result" })).toBeVisible();
+		await expect(page.getByRole("dialog")).not.toBeVisible();
 		await page.screenshot({
 			path: "playwright-results/screenshots/chat-complete.png",
 			fullPage: true,

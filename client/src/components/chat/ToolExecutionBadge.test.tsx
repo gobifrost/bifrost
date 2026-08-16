@@ -4,7 +4,7 @@
  * Cover:
  *   - status → label/icon behaviour (status class applied)
  *   - duration formatting (ms vs s)
- *   - popover details show input arguments, result, error, logs on expand
+ *   - inline details show input arguments, result, error, logs on expand
  *
  * PrettyInputDisplay is stubbed so we assert at the badge boundary, not on
  * the nested pretty-printer's DOM.
@@ -84,8 +84,8 @@ describe("ToolExecutionBadge — status rendering", () => {
 	});
 });
 
-describe("ToolExecutionBadge — popover details", () => {
-	it("opens the popover on click and shows the result", async () => {
+describe("ToolExecutionBadge — inline details", () => {
+	it("expands full-width details in place and shows the result", async () => {
 		const { user } = renderWithProviders(
 			<ToolExecutionBadge
 				toolCall={makeToolCall()}
@@ -94,16 +94,16 @@ describe("ToolExecutionBadge — popover details", () => {
 			/>,
 		);
 
+		expect(screen.queryByText(/^result$/i)).not.toBeInTheDocument();
 		await user.click(screen.getByText("read_file"));
 
-		// Popover content is portaled into document.body. Both the Input
-		// arguments and the Result are rendered via the same stub, so query
-		// by the Result heading and read the sibling stub from that section.
 		const resultHeading = await screen.findByText(/^result$/i);
 		const resultSection = resultHeading.parentElement!;
 		expect(resultSection).toHaveTextContent(
 			JSON.stringify({ matched: 3 }),
 		);
+		expect(resultHeading.closest(".rounded-xl")).toHaveClass("w-full");
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 	});
 
 	it("shows error text and hides the result when error is set", async () => {

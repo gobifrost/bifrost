@@ -53,6 +53,29 @@ describe("ChatAttachmentList", () => {
 		).toBeInTheDocument();
 	});
 
+	it("uses the full conversation width for generated artifacts", () => {
+		renderWithProviders(
+			<ChatAttachmentList
+				conversationId="conversation-1"
+				variant="artifact"
+				attachments={[
+					{
+						id: "artifact-1",
+						filename: "report.md",
+						content_type: "text/markdown",
+						size_bytes: 23,
+						kind: "artifact",
+					},
+				]}
+			/>,
+		);
+
+		expect(screen.getByRole("button", { name: /report\.md/i })).toHaveClass(
+			"w-full",
+			"max-w-none",
+		);
+	});
+
 	it("retries a failed artifact preview", async () => {
 		authFetch
 			.mockResolvedValueOnce(new Response(null, { status: 503 }))

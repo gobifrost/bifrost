@@ -41,7 +41,9 @@ describe("ChatRunActivity", () => {
 		expect(screen.getByText("Worked for 1m 14s")).toBeInTheDocument();
 		expect(screen.queryByText("create_text_artifact")).not.toBeInTheDocument();
 		await user.click(screen.getByRole("button"));
-		expect(screen.getByText("create_text_artifact")).toBeInTheDocument();
+		const detail = screen.getByText("create_text_artifact").parentElement;
+		expect(detail).toHaveClass("w-full");
+		expect(detail).not.toHaveClass("border-l", "pl-3");
 	});
 });
 
