@@ -21,6 +21,8 @@ class LLMConfigResponse(BaseModel):
     default_system_prompt: str | None = None
     summarization_model: str | None = None
     tuning_model: str | None = None
+    image_generation_model: str | None = None
+    video_generation_model: str | None = None
     chat_fast_label: str = "Fast"
     chat_fast_model: str | None = None
     chat_balanced_label: str = "Balanced"
@@ -71,6 +73,14 @@ class LLMConfigRequest(BaseModel):
     tuning_model: str | None = Field(
         default=None,
         description="Model override for tuning chat + dry-run. Falls back to primary model if unset.",
+    )
+    image_generation_model: str | None = Field(
+        default=None,
+        description="Optional dedicated model for image generation.",
+    )
+    video_generation_model: str | None = Field(
+        default=None,
+        description="Optional dedicated model for video generation.",
     )
     chat_fast_label: str = Field(default="Fast", min_length=1, max_length=30)
     chat_fast_model: str | None = Field(

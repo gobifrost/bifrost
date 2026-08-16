@@ -18455,6 +18455,16 @@ export interface components {
              */
             tuning_model?: string | null;
             /**
+             * Image Generation Model
+             * @description Optional dedicated model for image generation.
+             */
+            image_generation_model?: string | null;
+            /**
+             * Video Generation Model
+             * @description Optional dedicated model for video generation.
+             */
+            video_generation_model?: string | null;
+            /**
              * Chat Fast Label
              * @default Fast
              */
@@ -18513,6 +18523,10 @@ export interface components {
             summarization_model?: string | null;
             /** Tuning Model */
             tuning_model?: string | null;
+            /** Image Generation Model */
+            image_generation_model?: string | null;
+            /** Video Generation Model */
+            video_generation_model?: string | null;
             /**
              * Chat Fast Label
              * @default Fast
@@ -19823,11 +19837,6 @@ export interface components {
              * @default false
              */
             tool_calling: boolean;
-            /**
-             * Native Image Output
-             * @default false
-             */
-            native_image_output: boolean;
             /**
              * Source
              * @default unknown

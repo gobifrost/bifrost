@@ -20,7 +20,6 @@ test.describe("Chat attachments and model tiers", () => {
 				image_input: true,
 				pdf_input: true,
 				tool_calling: true,
-				native_image_output: false,
 				source: "verified",
 				fingerprint: "e2e",
 			};

@@ -240,7 +240,6 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 				image_input: false,
 				pdf_input: false,
 				tool_calling: false,
-				native_image_output: false,
 				source: "unknown" as const,
 				fingerprint: "",
 			},

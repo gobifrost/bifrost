@@ -58,6 +58,8 @@ def sample_config_data(fernet_instance):
         "encrypted_api_key": encrypted_key,
         "endpoint": None,
         "max_tokens": 4096,
+        "image_generation_model": "imagen-test",
+        "video_generation_model": "veo-test",
     }
 
 
@@ -112,6 +114,8 @@ class TestLLMConfigService:
         assert isinstance(result, LLMProviderConfig)
         assert result.provider == "anthropic"
         assert result.model == "claude-sonnet-4-20250514"
+        assert result.image_generation_model == "imagen-test"
+        assert result.video_generation_model == "veo-test"
         assert result.is_configured is True
         assert result.api_key_set is True
         # API key should NOT be returned
@@ -151,6 +155,8 @@ class TestLLMConfigService:
                 provider="openai",
                 model="gpt-4o",
                 api_key="sk-test-key",
+                image_generation_model="image-model",
+                video_generation_model="video-model",
                 updated_by="test@example.com",
             )
 
@@ -164,6 +170,8 @@ class TestLLMConfigService:
         assert added_config.key == LLM_CONFIG_KEY
         assert added_config.value_json["provider"] == "openai"
         assert added_config.value_json["model"] == "gpt-4o"
+        assert added_config.value_json["image_generation_model"] == "image-model"
+        assert added_config.value_json["video_generation_model"] == "video-model"
         assert "encrypted_api_key" in added_config.value_json
         assert added_config.organization_id is None
 

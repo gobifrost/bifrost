@@ -21,6 +21,8 @@ async def test_config_save_syncs_default_tiers_and_internal_models() -> None:
         chat_pro_model="pro/model",
         summarization_model="summary/model",
         tuning_model="tuning/model",
+        image_generation_model="image/model",
+        video_generation_model="video/model",
     )
     db = AsyncMock()
     user = MagicMock(email="admin@example.com")
@@ -61,6 +63,8 @@ async def test_config_save_syncs_default_tiers_and_internal_models() -> None:
         "pro/model",
         "summary/model",
         "tuning/model",
+        "image/model",
+        "video/model",
     }
     service.sync_provider_pricing.assert_awaited_once_with(
         provider="openrouter",

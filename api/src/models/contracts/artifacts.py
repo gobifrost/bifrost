@@ -130,7 +130,6 @@ class ModelCapabilities(BaseModel):
     image_input: bool = False
     pdf_input: bool = False
     tool_calling: bool = False
-    native_image_output: bool = False
     source: Literal["openrouter", "verified", "manual", "unknown"] = "unknown"
     checked_at: datetime | None = None
     fingerprint: str = ""

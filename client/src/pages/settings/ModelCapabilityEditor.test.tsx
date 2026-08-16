@@ -18,7 +18,6 @@ describe("ModelCapabilityEditor", () => {
 						image_input: true,
 						pdf_input: true,
 						tool_calling: true,
-						native_image_output: false,
 						source: "verified",
 						fingerprint: "verified-target",
 					},
@@ -51,9 +50,6 @@ describe("ModelCapabilityEditor", () => {
 				body: expect.stringContaining('"api_key":"new-key"'),
 			}),
 		);
-		expect(
-			screen.getByText(/conformance check completed/i),
-		).toBeInTheDocument();
 	});
 
 	it("records an administrator override as manual", async () => {
@@ -68,9 +64,55 @@ describe("ModelCapabilityEditor", () => {
 			/>,
 		);
 
-		await user.click(screen.getByRole("switch", { name: "Tool calling" }));
+		await user.click(
+			screen.getByRole("button", {
+				name: "Tool Calling: Not Verified",
+			}),
+		);
 		expect(onChange).toHaveBeenCalledWith(
 			expect.objectContaining({ tool_calling: true, source: "manual" }),
 		);
+	});
+
+	it("shows supported and unsupported capabilities as compact icon controls", async () => {
+		const { user } = renderWithProviders(
+			<ModelCapabilityEditor
+				provider="openai"
+				model="deepseek/deepseek-v4-pro"
+				endpoint="https://openrouter.ai/api/v1"
+				value={{
+					image_input: false,
+					pdf_input: false,
+					tool_calling: true,
+					source: "openrouter",
+					fingerprint: "catalog-target",
+				}}
+				onChange={vi.fn()}
+			/>,
+		);
+
+		expect(
+			screen.getByRole("button", {
+				name: "Image Input: Not Supported",
+			}),
+		).toHaveClass("text-red-600");
+		expect(
+			screen.getByRole("button", {
+				name: "Tool Calling: Supported",
+			}),
+		).toHaveClass("text-green-600");
+		expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+		expect(
+			screen.queryByText(/native image generation/i),
+		).not.toBeInTheDocument();
+
+		await user.hover(
+			screen.getByRole("button", {
+				name: "Tool Calling: Supported",
+			}),
+		);
+		expect(
+			await screen.findByText("Supported · OpenRouter Catalog"),
+		).toBeInTheDocument();
 	});
 });

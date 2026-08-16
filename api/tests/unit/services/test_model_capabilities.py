@@ -44,7 +44,6 @@ async def test_openrouter_catalog_maps_modalities_and_tools() -> None:
     assert capabilities.tool_calling is True
     assert capabilities.image_input is False
     assert capabilities.pdf_input is False
-    assert capabilities.native_image_output is False
     assert "OpenRouter" in message
 
 
@@ -132,6 +131,5 @@ async def test_provider_conformance_verifies_tool_image_and_pdf_support(
     assert capabilities.tool_calling is True
     assert capabilities.image_input is True
     assert capabilities.pdf_input is True
-    assert capabilities.native_image_output is False
     assert capabilities.checked_at is not None
     assert "completed" in message

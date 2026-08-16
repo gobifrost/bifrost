@@ -52,7 +52,6 @@ vi.mock("@/hooks/useChat", () => ({
 						image_input: false,
 						pdf_input: false,
 						tool_calling: true,
-						native_image_output: false,
 						source: "verified",
 						fingerprint: "test",
 					},

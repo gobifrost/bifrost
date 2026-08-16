@@ -100,6 +100,31 @@ class FixtureHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if self.path == "/v1/chat/completions":
+            request = json.loads(body or b"{}")
+            self._json(
+                200,
+                {
+                    "id": "chatcmpl-fixture",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": request.get("model", "fixture-chat"),
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "ok"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2,
+                    },
+                },
+            )
+            return
+
         if self.path != "/oauth/token":
             self._json(404, {"error": "not_found"})
             return

@@ -66,7 +66,6 @@ def configured_chat_model():
             image_input=False,
             pdf_input=False,
             tool_calling=True,
-            native_image_output=False,
         ),
     )
     with patch(

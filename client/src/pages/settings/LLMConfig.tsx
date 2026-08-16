@@ -68,6 +68,9 @@ import {
 	X,
 	Check,
 	ArrowRight,
+	MessageSquare,
+	Scale,
+	Sparkles,
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { $api, authFetch } from "@/lib/api-client";
@@ -86,6 +89,7 @@ import {
 	ModelCapabilityEditor,
 	type ModelCapabilities,
 } from "@/pages/settings/ModelCapabilityEditor";
+import { GenerationModelSettings } from "@/pages/settings/GenerationModelSettings";
 
 type Provider = "openai" | "anthropic" | "google";
 
@@ -119,6 +123,8 @@ export function LLMConfig() {
 	const [defaultSystemPrompt, setDefaultSystemPrompt] = useState("");
 	const [summarizationModel, setSummarizationModel] = useState("");
 	const [tuningModel, setTuningModel] = useState("");
+	const [imageGenerationModel, setImageGenerationModel] = useState("");
+	const [videoGenerationModel, setVideoGenerationModel] = useState("");
 	const [chatFastLabel, setChatFastLabel] = useState("Fast");
 	const [chatFastModel, setChatFastModel] = useState("");
 	const [chatBalancedLabel, setChatBalancedLabel] = useState("Balanced");
@@ -180,6 +186,8 @@ export function LLMConfig() {
 		);
 		setSummarizationModel(config.summarization_model ?? "");
 		setTuningModel(config.tuning_model ?? "");
+		setImageGenerationModel(config.image_generation_model ?? "");
+		setVideoGenerationModel(config.video_generation_model ?? "");
 		setChatFastLabel(config.chat_fast_label ?? "Fast");
 		setChatFastModel(config.chat_fast_model ?? "");
 		setChatBalancedLabel(config.chat_balanced_label ?? "Balanced");
@@ -234,6 +242,8 @@ export function LLMConfig() {
 		setChatFastCapabilities(null);
 		setChatBalancedCapabilities(null);
 		setChatProCapabilities(null);
+		setImageGenerationModel("");
+		setVideoGenerationModel("");
 	};
 
 	// Test connection with current form values
@@ -328,6 +338,8 @@ export function LLMConfig() {
 					default_system_prompt: defaultSystemPrompt || null,
 					summarization_model: summarizationModel || null,
 					tuning_model: tuningModel || null,
+					image_generation_model: imageGenerationModel.trim() || null,
+					video_generation_model: videoGenerationModel.trim() || null,
 					chat_fast_label: chatFastLabel.trim() || "Fast",
 					chat_fast_model: chatFastModel.trim() || null,
 					chat_balanced_label: chatBalancedLabel.trim() || "Balanced",
@@ -377,6 +389,8 @@ export function LLMConfig() {
 			setDefaultSystemPrompt("");
 			setSummarizationModel("");
 			setTuningModel("");
+			setImageGenerationModel("");
+			setVideoGenerationModel("");
 			setChatFastLabel("Fast");
 			setChatFastModel("");
 			setChatBalancedLabel("Balanced");
@@ -712,10 +726,11 @@ export function LLMConfig() {
 							</p>
 						</div>
 
-						<div className="space-y-3 rounded-lg border p-4">
+						<div className="space-y-4 rounded-lg border p-4">
 							<div>
-								<h5 className="text-sm font-medium">
-									Chat model choices
+								<h5 className="flex items-center gap-2 text-sm font-medium">
+									<MessageSquare className="h-4 w-4 text-blue-500" />
+									Chat Model Choices
 								</h5>
 								<p className="mt-1 text-xs text-muted-foreground">
 									Choose the models users may select in Chat.
@@ -727,6 +742,10 @@ export function LLMConfig() {
 							{[
 								{
 									id: "fast",
+									name: "Fast",
+									icon: Zap,
+									iconClassName:
+										"bg-amber-500/10 text-amber-600 dark:text-amber-400",
 									label: chatFastLabel,
 									setLabel: setChatFastLabel,
 									model: chatFastModel,
@@ -737,6 +756,10 @@ export function LLMConfig() {
 								},
 								{
 									id: "balanced",
+									name: "Balanced",
+									icon: Scale,
+									iconClassName:
+										"bg-blue-500/10 text-blue-600 dark:text-blue-400",
 									label: chatBalancedLabel,
 									setLabel: setChatBalancedLabel,
 									model: chatBalancedModel,
@@ -748,6 +771,10 @@ export function LLMConfig() {
 								},
 								{
 									id: "pro",
+									name: "Pro",
+									icon: Sparkles,
+									iconClassName:
+										"bg-violet-500/10 text-violet-600 dark:text-violet-400",
 									label: chatProLabel,
 									setLabel: setChatProLabel,
 									model: chatProModel,
@@ -756,104 +783,124 @@ export function LLMConfig() {
 									setCapabilities: setChatProCapabilities,
 									placeholder: "Optional pro model",
 								},
-							].map((tier) => (
-								<div
-									key={tier.id}
-									className="space-y-2 border-b pb-4 last:border-b-0 last:pb-0"
-								>
-									<div className="grid gap-2 sm:grid-cols-[10rem_1fr]">
-										<div className="space-y-1">
-											<Label
-												htmlFor={`chat-${tier.id}-label`}
-											>
-												{tier.id[0].toUpperCase() +
-													tier.id.slice(1)}{" "}
-												label
-											</Label>
-											<Input
-												id={`chat-${tier.id}-label`}
-												value={tier.label}
-												onChange={(event) =>
-													tier.setLabel(
-														event.target.value,
-													)
+							].map((tier) => {
+								const TierIcon = tier.icon;
+								return (
+									<div
+										key={tier.id}
+										className="flex gap-3 border-b pb-4 last:border-b-0 last:pb-0"
+									>
+										<div
+											className={`mt-5 grid h-8 w-8 shrink-0 place-items-center rounded-lg ${tier.iconClassName}`}
+											aria-hidden="true"
+										>
+											<TierIcon className="h-4 w-4" />
+										</div>
+										<div className="min-w-0 flex-1 space-y-1.5">
+											<div className="grid gap-2 sm:grid-cols-[10rem_minmax(0,1fr)]">
+												<div className="space-y-1">
+													<Label
+														htmlFor={`chat-${tier.id}-label`}
+													>
+														{tier.name} Label
+													</Label>
+													<Input
+														id={`chat-${tier.id}-label`}
+														value={tier.label}
+														onChange={(event) =>
+															tier.setLabel(
+																event.target
+																	.value,
+															)
+														}
+														maxLength={30}
+													/>
+												</div>
+												<div className="space-y-1">
+													<Label
+														htmlFor={`chat-${tier.id}-model`}
+													>
+														{tier.name} Model
+													</Label>
+													{hasModels ? (
+														<Combobox
+															id={`chat-${tier.id}-model`}
+															value={tier.model}
+															onValueChange={
+																tier.setModel
+															}
+															placeholder={
+																tier.placeholder
+															}
+															searchPlaceholder="Search models..."
+															emptyText="No models found."
+															options={availableModels.map(
+																(
+																	availableModel,
+																) => ({
+																	value: availableModel.id,
+																	label: availableModel.display_name,
+																	description:
+																		availableModel.id !==
+																		availableModel.display_name
+																			? availableModel.id
+																			: undefined,
+																}),
+															)}
+														/>
+													) : (
+														<Input
+															id={`chat-${tier.id}-model`}
+															value={tier.model}
+															onChange={(event) =>
+																tier.setModel(
+																	event.target
+																		.value,
+																)
+															}
+															placeholder={
+																tier.placeholder
+															}
+														/>
+													)}
+												</div>
+											</div>
+											<ModelCapabilityEditor
+												provider={provider}
+												model={
+													tier.id === "balanced"
+														? tier.model.trim() ||
+															model
+														: tier.model
 												}
-												maxLength={30}
+												endpoint={
+													endpoint ===
+													DEFAULT_ENDPOINTS[provider]
+														? ""
+														: endpoint
+												}
+												apiKey={apiKey}
+												value={tier.capabilities}
+												onChange={tier.setCapabilities}
 											/>
 										</div>
-										<div className="space-y-1">
-											<Label
-												htmlFor={`chat-${tier.id}-model`}
-											>
-												{tier.id[0].toUpperCase() +
-													tier.id.slice(1)}{" "}
-												model
-											</Label>
-											{hasModels ? (
-												<Combobox
-													id={`chat-${tier.id}-model`}
-													value={tier.model}
-													onValueChange={
-														tier.setModel
-													}
-													placeholder={
-														tier.placeholder
-													}
-													searchPlaceholder="Search models..."
-													emptyText="No models found."
-													options={availableModels.map(
-														(availableModel) => ({
-															value: availableModel.id,
-															label: availableModel.display_name,
-															description:
-																availableModel.id !==
-																availableModel.display_name
-																	? availableModel.id
-																	: undefined,
-														}),
-													)}
-												/>
-											) : (
-												<Input
-													id={`chat-${tier.id}-model`}
-													value={tier.model}
-													onChange={(event) =>
-														tier.setModel(
-															event.target.value,
-														)
-													}
-													placeholder={
-														tier.placeholder
-													}
-												/>
-											)}
-										</div>
 									</div>
-									<ModelCapabilityEditor
-										provider={provider}
-										model={
-											tier.id === "balanced"
-												? tier.model.trim() || model
-												: tier.model
-										}
-										endpoint={
-											endpoint ===
-											DEFAULT_ENDPOINTS[provider]
-												? ""
-												: endpoint
-										}
-										apiKey={apiKey}
-										value={tier.capabilities}
-										onChange={tier.setCapabilities}
-									/>
-								</div>
-							))}
+								);
+							})}
 						</div>
+
+						<GenerationModelSettings
+							models={availableModels}
+							imageModel={imageGenerationModel}
+							videoModel={videoGenerationModel}
+							onImageModelChange={setImageGenerationModel}
+							onVideoModelChange={setVideoGenerationModel}
+						/>
 
 						{/* Summarization Model Override */}
 						<div className="space-y-2">
 							<Label htmlFor="summarization-model">
-								Summarization model (optional)
+								Summarization Model (Optional)
 							</Label>
 							<Input
 								id="summarization-model"
@@ -873,7 +920,7 @@ export function LLMConfig() {
 						{/* Tuning Model Override */}
 						<div className="space-y-2">
 							<Label htmlFor="tuning-model">
-								Tuning model (optional)
+								Tuning Model (Optional)
 							</Label>
 							<Input
 								id="tuning-model"

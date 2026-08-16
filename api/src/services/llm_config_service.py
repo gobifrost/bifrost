@@ -40,6 +40,8 @@ class LLMProviderConfig:
     default_system_prompt: str | None = None  # Default system prompt for agentless chat
     summarization_model: str | None = None  # Override for post-run summarization
     tuning_model: str | None = None  # Override for tuning chat + dry-run
+    image_generation_model: str | None = None
+    video_generation_model: str | None = None
     chat_fast_label: str = "Fast"
     chat_fast_model: str | None = None
     chat_balanced_label: str = "Balanced"
@@ -161,6 +163,8 @@ class LLMConfigService:
             default_system_prompt=config_data.get("default_system_prompt"),
             summarization_model=config_data.get("summarization_model"),
             tuning_model=config_data.get("tuning_model"),
+            image_generation_model=config_data.get("image_generation_model"),
+            video_generation_model=config_data.get("video_generation_model"),
             chat_fast_label=config_data.get("chat_fast_label", "Fast"),
             chat_fast_model=config_data.get("chat_fast_model"),
             chat_balanced_label=config_data.get("chat_balanced_label", "Balanced"),
@@ -184,6 +188,8 @@ class LLMConfigService:
         default_system_prompt: str | None = None,
         summarization_model: str | None = None,
         tuning_model: str | None = None,
+        image_generation_model: str | None = None,
+        video_generation_model: str | None = None,
         chat_fast_label: str = "Fast",
         chat_fast_model: str | None = None,
         chat_balanced_label: str = "Balanced",
@@ -209,6 +215,8 @@ class LLMConfigService:
                 ``None`` means use the primary model.
             tuning_model: Optional override for tuning chat + dry-run calls.
                 ``None`` means use the primary model.
+            image_generation_model: Optional dedicated image generation model.
+            video_generation_model: Optional dedicated video generation model.
             updated_by: Email/ID of user making the change
         """
         fernet = self._get_fernet()
@@ -270,6 +278,8 @@ class LLMConfigService:
             "default_system_prompt": default_system_prompt,
             "summarization_model": summarization_model,
             "tuning_model": tuning_model,
+            "image_generation_model": image_generation_model,
+            "video_generation_model": video_generation_model,
             "chat_fast_label": chat_fast_label,
             "chat_fast_model": chat_fast_model,
             "chat_balanced_label": chat_balanced_label,

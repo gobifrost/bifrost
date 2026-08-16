@@ -79,7 +79,6 @@ export function ChatInput({
 				image_input: false,
 				pdf_input: false,
 				tool_calling: false,
-				native_image_output: false,
 				source: "unknown",
 				fingerprint: "",
 			},

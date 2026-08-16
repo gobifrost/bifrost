@@ -114,9 +114,6 @@ async def verify_model_capabilities(
         image_input=image_input,
         pdf_input=pdf_input,
         tool_calling=tool_calling,
-        # The shared LLM transport currently has no provider-neutral image-output
-        # contract. Catalog records or an explicit administrator assertion own it.
-        native_image_output=False,
         source="verified",
         checked_at=datetime.now(timezone.utc),
         fingerprint=model_fingerprint(
@@ -125,7 +122,7 @@ async def verify_model_capabilities(
     )
     return (
         capabilities,
-        "Provider conformance check completed. Native image output remains off unless cataloged or enabled manually.",
+        "Provider conformance check completed.",
     )
 
 
@@ -164,14 +161,12 @@ def manual_capabilities(
     image_input: bool,
     pdf_input: bool,
     tool_calling: bool,
-    native_image_output: bool,
 ) -> ModelCapabilities:
     """Create an explicitly administrator-asserted, fingerprinted record."""
     return ModelCapabilities(
         image_input=image_input,
         pdf_input=pdf_input,
         tool_calling=tool_calling,
-        native_image_output=native_image_output,
         source="manual",
         checked_at=datetime.now(timezone.utc),
         fingerprint=model_fingerprint(provider=provider, model=model, endpoint=endpoint),
@@ -224,13 +219,11 @@ async def lookup_model_capabilities(
             )
         architecture = data.get("architecture") or {}
         input_modalities = set(architecture.get("input_modalities") or [])
-        output_modalities = set(architecture.get("output_modalities") or [])
         supported_parameters = set(data.get("supported_parameters") or [])
         capabilities = ModelCapabilities(
             image_input="image" in input_modalities,
             pdf_input="file" in input_modalities,
             tool_calling="tools" in supported_parameters,
-            native_image_output="image" in output_modalities,
             source="openrouter",
             checked_at=datetime.now(timezone.utc),
             fingerprint=fingerprint,

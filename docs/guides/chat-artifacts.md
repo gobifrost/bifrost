@@ -46,9 +46,11 @@ conformance calls. The result is stored with its source, timestamp, and a
 fingerprint of provider, endpoint, and model; changing any of those fields
 invalidates it.
 
-Native image output remains separate. The shared LLM response contract does
-not currently transport provider-native image bytes, so an unknown provider's
-image output must be asserted manually or obtained from a catalog record.
+Image and video generation are configured as dedicated models under
+**Generation Models**. They are intentionally separate from Fast, Balanced,
+and Pro because those Chat tiers only need capability evidence for image input,
+PDF input, and tool calling. Leaving either generation model blank keeps that
+generation type unavailable.
 
 ## Returning an artifact from a workflow tool
 
