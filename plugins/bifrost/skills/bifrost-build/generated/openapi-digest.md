@@ -102,6 +102,9 @@
 | DELETE | `/api/branding/logo/{logo_type}` |
 | GET | `/api/branding/logo/{logo_type}` |
 | POST | `/api/branding/logo/{logo_type}` |
+| GET | `/api/chat/artifacts` |
+| DELETE | `/api/chat/artifacts/{attachment_id}` |
+| PATCH | `/api/chat/artifacts/{attachment_id}` |
 | GET | `/api/chat/conversations` |
 | POST | `/api/chat/conversations` |
 | DELETE | `/api/chat/conversations/{conversation_id}` |
