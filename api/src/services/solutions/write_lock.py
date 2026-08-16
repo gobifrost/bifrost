@@ -115,8 +115,10 @@ async def solution_write_lock(solution_id: UUID) -> AsyncIterator[None]:
             yield
         finally:
             watchdog.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await watchdog
+            except asyncio.CancelledError:
+                pass
             with contextlib.suppress(Exception):
                 # Release only if still ours — never delete a successor's lock.
                 await release(keys=[key], args=[token])

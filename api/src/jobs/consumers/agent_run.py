@@ -7,7 +7,6 @@ import json
 import logging
 import time
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import select
@@ -21,9 +20,6 @@ from src.core.pubsub import publish_agent_run_update
 from src.jobs.rabbitmq import BaseConsumer
 from src.models.orm.agents import Agent
 from src.models.orm.agent_runs import AgentRun
-
-if TYPE_CHECKING:
-    from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +77,7 @@ class AgentRunConsumer(BaseConsumer):
         start_time = time.time()
         agent_run: AgentRun | None = None
         agent: Agent | None = None
-        executor: AutonomousAgentExecutor | None = None
+        executor = None
 
         try:
             # Load agent with relationships (brief DB session)

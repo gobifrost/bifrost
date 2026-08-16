@@ -6,9 +6,11 @@ from typing import Protocol
 class ScannableRedis(Protocol):
     async def scan(
         self, cursor: int, *, match: str, count: int
-    ) -> tuple[int, list[str]]: ...
+    ) -> tuple[int, list[str]]:
+        raise NotImplementedError
 
-    async def delete(self, key: str) -> int: ...
+    async def delete(self, key: str) -> int:
+        raise NotImplementedError
 
 
 async def clear_redis_module_cache(redis: ScannableRedis) -> None:
