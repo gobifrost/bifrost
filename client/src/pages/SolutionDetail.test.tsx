@@ -84,17 +84,14 @@ vi.mock("@/services/solutions", () => ({
 		mockGetSolutionDeletionSummary(...a),
 	setSolutionConfig: (...a: unknown[]) => mockSetSolutionConfig(...a),
 	exportSolution: (...a: unknown[]) => mockExportSolution(...a),
-	createSolutionExportJob: (...a: unknown[]) =>
-		mockCreateSolutionExportJob(...a),
-	listSolutionExportJobs: (...a: unknown[]) =>
-		mockListSolutionExportJobs(...a),
+	createSolutionExportJob: (...a: unknown[]) => mockCreateSolutionExportJob(...a),
+	listSolutionExportJobs: (...a: unknown[]) => mockListSolutionExportJobs(...a),
 	downloadSolutionExportJob: (...a: unknown[]) =>
 		mockDownloadSolutionExportJob(...a),
 	syncSolution: (...a: unknown[]) => mockSyncSolution(...a),
 	getSolutionCaptureCandidates: (...a: unknown[]) =>
 		mockGetSolutionCaptureCandidates(...a),
-	captureSolutionEntities: (...a: unknown[]) =>
-		mockCaptureSolutionEntities(...a),
+	captureSolutionEntities: (...a: unknown[]) => mockCaptureSolutionEntities(...a),
 }));
 
 vi.mock("@/services/workflowKeys", () => ({
@@ -129,27 +126,27 @@ function makeEntities(statusOverride = "active") {
 				function_name: "sync_tickets",
 			},
 		],
-		apps: [
-			{
-				id: "app-1",
-				name: "Solution App",
-				slug: "solution-app",
-				description: "Solution app",
-				app_model: "standalone_v2",
-				is_published: true,
-				has_unpublished_changes: false,
-				logo_url: APP_LOGO_DATA_URL,
-			},
-		],
-		forms: [
-			{
-				id: "form-1",
-				name: "Ticket Intake",
-				description: "Collect ticket context",
-				is_active: true,
-				organization_id: "org-1",
-			},
-		],
+			apps: [
+				{
+					id: "app-1",
+					name: "Solution App",
+					slug: "solution-app",
+					description: "Solution app",
+					app_model: "standalone_v2",
+					is_published: true,
+					has_unpublished_changes: false,
+					logo_url: APP_LOGO_DATA_URL,
+				},
+			],
+			forms: [
+				{
+					id: "form-1",
+					name: "Ticket Intake",
+					description: "Collect ticket context",
+					is_active: true,
+					organization_id: "org-1",
+				},
+			],
 		agents: [],
 		tables: [{ id: "tbl-1", name: "Customers" }],
 		claims: [
@@ -258,9 +255,7 @@ describe("SolutionDetail", () => {
 		expect(
 			await screen.findByText(/no setup instructions provided/i),
 		).toBeInTheDocument();
-		expect(
-			screen.queryByText(/add setup instructions/i),
-		).not.toBeInTheDocument();
+		expect(screen.queryByText(/add setup instructions/i)).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole("button", { name: /write readme/i }),
 		).not.toBeInTheDocument();
@@ -285,9 +280,7 @@ describe("SolutionDetail", () => {
 		await renderPage();
 		await screen.findByTestId("solution-detail");
 
-		expect(screen.getByTestId("tab-overview")).toHaveTextContent(
-			"Overview",
-		);
+		expect(screen.getByTestId("tab-overview")).toHaveTextContent("Overview");
 
 		// Contents collapses the 6 entity inventories; its count is the total
 		// (1 workflow + 1 app + 1 form + 0 agents + 1 table + 1 claim = 5 in the
@@ -332,16 +325,10 @@ describe("SolutionDetail", () => {
 		await screen.findByTestId("solution-detail");
 
 		await waitFor(() =>
-			expect(
-				screen.queryByTestId("continue-setup"),
-			).not.toBeInTheDocument(),
+			expect(screen.queryByTestId("continue-setup")).not.toBeInTheDocument(),
 		);
-		expect(
-			screen.queryByTestId("incomplete-badge"),
-		).not.toBeInTheDocument();
-		expect(
-			screen.queryByTestId("config-tab-warning"),
-		).not.toBeInTheDocument();
+		expect(screen.queryByTestId("incomplete-badge")).not.toBeInTheDocument();
+		expect(screen.queryByTestId("config-tab-warning")).not.toBeInTheDocument();
 	});
 
 	it("returns to overview when completed setup is dismissed", async () => {
@@ -366,9 +353,7 @@ describe("SolutionDetail", () => {
 		await screen.findByTestId("solution-detail");
 
 		await user.click(screen.getByTestId("tab-configuration"));
-		expect(
-			await screen.findByText(/all required setup is complete/i),
-		).toBeInTheDocument();
+		expect(await screen.findByText(/all required setup is complete/i)).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: /done/i }));
 
 		await waitFor(() =>
@@ -429,9 +414,7 @@ describe("SolutionDetail", () => {
 		await screen.findByTestId("solution-detail");
 
 		await user.click(screen.getByTestId("solution-actions"));
-		await user.click(
-			await screen.findByRole("menuitem", { name: /export/i }),
-		);
+		await user.click(await screen.findByRole("menuitem", { name: /export/i }));
 		await user.click(screen.getByLabelText(/^backup/i));
 		await user.type(screen.getByLabelText(/^password/i), "hunter2");
 		await user.click(screen.getByRole("button", { name: /queue backup/i }));
@@ -461,9 +444,7 @@ describe("SolutionDetail", () => {
 		const workflows = screen.getByTestId("chip-workflows");
 		expect(workflows).toHaveTextContent("Workflows");
 		expect(workflows).toHaveTextContent("1");
-		expect(screen.getByTestId("chip-claims")).toHaveTextContent(
-			"Custom Claims",
-		);
+		expect(screen.getByTestId("chip-claims")).toHaveTextContent("Custom Claims");
 	});
 
 	it("opens the requested Contents filter from an Overview entity count", async () => {
@@ -476,13 +457,9 @@ describe("SolutionDetail", () => {
 			"data-state",
 			"active",
 		);
-		expect(screen.getByTestId("chip-workflows")).toHaveTextContent(
-			"Workflows",
-		);
+		expect(screen.getByTestId("chip-workflows")).toHaveTextContent("Workflows");
 		expect(screen.getByText("Sync Tickets")).toBeInTheDocument();
-		expect(
-			screen.queryByTestId("summary-workflows"),
-		).not.toBeInTheDocument();
+		expect(screen.queryByTestId("summary-workflows")).not.toBeInTheDocument();
 	});
 
 	it("opens Files directly from the Overview Files count", async () => {
@@ -500,18 +477,15 @@ describe("SolutionDetail", () => {
 			"data-state",
 			"active",
 		);
-		expect(
-			await screen.findByTestId("solution-files-explorer"),
-		).toHaveTextContent("Files Explorer sol-1 My Solution");
+		expect(await screen.findByTestId("solution-files-explorer"))
+			.toHaveTextContent("Files Explorer sol-1 My Solution");
 	});
 
 	it("renders the update action and the overflow menu in the header", async () => {
 		const { user } = await renderPage();
 		await screen.findByTestId("solution-detail");
 
-		expect(
-			screen.getByRole("button", { name: /update/i }),
-		).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /update/i })).toBeInTheDocument();
 
 		// The secondary actions (Capture, Export, Edit, Delete) live behind the
 		// "⋯" overflow menu now, not as a flat row of buttons.
@@ -537,109 +511,101 @@ describe("SolutionDetail", () => {
 		await screen.findByTestId("solution-detail");
 
 		await user.click(screen.getByTestId("solution-actions"));
-		await user.click(
-			await screen.findByRole("menuitem", { name: /capture/i }),
-		);
+		await user.click(await screen.findByRole("menuitem", { name: /capture/i }));
 
 		expect(
-			await screen.findByRole("heading", {
-				name: /capture existing entities/i,
-			}),
+			await screen.findByRole("heading", { name: /capture existing entities/i }),
 		).toBeInTheDocument();
-		expect(
-			await screen.findByLabelText(/capture orders/i),
-		).toBeInTheDocument();
+		expect(await screen.findByLabelText(/capture orders/i)).toBeInTheDocument();
 	});
 
-	it("shows the setup-incomplete banner", async () => {
-		await renderPage();
-		expect(
-			await screen.findByTestId("required-config-warning"),
-		).toBeInTheDocument();
-		expect(
-			screen.getByText(
-				/setup incomplete .* 1 required config needs a value/i,
-			),
-		).toBeInTheDocument();
-	});
-
-	it("uses the workflow list execute action instead of making the card open execution", async () => {
-		const { user } = await renderPage();
-		await screen.findByTestId("solution-detail");
-
-		await user.click(screen.getByTestId("tab-contents"));
-		await user.click(screen.getByTestId("chip-workflows"));
-		const execute = screen.getByRole("button", {
-			name: /execute workflow/i,
+		it("shows the setup-incomplete banner", async () => {
+			await renderPage();
+			expect(
+				await screen.findByTestId("required-config-warning"),
+			).toBeInTheDocument();
+			expect(
+				screen.getByText(/setup incomplete .* 1 required config needs a value/i),
+			).toBeInTheDocument();
 		});
-		await user.click(execute);
 
-		expect(mockNavigate).toHaveBeenCalledWith(
-			"/workflows/Sync%20Tickets/execute?from=solution:sol-1",
-		);
-	});
+		it("uses the workflow list execute action instead of making the card open execution", async () => {
+			const { user } = await renderPage();
+			await screen.findByTestId("solution-detail");
 
-	it("uses the forms list launch action without exposing edit controls", async () => {
-		const { user } = await renderPage();
-		await screen.findByTestId("solution-detail");
+			await user.click(screen.getByTestId("tab-contents"));
+			await user.click(screen.getByTestId("chip-workflows"));
+			const execute = screen.getByRole("button", { name: /execute workflow/i });
+			await user.click(execute);
 
-		await user.click(screen.getByTestId("tab-contents"));
-		await user.click(screen.getByTestId("chip-forms"));
-		expect(screen.getByText("Ticket Intake")).toBeInTheDocument();
-		expect(
-			screen.queryByRole("button", { name: /edit form/i }),
-		).not.toBeInTheDocument();
+			expect(mockNavigate).toHaveBeenCalledWith(
+				"/workflows/Sync%20Tickets/execute?from=solution:sol-1",
+			);
+		});
 
-		await user.click(screen.getByRole("button", { name: /launch/i }));
-		expect(mockNavigate).toHaveBeenCalledWith(
-			"/execute/form-1?from=solution:sol-1",
-		);
-	});
+		it("uses the forms list launch action without exposing edit controls", async () => {
+			const { user } = await renderPage();
+			await screen.findByTestId("solution-detail");
 
-	it("opens sharing for a solution-managed form without exposing edit controls", async () => {
-		const { user } = await renderPage();
-		await screen.findByTestId("solution-detail");
+			await user.click(screen.getByTestId("tab-contents"));
+			await user.click(screen.getByTestId("chip-forms"));
+			expect(screen.getByText("Ticket Intake")).toBeInTheDocument();
+			expect(
+				screen.queryByRole("button", { name: /edit form/i }),
+			).not.toBeInTheDocument();
 
-		await user.click(screen.getByTestId("tab-contents"));
-		await user.click(screen.getByTestId("chip-forms"));
-		await user.click(
-			screen.getByRole("button", { name: "Ticket Intake actions" }),
-		);
+			await user.click(screen.getByRole("button", { name: /launch/i }));
+			expect(mockNavigate).toHaveBeenCalledWith(
+				"/execute/form-1?from=solution:sol-1",
+			);
+		});
 
-		expect(
-			screen.getByRole("menuitem", { name: "Share Form" }),
-		).toBeInTheDocument();
-		expect(
-			screen.queryByRole("menuitem", { name: "Edit Form" }),
-		).not.toBeInTheDocument();
+		it("opens sharing for a solution-managed form without exposing edit controls", async () => {
+			const { user } = await renderPage();
+			await screen.findByTestId("solution-detail");
 
-		await user.click(screen.getByRole("menuitem", { name: "Share Form" }));
-		expect(screen.getByRole("dialog")).toHaveTextContent(
-			"Share Ticket Intake",
-		);
-	});
+			await user.click(screen.getByTestId("tab-contents"));
+			await user.click(screen.getByTestId("chip-forms"));
+			await user.click(
+				screen.getByRole("button", { name: "Ticket Intake actions" }),
+			);
 
-	it("uses the applications list open behavior for solution apps", async () => {
-		const { user } = await renderPage();
-		await screen.findByTestId("solution-detail");
+			expect(
+				screen.getByRole("menuitem", { name: "Share Form" }),
+			).toBeInTheDocument();
+			expect(
+				screen.queryByRole("menuitem", { name: "Edit Form" }),
+			).not.toBeInTheDocument();
 
-		await user.click(screen.getByTestId("tab-contents"));
-		await user.click(screen.getByTestId("chip-apps"));
-		expect(screen.queryByText(/open published/i)).not.toBeInTheDocument();
-		expect(screen.getByTestId("entity-logo")).toHaveAttribute(
-			"src",
-			APP_LOGO_DATA_URL,
-		);
-		await user.click(screen.getByRole("button", { name: /solution app/i }));
+			await user.click(
+				screen.getByRole("menuitem", { name: "Share Form" }),
+			);
+			expect(screen.getByRole("dialog")).toHaveTextContent(
+				"Share Ticket Intake",
+			);
+		});
 
-		expect(mockNavigate).toHaveBeenCalledWith(
-			"/apps/solution-app?from=solution:sol-1",
-		);
-	});
+		it("uses the applications list open behavior for solution apps", async () => {
+			const { user } = await renderPage();
+			await screen.findByTestId("solution-detail");
 
-	it("navigates a table row to its entity page with ?from=solution:", async () => {
-		const { user } = await renderPage();
-		await screen.findByTestId("solution-detail");
+			await user.click(screen.getByTestId("tab-contents"));
+			await user.click(screen.getByTestId("chip-apps"));
+			expect(screen.queryByText(/open published/i)).not.toBeInTheDocument();
+			expect(screen.getByTestId("entity-logo")).toHaveAttribute(
+				"src",
+				APP_LOGO_DATA_URL,
+			);
+			await user.click(screen.getByRole("button", { name: /solution app/i }));
+
+			expect(mockNavigate).toHaveBeenCalledWith(
+				"/apps/solution-app?from=solution:sol-1",
+			);
+		});
+
+		it("navigates a table row to its entity page with ?from=solution:", async () => {
+			const { user } = await renderPage();
+			await screen.findByTestId("solution-detail");
 
 		await user.click(screen.getByTestId("tab-contents"));
 		await user.click(screen.getByTestId("chip-tables"));
@@ -657,11 +623,12 @@ describe("SolutionDetail", () => {
 
 		await user.click(screen.getByTestId("tab-contents"));
 		await user.click(screen.getByTestId("chip-tables"));
-		expect(
-			screen.getByRole("row", { name: /customers/i }),
-		).toBeInTheDocument();
+		expect(screen.getByRole("row", { name: /customers/i })).toBeInTheDocument();
 
-		await user.type(screen.getByPlaceholderText("Search tables..."), "zzz");
+		await user.type(
+			screen.getByPlaceholderText("Search tables..."),
+			"zzz",
+		);
 		// SearchBox debounces input before propagating it.
 		expect(await screen.findByText(/no tables match/i)).toBeInTheDocument();
 		expect(
@@ -766,9 +733,7 @@ describe("SolutionDetail", () => {
 		// On success the entities query refetches (clears the badge once the
 		// backend drops update_available_version).
 		await waitFor(() =>
-			expect(mockGetSolutionEntities.mock.calls.length).toBeGreaterThan(
-				1,
-			),
+			expect(mockGetSolutionEntities.mock.calls.length).toBeGreaterThan(1),
 		);
 	});
 
@@ -799,9 +764,8 @@ describe("SolutionDetail", () => {
 		await user.click(screen.getByTestId("tab-contents"));
 		await user.click(screen.getByTestId("chip-files"));
 
-		expect(
-			await screen.findByTestId("solution-files-explorer"),
-		).toHaveTextContent("Files Explorer sol-1 My Solution");
+		expect(await screen.findByTestId("solution-files-explorer"))
+			.toHaveTextContent("Files Explorer sol-1 My Solution");
 		expect(mockFilesExplorer).toHaveBeenCalledWith({
 			install: "sol-1",
 			installName: "My Solution",
@@ -814,9 +778,7 @@ describe("SolutionDetail", () => {
 		await screen.findByTestId("solution-detail");
 
 		await user.click(screen.getByTestId("solution-actions"));
-		expect(
-			await screen.findByTestId("uninstall-solution"),
-		).toBeInTheDocument();
+		expect(await screen.findByTestId("uninstall-solution")).toBeInTheDocument();
 		expect(screen.getByTestId("hard-delete-solution")).toBeInTheDocument();
 	});
 
@@ -849,9 +811,7 @@ describe("SolutionDetail", () => {
 
 		// Overflow menu has no Uninstall but still has Delete permanently.
 		await user.click(screen.getByTestId("solution-actions"));
-		expect(
-			screen.queryByTestId("uninstall-solution"),
-		).not.toBeInTheDocument();
+		expect(screen.queryByTestId("uninstall-solution")).not.toBeInTheDocument();
 		expect(screen.getByTestId("hard-delete-solution")).toBeInTheDocument();
 	});
 
@@ -874,9 +834,7 @@ describe("SolutionDetail", () => {
 		expect(screen.getByTestId("hard-delete-slug")).toHaveTextContent(
 			"my-solution",
 		);
-		expect(
-			screen.getByText("Type the Solution slug to confirm"),
-		).toBeInTheDocument();
+		expect(screen.getByText("Type the Solution slug to confirm")).toBeInTheDocument();
 
 		// Confirm is disabled until slug is typed.
 		const confirmBtn = screen.getByTestId("confirm-hard-delete");
@@ -915,10 +873,7 @@ describe("SolutionDetail", () => {
 		await user.click(screen.getByTestId("confirm-hard-delete"));
 
 		await waitFor(() =>
-			expect(mockDeleteSolution).toHaveBeenCalledWith(
-				"sol-1",
-				"my-solution",
-			),
+			expect(mockDeleteSolution).toHaveBeenCalledWith("sol-1", "my-solution"),
 		);
 		await waitFor(() =>
 			expect(mockNavigate).toHaveBeenCalledWith("/solutions"),
