@@ -1,5 +1,3 @@
-import { Image as ImageIcon, Video, WandSparkles } from "lucide-react";
-
 import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -7,6 +5,7 @@ import { Label } from "@/components/ui/label";
 interface GenerationModelOption {
 	id: string;
 	display_name: string;
+	output_modalities?: string[] | null;
 }
 
 interface GenerationModelSettingsProps {
@@ -24,11 +23,18 @@ export function GenerationModelSettings({
 	onImageModelChange,
 	onVideoModelChange,
 }: GenerationModelSettingsProps) {
-	const options = models.map((model) => ({
-		value: model.id,
-		label: model.display_name,
-		description: model.id !== model.display_name ? model.id : undefined,
-	}));
+	const hasCapabilityCatalog = models.some(
+		(model) => model.output_modalities != null,
+	);
+	const optionsFor = (modality: "image" | "video") =>
+		models
+			.filter((model) => model.output_modalities?.includes(modality))
+			.map((model) => ({
+				value: model.id,
+				label: model.display_name,
+				description:
+					model.id !== model.display_name ? model.id : undefined,
+			}));
 
 	const fields = [
 		{
@@ -37,8 +43,8 @@ export function GenerationModelSettings({
 			placeholder: "Optional image model",
 			value: imageModel,
 			onChange: onImageModelChange,
-			icon: ImageIcon,
-			iconClassName: "text-violet-500",
+			options: optionsFor("image"),
+			emptyText: "No image generation models reported.",
 		},
 		{
 			id: "video-generation-model",
@@ -46,18 +52,15 @@ export function GenerationModelSettings({
 			placeholder: "Optional video model",
 			value: videoModel,
 			onChange: onVideoModelChange,
-			icon: Video,
-			iconClassName: "text-rose-500",
+			options: optionsFor("video"),
+			emptyText: "No video generation models reported.",
 		},
 	];
 
 	return (
 		<div className="space-y-3 rounded-lg border p-4">
 			<div>
-				<h5 className="flex items-center gap-2 text-sm font-medium">
-					<WandSparkles className="h-4 w-4 text-violet-500" />
-					Generation Models
-				</h5>
+				<h5 className="text-sm font-medium">Generation Models</h5>
 				<p className="mt-1 text-xs text-muted-foreground">
 					Reserve dedicated provider models for image and video
 					generation. Leave either blank when that generator is
@@ -66,27 +69,18 @@ export function GenerationModelSettings({
 			</div>
 			<div className="grid gap-3 sm:grid-cols-2">
 				{fields.map((field) => {
-					const Icon = field.icon;
 					return (
 						<div key={field.id} className="space-y-1">
-							<Label
-								htmlFor={field.id}
-								className="flex items-center gap-1.5"
-							>
-								<Icon
-									className={`h-3.5 w-3.5 ${field.iconClassName}`}
-								/>
-								{field.label}
-							</Label>
-							{models.length > 0 ? (
+							<Label htmlFor={field.id}>{field.label}</Label>
+							{hasCapabilityCatalog ? (
 								<Combobox
 									id={field.id}
 									value={field.value}
 									onValueChange={field.onChange}
 									placeholder={field.placeholder}
 									searchPlaceholder="Search models..."
-									emptyText="No models found."
-									options={options}
+									emptyText={field.emptyText}
+									options={field.options}
 								/>
 							) : (
 								<Input

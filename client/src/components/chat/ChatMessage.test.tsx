@@ -4,13 +4,13 @@
  * Cover the three axes that drive rendering:
  *   - user vs. assistant layout (user messages right-aligned bubble, assistant full-width)
  *   - markdown + code blocks render for assistant
- *   - streaming prop toggles the animate-pulse class
+ *   - streaming state is exposed without animating the message itself
  *
  * We rely on react-markdown/react-syntax-highlighter running for real since
  * they're pure and fast; happy-dom is fine.
  */
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { renderWithProviders, screen } from "@/test-utils";
 import { ChatMessage } from "./ChatMessage";
 import type { components } from "@/lib/v1";
@@ -59,7 +59,7 @@ describe("ChatMessage — user messages", () => {
 				})}
 			/>,
 		);
-		expect(screen.getByRole("button", { name: /notes.txt/i })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Preview notes.txt" })).toBeInTheDocument();
 	});
 
 	it("renders @[AgentName] mentions as an inline badge for user messages", () => {
@@ -106,7 +106,7 @@ describe("ChatMessage — assistant messages", () => {
 		expect(screen.getByText(/print/)).toBeInTheDocument();
 	});
 
-	it("applies animate-pulse while streaming and drops it when done", () => {
+	it("marks streaming content busy without fading the message", () => {
 		const { container, rerender } = renderWithProviders(
 			<ChatMessage
 				message={makeMessage({
@@ -116,7 +116,8 @@ describe("ChatMessage — assistant messages", () => {
 				isStreaming={true}
 			/>,
 		);
-		expect(container.querySelector(".animate-pulse")).not.toBeNull();
+		expect(container.querySelector('[aria-busy="true"]')).not.toBeNull();
+		expect(container.querySelector(".animate-pulse")).toBeNull();
 
 		rerender(
 			<ChatMessage
@@ -127,6 +128,7 @@ describe("ChatMessage — assistant messages", () => {
 				isStreaming={false}
 			/>,
 		);
+		expect(container.querySelector("[aria-busy]")).toBeNull();
 		expect(container.querySelector(".animate-pulse")).toBeNull();
 	});
 
@@ -145,5 +147,25 @@ describe("ChatMessage — assistant messages", () => {
 		expect(screen.getByText(/In: 10/)).toBeInTheDocument();
 		expect(screen.getByText(/Out: 42/)).toBeInTheDocument();
 		expect(screen.getByText(/1500ms/)).toBeInTheDocument();
+	});
+
+	it("shows message time, copies content, and disables local file links", async () => {
+		const writeText = vi.fn().mockResolvedValue(undefined);
+		vi.spyOn(navigator.clipboard, "writeText").mockImplementation(writeText);
+		const { user } = renderWithProviders(
+			<ChatMessage
+				message={makeMessage({
+					content: "[Local result](file:///tmp/report.pdf)",
+				})}
+			/>,
+		);
+
+		expect(screen.getByText(/Apr 20, 2026/i)).toBeInTheDocument();
+		expect(screen.queryByRole("link", { name: "Local result" })).not.toBeInTheDocument();
+		const copyButton = screen.getByRole("button", { name: "Copy message" });
+		expect(copyButton).toHaveClass("size-11", "sm:size-6");
+		expect(copyButton.parentElement).toHaveClass("opacity-100", "sm:opacity-0");
+		await user.click(copyButton);
+		expect(writeText).toHaveBeenCalledWith("[Local result](file:///tmp/report.pdf)");
 	});
 });

@@ -352,14 +352,14 @@ class AttachmentUploadResponse(BaseModel):
 class ChatArtifactPublic(AttachmentPublic):
     """A durable Chat file with enough context for the user's artifact library."""
 
-    conversation_id: UUID
-    message_id: UUID
+    conversation_id: UUID | None = None
+    message_id: UUID | None = None
     conversation_title: str | None = None
     created_at: datetime
 
     @field_serializer("conversation_id", "message_id")
-    def serialize_parent_ids(self, value: UUID) -> str:
-        return str(value)
+    def serialize_parent_ids(self, value: UUID | None) -> str | None:
+        return str(value) if value is not None else None
 
     @field_serializer("created_at")
     def serialize_created_at(self, value: datetime) -> str:

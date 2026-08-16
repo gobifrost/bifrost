@@ -62,9 +62,18 @@ test.describe("AI model settings", () => {
 						{
 							id: "deepseek/deepseek-v4-pro",
 							display_name: "DeepSeek V4 Pro",
+							output_modalities: ["text"],
 						},
-						{ id: "image-model", display_name: "Image Model" },
-						{ id: "video-model", display_name: "Video Model" },
+						{
+							id: "google/nano-banana",
+							display_name: "Nano Banana",
+							output_modalities: ["image"],
+						},
+						{
+							id: "video-model",
+							display_name: "Video Model",
+							output_modalities: ["video"],
+						},
 					],
 				},
 			});
@@ -72,12 +81,21 @@ test.describe("AI model settings", () => {
 
 		await page.goto("/settings/ai");
 		await expect(page.getByText("Chat Model Choices")).toBeVisible();
-		await expect(page.getByText("Fast Label", { exact: true })).toBeVisible();
-		await expect(page.getByText("Fast Model", { exact: true })).toBeVisible();
+		const fastTier = page.getByRole("group", { name: "Fast" });
+		await expect(fastTier.getByText("Fast", { exact: true })).toBeVisible();
+		await expect(
+			fastTier.getByText("Model", { exact: true }),
+		).toBeVisible();
+		await expect(
+			fastTier.getByText("OpenRouter", { exact: true }),
+		).toBeVisible();
+		await expect(fastTier.getByText("Capabilities")).toHaveCount(0);
 
-		const unsupportedImage = page.getByRole("button", {
-			name: "Image Input: Not Supported",
-		}).first();
+		const unsupportedImage = page
+			.getByRole("button", {
+				name: "Image Input: Not Supported",
+			})
+			.first();
 		await expect(unsupportedImage).toHaveClass(/text-red-600/);
 		await expect(
 			page
@@ -86,14 +104,18 @@ test.describe("AI model settings", () => {
 		).toHaveClass(/text-green-600/);
 		await unsupportedImage.hover();
 		await expect(
-			page.getByText("Not Supported · OpenRouter Catalog"),
+			page.getByText("Not Supported · OpenRouter"),
 		).toBeVisible();
 
 		const imageModel = page.getByRole("combobox", {
 			name: "Image Generation Model",
 		});
 		await imageModel.click();
-		const imageOption = page.getByRole("option", { name: "Image Model" });
+		await page.getByPlaceholder("Search models...").fill("banana");
+		const imageOption = page.getByRole("option", { name: /Nano Banana/ });
+		await expect(
+			page.getByRole("option", { name: /DeepSeek V4 Pro/ }),
+		).toHaveCount(0);
 		await imageOption.click();
 		await expect(imageOption).toBeHidden();
 		const videoModel = page.getByRole("combobox", {
@@ -104,6 +126,25 @@ test.describe("AI model settings", () => {
 		await videoOption.click();
 		await expect(videoOption).toBeHidden();
 
+		const summarizationModel = page.getByRole("combobox", {
+			name: "Summarization Model (Optional)",
+		});
+		await summarizationModel.click();
+		const summarizationOption = page.getByRole("option", {
+			name: "DeepSeek V4 Pro",
+		});
+		await summarizationOption.click();
+		await expect(summarizationOption).toBeHidden();
+		const tuningModel = page.getByRole("combobox", {
+			name: "Tuning Model (Optional)",
+		});
+		await tuningModel.click();
+		const tuningOption = page.getByRole("option", {
+			name: "DeepSeek V4 Pro",
+		});
+		await tuningOption.click();
+		await expect(tuningOption).toBeHidden();
+
 		await page.setViewportSize({ width: 1440, height: 1000 });
 		await page.getByText("Chat Model Choices").scrollIntoViewIfNeeded();
 		await testInfo.attach("AI settings — Model routing", {
@@ -113,8 +154,10 @@ test.describe("AI model settings", () => {
 		await page.getByRole("button", { name: "Save Configuration" }).click();
 		await expect.poll(() => savedBody).not.toBeNull();
 		expect(savedBody).toMatchObject({
-			image_generation_model: "image-model",
+			image_generation_model: "google/nano-banana",
 			video_generation_model: "video-model",
+			summarization_model: "deepseek/deepseek-v4-pro",
+			tuning_model: "deepseek/deepseek-v4-pro",
 		});
 	});
 });

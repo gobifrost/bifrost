@@ -29,6 +29,7 @@ SCHEDULED_TASKS: tuple[ScheduledTaskDefinition, ...] = (
     ScheduledTaskDefinition("webhook_renewal", "Renew Webhook Subscriptions", "Every 6 hours", "durable_job"),
     ScheduledTaskDefinition("solution_update_check", "Check Solution Updates", "Every 6 hours", "durable_job"),
     ScheduledTaskDefinition("solution_export_job_cleanup", "Clean Up Solution Export Artifacts", "Hourly"),
+    ScheduledTaskDefinition("artifact_retention_cleanup", "Clean Up Artifacts", "Daily at 03:30 UTC", "durable_job"),
     ScheduledTaskDefinition("event_cleanup", "Clean Up Old Events", "Daily at 03:00 UTC"),
     ScheduledTaskDefinition("stuck_event_cleanup", "Clean Up Stuck Event Deliveries", "Every 5 minutes"),
     ScheduledTaskDefinition("worker_metrics_sampling", "Sample Worker Metrics", "Every minute"),

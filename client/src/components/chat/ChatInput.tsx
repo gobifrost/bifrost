@@ -312,7 +312,7 @@ export function ChatInput({
 		!busy;
 
 	return (
-		<div className="px-3 pb-3 pt-2 sm:px-4 sm:pb-4">
+		<div className="px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 sm:px-4 sm:pb-4">
 			<div className="mx-auto max-w-3xl">
 				<div
 					onDrop={handleDrop}
@@ -361,7 +361,7 @@ export function ChatInput({
 										variant="secondary"
 										size="icon-sm"
 										aria-label={`Remove ${draft.file.name}`}
-										className="absolute -right-1.5 -top-1.5 h-6 w-6 rounded-full"
+										className="absolute -right-1.5 -top-1.5 h-7 w-7 rounded-full after:absolute after:-inset-2 sm:h-6 sm:w-6 sm:after:inset-0"
 										onClick={() => removeAttachment(index)}
 									>
 										<X className="h-3 w-3" />
@@ -444,6 +444,7 @@ export function ChatInput({
 								size="icon-sm"
 								aria-label="Attach files"
 								title="Attach files"
+								className="size-11 sm:size-7"
 								disabled={
 									busy ||
 									attachments.length >=
@@ -465,7 +466,7 @@ export function ChatInput({
 								>
 									<SelectTrigger
 										aria-label="Response model"
-										className="h-8 w-auto min-w-24 border-0 bg-transparent px-2 text-xs shadow-none"
+										className="h-11 w-auto min-w-24 border-0 bg-transparent px-2 text-xs shadow-none sm:h-8"
 									>
 										<SelectValue />
 									</SelectTrigger>
@@ -490,7 +491,7 @@ export function ChatInput({
 								variant="destructive"
 								aria-label="Stop generation"
 								title="Stop generation"
-								className="rounded-full"
+								className="size-11 rounded-full sm:size-7"
 							>
 								<Square className="h-3 w-3 fill-current" />
 							</Button>
@@ -500,7 +501,7 @@ export function ChatInput({
 								disabled={!canSend}
 								size="icon-sm"
 								aria-label="Send message"
-								className="rounded-full"
+								className="size-11 rounded-full sm:size-7"
 							>
 								{isSubmitting ? (
 									<Loader2 className="h-4 w-4 animate-spin" />

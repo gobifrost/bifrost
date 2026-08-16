@@ -13,6 +13,7 @@ describe("ChatRunActivity", () => {
 
 		const status = screen.getByText("Thinking…");
 		expect(status).toHaveClass("chat-activity-shimmer");
+		expect(status.closest("button")).toHaveClass("min-h-11", "sm:min-h-7");
 		expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
 	});
 
@@ -29,6 +30,12 @@ describe("ChatRunActivity", () => {
 				format: "markdown",
 			}),
 		).toBe("Generating Markdown…");
+		expect(getActiveRunLabel("create_image_artifact", {})).toBe(
+			"Generating image…",
+		);
+		expect(getActiveRunLabel("create_video_artifact", {})).toBe(
+			"Starting video generation…",
+		);
 	});
 
 	it("collapses completed details behind elapsed time", async () => {
@@ -39,11 +46,49 @@ describe("ChatRunActivity", () => {
 		);
 
 		expect(screen.getByText("Worked for 1m 14s")).toBeInTheDocument();
-		expect(screen.queryByText("create_text_artifact")).not.toBeInTheDocument();
+		const collapsedDetail = screen
+			.getByText("create_text_artifact")
+			.closest('[aria-hidden="true"]');
+		expect(collapsedDetail).toHaveClass("grid-rows-[0fr]", "opacity-0");
 		await user.click(screen.getByRole("button"));
-		const detail = screen.getByText("create_text_artifact").parentElement;
-		expect(detail).toHaveClass("w-full");
-		expect(detail).not.toHaveClass("border-l", "pl-3");
+		const detail = screen
+			.getByText("create_text_artifact")
+			.closest('[aria-hidden="false"]');
+		expect(detail).toHaveClass("grid-rows-[1fr]", "opacity-100");
+		const detailContent = screen.getByText("create_text_artifact").parentElement;
+		expect(detailContent).toHaveClass("w-full");
+		expect(detailContent).not.toHaveClass("border-l", "pl-3");
+	});
+
+	it("keeps running activity collapsed until the user expands it", async () => {
+		const { user } = renderWithProviders(
+			<ChatRunActivity isActive>
+				<span>Ran commands</span>
+			</ChatRunActivity>,
+		);
+
+		const collapsedDetail = screen
+			.getByText("Ran commands")
+			.closest('[aria-hidden="true"]');
+		expect(collapsedDetail).toHaveClass(
+			"grid-rows-[0fr]",
+			"opacity-0",
+			"duration-200",
+		);
+		expect(screen.getByRole("button")).toHaveAttribute(
+			"aria-expanded",
+			"false",
+		);
+
+		await user.click(screen.getByRole("button"));
+		const expandedDetail = screen
+			.getByText("Ran commands")
+			.closest('[aria-hidden="false"]');
+		expect(expandedDetail).toHaveClass("grid-rows-[1fr]", "duration-300");
+		expect(screen.getByRole("button")).toHaveAttribute(
+			"aria-expanded",
+			"true",
+		);
 	});
 });
 

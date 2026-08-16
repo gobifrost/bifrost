@@ -105,6 +105,34 @@ async def run_file_index_reconciliation(
     return result
 
 
+async def run_artifact_retention_cleanup(
+    context: PlatformJobContext, payload: EmptyMaintenancePayload
+) -> dict:
+    from src.services.artifact_retention import (
+        ArtifactRetentionSettingsService,
+        cleanup_expired_chat_artifacts,
+    )
+
+    await context.report("Finding expired artifacts", percent=5)
+    async with get_db_context() as db:
+        settings = await ArtifactRetentionSettingsService(db).get_settings()
+        deleted, failed = await cleanup_expired_chat_artifacts(db)
+        await db.commit()
+
+    await context.report("Artifact retention cleanup complete", percent=100)
+    await context.log(
+        "warning" if failed else "info",
+        "artifact_retention_cleanup_completed",
+        f"Artifact retention cleanup deleted {deleted} files with {failed} failures",
+    )
+    return {
+        "enabled": settings.enabled,
+        "retention_days": settings.retention_days,
+        "deleted_count": deleted,
+        "failed_count": failed,
+    }
+
+
 OAUTH_REFRESH_DEFINITION = PlatformJobDefinition(
     job_type="oauth.refresh",
     payload_version=1,
@@ -154,6 +182,19 @@ FILE_INDEX_RECONCILIATION_DEFINITION = PlatformJobDefinition(
         max_attempts=2,
         max_concurrency=1,
         min_memory_headroom_mb=256,
+    ),
+)
+
+ARTIFACT_RETENTION_CLEANUP_DEFINITION = PlatformJobDefinition(
+    job_type="artifact.retention_cleanup",
+    payload_version=1,
+    payload_model=EmptyMaintenancePayload,
+    handler=run_artifact_retention_cleanup,
+    policy=PlatformJobPolicy(
+        timeout_seconds=30 * 60,
+        max_attempts=2,
+        max_concurrency=1,
+        min_memory_headroom_mb=128,
     ),
 )
 
@@ -218,4 +259,12 @@ async def enqueue_automatic_file_index_reconciliation() -> ScheduledTaskOutcome:
         FILE_INDEX_RECONCILIATION_DEFINITION,
         EmptyMaintenancePayload(),
         title="Reconcile workspace file index",
+    )
+
+
+async def enqueue_automatic_artifact_retention_cleanup() -> ScheduledTaskOutcome:
+    return await enqueue_system_maintenance(
+        ARTIFACT_RETENTION_CLEANUP_DEFINITION,
+        EmptyMaintenancePayload(),
+        title="Clean up expired artifacts",
     )

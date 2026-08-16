@@ -39,6 +39,10 @@ export function isImageAttachment(contentType: string): boolean {
 	return contentType.startsWith("image/");
 }
 
+export function isVideoAttachment(contentType: string): boolean {
+	return contentType.startsWith("video/");
+}
+
 export function formatBytes(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
 	if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
@@ -135,9 +139,30 @@ export function attachmentContentUrl(
 	attachmentId: string,
 	options?: { download?: boolean; preview?: boolean },
 ): string {
-	const base = `/api/chat/conversations/${conversationId}/attachments/${attachmentId}/content`;
+	const base = conversationId
+		? `/api/chat/conversations/${conversationId}/attachments/${attachmentId}/content`
+		: `/api/sdk/artifacts/${attachmentId}/content`;
 	const query = new URLSearchParams();
 	if (options?.download) query.set("download", "true");
 	if (options?.preview) query.set("preview", "true");
 	return query.size > 0 ? `${base}?${query.toString()}` : base;
+}
+
+export async function downloadChatAttachment(
+	conversationId: string,
+	attachment: Pick<AttachmentPublic, "id" | "filename">,
+): Promise<void> {
+	const response = await authFetch(
+		attachmentContentUrl(conversationId, attachment.id, { download: true }),
+	);
+	if (!response.ok) throw new Error("Download failed");
+	const blobUrl = URL.createObjectURL(await response.blob());
+	try {
+		const anchor = document.createElement("a");
+		anchor.href = blobUrl;
+		anchor.download = attachment.filename;
+		anchor.click();
+	} finally {
+		URL.revokeObjectURL(blobUrl);
+	}
 }

@@ -128,7 +128,7 @@ export function ChatSidebar({
 						<Button
 							variant="ghost"
 							size="icon-sm"
-							className="lg:hidden"
+							className="size-11 lg:hidden"
 							onClick={onClose}
 							aria-label="Close chat sidebar"
 						>
@@ -138,7 +138,7 @@ export function ChatSidebar({
 				</div>
 				<Button
 					variant="ghost"
-					className="w-full justify-start gap-2"
+					className="min-h-11 w-full justify-start gap-2 sm:min-h-8"
 					onClick={handleNewChat}
 				>
 					<Plus className="h-4 w-4" />
@@ -147,7 +147,7 @@ export function ChatSidebar({
 				<Button
 					variant="ghost"
 					className={cn(
-						"w-full justify-start gap-2",
+						"min-h-11 w-full justify-start gap-2 sm:min-h-8",
 						location.pathname === "/chat/artifacts" && "bg-accent",
 					)}
 					onClick={() => {
@@ -196,7 +196,7 @@ export function ChatSidebar({
 									<button
 										type="button"
 										aria-label={`Open ${conv.title || conv.agent_name || "Untitled"}`}
-										className="flex min-w-0 flex-1 items-start gap-2 rounded-lg p-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+										className="flex min-h-11 min-w-0 flex-1 items-start gap-2 rounded-lg p-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
 										onClick={() => handleSelectConversation(conv)}
 									>
 										<MessageSquare className="h-4 w-4 mt-1 text-muted-foreground shrink-0" />
@@ -221,7 +221,7 @@ export function ChatSidebar({
 									<Button
 										variant="ghost"
 										size="icon-sm"
-										className="mr-1 mt-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shrink-0"
+										className="mr-1 mt-1 size-11 shrink-0 opacity-100 transition-opacity sm:size-7 sm:opacity-0 sm:group-hover:opacity-100"
 										aria-label={`Delete ${conv.title || conv.agent_name || "Untitled"}`}
 										onClick={() => setDeleteTarget(conv)}
 									>

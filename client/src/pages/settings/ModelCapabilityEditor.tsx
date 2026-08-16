@@ -1,14 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import {
 	CircleHelp,
+	CheckCircle2,
 	FileText,
 	Image,
 	Loader2,
-	RefreshCw,
 	ShieldCheck,
 	Wrench,
-	XCircle,
-	CheckCircle2,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -55,8 +53,8 @@ const CAPABILITIES = [
 
 function sourceLabel(source: ModelCapabilities["source"]): string {
 	return {
-		openrouter: "OpenRouter Catalog",
-		verified: "Provider Verified",
+		openrouter: "OpenRouter",
+		verified: "Verified",
 		manual: "Manual",
 		unknown: "Not Verified",
 	}[source];
@@ -81,6 +79,8 @@ export function ModelCapabilityEditor({
 	const [verifying, setVerifying] = useState(false);
 	const previousModel = useRef(model);
 	const capabilities = value ?? UNKNOWN;
+	const verified = capabilities.source !== "unknown";
+	const SourceIcon = verified ? CheckCircle2 : CircleHelp;
 
 	const detect = async (announce = false) => {
 		if (!model.trim()) return;
@@ -182,8 +182,7 @@ export function ModelCapabilityEditor({
 
 	return (
 		<TooltipProvider delayDuration={150}>
-			<div className="flex min-h-8 flex-wrap items-center gap-1.5 text-xs">
-				<span className="mr-1 text-muted-foreground">Capabilities</span>
+			<div className="flex min-h-5 flex-wrap items-center gap-0.5 text-xs">
 				{CAPABILITIES.map((item) => {
 					const Icon = item.icon;
 					const unknown = capabilities.source === "unknown";
@@ -193,12 +192,6 @@ export function ModelCapabilityEditor({
 						: supported
 							? "Supported"
 							: "Not Supported";
-					const StatusIcon = unknown
-						? CircleHelp
-						: supported
-							? CheckCircle2
-							: XCircle;
-
 					return (
 						<Tooltip key={item.key}>
 							<TooltipTrigger asChild>
@@ -207,7 +200,7 @@ export function ModelCapabilityEditor({
 									onClick={() => toggle(item.key)}
 									aria-label={`${item.label}: ${state}`}
 									className={cn(
-										"relative grid h-7 w-7 place-items-center rounded-md outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+										"grid h-6 w-6 place-items-center rounded-md outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
 										unknown &&
 											"text-amber-600 dark:text-amber-400",
 										supported &&
@@ -218,8 +211,7 @@ export function ModelCapabilityEditor({
 											"text-red-600 dark:text-red-400",
 									)}
 								>
-									<Icon className="h-4 w-4" />
-									<StatusIcon className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 fill-background" />
+									<Icon className="h-3.5 w-3.5" />
 								</button>
 							</TooltipTrigger>
 							<TooltipContent>
@@ -233,9 +225,6 @@ export function ModelCapabilityEditor({
 					);
 				})}
 
-				<span className="ml-1 text-[11px] text-muted-foreground">
-					{sourceLabel(capabilities.source)}
-				</span>
 				<div className="ml-auto flex items-center gap-0.5">
 					{capabilities.source === "unknown" && (
 						<Tooltip>
@@ -244,15 +233,15 @@ export function ModelCapabilityEditor({
 									type="button"
 									variant="ghost"
 									size="icon"
-									className="h-7 w-7 text-blue-600 dark:text-blue-400"
+									className="h-6 w-6 text-blue-600 dark:text-blue-400"
 									onClick={() => void verify()}
 									disabled={!model.trim() || verifying}
 									aria-label="Verify With Provider"
 								>
 									{verifying ? (
-										<Loader2 className="h-3.5 w-3.5 animate-spin" />
+										<Loader2 className="h-3 w-3 animate-spin" />
 									) : (
-										<ShieldCheck className="h-3.5 w-3.5" />
+										<ShieldCheck className="h-3 w-3" />
 									)}
 								</Button>
 							</TooltipTrigger>
@@ -263,24 +252,32 @@ export function ModelCapabilityEditor({
 					)}
 					<Tooltip>
 						<TooltipTrigger asChild>
-							<Button
+							<button
 								type="button"
-								variant="ghost"
-								size="icon"
-								className="h-7 w-7"
+								className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[11px] font-normal text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
 								onClick={() => void detect(true)}
 								disabled={!model.trim() || detecting}
-								aria-label="Refresh From Catalog"
+								aria-label="Refresh Model Capabilities"
 							>
-								<RefreshCw
-									className={cn(
-										"h-3.5 w-3.5",
-										detecting && "animate-spin",
-									)}
-								/>
-							</Button>
+								<span>{sourceLabel(capabilities.source)}</span>
+								{detecting ? (
+									<Loader2 className="h-3 w-3 animate-spin" />
+								) : (
+									<SourceIcon
+										className={cn(
+											"h-3 w-3",
+											verified
+												? "text-green-600 dark:text-green-400"
+												: "text-amber-600 dark:text-amber-400",
+										)}
+										aria-hidden="true"
+									/>
+								)}
+							</button>
 						</TooltipTrigger>
-						<TooltipContent>Refresh From Catalog</TooltipContent>
+						<TooltipContent>
+							Refresh Model Capabilities
+						</TooltipContent>
 					</Tooltip>
 				</div>
 			</div>

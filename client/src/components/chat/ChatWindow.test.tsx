@@ -226,6 +226,46 @@ describe("ChatWindow — messages render & send", () => {
 		expect(screen.getByText("Thinking…")).toHaveClass("chat-activity-shimmer");
 	});
 
+	it("collapses tool activity when the final response starts streaming", () => {
+		messagesRef.data = [
+			{
+				id: "m-1",
+				role: "user",
+				content: "Build a report",
+				created_at: "2026-04-20T00:00:00Z",
+			},
+			{
+				id: "tool-1",
+				role: "tool_call",
+				tool_name: "create_text_artifact",
+				tool_state: "completed",
+				created_at: "2026-04-20T00:00:01Z",
+			},
+			{
+				id: "assistant-final",
+				role: "assistant",
+				content: "I created the report.",
+				isStreaming: true,
+				created_at: "2026-04-20T00:00:02Z",
+			},
+		];
+		streamRef.isStreaming = true;
+		storeSelectors.streamingMessageIds = {
+			"c-1": "assistant-final",
+		};
+
+		const { container } = renderWithProviders(
+			<ChatWindow conversationId="c-1" />,
+		);
+
+		expect(screen.getByText("Responding…")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /Responding/i })).toHaveAttribute(
+			"aria-expanded",
+			"false",
+		);
+		expect(container.querySelector(".grid-rows-\\[0fr\\]")).not.toBeNull();
+	});
+
 	it("renders messages returned from the hook", () => {
 		messagesRef.data = [
 			{
@@ -247,6 +287,34 @@ describe("ChatWindow — messages render & send", () => {
 		// Stubbed ChatMessage emits a data-marker for each message.
 		expect(screen.getByText("ping")).toBeInTheDocument();
 		expect(screen.getByText("pong")).toBeInTheDocument();
+	});
+
+	it("uses the persisted run summary duration even when its content is empty", () => {
+		messagesRef.data = [
+			{
+				id: "m-1",
+				role: "user",
+				content: "Generate files",
+				created_at: "2026-04-20T00:00:00Z",
+			},
+			{
+				id: "m-2",
+				role: "assistant",
+				content: "I created the files.",
+				created_at: "2026-04-20T00:00:01Z",
+			},
+			{
+				id: "m-3",
+				role: "assistant",
+				content: "",
+				duration_ms: 8_500,
+				created_at: "2026-04-20T00:00:09Z",
+			},
+		];
+
+		renderWithProviders(<ChatWindow conversationId="c-1" />);
+
+		expect(screen.getByText("Worked for 9s")).toBeInTheDocument();
 	});
 
 	it("forwards a typed message to the stream's sendMessage", async () => {

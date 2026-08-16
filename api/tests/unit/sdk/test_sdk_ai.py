@@ -115,12 +115,10 @@ async def test_encode_input_files_resolves_artifact_refs(monkeypatch):
     read = AsyncMock(return_value=b"%PDF-input")
     monkeypatch.setattr(artifacts, "read", read)
     ref = ArtifactRef(
+        id="artifact-input",
         filename="input.pdf",
         content_type="application/pdf",
         size_bytes=10,
-        path="artifacts/id/input.pdf",
-        location="temp",
-        scope="org-1",
     )
 
     encoded = await _encode_input_files([ref])

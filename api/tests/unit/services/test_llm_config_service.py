@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+import httpx
 import pytest
 from cryptography.fernet import Fernet
 
@@ -19,7 +20,61 @@ from src.services.llm_config_service import (
     LLMTestResult,
     LLM_CONFIG_CATEGORY,
     LLM_CONFIG_KEY,
+    _list_openrouter_models,
+    _model_output_modalities,
 )
+
+
+def test_openrouter_output_modalities_are_preserved() -> None:
+    model = MagicMock()
+    model.architecture = {
+        "input_modalities": ["text"],
+        "output_modalities": ["text", "image"],
+    }
+
+    assert _model_output_modalities(model) == ["text", "image"]
+
+
+@pytest.mark.asyncio
+async def test_openrouter_catalog_includes_all_output_modalities() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == "Bearer test-key"
+        if request.url.path == "/api/v1/images/models":
+            return httpx.Response(
+                200,
+                json={"data": [{"id": "google/nano-banana", "name": "Nano Banana"}]},
+            )
+        if request.url.path == "/api/v1/videos/models":
+            return httpx.Response(
+                200,
+                json={"data": [{"id": "openai/sora", "name": "Sora"}]},
+            )
+        assert request.url.params["output_modalities"] == "all"
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "google/nano-banana",
+                        "name": "Nano Banana",
+                        "architecture": {"output_modalities": ["text"]},
+                    },
+                    {
+                        "id": "openai/sora",
+                        "name": "Sora",
+                        "architecture": {"output_modalities": ["text"]},
+                    },
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        models = await _list_openrouter_models("test-key", client)
+
+    assert [(model.id, model.output_modalities) for model in models] == [
+        ("google/nano-banana", ["text", "image"]),
+        ("openai/sora", ["text", "video"]),
+    ]
 
 
 @pytest.fixture

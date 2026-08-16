@@ -67,7 +67,9 @@ describe("ArtifactsLibrary", () => {
 		const { user } = renderWithProviders(<ArtifactsLibrary />);
 		await screen.findByText("Welcome Page.html");
 
-		await user.click(screen.getByRole("button", { name: "Uploaded" }));
+		const uploadedFilter = screen.getByRole("button", { name: "Uploaded" });
+		expect(uploadedFilter).toHaveClass("min-h-11", "sm:min-h-7");
+		await user.click(uploadedFilter);
 		await waitFor(() =>
 			expect(screen.queryByText("Welcome Page.html")).not.toBeInTheDocument(),
 		);

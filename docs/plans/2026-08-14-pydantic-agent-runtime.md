@@ -78,7 +78,9 @@ The system prompt and tool schemas are still present on every provider call beca
 
 The public `BaseLLMClient`, message, stream-chunk, tool, chat, run, and configuration DTOs remain intact. Provider selection adds Google but does not remove OpenAI-compatible endpoints, native OpenAI, or Anthropic. Embeddings and vector storage are untouched. MCP schemas and dispatch remain Bifrost-owned.
 
-The Coding Agent branch can consume the same model factory, shared budget, observed model, and Bifrost toolset. Coding-specific behavior should be expressed as a capability/tool profile—workspace tools, patch application, command execution, approval boundaries, and a longer context target—not as another model loop. That gives Code Builder a mature native coding harness without coupling ordinary support agents to coding dependencies.
+The Coding Agent branch can consume the same model factory, shared budget, observed model, Bifrost toolset, and artifact workspace. Coding-specific behavior should be expressed as a capability/tool profile—POSIX worktree tools, patch application, command execution, approval boundaries, and a longer context target—not as another model loop. Generated and uploaded binary outputs live in the root run's S3-backed artifact workspace; source edits and commands continue to use the real isolated git worktree. The coding profile can copy intentionally selected outputs between those surfaces, but ordinary Chat agents do not gain arbitrary filesystem access. That gives Code Builder a mature native coding harness without coupling ordinary support agents to coding dependencies.
+
+The root run owns one `artifact_workspace_id`, inherited by delegated agents and nested workflows. SDK generators automatically write to it, `artifacts.list()` discovers its latest logical paths, and `artifacts.read(ref)` resolves authorized bytes. Chat uses its conversation ID for the same contract. `ArtifactRef` remains the portable result across Chat, workflows, and MCP; it is not a requirement that every internal tool accept a hand-written artifact dictionary.
 
 ## Rollout and regression gates
 

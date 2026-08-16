@@ -6,7 +6,8 @@
  * Supports full markdown rendering for AI responses.
  */
 
-import { Bot } from "lucide-react";
+import { Bot, Check, Copy } from "lucide-react";
+import { useState } from "react";
 import { cn } from "@/lib/utils";
 import type { components } from "@/lib/v1";
 import ReactMarkdown from "react-markdown";
@@ -75,6 +76,72 @@ function MentionBadge({ name }: { name: string }) {
 	);
 }
 
+function SafeChatLink({
+	href,
+	children,
+	className,
+}: {
+	href?: string;
+	children: React.ReactNode;
+	className: string;
+}) {
+	const value = href?.trim() ?? "";
+	const allowed =
+		value.startsWith("https://") ||
+		value.startsWith("http://") ||
+		value.startsWith("mailto:") ||
+		value.startsWith("/") ||
+		value.startsWith("#");
+	if (!allowed) {
+		return (
+			<span className="text-muted-foreground" title="Local file links are unavailable">
+				{children}
+			</span>
+		);
+	}
+	return (
+		<a
+			href={value}
+			target={value.startsWith("http") ? "_blank" : undefined}
+			rel={value.startsWith("http") ? "noopener noreferrer" : undefined}
+			className={className}
+		>
+			{children}
+		</a>
+	);
+}
+
+function MessageActions({ message }: { message: MessagePublic }) {
+	const [copied, setCopied] = useState(false);
+	const createdAt = message.created_at ? new Date(message.created_at) : null;
+	const timestamp =
+		createdAt && !Number.isNaN(createdAt.valueOf())
+			? createdAt.toLocaleString([], {
+					dateStyle: "medium",
+					timeStyle: "short",
+				})
+			: null;
+	return (
+		<div className="flex min-h-11 items-center gap-2 text-[11px] text-muted-foreground opacity-100 transition-opacity sm:min-h-0 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100">
+			{timestamp && <time dateTime={message.created_at ?? undefined}>{timestamp}</time>}
+			{message.content && (
+				<button
+					type="button"
+					className="flex size-11 items-center justify-center rounded hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:size-6"
+					onClick={async () => {
+						await navigator.clipboard.writeText(message.content ?? "");
+						setCopied(true);
+						window.setTimeout(() => setCopied(false), 1500);
+					}}
+					aria-label={copied ? "Copied message" : "Copy message"}
+				>
+					{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+				</button>
+			)}
+		</div>
+	);
+}
+
 interface ChatMessageProps {
 	message: MessagePublic;
 	isStreaming?: boolean;
@@ -89,7 +156,7 @@ export function ChatMessage({
 	// User message - right-aligned bubble with markdown rendering
 	if (isUser) {
 		return (
-			<div className="flex justify-end py-2 px-4">
+			<div className="group flex flex-col items-end justify-end py-2 px-4">
 				<div className="max-w-[80%] bg-primary text-primary-foreground rounded-2xl px-4 py-2.5 overflow-x-auto break-words">
 					<ChatAttachmentList
 						conversationId={message.conversation_id}
@@ -138,14 +205,12 @@ export function ChatMessage({
 								),
 								// Links in user messages
 								a: ({ href, children }) => (
-									<a
+									<SafeChatLink
 										href={href}
-										target="_blank"
-										rel="noopener noreferrer"
 										className="text-primary-foreground underline hover:opacity-80"
 									>
 										{children}
-									</a>
+									</SafeChatLink>
 								),
 								// Handle @mention spans
 								span: ({ node, ...props }) => {
@@ -166,13 +231,17 @@ export function ChatMessage({
 						</ReactMarkdown>
 					</div>
 				</div>
+				<div className="mt-1 mr-1"><MessageActions message={message} /></div>
 			</div>
 		);
 	}
 
 	// Assistant message - full markdown rendering
 	return (
-		<div className={cn("py-3 px-4 group", isStreaming && "animate-pulse")}>
+		<div
+			className="py-3 px-4 group"
+			aria-busy={isStreaming || undefined}
+		>
 			<div className="max-w-4xl">
 				{/* Markdown Content */}
 				<div className="prose prose-slate dark:prose-invert max-w-none prose-p:my-2 prose-p:leading-7 prose-headings:font-semibold prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-pre:my-2 prose-pre:p-0 prose-pre:bg-transparent">
@@ -256,14 +325,12 @@ export function ChatMessage({
 							),
 							// Links
 							a: ({ href, children }) => (
-								<a
+								<SafeChatLink
 									href={href}
-									target="_blank"
-									rel="noopener noreferrer"
 									className="text-primary hover:underline"
 								>
 									{children}
-								</a>
+								</SafeChatLink>
 							),
 							// Blockquotes
 							blockquote: ({ children }) => (
@@ -297,9 +364,10 @@ export function ChatMessage({
 					</ReactMarkdown>
 				</div>
 
-				{/* Token Usage - shown on hover */}
+				<div className="mt-2 flex items-center gap-3">
+					<MessageActions message={message} />
 				{(message.token_count_input != null && message.token_count_input > 0 || message.token_count_output != null && message.token_count_output > 0) && (
-					<div className="mt-2 flex gap-3 text-xs text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity">
+					<div className="flex gap-3 text-xs text-muted-foreground opacity-100 transition-opacity sm:opacity-0 sm:group-hover:opacity-100">
 						{!!message.token_count_input && (
 							<span>In: {message.token_count_input}</span>
 						)}
@@ -311,6 +379,7 @@ export function ChatMessage({
 						)}
 					</div>
 				)}
+				</div>
 			</div>
 		</div>
 	);

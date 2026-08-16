@@ -80,7 +80,9 @@ describe("ToolExecutionBadge — status rendering", () => {
 				status="pending"
 			/>,
 		);
-		expect(screen.getByText("grep_code")).toBeInTheDocument();
+		const label = screen.getByText("grep_code");
+		expect(label).toBeInTheDocument();
+		expect(label.closest("button")).toHaveClass("min-h-11", "sm:min-h-7");
 	});
 });
 

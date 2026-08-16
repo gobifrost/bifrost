@@ -68,7 +68,6 @@ import {
 	X,
 	Check,
 	ArrowRight,
-	MessageSquare,
 	Scale,
 	Sparkles,
 } from "lucide-react";
@@ -97,6 +96,7 @@ type Provider = "openai" | "anthropic" | "google";
 interface ModelInfo {
 	id: string;
 	display_name: string;
+	output_modalities?: string[] | null;
 }
 
 // Default models for each provider (fallback if API doesn't return models)
@@ -428,7 +428,20 @@ export function LLMConfig() {
 
 	// Check if we can show model selection
 	const canSelectModel = modelsLoaded || config?.api_key_set;
-	const hasModels = availableModels.length > 0;
+	const availableTextModels = availableModels.filter(
+		(availableModel) =>
+			availableModel.output_modalities == null ||
+			availableModel.output_modalities.includes("text"),
+	);
+	const hasModels = availableTextModels.length > 0;
+	const availableModelOptions = availableTextModels.map((availableModel) => ({
+		value: availableModel.id,
+		label: availableModel.display_name,
+		description:
+			availableModel.id !== availableModel.display_name
+				? availableModel.id
+				: undefined,
+	}));
 
 	// Determine if we can save:
 	// - If entering new API key: must be tested successfully
@@ -728,8 +741,7 @@ export function LLMConfig() {
 
 						<div className="space-y-4 rounded-lg border p-4">
 							<div>
-								<h5 className="flex items-center gap-2 text-sm font-medium">
-									<MessageSquare className="h-4 w-4 text-blue-500" />
+								<h5 className="text-sm font-medium">
 									Chat Model Choices
 								</h5>
 								<p className="mt-1 text-xs text-muted-foreground">
@@ -745,7 +757,7 @@ export function LLMConfig() {
 									name: "Fast",
 									icon: Zap,
 									iconClassName:
-										"bg-amber-500/10 text-amber-600 dark:text-amber-400",
+										"text-amber-600 dark:text-amber-400",
 									label: chatFastLabel,
 									setLabel: setChatFastLabel,
 									model: chatFastModel,
@@ -759,7 +771,7 @@ export function LLMConfig() {
 									name: "Balanced",
 									icon: Scale,
 									iconClassName:
-										"bg-blue-500/10 text-blue-600 dark:text-blue-400",
+										"text-blue-600 dark:text-blue-400",
 									label: chatBalancedLabel,
 									setLabel: setChatBalancedLabel,
 									model: chatBalancedModel,
@@ -774,7 +786,7 @@ export function LLMConfig() {
 									name: "Pro",
 									icon: Sparkles,
 									iconClassName:
-										"bg-violet-500/10 text-violet-600 dark:text-violet-400",
+										"text-violet-600 dark:text-violet-400",
 									label: chatProLabel,
 									setLabel: setChatProLabel,
 									model: chatProModel,
@@ -788,101 +800,97 @@ export function LLMConfig() {
 								return (
 									<div
 										key={tier.id}
-										className="flex gap-3 border-b pb-4 last:border-b-0 last:pb-0"
+										role="group"
+										aria-label={tier.name}
+										className="grid gap-2 border-b pb-4 last:border-b-0 last:pb-0 sm:grid-cols-[10rem_minmax(0,1fr)]"
 									>
-										<div
-											className={`mt-5 grid h-8 w-8 shrink-0 place-items-center rounded-lg ${tier.iconClassName}`}
-											aria-hidden="true"
-										>
-											<TierIcon className="h-4 w-4" />
+										<div className="space-y-1">
+											<Label
+												htmlFor={`chat-${tier.id}-label`}
+												className="flex min-h-5 items-center gap-1.5"
+											>
+												<TierIcon
+													className={`h-3.5 w-3.5 ${tier.iconClassName}`}
+													aria-hidden="true"
+												/>
+												{tier.name}
+											</Label>
+											<Input
+												id={`chat-${tier.id}-label`}
+												value={tier.label}
+												onChange={(event) =>
+													tier.setLabel(
+														event.target.value,
+													)
+												}
+												maxLength={30}
+											/>
 										</div>
-										<div className="min-w-0 flex-1 space-y-1.5">
-											<div className="grid gap-2 sm:grid-cols-[10rem_minmax(0,1fr)]">
-												<div className="space-y-1">
-													<Label
-														htmlFor={`chat-${tier.id}-label`}
-													>
-														{tier.name} Label
-													</Label>
-													<Input
-														id={`chat-${tier.id}-label`}
-														value={tier.label}
-														onChange={(event) =>
-															tier.setLabel(
-																event.target
-																	.value,
-															)
+										<div className="min-w-0 space-y-1">
+											<div className="flex min-h-5 items-center gap-3">
+												<Label
+													htmlFor={`chat-${tier.id}-model`}
+												>
+													Model
+												</Label>
+												<div className="min-w-0 flex-1">
+													<ModelCapabilityEditor
+														provider={provider}
+														model={
+															tier.id ===
+															"balanced"
+																? tier.model.trim() ||
+																	model
+																: tier.model
 														}
-														maxLength={30}
+														endpoint={
+															endpoint ===
+															DEFAULT_ENDPOINTS[
+																provider
+															]
+																? ""
+																: endpoint
+														}
+														apiKey={apiKey}
+														value={
+															tier.capabilities
+														}
+														onChange={
+															tier.setCapabilities
+														}
 													/>
 												</div>
-												<div className="space-y-1">
-													<Label
-														htmlFor={`chat-${tier.id}-model`}
-													>
-														{tier.name} Model
-													</Label>
-													{hasModels ? (
-														<Combobox
-															id={`chat-${tier.id}-model`}
-															value={tier.model}
-															onValueChange={
-																tier.setModel
-															}
-															placeholder={
-																tier.placeholder
-															}
-															searchPlaceholder="Search models..."
-															emptyText="No models found."
-															options={availableModels.map(
-																(
-																	availableModel,
-																) => ({
-																	value: availableModel.id,
-																	label: availableModel.display_name,
-																	description:
-																		availableModel.id !==
-																		availableModel.display_name
-																			? availableModel.id
-																			: undefined,
-																}),
-															)}
-														/>
-													) : (
-														<Input
-															id={`chat-${tier.id}-model`}
-															value={tier.model}
-															onChange={(event) =>
-																tier.setModel(
-																	event.target
-																		.value,
-																)
-															}
-															placeholder={
-																tier.placeholder
-															}
-														/>
-													)}
-												</div>
 											</div>
-											<ModelCapabilityEditor
-												provider={provider}
-												model={
-													tier.id === "balanced"
-														? tier.model.trim() ||
-															model
-														: tier.model
-												}
-												endpoint={
-													endpoint ===
-													DEFAULT_ENDPOINTS[provider]
-														? ""
-														: endpoint
-												}
-												apiKey={apiKey}
-												value={tier.capabilities}
-												onChange={tier.setCapabilities}
-											/>
+											{hasModels ? (
+												<Combobox
+													id={`chat-${tier.id}-model`}
+													value={tier.model}
+													onValueChange={
+														tier.setModel
+													}
+													placeholder={
+														tier.placeholder
+													}
+													searchPlaceholder="Search models..."
+													emptyText="No models found."
+													options={
+														availableModelOptions
+													}
+												/>
+											) : (
+												<Input
+													id={`chat-${tier.id}-model`}
+													value={tier.model}
+													onChange={(event) =>
+														tier.setModel(
+															event.target.value,
+														)
+													}
+													placeholder={
+														tier.placeholder
+													}
+												/>
+											)}
 										</div>
 									</div>
 								);
@@ -902,14 +910,28 @@ export function LLMConfig() {
 							<Label htmlFor="summarization-model">
 								Summarization Model (Optional)
 							</Label>
-							<Input
-								id="summarization-model"
-								placeholder="Leave blank to use primary model"
-								value={summarizationModel}
-								onChange={(e) =>
-									setSummarizationModel(e.target.value)
-								}
-							/>
+							{hasModels ? (
+								<Combobox
+									id="summarization-model"
+									value={summarizationModel}
+									onValueChange={setSummarizationModel}
+									placeholder="Primary model"
+									searchPlaceholder="Search models..."
+									emptyText="No models found."
+									options={availableModelOptions}
+								/>
+							) : (
+								<Input
+									id="summarization-model"
+									placeholder="Leave blank to use primary model"
+									value={summarizationModel}
+									onChange={(event) =>
+										setSummarizationModel(
+											event.target.value,
+										)
+									}
+								/>
+							)}
 							<p className="text-xs text-muted-foreground">
 								Override the model used for post-run
 								summarization. Uses the primary provider and API
@@ -922,12 +944,26 @@ export function LLMConfig() {
 							<Label htmlFor="tuning-model">
 								Tuning Model (Optional)
 							</Label>
-							<Input
-								id="tuning-model"
-								placeholder="Leave blank to use primary model"
-								value={tuningModel}
-								onChange={(e) => setTuningModel(e.target.value)}
-							/>
+							{hasModels ? (
+								<Combobox
+									id="tuning-model"
+									value={tuningModel}
+									onValueChange={setTuningModel}
+									placeholder="Primary model"
+									searchPlaceholder="Search models..."
+									emptyText="No models found."
+									options={availableModelOptions}
+								/>
+							) : (
+								<Input
+									id="tuning-model"
+									placeholder="Leave blank to use primary model"
+									value={tuningModel}
+									onChange={(event) =>
+										setTuningModel(event.target.value)
+									}
+								/>
+							)}
 							<p className="text-xs text-muted-foreground">
 								Override the model used for agent tuning chat
 								and dry-runs. Uses the primary provider and API

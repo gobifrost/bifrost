@@ -7,13 +7,14 @@ import io
 from pathlib import Path
 from dataclasses import dataclass
 from itertools import islice
-from uuid import UUID, uuid4
+from uuid import UUID
 
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.orm import MessageAttachment
+from src.models.orm import Artifact, Conversation, MessageAttachment, User
+from src.services.artifacts import ArtifactService
 from src.services.file_storage.service import get_file_storage_service
 
 MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024
@@ -114,15 +115,14 @@ class ChatAttachmentService:
     def __init__(self, db: AsyncSession) -> None:
         self.db = db
 
-    @staticmethod
-    def _storage_key(conversation_id: UUID, attachment_id: UUID, filename: str) -> str:
-        safe_name = filename.replace("/", "_").replace("\\", "_")
-        return f"_attachments/{conversation_id}/{attachment_id}_{safe_name}"
-
-    @staticmethod
-    def _artifact_storage_key(conversation_id: UUID, attachment_id: UUID, filename: str) -> str:
-        safe_name = filename.replace("/", "_").replace("\\", "_")
-        return f"_artifacts/{conversation_id}/{attachment_id}_{safe_name}"
+    async def _artifact_owner(self, conversation_id: UUID) -> tuple[UUID, UUID | None]:
+        conversation = await self.db.get(Conversation, conversation_id)
+        if conversation is None:
+            raise ChatAttachmentError("The Chat conversation no longer exists.")
+        user = await self.db.get(User, conversation.user_id)
+        if user is None:
+            raise ChatAttachmentError("The Chat user no longer exists.")
+        return user.id, user.organization_id
 
     async def _ensure_conversation_capacity(
         self, conversation_id: UUID, content_size: int
@@ -165,26 +165,35 @@ class ChatAttachmentService:
 
         await self._ensure_conversation_capacity(conversation_id, len(content))
 
-        attachment_id = uuid4()
-        s3_key = self._storage_key(conversation_id, attachment_id, filename)
-        storage = get_file_storage_service(self.db)
-        await storage.write_raw_to_s3(s3_key, content)
-
-        attachment = MessageAttachment(
-            id=attachment_id,
-            message_id=None,
-            conversation_id=conversation_id,
-            s3_key=s3_key,
+        user_id, organization_id = await self._artifact_owner(conversation_id)
+        artifact = await ArtifactService(self.db).store(
             filename=filename,
             content_type=content_type,
-            size_bytes=len(content),
+            content=content,
+            created_by_user_id=user_id,
+            organization_id=organization_id,
+            storage_family="upload",
+            workspace_id=conversation_id,
+            logical_path=filename,
+        )
+
+        attachment = MessageAttachment(
+            id=artifact.id,
+            artifact_id=artifact.id,
+            artifact=artifact,
+            message_id=None,
+            conversation_id=conversation_id,
+            s3_key=artifact.s3_key,
+            filename=artifact.filename,
+            content_type=artifact.content_type,
+            size_bytes=artifact.size_bytes,
             extracted_text=_extract_text(content, content_type),
         )
         try:
             self.db.add(attachment)
             await self.db.flush()
         except Exception:
-            await storage.delete_raw_from_s3(s3_key)
+            await get_file_storage_service(self.db).delete_raw_from_s3(artifact.s3_key)
             raise
         return attachment
 
@@ -210,25 +219,33 @@ class ChatAttachmentService:
             raise ChatAttachmentError(str(exc)) from exc
         await self._ensure_conversation_capacity(conversation_id, len(content))
 
-        attachment_id = uuid4()
-        s3_key = self._artifact_storage_key(conversation_id, attachment_id, filename)
-        storage = get_file_storage_service(self.db)
-        await storage.write_raw_to_s3(s3_key, content)
-        attachment = MessageAttachment(
-            id=attachment_id,
-            message_id=message_id,
-            conversation_id=conversation_id,
-            s3_key=s3_key,
+        user_id, organization_id = await self._artifact_owner(conversation_id)
+        artifact = await ArtifactService(self.db).store(
             filename=filename,
             content_type=content_type,
-            size_bytes=len(content),
+            content=content,
+            created_by_user_id=user_id,
+            organization_id=organization_id,
+            workspace_id=conversation_id,
+            logical_path=filename,
+        )
+        attachment = MessageAttachment(
+            id=artifact.id,
+            artifact_id=artifact.id,
+            artifact=artifact,
+            message_id=message_id,
+            conversation_id=conversation_id,
+            s3_key=artifact.s3_key,
+            filename=artifact.filename,
+            content_type=artifact.content_type,
+            size_bytes=artifact.size_bytes,
             extracted_text=_extract_text(content, content_type),
         )
         try:
             self.db.add(attachment)
             await self.db.flush()
         except Exception:
-            await storage.delete_raw_from_s3(s3_key)
+            await get_file_storage_service(self.db).delete_raw_from_s3(artifact.s3_key)
             raise
         return attachment
 
@@ -245,9 +262,13 @@ class ChatAttachmentService:
             return []
 
         result = await self.db.execute(
-            select(MessageAttachment).where(MessageAttachment.id.in_(attachment_ids))
+            select(MessageAttachment).where(
+                MessageAttachment.artifact_id.in_(attachment_ids)
+            )
         )
-        found = {attachment.id: attachment for attachment in result.scalars().all()}
+        found = {
+            attachment.artifact_id: attachment for attachment in result.scalars().all()
+        }
         if len(found) != len(set(attachment_ids)):
             raise ChatAttachmentError("One or more attachments were not found.")
         attachments: list[MessageAttachment] = []
@@ -261,6 +282,44 @@ class ChatAttachmentService:
             attachments.append(attachment)
         await self.db.flush()
         return attachments
+
+    async def attach_artifact(
+        self,
+        *,
+        artifact: Artifact,
+        conversation_id: UUID,
+        message_id: UUID,
+    ) -> MessageAttachment:
+        """Associate an existing canonical artifact with a Chat message."""
+        existing = (
+            await self.db.execute(
+                select(MessageAttachment)
+                .where(MessageAttachment.artifact_id == artifact.id)
+                .where(MessageAttachment.conversation_id == conversation_id)
+                .where(MessageAttachment.message_id == message_id)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            return existing
+        await self._ensure_conversation_capacity(conversation_id, artifact.size_bytes)
+        extracted_text = None
+        if _is_text(artifact.content_type):
+            content = await ArtifactService(self.db).read(artifact)
+            extracted_text = _extract_text(content, artifact.content_type)
+        attachment = MessageAttachment(
+            artifact_id=artifact.id,
+            artifact=artifact,
+            message_id=message_id,
+            conversation_id=conversation_id,
+            s3_key=artifact.s3_key,
+            filename=artifact.filename,
+            content_type=artifact.content_type,
+            size_bytes=artifact.size_bytes,
+            extracted_text=extracted_text,
+        )
+        self.db.add(attachment)
+        await self.db.flush()
+        return attachment
 
     async def load_binary_input(self, attachment: MessageAttachment) -> ChatInputFile:
         storage = get_file_storage_service(self.db)

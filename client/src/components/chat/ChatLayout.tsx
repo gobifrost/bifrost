@@ -135,6 +135,7 @@ export function ChatLayout({
 						<Button
 							variant="ghost"
 							size="icon-sm"
+							className="-ml-2 size-11"
 							aria-label="Open chat sidebar"
 							onClick={() => setSidebarState("open")}
 						>
@@ -145,11 +146,12 @@ export function ChatLayout({
 				)}
 				{/* Header - always show when sidebar is closed or conversation is active */}
 				{view === "chat" && (!isSidebarOpen || activeConversationId) && (
-					<header className="h-14 border-b flex items-center px-4 gap-4 relative z-10">
+					<header className="h-14 border-b flex items-center px-4 gap-3 relative z-10 sm:gap-4">
 						{!isSidebarOpen && (
 							<Button
 								variant="ghost"
 								size="icon-sm"
+								className="-ml-2 size-11 sm:ml-0 sm:size-7"
 								aria-label="Open chat sidebar"
 								onClick={() => setSidebarState("open")}
 							>

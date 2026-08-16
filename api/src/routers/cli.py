@@ -50,7 +50,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -102,11 +102,15 @@ from src.models.contracts.cli import (
     SDKTableInfo,
 )
 from src.models.contracts.artifacts import (
-    ArtifactRenderResponse,
+    ArtifactDownloadResponse,
+    ArtifactRef,
     DocumentArtifactSpec,
+    ImageArtifactSpec,
     SpreadsheetArtifactSpec,
     TextArtifactSpec,
+    VideoArtifactSpec,
 )
+from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.core.pubsub import publish_cli_session_update, publish_execution_log, publish_execution_update, publish_history_update
 from src.repositories.cli_sessions import CLISessionRepository
 
@@ -1988,64 +1992,328 @@ async def post_cli_result(
 # =============================================================================
 
 
+@router.post("/artifacts")
+async def sdk_store_artifact(
+    current_user: CurrentUser,
+    file: UploadFile = File(...),
+    workspace_id: UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> ArtifactRef:
+    """Validate and store workflow-produced bytes behind an opaque identity."""
+    from shared.artifact_generation import validate_artifact_content
+    from src.services.artifacts import ArtifactService, artifact_ref
+
+    filename = file.filename or "Artifact"
+    content_type = file.content_type or "application/octet-stream"
+    content = await file.read()
+    validate_artifact_content(
+        filename=filename,
+        content_type=content_type,
+        content=content,
+    )
+    artifact = await ArtifactService(db).store(
+        filename=filename,
+        content_type=content_type,
+        content=content,
+        created_by_user_id=current_user.user_id,
+        organization_id=current_user.organization_id,
+        workspace_id=workspace_id,
+        logical_path=filename,
+    )
+    return artifact_ref(artifact)
+
+
+@router.get("/artifacts", response_model=list[ArtifactRef])
+async def sdk_list_artifacts(
+    current_user: CurrentUser,
+    workspace_id: UUID,
+    db: AsyncSession = Depends(get_db),
+) -> list[ArtifactRef]:
+    """List the latest logical files in one authorized execution workspace."""
+    from src.services.artifacts import ArtifactService, artifact_ref
+
+    stored = await ArtifactService(db).list_workspace(
+        workspace_id,
+        user_id=current_user.user_id,
+        organization_id=current_user.organization_id,
+        is_platform_admin=current_user.is_platform_admin,
+    )
+    return [artifact_ref(item) for item in stored]
+
+
 @router.post("/artifacts/document")
 async def sdk_render_document_artifact(
     request: DocumentArtifactSpec,
     current_user: CurrentUser,
-) -> ArtifactRenderResponse:
-    """Render a trusted PDF or DOCX payload for SDK-managed persistence."""
-    del current_user
-    import base64
+    workspace_id: UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> ArtifactRef:
+    """Render and store a trusted PDF or DOCX artifact."""
 
-    from shared.artifact_generation import generate_document
-
-    artifact = await asyncio.to_thread(generate_document, request)
-    return ArtifactRenderResponse(
-        filename=artifact.filename,
-        content_type=artifact.content_type,
-        size_bytes=artifact.size_bytes,
-        content_base64=base64.b64encode(artifact.content).decode("ascii"),
+    from shared.artifact_generation import (
+        generate_document,
+        generate_document_with_images,
     )
+    from src.services.artifacts import ArtifactService, artifact_ref
+
+    service = ArtifactService(db)
+    image_content: dict[str, bytes] = {}
+    if workspace_id is not None:
+        for image in (image for section in request.sections for image in section.images):
+            stored_image = await service.resolve_workspace_path(
+                workspace_id,
+                image.path,
+                user_id=current_user.user_id,
+                organization_id=current_user.organization_id,
+                is_platform_admin=current_user.is_platform_admin,
+            )
+            if not stored_image.content_type.startswith("image/"):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"{image.path} is not an image artifact.",
+                )
+            image_content[image.path] = await service.read(stored_image)
+    generated = await asyncio.to_thread(
+        generate_document_with_images if image_content else generate_document,
+        request,
+        *([image_content] if image_content else []),
+    )
+    artifact = await service.store(
+        filename=generated.filename,
+        content_type=generated.content_type,
+        content=generated.content,
+        created_by_user_id=current_user.user_id,
+        organization_id=current_user.organization_id,
+        workspace_id=workspace_id,
+        logical_path=generated.filename,
+    )
+    return artifact_ref(artifact)
 
 
 @router.post("/artifacts/spreadsheet")
 async def sdk_render_spreadsheet_artifact(
     request: SpreadsheetArtifactSpec,
     current_user: CurrentUser,
-) -> ArtifactRenderResponse:
-    """Render a trusted XLSX payload for SDK-managed persistence."""
-    del current_user
-    import base64
+    workspace_id: UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> ArtifactRef:
+    """Render and store a trusted XLSX artifact."""
 
     from shared.artifact_generation import generate_spreadsheet
+    from src.services.artifacts import ArtifactService, artifact_ref
 
-    artifact = await asyncio.to_thread(generate_spreadsheet, request)
-    return ArtifactRenderResponse(
-        filename=artifact.filename,
-        content_type=artifact.content_type,
-        size_bytes=artifact.size_bytes,
-        content_base64=base64.b64encode(artifact.content).decode("ascii"),
+    generated = await asyncio.to_thread(generate_spreadsheet, request)
+    artifact = await ArtifactService(db).store(
+        filename=generated.filename,
+        content_type=generated.content_type,
+        content=generated.content,
+        created_by_user_id=current_user.user_id,
+        organization_id=current_user.organization_id,
+        workspace_id=workspace_id,
+        logical_path=generated.filename,
     )
+    return artifact_ref(artifact)
 
 
 @router.post("/artifacts/text")
 async def sdk_render_text_artifact(
     request: TextArtifactSpec,
     current_user: CurrentUser,
-) -> ArtifactRenderResponse:
-    """Render a trusted text-family payload for SDK-managed persistence."""
-    del current_user
-    import base64
+    workspace_id: UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> ArtifactRef:
+    """Render and store a trusted text-family artifact."""
 
     from shared.artifact_generation import generate_text
+    from src.services.artifacts import ArtifactService, artifact_ref
 
-    artifact = await asyncio.to_thread(generate_text, request)
-    return ArtifactRenderResponse(
-        filename=artifact.filename,
-        content_type=artifact.content_type,
-        size_bytes=artifact.size_bytes,
-        content_base64=base64.b64encode(artifact.content).decode("ascii"),
+    generated = await asyncio.to_thread(generate_text, request)
+    artifact = await ArtifactService(db).store(
+        filename=generated.filename,
+        content_type=generated.content_type,
+        content=generated.content,
+        created_by_user_id=current_user.user_id,
+        organization_id=current_user.organization_id,
+        workspace_id=workspace_id,
+        logical_path=generated.filename,
     )
+    return artifact_ref(artifact)
+
+
+@router.post("/artifacts/image")
+async def sdk_generate_image_artifact(
+    request: ImageArtifactSpec,
+    current_user: CurrentUser,
+    workspace_id: UUID | None = None,
+    execution_id: UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> ArtifactRef:
+    """Generate and store an image with the configured provider."""
+
+    from src.services.artifacts import ArtifactService, artifact_ref
+    from src.services.media_generation import generate_image, record_media_usage
+
+    generated = await generate_image(
+        db,
+        filename=request.filename,
+        prompt=request.prompt,
+    )
+    artifact = await ArtifactService(db).store(
+        filename=generated.filename,
+        content_type=generated.content_type,
+        content=generated.content,
+        created_by_user_id=current_user.user_id,
+        organization_id=current_user.organization_id,
+        workspace_id=workspace_id,
+        logical_path=generated.filename,
+    )
+    await record_media_usage(
+        db,
+        generated,
+        execution_id=execution_id,
+        organization_id=current_user.organization_id,
+        user_id=current_user.user_id,
+    )
+    return artifact_ref(artifact)
+
+
+@router.post(
+    "/artifacts/video",
+    response_model=PlatformJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def sdk_generate_video_artifact(
+    request: VideoArtifactSpec,
+    current_user: CurrentUser,
+    response: Response,
+    workspace_id: UUID | None = None,
+    execution_id: UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> PlatformJobAccepted:
+    """Queue durable video generation into canonical artifact storage."""
+    from src.jobs.platform.video_generation import (
+        SDK_VIDEO_GENERATION_DEFINITION,
+        SDKVideoGenerationPayload,
+    )
+    from src.services.platform_jobs import (
+        enqueue_platform_job,
+        ensure_platform_job_notification,
+        publish_platform_job_update,
+    )
+
+    job, reused = await enqueue_platform_job(
+        db,
+        SDK_VIDEO_GENERATION_DEFINITION,
+        SDKVideoGenerationPayload(
+            filename=request.filename,
+            prompt=request.prompt,
+            workspace_id=workspace_id,
+            execution_id=execution_id,
+        ),
+        dedupe_key=None,
+        organization_id=current_user.organization_id,
+        requested_by_user_id=current_user.user_id,
+        requested_by_email=current_user.email,
+        requested_by_name=current_user.name or current_user.email,
+        resource_type="artifact",
+        resource_id=request.filename,
+        title=f"Generating {request.filename}",
+        action_url=None,
+    )
+    try:
+        await ensure_platform_job_notification(db, job)
+    except Exception:
+        logger.warning(
+            "SDK video generation queued without a progress notification",
+            extra={"platform_job_id": str(job.id)},
+            exc_info=True,
+        )
+    await db.commit()
+    await db.refresh(job)
+    await publish_platform_job_update(job)
+    response.headers["Location"] = f"/api/platform-jobs/{job.id}"
+    return PlatformJobAccepted(
+        job_id=job.id,
+        notification_id=job.notification_id,
+        status=job.status,
+        reused=reused,
+    )
+
+
+@router.get("/artifacts/{artifact_id}/content")
+async def sdk_read_artifact(
+    artifact_id: UUID,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    preview: bool = False,
+) -> Response:
+    """Read an opaque artifact after enforcing caller scope."""
+    from src.services.artifacts import ArtifactAccessError, ArtifactService
+
+    service = ArtifactService(db)
+    try:
+        artifact = await service.get_authorized(
+            artifact_id,
+            user_id=current_user.user_id,
+            organization_id=current_user.organization_id,
+            is_platform_admin=current_user.is_platform_admin,
+        )
+    except ArtifactAccessError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    content = await service.read(artifact)
+    if preview:
+        from shared.artifact_preview import preview_office_artifact
+
+        preview_html = await asyncio.to_thread(
+            preview_office_artifact,
+            content,
+            artifact.content_type,
+        )
+        if preview_html is not None:
+            return Response(
+                content=preview_html,
+                media_type="text/html",
+                headers={
+                    "Content-Security-Policy": (
+                        "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+                    ),
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
+    return Response(
+        content=content,
+        media_type=artifact.content_type,
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
+
+
+@router.get("/artifacts/{artifact_id}/download-url")
+async def sdk_artifact_download_url(
+    artifact_id: UUID,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> ArtifactDownloadResponse:
+    """Create a short-lived download URL for an opaque artifact."""
+    from src.services.artifacts import ArtifactAccessError, ArtifactService
+    from src.services.file_storage.service import get_file_storage_service
+
+    try:
+        artifact = await ArtifactService(db).get_authorized(
+            artifact_id,
+            user_id=current_user.user_id,
+            organization_id=current_user.organization_id,
+            is_platform_admin=current_user.is_platform_admin,
+        )
+    except ArtifactAccessError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    url = await get_file_storage_service(db).generate_presigned_download_url(
+        artifact.s3_key
+    )
+    return ArtifactDownloadResponse(url=url)
 
 
 @router.post(

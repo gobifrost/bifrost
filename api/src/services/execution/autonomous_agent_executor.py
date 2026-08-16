@@ -568,6 +568,11 @@ class AutonomousAgentExecutor:
                 else False
             ),
             is_agent=True,
+            artifact_workspace_id=(
+                self._ancestor_run_ids[0]
+                if self._ancestor_run_ids
+                else self._current_run_id
+            ),
         )
         self._last_workflow_execution_id = response.execution_id
         self._last_workflow_execution_is_error = response.status.value != "Success"

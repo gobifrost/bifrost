@@ -5,13 +5,16 @@ Manages LLM provider configuration in system_configs table.
 Follows the same pattern as GitHubConfigService for SystemConfig storage.
 """
 
+import asyncio
 import base64
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Any, Literal
+from urllib.parse import urlparse
 from uuid import uuid4
 
+import httpx
 from cryptography.fernet import Fernet
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +23,7 @@ from src.config import get_settings
 from src.core.log_safety import log_safe
 from src.models.orm import SystemConfig
 from src.models.contracts.artifacts import ModelCapabilities
-from src.services.model_capabilities import model_fingerprint, normalize_capabilities
+from src.services.model_capabilities import OPENROUTER_MODELS_URL, model_fingerprint, normalize_capabilities
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +94,111 @@ class LLMModelInfo:
 
     id: str
     display_name: str
+    output_modalities: list[str] | None = None
+
+
+def _model_output_modalities(model: object) -> list[str] | None:
+    """Read OpenRouter's architecture metadata from an OpenAI SDK model."""
+    architecture = getattr(model, "architecture", None)
+    if architecture is None:
+        model_extra = getattr(model, "model_extra", None)
+        if isinstance(model_extra, dict):
+            architecture = model_extra.get("architecture")
+
+    if isinstance(architecture, dict):
+        raw_modalities = architecture.get("output_modalities")
+    else:
+        raw_modalities = getattr(architecture, "output_modalities", None)
+
+    if not isinstance(raw_modalities, (list, tuple)):
+        return None
+    return [str(modality) for modality in raw_modalities]
+
+
+def _is_openrouter_endpoint(endpoint: str | None) -> bool:
+    hostname = urlparse(endpoint or "").hostname
+    return hostname == "openrouter.ai" or bool(hostname and hostname.endswith(".openrouter.ai"))
+
+
+async def _list_openrouter_models(
+    api_key: str,
+    client: httpx.AsyncClient | None = None,
+) -> list[LLMModelInfo]:
+    """List every OpenRouter model, including non-text output models."""
+    owns_client = client is None
+    http = client or httpx.AsyncClient(timeout=10.0, follow_redirects=True)
+    try:
+        headers = {"Authorization": f"Bearer {api_key}"}
+        response, image_response, video_response = await asyncio.gather(
+            http.get(OPENROUTER_MODELS_URL, headers=headers),
+            http.get("https://openrouter.ai/api/v1/images/models", headers=headers),
+            http.get("https://openrouter.ai/api/v1/videos/models", headers=headers),
+        )
+        response.raise_for_status()
+        image_response.raise_for_status()
+        video_response.raise_for_status()
+        payload: dict[str, Any] = response.json()
+        records = payload.get("data")
+        if not isinstance(records, list):
+            raise TypeError("OpenRouter model catalog did not contain a model list.")
+
+        def media_catalog(response: httpx.Response) -> dict[str, str]:
+            media_records = response.json().get("data")
+            if not isinstance(media_records, list):
+                raise TypeError("OpenRouter media catalog did not contain a model list.")
+            return {
+                record["id"]: str(record.get("name") or record["id"])
+                for record in media_records
+                if isinstance(record, dict) and isinstance(record.get("id"), str)
+            }
+
+        image_models = media_catalog(image_response)
+        video_models = media_catalog(video_response)
+        models_by_id: dict[str, LLMModelInfo] = {}
+        for record in records:
+            if not isinstance(record, dict) or not isinstance(record.get("id"), str):
+                continue
+            architecture = record.get("architecture")
+            output_modalities = architecture.get("output_modalities") if isinstance(architecture, dict) else None
+            modalities = (
+                [
+                    str(value)
+                    for value in output_modalities
+                    if str(value) not in {"image", "video"}
+                ]
+                if isinstance(output_modalities, list)
+                else []
+            )
+            if record["id"] in image_models:
+                modalities.append("image")
+            if record["id"] in video_models:
+                modalities.append("video")
+            models_by_id[record["id"]] = LLMModelInfo(
+                id=record["id"],
+                display_name=record.get("name") or record["id"],
+                output_modalities=modalities,
+            )
+        for model_id, display_name in image_models.items():
+            if model_id not in models_by_id:
+                models_by_id[model_id] = LLMModelInfo(
+                    id=model_id,
+                    display_name=display_name,
+                    output_modalities=["image"],
+                )
+        for model_id, display_name in video_models.items():
+            existing = models_by_id.get(model_id)
+            if existing is None:
+                models_by_id[model_id] = LLMModelInfo(
+                    id=model_id,
+                    display_name=display_name,
+                    output_modalities=["video"],
+                )
+            elif existing.output_modalities is not None and "video" not in existing.output_modalities:
+                existing.output_modalities.append("video")
+        return sorted(models_by_id.values(), key=lambda item: item.display_name.casefold())
+    finally:
+        if owns_client:
+            await http.aclose()
 
 
 @dataclass
@@ -431,9 +539,18 @@ class LLMConfigService:
             try:
                 models_response = await client.models.list()
                 model_infos = [
-                    LLMModelInfo(id=m.id, display_name=m.id)
+                    LLMModelInfo(
+                        id=m.id,
+                        display_name=m.id,
+                        output_modalities=_model_output_modalities(m),
+                    )
                     for m in sorted(models_response.data, key=lambda x: x.id)
                 ]
+                if _is_openrouter_endpoint(endpoint):
+                    try:
+                        model_infos = await _list_openrouter_models(api_key)
+                    except (httpx.HTTPError, TypeError, ValueError) as error:
+                        logger.info("OpenRouter's all-modality catalog was unavailable: %s", error)
                 return LLMTestResult(
                     success=True,
                     message=f"Connected to {endpoint_label}. Listed {len(model_infos)} model(s).",

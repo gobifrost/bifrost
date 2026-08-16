@@ -8,8 +8,10 @@ import {
 	attachmentContentUrl,
 	deleteChatArtifact,
 	deleteUnboundChatAttachment,
+	downloadChatAttachment,
 	formatBytes,
 	isImageAttachment,
+	isVideoAttachment,
 	listChatArtifacts,
 	renameChatArtifact,
 	uploadChatAttachments,
@@ -53,7 +55,11 @@ describe("chatAttachments", () => {
 				preview: true,
 			}),
 		).toMatch(/preview=true$/);
+		expect(attachmentContentUrl("", "artifact-1")).toBe(
+			"/api/sdk/artifacts/artifact-1/content",
+		);
 		expect(isImageAttachment("image/webp")).toBe(true);
+		expect(isVideoAttachment("video/mp4")).toBe(true);
 		expect(formatBytes(1024)).toBe("1 KB");
 	});
 
@@ -129,5 +135,29 @@ describe("chatAttachments", () => {
 			"/api/chat/artifacts/artifact-1",
 			{ method: "DELETE" },
 		);
+	});
+
+	it("downloads an attachment with its stored filename", async () => {
+		const click = vi.fn();
+		const createElement = vi.spyOn(document, "createElement");
+		createElement.mockReturnValue({ click } as unknown as HTMLAnchorElement);
+		vi.stubGlobal("URL", {
+			createObjectURL: vi.fn(() => "blob:download"),
+			revokeObjectURL: vi.fn(),
+		});
+		authFetch.mockResolvedValue(new Response("file", { status: 200 }));
+
+		await downloadChatAttachment("conversation-1", {
+			id: "artifact-1",
+			filename: "Field Report.pdf",
+		});
+
+		expect(authFetch).toHaveBeenCalledWith(
+			"/api/chat/conversations/conversation-1/attachments/artifact-1/content?download=true",
+		);
+		expect(click).toHaveBeenCalledOnce();
+		expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:download");
+		createElement.mockRestore();
+		vi.unstubAllGlobals();
 	});
 });

@@ -144,6 +144,24 @@ describe("ChatInput — @ mentions", () => {
 });
 
 describe("ChatInput — attachments and model tier", () => {
+	it("keeps primary composer controls touch-sized on phones", () => {
+		const { container } = renderWithProviders(
+			<ChatInput onSend={vi.fn()} />,
+		);
+
+		expect(screen.getByRole("button", { name: "Attach files" })).toHaveClass(
+			"size-11",
+			"sm:size-7",
+		);
+		expect(screen.getByRole("button", { name: "Send message" })).toHaveClass(
+			"size-11",
+			"sm:size-7",
+		);
+		expect(container.firstElementChild).toHaveClass(
+			"pb-[max(0.75rem,env(safe-area-inset-bottom))]",
+		);
+	});
+
 	it("sends a staged file without requiring message text", async () => {
 		const onSend = vi.fn();
 		const { user, container } = renderWithProviders(

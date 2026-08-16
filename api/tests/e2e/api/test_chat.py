@@ -5,9 +5,8 @@ Tests chat conversation and message operations.
 Requires LLM configuration to be set for message sending tests.
 """
 
-import base64
 import logging
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -207,7 +206,7 @@ class TestChatAttachments:
         missing = e2e_client.get(content_url, headers=platform_admin.headers)
         assert missing.status_code == 404
 
-    def test_sdk_document_artifact_renders_valid_pdf(
+    def test_sdk_document_artifact_returns_readable_opaque_reference(
         self,
         e2e_client,
         platform_admin,
@@ -230,9 +229,61 @@ class TestChatAttachments:
 
         assert response.status_code == 200, response.text
         artifact = response.json()
+        assert artifact["type"] == "bifrost_artifact"
+        assert artifact["id"]
         assert artifact["filename"] == "E2E Brief.pdf"
         assert artifact["content_type"] == "application/pdf"
-        assert base64.b64decode(artifact["content_base64"]).startswith(b"%PDF-")
+        assert "path" not in artifact
+        assert "location" not in artifact
+
+        content = e2e_client.get(
+            f"/api/sdk/artifacts/{artifact['id']}/content",
+            headers=platform_admin.headers,
+        )
+        assert content.status_code == 200, content.text
+        assert content.content.startswith(b"%PDF-")
+
+        library = e2e_client.get("/api/chat/artifacts", headers=platform_admin.headers)
+        listed = next(item for item in library.json() if item["id"] == artifact["id"])
+        assert listed["conversation_id"] is None
+
+    def test_sdk_can_store_and_read_workflow_produced_bytes(
+        self,
+        e2e_client,
+        platform_admin,
+    ):
+        upload_headers = {
+            key: value
+            for key, value in platform_admin.headers.items()
+            if key.lower() != "content-type"
+        }
+        workspace_id = uuid4()
+        stored = e2e_client.post(
+            f"/api/sdk/artifacts?workspace_id={workspace_id}",
+            files={"file": ("Workflow Notes.md", b"# Ready", "text/markdown")},
+            headers=upload_headers,
+        )
+
+        assert stored.status_code == 200, stored.text
+        ref = stored.json()
+        assert ref == {
+            "type": "bifrost_artifact",
+            "id": ref["id"],
+            "filename": "Workflow Notes.md",
+            "content_type": "text/markdown",
+            "size_bytes": 7,
+        }
+        content = e2e_client.get(
+            f"/api/sdk/artifacts/{ref['id']}/content",
+            headers=platform_admin.headers,
+        )
+        assert content.content == b"# Ready"
+        workspace = e2e_client.get(
+            f"/api/sdk/artifacts?workspace_id={workspace_id}",
+            headers=platform_admin.headers,
+        )
+        assert workspace.status_code == 200, workspace.text
+        assert workspace.json() == [ref]
 
     @pytest.mark.asyncio
     async def test_artifact_library_lists_renames_and_deletes_owned_files(

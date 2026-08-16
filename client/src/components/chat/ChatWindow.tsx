@@ -361,9 +361,14 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 	// Auto-scroll to bottom on new messages or events (only if user is at bottom)
 	useEffect(() => {
 		if (isAtBottom) {
-			messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+			messagesEndRef.current?.scrollIntoView({
+				// Repeated smooth-scroll animations fight the activity collapse and
+				// make streamed text feel unstable. Keep the live edge anchored, then
+				// use the softer motion only for settled message changes.
+				behavior: isStreaming ? "auto" : "smooth",
+			});
 		}
-	}, [messages, systemEvents, pendingQuestion, isAtBottom]);
+	}, [messages, systemEvents, pendingQuestion, isAtBottom, isStreaming]);
 
 	// Handle send message
 	const handleSendMessage = async (
@@ -601,9 +606,22 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 							finalAssistantIndex >= 0
 								? turn.activity[finalAssistantIndex]
 								: undefined;
+						const isFinalResponseStreaming =
+							isActiveTurn &&
+							finalAssistant?.type === "message" &&
+							(Boolean((finalAssistant.data as UnifiedMessage).isStreaming) ||
+								finalAssistant.data.id === streamingMessageId);
+						const runSummaryAssistant = turn.activity
+							.filter(
+								(item): item is Extract<TimelineItem, { type: "message" }> =>
+									item.type === "message" &&
+									item.data.role === "assistant" &&
+									item.data.duration_ms != null,
+							)
+							.at(-1);
 						const durationMs =
-							finalAssistant?.type === "message"
-								? finalAssistant.data.duration_ms
+							runSummaryAssistant?.type === "message"
+								? runSummaryAssistant.data.duration_ms
 								: turn.activity
 									.flatMap((item) =>
 										item.type === "tool_group" ? item.data : [],
@@ -647,10 +665,14 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 									<ChatRunActivity
 										isActive={isActiveTurn}
 										durationMs={durationMs}
-										activeLabel={getActiveRunLabel(
-											runningTool?.tool_name,
-											runningTool?.tool_input,
-										)}
+										activeLabel={
+											isFinalResponseStreaming
+												? "Responding…"
+												: getActiveRunLabel(
+														runningTool?.tool_name,
+														runningTool?.tool_input,
+													)
+										}
 									>
 										{detailItems.length > 0
 											? detailItems.map((item) =>

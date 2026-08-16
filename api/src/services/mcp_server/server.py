@@ -570,6 +570,11 @@ if HAS_FASTMCP:
                         # Plain string result - return as success
                         return success_result(result, {"result": result})
 
+                from pydantic import BaseModel
+
+                if isinstance(result, BaseModel):
+                    result = result.model_dump(mode="json")
+
                 # Auto-wrap dict results
                 if isinstance(result, dict):
                     if result.get("error"):
@@ -582,8 +587,11 @@ if HAS_FASTMCP:
 
                         from mcp.types import ImageContent, ResourceLink, TextContent
 
-                        from shared.file_paths import resolve_s3_key
                         from src.core.database import get_db_context
+                        from src.services.artifacts import (
+                            ArtifactAccessError,
+                            ArtifactService,
+                        )
                         from src.services.file_storage.service import (
                             get_file_storage_service,
                         )
@@ -596,23 +604,26 @@ if HAS_FASTMCP:
                         ]
                         async with get_db_context() as db:
                             storage = get_file_storage_service(db)
+                            artifact_service = ArtifactService(db)
                             for ref in artifact_refs:
-                                if not ref.path or not ref.location or not ref.scope:
+                                try:
+                                    artifact = await artifact_service.get_authorized(
+                                        UUID(ref.id),
+                                        user_id=UUID(str(context.user_id)),
+                                        organization_id=(
+                                            UUID(str(context.org_id))
+                                            if context.org_id
+                                            else None
+                                        ),
+                                        is_platform_admin=context.is_platform_admin,
+                                    )
+                                except (ArtifactAccessError, ValueError):
                                     return error_result(
-                                        "ArtifactRef output must include path, location, and scope.",
+                                        "ArtifactRef output was not found or is outside this MCP scope.",
                                         result,
                                     )
-                                if (
-                                    not context.is_platform_admin
-                                    and ref.scope not in {"global", str(context.org_id)}
-                                ):
-                                    return error_result(
-                                        "ArtifactRef output belongs to another organization scope.",
-                                        result,
-                                    )
-                                s3_key = resolve_s3_key(ref.location, ref.scope, ref.path)
                                 if ref.content_type.startswith("image/"):
-                                    data = await storage.read_uploaded_file(s3_key)
+                                    data = await artifact_service.read(artifact)
                                     content_blocks.append(
                                         ImageContent(
                                             type="image",
@@ -622,7 +633,7 @@ if HAS_FASTMCP:
                                     )
                                 else:
                                     url = await storage.generate_presigned_download_url(
-                                        s3_key
+                                        artifact.s3_key
                                     )
                                     content_blocks.append(
                                         ResourceLink(

@@ -476,6 +476,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
         form_inputs = pending.get("form_inputs", {})
         embed = pending.get("embed", {})
         event_data = pending.get("event")  # EventContext dict if event-triggered
+        artifact_workspace_id = pending.get("artifact_workspace_id")
 
         # Determine if this is a code or workflow execution
         is_script = bool(code_base64)
@@ -731,6 +732,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 "event": event_data,  # EventContext dict (None if not event-triggered)
                 "solution_id": solution_id,  # Install id if solution-managed (else None)
                 "solution_global_repo_access": solution_global_repo_access,
+                "artifact_workspace_id": artifact_workspace_id,
                 # Pre-minted engine token: child writes directly to credentials file,
                 # no SECRET_KEY required in child env.
                 "engine_token": engine_token,

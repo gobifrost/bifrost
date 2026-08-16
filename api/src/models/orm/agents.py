@@ -16,6 +16,7 @@ from src.models.enums import AgentAccessLevel, MessageRole
 from src.models.orm.base import Base
 
 if TYPE_CHECKING:
+    from src.models.orm.artifacts import Artifact
     from src.models.orm.ai_usage import AIUsage
     from src.models.orm.organizations import Organization
     from src.models.orm.users import Role, User
@@ -301,6 +302,9 @@ class MessageAttachment(Base):
     __tablename__ = "message_attachments"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    artifact_id: Mapped[UUID] = mapped_column(
+        ForeignKey("artifacts.id", ondelete="CASCADE"), nullable=False
+    )
     message_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("messages.id", ondelete="CASCADE"), nullable=True, default=None
     )
@@ -320,8 +324,10 @@ class MessageAttachment(Base):
 
     message: Mapped["Message | None"] = relationship(back_populates="attachments")
     conversation: Mapped["Conversation"] = relationship(back_populates="attachments")
+    artifact: Mapped["Artifact"] = relationship(back_populates="chat_bindings")
 
     __table_args__ = (
+        Index("ix_message_attachments_artifact_id", "artifact_id"),
         Index("ix_message_attachments_message_id", "message_id"),
         Index("ix_message_attachments_conversation_id", "conversation_id"),
     )

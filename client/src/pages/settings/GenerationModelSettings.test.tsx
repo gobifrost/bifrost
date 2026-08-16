@@ -30,16 +30,60 @@ describe("GenerationModelSettings", () => {
 		expect(onImageModelChange).toHaveBeenCalled();
 		expect(onVideoModelChange).toHaveBeenCalled();
 		expect(
+			screen.getByText("Generation Models").querySelector("svg"),
+		).toBeNull();
+		expect(
 			screen
 				.getByText("Image Generation Model")
 				.closest("label")
 				?.querySelector("svg"),
-		).toHaveClass("text-violet-500");
+		).toBeNull();
 		expect(
 			screen
 				.getByText("Video Generation Model")
 				.closest("label")
 				?.querySelector("svg"),
-		).toHaveClass("text-rose-500");
+		).toBeNull();
+	});
+
+	it("only offers models whose catalog output matches each generator", async () => {
+		const { user } = renderWithProviders(
+			<GenerationModelSettings
+				models={[
+					{
+						id: "google/gemini-2.5-flash-image",
+						display_name: "Nano Banana",
+						output_modalities: ["text", "image"],
+					},
+					{
+						id: "openai/sora",
+						display_name: "Sora",
+						output_modalities: ["video"],
+					},
+					{
+						id: "deepseek/deepseek-v4-pro",
+						display_name: "DeepSeek V4 Pro",
+						output_modalities: ["text"],
+					},
+				]}
+				imageModel=""
+				videoModel=""
+				onImageModelChange={vi.fn()}
+				onVideoModelChange={vi.fn()}
+			/>,
+		);
+
+		await user.click(
+			screen.getByRole("combobox", { name: "Image Generation Model" }),
+		);
+		expect(
+			screen.getByRole("option", { name: /Nano Banana/ }),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("option", { name: /DeepSeek V4 Pro/ }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("option", { name: /Sora/ }),
+		).not.toBeInTheDocument();
 	});
 });

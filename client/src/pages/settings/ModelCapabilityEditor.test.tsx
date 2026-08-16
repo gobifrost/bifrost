@@ -8,7 +8,9 @@ vi.mock("@/lib/api-client", () => ({ authFetch }));
 import { ModelCapabilityEditor } from "./ModelCapabilityEditor";
 
 describe("ModelCapabilityEditor", () => {
-	beforeEach(() => authFetch.mockReset());
+	beforeEach(() => {
+		authFetch.mockReset();
+	});
 
 	it("runs provider verification for an unknown model and returns the result", async () => {
 		authFetch.mockResolvedValue(
@@ -75,18 +77,19 @@ describe("ModelCapabilityEditor", () => {
 	});
 
 	it("shows supported and unsupported capabilities as compact icon controls", async () => {
+		const capabilities = {
+			image_input: false,
+			pdf_input: false,
+			tool_calling: true,
+			source: "openrouter" as const,
+			fingerprint: "catalog-target",
+		};
 		const { user } = renderWithProviders(
 			<ModelCapabilityEditor
 				provider="openai"
 				model="deepseek/deepseek-v4-pro"
 				endpoint="https://openrouter.ai/api/v1"
-				value={{
-					image_input: false,
-					pdf_input: false,
-					tool_calling: true,
-					source: "openrouter",
-					fingerprint: "catalog-target",
-				}}
+				value={capabilities}
 				onChange={vi.fn()}
 			/>,
 		);
@@ -101,7 +104,26 @@ describe("ModelCapabilityEditor", () => {
 				name: "Tool Calling: Supported",
 			}),
 		).toHaveClass("text-green-600");
+		expect(
+			screen.getByRole("button", {
+				name: "Tool Calling: Supported",
+			}),
+		).toHaveClass("h-6", "w-6");
+		expect(
+			screen
+				.getByRole("button", {
+					name: "Tool Calling: Supported",
+				})
+				.querySelector("svg"),
+		).toHaveClass("h-3.5", "w-3.5");
 		expect(screen.queryByRole("switch")).not.toBeInTheDocument();
+		expect(screen.queryByText("Capabilities")).not.toBeInTheDocument();
+		expect(screen.getByText("OpenRouter")).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", {
+				name: "Refresh Model Capabilities",
+			}),
+		).toContainElement(screen.getByText("OpenRouter"));
 		expect(
 			screen.queryByText(/native image generation/i),
 		).not.toBeInTheDocument();
@@ -112,7 +134,54 @@ describe("ModelCapabilityEditor", () => {
 			}),
 		);
 		expect(
-			await screen.findByText("Supported · OpenRouter Catalog"),
+			await screen.findByText("Supported · OpenRouter"),
 		).toBeInTheDocument();
+	});
+
+	it("refreshes through the source status and replaces its check with a spinner", async () => {
+		let resolveLookup: ((response: Response) => void) | undefined;
+		authFetch.mockImplementation(
+			() =>
+				new Promise<Response>((resolve) => {
+					resolveLookup = resolve;
+				}),
+		);
+		const capabilities = {
+			image_input: false,
+			pdf_input: false,
+			tool_calling: true,
+			source: "openrouter" as const,
+			fingerprint: "catalog-target",
+		};
+		const onChange = vi.fn();
+		const { user } = renderWithProviders(
+			<ModelCapabilityEditor
+				provider="openai"
+				model="deepseek/deepseek-v4-pro"
+				endpoint="https://openrouter.ai/api/v1"
+				value={capabilities}
+				onChange={onChange}
+			/>,
+		);
+		const refresh = screen.getByRole("button", {
+			name: "Refresh Model Capabilities",
+		});
+
+		await user.click(refresh);
+		expect(refresh.querySelector(".animate-spin")).toBeInTheDocument();
+		expect(refresh).toHaveTextContent("OpenRouter");
+
+		resolveLookup?.(
+			new Response(
+				JSON.stringify({
+					capabilities,
+					message: "Catalog refreshed.",
+				}),
+				{ status: 200 },
+			),
+		);
+		await waitFor(() =>
+			expect(onChange).toHaveBeenCalledWith(capabilities),
+		);
 	});
 });

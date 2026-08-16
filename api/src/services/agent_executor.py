@@ -277,7 +277,7 @@ class AgentExecutor:
                 async with self._db() as session:
                     attachment_result = await session.execute(
                         select(MessageAttachment)
-                        .where(MessageAttachment.id.in_(attachment_ids))
+                        .where(MessageAttachment.artifact_id.in_(attachment_ids))
                         .where(MessageAttachment.conversation_id == conversation.id)
                     )
                     selected_attachments = attachment_result.scalars().all()
@@ -394,7 +394,14 @@ class AgentExecutor:
                 existing_tool_names = {definition.name for definition in tool_definitions}
                 tool_definitions.extend(
                     definition
-                    for definition in artifact_tool_definitions()
+                    for definition in artifact_tool_definitions(
+                        image_generation_enabled=bool(
+                            llm_config.image_generation_model
+                        ),
+                        video_generation_enabled=bool(
+                            llm_config.video_generation_model
+                        ),
+                    )
                     if definition.name not in existing_tool_names
                 )
             logger.info(f"Agent '{agent.name if agent else 'None'}' has {len(tool_definitions)} tool definitions")
@@ -491,9 +498,17 @@ class AgentExecutor:
                     caller=caller,
                 )
                 promoted_artifacts = []
-                if not tool_result.error and tool_result.result is not None:
-                    from src.services.chat_artifacts import promote_artifact_refs
+                from src.services.chat_artifacts import (
+                    ARTIFACT_TOOL_NAMES,
+                    IMMEDIATE_ARTIFACT_TOOL_NAMES,
+                    promote_artifact_refs,
+                )
 
+                if (
+                    not tool_result.error
+                    and tool_result.result is not None
+                    and name not in ARTIFACT_TOOL_NAMES
+                ):
                     try:
                         async with self._db() as session:
                             promoted_artifacts = await promote_artifact_refs(
@@ -523,7 +538,6 @@ class AgentExecutor:
                         )
                     )
                 from src.models.contracts.artifacts import ArtifactRef
-                from src.services.chat_artifacts import ARTIFACT_TOOL_NAMES
 
                 if name in ARTIFACT_TOOL_NAMES:
                     if tool_result.error:
@@ -534,7 +548,7 @@ class AgentExecutor:
                                 message_id=str(message_id),
                             )
                         )
-                    else:
+                    elif name in IMMEDIATE_ARTIFACT_TOOL_NAMES:
                         pending_tool_chunks.append(
                             ChatStreamChunk(
                                 type="artifact_ready",
@@ -574,6 +588,18 @@ class AgentExecutor:
                 return tool_history_content
 
             system_prompt = messages[0].content or FALLBACK_SYSTEM_PROMPT
+            from src.services.chat_artifacts import (
+                ARTIFACT_WORKSPACE_INSTRUCTIONS,
+                BUILTIN_ARTIFACT_TOOL_NAMES,
+            )
+
+            if any(
+                definition.name in BUILTIN_ARTIFACT_TOOL_NAMES
+                for definition in tool_definitions
+            ):
+                system_prompt = (
+                    f"{system_prompt.rstrip()}\n\n{ARTIFACT_WORKSPACE_INSTRUCTIONS}"
+                )
             history_messages = messages[1:]
             current_prompt = user_message
             if history_messages and history_messages[-1].role == "user":
@@ -1224,9 +1250,10 @@ class AgentExecutor:
         """
         start_time = time.time()
 
-        from src.services.chat_artifacts import ARTIFACT_TOOL_NAMES
+        from src.models.contracts.artifacts import ArtifactRef
+        from src.services.chat_artifacts import BUILTIN_ARTIFACT_TOOL_NAMES
 
-        if tool_call.name in ARTIFACT_TOOL_NAMES:
+        if tool_call.name in BUILTIN_ARTIFACT_TOOL_NAMES:
             if conversation is None or tool_message_id is None:
                 return ToolResult(
                     tool_call_id=tool_call.id,
@@ -1249,7 +1276,11 @@ class AgentExecutor:
                 return ToolResult(
                     tool_call_id=tool_call.id,
                     tool_name=tool_call.name,
-                    result=artifact.model_dump(mode="json"),
+                    result=(
+                        artifact.model_dump(mode="json")
+                        if isinstance(artifact, ArtifactRef)
+                        else artifact
+                    ),
                     duration_ms=int((time.time() - start_time) * 1000),
                 )
             except Exception as exc:
@@ -1339,6 +1370,7 @@ class AgentExecutor:
                 org_id=org_id,
                 is_platform_admin=user.is_superuser if user else False,
                 execution_id=execution_id,
+                artifact_workspace_id=str(conversation.id) if conversation else None,
             )
 
             duration_ms = int((time.time() - start_time) * 1000)

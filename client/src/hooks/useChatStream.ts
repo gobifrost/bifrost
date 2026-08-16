@@ -65,6 +65,8 @@ export function useChatStream({
 	const handleChunkRef = useRef<((chunk: ChatStreamChunk) => void) | null>(
 		null,
 	);
+	const artifactJobUnsubscribersRef = useRef(new Map<string, () => void>());
+	const runAssistantMessageIdRef = useRef<string | null>(null);
 
 	const {
 		isStreaming,
@@ -82,9 +84,96 @@ export function useChatStream({
 		currentConversationIdRef.current = conversationId;
 	}, [conversationId]);
 
+	useEffect(
+		() => () => {
+			artifactJobUnsubscribersRef.current.forEach((unsubscribe) =>
+				unsubscribe(),
+			);
+			artifactJobUnsubscribersRef.current.clear();
+		},
+		[],
+	);
+
 	// Handle incoming chat stream chunks
 	const handleChunk = useCallback(
 		(chunk: ChatStreamChunk) => {
+			const observeArtifactJob = (
+				result: unknown,
+				messageId: string,
+			) => {
+				if (!result || typeof result !== "object") return;
+				const job = result as {
+					type?: string;
+					job_id?: string;
+					kind?: string;
+					conversation_id?: string;
+				};
+				if (
+					job.type !== "platform_job" ||
+					job.kind !== "video_generation" ||
+					!job.job_id ||
+					artifactJobUnsubscribersRef.current.has(job.job_id)
+				) {
+					return;
+				}
+				const unsubscribe = webSocketService.onPlatformJobUpdate(
+					job.job_id,
+					(update) => {
+						if (
+							update.status !== "succeeded" &&
+							update.status !== "failed" &&
+							update.status !== "cancelled"
+						) {
+							return;
+						}
+						const convId =
+							job.conversation_id ||
+							currentConversationIdRef.current;
+						if (convId) {
+							queryClient.invalidateQueries({
+								queryKey: [
+									"get",
+									"/api/chat/conversations/{conversation_id}/messages",
+									{
+										params: {
+											path: { conversation_id: convId },
+										},
+									},
+								],
+							});
+						}
+						queryClient.invalidateQueries({
+							queryKey: ["chat-artifacts"],
+						});
+						if (update.status === "succeeded") {
+							toast.success("Video ready");
+						} else {
+							toast.error("Video generation did not finish", {
+								description:
+									update.error?.message ||
+									"Open the notification for details.",
+							});
+						}
+						artifactJobUnsubscribersRef.current
+							.get(job.job_id!)?.();
+						artifactJobUnsubscribersRef.current.delete(job.job_id!);
+						if (convId) {
+							useChatStore.getState().updateMessage(convId, messageId, {
+								tool_state:
+									update.status === "succeeded"
+										? "completed"
+										: "error",
+								tool_result: {
+									...job,
+									status: update.status,
+								},
+							});
+						}
+					},
+				);
+				artifactJobUnsubscribersRef.current.set(job.job_id, unsubscribe);
+			};
+
 			// Handle title update - refresh conversations to show new title
 			if (chunk.type === "title_update") {
 				queryClient.invalidateQueries({
@@ -167,6 +256,7 @@ export function useChatStream({
 
 					// Create assistant message (with server-provided ID and current timestamp)
 					if (chunk.assistant_message_id) {
+						runAssistantMessageIdRef.current = chunk.assistant_message_id;
 						const assistantMessage: UnifiedMessage = {
 							id: chunk.assistant_message_id,
 							conversation_id: convId,
@@ -277,11 +367,7 @@ export function useChatStream({
 				case "artifact_ready": {
 					const convId = currentConversationIdRef.current;
 					const artifact = chunk.artifact;
-					if (
-						!convId ||
-						!chunk.message_id ||
-						!artifact?.attachment_id
-					)
+					if (!convId || !chunk.message_id || !artifact?.id)
 						break;
 					const messages =
 						useChatStore.getState().messagesByConversation[
@@ -292,9 +378,7 @@ export function useChatStream({
 					);
 					const attachments = message?.attachments ?? [];
 					if (
-						!attachments.some(
-							(item) => item.id === artifact.attachment_id,
-						)
+						!attachments.some((item) => item.id === artifact.id)
 					) {
 						useChatStore
 							.getState()
@@ -302,7 +386,7 @@ export function useChatStream({
 								attachments: [
 									...attachments,
 									{
-										id: artifact.attachment_id,
+										id: artifact.id,
 										filename: artifact.filename,
 										content_type: artifact.content_type,
 										size_bytes: artifact.size_bytes,
@@ -339,6 +423,10 @@ export function useChatStream({
 
 				case "tool_result":
 					if (chunk.tool_result && chunk.message_id) {
+						observeArtifactJob(
+							chunk.tool_result.result,
+							chunk.message_id,
+						);
 						const convId = currentConversationIdRef.current;
 						if (convId) {
 							// Update the TOOL_CALL message with result
@@ -372,6 +460,9 @@ export function useChatStream({
 							useChatStore
 								.getState()
 								.updateMessage(convId, streamingId, {
+									// Intermediate text is persisted under its own ID. The
+									// pre-generated run ID is reserved for the final response.
+									id: chunk.message_id || streamingId,
 									isStreaming: false,
 									isFinal: true,
 								});
@@ -392,11 +483,20 @@ export function useChatStream({
 						? useChatStore.getState().streamingMessageIds[convId]
 						: null;
 
-					// Mark message as no longer streaming and apply usage metadata
-					if (convId && streamingId) {
+					const summaryMessageId =
+						chunk.message_id || runAssistantMessageIdRef.current || streamingId;
+
+					// The final segment may have a temporary client ID when it starts
+					// after tool execution. Replace that ID with the persisted summary
+					// ID so the visible response cannot remain stuck in streaming state.
+					const messageToFinalize = streamingId || summaryMessageId;
+					if (convId && messageToFinalize) {
 						useChatStore
 							.getState()
-							.updateMessage(convId, streamingId, {
+							.updateMessage(convId, messageToFinalize, {
+								...(summaryMessageId && messageToFinalize !== summaryMessageId
+									? { id: summaryMessageId }
+									: {}),
 								isStreaming: false,
 								isFinal: true,
 								token_count_input:
@@ -411,6 +511,7 @@ export function useChatStream({
 							.getState()
 							.setStreamingMessageIdForConversation(convId, null);
 					}
+					runAssistantMessageIdRef.current = null;
 
 					completeStream();
 
@@ -599,9 +700,6 @@ export function useChatStream({
 		if (!conversationId) return;
 
 		let unsubscribe: (() => void) | null = null;
-
-		// Reset stream state directly from store
-		useChatStore.getState().resetStream();
 
 		// Connect and subscribe
 		const setup = async () => {

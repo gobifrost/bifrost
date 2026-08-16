@@ -47,6 +47,7 @@ async def _publish_pending(
     is_platform_admin: bool,
     file_path: str | None,
     event: dict[str, Any] | None = None,
+    artifact_workspace_id: str | None = None,
 ) -> None:
     """
     Write a pending-execution blob to Redis, register with the queue tracker,
@@ -75,6 +76,7 @@ async def _publish_pending(
         sync=sync,
         is_platform_admin=is_platform_admin,
         event=event,
+        artifact_workspace_id=artifact_workspace_id,
     )
 
     # Add to queue tracking (publishes position updates to all queued executions)
@@ -153,6 +155,7 @@ async def enqueue_workflow_execution(
         is_platform_admin=context.is_platform_admin,
         file_path=file_path,
         event=event_payload,
+        artifact_workspace_id=context.artifact_workspace_id,
     )
 
     logger.info(
@@ -209,6 +212,12 @@ async def enqueue_code_execution(
         user_name=context.name,
         user_email=context.email,
         form_id=None,
+        startup=context.startup,
+        form_inputs=context.form_inputs,
+        embed=context.embed,
+        sync=sync,
+        is_platform_admin=context.is_platform_admin,
+        artifact_workspace_id=context.artifact_workspace_id,
     )
 
     # Add to queue tracking

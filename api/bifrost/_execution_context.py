@@ -107,6 +107,9 @@ class ExecutionContext:
     execution_id: str
     workflow_name: str = field(default="")  # Name of the executing workflow
     is_agent: bool = False  # True when triggered by an autonomous agent
+    # Shared file workspace inherited by nested tools. Chat uses the
+    # conversation id; autonomous/coding runs use their root run id.
+    artifact_workspace_id: str | None = field(default=None)
     # The install this execution belongs to, when the workflow is solution-managed.
     # The SDK appends it to name lookups (tables/configs) so they resolve the
     # install's OWN entity first, then _repo/. None for plain _repo/ executions.
@@ -242,6 +245,7 @@ class ExecutionContext:
             "execution_id": self.execution_id,
             "workflow_name": self.workflow_name,
             "is_agent": self.is_agent,
+            "artifact_workspace_id": self.artifact_workspace_id,
             "public_url": self.public_url,
             "parameters": self.parameters,
             "startup": self.startup,

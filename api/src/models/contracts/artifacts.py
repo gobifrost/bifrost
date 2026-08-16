@@ -11,6 +11,38 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 ArtifactFormat = Literal["pdf", "docx", "xlsx", "csv", "html", "markdown", "text", "json"]
 
 
+class ArtifactRef(BaseModel):
+    """Opaque portable reference returned by Bifrost tools and accepted as input."""
+
+    type: Literal["bifrost_artifact"] = "bifrost_artifact"
+    id: str = Field(min_length=1)
+    filename: str
+    content_type: str
+    size_bytes: int = Field(ge=0)
+
+
+class ImageArtifactSpec(BaseModel):
+    """Prompt for a provider-generated image saved as a Chat artifact."""
+
+    filename: str = Field(
+        min_length=1,
+        max_length=200,
+        description="A short, descriptive filename; Bifrost applies proper casing and the extension.",
+    )
+    prompt: str = Field(min_length=1, max_length=20_000)
+
+
+class VideoArtifactSpec(BaseModel):
+    """Prompt for a durable provider-generated video job."""
+
+    filename: str = Field(
+        min_length=1,
+        max_length=200,
+        description="A short, descriptive filename; Bifrost applies proper casing and the extension.",
+    )
+    prompt: str = Field(min_length=1, max_length=20_000)
+
+
 class ArtifactTable(BaseModel):
     """A bounded table that can be rendered into a document."""
 
@@ -25,6 +57,18 @@ class ArtifactTable(BaseModel):
         return self
 
 
+class DocumentImage(BaseModel):
+    """A raster file from the active artifact workspace."""
+
+    path: str = Field(
+        min_length=1,
+        max_length=500,
+        description="Logical workspace path or filename returned by an earlier artifact tool.",
+    )
+    caption: str | None = Field(default=None, max_length=500)
+    max_width_inches: float = Field(default=6.5, ge=1, le=7)
+
+
 class DocumentSection(BaseModel):
     """One flowing section in a PDF or DOCX artifact."""
 
@@ -32,11 +76,20 @@ class DocumentSection(BaseModel):
     paragraphs: list[str] = Field(default_factory=list, max_length=100)
     bullets: list[str] = Field(default_factory=list, max_length=100)
     table: ArtifactTable | None = None
+    images: list[DocumentImage] = Field(default_factory=list, max_length=12)
 
     @model_validator(mode="after")
     def require_content(self) -> "DocumentSection":
-        if not (self.heading or self.paragraphs or self.bullets or self.table):
-            raise ValueError("A document section must contain a heading, text, bullets, or a table.")
+        if not (
+            self.heading
+            or self.paragraphs
+            or self.bullets
+            or self.table
+            or self.images
+        ):
+            raise ValueError(
+                "A document section must contain a heading, text, bullets, a table, or an image."
+            )
         return self
 
 
@@ -109,21 +162,6 @@ class TextArtifactSpec(BaseModel):
     content: str = Field(min_length=1, max_length=2_000_000)
 
 
-class ArtifactRef(BaseModel):
-    """Portable reference returned by Bifrost tools and accepted as tool input."""
-
-    type: Literal["bifrost_artifact"] = "bifrost_artifact"
-    filename: str
-    content_type: str
-    size_bytes: int = Field(ge=0)
-    path: str | None = None
-    location: str | None = None
-    scope: str | None = None
-    attachment_id: str | None = None
-    conversation_id: str | None = None
-    created_at: datetime | None = None
-
-
 class ModelCapabilities(BaseModel):
     """Persisted, fingerprinted model features used by Chat at runtime."""
 
@@ -159,10 +197,7 @@ class ModelCapabilityVerifyRequest(ModelCapabilityLookupRequest):
     )
 
 
-class ArtifactRenderResponse(BaseModel):
-    """Rendered binary returned to the SDK before managed-file persistence."""
+class ArtifactDownloadResponse(BaseModel):
+    """Short-lived authenticated download location for an artifact."""
 
-    filename: str
-    content_type: str
-    size_bytes: int
-    content_base64: str
+    url: str

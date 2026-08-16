@@ -187,10 +187,16 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
 	// Selection actions
 	setActiveConversation: (conversationId) => {
+		const previousConversationId = get().activeConversationId;
 		set({ activeConversationId: conversationId });
 
-		// Reset streaming state when switching conversations
-		if (get().isStreaming) {
+		// Route synchronization can select the conversation that was just
+		// created after its first message has already started streaming. Only a
+		// genuine switch should clear the conversation-scoped activity state.
+		if (
+			previousConversationId !== conversationId &&
+			get().isStreaming
+		) {
 			set({
 				isStreaming: false,
 			});

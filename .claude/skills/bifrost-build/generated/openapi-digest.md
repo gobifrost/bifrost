@@ -276,6 +276,9 @@
 | GET | `/api/knowledge-sources/{namespace}/documents/{doc_id}` |
 | PUT | `/api/knowledge-sources/{namespace}/documents/{doc_id}` |
 | GET | `/api/llms.txt` |
+| POST | `/api/maintenance/artifact-retention/cleanup` |
+| GET | `/api/maintenance/artifact-retention/settings` |
+| PUT | `/api/maintenance/artifact-retention/settings` |
 | POST | `/api/maintenance/cleanup-orphaned` |
 | POST | `/api/maintenance/index-docs` |
 | POST | `/api/maintenance/preflight` |
@@ -407,9 +410,15 @@
 | POST | `/api/sdk/ai/complete` |
 | GET | `/api/sdk/ai/info` |
 | POST | `/api/sdk/ai/stream` |
+| GET | `/api/sdk/artifacts` |
+| POST | `/api/sdk/artifacts` |
 | POST | `/api/sdk/artifacts/document` |
+| POST | `/api/sdk/artifacts/image` |
 | POST | `/api/sdk/artifacts/spreadsheet` |
 | POST | `/api/sdk/artifacts/text` |
+| POST | `/api/sdk/artifacts/video` |
+| GET | `/api/sdk/artifacts/{artifact_id}/content` |
+| GET | `/api/sdk/artifacts/{artifact_id}/download-url` |
 | POST | `/api/sdk/config/delete` |
 | POST | `/api/sdk/config/get` |
 | POST | `/api/sdk/config/list` |

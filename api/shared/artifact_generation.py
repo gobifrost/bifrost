@@ -11,8 +11,10 @@ import io
 import json
 import zipfile
 from dataclasses import dataclass
+from decimal import Decimal
 from html import escape
 from pathlib import Path
+from collections.abc import Mapping
 from typing import Any
 
 from docx import Document
@@ -28,6 +30,7 @@ from reportlab.lib.pagesizes import A4, LETTER
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import (
+    Image as ReportLabImage,
     ListFlowable,
     ListItem,
     Paragraph,
@@ -44,6 +47,7 @@ from src.models.contracts.artifacts import (
 )
 
 MAX_ARTIFACT_BYTES = 25 * 1024 * 1024
+MAX_VIDEO_ARTIFACT_BYTES = 250 * 1024 * 1024
 
 _CONTENT_TYPES = {
     "pdf": "application/pdf",
@@ -66,6 +70,11 @@ class GeneratedArtifact:
     filename: str
     content_type: str
     content: bytes
+    provider: str | None = None
+    model: str | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    provider_cost: Decimal | None = None
 
     @property
     def size_bytes(self) -> int:
@@ -78,8 +87,15 @@ def validate_artifact_content(
     """Validate signatures for trusted generators and promoted workflow files."""
     if not content:
         raise ArtifactGenerationError(f"{filename} is empty.")
-    if len(content) > MAX_ARTIFACT_BYTES:
-        raise ArtifactGenerationError(f"{filename} exceeds the 25 MB limit.")
+    max_bytes = (
+        MAX_VIDEO_ARTIFACT_BYTES
+        if content_type in {"video/mp4", "video/webm"}
+        else MAX_ARTIFACT_BYTES
+    )
+    if len(content) > max_bytes:
+        raise ArtifactGenerationError(
+            f"{filename} exceeds the {max_bytes // (1024 * 1024)} MB limit."
+        )
     if content_type == "application/pdf":
         if not content.startswith(b"%PDF-"):
             raise ArtifactGenerationError(f"{filename} is not a valid PDF.")
@@ -121,6 +137,14 @@ def validate_artifact_content(
         except (OSError, ValueError) as exc:
             raise ArtifactGenerationError(f"{filename} is not a valid image.") from exc
         return
+    if content_type == "video/mp4":
+        if len(content) < 12 or content[4:8] != b"ftyp":
+            raise ArtifactGenerationError(f"{filename} is not a valid MP4 video.")
+        return
+    if content_type == "video/webm":
+        if not content.startswith(b"\x1a\x45\xdf\xa3"):
+            raise ArtifactGenerationError(f"{filename} is not a valid WebM video.")
+        return
     if content_type.startswith("text/") or content_type in {
         "application/json",
         "application/csv",
@@ -139,7 +163,7 @@ def validate_artifact_content(
     )
 
 
-def _safe_filename(filename: str, extension: str) -> str:
+def safe_artifact_filename(filename: str, extension: str) -> str:
     name = Path(filename.replace("\\", "/")).name.strip()
     if not name or name in {".", ".."}:
         raise ArtifactGenerationError("Artifact filename is invalid.")
@@ -162,7 +186,7 @@ def _finish(filename: str, output_format: str, content: bytes) -> GeneratedArtif
     if len(content) > MAX_ARTIFACT_BYTES:
         raise ArtifactGenerationError("Generated artifact exceeds the 25 MB limit.")
     artifact = GeneratedArtifact(
-        filename=_safe_filename(filename, output_format),
+        filename=safe_artifact_filename(filename, output_format),
         content_type=_CONTENT_TYPES[output_format],
         content=content,
     )
@@ -181,7 +205,32 @@ def generate_document(spec: DocumentArtifactSpec) -> GeneratedArtifact:
     return _generate_docx(spec)
 
 
-def _generate_pdf(spec: DocumentArtifactSpec) -> GeneratedArtifact:
+def generate_document_with_images(
+    spec: DocumentArtifactSpec,
+    image_content: Mapping[str, bytes],
+) -> GeneratedArtifact:
+    """Generate a document after resolving its opaque image references."""
+    if spec.format == "pdf":
+        return _generate_pdf(spec, image_content)
+    return _generate_docx(spec, image_content)
+
+
+def _resolved_document_image(
+    path: str,
+    image_content: Mapping[str, bytes],
+) -> bytes:
+    content = image_content.get(path)
+    if content is None:
+        raise ArtifactGenerationError(
+            f"Document image {path} was not found in the artifact workspace."
+        )
+    return content
+
+
+def _generate_pdf(
+    spec: DocumentArtifactSpec,
+    image_content: Mapping[str, bytes] | None = None,
+) -> GeneratedArtifact:
     buffer = io.BytesIO()
     page_size = LETTER if spec.page_size == "letter" else A4
     document = SimpleDocTemplate(
@@ -254,6 +303,37 @@ def _generate_pdf(spec: DocumentArtifactSpec) -> GeneratedArtifact:
                 )
             )
             story.extend([table, Spacer(1, 10)])
+        for image_spec in section.images:
+            content = _resolved_document_image(
+                image_spec.path,
+                image_content or {},
+            )
+            with Image.open(io.BytesIO(content)) as source:
+                width_px, height_px = source.size
+            max_width = min(image_spec.max_width_inches * inch, document.width)
+            rendered_height = max_width * height_px / width_px
+            story.append(
+                ReportLabImage(
+                    io.BytesIO(content),
+                    width=max_width,
+                    height=rendered_height,
+                    hAlign="CENTER",
+                )
+            )
+            if image_spec.caption:
+                story.append(
+                    Paragraph(
+                        escape(image_spec.caption),
+                        ParagraphStyle(
+                            "ArtifactImageCaption",
+                            parent=styles["Caption"],
+                            alignment=TA_CENTER,
+                            textColor=colors.HexColor("#64748B"),
+                            spaceBefore=5,
+                        ),
+                    )
+                )
+            story.append(Spacer(1, 10))
 
     def add_page_number(canvas: Any, doc: Any) -> None:
         canvas.saveState()
@@ -269,7 +349,10 @@ def _generate_pdf(spec: DocumentArtifactSpec) -> GeneratedArtifact:
     return _finish(spec.filename, "pdf", content)
 
 
-def _generate_docx(spec: DocumentArtifactSpec) -> GeneratedArtifact:
+def _generate_docx(
+    spec: DocumentArtifactSpec,
+    image_content: Mapping[str, bytes] | None = None,
+) -> GeneratedArtifact:
     document = Document()
     section = document.sections[0]
     section.top_margin = Inches(0.75)
@@ -302,6 +385,23 @@ def _generate_docx(spec: DocumentArtifactSpec) -> GeneratedArtifact:
                 cells = table.add_row().cells
                 for index, value in enumerate(row):
                     cells[index].text = "" if value is None else str(value)
+        for image_spec in item.images:
+            content = _resolved_document_image(
+                image_spec.path,
+                image_content or {},
+            )
+            image_paragraph = document.add_paragraph()
+            image_paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            image_paragraph.add_run().add_picture(
+                io.BytesIO(content),
+                width=Inches(image_spec.max_width_inches),
+            )
+            if image_spec.caption:
+                caption = document.add_paragraph(image_spec.caption)
+                caption.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                for run in caption.runs:
+                    run.font.size = Pt(9)
+                    run.font.italic = True
 
     buffer = io.BytesIO()
     document.save(buffer)

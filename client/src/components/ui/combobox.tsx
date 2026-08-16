@@ -49,6 +49,16 @@ export function Combobox({
 	id,
 }: ComboboxProps) {
 	const [open, setOpen] = React.useState(false);
+	const filter = React.useCallback(
+		(value: string, search: string, keywords?: string[]) => {
+			const terms = search.toLocaleLowerCase().trim().split(/\s+/);
+			const searchable = [value, ...(keywords ?? [])]
+				.join(" ")
+				.toLocaleLowerCase();
+			return terms.every((term) => searchable.includes(term)) ? 1 : 0;
+		},
+		[],
+	);
 
 	const selectedOption = options.find((option) => option.value === value);
 
@@ -94,7 +104,7 @@ export function Combobox({
 				className="w-[var(--radix-popover-trigger-width)] p-0"
 				align="start"
 			>
-				<Command>
+				<Command filter={filter}>
 					<CommandInput placeholder={searchPlaceholder} />
 					<CommandList className="max-h-60 overflow-y-auto">
 						<CommandEmpty>{emptyText}</CommandEmpty>

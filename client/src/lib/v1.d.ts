@@ -4516,6 +4516,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sdk/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sdk List Artifacts
+         * @description List the latest logical files in one authorized execution workspace.
+         */
+        get: operations["sdk_list_artifacts_api_sdk_artifacts_get"];
+        put?: never;
+        /**
+         * Sdk Store Artifact
+         * @description Validate and store workflow-produced bytes behind an opaque identity.
+         */
+        post: operations["sdk_store_artifact_api_sdk_artifacts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sdk/artifacts/document": {
         parameters: {
             query?: never;
@@ -4527,7 +4551,7 @@ export interface paths {
         put?: never;
         /**
          * Sdk Render Document Artifact
-         * @description Render a trusted PDF or DOCX payload for SDK-managed persistence.
+         * @description Render and store a trusted PDF or DOCX artifact.
          */
         post: operations["sdk_render_document_artifact_api_sdk_artifacts_document_post"];
         delete?: never;
@@ -4547,7 +4571,7 @@ export interface paths {
         put?: never;
         /**
          * Sdk Render Spreadsheet Artifact
-         * @description Render a trusted XLSX payload for SDK-managed persistence.
+         * @description Render and store a trusted XLSX artifact.
          */
         post: operations["sdk_render_spreadsheet_artifact_api_sdk_artifacts_spreadsheet_post"];
         delete?: never;
@@ -4567,9 +4591,89 @@ export interface paths {
         put?: never;
         /**
          * Sdk Render Text Artifact
-         * @description Render a trusted text-family payload for SDK-managed persistence.
+         * @description Render and store a trusted text-family artifact.
          */
         post: operations["sdk_render_text_artifact_api_sdk_artifacts_text_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/artifacts/image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sdk Generate Image Artifact
+         * @description Generate and store an image with the configured provider.
+         */
+        post: operations["sdk_generate_image_artifact_api_sdk_artifacts_image_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/artifacts/video": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sdk Generate Video Artifact
+         * @description Queue durable video generation into canonical artifact storage.
+         */
+        post: operations["sdk_generate_video_artifact_api_sdk_artifacts_video_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/artifacts/{artifact_id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sdk Read Artifact
+         * @description Read an opaque artifact after enforcing caller scope.
+         */
+        get: operations["sdk_read_artifact_api_sdk_artifacts__artifact_id__content_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/artifacts/{artifact_id}/download-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sdk Artifact Download Url
+         * @description Create a short-lived download URL for an opaque artifact.
+         */
+        get: operations["sdk_artifact_download_url_api_sdk_artifacts__artifact_id__download_url_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -6728,6 +6832,41 @@ export interface paths {
          */
         put: operations["update_decorator_properties_api_decorator_properties_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/maintenance/artifact-retention/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get artifact retention settings */
+        get: operations["get_artifact_retention_settings_api_maintenance_artifact_retention_settings_get"];
+        /** Update artifact retention settings */
+        put: operations["update_artifact_retention_settings_api_maintenance_artifact_retention_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/maintenance/artifact-retention/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Clean up expired artifacts */
+        post: operations["cleanup_artifact_retention_api_maintenance_artifact_retention_cleanup_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -11611,8 +11750,16 @@ export interface components {
             affected_run_ids: string[];
         };
         /**
+         * ArtifactDownloadResponse
+         * @description Short-lived authenticated download location for an artifact.
+         */
+        ArtifactDownloadResponse: {
+            /** Url */
+            url: string;
+        };
+        /**
          * ArtifactRef
-         * @description Portable reference returned by Bifrost tools and accepted as tool input.
+         * @description Opaque portable reference returned by Bifrost tools and accepted as input.
          */
         ArtifactRef: {
             /**
@@ -11621,38 +11768,36 @@ export interface components {
              * @constant
              */
             type: "bifrost_artifact";
+            /** Id */
+            id: string;
             /** Filename */
             filename: string;
             /** Content Type */
             content_type: string;
             /** Size Bytes */
             size_bytes: number;
-            /** Path */
-            path?: string | null;
-            /** Location */
-            location?: string | null;
-            /** Scope */
-            scope?: string | null;
-            /** Attachment Id */
-            attachment_id?: string | null;
-            /** Conversation Id */
-            conversation_id?: string | null;
-            /** Created At */
-            created_at?: string | null;
         };
-        /**
-         * ArtifactRenderResponse
-         * @description Rendered binary returned to the SDK before managed-file persistence.
-         */
-        ArtifactRenderResponse: {
-            /** Filename */
-            filename: string;
-            /** Content Type */
-            content_type: string;
-            /** Size Bytes */
-            size_bytes: number;
-            /** Content Base64 */
-            content_base64: string;
+        /** ArtifactRetentionSettings */
+        ArtifactRetentionSettings: {
+            /**
+             * Enabled
+             * @description Whether scheduled cleanup deletes expired Chat attachments and artifacts.
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * Retention Days
+             * @description Number of days to retain Chat attachments and generated artifacts.
+             * @default 90
+             */
+            retention_days: number;
+        };
+        /** ArtifactRetentionSettingsUpdate */
+        ArtifactRetentionSettingsUpdate: {
+            /** Enabled */
+            enabled: boolean;
+            /** Retention Days */
+            retention_days: number;
         };
         /**
          * ArtifactTable
@@ -12177,6 +12322,11 @@ export interface components {
              * Format: password
              */
             client_secret?: string | null;
+        };
+        /** Body_sdk_store_artifact_api_sdk_artifacts_post */
+        Body_sdk_store_artifact_api_sdk_artifacts_post: {
+            /** File */
+            file: string;
         };
         /** Body_upload_agent_logo_api_agents__agent_id__logo_post */
         Body_upload_agent_logo_api_agents__agent_id__logo_post: {
@@ -12939,9 +13089,9 @@ export interface components {
              */
             kind: "attachment" | "artifact";
             /** Conversation Id */
-            conversation_id: string;
+            conversation_id?: string | null;
             /** Message Id */
-            message_id: string;
+            message_id?: string | null;
             /** Conversation Title */
             conversation_title?: string | null;
             /** Created At */
@@ -14320,6 +14470,24 @@ export interface components {
             updated_by?: string | null;
         };
         /**
+         * DocumentImage
+         * @description A raster file from the active artifact workspace.
+         */
+        DocumentImage: {
+            /**
+             * Path
+             * @description Logical workspace path or filename returned by an earlier artifact tool.
+             */
+            path: string;
+            /** Caption */
+            caption?: string | null;
+            /**
+             * Max Width Inches
+             * @default 6.5
+             */
+            max_width_inches: number;
+        };
+        /**
          * DocumentListResponse
          * @description Response for document queries.
          */
@@ -14425,6 +14593,8 @@ export interface components {
             /** Bullets */
             bullets?: string[];
             table?: components["schemas"]["ArtifactTable"] | null;
+            /** Images */
+            images?: components["schemas"]["DocumentImage"][];
         };
         /**
          * DocumentUpdate
@@ -17492,6 +17662,19 @@ export interface components {
             /** Environment */
             environment: string;
         };
+        /**
+         * ImageArtifactSpec
+         * @description Prompt for a provider-generated image saved as a Chat artifact.
+         */
+        ImageArtifactSpec: {
+            /**
+             * Filename
+             * @description A short, descriptive filename; Bifrost applies proper casing and the extension.
+             */
+            filename: string;
+            /** Prompt */
+            prompt: string;
+        };
         /** ImportResult */
         ImportResult: {
             /** Entity Type */
@@ -18571,6 +18754,8 @@ export interface components {
             id: string;
             /** Display Name */
             display_name: string;
+            /** Output Modalities */
+            output_modalities?: string[] | null;
         };
         /**
          * LLMModelsResponse
@@ -25609,6 +25794,19 @@ export interface components {
             sdk_fingerprint: string;
             /** Sdk Contract Version */
             sdk_contract_version: number;
+        };
+        /**
+         * VideoArtifactSpec
+         * @description Prompt for a durable provider-generated video job.
+         */
+        VideoArtifactSpec: {
+            /**
+             * Filename
+             * @description A short, descriptive filename; Bifrost applies proper casing and the extension.
+             */
+            filename: string;
+            /** Prompt */
+            prompt: string;
         };
         /**
          * WatchSessionRequest
@@ -34422,9 +34620,77 @@ export interface operations {
             };
         };
     };
+    sdk_list_artifacts_api_sdk_artifacts_get: {
+        parameters: {
+            query: {
+                workspace_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactRef"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_store_artifact_api_sdk_artifacts_post: {
+        parameters: {
+            query?: {
+                workspace_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_sdk_store_artifact_api_sdk_artifacts_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactRef"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     sdk_render_document_artifact_api_sdk_artifacts_document_post: {
         parameters: {
-            query?: never;
+            query?: {
+                workspace_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -34441,7 +34707,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ArtifactRenderResponse"];
+                    "application/json": components["schemas"]["ArtifactRef"];
                 };
             };
             /** @description Validation Error */
@@ -34457,7 +34723,9 @@ export interface operations {
     };
     sdk_render_spreadsheet_artifact_api_sdk_artifacts_spreadsheet_post: {
         parameters: {
-            query?: never;
+            query?: {
+                workspace_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -34474,7 +34742,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ArtifactRenderResponse"];
+                    "application/json": components["schemas"]["ArtifactRef"];
                 };
             };
             /** @description Validation Error */
@@ -34490,7 +34758,9 @@ export interface operations {
     };
     sdk_render_text_artifact_api_sdk_artifacts_text_post: {
         parameters: {
-            query?: never;
+            query?: {
+                workspace_id?: string | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -34507,7 +34777,143 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ArtifactRenderResponse"];
+                    "application/json": components["schemas"]["ArtifactRef"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_generate_image_artifact_api_sdk_artifacts_image_post: {
+        parameters: {
+            query?: {
+                workspace_id?: string | null;
+                execution_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImageArtifactSpec"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactRef"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_generate_video_artifact_api_sdk_artifacts_video_post: {
+        parameters: {
+            query?: {
+                workspace_id?: string | null;
+                execution_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VideoArtifactSpec"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_read_artifact_api_sdk_artifacts__artifact_id__content_get: {
+        parameters: {
+            query?: {
+                preview?: boolean;
+            };
+            header?: never;
+            path: {
+                artifact_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_artifact_download_url_api_sdk_artifacts__artifact_id__download_url_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                artifact_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactDownloadResponse"];
                 };
             };
             /** @description Validation Error */
@@ -38413,6 +38819,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_artifact_retention_settings_api_maintenance_artifact_retention_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactRetentionSettings"];
+                };
+            };
+        };
+    };
+    update_artifact_retention_settings_api_maintenance_artifact_retention_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactRetentionSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactRetentionSettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cleanup_artifact_retention_api_maintenance_artifact_retention_cleanup_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
                 };
             };
         };

@@ -15,6 +15,7 @@ from src.models.orm.summary_backfill_job import SummaryBackfillJob
 from src.models.orm.agents import Agent, AgentDelegation, AgentRole, AgentTool, Conversation, Message, MessageAttachment
 from src.models.orm.ai_usage import AIModelPricing, AIUsage
 from src.models.orm.app_embed_secrets import AppEmbedSecret
+from src.models.orm.artifacts import Artifact
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.scheduler_leases import SchedulerLease
 from src.models.orm.scheduler_diagnostics import (
@@ -83,6 +84,7 @@ __all__ = [
     "PendingCaptureORM",
     # Applications (App Builder)
     "Application",
+    "Artifact",
     "PlatformJob",
     "SchedulerLease",
     "SchedulerReplica",

@@ -115,7 +115,7 @@ export function ToolExecutionBadge({
 				onClick={() => setIsOpen((value) => !value)}
 				aria-expanded={hasDetails ? isOpen : undefined}
 				className={cn(
-					"flex min-h-7 w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-xs text-muted-foreground outline-none transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none motion-reduce:transition-none",
+					"flex min-h-11 w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-xs text-muted-foreground outline-none transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none motion-reduce:transition-none sm:min-h-7",
 					status === "failed" && "text-destructive",
 					status === "timeout" && "text-amber-600 dark:text-amber-400",
 					className,

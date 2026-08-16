@@ -9,6 +9,7 @@ import {
 	Presentation,
 	Search,
 	Trash2,
+	Video,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -44,6 +45,7 @@ import {
 	deleteChatArtifact,
 	formatBytes,
 	isImageAttachment,
+	isVideoAttachment,
 	listChatArtifacts,
 	renameChatArtifact,
 	type ChatArtifactPublic,
@@ -54,6 +56,7 @@ type LibraryFilter = "all" | "artifact" | "attachment";
 
 function ArtifactIcon({ artifact }: { artifact: ChatArtifactPublic }) {
 	if (isImageAttachment(artifact.content_type)) return <Image className="h-5 w-5" />;
+	if (isVideoAttachment(artifact.content_type)) return <Video className="h-5 w-5" />;
 	if (artifact.content_type.includes("spreadsheet")) {
 		return <FileSpreadsheet className="h-5 w-5" />;
 	}
@@ -128,7 +131,7 @@ export function ArtifactsLibrary() {
 
 	return (
 		<div className="min-h-0 flex-1 overflow-y-auto">
-			<div className="mx-auto w-full max-w-5xl px-5 py-8 sm:px-8">
+			<div className="mx-auto w-full max-w-5xl px-4 py-6 sm:px-8 sm:py-8">
 				<div className="mb-7">
 					<h1 className="text-2xl font-semibold tracking-tight">Artifacts</h1>
 					<p className="mt-1 text-sm text-muted-foreground">
@@ -145,7 +148,7 @@ export function ArtifactsLibrary() {
 								variant={filter === value ? "secondary" : "ghost"}
 								size="sm"
 								onClick={() => setFilter(value)}
-								className="capitalize"
+								className="min-h-11 capitalize sm:min-h-7"
 							>
 								{value === "artifact" ? "Generated" : value === "attachment" ? "Uploaded" : value}
 							</Button>
@@ -158,7 +161,7 @@ export function ArtifactsLibrary() {
 							value={search}
 							onChange={(event) => setSearch(event.target.value)}
 							placeholder="Search files"
-							className="pl-9"
+							className="h-11 pl-9 sm:h-8"
 						/>
 					</label>
 				</div>
@@ -211,7 +214,7 @@ export function ArtifactsLibrary() {
 									</button>
 									<DropdownMenu>
 										<DropdownMenuTrigger asChild>
-											<Button variant="ghost" size="icon-sm" aria-label={`Manage ${artifact.filename}`}>
+										<Button variant="ghost" size="icon-sm" className="size-11 sm:size-7" aria-label={`Manage ${artifact.filename}`}>
 												<MoreHorizontal className="h-4 w-4" />
 											</Button>
 										</DropdownMenuTrigger>
@@ -234,6 +237,10 @@ export function ArtifactsLibrary() {
 			<FilePreviewSheet
 				conversationId={preview?.conversation_id ?? ""}
 				attachment={preview}
+				attachments={filtered}
+				onAttachmentChange={(attachment) =>
+					setPreview(attachment as ChatArtifactPublic)
+				}
 				onOpenChange={(open) => !open && setPreview(null)}
 			/>
 

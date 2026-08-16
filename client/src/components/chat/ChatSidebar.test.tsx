@@ -198,6 +198,7 @@ describe("ChatSidebar — delete flow", () => {
 
 		expect(deleteButton.className).toContain("opacity-100");
 		expect(deleteButton.className).toContain("sm:opacity-0");
+		expect(deleteButton.className).toContain("size-11");
 	});
 
 	it("opens the confirm dialog and triggers delete on confirm", async () => {

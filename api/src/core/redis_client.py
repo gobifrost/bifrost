@@ -66,6 +66,7 @@ class PendingExecution(TypedDict):
     sync: bool  # If True, worker pushes result to Redis for sync execution
     is_platform_admin: bool  # Whether the caller is a platform admin
     event: dict[str, Any] | None  # EventContext fields if event-triggered; None otherwise
+    artifact_workspace_id: str | None
     created_at: str  # ISO format
     cancelled: bool
 
@@ -115,6 +116,7 @@ class RedisClient:
         sync: bool = False,
         is_platform_admin: bool = False,
         event: dict[str, Any] | None = None,
+        artifact_workspace_id: str | None = None,
     ) -> None:
         """
         Store pending execution in Redis.
@@ -156,6 +158,7 @@ class RedisClient:
             "sync": sync,
             "is_platform_admin": is_platform_admin,
             "event": event,
+            "artifact_workspace_id": artifact_workspace_id,
             "created_at": datetime.now(timezone.utc).isoformat(),
             "cancelled": False,
         }

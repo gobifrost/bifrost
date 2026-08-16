@@ -1,7 +1,7 @@
 # Chat artifacts and custom workflow tools
 
 Chat treats generated files as durable, authorized message attachments. The
-model never emits PDF, DOCX, or XLSX bytes directly. It calls a typed Bifrost
+model never emits PDF, DOCX, XLSX, image, or video bytes directly. It calls a typed Bifrost
 tool; trusted Python code renders the file, validates it, stores it, and returns
 a canonical `ArtifactRef`.
 
@@ -13,6 +13,11 @@ a canonical `ArtifactRef`.
   content-sized columns.
 - CSV, HTML, Markdown, JSON, and plain text use UTF-8 output. JSON is parsed and
   normalized before publication.
+- Images use the dedicated image model configured by an administrator. Bifrost
+  calls the provider's media endpoint and validates the returned raster bytes.
+- Videos use the dedicated video model and the shared durable platform-job
+  runner. Chat can finish responding while generation continues; the completed
+  MP4 or WebM is attached to the original tool message.
 
 The dependency and design survey deliberately favors maintained format
 libraries over hand-authored OOXML or PDF coordinates:
@@ -52,18 +57,27 @@ and Pro because those Chat tiers only need capability evidence for image input,
 PDF input, and tool calling. Leaving either generation model blank keeps that
 generation type unavailable.
 
+OpenRouter-backed image generation uses its dedicated synchronous Image API.
+OpenRouter video generation uses its asynchronous Video API and is mirrored by
+a Bifrost platform job, so progress, cancellation, failure, and completion use
+the same notification transport as other durable platform operations. OpenAI's
+standard image endpoint is also supported. Video generation currently requires
+OpenRouter; unsupported provider combinations fail explicitly rather than
+silently substituting another model.
+
 ## Returning an artifact from a workflow tool
 
-Use `bifrost.artifacts` so the result carries a managed-file path and scope. Do
-not return raw S3 keys, host filesystem paths, or base64 blobs.
+Return the opaque `ArtifactRef` created by the SDK. The public reference contains
+only an ID, filename, MIME type, and size; it never exposes an S3 key, filesystem
+path, scope coordinate, signed URL, or base64 payload.
 
 ```python
 from bifrost import artifacts, tool
 
 
 @tool
-async def create_customer_brief(customer: str) -> dict:
-    artifact = await artifacts.create_document(
+async def create_customer_brief(customer: str):
+    return await artifacts.create_document(
         f"{customer}-brief.pdf",
         format="pdf",
         title=f"{customer} brief",
@@ -75,18 +89,83 @@ async def create_customer_brief(customer: str) -> dict:
             }
         ],
     )
-    return {"artifact": artifact.model_dump(mode="json")}
 ```
 
-Chat recognizes the marker `type: "bifrost_artifact"`, verifies that the scope
-belongs to the conversation, copies the file into Chat's durable attachment
-store, and emits an `artifact_ready` stream event.
+Chat recognizes the marker `type: "bifrost_artifact"`, authorizes the opaque ID,
+associates that same artifact with the conversation without copying it, and
+emits an `artifact_ready` stream event. MCP recognizes the identical return.
 
-## Accepting an artifact as tool input
+## The artifact workspace
 
-MCP tool arguments are JSON, so a file input is represented by the canonical
-reference rather than an inline protocol binary part. Validate the object and
-let the SDK resolve its authorized managed-file location.
+`ArtifactRef` is the transport receipt, not the agent's working-directory
+model. Every Chat conversation and root agent run has one artifact workspace.
+Uploads and generated files are written under that workspace's S3 prefix with
+a normalized logical path. Nested workflow tools and delegated agents inherit
+the root workspace, so a later step can discover and read files produced by an
+earlier step without the user copying opaque IDs between calls.
+
+- Chat uses the conversation ID as the workspace ID.
+- Workflow and autonomous runs default to their root execution/run ID.
+- A nested workflow inherits its caller's workspace ID.
+- Reusing a logical filename creates a new stored version; workspace listing
+  returns the newest version at each path.
+- Retention settings govern cleanup. The S3 key remains private and is never
+  part of an agent, SDK, Chat, or MCP contract.
+
+Workflow code can treat this like a small shared working directory:
+
+```python
+from bifrost import artifacts, tool
+
+
+@tool
+async def compose_report():
+    files = await artifacts.list()
+    image = next(file for file in files if file.content_type.startswith("image/"))
+    image_bytes = await artifacts.read(image)
+    # Inspect or transform image_bytes here, or refer to image.filename from
+    # a schema-first document section.
+    return await artifacts.create_document(
+        "Field Report.pdf",
+        format="pdf",
+        title="Field report",
+        sections=[
+            {
+                "heading": "Photograph",
+                "images": [{"path": image.filename, "caption": "Generated earlier"}],
+            }
+        ],
+    )
+```
+
+The same SDK surface can call the configured media models:
+
+```python
+from bifrost import ai
+
+image = await ai.create_image(
+    "A clean isometric launch dashboard on a dark navy background",
+    filename="Launch Concept",
+)
+
+video = await ai.create_video(
+    "A slow camera move across the launch dashboard, subtle ambient motion",
+    filename="Launch Loop",
+)
+```
+
+`create_image` returns after the provider responds. `create_video` enqueues a
+durable platform job, waits for its terminal state from the SDK, and returns the
+same opaque `ArtifactRef`. If the caller times out, the exception includes the job
+ID and the platform job continues independently.
+
+## Explicit artifact input and MCP transport
+
+An explicit `ArtifactRef` is still useful when a workflow declares a particular
+file as an input, or when an artifact crosses an MCP boundary. MCP tool
+arguments are JSON, so that explicit input is represented by the canonical
+reference rather than a filesystem path or inline base64 payload. Validate the
+object and let the SDK resolve its authorized artifact ID.
 
 ```python
 from bifrost import ArtifactRef, artifacts, tool
@@ -96,14 +175,22 @@ from bifrost import ArtifactRef, artifacts, tool
 async def inspect_artifact(artifact: dict) -> dict:
     ref = ArtifactRef.model_validate(artifact)
     data = await artifacts.read(ref)
-    return {
-        "filename": ref.filename,
-        "content_type": ref.content_type,
-        "size_bytes": len(data),
-    }
+    processed = transform(data)
+    return await artifacts.write(
+        "Processed Artifact.pdf",
+        processed,
+        content_type="application/pdf",
+    )
 ```
 
-For MCP output, image artifacts become `ImageContent`; other files become
+For MCP output, image artifacts become `ImageContent`; videos and other files become
 short-lived `ResourceLink` blocks while the JSON `ArtifactRef` remains in
 `structuredContent`. MCP Apps/widgets are independent of this transport and
 are intentionally outside the first Chat artifact release.
+
+The shared workspace itself is a Bifrost runtime capability, not an MCP
+filesystem extension. A Bifrost-hosted MCP/workflow tool automatically operates
+inside the inherited workspace. A remote MCP server receives explicit
+`ArtifactRef` inputs and returns the same reference-shaped structured output;
+Bifrost performs the authorized byte read or resource-link projection at the
+platform boundary.

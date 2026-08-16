@@ -23,21 +23,17 @@ async def test_workflow_artifact_results_become_mcp_media_and_resources(
                 "artifacts": [
                     {
                         "type": "bifrost_artifact",
+                        "id": "00000000-0000-0000-0000-000000000001",
                         "filename": "chart.png",
                         "content_type": "image/png",
                         "size_bytes": 8,
-                        "path": "artifacts/chart.png",
-                        "location": "temp",
-                        "scope": str(org_id),
                     },
                     {
                         "type": "bifrost_artifact",
+                        "id": "00000000-0000-0000-0000-000000000002",
                         "filename": "brief.pdf",
                         "content_type": "application/pdf",
                         "size_bytes": 12,
-                        "path": "artifacts/brief.pdf",
-                        "location": "temp",
-                        "scope": str(org_id),
                     },
                 ]
             }
@@ -53,7 +49,26 @@ async def test_workflow_artifact_results_become_mcp_media_and_resources(
     storage.generate_presigned_download_url.return_value = (
         "https://files.example.test/brief.pdf"
     )
+
+    class FakeArtifactService:
+        def __init__(self, db) -> None:
+            pass
+
+        async def get_authorized(self, artifact_id, **kwargs):
+            return type(
+                "StoredArtifact",
+                (),
+                {"id": artifact_id, "s3_key": f"_artifacts/{artifact_id}"},
+            )()
+
+        async def read(self, artifact):
+            return b"png-data"
+
     monkeypatch.setattr("src.core.database.get_db_context", fake_db_context)
+    monkeypatch.setattr(
+        "src.services.artifacts.ArtifactService",
+        FakeArtifactService,
+    )
     monkeypatch.setattr(
         "src.services.file_storage.service.get_file_storage_service",
         lambda db: storage,

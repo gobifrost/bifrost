@@ -17,6 +17,17 @@ def _db_with_total(total: int = 0) -> MagicMock:
     result.scalar.return_value = total
     db.execute = AsyncMock(return_value=result)
     db.flush = AsyncMock()
+    user_id = uuid4()
+    organization_id = uuid4()
+
+    async def get(model, entity_id):
+        if model.__name__ == "Conversation":
+            return MagicMock(id=entity_id, user_id=user_id)
+        if model.__name__ == "User":
+            return MagicMock(id=user_id, organization_id=organization_id)
+        return None
+
+    db.get = AsyncMock(side_effect=get)
     return db
 
 
@@ -27,7 +38,7 @@ async def test_store_text_attachment_extracts_content_and_writes_s3() -> None:
     conversation_id = uuid4()
 
     with patch(
-        "src.services.chat_attachments.get_file_storage_service",
+        "src.services.artifacts.get_file_storage_service",
         return_value=storage,
     ):
         attachment = await ChatAttachmentService(db).store(
@@ -38,7 +49,7 @@ async def test_store_text_attachment_extracts_content_and_writes_s3() -> None:
         )
 
     assert attachment.extracted_text == "# Notes\nHello"
-    assert attachment.s3_key.startswith(f"_attachments/{conversation_id}/")
+    assert attachment.s3_key.startswith("_attachments/")
     assert attachment.s3_key.endswith("_notes.md")
     storage.write_raw_to_s3.assert_awaited_once_with(
         attachment.s3_key, b"# Notes\nHello"
@@ -51,7 +62,7 @@ async def test_store_infers_known_text_type_when_browser_omits_it() -> None:
     storage = AsyncMock()
 
     with patch(
-        "src.services.chat_attachments.get_file_storage_service",
+        "src.services.artifacts.get_file_storage_service",
         return_value=storage,
     ):
         attachment = await ChatAttachmentService(db).store(
@@ -90,9 +101,15 @@ async def test_store_removes_s3_object_when_persistence_fails() -> None:
     db.flush.side_effect = RuntimeError("database unavailable")
     storage = AsyncMock()
 
-    with patch(
-        "src.services.chat_attachments.get_file_storage_service",
-        return_value=storage,
+    with (
+        patch(
+            "src.services.artifacts.get_file_storage_service",
+            return_value=storage,
+        ),
+        patch(
+            "src.services.chat_attachments.get_file_storage_service",
+            return_value=storage,
+        ),
     ):
         with pytest.raises(RuntimeError, match="database unavailable"):
             await ChatAttachmentService(db).store(
@@ -113,7 +130,7 @@ async def test_store_generated_uses_artifact_prefix_and_binds_message() -> None:
     message_id = uuid4()
 
     with patch(
-        "src.services.chat_attachments.get_file_storage_service",
+        "src.services.artifacts.get_file_storage_service",
         return_value=storage,
     ):
         attachment = await ChatAttachmentService(db).store_generated(
@@ -125,7 +142,7 @@ async def test_store_generated_uses_artifact_prefix_and_binds_message() -> None:
         )
 
     assert attachment.message_id == message_id
-    assert attachment.s3_key.startswith(f"_artifacts/{conversation_id}/")
+    assert attachment.s3_key.startswith("_artifacts/")
     storage.write_raw_to_s3.assert_awaited_once()
 
 
@@ -133,6 +150,7 @@ async def test_store_generated_uses_artifact_prefix_and_binds_message() -> None:
 async def test_bind_rejects_cross_conversation_attachment() -> None:
     attachment = MessageAttachment(
         id=uuid4(),
+        artifact_id=uuid4(),
         message_id=None,
         conversation_id=uuid4(),
         s3_key="_attachments/file",
@@ -150,7 +168,7 @@ async def test_bind_rejects_cross_conversation_attachment() -> None:
 
     with pytest.raises(ChatAttachmentError, match="another conversation"):
         await ChatAttachmentService(db).bind(
-            attachment_ids=[attachment.id],
+            attachment_ids=[attachment.artifact_id],
             message_id=uuid4(),
             conversation_id=uuid4(),
         )

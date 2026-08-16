@@ -48,6 +48,7 @@ from __future__ import annotations
 import json
 import logging
 import base64
+import re
 from collections.abc import AsyncGenerator
 from typing import Any, TypeVar
 
@@ -60,6 +61,12 @@ logger = logging.getLogger(__name__)
 
 # Type variable for structured outputs
 T = TypeVar("T", bound=BaseModel)
+
+
+def _default_media_filename(prompt: str, fallback: str) -> str:
+    """Derive a short human filename while the platform owns final casing."""
+    words = re.findall(r"[A-Za-z0-9]+", prompt)[:6]
+    return " ".join(words) if words else fallback
 
 
 async def _encode_input_files(
@@ -273,6 +280,38 @@ class ai:
     Provides LLM completions using platform-configured providers.
     Supports structured outputs and RAG integration.
     """
+
+    @staticmethod
+    async def create_image(
+        prompt: str,
+        *,
+        filename: str | None = None,
+    ) -> ArtifactRef:
+        """Generate an image and return one portable artifact reference."""
+        from .artifacts import artifacts
+
+        return await artifacts.create_image(
+            filename or _default_media_filename(prompt, "Generated Image"),
+            prompt=prompt,
+        )
+
+    @staticmethod
+    async def create_video(
+        prompt: str,
+        *,
+        filename: str | None = None,
+        timeout_seconds: float = 1_800,
+        poll_interval_seconds: float = 2,
+    ) -> ArtifactRef:
+        """Generate a durable video and return one portable artifact reference."""
+        from .artifacts import artifacts
+
+        return await artifacts.create_video(
+            filename or _default_media_filename(prompt, "Generated Video"),
+            prompt=prompt,
+            timeout_seconds=timeout_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+        )
 
     @staticmethod
     async def complete(

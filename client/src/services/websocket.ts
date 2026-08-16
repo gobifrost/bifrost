@@ -334,11 +334,10 @@ export interface ChatStreamChunk {
 	tool_result?: ChatToolResult | null;
 	artifact?: {
 		type: "bifrost_artifact";
+		id: string;
 		filename: string;
 		content_type: string;
 		size_bytes: number;
-		attachment_id?: string | null;
-		conversation_id?: string | null;
 	} | null;
 	agent_switch?: ChatAgentSwitch | null;
 	message_id?: string | null;

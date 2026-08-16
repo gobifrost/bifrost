@@ -540,6 +540,7 @@ async def execute_tool(
     is_platform_admin: bool = False,
     is_agent: bool = False,
     execution_id: str | None = None,
+    artifact_workspace_id: str | None = None,
     sync: bool = True,
 ) -> WorkflowExecutionResponse:
     """
@@ -598,6 +599,7 @@ async def execute_tool(
         is_agent=is_agent,
         execution_id=execution_id,
         workflow_name=workflow_name,  # Workflow name for context
+        artifact_workspace_id=artifact_workspace_id,
         public_url=get_settings().public_url,
     )
 

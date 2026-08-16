@@ -262,15 +262,10 @@ class ArtifactRef(BaseModel):
     """Portable generated-file reference accepted by Bifrost and MCP tools."""
 
     type: Literal["bifrost_artifact"] = "bifrost_artifact"
+    id: str
     filename: str
     content_type: str
     size_bytes: int
-    path: str | None = None
-    location: str | None = None
-    scope: str | None = None
-    attachment_id: str | None = None
-    conversation_id: str | None = None
-    created_at: datetime | None = None
 
 
 class KnowledgeDocument(BaseModel):

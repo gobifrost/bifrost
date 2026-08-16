@@ -336,7 +336,10 @@ async def test_llm_connection(
     return LLMTestResponse(
         success=result.success,
         message=result.message,
-        models=[LLMModelInfo(id=m.id, display_name=m.display_name) for m in result.models] if result.models else None,
+        models=[
+            LLMModelInfo(id=m.id, display_name=m.display_name, output_modalities=m.output_modalities)
+            for m in result.models
+        ] if result.models else None,
     )
 
 
@@ -370,7 +373,10 @@ async def test_saved_llm_connection(
     return LLMTestResponse(
         success=result.success,
         message=result.message,
-        models=[LLMModelInfo(id=m.id, display_name=m.display_name) for m in result.models] if result.models else None,
+        models=[
+            LLMModelInfo(id=m.id, display_name=m.display_name, output_modalities=m.output_modalities)
+            for m in result.models
+        ] if result.models else None,
     )
 
 
@@ -403,7 +409,10 @@ async def list_llm_models(
         )
 
     return LLMModelsResponse(
-        models=[LLMModelInfo(id=m.id, display_name=m.display_name) for m in models],
+        models=[
+            LLMModelInfo(id=m.id, display_name=m.display_name, output_modalities=m.output_modalities)
+            for m in models
+        ],
         provider=config.provider,
     )
 

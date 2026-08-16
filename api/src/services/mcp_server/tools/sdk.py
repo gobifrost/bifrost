@@ -77,11 +77,13 @@ return {"download_url": signed["url"]}
 _ARTIFACT_DOCS = """## Artifact inputs and outputs
 
 `bifrost.artifacts` renders PDF, DOCX, XLSX, CSV, HTML, Markdown, JSON, and
-plain-text files through trusted platform generators. Every create method
+plain-text files through trusted platform generators, and calls the configured
+dedicated provider models for images and videos. Every create method
 returns an `ArtifactRef`, a JSON-safe object with the marker
-`type="bifrost_artifact"`, MIME type, filename, size, and managed-file path.
+`type="bifrost_artifact"`, opaque ID, MIME type, filename, and size. Storage
+paths and signed URLs are intentionally not part of the public contract.
 
-Return an `ArtifactRef` (or nest it in a result dictionary) from a custom tool
+Return an `ArtifactRef` directly (or nest it in a result dictionary) from a custom tool
 to make Chat attach it and to make MCP return an image content block or a
 resource link automatically:
 
@@ -89,19 +91,19 @@ resource link automatically:
 from bifrost import ArtifactRef, artifacts, tool
 
 @tool
-async def build_report(title: str) -> dict:
+async def build_report(title: str) -> ArtifactRef:
     report = await artifacts.create_document(
         "report.pdf",
         format="pdf",
         title=title,
         sections=[{"heading": "Summary", "paragraphs": ["Ready for review."]}],
     )
-    return {"artifact": report.model_dump(mode="json")}
+    return report
 ```
 
 MCP tool arguments remain JSON Schema. To accept a file from another custom
 tool or workflow, accept the canonical ArtifactRef object and read it through
-the SDK; do not accept an S3 key or trust a caller-supplied filesystem path:
+the SDK; do not accept an S3 key, URL, or caller-supplied filesystem path:
 
 ```python
 @tool
@@ -111,7 +113,7 @@ async def inspect_report(artifact: dict) -> dict:
     return {"filename": ref.filename, "size": len(content)}
 ```
 
-MCP image outputs are emitted as `ImageContent`. Other generated files are
+MCP image outputs are emitted as `ImageContent`. Videos and other generated files are
 emitted as short-lived `ResourceLink` values. MCP Apps/widgets are a separate
 UI resource surface and are not required for file transport.
 """

@@ -5,14 +5,24 @@ from openpyxl import load_workbook
 
 from shared.artifact_generation import (
     generate_document,
+    generate_document_with_images,
     generate_spreadsheet,
     generate_text,
+    validate_artifact_content,
 )
 from src.models.contracts.artifacts import (
     DocumentArtifactSpec,
     SpreadsheetArtifactSpec,
     TextArtifactSpec,
 )
+
+
+def _png() -> bytes:
+    from PIL import Image
+
+    buffer = io.BytesIO()
+    Image.new("RGB", (80, 40), "navy").save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 def _document_spec(output_format: str) -> DocumentArtifactSpec:
@@ -54,6 +64,33 @@ def test_generate_docx_can_be_opened_by_python_docx() -> None:
     assert document.paragraphs[0].text == "Customer brief"
     assert any(paragraph.text == "Proceed with the rollout." for paragraph in document.paragraphs)
     assert document.tables[0].cell(1, 0).text == "Pilot"
+
+
+def test_generate_docx_embeds_image_from_workspace_path() -> None:
+    spec = DocumentArtifactSpec.model_validate(
+        {
+            "filename": "field-report",
+            "format": "docx",
+            "title": "Field report",
+            "sections": [
+                {
+                    "heading": "Photo",
+                    "images": [
+                        {"path": "Bluetick Portrait.png", "caption": "Bluetick"}
+                    ],
+                }
+            ],
+        }
+    )
+
+    artifact = generate_document_with_images(
+        spec,
+        {"Bluetick Portrait.png": _png()},
+    )
+    document = Document(io.BytesIO(artifact.content))
+
+    assert len(document.inline_shapes) == 1
+    assert any(paragraph.text == "Bluetick" for paragraph in document.paragraphs)
 
 
 def test_generate_xlsx_styles_and_validates_workbook() -> None:
@@ -105,3 +142,11 @@ def test_generate_markdown_uses_human_friendly_name_and_extension() -> None:
 
     assert artifact.filename == "Customer Health Report.md"
     assert artifact.content == b"# Health report"
+
+
+def test_video_artifact_validation_accepts_mp4_signature() -> None:
+    validate_artifact_content(
+        filename="Demo.mp4",
+        content_type="video/mp4",
+        content=b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom",
+    )

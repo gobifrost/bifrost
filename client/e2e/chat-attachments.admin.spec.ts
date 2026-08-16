@@ -1,4 +1,19 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
+
+async function expectTouchTarget(locator: Locator) {
+	const box = await locator.boundingBox();
+	expect(box).not.toBeNull();
+	expect(box!.width).toBeGreaterThanOrEqual(44);
+	expect(box!.height).toBeGreaterThanOrEqual(44);
+}
+
+async function expectNoHorizontalOverflow(page: Page) {
+	const dimensions = await page.evaluate(() => ({
+		clientWidth: document.documentElement.clientWidth,
+		scrollWidth: document.documentElement.scrollWidth,
+	}));
+	expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+}
 
 test.describe("Chat attachments and model tiers", () => {
 	test("uploads a file with the selected tier and previews it", async ({
@@ -57,11 +72,27 @@ test.describe("Chat attachments and model tiers", () => {
 				if (payload.type === "chat") {
 					resolveChat(payload);
 					const conversationId = String(payload.conversation_id);
-					socket.send(JSON.stringify({
-						type: "message_start",
-						conversation_id: conversationId,
-						assistant_message_id: "assistant-message",
-					}));
+					setTimeout(() => {
+						socket.send(JSON.stringify({
+							type: "message_start",
+							conversation_id: conversationId,
+							assistant_message_id: "assistant-message",
+						}));
+					}, 500);
+					setTimeout(() => {
+						socket.send(JSON.stringify({
+							type: "delta",
+							conversation_id: conversationId,
+							content: "I’ll create that. ",
+						}));
+					}, 750);
+					setTimeout(() => {
+						socket.send(JSON.stringify({
+							type: "assistant_message_end",
+							conversation_id: conversationId,
+							message_id: "assistant-progress",
+						}));
+					}, 900);
 					setTimeout(() => {
 						socket.send(
 							JSON.stringify({
@@ -78,7 +109,7 @@ test.describe("Chat attachments and model tiers", () => {
 								},
 							}),
 						);
-					}, 250);
+					}, 1_000);
 					setTimeout(() => {
 						socket.send(JSON.stringify({
 							type: "tool_result",
@@ -98,33 +129,40 @@ test.describe("Chat attachments and model tiers", () => {
 								message_id: "artifact-tool-message",
 								artifact: {
 									type: "bifrost_artifact",
+									id: "generated-artifact",
 									filename: "Generated Report.md",
 									content_type: "text/markdown",
 									size_bytes: 40,
-									attachment_id: "generated-artifact",
-									conversation_id: conversationId,
-									created_at: "2026-08-15T00:00:00Z",
 								},
 							}),
 						);
+					}, 1_500);
+					setTimeout(() => {
 						socket.send(JSON.stringify({
 							type: "delta",
 							conversation_id: conversationId,
 							content: "I created the report.",
 						}));
+					}, 1_800);
+					setTimeout(() => {
 						socket.send(JSON.stringify({
 							type: "done",
 							conversation_id: conversationId,
+							message_id: "assistant-message",
 							duration_ms: 1_240,
 						}));
-					}, 600);
+					}, 2_300);
 				}
 				if (payload.type === "ping")
 					socket.send(JSON.stringify({ type: "pong" }));
 			});
 		});
 
+		await page.setViewportSize({ width: 390, height: 844 });
 		await page.goto("/chat");
+		await expectTouchTarget(page.getByRole("button", { name: "Attach files" }));
+		await expectTouchTarget(page.getByRole("button", { name: "Send message" }));
+		await expectNoHorizontalOverflow(page);
 		await page.getByRole("combobox", { name: "Response model" }).click();
 		await page.getByRole("option", { name: "Pro" }).click();
 
@@ -147,8 +185,26 @@ test.describe("Chat attachments and model tiers", () => {
 			fullPage: true,
 		});
 		await expect(page.getByText("Generating Markdown…")).toBeVisible();
+		await expect(
+			page.getByRole("button", { name: /Generating Markdown/i }),
+		).toHaveAttribute("aria-expanded", "false");
+		await expect(
+			page.getByRole("button", { name: "Stop generation" }),
+		).toBeVisible();
+		await expect(page.getByText(/Worked for/i)).toHaveCount(0);
 		await page.screenshot({
 			path: "playwright-results/screenshots/chat-generating.png",
+			fullPage: true,
+		});
+		await expect(page.getByText("Responding…")).toBeVisible();
+		await expect(
+			page.getByRole("button", { name: /Responding/i }),
+		).toHaveAttribute("aria-expanded", "false");
+		await expect(
+			page.locator('[aria-busy="true"]', { hasText: "I created the report." }),
+		).toBeVisible();
+		await page.screenshot({
+			path: "playwright-results/screenshots/chat-responding.png",
 			fullPage: true,
 		});
 
@@ -157,7 +213,10 @@ test.describe("Chat attachments and model tiers", () => {
 		expect(payload.model_tier).toBe("pro");
 		expect(payload.attachment_ids).toEqual([expect.any(String)]);
 
-		await page.getByRole("button", { name: /^notes\.txt \d+ B$/ }).click();
+		await expect(
+			page.getByRole("button", { name: "Download notes.txt" }),
+		).toBeVisible();
+		await page.getByRole("button", { name: "Preview notes.txt" }).click();
 		await expect(page.getByRole("dialog")).toContainText(
 			"attachment preview",
 		);
@@ -168,6 +227,11 @@ test.describe("Chat attachments and model tiers", () => {
 		await expect(page.getByRole("dialog")).not.toBeVisible();
 
 		await expect(page.getByText("Worked for 1s")).toBeVisible();
+		await expectTouchTarget(page.getByRole("button", { name: /Worked for 1s/i }));
+		await expectNoHorizontalOverflow(page);
+		await expect(
+			page.locator('[aria-busy="true"]', { hasText: "I created the report." }),
+		).toHaveCount(0);
 		await page.getByRole("button", { name: /Worked for 1s/i }).click();
 		await page
 			.getByRole("button", { name: /create_text_artifact/i })
@@ -178,7 +242,8 @@ test.describe("Chat attachments and model tiers", () => {
 			path: "playwright-results/screenshots/chat-complete.png",
 			fullPage: true,
 		});
-		await page.getByRole("button", { name: /Generated Report\.md/i }).click();
+		await expect(page.getByRole("button", { name: "Copy message" }).first()).toBeAttached();
+		await page.getByRole("button", { name: "Preview Generated Report.md" }).click();
 		await expect(page.getByRole("dialog")).toContainText(
 			"Generated report",
 		);
@@ -186,7 +251,6 @@ test.describe("Chat attachments and model tiers", () => {
 			page.getByRole("button", { name: "Download" }),
 		).toBeVisible();
 
-		await page.setViewportSize({ width: 390, height: 844 });
 		await expect(page.getByRole("dialog")).toBeVisible();
 		await expect(
 			page.getByRole("button", { name: "Download" }),
@@ -194,9 +258,46 @@ test.describe("Chat attachments and model tiers", () => {
 	});
 
 	test("browses the persistent artifact library", async ({ page }) => {
+		await page.route("**/attachments/generated-video/content*", async (route) => {
+			await route.fulfill({
+				contentType: "video/mp4",
+				body: Buffer.from("00000018667479706d703432", "hex"),
+			});
+		});
+		await page.route("**/attachments/generated-image/content*", async (route) => {
+			await route.fulfill({
+				contentType: "image/png",
+				body: Buffer.from(
+					"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+					"base64",
+				),
+			});
+		});
 		await page.route("**/api/chat/artifacts", async (route) => {
 			await route.fulfill({
 				json: [
+					{
+						id: "generated-video",
+						conversation_id: "conversation-1",
+						message_id: "message-video",
+						filename: "Launch Loop.mp4",
+						content_type: "video/mp4",
+						size_bytes: 2400000,
+						kind: "artifact",
+						conversation_title: "Bifrost welcome",
+						created_at: "2026-08-16T18:00:00Z",
+					},
+					{
+						id: "generated-image",
+						conversation_id: "conversation-1",
+						message_id: "message-image",
+						filename: "Launch Concept.png",
+						content_type: "image/png",
+						size_bytes: 480000,
+						kind: "artifact",
+						conversation_title: "Bifrost welcome",
+						created_at: "2026-08-16T17:00:00Z",
+					},
 					{
 						id: "generated-artifact",
 						conversation_id: "conversation-1",
@@ -226,6 +327,17 @@ test.describe("Chat attachments and model tiers", () => {
 		await page.goto("/chat/artifacts");
 		await expect(page.getByRole("heading", { name: "Artifacts" })).toBeVisible();
 		await expect(page.getByText("Bifrost Welcome Page.html")).toBeVisible();
+		await page.getByRole("button", { name: "Preview Launch Loop.mp4" }).click();
+		await expect(page.locator("video")).toBeVisible();
+		await expect(page.getByText("1 / 2")).toBeVisible();
+		await page.getByRole("button", { name: "Next media" }).click();
+		await expect(page.getByRole("heading", { name: "Launch Concept.png" })).toBeVisible();
+		await page.screenshot({
+			path: "playwright-results/screenshots/artifact-preview.png",
+			fullPage: true,
+		});
+		await page.getByRole("button", { name: /close/i }).click();
+		await expect(page.getByRole("dialog")).not.toBeVisible();
 		await page.screenshot({
 			path: "playwright-results/screenshots/artifact-library.png",
 			fullPage: true,
@@ -234,9 +346,32 @@ test.describe("Chat attachments and model tiers", () => {
 		await page.setViewportSize({ width: 390, height: 844 });
 		await page.reload();
 		await expect(page.getByRole("heading", { name: "Artifacts" })).toBeVisible();
+		await expectTouchTarget(
+			page.getByRole("button", { name: "Manage Launch Loop.mp4" }),
+		);
+		await expectNoHorizontalOverflow(page);
 		await page.screenshot({
 			path: "playwright-results/screenshots/artifact-library-mobile.png",
 			fullPage: true,
 		});
+		await page.getByRole("button", { name: "Preview Launch Concept.png" }).click();
+		await expect(page.getByRole("dialog")).toBeVisible();
+		await expect(page.getByRole("heading", { name: "Launch Concept.png" })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Previous media" })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Next media" })).toBeVisible();
+		await expect(page.getByRole("button", { name: "Download" })).toBeVisible();
+		await expectTouchTarget(page.getByRole("button", { name: "Previous media" }));
+		await expectTouchTarget(page.getByRole("button", { name: "Next media" }));
+		await expectTouchTarget(page.getByRole("button", { name: "Download" }));
+		await expectNoHorizontalOverflow(page);
+		await expect(page.locator('img[alt="Launch Concept.png"]')).toBeVisible();
+		await page.screenshot({
+			path: "playwright-results/screenshots/artifact-preview-mobile.png",
+			fullPage: true,
+		});
+
+		await page.setViewportSize({ width: 320, height: 568 });
+		await expect(page.getByRole("dialog")).toBeVisible();
+		await expectNoHorizontalOverflow(page);
 	});
 });

@@ -130,6 +130,7 @@ class LLMModelInfo(BaseModel):
 
     id: str
     display_name: str
+    output_modalities: list[str] | None = None
 
 
 class LLMTestResponse(BaseModel):
