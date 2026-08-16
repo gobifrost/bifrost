@@ -462,6 +462,22 @@ resulting `merge_group` run must execute and pass lint/type, backend unit,
 client unit, and both E2E shards. If any condition is absent, this change must
 not merge.
 
+### First queue validation incident
+
+The first exact-candidate run exposed a deterministic harness defect before any
+shared image promotion: `Critical Browser Smoke` failed during job setup because
+the pinned SHAs for `actions/upload-artifact@v7.0.1` and
+`docker/build-push-action@v7.3.0` each contained a one-character transcription
+error. GitHub could not resolve either action, so the browser test never ran.
+This was not a Docker failure or a flaky product test.
+
+The repair uses the official tag commit SHAs in every CI and nightly reference.
+The existing action-pin check now also resolves each readable version comment
+through GitHub's commits API and requires it to equal the pinned SHA. That moves
+this class of workflow setup failure into the ordinary PR lint job instead of
+discovering it after entering the merge queue. The failed candidate was not
+rerun; the repair requires a new commit and therefore a new exact candidate.
+
 ## Limitations
 
 - GitHub retains current run/job metadata more reliably than every historical
