@@ -6,16 +6,18 @@ import pytest
 from fastapi import HTTPException
 
 from src.models.contracts.agents import ChatArtifactUpdate
-from src.models.orm import MessageAttachment
+from src.models.enums import MessageRole
+from src.models.orm import Artifact, MessageAttachment
 from src.routers.chat import delete_chat_artifact, list_chat_artifacts, rename_chat_artifact
 
 
-def _bound_artifact() -> MessageAttachment:
-    return MessageAttachment(
+def _artifact() -> Artifact:
+    return Artifact(
         id=uuid4(),
-        message_id=uuid4(),
-        conversation_id=uuid4(),
-        s3_key="_artifacts/conversation/report.pdf",
+        created_by_user_id=uuid4(),
+        workspace_id=uuid4(),
+        logical_path="Quarterly Report.pdf",
+        s3_key="_artifact_workspaces/conversation/artifact/Quarterly Report.pdf",
         filename="Quarterly Report.pdf",
         content_type="application/pdf",
         size_bytes=2048,
@@ -23,31 +25,60 @@ def _bound_artifact() -> MessageAttachment:
     )
 
 
+def _binding(artifact: Artifact) -> MessageAttachment:
+    return MessageAttachment(
+        id=artifact.id,
+        artifact_id=artifact.id,
+        message_id=uuid4(),
+        conversation_id=uuid4(),
+        s3_key=artifact.s3_key,
+        filename=artifact.filename,
+        content_type=artifact.content_type,
+        size_bytes=artifact.size_bytes,
+        created_at=datetime(2026, 8, 15, tzinfo=UTC),
+    )
+
+
 @pytest.mark.asyncio
 async def test_list_chat_artifacts_returns_user_owned_file_context() -> None:
-    artifact = _bound_artifact()
-    result = MagicMock()
-    result.all.return_value = [(artifact, "Quarterly review")]
+    artifact = _artifact()
+    binding = _binding(artifact)
+    artifact_result = MagicMock()
+    artifact_result.scalars.return_value.all.return_value = [artifact]
+    binding_result = MagicMock()
+    binding_result.all.return_value = [
+        (binding, "Quarterly review", MessageRole.TOOL_CALL)
+    ]
     db = MagicMock()
-    db.execute = AsyncMock(return_value=result)
-    user = MagicMock(user_id=uuid4())
+    db.execute = AsyncMock(side_effect=[artifact_result, binding_result])
+    user = MagicMock(user_id=artifact.created_by_user_id)
 
     files = await list_chat_artifacts(db=db, user=user)
 
     assert len(files) == 1
     assert files[0].kind == "artifact"
     assert files[0].conversation_title == "Quarterly review"
-    assert files[0].message_id == artifact.message_id
+    assert files[0].message_id == binding.message_id
 
 
 @pytest.mark.asyncio
 async def test_rename_chat_artifact_updates_only_display_metadata() -> None:
-    artifact = _bound_artifact()
+    artifact = _artifact()
+    binding = _binding(artifact)
     original_key = artifact.s3_key
-    result = MagicMock()
-    result.one_or_none.return_value = (artifact, "Quarterly review")
+    artifact_result = MagicMock()
+    artifact_result.scalar_one_or_none.return_value = artifact
+    update_result = MagicMock()
+    binding_result = MagicMock()
+    binding_result.one_or_none.return_value = (
+        binding,
+        "Quarterly review",
+        MessageRole.TOOL_CALL,
+    )
     db = MagicMock()
-    db.execute = AsyncMock(return_value=result)
+    db.execute = AsyncMock(
+        side_effect=[artifact_result, update_result, binding_result]
+    )
     db.flush = AsyncMock()
 
     renamed = await rename_chat_artifact(
@@ -64,9 +95,9 @@ async def test_rename_chat_artifact_updates_only_display_metadata() -> None:
 
 @pytest.mark.asyncio
 async def test_rename_chat_artifact_rejects_extension_changes() -> None:
-    artifact = _bound_artifact()
+    artifact = _artifact()
     result = MagicMock()
-    result.one_or_none.return_value = (artifact, "Quarterly review")
+    result.scalar_one_or_none.return_value = artifact
     db = MagicMock()
     db.execute = AsyncMock(return_value=result)
 
@@ -81,17 +112,15 @@ async def test_rename_chat_artifact_rejects_extension_changes() -> None:
 
 @pytest.mark.asyncio
 async def test_delete_chat_artifact_removes_object_and_metadata() -> None:
-    artifact = _bound_artifact()
-    result = MagicMock()
-    result.scalar_one_or_none.return_value = artifact
+    artifact = _artifact()
     db = MagicMock()
-    db.execute = AsyncMock(return_value=result)
+    db.scalar = AsyncMock(return_value=artifact)
     db.delete = AsyncMock()
     db.flush = AsyncMock()
     storage = AsyncMock()
 
     with patch(
-        "src.services.file_storage.service.get_file_storage_service",
+        "src.services.artifacts.get_file_storage_service",
         return_value=storage,
     ):
         response = await delete_chat_artifact(

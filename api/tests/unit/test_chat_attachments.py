@@ -49,8 +49,8 @@ async def test_store_text_attachment_extracts_content_and_writes_s3() -> None:
         )
 
     assert attachment.extracted_text == "# Notes\nHello"
-    assert attachment.s3_key.startswith("_attachments/")
-    assert attachment.s3_key.endswith("_notes.md")
+    assert attachment.s3_key.startswith(f"_artifact_workspaces/{conversation_id}/")
+    assert attachment.s3_key.endswith("/notes.md")
     storage.write_raw_to_s3.assert_awaited_once_with(
         attachment.s3_key, b"# Notes\nHello"
     )
@@ -123,7 +123,7 @@ async def test_store_removes_s3_object_when_persistence_fails() -> None:
 
 
 @pytest.mark.asyncio
-async def test_store_generated_uses_artifact_prefix_and_binds_message() -> None:
+async def test_store_generated_uses_conversation_workspace_and_binds_message() -> None:
     db = _db_with_total()
     storage = AsyncMock()
     conversation_id = uuid4()
@@ -142,7 +142,7 @@ async def test_store_generated_uses_artifact_prefix_and_binds_message() -> None:
         )
 
     assert attachment.message_id == message_id
-    assert attachment.s3_key.startswith("_artifacts/")
+    assert attachment.s3_key.startswith(f"_artifact_workspaces/{conversation_id}/")
     storage.write_raw_to_s3.assert_awaited_once()
 
 

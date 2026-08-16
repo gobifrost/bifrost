@@ -175,7 +175,9 @@ async def test_chat_reapplies_agent_instructions_when_stored_history_exists(
         for message in model.requests[0]
         if isinstance(message, ModelRequest) and message.instructions
     ]
-    assert instructions == ["Stable triage instructions"]
+    assert len(instructions) == 1
+    assert instructions[0].startswith("Stable triage instructions\n\n")
+    assert "shared artifact workspace" in instructions[0]
 
 
 @pytest.mark.asyncio

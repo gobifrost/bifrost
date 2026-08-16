@@ -329,6 +329,7 @@ class TestAutonomousAgentExecutor:
             org_id=str(mock_agent.organization_id),
             is_platform_admin=True,
             is_agent=True,
+            artifact_workspace_id=None,
         )
 
     @pytest.mark.asyncio
@@ -370,6 +371,7 @@ class TestAutonomousAgentExecutor:
             org_id=str(mock_agent.organization_id),
             is_platform_admin=False,
             is_agent=True,
+            artifact_workspace_id=None,
         )
 
     @pytest.mark.asyncio

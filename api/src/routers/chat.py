@@ -38,6 +38,7 @@ from src.models.contracts.agents import (
     ChatArtifactUpdate,
     ToolCall,
 )
+from src.models.enums import MessageRole
 from src.models.orm import Artifact, Agent, Conversation, Message, MessageAttachment
 from src.services.agent_executor import AgentExecutor
 from src.services.chat_attachments import (
@@ -49,6 +50,13 @@ from src.services.chat_attachments import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/chat", tags=["Chat"])
+
+
+def _chat_file_kind(
+    message_role: MessageRole | None,
+) -> Literal["attachment", "artifact"]:
+    """Classify files from their Chat binding, independent of their storage key."""
+    return "attachment" if message_role in {None, MessageRole.USER} else "artifact"
 
 
 @router.get("/model-tiers")
@@ -308,11 +316,12 @@ async def list_chat_artifacts(
         .limit(bounded_limit)
     )
     artifacts = list(result.scalars().all())
-    bindings: dict[UUID, tuple[MessageAttachment, str | None]] = {}
+    bindings: dict[UUID, tuple[MessageAttachment, str | None, MessageRole | None]] = {}
     if artifacts:
         binding_result = await db.execute(
-            select(MessageAttachment, Conversation.title)
+            select(MessageAttachment, Conversation.title, Message.role)
             .join(Conversation, Conversation.id == MessageAttachment.conversation_id)
+            .outerjoin(Message, Message.id == MessageAttachment.message_id)
             .where(
                 MessageAttachment.artifact_id.in_(
                     [artifact.id for artifact in artifacts]
@@ -322,8 +331,11 @@ async def list_chat_artifacts(
             .where(Conversation.user_id == user.user_id)
             .order_by(MessageAttachment.created_at.desc())
         )
-        for attachment, title in binding_result.all():
-            bindings.setdefault(attachment.artifact_id, (attachment, title))
+        for attachment, title, message_role in binding_result.all():
+            bindings.setdefault(
+                attachment.artifact_id,
+                (attachment, title, message_role),
+            )
     return [
         ChatArtifactPublic(
             id=artifact.id,
@@ -341,10 +353,8 @@ async def list_chat_artifacts(
             filename=artifact.filename,
             content_type=artifact.content_type,
             size_bytes=artifact.size_bytes,
-            kind=(
-                "artifact"
-                if artifact.s3_key.startswith("_artifacts/")
-                else "attachment"
+            kind=_chat_file_kind(
+                bindings[artifact.id][2] if artifact.id in bindings else None
             ),
             created_at=artifact.created_at,
         )
@@ -383,8 +393,9 @@ async def rename_chat_artifact(
     await db.flush()
     binding = (
         await db.execute(
-            select(MessageAttachment, Conversation.title)
+            select(MessageAttachment, Conversation.title, Message.role)
             .join(Conversation, Conversation.id == MessageAttachment.conversation_id)
+            .outerjoin(Message, Message.id == MessageAttachment.message_id)
             .where(MessageAttachment.artifact_id == artifact.id)
             .where(Conversation.user_id == user.user_id)
             .limit(1)
@@ -399,7 +410,7 @@ async def rename_chat_artifact(
         filename=artifact.filename,
         content_type=artifact.content_type,
         size_bytes=artifact.size_bytes,
-        kind="artifact" if artifact.s3_key.startswith("_artifacts/") else "attachment",
+        kind=_chat_file_kind(binding[2] if binding else None),
         created_at=artifact.created_at,
     )
 
@@ -639,11 +650,7 @@ async def get_messages(
                     filename=attachment.filename,
                     content_type=attachment.content_type,
                     size_bytes=attachment.size_bytes,
-                    kind=(
-                        "artifact"
-                        if attachment.s3_key.startswith("_artifacts/")
-                        else "attachment"
-                    ),
+                    kind=_chat_file_kind(m.role),
                 )
                 for attachment in attachments_by_message.get(m.id, [])
             ],

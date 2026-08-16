@@ -571,7 +571,7 @@ class AutonomousAgentExecutor:
             artifact_workspace_id=(
                 self._ancestor_run_ids[0]
                 if self._ancestor_run_ids
-                else self._current_run_id
+                else self._current_run_id or None
             ),
         )
         self._last_workflow_execution_id = response.execution_id
