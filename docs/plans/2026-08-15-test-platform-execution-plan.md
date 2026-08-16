@@ -290,7 +290,12 @@ refresh remains a ranked follow-up; the current full browser inventory finishes
 well inside the existing two-hour test-token policy. The migration coupling,
 pending-delivery race, Redis event-loop leak, cleanup fail-open behavior,
 runtime skips, and browser retries now have permanent dispositions and focused
-contracts.
+contracts. The first longest-test pass additionally removed 51.09 seconds of
+measured duplicate/artificial pytest time: refused-loopback MCP discovery,
+one exposing large-memory loop, consolidated data/secret import lifecycles,
+and replacement of two state-poisoning package-install E2Es with isolated
+router plus storage/cache contracts. One real package install/recycle/execution
+journey remains.
 
 ### Phase 2 — browser tiers and nightly discovery
 
@@ -304,11 +309,16 @@ contracts.
   deterministic setup and cleanup.
 
 **Implementation status:** browser smoke, full product nightly, slow-contract
-nightly, and clean no-cache production builds are implemented. Browser tests
+nightly, truthful API unit coverage, and clean no-cache production builds are implemented. Browser tests
 now exercise the compiled production client and Nginx, which exposed and fixed
 two deployment-only defects. Prior-version upgrade and sustained concurrency
 fixtures remain intentionally pending rather than being represented by weak or
-stateful tests.
+stateful tests. Fresh hosted jobs consume their already-clean boot state once
+instead of immediately repeating the canonical reset; a marker guarantees any
+second suite still resets. The prior PR Codecov step uploaded no generated
+report and has been removed rather than continuing to imply coverage. The first
+working backend unit baseline is 57% line coverage (5,648 passes in 134.25
+seconds); nightly owns the report so measurement adds no merge latency.
 
 ### Phase 3 — exact dev artifact
 

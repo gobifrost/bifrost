@@ -123,6 +123,30 @@ def test_critical_browser_smoke_strengthens_only_exact_candidate_events() -> Non
         assert 'tag: "@smoke"' in source, relative_path
 
 
+def test_fresh_ci_jobs_consume_clean_boot_state_once() -> None:
+    """Fresh hosted jobs must opt into the one-shot redundant-reset bypass."""
+    ci_jobs = _load_workflow(CI_WORKFLOW)["jobs"]
+    nightly_jobs = _load_workflow(NIGHTLY_WORKFLOW)["jobs"]
+    selected = [
+        ci_jobs["test-unit"],
+        ci_jobs["test-e2e"],
+        ci_jobs["test-client-smoke"],
+        nightly_jobs["product-browser"],
+        nightly_jobs["slow-unit-contracts"],
+        nightly_jobs["backend-coverage"],
+    ]
+
+    for job in selected:
+        run_step = next(
+            step
+            for step in job["steps"]
+            if "./test.sh stack up" in step.get("run", "")
+        )
+        assert run_step["env"]["BIFROST_TEST_USE_CLEAN_BOOT"] == "1"
+        commands = run_step["run"]
+        assert commands.index("./test.sh stack up") < commands.rindex("./test.sh")
+
+
 def test_dev_artifact_is_built_on_merge_candidate_and_promoted_without_rebuild() -> None:
     jobs = _load_workflow(CI_WORKFLOW)["jobs"]
     candidate = jobs["build-dev-candidate"]
@@ -221,6 +245,7 @@ def test_nightly_owns_full_browser_slow_and_clean_build_discovery() -> None:
     assert set(jobs) == {
         "product-browser",
         "slow-unit-contracts",
+        "backend-coverage",
         "clean-production-build",
     }
 
@@ -234,6 +259,27 @@ def test_nightly_owns_full_browser_slow_and_clean_build_discovery() -> None:
         step.get("run", "") for step in jobs["slow-unit-contracts"]["steps"]
     ]
     assert any("-m slow" in step for step in slow_steps)
+
+    # Coverage is deliberately truthful and off the merge critical path. The
+    # former PR upload pointed at a file pytest never generated and Codecov
+    # reported success after finding zero reports.
+    ci_jobs = _load_workflow(CI_WORKFLOW)["jobs"]
+    assert all(
+        "codecov/codecov-action" not in step.get("uses", "")
+        for step in ci_jobs["test-unit"]["steps"]
+    )
+    coverage_steps = jobs["backend-coverage"]["steps"]
+    measure = next(
+        step for step in coverage_steps if step.get("name") == "Measure backend unit coverage"
+    )
+    assert "--cov=src" in measure["run"]
+    assert "--cov-report=xml:/tmp/bifrost/coverage.xml" in measure["run"]
+    upload = next(
+        step for step in coverage_steps if step.get("name") == "Upload measured coverage to Codecov"
+    )
+    assert upload["with"]["files"] == "./coverage.xml"
+    assert upload["with"]["disable_search"] == "true"
+    assert upload["with"]["fail_ci_if_error"] == "true"
 
     build_steps = jobs["clean-production-build"]["steps"]
     docker_builds = [step for step in build_steps if "with" in step]

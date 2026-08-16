@@ -207,21 +207,20 @@ class TestMCPServersCRUD:
 class TestMCPServerDiscover:
     """Discovery endpoint negative path (positive path is unit-tested).
 
-    A non-routable hostname triggers a fast connect failure inside the
-    discovery helper, which returns ``None`` and the router echoes that
-    back to the caller.
+    A refused loopback connection exercises the discovery helper's connection
+    failure path without spending ten seconds exhausting two network timeouts.
     """
 
     def test_discover_returns_null_when_endpoint_unreachable(
         self, e2e_client, platform_admin
     ):
-        # 192.0.2.0/24 is RFC 5737 TEST-NET-1 — guaranteed not to resolve
-        # to anything routable.
+        # Port 1 is intentionally not exposed by the API container. A refused
+        # local connection is deterministic and reaches the same httpx failure
+        # handling as a remote endpoint that cannot be reached.
         response = e2e_client.post(
             "/api/mcp-servers/discover",
             headers=platform_admin.headers,
-            json={"server_url": "http://192.0.2.1:1/mcp"},
-            timeout=15.0,
+            json={"server_url": "http://127.0.0.1:1/mcp"},
         )
         assert response.status_code == 200, response.text
         assert response.json() == {"metadata": None}

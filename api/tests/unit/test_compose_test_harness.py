@@ -116,6 +116,16 @@ def test_test_runner_mounts_pyright_inputs():
     assert "./api/Dockerfile.dev:/app/api/Dockerfile.dev:ro" in volumes
 
 
+def test_hardened_test_runner_writes_coverage_to_results_mount():
+    """pytest-cov data must be writable by the uid-1000 test runner."""
+    compose = yaml.safe_load(_COMPOSE.read_text())
+    runner = compose["services"]["test-runner"]
+
+    assert runner["environment"]["COVERAGE_FILE"] == "/tmp/bifrost/.coverage"
+    assert all("/coverage" not in str(volume) for volume in runner["volumes"])
+    assert "test-coverage" not in compose.get("volumes", {})
+
+
 def test_dev_image_installs_pyright_from_hash_pinned_lock():
     """Local Docker type-checks should not depend on host pyright installs."""
     dockerfile = _find_repo_file("api/Dockerfile.dev").read_text()
@@ -145,6 +155,21 @@ def test_state_reset_reloads_the_mounted_scheduler_fixture_server():
     reset_state = script.split("reset_state() {", 1)[1].split("\n}", 1)[0]
     stop_block = reset_state.split("docker compose", 1)[1].split("2>/dev/null", 1)[0]
     assert "scheduler-fixtures" in stop_block
+
+
+def test_clean_boot_optimization_is_one_shot_and_shared_by_test_runners():
+    """A CI clean boot may skip only the first otherwise-redundant reset."""
+    script = _find_repo_file("test.sh").read_text()
+    prepare = script.split("prepare_test_state() {", 1)[1].split("\n}", 1)[0]
+    pytest_runner = script.split("run_pytest() {", 1)[1].split("\n}", 1)[0]
+    browser_runner = script.split("client_e2e() {", 1)[1].split("\n}", 1)[0]
+
+    assert "BIFROST_TEST_USE_CLEAN_BOOT" in prepare
+    assert ".clean-boot-consumed" in prepare
+    assert "touch \"$boot_marker\"" in prepare
+    assert "reset_state" in prepare
+    assert "prepare_test_state" in pytest_runner
+    assert "prepare_test_state" in browser_runner
 
 
 def test_playwright_uses_the_production_client_image():

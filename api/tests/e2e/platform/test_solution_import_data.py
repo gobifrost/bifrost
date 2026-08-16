@@ -141,64 +141,6 @@ def make_solution_with_table_rows(e2e_client, platform_admin):
     return _make
 
 
-# ---------------------------------------------------------------------------
-# Test 1: empty table fills silently
-# ---------------------------------------------------------------------------
-
-
-async def test_full_export_with_data_restores_rows_in_fresh_org(
-    e2e_client, platform_admin, make_solution_with_table_rows, make_org
-):
-    """Installing a full-backup zip with table data into a fresh org must succeed
-    and the installed solution's table must contain the exported rows."""
-    headers = platform_admin.headers
-    upload_headers = _upload_headers(headers)
-
-    src = await make_solution_with_table_rows(
-        table="widgets",
-        rows=[{"id": "1", "name": "a"}],
-    )
-    org = await make_org()
-
-    files = {"file": ("s.zip", src.zip_bytes, "application/zip")}
-    r = wait_for_install(
-        e2e_client,
-        e2e_client.post(
-            "/api/solutions/install",
-            headers=upload_headers,
-            files=files,
-            data={"organization_id": str(org.id), "password": "pw"},
-        ),
-        headers,
-    )
-    assert r.status_code in (200, 201), r.text
-    sol_id = r.json()["id"]
-
-    # Find the installed table's UUID via /entities, then query its documents.
-    ent_r = e2e_client.get(f"/api/solutions/{sol_id}/entities", headers=headers)
-    assert ent_r.status_code == 200, ent_r.text
-    tables = ent_r.json()["tables"]
-    widgets_tbl = next((t for t in tables if t["name"] == "widgets"), None)
-    assert widgets_tbl is not None, f"widgets table not found in installed solution: {tables}"
-    tbl_id = widgets_tbl["id"]
-
-    table_r = e2e_client.post(
-        f"/api/tables/{tbl_id}/documents/query",
-        headers=headers,
-        json={},
-    )
-    assert table_r.status_code == 200, table_r.text
-    docs = table_r.json()
-    doc_items = docs.get("documents", [])
-    assert len(doc_items) == 1, f"expected 1 row, got {len(doc_items)}: {docs}"
-    assert doc_items[0]["data"].get("name") == "a", f"wrong row data: {doc_items[0]}"
-
-
-# ---------------------------------------------------------------------------
-# Test 2: collision refuses without replace_data; Test 3: replace_data succeeds
-# ---------------------------------------------------------------------------
-
-
 async def test_data_collision_refuses_without_replace_data(
     e2e_client, platform_admin, make_solution_with_table_rows, make_org
 ):
@@ -231,6 +173,28 @@ async def test_data_collision_refuses_without_replace_data(
     )
     assert r0.status_code in (200, 201), r0.text
     sol_id = r0.json()["id"]
+
+    # The first install covers the fresh-table restore contract. Keeping this
+    # assertion here avoids rebuilding and reinstalling an equivalent bundle
+    # in a separate 16-second E2E test.
+    fresh_entities = e2e_client.get(
+        f"/api/solutions/{sol_id}/entities", headers=headers
+    )
+    assert fresh_entities.status_code == 200, fresh_entities.text
+    fresh_table = next(
+        (table for table in fresh_entities.json()["tables"] if table["name"] == "widgets"),
+        None,
+    )
+    assert fresh_table is not None
+    fresh_rows = e2e_client.post(
+        f"/api/tables/{fresh_table['id']}/documents/query",
+        headers=headers,
+        json={},
+    )
+    assert fresh_rows.status_code == 200, fresh_rows.text
+    fresh_items = fresh_rows.json().get("documents", [])
+    assert len(fresh_items) == 1, fresh_rows.text
+    assert fresh_items[0]["data"].get("name") == "bundled"
 
     # Second install of the SAME zip into the SAME org → collision (table has rows).
     files2 = {"file": ("s.zip", src.zip_bytes, "application/zip")}
@@ -279,4 +243,3 @@ async def test_data_collision_refuses_without_replace_data(
     doc_items = docs.get("documents", [])
     assert len(doc_items) == 1, f"expected 1 row after replace, got {len(doc_items)}: {docs}"
     assert doc_items[0]["data"].get("name") == "bundled", f"wrong data after replace: {doc_items[0]}"
-

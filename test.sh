@@ -136,6 +136,24 @@ reset_state() {
     echo "State reset complete."
 }
 
+prepare_test_state() {
+    local boot_marker="$LOG_DIR/.clean-boot-consumed"
+
+    # GitHub-hosted jobs boot one new, empty Compose project and run exactly one
+    # suite. Re-cloning the template DB and restarting every service immediately
+    # afterward is equivalent state with roughly a minute of avoidable churn.
+    # The marker makes this a one-shot optimization: a second suite in the same
+    # project still receives the normal full reset.
+    if [ "${BIFROST_TEST_USE_CLEAN_BOOT:-0}" = "1" ] && [ ! -e "$boot_marker" ]; then
+        mkdir -p "$LOG_DIR"
+        touch "$boot_marker"
+        echo "Using clean state from the newly booted test stack."
+        return
+    fi
+
+    reset_state
+}
+
 # =============================================================================
 # stack up|down|reset|status
 # =============================================================================
@@ -248,7 +266,7 @@ run_pytest() {
     # template. `run_pytest` clones the current template, so if the user
     # changed migrations they should run `./test.sh stack reset` once.
     require_stack_up
-    reset_state
+    prepare_test_state
     # LOG_DIR is mkdir'd on the host as the runner/host user, then bind-mounted
     # into the test-runner container at /tmp/bifrost. The container runs as
     # uid 1000 (non-root, hardened), so it cannot write pytest's --junitxml file
@@ -358,7 +376,7 @@ client_e2e() {
         fi
     done
 
-    reset_state
+    prepare_test_state
 
     start_test_client
 

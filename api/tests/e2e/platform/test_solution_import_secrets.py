@@ -205,43 +205,6 @@ def make_full_backup_zip(e2e_client, platform_admin, db_session):
     return _make
 
 
-# ---------------------------------------------------------------------------
-# Test 1: empty slot → fill silently
-# ---------------------------------------------------------------------------
-
-async def test_full_import_fills_empty_secret_slot(
-    e2e_client, platform_admin, make_full_backup_zip, make_org
-):
-    """Installing a full-backup zip into an org that has NO existing value for the
-    declared key must succeed and mark the key as set."""
-    headers = platform_admin.headers
-    upload_headers = _upload_headers(headers)
-
-    zip_bytes, _, _ = await make_full_backup_zip(values={"api_key": "xyz"}, password="pw")
-    org = await make_org()
-
-    r = wait_for_install(
-        e2e_client,
-        e2e_client.post(
-            "/api/solutions/install",
-            headers=upload_headers,
-            files={"file": ("s.zip", zip_bytes, "application/zip")},
-            data={"organization_id": str(org.id), "password": "pw"},
-        ),
-        headers,
-    )
-    assert r.status_code in (200, 201), r.text
-    sol_id = r.json()["id"]
-
-    # Setup status must show api_key as set.
-    setup_r = e2e_client.get(f"/api/solutions/{sol_id}/setup", headers=headers)
-    assert setup_r.status_code == 200, setup_r.text
-    items = setup_r.json()["items"]
-    api_key_item = next((i for i in items if i["key"] == "api_key"), None)
-    assert api_key_item is not None, "api_key should be declared after install"
-    assert api_key_item["is_set"] is True, "api_key should be set after full-backup import"
-
-
 async def test_full_import_ignores_integration_owned_config_with_same_key(
     e2e_client, platform_admin, make_full_backup_zip, make_org, db_session
 ):
@@ -340,6 +303,20 @@ async def test_full_import_collision_refuses_without_replace_flag(
         headers,
     )
     assert r0.status_code in (200, 201), r0.text
+
+    # The first install also owns the empty-slot restore contract. Keeping the
+    # setup assertion in this lifecycle avoids rebuilding and reinstalling an
+    # equivalent encrypted bundle in a separate nine-second E2E test.
+    setup_r = e2e_client.get(
+        f"/api/solutions/{r0.json()['id']}/setup", headers=headers
+    )
+    assert setup_r.status_code == 200, setup_r.text
+    api_key_item = next(
+        (item for item in setup_r.json()["items"] if item["key"] == "api_key"),
+        None,
+    )
+    assert api_key_item is not None, "api_key should be declared after install"
+    assert api_key_item["is_set"] is True
 
     # Second install: SAME source solution, updated value api_key=NEW → collision.
     # Re-using the same source solution keeps the config schema UUIDs identical,

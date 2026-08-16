@@ -324,6 +324,48 @@ The sample shows material fixed cost in each runner, but collapsing stacks or
 adding shards would change failure isolation and is outside this safe first
 step.
 
+### Longest-test remediation implemented on 2026-08-15
+
+The first duration pass targeted repeated work and artificial waits, not lower
+timeouts or fewer assertions. Exact local timings used the canonical Docker
+stack and `--durations`; the complete merge-candidate suite remains required.
+
+| Contract | Before | After | Durable disposition | Saved |
+| --- | ---: | ---: | --- | ---: |
+| MCP unreachable discovery | 10.06 s | 0.03 s | Use a refused loopback port instead of a TEST-NET address that exhausts two five-second HTTP timeouts. The same `httpx` connection-failure path and router response remain covered. | 10.03 s |
+| sequential large-file memory bound | 16.94 s | 9.19 s | Keep the original exposing condition (three 4 MiB writes, which retained 300+ MiB before the repair); delete a second five-file loop that asserted the same bounded-memory contract with smaller inputs. | 7.75 s |
+| full data restore into a fresh org | 15.68 s | folded into collision lifecycle | Assert the restored row after the collision test's already-required first install, then continue through refusal and wholesale replacement. | 15.68 s |
+| package requirements S3/Redis E2Es | 0.32 s + 8.21 s | isolated unit contracts | Remove two extra real `humanize` mutations. A router unit contract proves save-before-broadcast ordering, and the existing `save_requirements` contract proves the S3 plus Redis write-through. One real install/recycle/execution E2E remains and passed in 14.56 s. | 8.53 s |
+| full secret restore into an empty slot | 9.10 s | folded into collision lifecycle | Assert the setup slot is set after the collision test's already-required first encrypted install, then continue through refusal and replacement. | 9.10 s |
+
+The directly measured pytest reduction is 51.09 seconds per complete suite.
+For the initial three-test benchmark, the selected set fell from 79.07 seconds
+to 45.72 seconds while retaining every observable contract. Removing the two
+extra package mutations also closes a poisoning mechanism: both old tests
+started asynchronous uninstall/recycle work without waiting for the worker
+filesystem and process pool to settle before later tests.
+
+CI also used to boot a brand-new empty Compose project and immediately perform
+the full state reset before its only suite. A one-shot clean-boot marker now
+lets fresh hosted jobs consume that objectively equivalent state once; any
+second suite still executes the canonical reset. Local runs continue to reset
+by default. This removes the observed roughly 45--60 second redundant restart
+from each backend/browser job and is statically guarded in both the harness and
+workflow topology tests. Combined with the test reductions, the expected
+merge-group savings are about two to three runner-minutes and roughly one
+minute on the critical path (the two E2E shards still run in parallel).
+
+Finally, the PR unit job's Codecov step was not measuring coverage: pytest did
+not create `coverage.xml`, the action found zero reports, and the step still
+reported success. The false upload is removed. Nightly now runs backend unit
+tests with explicit `pytest-cov` sources, proves the XML exists, and configures
+Codecov to fail on an upload error. This adds no PR or merge-candidate latency;
+it establishes a truthful baseline before setting a ratchet. The first complete
+local measurement was **57% line coverage** across `src`, `shared`, and
+`bifrost` (5,648 passed, three explicit environment skips, 20 slow tests moved
+to nightly; 134.25 seconds of pytest). Frontend coverage remains an explicit
+follow-up.
+
 ## Duplicated work and expected saving
 
 There were 132 merged code PRs with both a successful broad PR run and a

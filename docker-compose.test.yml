@@ -350,8 +350,9 @@ services:
       # For E2E tests, point to the API container
       TEST_API_URL: http://api:8000
       PYTHONPATH: /app
-      # Coverage data stored on shared volume for cross-phase accumulation
-      COVERAGE_FILE: /coverage/.coverage
+      # The hardened uid-1000 runner cannot write a root-owned named volume.
+      # Keep coverage data beside the already-permissioned per-worktree results.
+      COVERAGE_FILE: /tmp/bifrost/.coverage
       # GitHub E2E test configuration (optional - tests skip if not set)
       # Pass from host: GITHUB_TEST_PAT=ghp_xxx ./test.sh e2e
       # Or set in .env.test file
@@ -402,7 +403,6 @@ services:
                                       # tests/unit/test_platform_api_docs.py reads
                                       # bifrost-build/platform-api.md to enforce docs
                                       # cover every PLATFORM_EXPORT_NAMES entry.
-      - test-coverage:/coverage  # Shared coverage data across phases
       # Host-mounted for test results (junitxml) — per-worktree, driven by
       # LOG_DIR (set by test.sh to /tmp/bifrost-$COMPOSE_PROJECT_NAME) so two
       # worktrees running in parallel don't clobber each other's results.
@@ -494,4 +494,3 @@ services:
 # Named volumes for test data - ephemeral within test session
 volumes:
   test-mounts:  # File storage for uploads, branding, etc.
-  test-coverage:  # Shared coverage data across test phases

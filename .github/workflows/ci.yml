@@ -349,6 +349,7 @@ jobs:
       - name: Run critical browser smoke
         env:
           BIFROST_SKIP_BUILD: "1"
+          BIFROST_TEST_USE_CLEAN_BOOT: "1"
         run: |
           chmod +x test.sh
           ./test.sh stack up
@@ -403,18 +404,11 @@ jobs:
       - name: Run unit tests
         env:
           BIFROST_SKIP_BUILD: "1"
+          BIFROST_TEST_USE_CLEAN_BOOT: "1"
         run: |
           chmod +x test.sh
           ./test.sh stack up
           ./test.sh unit
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        with:
-          files: ./coverage.xml
-          flags: api
-          name: api-coverage
-          token: ${{ secrets.CODECOV_TOKEN }}
 
   # =============================================================================
   # E2E Tests - Sharded across 2 parallel runners. Each shard boots its own
@@ -465,6 +459,7 @@ jobs:
       - name: Run E2E tests (shard ${{ matrix.shard }}/2)
         env:
           BIFROST_SKIP_BUILD: "1"
+          BIFROST_TEST_USE_CLEAN_BOOT: "1"
         run: |
           chmod +x test.sh
           ./test.sh stack up
