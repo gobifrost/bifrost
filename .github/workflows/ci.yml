@@ -483,6 +483,7 @@ jobs:
   test-e2e-gate:
     if: >-
       always() && (
+        github.event_name == 'pull_request' ||
         github.event_name == 'merge_group' ||
         github.event_name == 'workflow_dispatch' ||
         startsWith(github.ref, 'refs/tags/v')
@@ -493,6 +494,16 @@ jobs:
     steps:
       - name: Check shard results
         run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            if [ "${{ needs.test-client-unit.result }}" != "success" ]; then
+              echo "Client unit tests failed or were cancelled (result: ${{ needs.test-client-unit.result }})"
+              exit 1
+            fi
+            echo "Full E2E is deferred to the merge queue's exact merge candidate."
+            echo "A successful merge_group E2E Tests check is required before main and :dev images."
+            exit 0
+          fi
+
           if [ "${{ needs.test-e2e.result }}" != "success" ] || \
              [ "${{ needs.test-client-unit.result }}" != "success" ] || \
              [ "${{ needs.test-client-smoke.result }}" != "success" ] || \
@@ -505,25 +516,6 @@ jobs:
             exit 1
           fi
           echo "All exact-candidate suites and required artifact builds passed."
-
-  # Ordinary PRs retain the existing required check name while deferring the
-  # complete E2E suite to merge_group. Lint, backend unit, and client unit tests
-  # still run on the PR. The static workflow contract exercised by Unit Tests
-  # prevents this check from being used without the full exact-candidate gate.
-  test-e2e-pr:
-    if: always() && github.event_name == 'pull_request'
-    needs: [test-client-unit]
-    runs-on: ubuntu-latest
-    name: E2E Tests
-    steps:
-      - name: Report exact-candidate E2E gate
-        run: |
-          if [ "${{ needs.test-client-unit.result }}" != "success" ]; then
-            echo "Client unit tests failed or were cancelled (result: ${{ needs.test-client-unit.result }})"
-            exit 1
-          fi
-          echo "Full E2E is deferred to the merge queue's exact merge candidate."
-          echo "A successful merge_group E2E Tests check is required before main and :dev images."
 
   # =============================================================================
   # Dev Promotion - main may only publish the already-built exact candidate.
@@ -543,6 +535,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+
+      - name: Verify exact merge candidate gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 api/scripts/verify_merge_candidate.py
+          --repository "$GITHUB_REPOSITORY"
+          --sha "$GITHUB_SHA"
 
       - name: Compute version
         id: version
@@ -765,9 +765,9 @@ jobs:
       - name: Smoke deployed API and client services
         run: |
           set -euo pipefail
-          kubectl -n bifrost port-forward service/bifrost-api 18000:8000 > /tmp/bifrost-api-port-forward.log 2>&1 &
+          kubectl -n bifrost port-forward service/api 18000:8000 > /tmp/bifrost-api-port-forward.log 2>&1 &
           API_FORWARD_PID=$!
-          kubectl -n bifrost port-forward service/bifrost-client 18080:80 > /tmp/bifrost-client-port-forward.log 2>&1 &
+          kubectl -n bifrost port-forward service/client 18080:80 > /tmp/bifrost-client-port-forward.log 2>&1 &
           CLIENT_FORWARD_PID=$!
           cleanup() {
             kill "$API_FORWARD_PID" "$CLIENT_FORWARD_PID" 2>/dev/null || true

@@ -55,7 +55,8 @@ def test_full_suite_gates_exact_merge_candidate_before_dev_image() -> None:
         assert "github.event_name == 'merge_group'" in condition
         assert "github.event_name == 'workflow_dispatch'" in condition
         assert "startsWith(github.ref, 'refs/tags/v')" in condition
-        assert "pull_request" not in condition
+    assert "pull_request" not in full_e2e_condition
+    assert "github.event_name == 'pull_request'" in full_e2e_gate_condition
 
     assert set(jobs["test-e2e-gate"]["needs"]) == {
         "test-e2e",
@@ -64,6 +65,9 @@ def test_full_suite_gates_exact_merge_candidate_before_dev_image() -> None:
         "build-dev-candidate",
     }
     assert jobs["test-e2e-gate"]["name"] == "E2E Tests"
+    assert [
+        name for name, job in jobs.items() if job.get("name") == "E2E Tests"
+    ] == ["test-e2e-gate"]
 
     for job_name in ("lint", "test-unit", "test-client-unit"):
         condition = _normalized(jobs[job_name]["if"])
@@ -75,6 +79,13 @@ def test_full_suite_gates_exact_merge_candidate_before_dev_image() -> None:
         "github.event_name == 'push' && github.ref == 'refs/heads/main'"
     )
     assert "needs" not in build_dev
+    verification = next(
+        step
+        for step in build_dev["steps"]
+        if step.get("name") == "Verify exact merge candidate gate"
+    )
+    assert "verify_merge_candidate.py" in verification["run"]
+    assert '--sha "$GITHUB_SHA"' in verification["run"]
     assert jobs["deploy-dev"]["needs"] == ["build-dev"]
 
 
@@ -192,6 +203,8 @@ def test_dev_artifact_is_built_on_merge_candidate_and_promoted_without_rebuild()
     deploy = jobs["deploy-dev"]
     assert deploy["needs"] == ["build-dev"]
     deploy_source = "\n".join(step.get("run", "") for step in deploy["steps"])
+    assert "port-forward service/api" in deploy_source
+    assert "port-forward service/client" in deploy_source
     assert "http://127.0.0.1:18000/health/ready" in deploy_source
     assert "http://127.0.0.1:18080/" in deploy_source
 
@@ -199,17 +212,13 @@ def test_dev_artifact_is_built_on_merge_candidate_and_promoted_without_rebuild()
 def test_pull_request_reports_required_e2e_context_without_running_full_suite() -> None:
     jobs = _load_workflow(CI_WORKFLOW)["jobs"]
 
-    pr_gate = jobs["test-e2e-pr"]
-    assert _normalized(pr_gate["if"]) == (
-        "always() && github.event_name == 'pull_request'"
-    )
-    assert pr_gate["needs"] == ["test-client-unit"]
-    assert pr_gate["name"] == "E2E Tests"
-
-    # The ordinary PR and exact-candidate jobs share the required check name but
-    # their event conditions are mutually exclusive.
-    assert jobs["test-e2e-gate"]["name"] == pr_gate["name"]
-    assert "pull_request" not in _normalized(jobs["test-e2e-gate"]["if"])
+    gate = jobs["test-e2e-gate"]
+    assert gate["name"] == "E2E Tests"
+    assert "github.event_name == 'pull_request'" in _normalized(gate["if"])
+    source = "\n".join(step.get("run", "") for step in gate["steps"])
+    assert 'github.event_name }}" = "pull_request"' in source
+    assert "needs.test-client-unit.result" in source
+    assert "Full E2E is deferred" in source
 
 
 def test_docs_only_inverse_workflow_covers_the_same_paths_and_check_names() -> None:
