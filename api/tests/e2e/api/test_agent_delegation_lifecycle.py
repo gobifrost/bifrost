@@ -28,6 +28,7 @@ from src.services.execution.autonomous_agent_executor import AutonomousAgentExec
 from src.services.llm.base import LLMConfig, ToolCallRequest
 from src.services.llm.pydantic_client import PydanticAIClient
 from src.services.llm_config_service import LLMProviderConfig
+from src.services.model_capabilities import manual_capabilities
 
 
 pytestmark = pytest.mark.asyncio
@@ -309,6 +310,14 @@ async def test_chat_executor_receives_durable_child_callback(
                     return_value=LLMProviderConfig(
                         provider="openai",
                         model="test-parent",
+                        chat_balanced_capabilities=manual_capabilities(
+                            provider="openai",
+                            model="test-parent",
+                            endpoint=None,
+                            image_input=False,
+                            pdf_input=False,
+                            tool_calling=True,
+                        ),
                     )
                 ),
             ),
