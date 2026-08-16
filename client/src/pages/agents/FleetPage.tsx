@@ -3,8 +3,8 @@
  *
  * Visual spec mirrors `/tmp/agent-mockup/src/pages/FleetPage.tsx`: stat row with
  * deltas, paired grid/table toggle, per-agent cards with mini-stat trio +
- * sparkline + footer row. Per-agent stats are fetched via `useAgentStats(id)`
- * (N+1; acceptable v1, TODO for a denormalized list endpoint).
+ * sparkline + footer row. Per-agent stats are included by the list endpoint so
+ * the page renders the fleet in one bounded request instead of one call/card.
  */
 
 import { type MouseEvent, useMemo, useState } from "react";
@@ -29,6 +29,7 @@ import {
 import { toast } from "sonner";
 
 import { EntityLogo } from "@/components/EntityLogo";
+import { PageLoader } from "@/components/PageLoader";
 import { SolutionManagedBadge } from "@/components/solutions/SolutionManagedBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -71,7 +72,7 @@ import {
 } from "@/components/agents/design-tokens";
 
 import { useAgents, type AgentSummary } from "@/hooks/useAgents";
-import { useAgentStats, useFleetStats } from "@/services/agents";
+import { useFleetStats } from "@/services/agents";
 import {
 	cn,
 	formatCost,
@@ -95,7 +96,7 @@ export function FleetPage() {
 
 	const { data: agents, isLoading: agentsLoading } = useAgents(
 		isPlatformAdmin ? filterOrgId : undefined,
-		{ includeInactive: showInactive },
+		{ includeInactive: showInactive, includeStats: true },
 	);
 	const { data: fleetStats, isLoading: fleetLoading } = useFleetStats();
 
@@ -348,24 +349,10 @@ export function FleetPage() {
 			{/* Content */}
 			<div className="flex-1 min-h-0 overflow-auto">
 				{agentsLoading ? (
-					view === "grid" ? (
-						<div
-							className={cn(
-								"grid md:grid-cols-2 xl:grid-cols-3",
-								GAP_CARD,
-							)}
-						>
-							{[...Array(6)].map((_, i) => (
-								<Skeleton key={i} className="h-52 w-full" />
-							))}
-						</div>
-					) : (
-						<div className="space-y-2">
-							{[...Array(3)].map((_, i) => (
-								<Skeleton key={i} className="h-12 w-full" />
-							))}
-						</div>
-					)
+					<PageLoader
+						message={`Loading ${term(terminology, "agent", "pluralLower")}…`}
+						size="sm"
+					/>
 				) : filtered.length === 0 ? (
 					<EmptyState hasQuery={query.trim().length > 0} />
 				) : view === "grid" ? (
@@ -473,9 +460,7 @@ function AgentGridCard({
 	showOrg: boolean;
 	orgName: string;
 }) {
-	// TODO(plan-2): replace per-card useAgentStats N+1 with a denormalized
-	// list endpoint that returns fleet member stats in one round-trip.
-	const { data: stats, isLoading } = useAgentStats(agent.id ?? undefined);
+	const stats = agent.stats;
 	const successRate = stats?.success_rate ?? 0;
 	const colorClass = successRateTone(successRate);
 	const hasRuns = (stats?.runs_7d ?? 0) > 0;
@@ -496,7 +481,9 @@ function AgentGridCard({
 							entityType="agent"
 							entityId={agent.id}
 							logo={agent.logo_url ?? null}
-							fallback={<Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+							fallback={
+								<Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+							}
 							size={20}
 							className="h-5 w-5 rounded shrink-0 object-cover"
 						/>
@@ -527,9 +514,7 @@ function AgentGridCard({
 				) : null}
 			</div>
 			<div className="flex-1 space-y-3 p-4">
-				{isLoading ? (
-					<Skeleton className="h-24 w-full" />
-				) : hasRuns ? (
+				{hasRuns ? (
 					<>
 						<div className="grid grid-cols-3 gap-3">
 							<MiniStat
@@ -717,7 +702,7 @@ function AgentTableRow({
 	showOrg: boolean;
 	orgName: string;
 }) {
-	const { data: stats } = useAgentStats(agent.id ?? undefined);
+	const stats = agent.stats;
 	const hasRuns = (stats?.runs_7d ?? 0) > 0;
 
 	return (

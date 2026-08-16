@@ -125,7 +125,22 @@ test.describe("Entity logos", () => {
 
 			await expect(page.getByText("Image updated")).toBeVisible();
 
+			const perAgentStatsRequests: string[] = [];
+			page.on("request", (request) => {
+				if (/\/api\/agents\/[0-9a-f-]+\/stats$/.test(new URL(request.url()).pathname)) {
+					perAgentStatsRequests.push(request.url());
+				}
+			});
+			const listWithStats = page.waitForResponse((response) => {
+				const url = new URL(response.url());
+				return (
+					url.pathname === "/api/agents" &&
+					url.searchParams.get("include_stats") === "true"
+				);
+			});
+
 			await page.goto("/agents");
+			await listWithStats;
 
 			const card = page.getByRole("link", {
 				name: new RegExp(AGENT_NAME),
@@ -136,6 +151,7 @@ test.describe("Entity logos", () => {
 				"src",
 				new RegExp(`^/api/agents/${agentId}/logo\\?v=[0-9a-f]{64}$`),
 			);
+			expect(perAgentStatsRequests).toEqual([]);
 		});
 	});
 });

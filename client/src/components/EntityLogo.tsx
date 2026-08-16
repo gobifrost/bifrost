@@ -34,7 +34,7 @@ export function EntityLogo({
 	className,
 	logo,
 }: EntityLogoProps) {
-	const [erroredVersion, setErroredVersion] = useState<string | null>(null);
+	const [erroredSource, setErroredSource] = useState<string | null>(null);
 	const globalVersion = useEntityLogoVersion(entityType, entityId);
 
 	if (logo === null) {
@@ -42,6 +42,9 @@ export function EntityLogo({
 	}
 
 	if (typeof logo === "string") {
+		if (erroredSource === logo) {
+			return <>{fallback}</>;
+		}
 		return (
 			<img
 				data-testid="entity-logo"
@@ -50,6 +53,7 @@ export function EntityLogo({
 				width={size}
 				height={size}
 				className={className}
+				onError={() => setErroredSource(logo)}
 			/>
 		);
 	}
@@ -60,7 +64,7 @@ export function EntityLogo({
 		? `${base}?v=${encodeURIComponent(effectiveKey)}`
 		: base;
 
-	if (erroredVersion !== null && erroredVersion === (effectiveKey ?? "")) {
+	if (erroredSource === src) {
 		return <>{fallback}</>;
 	}
 
@@ -72,7 +76,7 @@ export function EntityLogo({
 			width={size}
 			height={size}
 			className={className}
-			onError={() => setErroredVersion(effectiveKey ?? "")}
+			onError={() => setErroredSource(src)}
 		/>
 	);
 }

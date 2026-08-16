@@ -63,6 +63,20 @@ describe("EntityLogo", () => {
 		expect(img.getAttribute("src")).toBe(dataUrl);
 	});
 
+	it("falls back when a list-provided logo URL fails", () => {
+		render(
+			<EntityLogo
+				entityType="agent"
+				entityId="22222222-2222-2222-2222-222222222222"
+				logo="/api/agents/22222222-2222-2222-2222-222222222222/logo"
+				fallback={<span data-testid="fallback">F</span>}
+				size={32}
+			/>,
+		);
+		fireEvent.error(screen.getByTestId("entity-logo"));
+		expect(screen.getByTestId("fallback")).toBeInTheDocument();
+	});
+
 	it("renders fallback without making any request when logo is explicitly null", () => {
 		render(
 			<EntityLogo

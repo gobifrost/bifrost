@@ -8,6 +8,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
+from src.models.contracts.agent_stats import AgentStatsResponse
+
 from src.models.contracts.refs import WorkflowRef
 from src.models.enums import AgentAccessLevel, AgentChannel, MessageRole
 
@@ -222,6 +224,10 @@ class AgentSummary(BaseModel):
         description="Versioned presentation-logo URL, or null when no logo is set.",
     )
     logo_version: str | None = Field(default=None, description="Presentation-logo content hash.")
+    stats: AgentStatsResponse | None = Field(
+        default=None,
+        description="Per-agent run stats when explicitly requested by the list caller.",
+    )
     is_solution_managed: bool = Field(default=False, description="True if managed by a deployed Solution (read-only on platform)")
     solution_id: UUID | None = Field(default=None, description="UUID of the owning Solution install (null if not solution-managed)")
 

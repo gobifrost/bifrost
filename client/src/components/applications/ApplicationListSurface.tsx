@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { EntityLogo } from "@/components/EntityLogo";
+import { PageLoader } from "@/components/PageLoader";
 import { SolutionManagedBadge } from "@/components/solutions/SolutionManagedBadge";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -22,7 +23,6 @@ import {
 	DataTableHeader,
 	DataTableRow,
 } from "@/components/ui/data-table";
-import { Skeleton } from "@/components/ui/skeleton";
 import { term, useTerminology } from "@/lib/terminology";
 import type { components } from "@/lib/v1";
 
@@ -74,19 +74,7 @@ export function ApplicationListSurface({
 	const terminology = useTerminology();
 
 	if (isLoading) {
-		return viewMode === "grid" || !canManageApps ? (
-			<div className="grid grid-cols-1 gap-4 sm:grid-cols-[repeat(auto-fill,minmax(320px,1fr))]">
-				{[...Array(6)].map((_, i) => (
-					<Skeleton key={i} className="h-48 w-full" />
-				))}
-			</div>
-		) : (
-			<div className="space-y-2">
-				{[...Array(3)].map((_, i) => (
-					<Skeleton key={i} className="h-12 w-full" />
-				))}
-			</div>
-		);
+		return <PageLoader message="Loading applications…" size="sm" />;
 	}
 
 	if (apps.length === 0) {
@@ -100,10 +88,10 @@ export function ApplicationListSurface({
 							: `No ${term(terminology, "app", "formalPluralLower")} found`}
 					</h3>
 					<p className="mt-2 text-sm text-muted-foreground">
-							{emptySearchActive
-								? "Try adjusting your search term or clear the filter"
-								: `No ${term(terminology, "app", "formalPluralLower")} are currently available`}
-						</p>
+						{emptySearchActive
+							? "Try adjusting your search term or clear the filter"
+							: `No ${term(terminology, "app", "formalPluralLower")} are currently available`}
+					</p>
 					{canManageApps && !emptySearchActive && onCreateEmpty && (
 						<Button
 							variant="outline"
@@ -133,8 +121,12 @@ export function ApplicationListSurface({
 							)}
 							<DataTableHead>Name</DataTableHead>
 							<DataTableHead>Description</DataTableHead>
-							<DataTableHead className="w-0 whitespace-nowrap">Status</DataTableHead>
-							<DataTableHead className="w-0 whitespace-nowrap">Version</DataTableHead>
+							<DataTableHead className="w-0 whitespace-nowrap">
+								Status
+							</DataTableHead>
+							<DataTableHead className="w-0 whitespace-nowrap">
+								Version
+							</DataTableHead>
 							<DataTableHead className="w-0 whitespace-nowrap text-right" />
 						</DataTableRow>
 					</DataTableHeader>
@@ -144,12 +136,20 @@ export function ApplicationListSurface({
 								{isPlatformAdmin && (
 									<DataTableCell className="w-0 whitespace-nowrap">
 										{app.organization_id ? (
-											<Badge variant="outline" className="text-xs">
+											<Badge
+												variant="outline"
+												className="text-xs"
+											>
 												<Building2 className="mr-1 h-3 w-3" />
-												{getOrgName(app.organization_id)}
+												{getOrgName(
+													app.organization_id,
+												)}
 											</Badge>
 										) : (
-											<Badge variant="default" className="text-xs">
+											<Badge
+												variant="default"
+												className="text-xs"
+											>
 												<Globe className="mr-1 h-3 w-3" />
 												Global
 											</Badge>
@@ -161,26 +161,40 @@ export function ApplicationListSurface({
 								</DataTableCell>
 								<DataTableCell className="max-w-xs truncate text-muted-foreground">
 									{app.description || (
-										<span className="italic">No description</span>
+										<span className="italic">
+											No description
+										</span>
 									)}
 								</DataTableCell>
 								<DataTableCell className="w-0 whitespace-nowrap">
 									<div className="flex gap-1">
 										{app.is_published && (
-											<Badge variant="default" className="text-xs">
+											<Badge
+												variant="default"
+												className="text-xs"
+											>
 												Published
 											</Badge>
 										)}
 										{app.has_unpublished_changes && (
-											<Badge variant="outline" className="text-xs">
+											<Badge
+												variant="outline"
+												className="text-xs"
+											>
 												Draft
 											</Badge>
 										)}
-										{!app.is_published && !app.has_unpublished_changes && (
-											<Badge variant="secondary" className="text-xs">
-												{isV2App(app) ? "V2" : "Empty"}
-											</Badge>
-										)}
+										{!app.is_published &&
+											!app.has_unpublished_changes && (
+												<Badge
+													variant="secondary"
+													className="text-xs"
+												>
+													{isV2App(app)
+														? "V2"
+														: "Empty"}
+												</Badge>
+											)}
 									</div>
 								</DataTableCell>
 								<DataTableCell className="w-0 whitespace-nowrap">
@@ -207,49 +221,62 @@ export function ApplicationListSurface({
 												<Button
 													variant="ghost"
 													size="sm"
-													onClick={() => onPreview(app)}
+													onClick={() =>
+														onPreview(app)
+													}
 													title="Preview draft"
 												>
 													<Eye className="h-4 w-4" />
 												</Button>
 											)}
 										{app.is_solution_managed && (
-											<SolutionManagedBadge solutionId={app.solution_id} />
+											<SolutionManagedBadge
+												solutionId={app.solution_id}
+											/>
 										)}
-										{canManageApps && !app.is_solution_managed && (
-											<>
-												{onOpenSettings && (
-													<Button
-														variant="ghost"
-														size="sm"
-														onClick={() => onOpenSettings(app)}
-														title="Settings"
-													>
-														<Pencil className="h-4 w-4" />
-													</Button>
-												)}
-												{onOpenCode && (
-													<Button
-														variant="ghost"
-														size="sm"
-														onClick={() => onOpenCode(app)}
-														title="Code editor"
-													>
-														<Code2 className="h-4 w-4" />
-													</Button>
-												)}
-												{onDelete && (
-													<Button
-														variant="ghost"
-														size="sm"
-														onClick={() => onDelete(app)}
-														title={`Delete ${term(terminology, "app", "formalSingularLower")}`}
-													>
-														<Trash2 className="h-4 w-4" />
-													</Button>
-												)}
-											</>
-										)}
+										{canManageApps &&
+											!app.is_solution_managed && (
+												<>
+													{onOpenSettings && (
+														<Button
+															variant="ghost"
+															size="sm"
+															onClick={() =>
+																onOpenSettings(
+																	app,
+																)
+															}
+															title="Settings"
+														>
+															<Pencil className="h-4 w-4" />
+														</Button>
+													)}
+													{onOpenCode && (
+														<Button
+															variant="ghost"
+															size="sm"
+															onClick={() =>
+																onOpenCode(app)
+															}
+															title="Code editor"
+														>
+															<Code2 className="h-4 w-4" />
+														</Button>
+													)}
+													{onDelete && (
+														<Button
+															variant="ghost"
+															size="sm"
+															onClick={() =>
+																onDelete(app)
+															}
+															title={`Delete ${term(terminology, "app", "formalSingularLower")}`}
+														>
+															<Trash2 className="h-4 w-4" />
+														</Button>
+													)}
+												</>
+											)}
 									</div>
 								</DataTableCell>
 							</DataTableRow>
@@ -280,7 +307,10 @@ export function ApplicationListSurface({
 						tabIndex={0}
 						onClick={defaultTarget}
 						onKeyDown={(e) => {
-							if (defaultTarget && (e.key === "Enter" || e.key === " ")) {
+							if (
+								defaultTarget &&
+								(e.key === "Enter" || e.key === " ")
+							) {
 								e.preventDefault();
 								defaultTarget();
 							}
@@ -305,7 +335,9 @@ export function ApplicationListSurface({
 									</span>
 								</div>
 								{app.is_solution_managed ? (
-									<SolutionManagedBadge solutionId={app.solution_id} />
+									<SolutionManagedBadge
+										solutionId={app.solution_id}
+									/>
 								) : canManageApps ? (
 									<div className="flex shrink-0 gap-1">
 										{onOpenSettings && (
@@ -371,19 +403,21 @@ export function ApplicationListSurface({
 											Open Published
 										</button>
 									)}
-									{canManageApps && app.has_unpublished_changes && onPreview && (
-										<button
-											type="button"
-											className="pointer-events-auto text-left text-[13px] font-medium text-foreground hover:text-primary"
-											onClick={(e) => {
-												e.stopPropagation();
-												onPreview(app);
-											}}
-										>
-											<Eye className="-mt-0.5 mr-1.5 inline h-3.5 w-3.5" />
-											Open Preview
-										</button>
-									)}
+									{canManageApps &&
+										app.has_unpublished_changes &&
+										onPreview && (
+											<button
+												type="button"
+												className="pointer-events-auto text-left text-[13px] font-medium text-foreground hover:text-primary"
+												onClick={(e) => {
+													e.stopPropagation();
+													onPreview(app);
+												}}
+											>
+												<Eye className="-mt-0.5 mr-1.5 inline h-3.5 w-3.5" />
+												Open Preview
+											</button>
+										)}
 								</div>
 							)}
 						</div>
@@ -391,24 +425,35 @@ export function ApplicationListSurface({
 						<div className="flex items-center justify-between gap-2 border-t px-4 py-2.5">
 							<div className="flex items-center gap-1.5">
 								{app.is_published && (
-									<Badge variant="default" className="text-[10px] px-1.5 py-0">
+									<Badge
+										variant="default"
+										className="text-[10px] px-1.5 py-0"
+									>
 										Published
 									</Badge>
 								)}
 								{app.has_unpublished_changes && (
-									<Badge variant="outline" className="text-[10px] px-1.5 py-0">
+									<Badge
+										variant="outline"
+										className="text-[10px] px-1.5 py-0"
+									>
 										Draft
 									</Badge>
 								)}
-								{!app.is_published && !app.has_unpublished_changes && (
-									<span className="text-[11px] text-muted-foreground">
-										{isV2App(app) ? "V2" : "Empty"}
-									</span>
-								)}
+								{!app.is_published &&
+									!app.has_unpublished_changes && (
+										<span className="text-[11px] text-muted-foreground">
+											{isV2App(app) ? "V2" : "Empty"}
+										</span>
+									)}
 							</div>
 							{orgLabel ? (
 								<Badge
-									variant={app.organization_id ? "outline" : "default"}
+									variant={
+										app.organization_id
+											? "outline"
+											: "default"
+									}
 									className="text-[10px] px-1.5 py-0"
 								>
 									{app.organization_id ? (

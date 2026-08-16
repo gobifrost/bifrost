@@ -185,7 +185,10 @@ class TestAgentLogo:
             assert len(got.content) <= 20 * 1024
             assert got.headers["cache-control"] == "private, max-age=31536000, immutable"
 
-            listed = e2e_client.get("/api/agents", headers=platform_admin.headers)
+            listed = e2e_client.get(
+                "/api/agents?include_stats=true",
+                headers=platform_admin.headers,
+            )
             listed_agent = next(
                 row for row in listed.json() if row["id"] == agent_id
             )
@@ -193,6 +196,7 @@ class TestAgentLogo:
             assert listed_agent["logo_url"].startswith(
                 f"/api/agents/{agent_id}/logo?v="
             )
+            assert listed_agent["stats"]["runs_7d"] == 0
 
             deleted = e2e_client.delete(
                 f"/api/agents/{agent_id}/logo",

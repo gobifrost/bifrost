@@ -2,7 +2,8 @@
  * Tests for FleetPage.
  *
  * The page composes hooks from `@/hooks/useAgents` (list) and
- * `@/services/agents` (fleet + per-agent stats). We mock both at module
+ * `@/services/agents` (fleet stats). Per-agent stats arrive on each list item.
+ * We mock both modules at module
  * scope so we can control loading / data states deterministically.
  */
 
@@ -17,14 +18,12 @@ const mockUseAgents = vi.fn();
 vi.mock("@/hooks/useAgents", () => ({
 	useAgents: (
 		filterScope?: string | null,
-		options?: { includeInactive?: boolean },
+		options?: { includeInactive?: boolean; includeStats?: boolean },
 	) => mockUseAgents(filterScope, options),
 }));
 
-const mockUseAgentStats = vi.fn();
 const mockUseFleetStats = vi.fn();
 vi.mock("@/services/agents", () => ({
-	useAgentStats: (id: string | undefined) => mockUseAgentStats(id),
 	useFleetStats: () => mockUseFleetStats(),
 }));
 
@@ -69,6 +68,7 @@ function makeAgent(overrides: Partial<Record<string, unknown>> = {}) {
 		owner_user_id: null,
 		created_at: "2026-04-01T00:00:00Z",
 		dependency_count: 0,
+		stats: baseStats,
 		...overrides,
 	};
 }
@@ -88,7 +88,6 @@ const baseStats = {
 beforeEach(() => {
 	mockUseAgents.mockReturnValue({ data: [], isLoading: false });
 	mockUseFleetStats.mockReturnValue({ data: fleetStats, isLoading: false });
-	mockUseAgentStats.mockReturnValue({ data: baseStats, isLoading: false });
 	mockUseAuth.mockReturnValue({ isPlatformAdmin: false });
 });
 
@@ -179,6 +178,7 @@ describe("FleetPage — agent cards (grid)", () => {
 
 		expect(mockUseAgents).toHaveBeenLastCalledWith(undefined, {
 			includeInactive: false,
+			includeStats: true,
 		});
 
 		const toggle = screen.getByRole("switch", { name: "Show Inactive" });
@@ -186,6 +186,7 @@ describe("FleetPage — agent cards (grid)", () => {
 
 		expect(mockUseAgents).toHaveBeenLastCalledWith(undefined, {
 			includeInactive: true,
+			includeStats: true,
 		});
 	});
 
@@ -373,14 +374,17 @@ describe("FleetPage — view toggle", () => {
 });
 
 describe("FleetPage — loading state", () => {
-	it("renders skeletons while fleet stats and agents are loading", async () => {
+	it("shows a loading indicator while agents are loading", async () => {
 		mockUseAgents.mockReturnValue({ data: undefined, isLoading: true });
 		mockUseFleetStats.mockReturnValue({
 			data: undefined,
 			isLoading: true,
 		});
 		const { container } = await renderPage();
-		// Skeleton renders divs with the .animate-pulse class.
+		expect(
+			screen.getByRole("status", { name: /loading agents/i }),
+		).toBeInTheDocument();
+		// Fleet metrics retain compact placeholders while their separate request loads.
 		expect(
 			container.querySelectorAll(".animate-pulse").length,
 		).toBeGreaterThan(0);

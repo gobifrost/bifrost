@@ -69,6 +69,18 @@ async function renderPage() {
 }
 
 describe("Applications — app launch behavior", () => {
+	it("shows a loading indicator while the list loads", async () => {
+		mockUseApplications.mockReturnValue({
+			data: undefined,
+			isLoading: true,
+			refetch: vi.fn(),
+		});
+		await renderPage();
+		expect(
+			screen.getByRole("status", { name: /loading applications/i }),
+		).toBeInTheDocument();
+	});
+
 	it("does not expose the deprecated create code application action", async () => {
 		await renderPage();
 		expect(

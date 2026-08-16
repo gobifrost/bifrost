@@ -119,10 +119,12 @@ def _logo_data_url(data: bytes | None, content_type: str | None) -> str | None:
 
 
 def _application_logo_url(application: Application) -> str | None:
-    """Return a cache-busted URL only after a presentation copy exists."""
-    if not is_logo_thumbnail_version(application.logo_thumbnail_version):
-        return None
-    return f"/api/applications/{application.id}/logo?v={application.logo_thumbnail_version}"
+    """Return a logo URL without hiding legacy images during thumbnail backfill."""
+    if is_logo_thumbnail_version(application.logo_thumbnail_version):
+        return f"/api/applications/{application.id}/logo?v={application.logo_thumbnail_version}"
+    if application.logo_content_type:
+        return f"/api/applications/{application.id}/logo"
+    return None
 
 
 async def application_to_public(

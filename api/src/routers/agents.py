@@ -52,7 +52,7 @@ from shared.logo_processing import (
 from src.repositories.agents import AgentRepository
 from src.services.solutions.guard import assert_not_solution_managed
 from src.routers.tools import get_system_tool_ids
-from src.services.agent_stats import get_agent_stats, get_fleet_stats
+from src.services.agent_stats import get_agent_stats, get_agent_stats_batch, get_fleet_stats
 from src.services.workflow_role_service import sync_agent_roles_to_workflows
 
 logger = logging.getLogger(__name__)
@@ -210,10 +210,12 @@ def _logo_data_url(data: bytes | None, content_type: str | None) -> str | None:
 
 
 def _agent_logo_url(agent: Agent) -> str | None:
-    """Return a cache-busted URL only after a presentation copy exists."""
-    if not is_logo_thumbnail_version(agent.logo_thumbnail_version):
-        return None
-    return f"/api/agents/{agent.id}/logo?v={agent.logo_thumbnail_version}"
+    """Return a logo URL without hiding legacy images during thumbnail backfill."""
+    if is_logo_thumbnail_version(agent.logo_thumbnail_version):
+        return f"/api/agents/{agent.id}/logo?v={agent.logo_thumbnail_version}"
+    if agent.logo_content_type:
+        return f"/api/agents/{agent.id}/logo"
+    return None
 
 
 def _agent_to_public(agent: Agent) -> AgentPublic:
@@ -279,6 +281,10 @@ async def list_agents(
     ),
     category: str | None = None,
     active_only: bool = True,
+    include_stats: bool = Query(
+        False,
+        description="Include per-agent run stats in the list response.",
+    ),
 ) -> list[AgentSummary]:
     """
     List agents the user has access to.
@@ -341,6 +347,12 @@ async def list_agents(
         )
         mcp_counts = {row[0]: row[1] for row in mcp_count_result.all()}
 
+    stats_by_agent = (
+        await get_agent_stats_batch(agent_ids, db)
+        if include_stats and agent_ids
+        else {}
+    )
+
     result = []
     for a in agents:
         summary = AgentSummary.model_validate(a)
@@ -353,6 +365,7 @@ async def list_agents(
             if is_logo_thumbnail_version(a.logo_thumbnail_version)
             else None
         )
+        summary.stats = stats_by_agent.get(a.id)
         result.append(summary)
 
     return result

@@ -10938,6 +10938,8 @@ export interface components {
              * @description Presentation-logo content hash.
              */
             logo_version?: string | null;
+            /** @description Per-agent run stats when explicitly requested by the list caller. */
+            stats?: components["schemas"]["AgentStatsResponse"] | null;
             /**
              * Is Solution Managed
              * @description True if managed by a deployed Solution (read-only on platform)
@@ -35105,6 +35107,8 @@ export interface operations {
                 scope?: string | null;
                 category?: string | null;
                 active_only?: boolean;
+                /** @description Include per-agent run stats in the list response. */
+                include_stats?: boolean;
             };
             header?: never;
             path?: never;
