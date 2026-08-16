@@ -526,6 +526,8 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     name: Promote Dev Images
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     permissions:
       contents: read
       packages: write
@@ -691,7 +693,7 @@ jobs:
           kubectl auth can-i patch deployment -n bifrost
           echo "::endgroup::"
 
-          echo "::group::Deployments the real job would restart"
+          echo "::group::Deployments the real job would monitor"
           kubectl -n bifrost get deployment \
             -l app.kubernetes.io/part-of=bifrost,app.kubernetes.io/component!=message-broker \
             -o wide
@@ -705,7 +707,7 @@ jobs:
             echo ""
             echo "If the step above passed, the real \`deploy-dev\` job will work when this PR merges."
             echo ""
-            echo "### Deployments that would be restarted"
+            echo "### Deployments that would be monitored"
             echo ""
             echo '```'
             kubectl -n bifrost get deployment \
@@ -716,8 +718,9 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # =============================================================================
-  # Deploy Dev - Push-to-main only. Rolls the DigitalOcean deployment once
-  # the :dev images are published. Targets anything labeled
+  # Deploy Dev - Push-to-main only. Waits for Keel to move the DigitalOcean
+  # deployments to the immutable version tags published alongside :dev.
+  # Targets anything labeled
   # `app.kubernetes.io/part-of=bifrost` in the `bifrost` namespace so new
   # services are picked up automatically. Failures page the maintainer via
   # GitHub's built-in workflow-failure email (no extra wiring).
@@ -743,15 +746,49 @@ jobs:
       - name: Save kubeconfig
         run: doctl kubernetes cluster kubeconfig save "${{ secrets.DO_CLUSTER_NAME }}"
 
-      - name: Roll deployments
+      - name: Wait for image automation
+        env:
+          EXPECTED_VERSION: ${{ needs.build-dev.outputs.version }}
         run: |
-          kubectl -n bifrost rollout restart deployment \
-            -l app.kubernetes.io/part-of=bifrost,app.kubernetes.io/component!=message-broker
+          set -euo pipefail
+          expected_api="ghcr.io/${{ env.API_IMAGE }}:${EXPECTED_VERSION}"
+          expected_client="ghcr.io/${{ env.CLIENT_IMAGE }}:${EXPECTED_VERSION}"
+          deadline=$((SECONDS + 600))
+
+          while true; do
+            pending=0
+            DEPLOYMENTS=$(kubectl -n bifrost get deployment \
+              -l app.kubernetes.io/part-of=bifrost,app.kubernetes.io/component!=message-broker \
+              -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+            for d in $DEPLOYMENTS; do
+              component=$(kubectl -n bifrost get "deployment/$d" \
+                -o jsonpath='{.metadata.labels.app\.kubernetes\.io/component}')
+              case "$component" in
+                client) expected="$expected_client" ;;
+                api|scheduler|worker) expected="$expected_api" ;;
+                *) echo "Unsupported Bifrost deployment component: $d ($component)" >&2; exit 1 ;;
+              esac
+              images=$(kubectl -n bifrost get "deployment/$d" \
+                -o jsonpath='{range .spec.template.spec.initContainers[*]}{.image}{"\n"}{end}{range .spec.template.spec.containers[*]}{.image}{"\n"}{end}')
+              if [ -z "$images" ] || [ "$(printf '%s\n' "$images" | sort -u)" != "$expected" ]; then
+                echo "Waiting for $d to use $expected (currently: $(printf '%s' "$images" | tr '\n' ' '))"
+                pending=1
+              fi
+            done
+            if [ "$pending" -eq 0 ]; then
+              break
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "Timed out waiting for image automation to deploy ${EXPECTED_VERSION}" >&2
+              exit 1
+            fi
+            sleep 10
+          done
 
       - name: Wait for rollouts
         run: |
           set -e
-          # Query the same label selector we restarted, so new services are
+          # Query the same label selector watched above, so new services are
           # picked up without editing this workflow.
           DEPLOYMENTS=$(kubectl -n bifrost get deployment \
             -l app.kubernetes.io/part-of=bifrost,app.kubernetes.io/component!=message-broker \

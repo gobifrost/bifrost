@@ -199,10 +199,20 @@ def test_dev_artifact_is_built_on_merge_candidate_and_promoted_without_rebuild()
     assert "docker buildx imagetools create" in promotion_source
     assert "Digest mismatch" in promotion_source
     assert "fallback" not in promotion_source.lower()
+    assert promotion["outputs"]["version"] == "${{ steps.version.outputs.version }}"
 
     deploy = jobs["deploy-dev"]
     assert deploy["needs"] == ["build-dev"]
     deploy_source = "\n".join(step.get("run", "") for step in deploy["steps"])
+    assert "rollout restart" not in deploy_source
+    assert "Wait for image automation" in {
+        step.get("name") for step in deploy["steps"]
+    }
+    assert "needs.build-dev.outputs.version" in str(deploy["steps"])
+    assert 'expected_api="ghcr.io/${{ env.API_IMAGE }}:${EXPECTED_VERSION}"' in deploy_source
+    assert 'expected_client="ghcr.io/${{ env.CLIENT_IMAGE }}:${EXPECTED_VERSION}"' in deploy_source
+    assert "app.kubernetes.io/component!=message-broker" in deploy_source
+    assert "Timed out waiting for image automation" in deploy_source
     assert "port-forward service/api" in deploy_source
     assert "port-forward service/client" in deploy_source
     assert "http://127.0.0.1:18000/health/ready" in deploy_source
