@@ -11,7 +11,7 @@
 #   ./test.sh                           Unit tests only (fast default).
 #   ./test.sh unit                      Same as above.
 #   ./test.sh e2e                       Backend e2e tests.
-#   ./test.sh all                       Unit + e2e (mirrors CI).
+#   ./test.sh all                       All backend tests, including slow tests.
 #   ./test.sh tests/path/... [args]     Pass through to pytest.
 #
 # Quality checks:
@@ -26,6 +26,7 @@
 #   ./test.sh client e2e e2e/auth.unauth.spec.ts   Pass through to playwright.
 #
 # CI escape hatch:
+#   ./test.sh pre-pr                    Required local PR/merge gate for a clean commit.
 #   ./test.sh ci                        Full isolated run: up, all tests, down.
 #
 # Global flags (apply to most subcommands):
@@ -337,6 +338,45 @@ client_unit() {
     (cd client && npm test "$@")
 }
 
+client_ci_checks() {
+    echo "Building the production client and running Node 26 CI checks..."
+    docker compose -f "$COMPOSE_FILE" --profile client-check build client-check-runner
+    docker compose -f "$COMPOSE_FILE" --profile client-check run --rm --no-deps \
+        client-check-runner
+}
+
+repository_ci_checks() {
+    echo "Checking GitHub Action pins..."
+    python3 api/scripts/check_github_action_pins.py --verify-versions
+
+    echo "Checking generated Codex skill mirrors..."
+    scripts/sync-codex-skills.sh
+    if ! git diff --quiet -- plugins/bifrost/skills .codex/skills; then
+        echo "ERROR: Codex skill mirrors were stale and have been regenerated." >&2
+        echo "Commit the generated changes, then rerun ./test.sh pre-pr." >&2
+        return 1
+    fi
+}
+
+build_local_api_candidate() {
+    local head_sha version image_tag
+    head_sha="$(git rev-parse --short=12 HEAD)"
+    version="$(scripts/compute-dev-version.sh)"
+    image_tag="bifrost-local-api-candidate:${head_sha}"
+
+    echo "Building and exercising the production API candidate..."
+    docker build \
+        --file api/Dockerfile \
+        --build-arg "BIFROST_VERSION=$version" \
+        --tag "$image_tag" \
+        .
+    docker run --rm \
+        --env "EXPECTED_VERSION=$version" \
+        --entrypoint python \
+        "$image_tag" \
+        -c "import os; from shared.version import get_version; from src.main import app; assert app is not None; assert get_version() == os.environ['EXPECTED_VERSION']"
+}
+
 start_test_client() {
     # Playwright runs against the production client image. Keep frontend
     # startup out of stack_up so backend-only lanes never build or boot a
@@ -448,6 +488,57 @@ cmd_ci() {
     client_e2e
 }
 
+cmd_pre_pr() {
+    local head_sha stack_was_up
+
+    if [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+        echo "ERROR: ./test.sh pre-pr requires a clean worktree." >&2
+        echo "Commit the exact candidate first so the result maps to one SHA." >&2
+        git status --short >&2
+        return 1
+    fi
+
+    echo "Refreshing origin/main before the local PR gate..."
+    git fetch --quiet origin main
+    if ! git merge-base --is-ancestor origin/main HEAD; then
+        echo "ERROR: HEAD does not contain the latest origin/main." >&2
+        echo "Rebase or merge origin/main, then rerun ./test.sh pre-pr." >&2
+        return 1
+    fi
+
+    head_sha="$(git rev-parse HEAD)"
+    stack_was_up=0
+    if stack_is_up "$COMPOSE_PROJECT_NAME" "$COMPOSE_FILE"; then
+        stack_was_up=1
+    else
+        # Install the trap before boot so a partial startup is cleaned up too.
+        trap 'export_logs "$COMPOSE_PROJECT_NAME" "$COMPOSE_FILE"; stack_down' EXIT
+    fi
+
+    print_project
+    echo "Pre-PR candidate: $head_sha"
+    repository_ci_checks
+    client_ci_checks
+    stack_up
+    quality_api
+    cmd_unit
+    cmd_e2e
+    client_smoke
+    build_local_api_candidate
+
+    if [ "$(git rev-parse HEAD)" != "$head_sha" ] || \
+       [ -n "$(git status --porcelain --untracked-files=all)" ]; then
+        echo "ERROR: the candidate changed while ./test.sh pre-pr was running." >&2
+        echo "Commit the final state and rerun the gate." >&2
+        return 1
+    fi
+
+    echo "Local PR gate passed for $head_sha"
+    if [ "$stack_was_up" = "1" ]; then
+        echo "The pre-existing test stack remains running."
+    fi
+}
+
 # =============================================================================
 # Dispatch
 # =============================================================================
@@ -464,6 +555,7 @@ case "$1" in
     all) shift; cmd_all "$@" ;;
     quality) shift; cmd_quality "$@" ;;
     client) shift; cmd_client "$@" ;;
+    pre-pr) shift; cmd_pre_pr "$@" ;;
     ci) cmd_ci ;;
     -h|--help|help)
         sed -n '2,35p' "$0"

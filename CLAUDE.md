@@ -288,7 +288,7 @@ export async function getDataProviders() {
 
 -   **Tests**: All work requires tests. Backend logic → unit tests in `api/tests/unit/`. Endpoint/workflow/integration changes → e2e tests in `api/tests/e2e/`. React components → sibling `*.test.tsx` (vitest). User-facing features → happy-path spec in `client/e2e/` (Playwright).
     -   **Functional frontend modules require vitest coverage.** New or modified `.ts` files under `client/src/lib/**` and `client/src/services/**` that export functions (auth helpers, storage adapters, API wrappers, formatters, etc.) need a sibling `*.test.ts` covering the public API. Pure type/constant re-export files and files that only import and re-configure third-party SDKs are exempt. If the module has a cross-tab, cross-window, or storage-boundary concern (like `auth-token.ts`), the test MUST exercise that boundary — a regression that only reproduces with two tabs open is one a future refactor will silently re-introduce otherwise.
-    -   **Scoped verification is the local default.** Run the tests that directly exercise the changed behavior, its known consumers, and any affected contract boundaries. Full backend, Vitest, and Playwright suites are broad integration-gate checks, not a routine local completion requirement. Until every suite is wired into that gate, targeted coverage for changed behavior remains mandatory; never assume an unrun suite is covered elsewhere. Report exactly what ran and which broader suites did not run.
+    -   **Scoped verification is the development-loop default.** Run the tests that directly exercise the changed behavior, its known consumers, and any affected contract boundaries while iterating. Before opening or queueing a PR, commit the exact candidate and run `./test.sh pre-pr`; this broad local gate is mandatory even when the change itself is narrowly scoped. Rerun it after any commit, rebase, or merge. Report exact targeted commands and the pre-PR candidate SHA.
     -   **A known failure must receive a durable disposition.** If a broader local or CI run finds a failure outside the scoped set, determine whether it is a regression, product race, leaked state, harness defect, overcomplicated test, or obsolete coverage. Fix the cause, simplify the test, or delete genuinely redundant coverage with a documented replacement. "Unrelated" or "flaky" alone is not a disposition.
     -   **Never rerun until green or mask instability.** Do not add retries, longer timeouts, `skip`, or `xfail`. Reproduce the exposing condition, fix the hypothesized cause, then use repetition only to validate the fix. See `.claude/skills/bifrost-testing/SKILL.md` for the full protocol.
     -   **Prefer simple, durable tests.** Keep one observable contract per test, minimal fixtures, deterministic state, explicit cleanup, and only one useful end-to-end happy path. Move edge cases down to unit/component tests; complexity is not evidence of rigor.
@@ -318,7 +318,7 @@ export async function getDataProviders() {
 ./test.sh                                          # Unit tests only (fast default)
 ./test.sh unit                                     # Same
 ./test.sh e2e                                      # Backend e2e
-./test.sh all                                      # Unit + e2e (mirrors CI)
+./test.sh all                                      # All backend tests, including slow tests
 ./test.sh tests/unit/test_foo.py::test_bar -v      # Passthrough to pytest
 
 # Client tests
@@ -328,6 +328,7 @@ export async function getDataProviders() {
 ./test.sh client e2e e2e/auth.unauth.spec.ts       # Passthrough to Playwright
 
 # CI (one-shot: boot → all tests → tear down)
+./test.sh pre-pr                         # Required clean-commit gate before opening/queueing a PR
 ./test.sh ci
 
 # Type Generation (requires dev stack running via ./debug.sh)
@@ -398,6 +399,8 @@ Before marking work complete, select verification from the actual change surface
 (cd client && npm run generate:types)
 ```
 
-The selected tests must cover the changed behavior, known consumers, and contract tripwires. Do not run `./test.sh all`, the full Vitest suite, or the full Playwright suite by default; use them when explicitly requested, when reproducing a broad CI failure, or when no honest bounded selection exists for a cross-cutting change.
+The selected tests must cover the changed behavior, known consumers, and contract tripwires. During iteration, do not run `./test.sh all`, the full Vitest suite, or the full Playwright suite by default; use targeted coverage to get fast, relevant feedback.
+
+Before opening or queueing a PR, the worktree must be clean and based on current `origin/main`, and `./test.sh pre-pr` must pass for the exact `HEAD`. This is separate from scoped completion verification: it runs every locally reproducible required PR/merge-queue check, including the full backend E2E and critical browser-smoke suites. GitHub still owns non-local boundaries such as the synthetic merge ref, registry publication, signing, and attestation.
 
 In the final handoff, list the exact checks and tests run, state which broader suites were not run, and disclose any known failure. A known out-of-scope failure must be permanently fixed in the current change or split into a dedicated blocking repair change; it cannot be waived as flaky or left as an unowned follow-up.

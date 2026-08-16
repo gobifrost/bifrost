@@ -140,6 +140,57 @@ def test_test_sh_advertises_dockerized_api_quality_lane():
     assert "sh /app/scripts/quality_api.sh" in script
 
 
+def test_pre_pr_gate_covers_every_locally_reproducible_merge_gate():
+    """A PR must not be the first place broad, reproducible checks run."""
+    script = _find_repo_file("test.sh").read_text()
+    pre_pr = script.split("cmd_pre_pr() {", 1)[1].split("\n}", 1)[0]
+
+    for required_call in (
+        "repository_ci_checks",
+        "client_ci_checks",
+        "quality_api",
+        "cmd_unit",
+        "cmd_e2e",
+        "client_smoke",
+        "build_local_api_candidate",
+    ):
+        assert required_call in pre_pr
+
+    assert "git status --porcelain --untracked-files=all" in pre_pr
+    assert "git fetch --quiet origin main" in pre_pr
+    assert "git merge-base --is-ancestor origin/main HEAD" in pre_pr
+    assert 'git rev-parse HEAD' in pre_pr
+
+    repository_checks = script.split("repository_ci_checks() {", 1)[1].split(
+        "\n}", 1
+    )[0]
+    assert "check_github_action_pins.py --verify-versions" in repository_checks
+    assert "scripts/sync-codex-skills.sh" in repository_checks
+    assert "git diff --quiet -- plugins/bifrost/skills .codex/skills" in repository_checks
+
+    api_candidate = script.split("build_local_api_candidate() {", 1)[1].split(
+        "\n}", 1
+    )[0]
+    assert "--file api/Dockerfile" in api_candidate
+    assert "from src.main import app" in api_candidate
+
+
+def test_pre_pr_client_checks_use_the_ci_node_and_production_build():
+    compose = yaml.safe_load(_COMPOSE.read_text())
+    runner = compose["services"]["client-check-runner"]
+
+    assert runner["build"]["dockerfile"] == "Dockerfile"
+    assert runner["build"]["target"] == "builder"
+    assert runner["command"] == [
+        "sh",
+        "-c",
+        "npm run tsc && npm run lint && npm test",
+    ]
+
+    dockerfile = _find_repo_file("client/Dockerfile").read_text()
+    assert "FROM --platform=$BUILDPLATFORM node:26-slim@" in dockerfile
+
+
 def test_api_quality_script_runs_pyright_without_ci_venv_config():
     script = _find_repo_file("api/scripts/quality_api.sh").read_text()
     assert 'config.pop("venvPath", None)' in script

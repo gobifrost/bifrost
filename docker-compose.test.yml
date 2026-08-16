@@ -429,6 +429,21 @@ services:
     profiles:
       - test  # Only start when running tests
 
+  # Node 26 matches actions/setup-node in CI. The builder target compiles the
+  # production client before this runner executes TypeScript, ESLint, and the
+  # complete Vitest suite against the same source snapshot.
+  client-check-runner:
+    image: bifrost-test-client-check:latest
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      target: builder
+      args:
+        VITE_BIFROST_VERSION: test
+    command: ["sh", "-c", "npm run tsc && npm run lint && npm test"]
+    profiles:
+      - client-check
+
   # =============================================================================
   # Client E2E Testing Services (started with --profile client)
   # =============================================================================
