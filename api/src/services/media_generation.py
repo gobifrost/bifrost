@@ -106,6 +106,8 @@ def _raise_provider_error(response: httpx.Response, kind: MediaKind) -> None:
         if isinstance(detail, str) and detail.strip():
             message = detail.strip()[:500]
     except ValueError:
+        # Providers may return HTML or plain text for gateway errors. Keep the
+        # generic, status-bearing message instead of exposing that response body.
         pass
     raise MediaGenerationError(message)
 
