@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/data-table";
 import { term, useTerminology } from "@/lib/terminology";
 import type { components } from "@/lib/v1";
+import { prefetchApplicationDetail } from "@/lib/detail-route-loaders";
 
 export type ApplicationListItem = components["schemas"]["ApplicationPublic"] & {
 	app_model?: string | null;
@@ -131,156 +132,190 @@ export function ApplicationListSurface({
 						</DataTableRow>
 					</DataTableHeader>
 					<DataTableBody>
-						{apps.map((app) => (
-							<DataTableRow key={app.id}>
-								{isPlatformAdmin && (
-									<DataTableCell className="w-0 whitespace-nowrap">
-										{app.organization_id ? (
-											<Badge
-												variant="outline"
-												className="text-xs"
-											>
-												<Building2 className="mr-1 h-3 w-3" />
-												{getOrgName(
-													app.organization_id,
-												)}
-											</Badge>
-										) : (
-											<Badge
-												variant="default"
-												className="text-xs"
-											>
-												<Globe className="mr-1 h-3 w-3" />
-												Global
-											</Badge>
-										)}
-									</DataTableCell>
-								)}
-								<DataTableCell className="font-medium">
-									{app.name}
-								</DataTableCell>
-								<DataTableCell className="max-w-xs truncate text-muted-foreground">
-									{app.description || (
-										<span className="italic">
-											No description
-										</span>
-									)}
-								</DataTableCell>
-								<DataTableCell className="w-0 whitespace-nowrap">
-									<div className="flex gap-1">
-										{app.is_published && (
-											<Badge
-												variant="default"
-												className="text-xs"
-											>
-												Published
-											</Badge>
-										)}
-										{app.has_unpublished_changes && (
-											<Badge
-												variant="outline"
-												className="text-xs"
-											>
-												Draft
-											</Badge>
-										)}
-										{!app.is_published &&
-											!app.has_unpublished_changes && (
+						{apps.map((app) => {
+							const opensPreview =
+								!canLaunchApp(app) && Boolean(onPreview);
+							return (
+								<DataTableRow
+									key={app.id}
+									onPointerEnter={() =>
+										prefetchApplicationDetail(
+											app,
+											opensPreview,
+										)
+									}
+									onFocus={() =>
+										prefetchApplicationDetail(
+											app,
+											opensPreview,
+										)
+									}
+								>
+									{isPlatformAdmin && (
+										<DataTableCell className="w-0 whitespace-nowrap">
+											{app.organization_id ? (
 												<Badge
-													variant="secondary"
+													variant="outline"
 													className="text-xs"
 												>
-													{isV2App(app)
-														? "V2"
-														: "Empty"}
+													<Building2 className="mr-1 h-3 w-3" />
+													{getOrgName(
+														app.organization_id,
+													)}
+												</Badge>
+											) : (
+												<Badge
+													variant="default"
+													className="text-xs"
+												>
+													<Globe className="mr-1 h-3 w-3" />
+													Global
 												</Badge>
 											)}
-									</div>
-								</DataTableCell>
-								<DataTableCell className="w-0 whitespace-nowrap">
-									{app.is_published ? "Published" : "-"}
-								</DataTableCell>
-								<DataTableCell className="w-0 whitespace-nowrap text-right">
-									<div className="flex gap-1 justify-end">
-										<Button
-											size="sm"
-											onClick={() => onLaunch(app)}
-											disabled={!canLaunchApp(app)}
-											title={
-												!canLaunchApp(app)
-													? "No published version"
-													: `Open ${term(terminology, "app", "formalSingularLower")}`
-											}
-										>
-											<PlayCircle className="h-4 w-4" />
-										</Button>
-										{canManageApps &&
-											!isV2App(app) &&
-											app.has_unpublished_changes &&
-											onPreview && (
-												<Button
-													variant="ghost"
-													size="sm"
-													onClick={() =>
-														onPreview(app)
-													}
-													title="Preview draft"
-												>
-													<Eye className="h-4 w-4" />
-												</Button>
-											)}
-										{app.is_solution_managed && (
-											<SolutionManagedBadge
-												solutionId={app.solution_id}
+										</DataTableCell>
+									)}
+									<DataTableCell className="font-medium">
+										<div className="flex items-center gap-2">
+											<EntityLogo
+												entityType="app"
+												entityId={app.id}
+												logo={app.logo_url ?? null}
+												fallback={
+													<AppWindow className="h-3.5 w-3.5 text-muted-foreground" />
+												}
+												size={20}
+												className="h-5 w-5 shrink-0 rounded object-cover"
 											/>
+											<span>{app.name}</span>
+										</div>
+									</DataTableCell>
+									<DataTableCell className="max-w-xs truncate text-muted-foreground">
+										{app.description || (
+											<span className="italic">
+												No description
+											</span>
 										)}
-										{canManageApps &&
-											!app.is_solution_managed && (
-												<>
-													{onOpenSettings && (
-														<Button
-															variant="ghost"
-															size="sm"
-															onClick={() =>
-																onOpenSettings(
-																	app,
-																)
-															}
-															title="Settings"
-														>
-															<Pencil className="h-4 w-4" />
-														</Button>
-													)}
-													{onOpenCode && (
-														<Button
-															variant="ghost"
-															size="sm"
-															onClick={() =>
-																onOpenCode(app)
-															}
-															title="Code editor"
-														>
-															<Code2 className="h-4 w-4" />
-														</Button>
-													)}
-													{onDelete && (
-														<Button
-															variant="ghost"
-															size="sm"
-															onClick={() =>
-																onDelete(app)
-															}
-															title={`Delete ${term(terminology, "app", "formalSingularLower")}`}
-														>
-															<Trash2 className="h-4 w-4" />
-														</Button>
-													)}
-												</>
+									</DataTableCell>
+									<DataTableCell className="w-0 whitespace-nowrap">
+										<div className="flex gap-1">
+											{app.is_published && (
+												<Badge
+													variant="default"
+													className="text-xs"
+												>
+													Published
+												</Badge>
 											)}
-									</div>
-								</DataTableCell>
-							</DataTableRow>
-						))}
+											{app.has_unpublished_changes && (
+												<Badge
+													variant="outline"
+													className="text-xs"
+												>
+													Draft
+												</Badge>
+											)}
+											{!app.is_published &&
+												!app.has_unpublished_changes && (
+													<Badge
+														variant="secondary"
+														className="text-xs"
+													>
+														{isV2App(app)
+															? "V2"
+															: "Empty"}
+													</Badge>
+												)}
+										</div>
+									</DataTableCell>
+									<DataTableCell className="w-0 whitespace-nowrap">
+										{app.is_published ? "Published" : "-"}
+									</DataTableCell>
+									<DataTableCell className="w-0 whitespace-nowrap text-right">
+										<div className="flex gap-1 justify-end">
+											<Button
+												size="sm"
+												onClick={() => onLaunch(app)}
+												disabled={!canLaunchApp(app)}
+												title={
+													!canLaunchApp(app)
+														? "No published version"
+														: `Open ${term(terminology, "app", "formalSingularLower")}`
+												}
+											>
+												<PlayCircle className="h-4 w-4" />
+											</Button>
+											{canManageApps &&
+												!isV2App(app) &&
+												app.has_unpublished_changes &&
+												onPreview && (
+													<Button
+														variant="ghost"
+														size="sm"
+														onClick={() =>
+															onPreview(app)
+														}
+														title="Preview draft"
+													>
+														<Eye className="h-4 w-4" />
+													</Button>
+												)}
+											{app.is_solution_managed && (
+												<SolutionManagedBadge
+													solutionId={app.solution_id}
+												/>
+											)}
+											{canManageApps &&
+												!app.is_solution_managed && (
+													<>
+														{onOpenSettings && (
+															<Button
+																variant="ghost"
+																size="sm"
+																onClick={() =>
+																	onOpenSettings(
+																		app,
+																	)
+																}
+																title="Settings"
+															>
+																<Pencil className="h-4 w-4" />
+															</Button>
+														)}
+														{onOpenCode && (
+															<Button
+																variant="ghost"
+																size="sm"
+																onClick={() =>
+																	onOpenCode(
+																		app,
+																	)
+																}
+																title="Code editor"
+															>
+																<Code2 className="h-4 w-4" />
+															</Button>
+														)}
+														{onDelete && (
+															<Button
+																variant="ghost"
+																size="sm"
+																onClick={() =>
+																	onDelete(
+																		app,
+																	)
+																}
+																title={`Delete ${term(terminology, "app", "formalSingularLower")}`}
+															>
+																<Trash2 className="h-4 w-4" />
+															</Button>
+														)}
+													</>
+												)}
+										</div>
+									</DataTableCell>
+								</DataTableRow>
+							);
+						})}
 					</DataTableBody>
 				</DataTable>
 			</div>
@@ -290,6 +325,7 @@ export function ApplicationListSurface({
 	return (
 		<div className="grid grid-cols-1 gap-4 sm:grid-cols-[repeat(auto-fill,minmax(320px,1fr))]">
 			{apps.map((app) => {
+				const opensPreview = !canLaunchApp(app) && Boolean(onPreview);
 				const defaultTarget = canLaunchApp(app)
 					? () => onLaunch(app)
 					: onPreview
@@ -305,6 +341,12 @@ export function ApplicationListSurface({
 						key={app.id}
 						role="button"
 						tabIndex={0}
+						onPointerEnter={() =>
+							prefetchApplicationDetail(app, opensPreview)
+						}
+						onFocus={() =>
+							prefetchApplicationDetail(app, opensPreview)
+						}
 						onClick={defaultTarget}
 						onKeyDown={(e) => {
 							if (

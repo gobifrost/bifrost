@@ -378,6 +378,21 @@
 		}
 	}
 
+	@keyframes routeReadyReveal {
+		from {
+			opacity: 0.72;
+			filter: blur(2px);
+			clip-path: inset(0 0 6px 0 round 8px);
+			transform: translateY(4px);
+		}
+		to {
+			opacity: 1;
+			filter: blur(0);
+			clip-path: inset(0 round 0);
+			transform: translateY(0);
+		}
+	}
+
 	.route-transition-progress-track {
 		background: oklch(from var(--primary) l c h / 0.12);
 	}
@@ -392,13 +407,14 @@
 		transform-origin: left center;
 	}
 
-	.route-transition-progress-fill[data-state="finishing"] {
-		transform: translateX(0) scaleX(1);
+	.route-ready-reveal {
+		animation: routeReadyReveal 220ms cubic-bezier(0.16, 1, 0.3, 1);
 	}
 
-	/* Apply fade-in animation to main content */
-	main > * {
-		animation: fadeIn 0.3s ease-out;
+	@media (prefers-reduced-motion: reduce) {
+		.route-ready-reveal {
+			animation: none;
+		}
 	}
 
 	/* Button press effect */

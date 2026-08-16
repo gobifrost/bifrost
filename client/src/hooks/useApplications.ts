@@ -85,7 +85,7 @@ export function useApplication(slug: string | undefined) {
 				path: { slug: slug ?? "" },
 			},
 		},
-		{ enabled: !!slug },
+		{ enabled: !!slug, staleTime: 60_000 },
 	);
 }
 

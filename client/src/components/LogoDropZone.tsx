@@ -42,7 +42,7 @@ export function LogoDropZone({
 	onChange,
 }: LogoDropZoneProps) {
 	const fileInputRef = useRef<HTMLInputElement>(null);
-	const [cacheKey, setCacheKey] = useState(() => String(Date.now()));
+	const [cacheKey, setCacheKey] = useState<string | null>(null);
 	const [isDragging, setIsDragging] = useState(false);
 	const [imageLoaded, setImageLoaded] = useState(false);
 	const [isErrored, setIsErrored] = useState(false);
@@ -70,7 +70,10 @@ export function LogoDropZone({
 		try {
 			const fd = new FormData();
 			fd.append("file", file);
-			const resp = await authFetch(uploadUrl, { method: "POST", body: fd });
+			const resp = await authFetch(uploadUrl, {
+				method: "POST",
+				body: fd,
+			});
 			if (!resp.ok) {
 				const err = await resp.json().catch(() => ({}));
 				throw new Error(err.detail || `Upload failed (${resp.status})`);
@@ -126,7 +129,9 @@ export function LogoDropZone({
 	);
 
 	const rounded = shape === "circle" ? "rounded-full" : "rounded-md";
-	const src = `${previewUrl}?v=${encodeURIComponent(cacheKey)}`;
+	const src = cacheKey
+		? `${previewUrl}${previewUrl.includes("?") ? "&" : "?"}v=${encodeURIComponent(cacheKey)}`
+		: previewUrl;
 
 	return (
 		<div
@@ -150,6 +155,9 @@ export function LogoDropZone({
 				isDragging ? "ring-2 ring-primary ring-offset-2" : ""
 			}`}
 		>
+			<div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
+				{fallback}
+			</div>
 			{!isErrored && (
 				<img
 					data-testid="logo-drop-zone-img"
@@ -157,18 +165,13 @@ export function LogoDropZone({
 					alt=""
 					width={size}
 					height={size}
-					className="h-full w-full object-cover"
+					className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-150 motion-reduce:transition-none ${imageLoaded ? "opacity-100" : "opacity-0"}`}
 					onLoad={() => setImageLoaded(true)}
 					onError={() => {
 						setIsErrored(true);
 						setImageLoaded(false);
 					}}
 				/>
-			)}
-			{(isErrored || !imageLoaded) && (
-				<div className="absolute inset-0 flex items-center justify-center text-muted-foreground">
-					{fallback}
-				</div>
 			)}
 			<div
 				className={`absolute inset-0 flex items-center justify-center bg-black/50 ${rounded} transition-opacity ${

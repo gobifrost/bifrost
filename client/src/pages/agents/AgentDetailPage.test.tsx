@@ -235,13 +235,3 @@ describe("AgentDetailPage — solution back-nav", () => {
 		expect(back).toHaveAttribute("href", "/agents");
 	});
 });
-
-describe("AgentDetailPage — loading state in edit mode", () => {
-	it("renders 'Loading…' while the agent is being fetched", async () => {
-		mockUseAgent.mockReturnValue({ data: undefined, isLoading: true });
-		await renderAtRoute("/agents/agent-1");
-		expect(
-			screen.getByRole("heading", { name: /loading/i }),
-		).toBeInTheDocument();
-	});
-});

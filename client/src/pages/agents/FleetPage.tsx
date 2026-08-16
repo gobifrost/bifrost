@@ -8,7 +8,7 @@
  */
 
 import { type MouseEvent, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
 	AlertTriangle,
 	Bot,
@@ -80,6 +80,7 @@ import {
 	formatNumber,
 	formatRelativeTime,
 } from "@/lib/utils";
+import { prefetchAgentDetail } from "@/lib/detail-route-loaders";
 
 type ViewMode = "grid" | "table";
 type Organization = components["schemas"]["OrganizationPublic"];
@@ -468,6 +469,8 @@ function AgentGridCard({
 	return (
 		<Link
 			to={`/agents/${agent.id}`}
+			onPointerEnter={() => prefetchAgentDetail(agent.id)}
+			onFocus={() => prefetchAgentDetail(agent.id)}
 			className={cn(
 				"group flex flex-col overflow-hidden",
 				CARD_SURFACE,
@@ -702,14 +705,22 @@ function AgentTableRow({
 	showOrg: boolean;
 	orgName: string;
 }) {
+	const navigate = useNavigate();
 	const stats = agent.stats;
 	const hasRuns = (stats?.runs_7d ?? 0) > 0;
 
 	return (
 		<DataTableRow
-			className="cursor-pointer hover:bg-accent/40"
-			onClick={() => {
-				window.location.href = `/agents/${agent.id}`;
+			className="cursor-pointer hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+			tabIndex={0}
+			onPointerEnter={() => prefetchAgentDetail(agent.id)}
+			onFocus={() => prefetchAgentDetail(agent.id)}
+			onClick={() => navigate(`/agents/${agent.id}`)}
+			onKeyDown={(event) => {
+				if (event.key === "Enter" || event.key === " ") {
+					event.preventDefault();
+					navigate(`/agents/${agent.id}`);
+				}
 			}}
 		>
 			{showOrg && (
@@ -719,7 +730,16 @@ function AgentTableRow({
 			)}
 			<DataTableCell>
 				<div className="flex items-center gap-2">
-					<Bot className="h-3.5 w-3.5 text-muted-foreground" />
+					<EntityLogo
+						entityType="agent"
+						entityId={agent.id}
+						logo={agent.logo_url ?? null}
+						fallback={
+							<Bot className="h-3.5 w-3.5 text-muted-foreground" />
+						}
+						size={20}
+						className="h-5 w-5 shrink-0 rounded object-cover"
+					/>
 					<span className="font-medium">{agent.name}</span>
 					{agent.is_solution_managed ? (
 						<SolutionManagedBadge solutionId={agent.solution_id} />

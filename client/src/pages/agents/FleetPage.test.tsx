@@ -68,6 +68,7 @@ function makeAgent(overrides: Partial<Record<string, unknown>> = {}) {
 		owner_user_id: null,
 		created_at: "2026-04-01T00:00:00Z",
 		dependency_count: 0,
+		logo_url: null,
 		stats: baseStats,
 		...overrides,
 	};
@@ -370,6 +371,24 @@ describe("FleetPage — view toggle", () => {
 		// Header cells from AgentTable
 		expect(within(table!).getByText(/runs \(7d\)/i)).toBeInTheDocument();
 		expect(within(table!).getByText("Alpha")).toBeInTheDocument();
+	});
+
+	it("keeps the agent icon in table view", async () => {
+		mockUseAgents.mockReturnValue({
+			data: [
+				makeAgent({
+					id: "a",
+					name: "Alpha",
+					logo_url: "/api/agents/a/logo",
+				}),
+			],
+			isLoading: false,
+		});
+		const { user } = await renderPage();
+		await user.click(screen.getByLabelText(/table view/i));
+		expect(
+			document.querySelector('img[src="/api/agents/a/logo"]'),
+		).not.toBeNull();
 	});
 });
 

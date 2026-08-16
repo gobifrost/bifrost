@@ -85,7 +85,7 @@ export function useAgent(agentId: string | undefined) {
 		"get",
 		"/api/agents/{agent_id}",
 		{ params: { path: { agent_id: agentId ?? "" } } },
-		{ enabled: !!agentId },
+		{ enabled: !!agentId, staleTime: 60_000 },
 	);
 }
 

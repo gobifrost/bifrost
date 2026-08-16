@@ -38,7 +38,8 @@ import {
 
 // jsDelivr — JSPM's CDN 404s on floating tags (`@2`), only exact versions
 // resolve. Pinned to an exact version for reproducible loads.
-const ESM_SHIMS_URL = "https://cdn.jsdelivr.net/npm/es-module-shims@2.8.0/dist/es-module-shims.js";
+const ESM_SHIMS_URL =
+	"https://cdn.jsdelivr.net/npm/es-module-shims@2.8.0/dist/es-module-shims.js";
 // Force esm.sh to leave React/Router as bare specifiers in its own response so
 // they resolve back through our static import map to the host's copies. Same
 // instance everywhere -> no "two Reacts" hooks failure when a user dep calls
@@ -71,7 +72,11 @@ function ensureEsModuleShimsLoaded(): Promise<void> {
 		script.src = ESM_SHIMS_URL;
 		script.onload = () => resolve();
 		script.onerror = () =>
-			reject(new Error(`Failed to load es-module-shims from ${ESM_SHIMS_URL}`));
+			reject(
+				new Error(
+					`Failed to load es-module-shims from ${ESM_SHIMS_URL}`,
+				),
+			);
 		document.head.appendChild(script);
 	});
 	return esModuleShimsPromise;
@@ -87,7 +92,7 @@ function registerUserDepImportMap(dependencies: Record<string, string>): void {
 	// Always include the platform keys in the shim-mode map too — shim-mode
 	// modules can't see the native importmap, so they need their own copy.
 	const imports: Record<string, string> = {
-		"react": "/__bifrost_modules/react.js",
+		react: "/__bifrost_modules/react.js",
 		"react-dom": "/__bifrost_modules/react-dom.js",
 		"react-dom/client": "/__bifrost_modules/react-dom-client.js",
 		"react/jsx-runtime": "/__bifrost_modules/react-jsx-runtime.js",
@@ -96,7 +101,8 @@ function registerUserDepImportMap(dependencies: Record<string, string>): void {
 		"lucide-react": "/__bifrost_modules/lucide-react.js",
 	};
 	for (const [name, version] of Object.entries(dependencies)) {
-		imports[name] = `https://esm.sh/${name}@${version}?external=${REACT_EXTERNALS}`;
+		imports[name] =
+			`https://esm.sh/${name}@${version}?external=${REACT_EXTERNALS}`;
 	}
 
 	const key = JSON.stringify(imports);
@@ -109,7 +115,7 @@ function registerUserDepImportMap(dependencies: Record<string, string>): void {
 	document.head.appendChild(script);
 }
 
-interface BundleManifest {
+export interface BundleManifest {
 	// null for a standalone_v2 app with no built dist yet; a string otherwise.
 	entry: string | null;
 	css: string | null;
@@ -142,19 +148,183 @@ interface BundledAppShellProps {
 // React component type exported by the bundled entry.
 type BundledAppComponent = React.ComponentType<Record<string, never>>;
 
-export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellProps) {
+interface PreparedAppBundle {
+	manifest: BundleManifest;
+	component: BundledAppComponent | null;
+	entry: string | null;
+	cssHref: string | null;
+}
+
+const preparedBundles = new Map<string, PreparedAppBundle>();
+const preparingBundles = new Map<string, Promise<PreparedAppBundle>>();
+const PREPARED_BUNDLE_TTL_MS = 10_000;
+
+function preparedBundleKey(appId: string, isPreview: boolean): string {
+	return `${appId}:${isPreview ? "draft" : "live"}`;
+}
+
+function invalidatePreparedAppBundle(appId: string, isPreview: boolean): void {
+	preparedBundles.delete(preparedBundleKey(appId, isPreview));
+}
+
+export function getPreparedAppBundle(
+	appId: string,
+	isPreview: boolean,
+): PreparedAppBundle | undefined {
+	return preparedBundles.get(preparedBundleKey(appId, isPreview));
+}
+
+export function prepareAppBundle({
+	appId,
+	isPreview,
+	signal,
+}: {
+	appId: string;
+	isPreview: boolean;
+	signal?: AbortSignal;
+}): Promise<PreparedAppBundle> {
+	const key = preparedBundleKey(appId, isPreview);
+	const prepared = preparedBundles.get(key);
+	if (prepared) return Promise.resolve(prepared);
+
+	const pending = preparingBundles.get(key);
+	if (pending) return pending;
+
+	const load = (async () => {
+		const mode = isPreview ? "draft" : "live";
+		const response = await authFetch(
+			`/api/applications/${appId}/bundle-manifest?mode=${mode}`,
+			{ signal },
+		);
+		if (!response.ok) {
+			const text = await response.text();
+			throw new Error(
+				`Bundle manifest fetch failed: ${response.status} ${text}`,
+			);
+		}
+
+		const manifest: BundleManifest = await response.json();
+		if (manifest.app_model === "standalone_v2") {
+			if (!manifest.entry) {
+				throw new Error(
+					"This v2 app has no built bundle yet (deploy it first).",
+				);
+			}
+
+			await Promise.all([
+				preloadModule(`${manifest.base_url}/${manifest.entry}`, signal),
+				manifest.css
+					? preloadStylesheet(
+							`${manifest.base_url}/${manifest.css}`,
+							signal,
+						)
+					: Promise.resolve(),
+			]);
+
+			return {
+				manifest,
+				component: null,
+				entry: manifest.entry,
+				cssHref: manifest.css
+					? `${manifest.base_url}/${manifest.css}`
+					: null,
+			};
+		}
+
+		if (!manifest.entry) {
+			throw new Error("Bundle manifest did not include an entry module.");
+		}
+
+		const entryUrl = `${manifest.base_url}/${manifest.entry}?mode=${mode}`;
+		const cssHref = manifest.css
+			? `${manifest.base_url}/${manifest.css}?mode=${mode}`
+			: null;
+		const dependencies = manifest.dependencies ?? {};
+		const hasUserDependencies = Object.keys(dependencies).length > 0;
+		let dynamicImport: (url: string) => Promise<{ default?: unknown }>;
+		if (hasUserDependencies) {
+			await ensureEsModuleShimsLoaded();
+			registerUserDepImportMap(dependencies);
+			const runtime = window as unknown as ImportShimWindow;
+			if (typeof runtime.importShim !== "function") {
+				throw new Error(
+					"es-module-shims loaded but importShim is undefined",
+				);
+			}
+			const importShim = runtime.importShim;
+			dynamicImport = (url) =>
+				importShim(url) as Promise<{ default?: unknown }>;
+		} else {
+			dynamicImport = (url) =>
+				import(/* @vite-ignore */ url) as Promise<{
+					default?: unknown;
+				}>;
+		}
+
+		const [module] = await Promise.all([
+			dynamicImport(entryUrl),
+			cssHref ? preloadStylesheet(cssHref, signal) : Promise.resolve(),
+		]);
+		if (typeof module.default !== "function") {
+			throw new Error(
+				"Bundle does not have a default export (expected a React component)",
+			);
+		}
+
+		return {
+			manifest,
+			component: module.default as BundledAppComponent,
+			entry: manifest.entry,
+			cssHref,
+		};
+	})();
+	preparingBundles.set(key, load);
+
+	return load
+		.then((result) => {
+			preparedBundles.set(key, result);
+			preparingBundles.delete(key);
+			window.setTimeout(() => {
+				if (preparedBundles.get(key) === result) {
+					preparedBundles.delete(key);
+				}
+			}, PREPARED_BUNDLE_TTL_MS);
+			return result;
+		})
+		.catch((error: unknown) => {
+			preparingBundles.delete(key);
+			throw error;
+		});
+}
+
+export function BundledAppShell({
+	appId,
+	appSlug,
+	isPreview,
+}: BundledAppShellProps) {
+	const initiallyPrepared = getPreparedAppBundle(appId, isPreview);
 	// The bundle's default export is a React component. We render it INLINE
 	// via React.createElement so the bundled subtree inherits all of the
 	// host's context providers (AuthContext, QueryClientProvider, theme, etc.).
 	// Earlier we used `createRoot(container).render(...)` inside the bundle's
 	// `mount()` — that created a sibling root with no provider inheritance
 	// and broke every hook that read host context (e.g. useUser → useAuth).
-	const [BundledApp, setBundledApp] = useState<BundledAppComponent | null>(null);
-	const [loadedEntry, setLoadedEntry] = useState<string | null>(null);
-	const [cssHref, setCssHref] = useState<string | null>(null);
+	const [BundledApp, setBundledApp] = useState<BundledAppComponent | null>(
+		() => initiallyPrepared?.component ?? null,
+	);
+	const [loadedEntry, setLoadedEntry] = useState<string | null>(
+		initiallyPrepared?.entry ?? null,
+	);
+	const [cssHref, setCssHref] = useState<string | null>(
+		initiallyPrepared?.cssHref ?? null,
+	);
 	// Render model from the manifest. 'standalone_v2' apps are NOT loaded inline
 	// here — they are mounted same-document by <StandaloneV2App>.
-	const [appModel, setAppModel] = useState<"inline_v1" | "standalone_v2">("inline_v1");
+	const [appModel, setAppModel] = useState<"inline_v1" | "standalone_v2">(
+		initiallyPrepared?.manifest.app_model === "standalone_v2"
+			? "standalone_v2"
+			: "inline_v1",
+	);
 	// For standalone_v2: the hashed entry/css + dist base from the manifest, used
 	// to mount the app same-document (replaces the old iframe).
 	const [v2Mount, setV2Mount] = useState<{
@@ -162,7 +332,18 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 		css: string | null;
 		baseUrl: string;
 		runtimeContract: StandaloneV2RuntimeContract;
-	} | null>(null);
+	} | null>(() => {
+		const manifest = initiallyPrepared?.manifest;
+		if (manifest?.app_model !== "standalone_v2" || !manifest.entry) {
+			return null;
+		}
+		return {
+			entry: manifest.entry,
+			css: manifest.css,
+			baseUrl: manifest.base_url,
+			runtimeContract: manifest.runtime_contract ?? null,
+		};
+	});
 	// Reset the v2 mount DURING RENDER when the app changes (React's "adjust
 	// state on prop change" pattern). This shell instance is reused across app
 	// routes; without this, the render below would pair the NEW appId with the
@@ -179,12 +360,16 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 	// Org-scoped app: tells the table SDK to default `scope` to the app's
 	// org for `tables.*` and `useTable` calls inside the bundle. Captured
 	// from the first successful manifest fetch.
-	const [appOrgId, setAppOrgId] = useState<string | null>(null);
+	const [appOrgId, setAppOrgId] = useState<string | null>(
+		initiallyPrepared?.manifest.organization_id ?? null,
+	);
 
 	const [loadError, setLoadError] = useState<string | null>(null);
 	// Build errors from hot-reload rebuilds. The last-good bundle keeps
 	// rendering underneath; this banner sits on top.
-	const [buildErrors, setBuildErrors] = useState<BundleMessage[] | null>(null);
+	const [buildErrors, setBuildErrors] = useState<BundleMessage[] | null>(
+		null,
+	);
 	const [buildErrorDismissed, setBuildErrorDismissed] = useState(false);
 
 	// Auto-migration notice shown when the first-view bundle-manifest fetch
@@ -192,16 +377,16 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 	// Persisted-dismissed via localStorage so it doesn't re-appear on every
 	// navigation within the same app.
 	const migrateDismissKey = `bifrost.automigrate-dismissed.${appId}`;
-	const [migrateNotice, setMigrateNotice] = useState(false);
-	const [migrateNoticeDismissed, setMigrateNoticeDismissed] = useState(
-		() => {
-			try {
-				return localStorage.getItem(migrateDismissKey) === "1";
-			} catch {
-				return false;
-			}
-		},
+	const [migrateNotice, setMigrateNotice] = useState(
+		initiallyPrepared?.manifest.migrated ?? false,
 	);
+	const [migrateNoticeDismissed, setMigrateNoticeDismissed] = useState(() => {
+		try {
+			return localStorage.getItem(migrateDismissKey) === "1";
+		} catch {
+			return false;
+		}
+	});
 
 	const setAppContext = useAppBuilderStore((state) => state.setAppContext);
 
@@ -234,6 +419,33 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 			cssOverride?: string | null,
 		): Promise<"inline_v1" | "standalone_v2" | undefined> {
 			try {
+				if (entryOverride === undefined) {
+					const prepared = getPreparedAppBundle(appId, isPreview);
+					if (prepared) {
+						const manifest = prepared.manifest;
+						setAppOrgId(manifest.organization_id ?? null);
+						if (manifest.migrated) setMigrateNotice(true);
+						if (manifest.app_model === "standalone_v2") {
+							if (!manifest.entry) return undefined;
+							setV2Mount({
+								entry: manifest.entry,
+								css: manifest.css,
+								baseUrl: manifest.base_url,
+								runtimeContract:
+									manifest.runtime_contract ?? null,
+							});
+							setAppModel("standalone_v2");
+							return "standalone_v2";
+						}
+
+						setCssHref(prepared.cssHref);
+						setBundledApp(() => prepared.component);
+						setLoadedEntry(prepared.entry);
+						setAppModel("inline_v1");
+						return "inline_v1";
+					}
+				}
+
 				const mode = isPreview ? "draft" : "live";
 				let entry: string;
 				let css: string | null;
@@ -255,7 +467,9 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 					);
 					if (!resp.ok) {
 						const txt = await resp.text();
-						throw new Error(`Bundle manifest fetch failed: ${resp.status} ${txt}`);
+						throw new Error(
+							`Bundle manifest fetch failed: ${resp.status} ${txt}`,
+						);
 					}
 					const manifest: BundleManifest = await resp.json();
 					// inline_v1 always has an entry; a v2 app may have null (handled
@@ -299,30 +513,39 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 				}
 
 				if (controller.signal.aborted) return;
-				if (loadedEntry === entry) return;
+				if (entryOverride === undefined && loadedEntry === entry)
+					return;
 
 				const entryUrl = `${baseUrl}/${entry}?mode=${mode}`;
-				const nextCssHref = css ? `${baseUrl}/${css}?mode=${mode}` : null;
+				const nextCssHref = css
+					? `${baseUrl}/${css}?mode=${mode}`
+					: null;
 
 				// User-dep apps go through es-module-shims so that the user-dep
 				// importmap can be registered after page load. Apps with only
 				// platform externals use the native dynamic import, which
 				// resolves through the static map in index.html.
 				const hasUserDeps = Object.keys(dependencies).length > 0;
-				let dynamicImport: (url: string) => Promise<{ default?: unknown }>;
+				let dynamicImport: (
+					url: string,
+				) => Promise<{ default?: unknown }>;
 				if (hasUserDeps) {
 					await ensureEsModuleShimsLoaded();
 					registerUserDepImportMap(dependencies);
 					const w = window as unknown as ImportShimWindow;
 					if (typeof w.importShim !== "function") {
-						throw new Error("es-module-shims loaded but importShim is undefined");
+						throw new Error(
+							"es-module-shims loaded but importShim is undefined",
+						);
 					}
 					const importShim = w.importShim;
 					dynamicImport = (url) =>
 						importShim(url) as Promise<{ default?: unknown }>;
 				} else {
 					dynamicImport = (url) =>
-						import(/* @vite-ignore */ url) as Promise<{ default?: unknown }>;
+						import(/* @vite-ignore */ url) as Promise<{
+							default?: unknown;
+						}>;
 				}
 
 				// Load JS and CSS in parallel, but don't commit either until
@@ -330,7 +553,9 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 				// tick before the <link> attaches and we get a FOUC.
 				const [module] = await Promise.all([
 					dynamicImport(entryUrl),
-					nextCssHref ? preloadStylesheet(nextCssHref, controller.signal) : Promise.resolve(),
+					nextCssHref
+						? preloadStylesheet(nextCssHref, controller.signal)
+						: Promise.resolve(),
 				]);
 
 				if (controller.signal.aborted) return;
@@ -359,11 +584,16 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 				// show a full-screen error; otherwise it's a failed hot-reload
 				// and we surface it via the banner while keeping last-good live.
 				if (!BundledApp) {
-					setLoadError(err instanceof Error ? err.message : String(err));
+					setLoadError(
+						err instanceof Error ? err.message : String(err),
+					);
 				} else {
 					setBuildErrors([
 						{
-							text: err instanceof Error ? err.message : String(err),
+							text:
+								err instanceof Error
+									? err.message
+									: String(err),
 							file: null,
 							line: null,
 							column: null,
@@ -393,16 +623,26 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
 					unsub = webSocketService.onAppCodeFileUpdate(
 						appId,
 						(update: AppCodeFileUpdate) => {
-							if (update.error && update.error.messages.length > 0) {
+							if (
+								update.error &&
+								update.error.messages.length > 0
+							) {
 								setBuildErrors(update.error.messages);
 								setBuildErrorDismissed(false);
 							} else if (update.bundle) {
-								loadBundle(update.bundle.entry, update.bundle.css);
+								invalidatePreparedAppBundle(appId, isPreview);
+								loadBundle(
+									update.bundle.entry,
+									update.bundle.css,
+								);
 							}
 						},
 					);
 				} catch (e) {
-					console.warn("[Bifrost] Failed to subscribe to app updates:", e);
+					console.warn(
+						"[Bifrost] Failed to subscribe to app updates:",
+						e,
+					);
 				}
 			})();
 		}
@@ -490,7 +730,7 @@ export function BundledAppShell({ appId, appSlug, isPreview }: BundledAppShellPr
  * Warm the browser cache for a stylesheet before we mount the bundled
  * component, so the <link> that BundleStyles appends applies on first paint.
  */
-function preloadStylesheet(href: string, signal: AbortSignal): Promise<void> {
+function preloadStylesheet(href: string, signal?: AbortSignal): Promise<void> {
 	return new Promise((resolve, reject) => {
 		const el = document.createElement("link");
 		el.rel = "preload";
@@ -498,7 +738,7 @@ function preloadStylesheet(href: string, signal: AbortSignal): Promise<void> {
 		el.href = href;
 		const cleanup = () => {
 			el.remove();
-			signal.removeEventListener("abort", onAbort);
+			signal?.removeEventListener("abort", onAbort);
 		};
 		const onAbort = () => {
 			cleanup();
@@ -514,12 +754,37 @@ function preloadStylesheet(href: string, signal: AbortSignal): Promise<void> {
 			// sees *something* instead of a hang.
 			resolve();
 		};
-		if (signal.aborted) {
+		if (signal?.aborted) {
 			onAbort();
 			return;
 		}
-		signal.addEventListener("abort", onAbort);
+		signal?.addEventListener("abort", onAbort);
 		document.head.appendChild(el);
+	});
+}
+
+function preloadModule(href: string, signal?: AbortSignal): Promise<void> {
+	return new Promise((resolve) => {
+		const element = document.createElement("link");
+		element.rel = "modulepreload";
+		element.href = href;
+		const cleanup = () => {
+			element.remove();
+			signal?.removeEventListener("abort", onAbort);
+		};
+		const finish = () => {
+			cleanup();
+			resolve();
+		};
+		const onAbort = () => finish();
+		element.onload = finish;
+		element.onerror = finish;
+		if (signal?.aborted) {
+			finish();
+			return;
+		}
+		signal?.addEventListener("abort", onAbort);
+		document.head.appendChild(element);
 	});
 }
 
@@ -565,8 +830,8 @@ function AutoMigrateNotice({ onDismiss }: { onDismiss: () => void }) {
 						</button>
 					</div>
 					<p className="text-sm text-blue-800 dark:text-blue-200">
-						Your app was automatically updated to the new runtime. Review the
-						changes in your workspace on your next{" "}
+						Your app was automatically updated to the new runtime.
+						Review the changes in your workspace on your next{" "}
 						<code className="rounded bg-blue-100 px-1 dark:bg-blue-900/60">
 							bifrost pull
 						</code>
@@ -614,7 +879,9 @@ function BuildErrorBanner({
 									<span className="font-semibold">
 										{e.file}
 										{e.line !== null ? `:${e.line}` : ""}
-										{e.column !== null ? `:${e.column}` : ""}
+										{e.column !== null
+											? `:${e.column}`
+											: ""}
 										{" — "}
 									</span>
 								)}
@@ -622,7 +889,9 @@ function BuildErrorBanner({
 							</li>
 						))}
 						{errors.length > 5 && (
-							<li className="italic">… and {errors.length - 5} more</li>
+							<li className="italic">
+								… and {errors.length - 5} more
+							</li>
 						)}
 					</ul>
 				</div>

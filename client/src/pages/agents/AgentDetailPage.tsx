@@ -30,7 +30,6 @@ import {
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
 	Tooltip,
 	TooltipContent,
@@ -77,7 +76,7 @@ export function AgentDetailPage() {
 
 	const isCreate = !id || id === "new";
 	const agentId = isCreate ? undefined : id;
-	const { data: agent, isLoading } = useAgent(agentId);
+	const { data: agent } = useAgent(agentId);
 	const { data: runsList } = useAgentRuns({
 		agentId: agentId ?? "",
 		limit: 1,
@@ -176,7 +175,9 @@ export function AgentDetailPage() {
 						<LogoDropZone
 							uploadUrl={`/api/agents/${agent.id}/logo`}
 							deleteUrl={`/api/agents/${agent.id}/logo`}
-							previewUrl={`/api/agents/${agent.id}/logo`}
+							previewUrl={
+								agent.logo_url ?? `/api/agents/${agent.id}/logo`
+							}
 							fallback={<Bot className="h-5 w-5" />}
 							size={48}
 							onChange={() =>
@@ -194,9 +195,7 @@ export function AgentDetailPage() {
 							<span className="truncate">
 								{isCreate
 									? "New agent"
-									: isLoading
-										? "Loading…"
-										: (agent?.name ?? "Unknown agent")}
+									: (agent?.name ?? "Unknown agent")}
 							</span>
 							{!isCreate && agent ? (
 								isActive ? (
@@ -369,8 +368,6 @@ export function AgentDetailPage() {
 			{tab === "settings" ? (
 				isCreate ? (
 					<AgentSettingsTab mode="create" onCreated={handleCreated} />
-				) : isLoading ? (
-					<Skeleton className="h-64 w-full" />
 				) : (
 					<AgentSettingsTab mode="edit" agent={agent ?? null} />
 				)

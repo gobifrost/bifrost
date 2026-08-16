@@ -1,9 +1,11 @@
 import { Suspense, useEffect } from "react";
 import {
-	BrowserRouter,
-	Routes,
 	Route,
+	RouterProvider,
+	createBrowserRouter,
+	createRoutesFromElements,
 	useLocation,
+	Outlet,
 	matchPath,
 } from "react-router-dom";
 import { Layout } from "@/components/layout/Layout";
@@ -28,6 +30,13 @@ import {
 } from "@/contexts/KeyboardContext";
 import { lazyWithReload } from "@/lib/lazy-with-reload";
 import { RunFormRoute } from "@/pages/run-form-route";
+import { RouteOpeningState } from "@/components/layout/RouteOpeningState";
+import { RouteReadyReveal } from "@/components/layout/RouteReadyReveal";
+import { RouteLoadError } from "@/components/layout/RouteLoadError";
+import {
+	agentDetailLoader,
+	applicationDetailLoader,
+} from "@/lib/detail-route-loaders";
 
 // Lazy load all page components for code splitting
 const Dashboard = lazyWithReload(() =>
@@ -216,7 +225,7 @@ const MCPConnectionEdit = lazyWithReload(() =>
 	})),
 );
 
-function AppRoutes() {
+function AppFrame() {
 	const { brandingLoaded } = useOrgScope();
 	const applicationName = useApplicationName();
 	const location = useLocation();
@@ -281,530 +290,554 @@ function AppRoutes() {
 			<UnifiedDock />
 
 			<Suspense fallback={<PageLoader />}>
-				<Routes>
-					{/* Public routes - no auth required */}
-					<Route path="login" element={<Login />} />
-					<Route path="setup" element={<Setup />} />
-					<Route path="accept-invite" element={<Register />} />
-					<Route path="mfa-setup" element={<MFASetup />} />
-					<Route
-						path="auth/callback/:provider"
-						element={<AuthCallback />}
-					/>
-					<Route path="mcp/callback" element={<MCPCallback />} />
-
-					{/* Device authorization - requires auth, handles redirect internally */}
-					<Route path="device" element={<DevicePage />} />
-
-					{/* OAuth Callback - Public (no auth, no layout) */}
-					<Route
-						path="oauth/callback/:integrationId"
-						element={<OAuthCallback />}
-					/>
-
-					{/* Application Preview - Full screen for developers */}
-					<Route
-						path="apps/:applicationId/preview/*"
-						element={
-							<ProtectedRoute requirePlatformAdmin>
-								<ApplicationPreview />
-							</ProtectedRoute>
-						}
-					/>
-
-					{/* Application Runner - Published apps (full screen) */}
-					<Route
-						path="apps/:applicationId/*"
-						element={
-							<ProtectedRoute requireOrgUser>
-								<ApplicationRunner />
-							</ProtectedRoute>
-						}
-					/>
-					<Route
-						path="embedded/forms/public/:publicKey"
-						element={
-							<ProtectedRoute requireOrgUser>
-								<RunFormRoute />
-							</ProtectedRoute>
-						}
-					/>
-					<Route
-						path="embedded/forms/hmac/:formId"
-						element={
-							<ProtectedRoute requireOrgUser>
-								<RunFormRoute />
-							</ProtectedRoute>
-						}
-					/>
-
-					<Route path="/" element={<Layout />}>
-						{/* Dashboard - PlatformAdmin only (OrgUsers redirected to /forms) */}
-						<Route index element={<Dashboard />} />
-
-						{/* Workflows - PlatformAdmin only */}
-						<Route
-							path="workflows"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<Workflows />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="workflows/:workflowName/execute"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<ExecuteWorkflow />
-								</ProtectedRoute>
-							}
-						/>
-
-						{/* Forms - PlatformAdmin or OrgUser */}
-						<Route
-							path="forms"
-							element={
-								<ProtectedRoute requireOrgUser>
-									<Forms />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="execute/:formId"
-							element={
-								<ProtectedRoute requireOrgUser>
-									<RunFormRoute />
-								</ProtectedRoute>
-							}
-						/>
-
-						{/* Form Builder - PlatformAdmin only */}
-						<Route
-							path="forms/new"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<FormBuilder />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="forms/:formId/edit"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<FormBuilder />
-								</ProtectedRoute>
-							}
-						/>
-
-						{/* History - PlatformAdmin or OrgUser */}
-						<Route
-							path="history"
-							element={
-								<ProtectedRoute requireOrgUser>
-									<ExecutionHistory />
-								</ProtectedRoute>
-							}
-						/>
-
-						{/* Organizations - PlatformAdmin only */}
-						<Route
-							path="organizations"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<Organizations />
-								</ProtectedRoute>
-							}
-						/>
-
-						{/* Users - PlatformAdmin only */}
-						<Route
-							path="users"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<Users />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="users/:userId"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<Users />
-								</ProtectedRoute>
-							}
-						/>
-
-						{/* Roles - PlatformAdmin only */}
-						<Route
-							path="roles"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<Roles />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="roles/:roleId"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<RoleDetail />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="roles/:roleId/:tab"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<RoleDetail />
-								</ProtectedRoute>
-							}
-						/>
-
-						{/* Solutions - PlatformAdmin only */}
-						<Route
-							path="solutions"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<Solutions />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="solutions/:solutionId"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<SolutionDetail />
-								</ProtectedRoute>
-							}
-						/>
-
-						{/* Config - PlatformAdmin only */}
-						<Route
-							path="config"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<Config />
-								</ProtectedRoute>
-							}
-						/>
-
-						{/* Data Tables - PlatformAdmin only */}
-						<Route
-							path="tables"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<Tables />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="tables/:tableId"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<TableDetail />
-								</ProtectedRoute>
-							}
-						/>
-
-						{/* Files - PlatformAdmin only */}
-						<Route
-							path="files"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<Files />
-								</ProtectedRoute>
-							}
-						/>
-
-						{/* Applications List - OrgUser access (with sidebar) */}
-						<Route
-							path="apps"
-							element={
-								<ProtectedRoute requireOrgUser>
-									<Applications />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="apps/new"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<AppCodeEditorPage />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="apps/:applicationId/edit/*"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<AppCodeEditorPage />
-								</ProtectedRoute>
-							}
-						/>
-
-						{/* Agents - All authenticated users */}
-						<Route
-							path="agents"
-							element={
-								<ProtectedRoute>
-									<FleetPage />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="agents/new"
-							element={
-								<ProtectedRoute>
-									<AgentDetailPage />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="agents/:id"
-							element={
-								<ProtectedRoute>
-									<AgentDetailPage />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="agents/:id/review"
-							element={
-								<ProtectedRoute>
-									<AgentReviewPage />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="agents/:id/tune"
-							element={
-								<ProtectedRoute>
-									<AgentTuneWorkbench />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="agents/:agentId/runs/:runId"
-							element={
-								<ProtectedRoute>
-									<AgentRunDetailPage />
-								</ProtectedRoute>
-							}
-						/>
-						{/* Knowledge - PlatformAdmin only */}
-						<Route
-							path="knowledge"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<Knowledge />
-								</ProtectedRoute>
-							}
-						/>
-
-						{/* Entity Management - PlatformAdmin only */}
-						<Route
-							path="entity-management"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<EntityManagement />
-								</ProtectedRoute>
-							}
-						/>
-
-						{/* Integrations - PlatformAdmin only */}
-						<Route
-							path="integrations"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<Integrations />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="integrations/:id"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<IntegrationDetail />
-								</ProtectedRoute>
-							}
-						/>
-
-						{/* MCP Servers - PlatformAdmin only */}
-						<Route
-							path="mcp-servers"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<MCPServers />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="mcp-servers/:id"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<MCPServerDetail />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="mcp-servers/:serverId/connections/:connectionId/edit"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<MCPConnectionEdit />
-								</ProtectedRoute>
-							}
-						/>
-
-						{/* Event Sources - PlatformAdmin only */}
-						<Route
-							path="event-sources"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<Events />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="event-sources/:sourceId"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<Events />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="event-sources/:sourceId/events/:eventId"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<Events />
-								</ProtectedRoute>
-							}
-						/>
-
-						{/* Settings - PlatformAdmin only */}
-						<Route
-							path="settings"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<Settings />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="settings/:tab"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<Settings />
-								</ProtectedRoute>
-							}
-						/>
-
-						{/* Diagnostics - PlatformAdmin only */}
-						<Route
-							path="diagnostics"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<DiagnosticsPage />
-								</ProtectedRoute>
-							}
-						/>
-
-						{/* Audit Log - PlatformAdmin only */}
-						<Route
-							path="audit"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<AuditLogPage />
-								</ProtectedRoute>
-							}
-						/>
-
-						{/* Reports - PlatformAdmin only */}
-						<Route
-							path="reports/roi"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<ROIReports />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="reports/usage"
-							element={
-								<ProtectedRoute requirePlatformAdmin>
-									<UsageReports />
-								</ProtectedRoute>
-							}
-						/>
-
-						{/* User Settings - All authenticated users */}
-						<Route
-							path="user-settings"
-							element={
-								<ProtectedRoute>
-									<UserSettings />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="user-settings/:tab"
-							element={
-								<ProtectedRoute>
-									<UserSettings />
-								</ProtectedRoute>
-							}
-						/>
-					</Route>
-
-					{/* ContentLayout - Pages without default padding */}
-					<Route path="/" element={<ContentLayout />}>
-						{/* Chat - All authenticated users */}
-						<Route
-							path="chat"
-							element={
-								<ProtectedRoute>
-									<Chat />
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="chat/:conversationId"
-							element={
-								<ProtectedRoute>
-									<Chat />
-								</ProtectedRoute>
-							}
-						/>
-						{/* Execution Details - PlatformAdmin or OrgUser */}
-						<Route
-							path="history/:executionId"
-							element={
-								<ProtectedRoute requireOrgUser>
-									<ExecutionDetails />
-								</ProtectedRoute>
-							}
-						/>
-					</Route>
-				</Routes>
+				<RouteReadyReveal key={location.key}>
+					<Outlet />
+				</RouteReadyReveal>
 			</Suspense>
 		</>
 	);
 }
 
+const routeElements = (
+	<>
+		{/* Public routes - no auth required */}
+		<Route path="login" element={<Login />} />
+		<Route path="setup" element={<Setup />} />
+		<Route path="accept-invite" element={<Register />} />
+		<Route path="mfa-setup" element={<MFASetup />} />
+		<Route path="auth/callback/:provider" element={<AuthCallback />} />
+		<Route path="mcp/callback" element={<MCPCallback />} />
+
+		{/* Device authorization - requires auth, handles redirect internally */}
+		<Route path="device" element={<DevicePage />} />
+
+		{/* OAuth Callback - Public (no auth, no layout) */}
+		<Route
+			path="oauth/callback/:integrationId"
+			element={<OAuthCallback />}
+		/>
+
+		{/* Application Preview - Full screen for developers */}
+		<Route
+			path="apps/:applicationId/preview/*"
+			loader={applicationDetailLoader(true)}
+			errorElement={<RouteLoadError />}
+			element={
+				<ProtectedRoute requirePlatformAdmin>
+					<ApplicationPreview />
+				</ProtectedRoute>
+			}
+		/>
+
+		{/* Application Runner - Published apps (full screen) */}
+		<Route
+			path="apps/:applicationId/*"
+			loader={applicationDetailLoader(false)}
+			errorElement={<RouteLoadError />}
+			element={
+				<ProtectedRoute requireOrgUser>
+					<ApplicationRunner />
+				</ProtectedRoute>
+			}
+		/>
+		<Route
+			path="embedded/forms/public/:publicKey"
+			element={
+				<ProtectedRoute requireOrgUser>
+					<RunFormRoute />
+				</ProtectedRoute>
+			}
+		/>
+		<Route
+			path="embedded/forms/hmac/:formId"
+			element={
+				<ProtectedRoute requireOrgUser>
+					<RunFormRoute />
+				</ProtectedRoute>
+			}
+		/>
+
+		<Route path="/" element={<Layout />}>
+			{/* Dashboard - PlatformAdmin only (OrgUsers redirected to /forms) */}
+			<Route index element={<Dashboard />} />
+
+			{/* Workflows - PlatformAdmin only */}
+			<Route
+				path="workflows"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<Workflows />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="workflows/:workflowName/execute"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<ExecuteWorkflow />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Forms - PlatformAdmin or OrgUser */}
+			<Route
+				path="forms"
+				element={
+					<ProtectedRoute requireOrgUser>
+						<Forms />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="execute/:formId"
+				element={
+					<ProtectedRoute requireOrgUser>
+						<RunFormRoute />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Form Builder - PlatformAdmin only */}
+			<Route
+				path="forms/new"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<FormBuilder />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="forms/:formId/edit"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<FormBuilder />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* History - PlatformAdmin or OrgUser */}
+			<Route
+				path="history"
+				element={
+					<ProtectedRoute requireOrgUser>
+						<ExecutionHistory />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Organizations - PlatformAdmin only */}
+			<Route
+				path="organizations"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<Organizations />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Users - PlatformAdmin only */}
+			<Route
+				path="users"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<Users />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="users/:userId"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<Users />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Roles - PlatformAdmin only */}
+			<Route
+				path="roles"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<Roles />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="roles/:roleId"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<RoleDetail />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="roles/:roleId/:tab"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<RoleDetail />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Solutions - PlatformAdmin only */}
+			<Route
+				path="solutions"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<Solutions />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="solutions/:solutionId"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<SolutionDetail />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Config - PlatformAdmin only */}
+			<Route
+				path="config"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<Config />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Data Tables - PlatformAdmin only */}
+			<Route
+				path="tables"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<Tables />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="tables/:tableId"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<TableDetail />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Files - PlatformAdmin only */}
+			<Route
+				path="files"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<Files />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Applications List - OrgUser access (with sidebar) */}
+			<Route
+				path="apps"
+				element={
+					<ProtectedRoute requireOrgUser>
+						<Applications />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="apps/new"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<AppCodeEditorPage />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="apps/:applicationId/edit/*"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<AppCodeEditorPage />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Agents - All authenticated users */}
+			<Route
+				path="agents"
+				element={
+					<ProtectedRoute>
+						<FleetPage />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="agents/new"
+				element={
+					<ProtectedRoute>
+						<AgentDetailPage />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="agents/:id"
+				loader={agentDetailLoader}
+				errorElement={<RouteLoadError />}
+				element={
+					<ProtectedRoute>
+						<AgentDetailPage />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="agents/:id/review"
+				element={
+					<ProtectedRoute>
+						<AgentReviewPage />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="agents/:id/tune"
+				element={
+					<ProtectedRoute>
+						<AgentTuneWorkbench />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="agents/:agentId/runs/:runId"
+				element={
+					<ProtectedRoute>
+						<AgentRunDetailPage />
+					</ProtectedRoute>
+				}
+			/>
+			{/* Knowledge - PlatformAdmin only */}
+			<Route
+				path="knowledge"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<Knowledge />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Entity Management - PlatformAdmin only */}
+			<Route
+				path="entity-management"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<EntityManagement />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Integrations - PlatformAdmin only */}
+			<Route
+				path="integrations"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<Integrations />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="integrations/:id"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<IntegrationDetail />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* MCP Servers - PlatformAdmin only */}
+			<Route
+				path="mcp-servers"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<MCPServers />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="mcp-servers/:id"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<MCPServerDetail />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="mcp-servers/:serverId/connections/:connectionId/edit"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<MCPConnectionEdit />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Event Sources - PlatformAdmin only */}
+			<Route
+				path="event-sources"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<Events />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="event-sources/:sourceId"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<Events />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="event-sources/:sourceId/events/:eventId"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<Events />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Settings - PlatformAdmin only */}
+			<Route
+				path="settings"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<Settings />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="settings/:tab"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<Settings />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Diagnostics - PlatformAdmin only */}
+			<Route
+				path="diagnostics"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<DiagnosticsPage />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Audit Log - PlatformAdmin only */}
+			<Route
+				path="audit"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<AuditLogPage />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Reports - PlatformAdmin only */}
+			<Route
+				path="reports/roi"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<ROIReports />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="reports/usage"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<UsageReports />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* User Settings - All authenticated users */}
+			<Route
+				path="user-settings"
+				element={
+					<ProtectedRoute>
+						<UserSettings />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="user-settings/:tab"
+				element={
+					<ProtectedRoute>
+						<UserSettings />
+					</ProtectedRoute>
+				}
+			/>
+		</Route>
+
+		{/* ContentLayout - Pages without default padding */}
+		<Route path="/" element={<ContentLayout />}>
+			{/* Chat - All authenticated users */}
+			<Route
+				path="chat"
+				element={
+					<ProtectedRoute>
+						<Chat />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="chat/:conversationId"
+				element={
+					<ProtectedRoute>
+						<Chat />
+					</ProtectedRoute>
+				}
+			/>
+			{/* Execution Details - PlatformAdmin or OrgUser */}
+			<Route
+				path="history/:executionId"
+				element={
+					<ProtectedRoute requireOrgUser>
+						<ExecutionDetails />
+					</ProtectedRoute>
+				}
+			/>
+		</Route>
+	</>
+);
+
+function AppProviders() {
+	return (
+		<AuthProvider>
+			<OrgScopeProvider>
+				<KeyboardProvider>
+					<RouteTransitionProgress />
+					<AppFrame />
+				</KeyboardProvider>
+			</OrgScopeProvider>
+		</AuthProvider>
+	);
+}
+
+const router = createBrowserRouter(
+	createRoutesFromElements(
+		<Route
+			element={<AppProviders />}
+			hydrateFallbackElement={<RouteOpeningState />}
+		>
+			{routeElements}
+		</Route>,
+	),
+);
+
 function App() {
 	return (
 		<ApplicationUpdateGate>
 			<ErrorBoundary>
-				<BrowserRouter>
-					<RouteTransitionProgress />
-					<AuthProvider>
-						<OrgScopeProvider>
-							<KeyboardProvider>
-								<AppRoutes />
-							</KeyboardProvider>
-						</OrgScopeProvider>
-					</AuthProvider>
-				</BrowserRouter>
+				<RouterProvider router={router} />
 			</ErrorBoundary>
 		</ApplicationUpdateGate>
 	);
