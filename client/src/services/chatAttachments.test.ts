@@ -6,9 +6,12 @@ vi.mock("@/lib/api-client", () => ({ authFetch }));
 import {
 	MAX_ATTACHMENT_SIZE_BYTES,
 	attachmentContentUrl,
+	deleteChatArtifact,
 	deleteUnboundChatAttachment,
 	formatBytes,
 	isImageAttachment,
+	listChatArtifacts,
+	renameChatArtifact,
 	uploadChatAttachments,
 	validateAttachment,
 } from "./chatAttachments";
@@ -84,6 +87,46 @@ describe("chatAttachments", () => {
 		await deleteUnboundChatAttachment("conversation-1", "attachment-1");
 		expect(authFetch).toHaveBeenLastCalledWith(
 			"/api/chat/conversations/conversation-1/attachments/attachment-1",
+			{ method: "DELETE" },
+		);
+	});
+
+	it("lists, renames, and deletes durable artifacts", async () => {
+		const artifact = {
+			id: "artifact-1",
+			conversation_id: "conversation-1",
+			message_id: "message-1",
+			filename: "Welcome Page.html",
+			content_type: "text/html",
+			size_bytes: 100,
+			kind: "artifact",
+			created_at: "2026-08-15T00:00:00Z",
+		};
+		authFetch
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify([artifact]), { status: 200 }),
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({ ...artifact, filename: "Bifrost Welcome.html" }),
+					{ status: 200 },
+				),
+			)
+			.mockResolvedValueOnce(new Response(null, { status: 204 }));
+
+		expect(await listChatArtifacts()).toEqual([artifact]);
+		await renameChatArtifact("artifact-1", "Bifrost Welcome.html");
+		expect(authFetch).toHaveBeenNthCalledWith(
+			2,
+			"/api/chat/artifacts/artifact-1",
+			expect.objectContaining({
+				method: "PATCH",
+				body: JSON.stringify({ filename: "Bifrost Welcome.html" }),
+			}),
+		);
+		await deleteChatArtifact("artifact-1");
+		expect(authFetch).toHaveBeenLastCalledWith(
+			"/api/chat/artifacts/artifact-1",
 			{ method: "DELETE" },
 		);
 	});

@@ -4,6 +4,7 @@ import type { components } from "@/lib/v1";
 export type AttachmentPublic = components["schemas"]["AttachmentPublic"];
 export type AttachmentUploadResponse =
 	components["schemas"]["AttachmentUploadResponse"];
+export type ChatArtifactPublic = components["schemas"]["ChatArtifactPublic"];
 
 export const MAX_ATTACHMENT_SIZE_BYTES = 25 * 1024 * 1024;
 export const MAX_ATTACHMENTS_PER_MESSAGE = 5;
@@ -96,6 +97,37 @@ export async function deleteUnboundChatAttachment(
 	if (!response.ok && response.status !== 404) {
 		throw new Error("Could not discard the uploaded file.");
 	}
+}
+
+export async function listChatArtifacts(): Promise<ChatArtifactPublic[]> {
+	const response = await authFetch("/api/chat/artifacts");
+	if (!response.ok) throw new Error("Could not load your artifacts.");
+	return response.json() as Promise<ChatArtifactPublic[]>;
+}
+
+export async function renameChatArtifact(
+	attachmentId: string,
+	filename: string,
+): Promise<ChatArtifactPublic> {
+	const response = await authFetch(`/api/chat/artifacts/${attachmentId}`, {
+		method: "PATCH",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ filename }),
+	});
+	if (!response.ok) {
+		const body = (await response.json().catch(() => ({}))) as {
+			detail?: string;
+		};
+		throw new Error(body.detail || "Could not rename this artifact.");
+	}
+	return response.json() as Promise<ChatArtifactPublic>;
+}
+
+export async function deleteChatArtifact(attachmentId: string): Promise<void> {
+	const response = await authFetch(`/api/chat/artifacts/${attachmentId}`, {
+		method: "DELETE",
+	});
+	if (!response.ok) throw new Error("Could not delete this artifact.");
 }
 
 export function attachmentContentUrl(

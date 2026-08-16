@@ -163,6 +163,9 @@ const MCPCallback = lazyWithReload(() =>
 const Chat = lazyWithReload(() =>
 	import("@/pages/Chat").then((m) => ({ default: m.Chat })),
 );
+const ChatArtifacts = lazyWithReload(() =>
+	import("@/pages/ChatArtifacts").then((m) => ({ default: m.ChatArtifacts })),
+);
 const ROIReports = lazyWithReload(() =>
 	import("@/pages/ROIReports").then((m) => ({
 		default: m.ROIReports,
@@ -785,6 +788,14 @@ const routeElements = (
 				element={
 					<ProtectedRoute>
 						<Chat />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="chat/artifacts"
+				element={
+					<ProtectedRoute>
+						<ChatArtifacts />
 					</ProtectedRoute>
 				}
 			/>

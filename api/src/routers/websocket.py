@@ -1531,7 +1531,10 @@ async def _process_chat_message(
                     assistant_message_id = None
 
                 # Send chunk to WebSocket with conversation_id for client routing
-                chunk_data = chunk.model_dump(exclude_none=True)
+                # WebSocket.send_json ultimately uses the stdlib JSON encoder.
+                # Pydantic's JSON mode converts nested UUIDs and datetimes (for
+                # example ArtifactRef.created_at) before they reach Starlette.
+                chunk_data = chunk.model_dump(mode="json", exclude_none=True)
                 chunk_data["conversation_id"] = conversation_id
                 await websocket.send_json(chunk_data)
         except asyncio.CancelledError:

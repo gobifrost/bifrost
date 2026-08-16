@@ -211,6 +211,22 @@ describe("ChatWindow — loading state", () => {
 });
 
 describe("ChatWindow — messages render & send", () => {
+	it("shows an immediate thinking activity line while the run is starting", () => {
+		messagesRef.data = [
+			{
+				id: "m-1",
+				role: "user",
+				content: "Build a report",
+				created_at: "2026-04-20T00:00:00Z",
+			},
+		];
+		streamRef.isStreaming = true;
+
+		renderWithProviders(<ChatWindow conversationId="c-1" />);
+
+		expect(screen.getByText("Thinking…")).toHaveClass("chat-activity-shimmer");
+	});
+
 	it("renders messages returned from the hook", () => {
 		messagesRef.data = [
 			{

@@ -7,8 +7,13 @@ Requires LLM configuration to be set for message sending tests.
 
 import base64
 import logging
+from uuid import UUID
 
 import pytest
+
+from src.models.enums import MessageRole
+from src.models.orm import Conversation, Message
+from src.services.chat_attachments import ChatAttachmentService
 
 logger = logging.getLogger(__name__)
 
@@ -225,9 +230,72 @@ class TestChatAttachments:
 
         assert response.status_code == 200, response.text
         artifact = response.json()
-        assert artifact["filename"] == "e2e-brief.pdf"
+        assert artifact["filename"] == "E2E Brief.pdf"
         assert artifact["content_type"] == "application/pdf"
         assert base64.b64decode(artifact["content_base64"]).startswith(b"%PDF-")
+
+    @pytest.mark.asyncio
+    async def test_artifact_library_lists_renames_and_deletes_owned_files(
+        self,
+        e2e_client,
+        db_session,
+        platform_admin,
+        org1_user,
+        test_conversation,
+    ):
+        conversation_id = UUID(test_conversation["id"])
+        conversation = await db_session.get(Conversation, conversation_id)
+        assert conversation is not None
+        message = Message(
+            conversation_id=conversation_id,
+            role=MessageRole.TOOL_CALL,
+            content=None,
+            tool_name="create_text_artifact",
+            tool_state="completed",
+            sequence=1,
+        )
+        db_session.add(message)
+        await db_session.flush()
+        artifact = await ChatAttachmentService(db_session).store_generated(
+            conversation_id=conversation_id,
+            message_id=message.id,
+            filename="Welcome Page.html",
+            content_type="text/html",
+            content=b"<!doctype html><title>Welcome</title>",
+        )
+        await db_session.commit()
+
+        library = e2e_client.get("/api/chat/artifacts", headers=platform_admin.headers)
+        assert library.status_code == 200, library.text
+        listed = next(item for item in library.json() if item["id"] == str(artifact.id))
+        assert listed["filename"] == "Welcome Page.html"
+        assert listed["kind"] == "artifact"
+        assert listed["conversation_id"] == test_conversation["id"]
+        assert "created_at" in listed
+
+        forbidden = e2e_client.patch(
+            f"/api/chat/artifacts/{artifact.id}",
+            json={"filename": "Not Yours.html"},
+            headers=org1_user.headers,
+        )
+        assert forbidden.status_code == 404
+
+        renamed = e2e_client.patch(
+            f"/api/chat/artifacts/{artifact.id}",
+            json={"filename": "Bifrost Welcome.html"},
+            headers=platform_admin.headers,
+        )
+        assert renamed.status_code == 200, renamed.text
+        assert renamed.json()["filename"] == "Bifrost Welcome.html"
+
+        deleted = e2e_client.delete(
+            f"/api/chat/artifacts/{artifact.id}", headers=platform_admin.headers
+        )
+        assert deleted.status_code == 204
+        library_after = e2e_client.get(
+            "/api/chat/artifacts", headers=platform_admin.headers
+        )
+        assert all(item["id"] != str(artifact.id) for item in library_after.json())
 
 
 # =============================================================================

@@ -5974,6 +5974,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/chat/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Chat Artifacts
+         * @description List the current user's durable generated and uploaded Chat files.
+         */
+        get: operations["list_chat_artifacts_api_chat_artifacts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat/artifacts/{attachment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Chat Artifact
+         * @description Delete one Chat file owned by the current user.
+         */
+        delete: operations["delete_chat_artifact_api_chat_artifacts__attachment_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename Chat Artifact
+         * @description Rename a Chat file without changing its immutable storage object.
+         */
+        patch: operations["rename_chat_artifact_api_chat_artifacts__attachment_id__patch"];
+        trace?: never;
+    };
     "/api/chat/conversations/{conversation_id}/attachments": {
         parameters: {
             query?: never;
@@ -12876,6 +12920,42 @@ export interface components {
             logs?: components["schemas"]["CLISessionLogRequest"][];
         };
         /**
+         * ChatArtifactPublic
+         * @description A durable Chat file with enough context for the user's artifact library.
+         */
+        ChatArtifactPublic: {
+            /** Id */
+            id: string;
+            /** Filename */
+            filename: string;
+            /** Content Type */
+            content_type: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /**
+             * Kind
+             * @default attachment
+             * @enum {string}
+             */
+            kind: "attachment" | "artifact";
+            /** Conversation Id */
+            conversation_id: string;
+            /** Message Id */
+            message_id: string;
+            /** Conversation Title */
+            conversation_title?: string | null;
+            /** Created At */
+            created_at: string;
+        };
+        /**
+         * ChatArtifactUpdate
+         * @description Editable metadata for a durable Chat file.
+         */
+        ChatArtifactUpdate: {
+            /** Filename */
+            filename: string;
+        };
+        /**
          * ChatModelTierPublic
          * @description One administrator-governed model choice exposed in Chat.
          */
@@ -14088,7 +14168,10 @@ export interface components {
          * @description Schema-first payload for a flowing PDF or DOCX document.
          */
         DocumentArtifactSpec: {
-            /** Filename */
+            /**
+             * Filename
+             * @description A short, descriptive filename; Bifrost applies proper casing and the extension.
+             */
             filename: string;
             /**
              * Format
@@ -24436,7 +24519,10 @@ export interface components {
          * @description Schema-first payload for an XLSX workbook.
          */
         SpreadsheetArtifactSpec: {
-            /** Filename */
+            /**
+             * Filename
+             * @description A short, descriptive filename; Bifrost applies proper casing and the extension.
+             */
             filename: string;
             /** Sheets */
             sheets: components["schemas"]["SpreadsheetSheetSpec"][];
@@ -24704,7 +24790,10 @@ export interface components {
          * @description Schema-first payload for a text, HTML, CSV, Markdown, or JSON file.
          */
         TextArtifactSpec: {
-            /** Filename */
+            /**
+             * Filename
+             * @description A short, descriptive filename; Bifrost applies proper casing and the extension.
+             */
             filename: string;
             /**
              * Format
@@ -36862,6 +36951,101 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_chat_artifacts_api_chat_artifacts_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatArtifactPublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_chat_artifact_api_chat_artifacts__attachment_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_chat_artifact_api_chat_artifacts__attachment_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatArtifactUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatArtifactPublic"];
+                };
             };
             /** @description Validation Error */
             422: {

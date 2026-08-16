@@ -43,7 +43,11 @@ class DocumentSection(BaseModel):
 class DocumentArtifactSpec(BaseModel):
     """Schema-first payload for a flowing PDF or DOCX document."""
 
-    filename: str = Field(min_length=1, max_length=200)
+    filename: str = Field(
+        min_length=1,
+        max_length=200,
+        description="A short, descriptive filename; Bifrost applies proper casing and the extension.",
+    )
     format: Literal["pdf", "docx"]
     title: str = Field(min_length=1, max_length=300)
     subtitle: str | None = Field(default=None, max_length=500)
@@ -78,7 +82,11 @@ class SpreadsheetSheetSpec(BaseModel):
 class SpreadsheetArtifactSpec(BaseModel):
     """Schema-first payload for an XLSX workbook."""
 
-    filename: str = Field(min_length=1, max_length=200)
+    filename: str = Field(
+        min_length=1,
+        max_length=200,
+        description="A short, descriptive filename; Bifrost applies proper casing and the extension.",
+    )
     sheets: list[SpreadsheetSheetSpec] = Field(min_length=1, max_length=20)
 
     @model_validator(mode="after")
@@ -92,7 +100,11 @@ class SpreadsheetArtifactSpec(BaseModel):
 class TextArtifactSpec(BaseModel):
     """Schema-first payload for a text, HTML, CSV, Markdown, or JSON file."""
 
-    filename: str = Field(min_length=1, max_length=200)
+    filename: str = Field(
+        min_length=1,
+        max_length=200,
+        description="A short, descriptive filename; Bifrost applies proper casing and the extension.",
+    )
     format: Literal["csv", "html", "markdown", "text", "json"]
     content: str = Field(min_length=1, max_length=2_000_000)
 

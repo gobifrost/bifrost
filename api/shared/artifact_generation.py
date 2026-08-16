@@ -143,10 +143,17 @@ def _safe_filename(filename: str, extension: str) -> str:
     name = Path(filename.replace("\\", "/")).name.strip()
     if not name or name in {".", ".."}:
         raise ArtifactGenerationError("Artifact filename is invalid.")
-    expected = f".{extension}"
-    if not name.lower().endswith(expected):
-        name = f"{name}{expected}"
-    return name
+    public_extension = {"markdown": "md", "text": "txt"}.get(extension, extension)
+    expected = f".{public_extension}"
+    stem = name[: -len(expected)] if name.lower().endswith(expected) else name
+    words = stem.replace("_", " ").replace("-", " ").split()
+    proper_stem = " ".join(
+        word.upper()
+        if any(character.isdigit() for character in word)
+        else f"{word[:1].upper()}{word[1:]}"
+        for word in words
+    )
+    return f"{proper_stem}{expected}"
 
 
 def _finish(filename: str, output_format: str, content: bytes) -> GeneratedArtifact:

@@ -12,6 +12,7 @@ import json
 import asyncio
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Literal, cast
 from urllib.parse import quote
 from uuid import UUID, uuid4
@@ -33,6 +34,8 @@ from src.models.contracts.agents import (
     MessagePublic,
     AttachmentPublic,
     AttachmentUploadResponse,
+    ChatArtifactPublic,
+    ChatArtifactUpdate,
     ToolCall,
 )
 from src.models.orm import Agent, Conversation, Message, MessageAttachment
@@ -288,6 +291,109 @@ async def delete_conversation(
 # =============================================================================
 # Messages
 # =============================================================================
+
+
+@router.get("/artifacts")
+async def list_chat_artifacts(
+    db: DbSession,
+    user: CurrentActiveUser,
+    limit: int = 200,
+) -> list[ChatArtifactPublic]:
+    """List the current user's durable generated and uploaded Chat files."""
+    bounded_limit = min(max(limit, 1), 500)
+    result = await db.execute(
+        select(MessageAttachment, Conversation.title)
+        .join(Conversation, Conversation.id == MessageAttachment.conversation_id)
+        .where(Conversation.user_id == user.user_id)
+        .where(MessageAttachment.message_id.is_not(None))
+        .order_by(MessageAttachment.created_at.desc())
+        .limit(bounded_limit)
+    )
+    return [
+        ChatArtifactPublic(
+            id=attachment.id,
+            conversation_id=attachment.conversation_id,
+            message_id=cast(UUID, attachment.message_id),
+            conversation_title=conversation_title,
+            filename=attachment.filename,
+            content_type=attachment.content_type,
+            size_bytes=attachment.size_bytes,
+            kind=(
+                "artifact"
+                if attachment.s3_key.startswith("_artifacts/")
+                else "attachment"
+            ),
+            created_at=attachment.created_at,
+        )
+        for attachment, conversation_title in result.all()
+    ]
+
+
+@router.patch("/artifacts/{attachment_id}")
+async def rename_chat_artifact(
+    attachment_id: UUID,
+    request: ChatArtifactUpdate,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> ChatArtifactPublic:
+    """Rename a Chat file without changing its immutable storage object."""
+    row = (
+        await db.execute(
+            select(MessageAttachment, Conversation.title)
+            .join(Conversation, Conversation.id == MessageAttachment.conversation_id)
+            .where(MessageAttachment.id == attachment_id)
+            .where(MessageAttachment.message_id.is_not(None))
+            .where(Conversation.user_id == user.user_id)
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artifact not found")
+    attachment, conversation_title = row
+    if Path(request.filename).suffix.casefold() != Path(attachment.filename).suffix.casefold():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Keep the file's existing extension when renaming it.",
+        )
+    attachment.filename = request.filename
+    await db.flush()
+    return ChatArtifactPublic(
+        id=attachment.id,
+        conversation_id=attachment.conversation_id,
+        message_id=cast(UUID, attachment.message_id),
+        conversation_title=conversation_title,
+        filename=attachment.filename,
+        content_type=attachment.content_type,
+        size_bytes=attachment.size_bytes,
+        kind="artifact" if attachment.s3_key.startswith("_artifacts/") else "attachment",
+        created_at=attachment.created_at,
+    )
+
+
+@router.delete("/artifacts/{attachment_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_chat_artifact(
+    attachment_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> Response:
+    """Delete one Chat file owned by the current user."""
+    attachment = (
+        await db.execute(
+            select(MessageAttachment)
+            .join(Conversation, Conversation.id == MessageAttachment.conversation_id)
+            .where(MessageAttachment.id == attachment_id)
+            .where(MessageAttachment.message_id.is_not(None))
+            .where(Conversation.user_id == user.user_id)
+        )
+    ).scalar_one_or_none()
+    if attachment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Artifact not found")
+
+    from src.services.file_storage.service import get_file_storage_service
+
+    await get_file_storage_service(db).delete_raw_from_s3(attachment.s3_key)
+    await db.delete(attachment)
+    await db.flush()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/conversations/{conversation_id}/attachments")

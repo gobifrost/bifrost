@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator, model_validator
 
 from src.models.contracts.agent_stats import AgentStatsResponse
 from src.models.contracts.artifacts import ArtifactRef, ModelCapabilities
@@ -347,6 +347,37 @@ class AttachmentUploadResponse(BaseModel):
     """Files accepted for the next message in a conversation."""
 
     attachments: list[AttachmentPublic]
+
+
+class ChatArtifactPublic(AttachmentPublic):
+    """A durable Chat file with enough context for the user's artifact library."""
+
+    conversation_id: UUID
+    message_id: UUID
+    conversation_title: str | None = None
+    created_at: datetime
+
+    @field_serializer("conversation_id", "message_id")
+    def serialize_parent_ids(self, value: UUID) -> str:
+        return str(value)
+
+    @field_serializer("created_at")
+    def serialize_created_at(self, value: datetime) -> str:
+        return value.isoformat()
+
+
+class ChatArtifactUpdate(BaseModel):
+    """Editable metadata for a durable Chat file."""
+
+    filename: str = Field(min_length=1, max_length=500)
+
+    @field_validator("filename")
+    @classmethod
+    def validate_filename(cls, value: str) -> str:
+        cleaned = value.strip()
+        if cleaned in {"", ".", ".."} or "/" in cleaned or "\\" in cleaned:
+            raise ValueError("Enter a filename without folders.")
+        return cleaned
 
 
 ChatModelTierId = Literal["fast", "balanced", "pro"]

@@ -118,6 +118,9 @@ describe("ChatSidebar — conversation list", () => {
 		expect(screen.getByText("First")).toBeInTheDocument();
 		const secondRow = screen.getByText("Second").closest("div.group");
 		expect(secondRow?.className).toMatch(/bg-accent/);
+		expect(
+			screen.getByRole("button", { name: /open second/i }),
+		).toBeInTheDocument();
 	});
 
 	it("filters by title via the search input", () => {

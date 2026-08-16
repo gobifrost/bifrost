@@ -40,7 +40,7 @@ def _document_spec(output_format: str) -> DocumentArtifactSpec:
 def test_generate_pdf_uses_flowing_document_contract() -> None:
     artifact = generate_document(_document_spec("pdf"))
 
-    assert artifact.filename == "customer-brief.pdf"
+    assert artifact.filename == "Customer Brief.pdf"
     assert artifact.content_type == "application/pdf"
     assert artifact.content.startswith(b"%PDF-")
     assert artifact.size_bytes > 500
@@ -50,7 +50,7 @@ def test_generate_docx_can_be_opened_by_python_docx() -> None:
     artifact = generate_document(_document_spec("docx"))
     document = Document(io.BytesIO(artifact.content))
 
-    assert artifact.filename == "customer-brief.docx"
+    assert artifact.filename == "Customer Brief.docx"
     assert document.paragraphs[0].text == "Customer brief"
     assert any(paragraph.text == "Proceed with the rollout." for paragraph in document.paragraphs)
     assert document.tables[0].cell(1, 0).text == "Pilot"
@@ -74,7 +74,7 @@ def test_generate_xlsx_styles_and_validates_workbook() -> None:
     workbook = load_workbook(io.BytesIO(artifact.content))
     worksheet = workbook["Adoption"]
 
-    assert artifact.filename == "adoption-dashboard.xlsx"
+    assert artifact.filename == "Adoption Dashboard.xlsx"
     assert worksheet["A2"].value == "Partner"
     assert worksheet.freeze_panes == "A2"
     assert worksheet.auto_filter.ref == "A1:B3"
@@ -91,5 +91,17 @@ def test_generate_json_normalizes_valid_content() -> None:
         )
     )
 
-    assert artifact.filename == "result.json"
-    assert artifact.content == b'{\n  "ready": true,\n  "count": 2\n}'
+    assert artifact.filename == "Result.json"
+
+
+def test_generate_markdown_uses_human_friendly_name_and_extension() -> None:
+    artifact = generate_text(
+        TextArtifactSpec(
+            filename="customer-health_report.md",
+            format="markdown",
+            content="# Health report",
+        )
+    )
+
+    assert artifact.filename == "Customer Health Report.md"
+    assert artifact.content == b"# Health report"

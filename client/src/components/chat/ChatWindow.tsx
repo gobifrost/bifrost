@@ -7,7 +7,7 @@
 
 import { useEffect, useRef, useMemo, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { Bot, Loader2, MessageSquare } from "lucide-react";
+import { Bot, MessageSquare } from "lucide-react";
 import { ChatMessage } from "./ChatMessage";
 import { ChatAttachmentList } from "./ChatAttachmentList";
 import { ChatInput } from "./ChatInput";
@@ -15,6 +15,7 @@ import { ToolExecutionCard } from "./ToolExecutionCard";
 import { ToolExecutionBadge } from "./ToolExecutionBadge";
 import { ToolExecutionGroup } from "./ToolExecutionGroup";
 import { ChatSystemEvent, type SystemEvent } from "./ChatSystemEvent";
+import { ChatRunActivity, getActiveRunLabel } from "./ChatRunActivity";
 import { AskUserQuestionCard } from "./AskUserQuestionCard";
 import { NeedsReauthCard, extractNeedsReauth } from "./NeedsReauthCard";
 import { TodoList } from "./TodoList";
@@ -41,6 +42,16 @@ type MessagePublic = components["schemas"]["MessagePublic"];
 // Stable empty array to prevent re-render loops in Zustand selectors
 const EMPTY_MESSAGES: MessagePublic[] = [];
 const EMPTY_EVENTS: SystemEvent[] = [];
+
+type TimelineItem =
+	| { type: "message"; data: MessagePublic; timestamp: string }
+	| { type: "tool_group"; data: MessagePublic[]; timestamp: string }
+	| { type: "event"; data: SystemEvent; timestamp: string };
+
+interface ConversationTurn {
+	user: TimelineItem;
+	activity: TimelineItem[];
+}
 
 /** Helper component to render a message with its tool execution cards */
 interface MessageWithToolCardsProps {
@@ -276,11 +287,6 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 	}, [messages]);
 
 	// Create a unified timeline of messages and system events
-	type TimelineItem =
-		| { type: "message"; data: MessagePublic; timestamp: string }
-		| { type: "tool_group"; data: MessagePublic[]; timestamp: string }
-		| { type: "event"; data: SystemEvent; timestamp: string };
-
 	const timeline = useMemo<TimelineItem[]>(() => {
 		const items: TimelineItem[] = [];
 		let currentToolGroup: MessagePublic[] = [];
@@ -333,6 +339,25 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 
 		return items;
 	}, [messages, systemEvents]);
+
+	const { preludeItems, turns } = useMemo(() => {
+		const prelude: TimelineItem[] = [];
+		const groupedTurns: ConversationTurn[] = [];
+		let currentTurn: ConversationTurn | null = null;
+
+		for (const item of timeline) {
+			if (item.type === "message" && item.data.role === "user") {
+				currentTurn = { user: item, activity: [] };
+				groupedTurns.push(currentTurn);
+			} else if (currentTurn) {
+				currentTurn.activity.push(item);
+			} else {
+				prelude.push(item);
+			}
+		}
+
+		return { preludeItems: prelude, turns: groupedTurns };
+	}, [timeline]);
 
 	// Auto-scroll to bottom on new messages or events (only if user is at bottom)
 	useEffect(() => {
@@ -474,6 +499,81 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 		);
 	}
 
+	const renderTimelineItem = (
+		item: TimelineItem,
+		options: { includeArtifacts?: boolean } = {},
+	) => {
+		const includeArtifacts = options.includeArtifacts ?? true;
+		if (item.type === "event") {
+			return <ChatSystemEvent key={item.data.id} event={item.data} />;
+		}
+
+		if (item.type === "tool_group") {
+			return (
+				<div key={`tools-${item.data[0].id}`}>
+					<ToolExecutionGroup className="ml-0 pl-0 [&>div:first-child]:hidden">
+						{item.data.map((tc) => (
+							<ToolExecutionBadge
+								key={tc.id}
+								toolCall={{
+									id: tc.tool_call_id || tc.id,
+									name: tc.tool_name || "unknown",
+									arguments: tc.tool_input || {},
+								}}
+								status={
+									tc.tool_state === "completed"
+										? "success"
+										: tc.tool_state === "error"
+											? "failed"
+											: tc.tool_state === "running"
+												? "running"
+												: "pending"
+								}
+								result={tc.tool_result}
+								error={
+									tc.tool_state === "error"
+										? (tc.tool_result as { error?: string })?.error
+										: undefined
+								}
+								durationMs={tc.duration_ms || undefined}
+								className="!border-0 !bg-transparent !px-0 !text-muted-foreground shadow-none hover:!bg-transparent hover:!text-foreground"
+							/>
+						))}
+					</ToolExecutionGroup>
+					{includeArtifacts &&
+						item.data.map((toolMessage) =>
+							(toolMessage.attachments ?? []).length > 0 ? (
+								<ChatAttachmentList
+									key={`artifacts-${toolMessage.id}`}
+									conversationId={conversationId}
+									attachments={toolMessage.attachments ?? []}
+									variant="artifact"
+								/>
+							) : null,
+						)}
+					{item.data.map((tc) => {
+						const reauth = extractNeedsReauth(tc.tool_result);
+						if (!reauth) return null;
+						return <NeedsReauthCard key={`reauth-${tc.id}`} metadata={reauth} />;
+					})}
+				</div>
+			);
+		}
+
+		const msg = item.data;
+		return (
+			<MessageWithToolCards
+				key={msg.id}
+				message={msg}
+				toolResultMessages={toolResultMessages}
+				conversationId={conversationId}
+				isStreaming={
+					(msg as UnifiedMessage).isStreaming || msg.id === streamingMessageId
+				}
+			/>
+		);
+	};
+
 	return (
 		<div className="flex-1 min-h-0 flex flex-col h-full overflow-hidden">
 			{/* Messages Area */}
@@ -483,126 +583,95 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 				className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-muted scrollbar-track-transparent"
 			>
 				<div className="max-w-4xl mx-auto pt-8">
-					{/* Unified message and event rendering */}
-					{timeline.map((item) => {
-						if (item.type === "event") {
-							return (
-								<ChatSystemEvent
-									key={item.data.id}
-									event={item.data}
-								/>
-							);
-						}
+					{/* Unified user turns and their progressive activity */}
+					{preludeItems.map((item) => renderTimelineItem(item))}
+					{turns.map((turn, turnIndex) => {
+						const isActiveTurn =
+							isStreaming && turnIndex === turns.length - 1;
+						const assistantIndexes = turn.activity
+							.map((item, index) =>
+								item.type === "message" &&
+								item.data.role === "assistant" &&
+								item.data.content?.trim()
+									? index
+									: -1,
+							)
+							.filter((index) => index >= 0);
+						const finalAssistantIndex = assistantIndexes.at(-1) ?? -1;
+						const finalAssistant =
+							finalAssistantIndex >= 0
+								? turn.activity[finalAssistantIndex]
+								: undefined;
+						const durationMs =
+							finalAssistant?.type === "message"
+								? finalAssistant.data.duration_ms
+								: turn.activity
+									.flatMap((item) =>
+										item.type === "tool_group" ? item.data : [],
+									)
+									.reduce(
+										(total, tool) => total + (tool.duration_ms ?? 0),
+										0,
+									);
+						const runningTool = turn.activity
+							.flatMap((item) =>
+								item.type === "tool_group" ? item.data : [],
+							)
+							.slice()
+							.reverse()
+							.find((tool) => tool.tool_state === "running");
+						const detailItems = turn.activity.filter(
+							(item, index) =>
+								index !== finalAssistantIndex &&
+								!(item.type === "event" && item.data.type === "error") &&
+								!(
+									item.type === "message" &&
+									item.data.role === "assistant" &&
+									!item.data.content?.trim() &&
+									!(item.data.attachments ?? []).length &&
+									!(item.data.tool_calls ?? []).length
+								),
+						);
+						const errors = turn.activity.filter(
+							(item) => item.type === "event" && item.data.type === "error",
+						);
+						const artifacts = turn.activity.flatMap((item) =>
+							item.type === "tool_group"
+								? item.data.flatMap((tool) => tool.attachments ?? [])
+								: [],
+						);
 
-						if (item.type === "tool_group") {
-							return (
-								<div key={`tools-${item.data[0].id}`}>
-									<ToolExecutionGroup>
-										{item.data.map((tc) => (
-											<ToolExecutionBadge
-												key={tc.id}
-												toolCall={{
-													id:
-														tc.tool_call_id ||
-														tc.id,
-													name:
-														tc.tool_name ||
-														"unknown",
-													arguments:
-														tc.tool_input || {},
-												}}
-												status={
-													tc.tool_state ===
-													"completed"
-														? "success"
-														: tc.tool_state ===
-															  "error"
-															? "failed"
-															: "pending"
-												}
-												result={tc.tool_result}
-												error={
-													tc.tool_state === "error"
-														? (
-																tc.tool_result as {
-																	error?: string;
-																}
-															)?.error
-														: undefined
-												}
-												durationMs={
-													tc.duration_ms || undefined
-												}
-											/>
-										))}
-									</ToolExecutionGroup>
-									{item.data.map((toolMessage) =>
-										(toolMessage.attachments ?? []).length >
-										0 ? (
-											<ChatAttachmentList
-												key={`artifacts-${toolMessage.id}`}
-												conversationId={conversationId}
-												attachments={
-													toolMessage.attachments ??
-													[]
-												}
-												variant="artifact"
-											/>
-										) : null,
-									)}
-									{item.data.map((toolMessage) =>
-										toolMessage.tool_state === "running" &&
-										toolMessage.tool_name?.startsWith(
-											"create_",
-										) &&
-										toolMessage.tool_name.endsWith(
-											"_artifact",
-										) ? (
-											<div
-												key={`artifact-loading-${toolMessage.id}`}
-												className="mx-4 mb-2 flex items-center gap-2 text-xs text-muted-foreground"
-											>
-												<Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
-												Preparing{" "}
-												{String(
-													toolMessage.tool_input
-														?.filename ||
-														"generated file",
-												)}
-											</div>
-										) : null,
-									)}
-									{/* Inline reconnect prompts for any needs_reauth result. */}
-									{item.data.map((tc) => {
-										const reauth = extractNeedsReauth(
-											tc.tool_result,
-										);
-										if (!reauth) return null;
-										return (
-											<NeedsReauthCard
-												key={`reauth-${tc.id}`}
-												metadata={reauth}
-											/>
-										);
-									})}
-								</div>
-							);
-						}
-
-						const msg = item.data;
-
-						// Render user/assistant messages normally
 						return (
-							<MessageWithToolCards
-								key={msg.id}
-								message={msg}
-								toolResultMessages={toolResultMessages}
-								conversationId={conversationId}
-								isStreaming={
-									(msg as UnifiedMessage).isStreaming ||
-									msg.id === streamingMessageId
-								}
-							/>
+							<div key={`turn-${turn.user.timestamp}`}>
+								{renderTimelineItem(turn.user)}
+								{(isActiveTurn || turn.activity.length > 0) && (
+									<ChatRunActivity
+										isActive={isActiveTurn}
+										durationMs={durationMs}
+										activeLabel={getActiveRunLabel(
+											runningTool?.tool_name,
+											runningTool?.tool_input,
+										)}
+									>
+										{detailItems.length > 0
+											? detailItems.map((item) =>
+													renderTimelineItem(item, {
+														includeArtifacts: false,
+													}),
+												)
+											: undefined}
+									</ChatRunActivity>
+								)}
+								{artifacts.length > 0 && (
+									<ChatAttachmentList
+										conversationId={conversationId}
+										attachments={artifacts}
+										variant="artifact"
+									/>
+								)}
+								{errors.map((item) => renderTimelineItem(item))}
+								{finalAssistant && renderTimelineItem(finalAssistant)}
+							</div>
 						);
 					})}
 
