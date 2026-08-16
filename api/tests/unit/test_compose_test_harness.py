@@ -223,6 +223,19 @@ def test_clean_boot_optimization_is_one_shot_and_shared_by_test_runners():
     assert "prepare_test_state" in browser_runner
 
 
+def test_pytest_runner_prevents_concurrent_or_orphaned_stack_mutation():
+    """A detached pytest container must block a second run on the same stack."""
+    script = _find_repo_file("test.sh").read_text()
+    pytest_runner = script.split("run_pytest() {", 1)[1].split("\n}", 1)[0]
+
+    assert 'flock -n "$runner_lock_fd"' in pytest_runner
+    assert 'runner_name="${COMPOSE_PROJECT_NAME}-pytest-runner"' in pytest_runner
+    assert 'docker container inspect "$runner_name"' in pytest_runner
+    assert '--name "$runner_name" test-runner' in pytest_runner
+    assert "trap cleanup_pytest_runner INT TERM" in pytest_runner
+    assert 'docker rm -f "$runner_name"' in pytest_runner
+
+
 def test_playwright_uses_the_production_client_image():
     """Browser gates must cover compiled assets and nginx, not Vite transforms."""
     compose = yaml.safe_load(_COMPOSE.read_text())

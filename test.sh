@@ -262,6 +262,34 @@ stack_status() {
 # =============================================================================
 
 run_pytest() {
+    local runner_lock_fd runner_name runner_status
+
+    # One worktree owns one mutable Docker test stack.  A second pytest process
+    # against that stack can reset the database underneath the first process and
+    # produce order-impossible failures.  The flock covers the normal case; the
+    # stable container name is a second guard when the parent shell is killed and
+    # Docker leaves the already-running one-off container behind.
+    exec {runner_lock_fd}>"$LOG_DIR/test-runner.lock"
+    if ! flock -n "$runner_lock_fd"; then
+        echo "ERROR: another pytest run is already using this worktree's test stack." >&2
+        echo "Wait for it to finish before starting another test command." >&2
+        exec {runner_lock_fd}>&-
+        return 1
+    fi
+
+    runner_name="${COMPOSE_PROJECT_NAME}-pytest-runner"
+    if docker container inspect "$runner_name" > /dev/null 2>&1; then
+        echo "ERROR: pytest runner container '$runner_name' still exists." >&2
+        echo "Wait for it to finish; if its parent was interrupted, stop that container explicitly." >&2
+        exec {runner_lock_fd}>&-
+        return 1
+    fi
+
+    cleanup_pytest_runner() {
+        docker rm -f "$runner_name" > /dev/null 2>&1 || true
+    }
+    trap cleanup_pytest_runner INT TERM
+
     # Note: we deliberately do NOT re-run stack_template_init.sh here.
     # `stack reset` / `stack up` is where migration changes flow into the
     # template. `run_pytest` clones the current template, so if the user
@@ -275,9 +303,16 @@ run_pytest() {
     # the whole session is reported as ERROR even though every test ran. Make the
     # mount dir world-writable so the uid-1000 container can write results into it.
     chmod 777 "$LOG_DIR" 2>/dev/null || true
-    docker compose -f "$COMPOSE_FILE" --profile test run --rm test-runner \
-        pytest "$@" --junitxml="/tmp/bifrost/test-results.xml" 2>&1 | tee "$LOG_DIR/test-runner.log"
-    return "${PIPESTATUS[0]}"
+    runner_status=0
+    docker compose -f "$COMPOSE_FILE" --profile test run --rm \
+        --name "$runner_name" test-runner \
+        pytest "$@" --junitxml="/tmp/bifrost/test-results.xml" 2>&1 \
+        | tee "$LOG_DIR/test-runner.log" || runner_status="${PIPESTATUS[0]}"
+
+    cleanup_pytest_runner
+    trap - INT TERM
+    exec {runner_lock_fd}>&-
+    return "$runner_status"
 }
 
 # `unit` is the fast every-PR lane: it deselects `@pytest.mark.slow` tests
