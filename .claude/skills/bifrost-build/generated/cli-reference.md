@@ -1207,7 +1207,8 @@ Usage: forms update [OPTIONS] REF
   from the payload so only the supplied fields are patched.
 
   Passing ``--org``/``--global`` re-scopes the form (HOME leaves the scope
-  unchanged, since omitting org sends no ``organization_id``).
+  unchanged, since omitting org sends no ``organization_id``). Pass an empty
+  value to ``--workflow`` or ``--launch-workflow`` to clear that reference.
 
 Options:
   --name TEXT                     name

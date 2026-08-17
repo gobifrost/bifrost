@@ -336,12 +336,352 @@
         "summary": "Delete an Agent the caller may manage",
         "target_kind": "resource"
       }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "forms",
+            "list"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_list_forms",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "forms.list",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "forms.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "FormRepository.list_forms",
+        "cli": {
+          "path": [
+            "forms",
+            "list"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Manifests reconcile Form state; they do not perform collection reads.",
+          "sdk": "Form administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_list_forms"
+        },
+        "native_builder": true,
+        "operation_id": "forms.list",
+        "rest": {
+          "method": "GET",
+          "path": "/api/forms",
+          "request_model": null,
+          "response_model": "list[FormPublic]"
+        },
+        "side_effects": [],
+        "summary": "List Forms visible to the caller",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "forms",
+            "get"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_get_form",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "forms.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "forms.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "FormRepository plus form access policy",
+        "cli": {
+          "path": [
+            "forms",
+            "get"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Manifests reconcile Form state; they do not perform resource reads.",
+          "sdk": "Form administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_get_form"
+        },
+        "native_builder": true,
+        "operation_id": "forms.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/forms/{form_id}",
+          "request_model": null,
+          "response_model": "FormPublic"
+        },
+        "side_effects": [],
+        "summary": "Get one Form visible to the caller",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "forms",
+            "create"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "forms",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_create_form",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "forms.create",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "forms.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "form.create",
+        "authorization_resolver": "Platform-admin gate and target organization resolver",
+        "cli": {
+          "path": [
+            "forms",
+            "create"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Form administration is not available to application SDKs."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "forms"
+        },
+        "mcp": {
+          "name": "bifrost_create_form"
+        },
+        "native_builder": true,
+        "operation_id": "forms.create",
+        "rest": {
+          "method": "POST",
+          "path": "/api/forms",
+          "request_model": "FormCreate",
+          "response_model": "FormPublic"
+        },
+        "side_effects": [
+          "persist Form fields and role assignments",
+          "synchronize Form roles to referenced workflows",
+          "invalidate Form caches",
+          "write manifest change through RepoSyncWriter when applicable"
+        ],
+        "summary": "Create a Form in an allowed target",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "forms",
+            "update"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "forms",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_update_form",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "forms.update",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "forms.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "form.update",
+        "authorization_resolver": "Platform-admin and Solution-management guards",
+        "cli": {
+          "path": [
+            "forms",
+            "update"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Form administration is not available to application SDKs."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "forms"
+        },
+        "mcp": {
+          "name": "bifrost_update_form"
+        },
+        "native_builder": true,
+        "operation_id": "forms.update",
+        "rest": {
+          "method": "PATCH",
+          "path": "/api/forms/{form_id}",
+          "request_model": "FormUpdate",
+          "response_model": "FormPublic"
+        },
+        "side_effects": [
+          "replace selected Form fields and role assignments",
+          "synchronize Form roles to referenced workflows",
+          "invalidate Form caches",
+          "write manifest change through RepoSyncWriter when applicable"
+        ],
+        "summary": "Update a Form the caller may manage",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "forms",
+            "delete"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "forms",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_delete_form",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "forms.delete",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "forms.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "form.delete",
+        "authorization_resolver": "Platform-admin and Solution-management guards",
+        "cli": {
+          "path": [
+            "forms",
+            "delete"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Form administration is not available to application SDKs."
+        },
+        "manifest": {
+          "behavior": "remove",
+          "entity": "forms"
+        },
+        "mcp": {
+          "name": "bifrost_delete_form"
+        },
+        "native_builder": true,
+        "operation_id": "forms.delete",
+        "rest": {
+          "method": "DELETE",
+          "path": "/api/forms/{form_id}",
+          "request_model": null,
+          "response_model": null
+        },
+        "side_effects": [
+          "deactivate the Form or purge its persisted relations",
+          "invalidate Form caches",
+          "remove the active manifest entry through RepoSyncWriter"
+        ],
+        "summary": "Deactivate or purge a Form the caller may manage",
+        "target_kind": "resource"
+      }
     }
   ],
   "counts": {
     "cli": 129,
     "manifest": 16,
-    "mcp": 98,
+    "mcp": 99,
     "native_builder": 10,
     "rest": 656,
     "sdk": 19
@@ -743,51 +1083,6 @@
         "path": [
           "files",
           "write"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "forms",
-          "create"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "forms",
-          "delete"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "forms",
-          "get"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "forms",
-          "list"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "forms",
-          "update"
         ],
         "reason": "CLI operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -1494,11 +1789,6 @@
         "status": "missing_surface"
       },
       {
-        "entity": "forms",
-        "reason": "Manifest entity has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "entity": "integrations",
         "reason": "Manifest entity has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -1579,12 +1869,6 @@
       {
         "hidden": false,
         "name": "create_event_subscription",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "create_form",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -1758,12 +2042,6 @@
       },
       {
         "hidden": false,
-        "name": "get_form",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "get_integration",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -1849,12 +2127,6 @@
       {
         "hidden": true,
         "name": "list_files",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "list_forms",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -2029,12 +2301,6 @@
       {
         "hidden": false,
         "name": "update_event_subscription",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "update_form",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -3773,41 +4039,6 @@
         "method": "POST",
         "operation_id": "",
         "path": "/api/files/write",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/forms",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/forms",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "DELETE",
-        "operation_id": "",
-        "path": "/api/forms/{form_id}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/forms/{form_id}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "PATCH",
-        "operation_id": "",
-        "path": "/api/forms/{form_id}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

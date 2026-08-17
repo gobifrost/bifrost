@@ -15,7 +15,7 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
     assert inventory["counts"] == {
         "cli": 129,
         "manifest": 16,
-        "mcp": 98,
+        "mcp": 99,
         "native_builder": 10,
         "rest": 656,
         "sdk": 19,
@@ -27,7 +27,7 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
             assert row["reason"]
 
 
-def test_agent_vertical_slice_reports_rest_cli_and_mcp_parity() -> None:
+def test_catalog_vertical_slices_report_rest_cli_and_mcp_parity() -> None:
     inventory = build_operation_inventory(app, REPO_ROOT)
     operations = {
         row["operation"]["operation_id"]: row

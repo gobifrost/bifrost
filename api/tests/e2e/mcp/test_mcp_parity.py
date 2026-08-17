@@ -145,6 +145,18 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
         "field_renames": {},
     },
     {
+        "model_path": "src.models.contracts.forms:FormCreate",
+        "tool_path": "src.services.mcp_server.tools.forms:bifrost_create_form",
+        "extra_args": {"scope"},
+        "field_renames": {},
+    },
+    {
+        "model_path": "src.models.contracts.forms:FormUpdate",
+        "tool_path": "src.services.mcp_server.tools.forms:bifrost_update_form",
+        "extra_args": {"form_ref", "scope"},
+        "field_renames": {},
+    },
+    {
         "model_path": "src.models.contracts.users:RoleCreate",
         "tool_path": "src.services.mcp_server.tools.roles:create_role",
         "extra_args": set(),
@@ -490,6 +502,266 @@ class TestMcpParityAgents:
             assert (deleted_private.structured_content or {}).get(
                 "deleted"
             ) == private_id
+
+
+# =============================================================================
+# Forms
+# =============================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestMcpParityForms:
+    async def test_forms_crud_roundtrip_manifest_and_audit(
+        self,
+        admin_context,
+        e2e_client,
+        platform_admin,
+    ) -> None:
+        from src.services.mcp_server.tools.forms import (
+            bifrost_create_form,
+            bifrost_delete_form,
+            bifrost_get_form,
+            bifrost_list_forms,
+            bifrost_update_form,
+        )
+        from src.services.repo_storage import RepoStorage
+
+        listed = await bifrost_list_forms(admin_context)
+        assert listed.structured_content is not None
+        assert listed.structured_content.get("count", -1) >= 0
+
+        name = f"mcp-parity-form-{uuid4().hex[:8]}"
+        created_result = await bifrost_create_form(
+            admin_context,
+            name=name,
+            description="created through canonical MCP",
+            form_schema={
+                "fields": [
+                    {
+                        "name": "summary",
+                        "type": "text",
+                        "label": "Summary",
+                        "required": True,
+                    }
+                ]
+            },
+            access_level="authenticated",
+            scope="global",
+        )
+        created = created_result.structured_content or {}
+        assert "error" not in created, created
+        form_id = str(created["id"])
+
+        manifest_after_create = (
+            await RepoStorage().read(".bifrost/forms.yaml")
+        ).decode("utf-8")
+        assert form_id in manifest_after_create
+
+        fetched_result = await bifrost_get_form(admin_context, form_ref=name)
+        fetched = fetched_result.structured_content or {}
+        assert fetched.get("id") == form_id
+        assert fetched["form_schema"]["fields"][0]["name"] == "summary"
+
+        renamed = f"mcp-parity-form-renamed-{uuid4().hex[:8]}"
+        updated_result = await bifrost_update_form(
+            admin_context,
+            form_ref=name,
+            name=renamed,
+            description="updated through canonical MCP",
+            form_schema={
+                "fields": [
+                    {
+                        "name": "details",
+                        "type": "textarea",
+                        "label": "Details",
+                    }
+                ]
+            },
+        )
+        updated = updated_result.structured_content or {}
+        assert "error" not in updated, updated
+        assert updated.get("name") == renamed
+        assert updated["form_schema"]["fields"][0]["name"] == "details"
+
+        rest_get = e2e_client.get(
+            f"/api/forms/{form_id}",
+            headers=platform_admin.headers,
+        )
+        assert rest_get.status_code == 200, rest_get.text
+        assert rest_get.json()["description"] == "updated through canonical MCP"
+
+        deactivated_result = await bifrost_delete_form(
+            admin_context,
+            form_ref=renamed,
+        )
+        deactivated = deactivated_result.structured_content or {}
+        assert deactivated == {"deleted": form_id, "purged": False}
+        inactive = e2e_client.get(
+            f"/api/forms/{form_id}",
+            headers=platform_admin.headers,
+        )
+        assert inactive.status_code == 200, inactive.text
+        assert inactive.json()["is_active"] is False
+
+        manifest_paths = await RepoStorage().list(".bifrost/")
+        if ".bifrost/forms.yaml" in manifest_paths:
+            manifest_after_delete = (
+                await RepoStorage().read(".bifrost/forms.yaml")
+            ).decode("utf-8")
+            assert form_id not in manifest_after_delete
+
+        purged_result = await bifrost_delete_form(
+            admin_context,
+            form_ref=form_id,
+            purge=True,
+        )
+        purged = purged_result.structured_content or {}
+        assert purged == {"deleted": form_id, "purged": True}
+        assert e2e_client.get(
+            f"/api/forms/{form_id}",
+            headers=platform_admin.headers,
+        ).status_code == 404
+
+        audit = e2e_client.get(
+            "/api/audit",
+            headers=platform_admin.headers,
+            params={"action": "form.", "resource_type": "form", "limit": 50},
+        )
+        assert audit.status_code == 200, audit.text
+        entries = [
+            entry
+            for entry in audit.json()["entries"]
+            if entry["resource_id"] == form_id
+        ]
+        assert {entry["action"] for entry in entries} == {
+            "form.create",
+            "form.update",
+            "form.delete",
+        }
+        assert sum(entry["action"] == "form.delete" for entry in entries) == 2
+
+    async def test_form_authorization_matches_rest(
+        self,
+        admin_context,
+        org_context,
+    ) -> None:
+        from src.services.mcp_server.tools.forms import (
+            bifrost_create_form,
+            bifrost_delete_form,
+            bifrost_get_form,
+            bifrost_list_forms,
+            bifrost_update_form,
+        )
+
+        forbidden_create = await bifrost_create_form(
+            org_context,
+            name=f"forbidden-form-{uuid4().hex[:8]}",
+            form_schema={"fields": []},
+        )
+        assert "error" in (forbidden_create.structured_content or {})
+
+        name = f"shared-mcp-form-{uuid4().hex[:8]}"
+        created_result = await bifrost_create_form(
+            admin_context,
+            name=name,
+            form_schema={"fields": []},
+            access_level="authenticated",
+            scope="global",
+        )
+        created = created_result.structured_content or {}
+        assert "error" not in created, created
+        form_id = str(created["id"])
+        try:
+            listed = await bifrost_list_forms(org_context)
+            visible_ids = {
+                str(form["id"])
+                for form in (listed.structured_content or {}).get("forms", [])
+            }
+            assert form_id in visible_ids
+
+            fetched = await bifrost_get_form(org_context, form_ref=name)
+            assert (fetched.structured_content or {}).get("id") == form_id
+
+            forbidden_update = await bifrost_update_form(
+                org_context,
+                form_ref=form_id,
+                description="must not persist",
+            )
+            assert "error" in (forbidden_update.structured_content or {})
+
+            forbidden_delete = await bifrost_delete_form(
+                org_context,
+                form_ref=form_id,
+            )
+            assert "error" in (forbidden_delete.structured_content or {})
+        finally:
+            deactivated = await bifrost_delete_form(
+                admin_context,
+                form_ref=form_id,
+            )
+            assert (deactivated.structured_content or {}).get("deleted") == form_id
+            purged = await bifrost_delete_form(
+                admin_context,
+                form_ref=form_id,
+                purge=True,
+            )
+            assert (purged.structured_content or {}).get("purged") is True
+
+    async def test_form_name_ambiguity_requires_uuid(
+        self,
+        admin_context,
+        org_context,
+    ) -> None:
+        """CLI and MCP share strict ambiguity handling across visible scopes."""
+        from src.services.mcp_server.tools.forms import (
+            bifrost_create_form,
+            bifrost_delete_form,
+            bifrost_get_form,
+        )
+
+        name = f"ambiguous-mcp-form-{uuid4().hex[:8]}"
+        created_ids: list[str] = []
+        try:
+            for scope in ("global", str(org_context.org_id)):
+                created_result = await bifrost_create_form(
+                    admin_context,
+                    name=name,
+                    form_schema={"fields": []},
+                    access_level="authenticated",
+                    scope=scope,
+                )
+                created = created_result.structured_content or {}
+                assert "error" not in created, created
+                created_ids.append(str(created["id"]))
+
+            ambiguous_result = await bifrost_get_form(
+                org_context,
+                form_ref=name,
+            )
+            ambiguous = ambiguous_result.structured_content or {}
+            assert "error" in ambiguous
+            assert ambiguous["kind"] == "form"
+            assert {candidate["uuid"] for candidate in ambiguous["candidates"]} == set(
+                created_ids
+            )
+
+            for form_id in created_ids:
+                fetched = await bifrost_get_form(org_context, form_ref=form_id)
+                assert (fetched.structured_content or {}).get("id") == form_id
+        finally:
+            for form_id in created_ids:
+                deactivated = await bifrost_delete_form(
+                    admin_context,
+                    form_ref=form_id,
+                )
+                assert (deactivated.structured_content or {}).get("deleted") == form_id
+                purged = await bifrost_delete_form(
+                    admin_context,
+                    form_ref=form_id,
+                    purge=True,
+                )
+                assert (purged.structured_content or {}).get("purged") is True
 
 
 # =============================================================================

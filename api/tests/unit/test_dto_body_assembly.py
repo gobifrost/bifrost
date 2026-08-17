@@ -234,6 +234,36 @@ async def test_uuid_passthrough_for_ref_fields() -> None:
 
 
 @pytest.mark.asyncio
+async def test_empty_nullable_ref_becomes_explicit_null() -> None:
+    resolver = _resolver()
+    body = await assemble_body(
+        FormUpdate,
+        _parsed(
+            FormUpdate,
+            {"workflow_id": "", "launch_workflow_id": ""},
+        ),
+        resolver=resolver,  # type: ignore[arg-type]
+    )
+    assert body == {"workflow_id": None, "launch_workflow_id": None}
+    assert resolver.calls == []
+
+
+@pytest.mark.asyncio
+async def test_empty_required_ref_still_resolves_or_fails() -> None:
+    resolver = _resolver()
+    with pytest.raises(AssertionError, match="missing mapping"):
+        await assemble_body(
+            IntegrationMappingCreate,
+            _parsed(
+                IntegrationMappingCreate,
+                {"organization_id": "", "entity_id": "tenant"},
+            ),
+            resolver=resolver,  # type: ignore[arg-type]
+        )
+    assert resolver.calls == [("org", "")]
+
+
+@pytest.mark.asyncio
 async def test_event_subscription_resolves_workflow_or_agent() -> None:
     resolver = _resolver()
     body = await assemble_body(

@@ -19,6 +19,7 @@ Field handling rules (uniform across CLI and MCP):
 * Plain scalar → typed flag.
 * Field declared in ``verb_ref_lookups`` → string ref flag, resolved via
   :class:`bifrost.refs.RefResolver` in :func:`assemble_body`.
+* Empty string on a nullable ref field → explicit JSON ``null`` (clear).
 
 Per-entity exclude registries are declared at module level and consumed by
 the field-parity tests in ``tests/unit/test_dto_flags.py`` so adding an
@@ -181,6 +182,13 @@ def _unwrap_optional(tp: Any) -> Any:
         # non-None arm — generators only need a coarse classifier.
         return args[0] if args else tp
     return tp
+
+
+def _allows_none(tp: Any) -> bool:
+    """Return whether ``tp`` is a union containing ``None``."""
+
+    origin = get_origin(tp)
+    return origin in (Union, UnionType) and type(None) in get_args(tp)
 
 
 def _is_enum_type(tp: Any) -> bool:
@@ -509,6 +517,9 @@ async def assemble_body(
         annotation = field.annotation
 
         if name in ref_lookups:
+            if value == "" and _allows_none(annotation):
+                body[name] = None
+                continue
             body[name] = await resolver.resolve(
                 ref_lookups[name],  # type: ignore[arg-type]
                 str(value),

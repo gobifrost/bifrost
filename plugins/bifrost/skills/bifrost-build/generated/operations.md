@@ -11,3 +11,8 @@ harness.
 | `agents.create` | `bifrost agents create` | `bifrost_create_agent` | `agents.write` |
 | `agents.update` | `bifrost agents update` | `bifrost_update_agent` | `agents.write` |
 | `agents.delete` | `bifrost agents delete` | `bifrost_delete_agent` | `agents.write` |
+| `forms.list` | `bifrost forms list` | `bifrost_list_forms` | `forms.read` |
+| `forms.get` | `bifrost forms get` | `bifrost_get_form` | `forms.read` |
+| `forms.create` | `bifrost forms create` | `bifrost_create_form` | `forms.write` |
+| `forms.update` | `bifrost forms update` | `bifrost_update_form` | `forms.write` |
+| `forms.delete` | `bifrost forms delete` | `bifrost_delete_form` | `forms.write` |
