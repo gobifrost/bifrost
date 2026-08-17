@@ -2,7 +2,7 @@
 
 **Owner:** Jack Musick / Bifrost engineering
 **Created:** 2026-08-17
-**Status:** In progress — Phases 0–1 complete; Phase 2 Agent, Form, Table, App, Event, Workflow, Organization, and Integration slices complete
+**Status:** In progress — Phases 0–1 complete; Phase 2 Agent, Form, Table, App, Event, Workflow, Organization, Integration, and Workspace Files slices complete
 **Execution branch:** `codex/code-builder-pydantic-integration-20260816`
 **Base:** `origin/main@16e317e62`
 **Depends on:** the reconstructed Builder and shared Pydantic runtime described
@@ -199,8 +199,8 @@ configured, provisioned, connected, enabled, and ready with no blockers.
 **Gate:** every existing surface is accounted for and a representative Agent
 operation is generated end to end from one catalog entry.
 
-**Evidence:** the current schema-versioned inventory captures 658 REST
-method/path pairs, 135 CLI leaves, 101 registered MCP tools, 10 native Builder
+**Evidence:** the current schema-versioned inventory captures 659 REST
+method/path pairs, 136 CLI leaves, 101 registered MCP tools, 10 native Builder
 primitives, 16 manifest fields, and 19 app-SDK bindings. Agent and Form CRUD
 are the first
 catalog slices; the same definitions drive explicit OpenAPI
@@ -241,6 +241,10 @@ environment-skipped mirror tests; API Pyright and Ruff are clean.
       mapping create/update operations, mapped-Organization discovery for
       internal users, REST-owned schema-removal confirmation, audit/manifest
       side effects, and persisted tool-name migration.
+- [x] Complete the Workspace Files slice with canonical list/search/read/stat/
+      exists/write/patch/delete operations, platform-admin-only `_repo`
+      authorization, Solution-managed source guards, conflict-safe editing,
+      thin REST adapters, and persisted tool-name migration.
 - [ ] Convert legacy direct-ORM MCP implementations to thin HTTP wrappers using
       `_http_bridge.py`; do not create a second service path for MCP.
 - [ ] Reconcile known drift in the remaining domains:
@@ -405,6 +409,28 @@ The generated inventory now accounts for 56 catalog operations. Generated
 operation/Skill/OpenAPI/browser references are fresh, API Pyright/Ruff and
 client TypeScript are clean, and ESLint has zero errors with only the
 pre-existing React Compiler warning in `FormRenderer.tsx`.
+
+**Workspace-Files-slice evidence:** the seven direct-storage code-editor tools
+and App-specific `push_files` mutation are removed in favor of eight canonical
+REST adapters: `bifrost_list_files`, `bifrost_search_files`,
+`bifrost_read_file`, `bifrost_stat_file`, `bifrost_exists_file`,
+`bifrost_write_file`, `bifrost_patch_file`, and `bifrost_delete_file`. The CLI
+uses the matching `bifrost files ...` commands, including a new conflict-safe
+`files patch`; top-level local `push` remains a lifecycle composition over the
+same per-file REST write rather than a second server mutation. REST now owns
+platform-admin authorization, file validation/indexing/cache/preview side
+effects, and a shared guard that prevents direct Workspace edits to
+Solution-managed App source. Forward migration
+`20260817_workspace_file_names` merges and deduplicates persisted legacy read
+and write grants without restoring withdrawn Builder migrations. The focused
+architecture/wrapper/CLI/guard selection passed 196/196; the live REST/MCP
+lifecycle and authorization selection passed 10/10; DTO, contract-version,
+and migration checks passed 67/67. Fresh migration and the live debug database
+both report the new revision as the sole Alembic head. Generated operation,
+Skill, CLI, OpenAPI, and browser references are fresh; API Pyright/Ruff and
+client TypeScript are clean, while ESLint has zero errors and only the
+pre-existing React Compiler warning in `FormRenderer.tsx`. The inventory now
+accounts for 64 canonical operations, with 37 uncatalogued MCP tools remaining.
 
 ### Phase 3 — Finish Agent Skill portability
 

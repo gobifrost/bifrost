@@ -111,6 +111,73 @@ class TestAssertEntityIdNotSolutionManaged:
         await assert_entity_id_not_solution_managed(db, Workflow, uuid.uuid4())
 
 
+@pytest.mark.e2e
+class TestWorkspacePathSolutionGuard:
+    async def _managed_app(self, db, repo_path: str) -> None:
+        from src.models.orm.applications import Application
+        from src.models.orm.solutions import Solution
+
+        solution = Solution(
+            id=uuid.uuid4(),
+            slug=f"path-{uuid.uuid4().hex[:8]}",
+            name="Path guard",
+            organization_id=None,
+        )
+        db.add(solution)
+        await db.flush()
+        db.add(
+            Application(
+                id=uuid.uuid4(),
+                name=f"app_{uuid.uuid4().hex[:8]}",
+                slug=f"app-{uuid.uuid4().hex[:8]}",
+                organization_id=None,
+                solution_id=solution.id,
+                repo_path=repo_path,
+                created_by="system",
+            )
+        )
+        await db.flush()
+
+    async def test_file_inside_managed_app_is_rejected(self, db_session) -> None:
+        from src.services.solutions.guard import (
+            assert_workspace_path_not_solution_managed,
+        )
+
+        await self._managed_app(db_session, "apps/managed")
+        with pytest.raises(HTTPException) as exc:
+            await assert_workspace_path_not_solution_managed(
+                db_session,
+                "apps/managed/pages/index.tsx",
+            )
+        assert exc.value.status_code == 409
+        assert exc.value.detail == SOLUTION_MANAGED_MESSAGE
+
+    async def test_recursive_parent_of_managed_app_is_rejected(self, db_session) -> None:
+        from src.services.solutions.guard import (
+            assert_workspace_path_not_solution_managed,
+        )
+
+        await self._managed_app(db_session, "apps/managed-child")
+        with pytest.raises(HTTPException) as exc:
+            await assert_workspace_path_not_solution_managed(
+                db_session,
+                "apps",
+                recursive=True,
+            )
+        assert exc.value.detail == SOLUTION_MANAGED_MESSAGE
+
+    async def test_unmanaged_path_is_allowed(self, db_session) -> None:
+        from src.services.solutions.guard import (
+            assert_workspace_path_not_solution_managed,
+        )
+
+        await self._managed_app(db_session, "apps/managed-other")
+        await assert_workspace_path_not_solution_managed(
+            db_session,
+            "apps/loose/pages/index.tsx",
+        )
+
+
 @pytest.fixture(autouse=True)
 def _install_backstop_and_reset_redis():
     """Production installs the before_flush backstop via get_session_factory();

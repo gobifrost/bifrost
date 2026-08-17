@@ -9,6 +9,7 @@ Verbs:
 * ``bifrost files read <path> [--location LOC] [--solution SLUG|ID]``
 * ``bifrost files stat <path> [--location LOC] [--solution SLUG|ID]``
 * ``bifrost files write <path> (--content S | --from-file F | -) [--create-only | --expected-version VERSION]``
+* ``bifrost files patch <path> --old S --new S [--expected-version VERSION]``
 * ``bifrost files list [directory] [--location LOC] [--solution SLUG|ID]``
 * ``bifrost files delete <path> [--location LOC]`` -> SDK ``files.delete``
 * ``bifrost files exists <path> [--location LOC]`` -> SDK ``files.exists``;
@@ -305,6 +306,50 @@ async def write_cmd(
         },
     )
     response.raise_for_status()
+
+
+@files_group.command("patch")
+@click.argument("path")
+@click.option("--old", "old_string", required=True, help="Unique text to replace.")
+@click.option("--new", "new_string", default="", help="Replacement text; defaults to empty.")
+@click.option(
+    "--expected-version",
+    default=None,
+    help="Patch only if the file still has this version from `files stat`.",
+)
+@click.option(
+    "--force-deactivation",
+    is_flag=True,
+    default=False,
+    help="Allow workflows removed by the patch to be deactivated.",
+)
+@click.pass_context
+@pass_resolver
+@run_async
+async def patch_cmd(
+    ctx: click.Context,
+    path: str,
+    old_string: str,
+    new_string: str,
+    expected_version: str | None,
+    force_deactivation: bool,
+    *,
+    client: BifrostClient,
+    resolver,  # noqa: ARG001
+) -> None:
+    """Replace one unique text fragment in the global source workspace."""
+    response = await client.post(
+        "/api/files/patch",
+        json={
+            "path": path,
+            "old_string": old_string,
+            "new_string": new_string,
+            "expected_version": expected_version,
+            "force_deactivation": force_deactivation,
+        },
+    )
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
 
 
 @files_group.command("list")

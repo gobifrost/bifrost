@@ -254,10 +254,10 @@ Current-branch evidence collected in this integration worktree includes:
 - Settings → Builder now reports the Cloudflare provider configured,
   provisioned, connected, enabled, and ready with no setup blockers;
 - `builder-runner/runner.py` bytecode compilation and `git diff --check`: clean.
-- canonical operation inventory currently accounts for 658 REST pairs, 135
+- canonical operation inventory currently accounts for 659 REST pairs, 136
   CLI leaves, 101 MCP tools, 10 native Builder primitives, 16 manifest fields,
-  and 19 app-SDK bindings; 56 Agent, Form, Table, App, Event, Workflow,
-  Organization, and Integration
+  and 19 app-SDK bindings; 64 Agent, Form, Table, App, Event, Workflow,
+  Organization, Integration, and Workspace Files
   operations now supply stable OpenAPI, CLI, MCP, scope, authorization,
   side-effect, and generated Skill metadata;
 - operation-catalog, generated-reference, Compose-harness, Skill-mirror, and
@@ -293,6 +293,15 @@ Current-branch evidence collected in this integration worktree includes:
   `20260817_integration_mcp_names` preserves persisted Agent grants; 446
   focused unit checks, 33 live MCP/CLI/REST checks, 35 MCP protocol checks,
   the external denial, and 3 browser component checks pass;
+- the Workspace Files slice removes all seven direct-storage code-editor MCP
+  paths and the duplicate App `push_files` mutation in favor of eight
+  canonical REST adapters. REST owns platform-admin-only `_repo` access,
+  conflict-safe patching, storage/index/cache/preview side effects, and the
+  Solution-managed source boundary. Forward migration
+  `20260817_workspace_file_names` preserves and deduplicates persisted Agent
+  grants; 196 focused architecture/unit checks, 10 live REST/MCP checks, and
+  67 DTO/contract/migration checks pass. The operation inventory now contains
+  64 canonical operations and 37 uncatalogued MCP tools;
 - the candidate CI E2E shard exposed one real test-harness defect: the global
   asyncpg queue pool retained connections across pytest's function-scoped
   event loops. Testing now uses `NullPool` while development and production
@@ -311,8 +320,9 @@ state was discarded during resume.
   not part of this version. The shared ledger records provider tokens, cache
   tokens, media usage, reported cost, user, organization, and Solution; Builder
   currently enforces only its per-turn request/token ceilings.
-- Agent, Form, Table, App, Event, Workflow, Organization, and Integration administration now use REST-canonical MCP
-  adapters. Remaining uncatalogued domains, native Builder dispatch parity,
+- Agent, Form, Table, App, Event, Workflow, Organization, Integration, and
+  Workspace Files administration now use REST-canonical MCP adapters.
+  Remaining uncatalogued domains, native Builder dispatch parity,
   revision-bound Agent Skill hydration, generated transport bindings, and the
   maintained coding profile remain sequenced work in the capability-parity
   execution plan.
@@ -320,7 +330,8 @@ state was discarded during resume.
   canonical App and Event checkpoints are pushed through `3c717d110`; the
   Workflow checkpoint is pushed through `c6251e790`; the Organization
   checkpoint is pushed through `367ca7d2c`; and the Integration checkpoint is
-  complete on the same integration branch. It remains
+  pushed through `85ee5b2a0`. The Workspace Files checkpoint is complete on
+  the same integration branch. It remains
   an integration branch: no pull request or merge action has been taken, and
   merge still requires Jack's explicit approval after the remaining phases and
   delivery QA are complete.

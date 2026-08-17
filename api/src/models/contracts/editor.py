@@ -231,6 +231,8 @@ class FileConflictResponse(BaseModel):
         "file_exists",
         "file_missing",
         "path_not_found",
+        "string_not_found",
+        "string_not_unique",
         "version_conflict",
         "workflows_would_deactivate",
     ] = Field(
