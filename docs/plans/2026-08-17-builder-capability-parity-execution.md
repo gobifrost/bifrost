@@ -2,7 +2,7 @@
 
 **Owner:** Jack Musick / Bifrost engineering
 **Created:** 2026-08-17
-**Status:** In progress — Phase 0 complete; Phase 1 next
+**Status:** In progress — Phases 0–1 complete; Phase 2 next
 **Execution branch:** `codex/code-builder-pydantic-integration-20260816`
 **Base:** `origin/main@16e317e62`
 **Depends on:** the reconstructed Builder and shared Pydantic runtime described
@@ -183,21 +183,32 @@ configured, provisioned, connected, enabled, and ready with no blockers.
 
 ### Phase 1 — Canonical operation catalog and parity inventory
 
-- [ ] Add the catalog model and explicit route metadata in shared backend code.
-- [ ] Inventory every REST route, CLI command, registered Bifrost MCP tool, SDK
+- [x] Add the catalog model and explicit route metadata in shared backend code.
+- [x] Inventory every REST route, CLI command, registered Bifrost MCP tool, SDK
       operation, native Builder operation, and manifest-owned mutation.
-- [ ] Classify each operation as exact parity, missing surface, divergent
+- [x] Classify each operation as exact parity, missing surface, divergent
       behavior, transport-only, or intentionally unsupported.
-- [ ] Record target kind, authorization resolver, audit event, side effects,
+- [x] Record target kind, authorization resolver, audit event, side effects,
       async policy, and DTOs for every catalog entry.
-- [ ] Establish the `bifrost_<verb>_<noun>` and CLI mapping rules above.
-- [ ] Generate a compact operation reference for `bifrost-build` and retain the
+- [x] Establish the `bifrost_<verb>_<noun>` and CLI mapping rules above.
+- [x] Generate a compact operation reference for `bifrost-build` and retain the
       existing detailed CLI reference as generated material.
-- [ ] Add CI tripwires for duplicate IDs/names, missing REST routes, unaccounted
+- [x] Add CI tripwires for duplicate IDs/names, missing REST routes, unaccounted
       CLI/MCP verbs, stale generated docs, and exclusions without reasons.
 
 **Gate:** every existing surface is accounted for and a representative Agent
 operation is generated end to end from one catalog entry.
+
+**Evidence:** schema-versioned inventory captures 656 REST method/path pairs,
+129 CLI leaves, 98 registered MCP tools, 10 native Builder primitives, 16
+manifest fields, and 19 app-SDK bindings. Agent CRUD is the first catalog
+slice; the same definitions now drive explicit OpenAPI identities/extensions
+and the generated `bifrost-build` operation reference. Inventory deliberately
+reports the five legacy Agent MCP names as divergent and their native Builder
+entity bindings as missing so Phase 2 cannot hide the work. Catalog, inventory,
+generated-file, mirror, Compose-harness, and cross-event-loop regression
+selection: 25 passed and 2 environment-skipped mirror tests; API Pyright and
+Ruff are clean.
 
 ### Phase 2 — Make REST behavior canonical
 
