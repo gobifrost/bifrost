@@ -382,7 +382,7 @@ class ManifestAgent(EntityCodec, BaseModel):
     tool_ids: list[str] = Field(default_factory=list, description="Workflow UUIDs exposed as tools", **classify(FieldClass.REFERENCE, import_owner="indexer"))
     delegated_agent_ids: list[str] = Field(default_factory=list, description="Agent UUIDs this agent can delegate to", **classify(FieldClass.REFERENCE, import_owner="indexer"))
     knowledge_sources: list[str] = Field(default_factory=list, description="Knowledge namespaces searchable via RAG", **classify(FieldClass.CONTENT, import_owner="indexer", install_view="keep_empty_list"))
-    system_tools: list[str] = Field(default_factory=list, description="System tool names enabled (e.g. 'execute_workflow')", **classify(FieldClass.CONTENT, import_owner="indexer", install_view="keep_empty_list"))
+    system_tools: list[str] = Field(default_factory=list, description="System tool names enabled (e.g. 'bifrost_execute_workflow')", **classify(FieldClass.CONTENT, import_owner="indexer", install_view="keep_empty_list"))
     mcp_connection_ids: list[str] = Field(
         default_factory=list,
         description=(

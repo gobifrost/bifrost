@@ -70,9 +70,15 @@ from src.services.solutions.guard import (
     assert_entity_id_not_solution_managed,
     assert_not_solution_managed,
 )
+from src.services.solutions.access import visible_solution_child_criterion
+from src.repositories.workflows import WorkflowRepository
+from src.services.audit import emit_audit
+from src.services.operation_catalog import operation_route
+from src.services.repo_sync_writer import RepoSyncWriter
 
 from src.core.auth import Context, CurrentActiveUser, CurrentSuperuser
 from src.core.db_deps import DbSession
+from src.core.org_filter import org_filter_clause, resolve_org_filter
 from src.core.log_safety import log_safe
 from src.core.pubsub import publish_execution_update, publish_history_update
 from src.core.cache import get_cached_data_provider
@@ -339,12 +345,18 @@ async def _compute_used_by_counts(db: DbSession, workflow_ids: list[UUID]) -> di
     response_model=list[WorkflowMetadata],
     summary="List all workflows",
     description="Returns metadata for all registered workflows in the system",
+    **operation_route("workflows.list"),
 )
 async def list_workflows(
-    user: CurrentSuperuser,
+    user: CurrentActiveUser,
     db: DbSession,
     type: str | None = None,
     is_tool: bool | None = None,  # Deprecated, use type="tool" instead
+    query: str | None = Query(
+        None,
+        description="Case-insensitive search across workflow name and description.",
+    ),
+    category: str | None = Query(None, description="Filter by exact category."),
     scope: str | None = Query(
         None,
         description="Filter scope: omit for user's org + global, 'global' for global only, "
@@ -368,10 +380,15 @@ async def list_workflows(
     Workflows are discovered by the Discovery container and synced to the
     database. This endpoint queries the database for fast lookups.
 
-    Organization scoping (consistent with forms, agents):
-    - scope omitted: All workflows (platform admins only)
+    Organization scoping (consistent with forms and agents):
+    - scope omitted: all ordinary-catalog workflows for platform admins;
+      caller org + global for regular users
     - scope='global': Only global workflows (organization_id IS NULL)
-    - scope=<uuid>: Only that org's workflows (no global fallback)
+    - scope=<uuid>: Only that org's workflows for platform admins
+
+    Private Solution children remain absent from ordinary catalogs unless the
+    caller owns or collaborates on the parent. Support access uses Builder's
+    explicit All view, so admins are not flooded with every customer's work.
 
     Entity filtering:
     - filter_by_form: Show only workflows used by the specified form
@@ -386,10 +403,7 @@ async def list_workflows(
         filter_by_app: App UUID to filter workflows by.
         filter_by_agent: Agent UUID to filter workflows by.
     """
-    from src.core.org_filter import resolve_org_filter, OrgFilterType
-
     try:
-        # Resolve organization filter using shared helper (consistent with forms)
         try:
             filter_type, filter_org = resolve_org_filter(user, scope)
         except ValueError as e:
@@ -398,44 +412,67 @@ async def list_workflows(
                 detail=str(e),
             )
 
-        # Query active workflows from database
-        query = select(WorkflowORM).where(WorkflowORM.is_active.is_(True))
+        stmt = select(WorkflowORM).where(WorkflowORM.is_active.is_(True))
+        org_clause = org_filter_clause(
+            WorkflowORM.organization_id,
+            filter_type,
+            filter_org,
+        )
+        if org_clause is not None:
+            stmt = stmt.where(org_clause)
 
-        # Apply organization scope filter
-        if filter_type == OrgFilterType.ALL:
-            # Platform admin sees all - no org filter
-            pass
-        elif filter_type == OrgFilterType.GLOBAL_ONLY:
-            # Only global workflows (no organization)
-            query = query.where(WorkflowORM.organization_id.is_(None))
-        elif filter_type == OrgFilterType.ORG_ONLY:
-            # Only that org's workflows (platform admin filtering)
-            query = query.where(WorkflowORM.organization_id == filter_org)
-        elif filter_type == OrgFilterType.ORG_PLUS_GLOBAL:
-            # User's org + global (org users)
-            query = query.where(
-                or_(
-                    WorkflowORM.organization_id == filter_org,
-                    WorkflowORM.organization_id.is_(None),
-                )
+        # The ordinary catalog intentionally hides foreign private Solution
+        # children even from admins. The dedicated Builder All view is the
+        # explicit, audited support surface.
+        stmt = stmt.where(
+            visible_solution_child_criterion(
+                child_solution_id=WorkflowORM.solution_id,
+                actor_user_id=user.user_id,
+                is_external=user.is_external,
             )
+        )
+
+        if not user.is_platform_admin:
+            repo = WorkflowRepository(
+                session=db,
+                org_id=user.organization_id,
+                user_id=user.user_id,
+                is_superuser=False,
+                is_external=user.is_external,
+            )
+            accessible = await repo.list(is_active=True)
+            accessible_ids = [workflow.id for workflow in accessible]
+            if not accessible_ids:
+                return []
+            stmt = stmt.where(WorkflowORM.id.in_(accessible_ids))
 
         # Filter by type
         if type is not None:
-            query = query.where(WorkflowORM.type == type)
+            stmt = stmt.where(WorkflowORM.type == type)
         # Legacy support: is_tool=True maps to type="tool"
         elif is_tool is not None:
             if is_tool:
-                query = query.where(WorkflowORM.type == "tool")
+                stmt = stmt.where(WorkflowORM.type == "tool")
             else:
-                query = query.where(WorkflowORM.type != "tool")
+                stmt = stmt.where(WorkflowORM.type != "tool")
+
+        if query:
+            search = f"%{query}%"
+            stmt = stmt.where(
+                or_(
+                    WorkflowORM.name.ilike(search),
+                    WorkflowORM.description.ilike(search),
+                )
+            )
+        if category:
+            stmt = stmt.where(WorkflowORM.category == category)
 
         # Apply entity filters by querying entities directly
         if filter_by_form:
             # Get workflow IDs used by this form (direct query)
             workflow_ids = await _get_form_workflow_ids(db, filter_by_form)
             if workflow_ids:
-                query = query.where(WorkflowORM.id.in_(workflow_ids))
+                stmt = stmt.where(WorkflowORM.id.in_(workflow_ids))
             else:
                 # No workflows found, return empty result
                 return []
@@ -443,7 +480,7 @@ async def list_workflows(
             # Get workflow IDs used by this app (query pages/components)
             workflow_ids = await _get_app_workflow_ids(db, filter_by_app)
             if workflow_ids:
-                query = query.where(WorkflowORM.id.in_(workflow_ids))
+                stmt = stmt.where(WorkflowORM.id.in_(workflow_ids))
             else:
                 # No workflows found, return empty result
                 return []
@@ -452,9 +489,9 @@ async def list_workflows(
             workflow_ids_subquery = select(AgentTool.workflow_id).where(
                 AgentTool.agent_id == filter_by_agent,
             )
-            query = query.where(WorkflowORM.id.in_(workflow_ids_subquery))
+            stmt = stmt.where(WorkflowORM.id.in_(workflow_ids_subquery))
 
-        result = await db.execute(query)
+        result = await db.execute(stmt.order_by(WorkflowORM.name))
         workflows = result.scalars().all()
 
         # Batch-compute used_by_count for all workflows in a single query.
@@ -709,6 +746,7 @@ async def _insert_scheduled_execution(
     response_model=WorkflowExecutionResponse,
     summary="Execute a workflow, data provider, or script",
     description="Execute a workflow or data provider by ID. For data providers, returns options list in result field. Requires platform admin, API key, or access via form/app/integration.",
+    **operation_route("workflows.execute"),
 )
 async def execute_workflow(
     request: WorkflowExecutionRequest,
@@ -1142,6 +1180,7 @@ async def cancel_scheduled_execution(
     response_model=WorkflowValidationResponse,
     summary="Validate a workflow file",
     description="Validate a workflow file for syntax errors and decorator issues",
+    **operation_route("workflows.validate"),
 )
 async def validate_workflow(
     request: WorkflowValidationRequest,
@@ -1178,6 +1217,7 @@ async def validate_workflow(
     status_code=201,
     summary="Register a workflow function",
     description="Register a decorated function from an existing .py file as a workflow.",
+    **operation_route("workflows.register"),
 )
 async def register_workflow(
     request: RegisterWorkflowRequest,
@@ -1346,6 +1386,22 @@ async def register_workflow(
     )
     workflow = result.scalar_one()
 
+    await emit_audit(
+        db,
+        "workflow.register",
+        resource_type="workflow",
+        resource_id=workflow.id,
+        details={
+            "name": workflow.name,
+            "path": workflow.path,
+            "function_name": workflow.function_name,
+            "organization_id": (
+                str(workflow.organization_id) if workflow.organization_id else None
+            ),
+        },
+    )
+    await RepoSyncWriter(db).regenerate_manifest()
+
     # Commit before refreshing MCP tools. refresh_workflow_tools() opens its
     # own session via get_db_context(), and at READ COMMITTED it cannot see
     # this request's still-uncommitted INSERT — leaving the freshly-registered
@@ -1375,6 +1431,7 @@ async def register_workflow(
     response_model=WorkflowMetadata,
     summary="Update a workflow",
     description="Update editable workflow properties like organization scope (Platform admin only)",
+    **operation_route("workflows.update"),
 )
 async def update_workflow(
     workflow_id: UUID,
@@ -1600,6 +1657,17 @@ async def update_workflow(
         if request.tags is not None:
             workflow.tags = request.tags
 
+        await emit_audit(
+            db,
+            "workflow.update",
+            resource_type="workflow",
+            resource_id=workflow.id,
+            details={
+                "name": workflow.name,
+                "updated_fields": sorted(request.model_fields_set),
+            },
+        )
+        await RepoSyncWriter(db).regenerate_manifest()
         await db.commit()
         await db.refresh(workflow)
 
@@ -1990,6 +2058,40 @@ async def deactivate_workflow(
 
 
 @router.get(
+    "/{workflow_id}",
+    response_model=WorkflowMetadata,
+    summary="Get one workflow",
+    description="Return one workflow visible to the caller.",
+    **operation_route("workflows.get"),
+)
+async def get_workflow(
+    workflow_id: UUID,
+    user: CurrentActiveUser,
+    db: DbSession,
+) -> WorkflowMetadata:
+    """Get one workflow through the same tenant, role, and Solution gate as list."""
+
+    repo = WorkflowRepository(
+        session=db,
+        org_id=user.organization_id,
+        user_id=user.user_id,
+        is_superuser=user.is_platform_admin,
+        is_external=user.is_external,
+    )
+    workflow = await repo.get(id=workflow_id)
+    if workflow is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Workflow with ID '{workflow_id}' not found",
+        )
+    used_by_counts = await _compute_used_by_counts(db, [workflow.id])
+    return _convert_workflow_orm_to_schema(
+        workflow,
+        used_by_count=used_by_counts.get(workflow.id, 0),
+    )
+
+
+@router.get(
     "/{workflow_id}/roles",
     response_model=WorkflowRolesResponse,
     summary="Get workflow roles",
@@ -2032,6 +2134,7 @@ async def get_workflow_roles(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Assign roles to workflow",
     description="Assign roles to a workflow (batch operation, Platform admin only)",
+    **operation_route("workflows.roles.grant"),
 )
 async def assign_roles_to_workflow(
     workflow_id: UUID,
@@ -2097,6 +2200,14 @@ async def assign_roles_to_workflow(
         db.add(workflow_role)
 
     await db.flush()
+    await emit_audit(
+        db,
+        "workflow.roles.grant",
+        resource_type="workflow",
+        resource_id=workflow_id,
+        details={"role_ids": request.role_ids},
+    )
+    await RepoSyncWriter(db).regenerate_manifest()
     logger.info(f"Assigned roles to workflow {log_safe(workflow_id)}")
 
 
@@ -2105,6 +2216,7 @@ async def assign_roles_to_workflow(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Remove role from workflow",
     description="Remove a role from a workflow (Platform admin only)",
+    **operation_route("workflows.roles.revoke"),
 )
 async def remove_role_from_workflow(
     workflow_id: UUID,
@@ -2135,6 +2247,14 @@ async def remove_role_from_workflow(
             detail="Workflow-role assignment not found",
         )
 
+    await emit_audit(
+        db,
+        "workflow.roles.revoke",
+        resource_type="workflow",
+        resource_id=workflow_id,
+        details={"role_id": str(role_id)},
+    )
+    await RepoSyncWriter(db).regenerate_manifest()
     logger.info(f"Removed role {log_safe(role_id)} from workflow {log_safe(workflow_id)}")
 
 
@@ -2149,6 +2269,7 @@ async def remove_role_from_workflow(
         409: {"description": "Workflow has dependencies or history, confirmation required"},
     },
     response_model=None,
+    **operation_route("workflows.delete"),
 )
 async def delete_workflow(
     workflow_id: UUID,
@@ -2287,6 +2408,18 @@ async def delete_workflow(
     except FileNotFoundError:
         # File already gone — just deactivate the workflow record
         workflow.is_active = False
+        await emit_audit(
+            db,
+            "workflow.delete",
+            resource_type="workflow",
+            resource_id=workflow.id,
+            details={
+                "name": workflow.name,
+                "path": workflow.path,
+                "source_file_missing": True,
+            },
+        )
+        await RepoSyncWriter(db).regenerate_manifest()
         await db.commit()
         return {"status": "deleted", "detail": "Source file not found, workflow deactivated"}
 
@@ -2306,6 +2439,18 @@ async def delete_workflow(
         )
         logger.info(f"Removed function '{workflow.function_name}' from {workflow.path}")
 
+    await emit_audit(
+        db,
+        "workflow.delete",
+        resource_type="workflow",
+        resource_id=workflow.id,
+        details={
+            "name": workflow.name,
+            "path": workflow.path,
+            "source_file_missing": False,
+        },
+    )
+    await RepoSyncWriter(db).regenerate_manifest()
     await db.commit()
 
     # Refresh MCP tool registry so deleted tools disappear immediately

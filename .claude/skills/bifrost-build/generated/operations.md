@@ -31,6 +31,15 @@ harness.
 | `apps.validate` | `bifrost apps validate` | `bifrost_validate_app` | `apps.read` |
 | `apps.publish` | `bifrost apps publish` | `bifrost_publish_app` | `apps.publish` |
 | `apps.replace` | `bifrost apps replace` | `bifrost_replace_app` | `apps.write` |
+| `workflows.list` | `bifrost workflows list` | `bifrost_list_workflows` | `workflows.read` |
+| `workflows.get` | `bifrost workflows get` | `bifrost_get_workflow` | `workflows.read` |
+| `workflows.validate` | `bifrost workflows validate` | `bifrost_validate_workflow` | `workflows.read` |
+| `workflows.register` | `bifrost workflows register` | `bifrost_register_workflow` | `workflows.write` |
+| `workflows.execute` | `bifrost workflows execute` | `bifrost_execute_workflow` | `workflows.execute` |
+| `workflows.update` | `bifrost workflows update` | `bifrost_update_workflow` | `workflows.write` |
+| `workflows.delete` | `bifrost workflows delete` | `bifrost_delete_workflow` | `workflows.write` |
+| `workflows.roles.grant` | `bifrost workflows grant-role` | `bifrost_grant_workflow_role` | `workflows.write` |
+| `workflows.roles.revoke` | `bifrost workflows revoke-role` | `bifrost_revoke_workflow_role` | `workflows.write` |
 | `events.sources.list` | `bifrost events list-sources` | `bifrost_list_event_sources` | `events.read` |
 | `events.sources.get` | `bifrost events get-source` | `bifrost_get_event_source` | `events.read` |
 | `events.sources.create` | `bifrost events create-source` | `bifrost_create_event_source` | `events.write` |

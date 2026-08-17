@@ -281,27 +281,27 @@ class TestToolConflictDetection:
     @pytest.mark.asyncio
     async def test_system_tools_win_over_workflow_tools(self, executor, mock_agent):
         """System tools take priority — resolve_agent_tools returns only the system tool."""
-        mock_agent.system_tools = ["execute_workflow"]
+        mock_agent.system_tools = ["bifrost_execute_workflow"]
 
         # resolve_agent_tools handles the conflict internally and returns only the winner
         mock_tools = [
-            ToolDefinition(name="execute_workflow", description="Execute a workflow", parameters={"type": "object", "properties": {}}),
+            ToolDefinition(name="bifrost_execute_workflow", description="Execute a workflow", parameters={"type": "object", "properties": {}}),
         ]
 
         with patch("src.services.agent_executor.resolve_agent_tools", new_callable=AsyncMock, return_value=(mock_tools, {})):
             tools = await executor._get_agent_tools(mock_agent)
 
         tool_names = [t.name for t in tools]
-        assert tool_names.count("execute_workflow") == 1
+        assert tool_names.count("bifrost_execute_workflow") == 1
 
     @pytest.mark.asyncio
     async def test_no_conflict_with_prefixed_workflow_tools(self, executor, mock_agent):
         """Workflow tools with category prefix don't conflict with system tools."""
-        mock_agent.system_tools = ["execute_workflow"]
+        mock_agent.system_tools = ["bifrost_execute_workflow"]
 
         workflow_id = uuid4()
         mock_tools = [
-            ToolDefinition(name="execute_workflow", description="Execute a workflow", parameters={"type": "object", "properties": {}}),
+            ToolDefinition(name="bifrost_execute_workflow", description="Execute a workflow", parameters={"type": "object", "properties": {}}),
             ToolDefinition(name="halopsa_execute_workflow", description="HaloPSA workflow", parameters={"type": "object", "properties": {}}),
         ]
 
@@ -309,7 +309,7 @@ class TestToolConflictDetection:
             tools = await executor._get_agent_tools(mock_agent)
 
         tool_names = [t.name for t in tools]
-        assert "execute_workflow" in tool_names
+        assert "bifrost_execute_workflow" in tool_names
         assert "halopsa_execute_workflow" in tool_names
 
 

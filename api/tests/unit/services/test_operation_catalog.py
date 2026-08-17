@@ -160,6 +160,63 @@ APP_OPERATIONS = {
     ),
 }
 
+WORKFLOW_OPERATIONS = {
+    "workflows.list": (
+        "GET",
+        "/api/workflows",
+        ("workflows", "list"),
+        "bifrost_list_workflows",
+    ),
+    "workflows.get": (
+        "GET",
+        "/api/workflows/{workflow_id}",
+        ("workflows", "get"),
+        "bifrost_get_workflow",
+    ),
+    "workflows.validate": (
+        "POST",
+        "/api/workflows/validate",
+        ("workflows", "validate"),
+        "bifrost_validate_workflow",
+    ),
+    "workflows.register": (
+        "POST",
+        "/api/workflows/register",
+        ("workflows", "register"),
+        "bifrost_register_workflow",
+    ),
+    "workflows.execute": (
+        "POST",
+        "/api/workflows/execute",
+        ("workflows", "execute"),
+        "bifrost_execute_workflow",
+    ),
+    "workflows.update": (
+        "PATCH",
+        "/api/workflows/{workflow_id}",
+        ("workflows", "update"),
+        "bifrost_update_workflow",
+    ),
+    "workflows.delete": (
+        "DELETE",
+        "/api/workflows/{workflow_id}",
+        ("workflows", "delete"),
+        "bifrost_delete_workflow",
+    ),
+    "workflows.roles.grant": (
+        "POST",
+        "/api/workflows/{workflow_id}/roles",
+        ("workflows", "grant-role"),
+        "bifrost_grant_workflow_role",
+    ),
+    "workflows.roles.revoke": (
+        "DELETE",
+        "/api/workflows/{workflow_id}/roles/{role_id}",
+        ("workflows", "revoke-role"),
+        "bifrost_revoke_workflow_role",
+    ),
+}
+
 EVENT_OPERATIONS = {
     "events.sources.list": (
         "GET",
@@ -234,6 +291,7 @@ CANONICAL_OPERATIONS = {
     **FORM_OPERATIONS,
     **TABLE_OPERATIONS,
     **APP_OPERATIONS,
+    **WORKFLOW_OPERATIONS,
     **EVENT_OPERATIONS,
 }
 

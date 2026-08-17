@@ -2,7 +2,7 @@
 
 **Owner:** Jack Musick / Bifrost engineering
 **Created:** 2026-08-17
-**Status:** In progress — Phases 0–1 complete; Phase 2 Agent, Form, Table, App, and Event slices complete
+**Status:** In progress — Phases 0–1 complete; Phase 2 Agent, Form, Table, App, Event, and Workflow slices complete
 **Execution branch:** `codex/code-builder-pydantic-integration-20260816`
 **Base:** `origin/main@16e317e62`
 **Depends on:** the reconstructed Builder and shared Pydantic runtime described
@@ -229,6 +229,10 @@ environment-skipped mirror tests; API Pyright and Ruff are clean.
       DTOs and tool names, thin REST adapters, organization-safe targets,
       schedule/webhook validation, audit/manifest/Scheduler side effects, and
       persisted tool-name migration.
+- [x] Complete the Workflow vertical slice with canonical list/get/validate/
+      register/execute/update/delete/role operations, thin REST adapters,
+      ordinary-user visibility enforcement, audit/manifest/cache/MCP-refresh
+      side effects, execution-worker reuse, and persisted tool-name migration.
 - [ ] Convert legacy direct-ORM MCP implementations to thin HTTP wrappers using
       `_http_bridge.py`; do not create a second service path for MCP.
 - [ ] Reconcile known drift in the remaining domains:
@@ -334,6 +338,23 @@ processor selection passed 39/39. Generated operation, Skill, CLI, OpenAPI, and
 browser references are fresh. API Pyright/Ruff and client TypeScript are clean;
 ESLint has zero errors and only the pre-existing React Compiler warning in
 `FormRenderer.tsx`.
+
+**Workflow-slice evidence:** all nine Workflow platform tools are thin REST
+adapters registered only with canonical `bifrost_<verb>_workflow` names, and
+forward migration `20260817_workflow_mcp_names` atomically renames persisted
+Agent grants. REST now owns ordinary-user role/tenant/Solution visibility,
+per-record reads, registration and mutation audit, manifest regeneration,
+Solution guards, dynamic MCP/cache refresh, validation, and the existing
+execution-worker boundary. CLI adds canonical validation and query/category/
+type/scope discovery while sharing the register/update DTOs and standard
+organization target contract. The focused catalog/DTO/wrapper/CLI/migration
+selection passed 360/360; Workflow REST, registration, MCP protocol, and
+dynamic refresh passed 60/60; Solution read-only coverage passed 2/2; and the
+full MCP journey passed across validation, manifest sync, ordinary-user
+discovery/execution, update, delete, and audit. Generated operation and Skill
+references are fresh, Alembic current equals the sole head, API Pyright/Ruff
+and client TypeScript are clean, and ESLint has zero errors with only the
+pre-existing React Compiler warning in `FormRenderer.tsx`.
 
 ### Phase 3 — Finish Agent Skill portability
 

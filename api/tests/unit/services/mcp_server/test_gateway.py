@@ -33,7 +33,7 @@ def _agent() -> MagicMock:
     agent.name = "Operations Agent"
     agent.description = "Handles operational tasks"
     agent.system_prompt = "Use the tools carefully."
-    agent.system_tools = ["list_workflows"]
+    agent.system_tools = ["bifrost_list_workflows"]
     agent.knowledge_sources = ["runbooks"]
     agent.delegated_agents = []
     agent.organization_id = uuid4()
@@ -105,7 +105,7 @@ def test_live_config_filters_underlying_tools_by_name_or_source_id():
     workflow_id = uuid4()
     definitions = [
         ToolDefinition(
-            name="list_workflows",
+            name="bifrost_list_workflows",
             description="List",
             parameters={"type": "object"},
         ),

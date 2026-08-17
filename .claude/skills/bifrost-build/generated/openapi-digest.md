@@ -575,6 +575,7 @@
 | GET | `/api/workflows/usage-stats` |
 | POST | `/api/workflows/validate` |
 | DELETE | `/api/workflows/{workflow_id}` |
+| GET | `/api/workflows/{workflow_id}` |
 | PATCH | `/api/workflows/{workflow_id}` |
 | GET | `/api/workflows/{workflow_id}/compatible-replacements` |
 | POST | `/api/workflows/{workflow_id}/deactivate` |

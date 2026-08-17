@@ -74,12 +74,13 @@ DTO_EXCLUDES: dict[str, set[str]] = {
     # advertise a flag that can only return HTTP 422.
     "AgentCreate": set(_ORG_TARGET_EXCLUDE) | {"bundle_path"},
     "AgentUpdate": set(_ORG_TARGET_EXCLUDE) | {"bundle_path"},
+    "RegisterWorkflowRequest": set(_ORG_TARGET_EXCLUDE),
     # Organizations: ``domain`` is auto-provisioning policy; ``settings`` is a
     # UI-managed JSON blob; ``is_provider`` is immutable post-create.
     "OrganizationCreate": {"domain", "settings", "is_provider"},
     "OrganizationUpdate": {"domain", "settings"},
     # Workflows: code-defined or UI-managed surface metadata.
-    "WorkflowUpdateRequest": {
+    "WorkflowUpdateRequest": _ORG_TARGET_EXCLUDE | {
         "display_name",
         "tool_description",
         "time_saved",

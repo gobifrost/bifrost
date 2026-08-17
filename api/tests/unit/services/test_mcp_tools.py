@@ -3,12 +3,12 @@ Unit tests for MCP Tools.
 
 Tests the MCP tools for the Bifrost platform:
 - get_docs: Returns unified platform documentation
-- list_workflows: Lists registered workflows
+- bifrost_list_workflows: Lists registered workflows
 - bifrost_list_forms: Lists forms through the canonical REST API
 - bifrost_list_tables: Lists table definitions through the canonical REST API
 - search_knowledge: Searches the knowledge base
 - list_integrations: Lists available integrations
-- execute_workflow: Executes workflows and returns results
+- bifrost_execute_workflow: Executes workflows and returns an execution envelope
 
 Uses mocked database access for fast, isolated testing.
 
@@ -27,7 +27,10 @@ from src.services.mcp_server.tools.forms import bifrost_list_forms
 from src.services.mcp_server.tools.integrations import list_integrations
 from src.services.mcp_server.tools.knowledge import search_knowledge
 from src.services.mcp_server.tools.tables import bifrost_list_tables
-from src.services.mcp_server.tools.workflow import execute_workflow, list_workflows
+from src.services.mcp_server.tools.workflow import (
+    bifrost_execute_workflow,
+    bifrost_list_workflows,
+)
 
 
 # ==================== Fixtures ====================
@@ -58,22 +61,6 @@ def org_user_context() -> MCPContext:
 
 
 @pytest.fixture
-def mock_workflow():
-    """Create a mock workflow ORM object."""
-    mock = MagicMock()
-    mock.id = uuid4()
-    mock.name = "test_workflow"
-    mock.description = "A test workflow for testing"
-    mock.type = "standard"
-    mock.category = "automation"
-    mock.is_tool = False
-    mock.endpoint_enabled = True
-    mock.path = "/tmp/bifrost/workspace/workflows/test_workflow.py"
-    mock.is_active = True
-    return mock
-
-
-@pytest.fixture
 def mock_knowledge_document():
     """Create a mock knowledge document."""
     from src.repositories.knowledge import KnowledgeDocument
@@ -90,102 +77,46 @@ def mock_knowledge_document():
     )
 
 
-# ==================== list_workflows Tests ====================
+# ==================== canonical Workflow list wrapper ====================
 
 
 class TestListWorkflows:
-    """Tests for the list_workflows MCP tool."""
-
     @pytest.mark.asyncio
-    async def test_lists_workflows(self, org_user_context, mock_workflow):
-        """Should list registered workflows."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch(
-                "src.repositories.workflows.WorkflowRepository"
-            ) as mock_repo_cls:
-                mock_repo = MagicMock()
-                mock_repo.search = AsyncMock(return_value=[mock_workflow])
-                mock_repo.count_active = AsyncMock(return_value=1)
-                mock_repo_cls.return_value = mock_repo
-
-                result = await list_workflows(org_user_context)
-
-        # Result is a ToolResult with structured_content
-        data = result.structured_content
-        assert "workflows" in data
-        assert len(data["workflows"]) == 1
-        assert data["workflows"][0]["name"] == "test_workflow"
-        assert data["workflows"][0]["description"] == "A test workflow for testing"
-        assert data["workflows"][0]["endpoint_enabled"] is True
-        assert data["count"] == 1
-        assert data["total_count"] == 1
-
-    @pytest.mark.asyncio
-    async def test_returns_empty_list(self, org_user_context):
-        """Should return empty list when no workflows found."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch(
-                "src.repositories.workflows.WorkflowRepository"
-            ) as mock_repo_cls:
-                mock_repo = MagicMock()
-                mock_repo.search = AsyncMock(return_value=[])
-                mock_repo.count_active = AsyncMock(return_value=0)
-                mock_repo_cls.return_value = mock_repo
-
-                result = await list_workflows(org_user_context)
-
-        data = result.structured_content
-        assert data["workflows"] == []
-        assert data["count"] == 0
-        assert data["total_count"] == 0
-
-    @pytest.mark.asyncio
-    async def test_filters_by_category(self, org_user_context, mock_workflow):
-        """Should pass category filter to repository."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch(
-                "src.repositories.workflows.WorkflowRepository"
-            ) as mock_repo_cls:
-                mock_repo = MagicMock()
-                mock_repo.search = AsyncMock(return_value=[mock_workflow])
-                mock_repo.count_active = AsyncMock(return_value=1)
-                mock_repo_cls.return_value = mock_repo
-
-                await list_workflows(org_user_context, category="automation")
-
-                # Verify category was passed to search
-                mock_repo.search.assert_called_once_with(
-                    query=None,
-                    category="automation",
-                    limit=100,
-                )
-
-    @pytest.mark.asyncio
-    async def test_handles_database_error(self, org_user_context):
-        """Should return error message on database failure."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(
-                side_effect=Exception("Database connection failed")
+    async def test_forwards_filters_to_rest(self, org_user_context):
+        workflows = [{"id": str(uuid4()), "name": "test_workflow"}]
+        with (
+            patch(
+                "src.services.mcp_server.tools.workflow._resolve_scope",
+                new=AsyncMock(return_value="00000000-0000-0000-0000-000000000002"),
+            ),
+            patch(
+                "src.services.mcp_server.tools.workflow.call_rest",
+                new=AsyncMock(return_value=(200, workflows)),
+            ) as call_rest,
+        ):
+            result = await bifrost_list_workflows(
+                org_user_context,
+                query="test",
+                category="automation",
+                type="workflow",
+                scope="Customer",
             )
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            result = await list_workflows(org_user_context)
-
-        data = result.structured_content
-        assert "error" in data
-        assert "Error listing workflows" in data["error"]
+        assert result.structured_content == {
+            "workflows": workflows,
+            "count": 1,
+        }
+        call_rest.assert_awaited_once_with(
+            org_user_context,
+            "GET",
+            "/api/workflows",
+            params={
+                "query": "test",
+                "category": "automation",
+                "type": "workflow",
+                "scope": "00000000-0000-0000-0000-000000000002",
+            },
+        )
 
 
 # ==================== list_forms Tests ====================
@@ -525,187 +456,57 @@ class TestListIntegrations:
         assert "Error listing integrations" in data["error"]
 
 
-# ==================== execute_workflow Tests ====================
+# ==================== canonical Workflow execution wrapper ====================
 
 
 class TestExecuteWorkflow:
-    """Tests for the execute_workflow MCP tool."""
-
     @pytest.mark.asyncio
-    async def test_executes_workflow_successfully(
-        self, org_user_context, mock_workflow
-    ):
-        """Should execute workflow and return success result."""
-        # Create mock execution result
-        mock_result = MagicMock()
-        mock_result.status.value = "Success"
-        mock_result.duration_ms = 150
-        mock_result.result = {"output": "test value"}
-        mock_result.error = None
-        mock_result.error_type = None
-
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch(
-                "src.repositories.workflows.WorkflowRepository"
-            ) as mock_repo_cls:
-                mock_repo = MagicMock()
-                mock_repo.resolve = AsyncMock(return_value=mock_workflow)
-                mock_repo_cls.return_value = mock_repo
-
-                with patch(
-                    "src.services.execution.service.execute_tool"
-                ) as mock_execute:
-                    mock_execute.return_value = mock_result
-
-                    result = await execute_workflow(
-                        org_user_context,
-                        str(mock_workflow.id),
-                        {"key": "value"},
-                    )
-
-        # Result is a ToolResult with structured_content
-        data = result.structured_content
-        assert data["success"] is True
-        assert data["workflow_name"] == "test_workflow"
-        assert data["duration_ms"] == 150
-        assert data["result"]["output"] == "test value"
-        assert data["status"] == "Success"
-
-    @pytest.mark.asyncio
-    async def test_returns_error_workflow_not_found(self, org_user_context):
-        """Should return error when workflow not found."""
-        workflow_id = str(uuid4())
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch(
-                "src.repositories.workflows.WorkflowRepository"
-            ) as mock_repo_cls:
-                mock_repo = MagicMock()
-                mock_repo.resolve = AsyncMock(return_value=None)
-                mock_repo_cls.return_value = mock_repo
-
-                result = await execute_workflow(
-                    org_user_context,
-                    workflow_id,
-                )
-
-        data = result.structured_content
-        assert "error" in data
-        assert "not found" in data["error"]
-        assert workflow_id in data["error"]
-        assert "list_workflows" in data["error"]
-
-    @pytest.mark.asyncio
-    async def test_resolves_workflow_by_name(self, org_user_context, mock_workflow):
-        """Should resolve workflow by name (not just UUID)."""
-        mock_result = MagicMock()
-        mock_result.status.value = "Success"
-        mock_result.duration_ms = 100
-        mock_result.result = {"output": "ok"}
-        mock_result.error = None
-        mock_result.error_type = None
-
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch(
-                "src.repositories.workflows.WorkflowRepository"
-            ) as mock_repo_cls:
-                mock_repo = MagicMock()
-                mock_repo.resolve = AsyncMock(return_value=mock_workflow)
-                mock_repo_cls.return_value = mock_repo
-
-                with patch(
-                    "src.services.execution.service.execute_tool"
-                ) as mock_execute:
-                    mock_execute.return_value = mock_result
-
-                    result = await execute_workflow(
-                        org_user_context,
-                        "test_workflow",  # name, not UUID
-                    )
-
-        data = result.structured_content
-        assert data["success"] is True
-        assert data["workflow_name"] == "test_workflow"
-        # Verify resolve was called with the name string
-        mock_repo.resolve.assert_called_once_with("test_workflow")
-
-    @pytest.mark.asyncio
-    async def test_returns_error_on_execution_failure(
-        self, org_user_context, mock_workflow
-    ):
-        """Should return error details when workflow execution fails."""
-        # Create mock failed execution result
-        mock_result = MagicMock()
-        mock_result.status.value = "Failed"
-        mock_result.duration_ms = 50
-        mock_result.result = None
-        mock_result.error = "Division by zero"
-        mock_result.error_type = "ValueError"
-
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch(
-                "src.repositories.workflows.WorkflowRepository"
-            ) as mock_repo_cls:
-                mock_repo = MagicMock()
-                mock_repo.resolve = AsyncMock(return_value=mock_workflow)
-                mock_repo_cls.return_value = mock_repo
-
-                with patch(
-                    "src.services.execution.service.execute_tool"
-                ) as mock_execute:
-                    mock_execute.return_value = mock_result
-
-                    result = await execute_workflow(
-                        org_user_context,
-                        str(mock_workflow.id),
-                    )
-
-        data = result.structured_content
-        assert data["success"] is False
-        assert data["status"] == "Failed"
-        assert data["error"] == "Division by zero"
-        assert data["error_type"] == "ValueError"
-
-    @pytest.mark.asyncio
-    async def test_handles_missing_workflow_id(self, org_user_context):
-        """Should return error when workflow_id is empty."""
-        result = await execute_workflow(org_user_context, "")
-        data = result.structured_content
-        assert "error" in data
-        assert "workflow_id is required" in data["error"]
-
-    @pytest.mark.asyncio
-    async def test_handles_exception(self, org_user_context, mock_workflow):
-        """Should return error message on unexpected exception."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(
-                side_effect=Exception("Unexpected error")
-            )
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            result = await execute_workflow(
+    async def test_returns_async_execution_envelope(self, org_user_context):
+        execution = {
+            "execution_id": str(uuid4()),
+            "workflow_id": str(uuid4()),
+            "workflow_name": "test_workflow",
+            "status": "Pending",
+        }
+        resolver = AsyncMock()
+        resolver.resolve = AsyncMock(return_value=execution["workflow_id"])
+        http = AsyncMock()
+        http.__aenter__ = AsyncMock(return_value=MagicMock())
+        http.__aexit__ = AsyncMock(return_value=None)
+        with (
+            patch(
+                "src.services.mcp_server.tools.workflow.rest_client",
+                return_value=http,
+            ),
+            patch("bifrost.refs.RefResolver", return_value=resolver),
+            patch(
+                "src.services.mcp_server.tools.workflow.call_rest",
+                new=AsyncMock(return_value=(200, execution)),
+            ) as call_rest,
+        ):
+            result = await bifrost_execute_workflow(
                 org_user_context,
-                str(mock_workflow.id),
+                "test_workflow",
+                input_data={"key": "value"},
             )
 
-        data = result.structured_content
-        assert "error" in data
-        assert "Error executing workflow" in data["error"]
+        assert result.structured_content == execution
+        call_rest.assert_awaited_once_with(
+            org_user_context,
+            "POST",
+            "/api/workflows/execute",
+            json_body={
+                "workflow_id": execution["workflow_id"],
+                "input_data": {"key": "value"},
+                "sync": False,
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_rejects_missing_workflow_ref(self, org_user_context):
+        result = await bifrost_execute_workflow(org_user_context, "")
+        assert result.structured_content is not None
+        assert result.structured_content["error"] == "workflow_ref is required"
 
 
 # ==================== BifrostMCPServer Tests ====================
@@ -748,8 +549,8 @@ class TestGetSystemToolIds:
 
         # These are some of the core system tools (not exhaustive)
         expected = [
-            "execute_workflow",
-            "list_workflows",
+            "bifrost_execute_workflow",
+            "bifrost_list_workflows",
             "list_integrations",
             "bifrost_list_forms",
             "get_docs",
@@ -806,7 +607,7 @@ class TestMCPConfigService:
         mock_config = MagicMock()
         mock_config.value_json = {
             "enabled": False,
-            "allowed_tool_ids": ["execute_workflow", "list_workflows"],
+            "allowed_tool_ids": ["bifrost_execute_workflow", "bifrost_list_workflows"],
             "blocked_tool_ids": ["search_knowledge"],
         }
         mock_config.updated_at = datetime.now(timezone.utc)
@@ -820,7 +621,10 @@ class TestMCPConfigService:
         config = await service.get_config()
 
         assert config.enabled is False
-        assert config.allowed_tool_ids == ["execute_workflow", "list_workflows"]
+        assert config.allowed_tool_ids == [
+            "bifrost_execute_workflow",
+            "bifrost_list_workflows",
+        ]
         assert config.blocked_tool_ids == ["search_knowledge"]
         assert config.is_configured is True
         assert config.configured_by == "admin@test.com"
@@ -863,7 +667,7 @@ class TestMCPConfigService:
         service = MCPConfigService(mock_session)
         config = await service.save_config(
             enabled=False,
-            allowed_tool_ids=["execute_workflow"],
+            allowed_tool_ids=["bifrost_execute_workflow"],
             blocked_tool_ids=[],
             updated_by="admin@test.com",
         )
@@ -983,86 +787,33 @@ class TestToolResultDisplayText:
         assert "my_wf" in text
 
 
-# ==================== register_workflow Tests ====================
+# ==================== bifrost_register_workflow Tests ====================
 
 
 class TestRegisterWorkflow:
-    """Tests for the register_workflow MCP tool."""
+    """Input guards for the canonical register wrapper."""
 
     @pytest.mark.asyncio
     async def test_rejects_missing_path(self, platform_admin_context):
-        """register_workflow MCP tool rejects missing path."""
-        from src.services.mcp_server.tools.workflow import register_workflow
+        from src.services.mcp_server.tools.workflow import bifrost_register_workflow
 
-        result = await register_workflow(platform_admin_context, "", "my_function")
+        result = await bifrost_register_workflow(
+            platform_admin_context, "", "my_function"
+        )
         data = result.structured_content
         assert "error" in data
         assert "path is required" in data["error"]
 
     @pytest.mark.asyncio
     async def test_rejects_missing_function_name(self, platform_admin_context):
-        """register_workflow MCP tool rejects missing function_name."""
-        from src.services.mcp_server.tools.workflow import register_workflow
+        from src.services.mcp_server.tools.workflow import bifrost_register_workflow
 
-        result = await register_workflow(platform_admin_context, "workflows/test.py", "")
+        result = await bifrost_register_workflow(
+            platform_admin_context, "workflows/test.py", ""
+        )
         data = result.structured_content
         assert "error" in data
         assert "function_name is required" in data["error"]
-
-    @pytest.mark.asyncio
-    async def test_rejects_non_python_file(self, platform_admin_context):
-        """register_workflow MCP tool rejects non-.py files."""
-        from src.services.mcp_server.tools.workflow import register_workflow
-
-        result = await register_workflow(platform_admin_context, "workflows/test.yaml", "my_function")
-        data = result.structured_content
-        assert "error" in data
-        assert "path must be a .py file" in data["error"]
-
-    @pytest.mark.asyncio
-    async def test_rejects_file_not_found(self, platform_admin_context):
-        """register_workflow MCP tool returns error when file not found."""
-        from src.services.mcp_server.tools.workflow import register_workflow
-
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch("src.services.file_storage.FileStorageService") as mock_svc_cls:
-                mock_svc = MagicMock()
-                mock_svc.read_file = AsyncMock(side_effect=FileNotFoundError("not found"))
-                mock_svc_cls.return_value = mock_svc
-
-                result = await register_workflow(platform_admin_context, "workflows/missing.py", "my_func")
-
-        data = result.structured_content
-        assert "error" in data
-        assert "File not found" in data["error"]
-
-    @pytest.mark.asyncio
-    async def test_rejects_no_decorated_function(self, platform_admin_context):
-        """register_workflow MCP tool rejects files without matching decorated function."""
-        from src.services.mcp_server.tools.workflow import register_workflow
-
-        # Python file with a function but no @workflow decorator
-        code = b"def my_func():\n    return 42\n"
-
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch("src.services.file_storage.FileStorageService") as mock_svc_cls:
-                mock_svc = MagicMock()
-                mock_svc.read_file = AsyncMock(return_value=(code, None))
-                mock_svc_cls.return_value = mock_svc
-
-                result = await register_workflow(platform_admin_context, "workflows/test.py", "my_func")
-
-        data = result.structured_content
-        assert "error" in data
-        assert "No @workflow/@tool/@data_provider decorated function" in data["error"]
 
 
 class TestMCPContextInputCoercion:

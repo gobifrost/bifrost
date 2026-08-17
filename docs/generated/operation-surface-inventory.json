@@ -1686,6 +1686,616 @@
       "observed": {
         "cli": {
           "path": [
+            "workflows",
+            "list"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_list_workflows",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "workflows.list",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "workflows.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "WorkflowRepository tenant, role, and private-Solution visibility",
+        "cli": {
+          "path": [
+            "workflows",
+            "list"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Manifests reconcile Workflow state; they do not perform collection reads.",
+          "sdk": "Workflow catalog administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_list_workflows"
+        },
+        "native_builder": true,
+        "operation_id": "workflows.list",
+        "rest": {
+          "method": "GET",
+          "path": "/api/workflows",
+          "request_model": null,
+          "response_model": "list[WorkflowMetadata]"
+        },
+        "side_effects": [],
+        "summary": "List Workflows visible to the caller",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "workflows",
+            "get"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_get_workflow",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "workflows.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "workflows.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "WorkflowRepository tenant, role, and private-Solution visibility",
+        "cli": {
+          "path": [
+            "workflows",
+            "get"
+          ]
+        },
+        "exclusions": {
+          "manifest": "The read does not mutate the Workflow manifest.",
+          "sdk": "Workflow catalog administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_get_workflow"
+        },
+        "native_builder": true,
+        "operation_id": "workflows.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/workflows/{workflow_id}",
+          "request_model": null,
+          "response_model": "WorkflowMetadata"
+        },
+        "side_effects": [],
+        "summary": "Get one Workflow visible to the caller",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "workflows",
+            "validate"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_validate_workflow",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "workflows.validate",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "workflows.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Authenticated caller and workspace file policy",
+        "cli": {
+          "path": [
+            "workflows",
+            "validate"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Validation is read-only and does not alter portable Workflow state.",
+          "sdk": "Workflow catalog administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_validate_workflow"
+        },
+        "native_builder": true,
+        "operation_id": "workflows.validate",
+        "rest": {
+          "method": "POST",
+          "path": "/api/workflows/validate",
+          "request_model": "WorkflowValidationRequest",
+          "response_model": "WorkflowValidationResponse"
+        },
+        "side_effects": [],
+        "summary": "Validate Workflow source",
+        "target_kind": "workspace"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "workflows",
+            "register"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "workflows",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_register_workflow",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "workflows.register",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "workflows.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "workflow.register",
+        "authorization_resolver": "Platform-admin gate and target organization resolver",
+        "cli": {
+          "path": [
+            "workflows",
+            "register"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Workflow catalog administration is not available to application SDKs."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "workflows"
+        },
+        "mcp": {
+          "name": "bifrost_register_workflow"
+        },
+        "native_builder": true,
+        "operation_id": "workflows.register",
+        "rest": {
+          "method": "POST",
+          "path": "/api/workflows/register",
+          "request_model": "RegisterWorkflowRequest",
+          "response_model": "RegisterWorkflowResponse"
+        },
+        "side_effects": [
+          "index decorated Workflow metadata from workspace source",
+          "refresh dynamic Workflow MCP registrations",
+          "write manifest change through RepoSyncWriter"
+        ],
+        "summary": "Register a decorated Workspace function as a Workflow",
+        "target_kind": "workspace"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "workflows",
+            "execute"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_execute_workflow",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "workflows.execute",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": {
+            "method": "POST",
+            "path": "/api/workflows/execute"
+          },
+          "status": "exact_parity"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "workflows.execute"
+        ],
+        "async_policy": "execution_worker",
+        "audit_event": null,
+        "authorization_resolver": "WorkflowRepository execution access and execution-context policy",
+        "cli": {
+          "path": [
+            "workflows",
+            "execute"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Execution does not mutate portable Workflow definitions."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_execute_workflow"
+        },
+        "native_builder": true,
+        "operation_id": "workflows.execute",
+        "rest": {
+          "method": "POST",
+          "path": "/api/workflows/execute",
+          "request_model": "WorkflowExecutionRequest",
+          "response_model": "WorkflowExecutionResponse"
+        },
+        "side_effects": [
+          "enqueue tracked execution work and publish shared execution progress"
+        ],
+        "summary": "Execute a Workflow",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "workflows",
+            "update"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "workflows",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_update_workflow",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "workflows.update",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "workflows.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "workflow.update",
+        "authorization_resolver": "Platform-admin and Solution-management guards",
+        "cli": {
+          "path": [
+            "workflows",
+            "update"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Workflow catalog administration is not available to application SDKs."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "workflows"
+        },
+        "mcp": {
+          "name": "bifrost_update_workflow"
+        },
+        "native_builder": true,
+        "operation_id": "workflows.update",
+        "rest": {
+          "method": "PATCH",
+          "path": "/api/workflows/{workflow_id}",
+          "request_model": "WorkflowUpdateRequest",
+          "response_model": "WorkflowMetadata"
+        },
+        "side_effects": [
+          "replace selected metadata and role assignments",
+          "invalidate execution and endpoint caches",
+          "refresh dynamic Workflow MCP registrations",
+          "write manifest change through RepoSyncWriter"
+        ],
+        "summary": "Update Workflow metadata and access",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "workflows",
+            "delete"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "workflows",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_delete_workflow",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "workflows.delete",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "workflows.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "workflow.delete",
+        "authorization_resolver": "Platform-admin, dependency, and Solution-management guards",
+        "cli": {
+          "path": [
+            "workflows",
+            "delete"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Workflow catalog administration is not available to application SDKs."
+        },
+        "manifest": {
+          "behavior": "remove",
+          "entity": "workflows"
+        },
+        "mcp": {
+          "name": "bifrost_delete_workflow"
+        },
+        "native_builder": true,
+        "operation_id": "workflows.delete",
+        "rest": {
+          "method": "DELETE",
+          "path": "/api/workflows/{workflow_id}",
+          "request_model": "DeleteWorkflowRequest",
+          "response_model": null
+        },
+        "side_effects": [
+          "remove the decorated function or its sole source file",
+          "deactivate indexed Workflow metadata",
+          "refresh dynamic Workflow MCP registrations",
+          "remove the manifest entry through RepoSyncWriter"
+        ],
+        "summary": "Delete a Workspace Workflow",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "workflows",
+            "grant-role"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "workflows",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_grant_workflow_role",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "workflows.roles.grant",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "workflows.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "workflow.roles.grant",
+        "authorization_resolver": "Platform-admin and Solution-management guards",
+        "cli": {
+          "path": [
+            "workflows",
+            "grant-role"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Workflow catalog administration is not available to application SDKs."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "workflows"
+        },
+        "mcp": {
+          "name": "bifrost_grant_workflow_role"
+        },
+        "native_builder": true,
+        "operation_id": "workflows.roles.grant",
+        "rest": {
+          "method": "POST",
+          "path": "/api/workflows/{workflow_id}/roles",
+          "request_model": "AssignRolesToWorkflowRequest",
+          "response_model": null
+        },
+        "side_effects": [
+          "add idempotent Workflow role grants",
+          "write manifest change through RepoSyncWriter"
+        ],
+        "summary": "Grant a Role access to a Workflow",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "workflows",
+            "revoke-role"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "workflows",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_revoke_workflow_role",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "workflows.roles.revoke",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "workflows.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "workflow.roles.revoke",
+        "authorization_resolver": "Platform-admin and Solution-management guards",
+        "cli": {
+          "path": [
+            "workflows",
+            "revoke-role"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Workflow catalog administration is not available to application SDKs."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "workflows"
+        },
+        "mcp": {
+          "name": "bifrost_revoke_workflow_role"
+        },
+        "native_builder": true,
+        "operation_id": "workflows.roles.revoke",
+        "rest": {
+          "method": "DELETE",
+          "path": "/api/workflows/{workflow_id}/roles/{role_id}",
+          "request_model": null,
+          "response_model": null
+        },
+        "side_effects": [
+          "remove the exact Workflow role grant",
+          "write manifest change through RepoSyncWriter"
+        ],
+        "summary": "Revoke a Role from a Workflow",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
             "events",
             "list-sources"
           ],
@@ -2421,11 +3031,11 @@
     }
   ],
   "counts": {
-    "cli": 134,
+    "cli": 135,
     "manifest": 16,
     "mcp": 101,
     "native_builder": 10,
-    "rest": 657,
+    "rest": 658,
     "sdk": 19
   },
   "schema_version": 1,
@@ -3214,61 +3824,7 @@
         "kind": "operation",
         "path": [
           "workflows",
-          "delete"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "workflows",
-          "execute"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "workflows",
-          "get"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "workflows",
-          "grant-role"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "workflows",
-          "list"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "workflows",
           "list-orphaned"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "workflows",
-          "register"
         ],
         "reason": "CLI operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -3287,24 +3843,6 @@
         "path": [
           "workflows",
           "replace"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "workflows",
-          "revoke-role"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "workflows",
-          "update"
         ],
         "reason": "CLI operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -3358,11 +3896,6 @@
       },
       {
         "entity": "solution_files",
-        "reason": "Manifest entity has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "entity": "workflows",
         "reason": "Manifest entity has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       }
@@ -3472,18 +4005,6 @@
       },
       {
         "hidden": false,
-        "name": "delete_workflow",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "execute_workflow",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "get_claim",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -3533,18 +4054,6 @@
       {
         "hidden": false,
         "name": "get_role",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "get_workflow",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "grant_workflow_role",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -3609,12 +4118,6 @@
         "status": "missing_surface"
       },
       {
-        "hidden": false,
-        "name": "list_workflows",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "hidden": true,
         "name": "make_directory",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
@@ -3652,19 +4155,7 @@
       },
       {
         "hidden": false,
-        "name": "register_workflow",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "replace_content",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "revoke_workflow_role",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -3735,20 +4226,8 @@
         "status": "missing_surface"
       },
       {
-        "hidden": false,
-        "name": "update_workflow",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "hidden": true,
         "name": "validate_solution",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "validate_workflow",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -7677,20 +8156,6 @@
         "status": "missing_surface"
       },
       {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/workflows",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/workflows/execute",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "method": "POST",
         "operation_id": "",
         "path": "/api/workflows/executions/{execution_id}/cancel",
@@ -7705,37 +8170,9 @@
         "status": "missing_surface"
       },
       {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/workflows/register",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "method": "GET",
         "operation_id": "",
         "path": "/api/workflows/usage-stats",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/workflows/validate",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "DELETE",
-        "operation_id": "",
-        "path": "/api/workflows/{workflow_id}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "PATCH",
-        "operation_id": "",
-        "path": "/api/workflows/{workflow_id}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -7778,20 +8215,6 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/workflows/{workflow_id}/roles",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/workflows/{workflow_id}/roles",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "DELETE",
-        "operation_id": "",
-        "path": "/api/workflows/{workflow_id}/roles/{role_id}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -8260,12 +8683,6 @@
       {
         "method": "PATCH",
         "path": "/api/tables/{table}/documents/{id}",
-        "reason": "Application runtime SDK binding; not an administration operation.",
-        "status": "transport_only"
-      },
-      {
-        "method": "POST",
-        "path": "/api/workflows/execute",
         "reason": "Application runtime SDK binding; not an administration operation.",
         "status": "transport_only"
       },

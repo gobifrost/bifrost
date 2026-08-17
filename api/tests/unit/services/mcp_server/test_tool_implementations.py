@@ -107,14 +107,14 @@ class TestSearchKnowledgeImpl:
 
 
 class TestValidateWorkflowImpl:
-    """Tests for validate_workflow tool."""
+    """Tests for bifrost_validate_workflow tool."""
 
     @pytest.mark.asyncio
     async def test_returns_error_when_path_empty(self, context):
         """Should return error message when file_path is empty."""
-        from src.services.mcp_server.tools.workflow import validate_workflow
+        from src.services.mcp_server.tools.workflow import bifrost_validate_workflow
 
-        result = await validate_workflow(context, "")
+        result = await bifrost_validate_workflow(context, "")
         # The implementation returns a ToolResult with error when path is empty
         assert is_error_result(result)
         # Check that the content contains error info
@@ -127,18 +127,18 @@ class TestValidateWorkflowImpl:
 
 
 class TestGetWorkflowImpl:
-    """Tests for get_workflow tool."""
+    """Tests for bifrost_get_workflow tool."""
 
     @pytest.mark.asyncio
     async def test_returns_error_when_no_id_or_name(self, context):
         """Should return error when neither workflow_id nor workflow_name provided."""
-        from src.services.mcp_server.tools.workflow import get_workflow
+        from src.services.mcp_server.tools.workflow import bifrost_get_workflow
 
-        result = await get_workflow(context, None, None)
+        result = await bifrost_get_workflow(context, "")
         assert is_error_result(result)
         assert result.structured_content is not None
         assert "error" in result.structured_content
-        assert "workflow_id or workflow_name" in result.structured_content["error"]
+        assert "workflow_ref is required" in result.structured_content["error"]
 
 
 # ==================== Execution Tool Tests ====================
@@ -199,8 +199,8 @@ class TestSystemToolsRegistry:
 
         tools = get_system_tools()
         workflow_tool_ids = [
-            "execute_workflow",
-            "list_workflows",
+            "bifrost_execute_workflow",
+            "bifrost_list_workflows",
             "list_executions",
             "get_execution",
         ]

@@ -3,9 +3,8 @@
 Implements Task 5c of the CLI mutation surface plan:
 
 * ``bifrost workflows list`` → ``GET /api/workflows``
-* ``bifrost workflows get <ref>`` — list-and-filter (the server does not
-  expose ``GET /api/workflows/{uuid}``; the resolver is used to derive the
-  UUID, then the row is located in the list payload).
+* ``bifrost workflows get <ref>`` → ``GET /api/workflows/{uuid}``.
+* ``bifrost workflows validate <path>`` → ``POST /api/workflows/validate``.
 * ``bifrost workflows register`` → ``POST /api/workflows/register`` (registers
   a decorated function from an existing workspace ``.py`` file).
 * ``bifrost workflows execute <ref>`` → ``POST /api/workflows/execute`` plus
@@ -74,17 +73,42 @@ _UPDATE_FLAGS = build_cli_flags(
 
 
 @workflows_group.command("list")
+@click.option("--query", default=None, help="Search Workflow names and descriptions.")
+@click.option("--category", default=None, help="Filter by exact category.")
+@click.option(
+    "--type",
+    "workflow_type",
+    type=click.Choice(["workflow", "tool", "data_provider"]),
+    default=None,
+    help="Filter by executable type.",
+)
+@org_option
 @click.pass_context
 @pass_resolver
 @run_async
 async def list_workflows(
     ctx: click.Context,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
-    resolver: RefResolver,  # noqa: ARG001 - kept for signature parity
+    resolver: RefResolver,
+    query: str | None,
+    category: str | None,
+    workflow_type: str | None,
 ) -> None:
-    """List all workflows visible to the caller."""
-    response = await client.get("/api/workflows")
+    """List Workflows visible to the caller."""
+    params: dict[str, str] = {}
+    if query is not None:
+        params["query"] = query
+    if category is not None:
+        params["category"] = category
+    if workflow_type is not None:
+        params["type"] = workflow_type
+    target = await resolve_org_target(org, is_global, resolver)
+    if target.is_set:
+        params["scope"] = target.organization_id or "global"
+    response = await client.get("/api/workflows", params=params)
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
 
@@ -101,23 +125,50 @@ async def get_workflow(
     client: BifrostClient,
     resolver: RefResolver,
 ) -> None:
-    """Get a single workflow by UUID, name, or ``path::func`` ref.
-
-    The server does not expose a per-record GET endpoint for workflows, so
-    this resolves the ref via :class:`RefResolver` and locates the entry in
-    the ``GET /api/workflows`` list payload.
-    """
+    """Get a single Workflow by UUID, name, or ``path::func`` ref."""
     workflow_uuid = await resolver.resolve("workflow", ref)
-    list_response = await client.get("/api/workflows")
-    list_response.raise_for_status()
-    items = list_response.json()
-    for item in items:
-        if str(item.get("id")) == workflow_uuid:
-            output_result(item, ctx=ctx)
-            return
-    raise click.ClickException(
-        f"workflow {ref!r} resolved to {workflow_uuid} but is not in the accessible list"
-    )
+    response = await client.get(f"/api/workflows/{workflow_uuid}")
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
+
+
+@workflows_group.command("validate")
+@click.argument("path")
+@click.option(
+    "--content",
+    default=None,
+    help="Validate supplied Python content instead of reading the workspace file.",
+)
+@click.option(
+    "--content-file",
+    type=click.Path(exists=True, dir_okay=False, readable=True),
+    default=None,
+    help="Read validation content from a local file.",
+)
+@click.pass_context
+@pass_resolver
+@run_async
+async def validate_workflow(
+    ctx: click.Context,
+    path: str,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,  # noqa: ARG001 - standard command injection contract
+    content: str | None,
+    content_file: str | None,
+) -> None:
+    """Validate a workspace Workflow file or supplied Python content."""
+    if content is not None and content_file is not None:
+        raise click.UsageError("--content and --content-file are mutually exclusive")
+    if content_file is not None:
+        with open(content_file, "r", encoding="utf-8") as handle:
+            content = handle.read()
+    body: dict[str, Any] = {"path": path}
+    if content is not None:
+        body["content"] = content
+    response = await client.post("/api/workflows/validate", json=body)
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
 
 
 @workflows_group.command("register")
@@ -386,12 +437,15 @@ async def _fetch_final_execution(
 @workflows_group.command("update")
 @click.argument("ref")
 @_apply_flags(_UPDATE_FLAGS)
+@org_option
 @click.pass_context
 @pass_resolver
 @run_async
 async def update_workflow(
     ctx: click.Context,
     ref: str,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
@@ -404,6 +458,9 @@ async def update_workflow(
     """
     workflow_uuid = await resolver.resolve("workflow", ref)
     body = await assemble_body(WorkflowUpdateRequest, fields, resolver=resolver)
+    target = await resolve_org_target(org, is_global, resolver)
+    if target.is_set:
+        body["organization_id"] = target.organization_id
     response = await client.patch(
         f"/api/workflows/{workflow_uuid}", json=body
     )

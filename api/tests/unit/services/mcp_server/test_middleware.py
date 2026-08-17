@@ -98,7 +98,7 @@ class TestOnListTools:
 
         all_tools = [
             *[mock_tool(name) for name in GATEWAY_TOOL_NAMES],
-            mock_tool("execute_workflow"),
+            mock_tool("bifrost_execute_workflow"),
             mock_tool("search_knowledge"),
         ]
         call_next = AsyncMock(return_value=all_tools)
@@ -162,7 +162,7 @@ class TestOnCallTool:
 
         middleware = ToolFilterMiddleware()
 
-        mock_context.message.name = "execute_workflow"
+        mock_context.message.name = "bifrost_execute_workflow"
         call_next = AsyncMock()
 
         with patch("src.services.mcp_server.middleware.get_access_token", return_value=None):
@@ -210,7 +210,7 @@ class TestOnCallTool:
 
         middleware = ToolFilterMiddleware()
 
-        mock_context.message.name = "execute_workflow"
+        mock_context.message.name = "bifrost_execute_workflow"
         call_next = AsyncMock()
         token = mock_access_token()
 
@@ -228,5 +228,5 @@ class TestOnCallTool:
                 await middleware.on_call_tool(mock_context, call_next)
 
         assert "not available on the unscoped MCP endpoint" in str(exc_info.value)
-        assert "execute_workflow" in str(exc_info.value)
+        assert "bifrost_execute_workflow" in str(exc_info.value)
         call_next.assert_not_called()
