@@ -1618,6 +1618,68 @@
       "observed": {
         "cli": {
           "path": [
+            "platform-jobs",
+            "get"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_get_platform_job",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "platform.jobs.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-job requester identity or platform administrator",
+        "cli": {
+          "path": [
+            "platform-jobs",
+            "get"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Reading job progress does not change manifest state.",
+          "sdk": "Platform-job status is a platform operation surface, not an application SDK binding."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_get_platform_job"
+        },
+        "native_builder": true,
+        "operation_id": "platform.jobs.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/platform-jobs/{job_id}",
+          "request_model": null,
+          "response_model": "PlatformJobPublic"
+        },
+        "side_effects": [],
+        "summary": "Read durable status for one queued platform job",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
             "apps",
             "replace"
           ],
@@ -4833,7 +4895,7 @@
     }
   ],
   "counts": {
-    "cli": 139,
+    "cli": 140,
     "manifest": 16,
     "mcp": 101,
     "native_builder": 10,
@@ -5489,12 +5551,6 @@
       {
         "hidden": true,
         "name": "apply_patch",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "bifrost_get_app_publish_status",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -8217,13 +8273,6 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/platform-jobs",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/platform-jobs/{job_id}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

@@ -57,6 +57,7 @@ from src.services.mcp_server.tools import (  # noqa: E402
     integrations as integrations_mod,
     knowledge as knowledge_mod,
     organizations as organizations_mod,
+    platform_jobs as platform_jobs_mod,
     apps as apps_mod,
     policy_rules as policy_rules_mod,
     roles as roles_mod,
@@ -156,7 +157,6 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "bifrost_update_app",
         "bifrost_delete_app",
         "bifrost_publish_app",
-        "bifrost_get_app_publish_status",
         "bifrost_replace_app",
         "bifrost_validate_app",
         "bifrost_get_app_dependencies",
@@ -180,6 +180,7 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "bifrost_get_workflow_execution",
     },
     "knowledge": {"bifrost_search_knowledge"},
+    "platform_jobs": {"bifrost_get_platform_job"},
     "policy_rules": {
         "list_policy_rules",
         "create_policy_rule",
@@ -214,6 +215,7 @@ MODULES = {
     "events": events_mod,
     "execution": execution_mod,
     "knowledge": knowledge_mod,
+    "platform_jobs": platform_jobs_mod,
     "gateway": gateway_mod,
 }
 

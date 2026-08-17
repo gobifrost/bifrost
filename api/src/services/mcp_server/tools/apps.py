@@ -271,37 +271,6 @@ async def bifrost_publish_app(
     )
 
 
-async def bifrost_get_app_publish_status(
-    context: Any,
-    publish_job_id: str,
-) -> ToolResult:
-    """Read durable publish progress through the canonical REST endpoint."""
-    logger.info(
-        "MCP bifrost_get_app_publish_status (HTTP bridge) job=%s",
-        publish_job_id,
-    )
-    status_code, body = await call_rest(
-        context,
-        "GET",
-        f"/api/platform-jobs/{publish_job_id}",
-    )
-    if status_code != 200 or not isinstance(body, dict):
-        return _rest_error("Get Application publish status", status_code, body)
-    status_value = body.get("status", "unknown")
-    progress = body.get("progress") or {}
-    phase = progress.get("phase")
-    description = f"Application publish {status_value}"
-    if phase:
-        description += f": {phase}"
-    if status_value in ("failed", "cancelled"):
-        error = body.get("error") or {}
-        return error_result(
-            error.get("message") or description,
-            body,
-        )
-    return success_result(description, body)
-
-
 async def bifrost_replace_app(
     context: Any,
     app_ref: str,
@@ -454,11 +423,6 @@ TOOLS = [
         "Queue a durable rebuild and publish.",
     ),
     (
-        "bifrost_get_app_publish_status",
-        "Get Application Publish Status",
-        "Get progress, result, or error for an Application publish job.",
-    ),
-    (
         "bifrost_replace_app",
         "Replace Application Source Path",
         "Repoint an Application's workspace source directory.",
@@ -494,7 +458,6 @@ def register_tools(mcp: Any, get_context_fn: Any) -> None:
         "bifrost_update_app": bifrost_update_app,
         "bifrost_delete_app": bifrost_delete_app,
         "bifrost_publish_app": bifrost_publish_app,
-        "bifrost_get_app_publish_status": bifrost_get_app_publish_status,
         "bifrost_replace_app": bifrost_replace_app,
         "bifrost_validate_app": bifrost_validate_app,
         "bifrost_get_app_dependencies": bifrost_get_app_dependencies,

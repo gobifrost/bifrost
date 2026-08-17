@@ -241,6 +241,15 @@ KNOWLEDGE_OPERATIONS = {
     ),
 }
 
+PLATFORM_JOB_OPERATIONS = {
+    "platform.jobs.get": (
+        "GET",
+        "/api/platform-jobs/{job_id}",
+        ("platform-jobs", "get"),
+        "bifrost_get_platform_job",
+    ),
+}
+
 ROLE_OPERATIONS = {
     "roles.list": (
         "GET",
@@ -479,6 +488,7 @@ CANONICAL_OPERATIONS = {
     **ORGANIZATION_OPERATIONS,
     **INTEGRATION_OPERATIONS,
     **WORKSPACE_FILE_OPERATIONS,
+    **PLATFORM_JOB_OPERATIONS,
 }
 
 
