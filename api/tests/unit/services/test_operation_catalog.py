@@ -97,10 +97,74 @@ TABLE_OPERATIONS = {
     ),
 }
 
+APP_OPERATIONS = {
+    "apps.list": (
+        "GET",
+        "/api/applications",
+        ("apps", "list"),
+        "bifrost_list_apps",
+    ),
+    "apps.get": (
+        "GET",
+        "/api/applications/{slug}",
+        ("apps", "get"),
+        "bifrost_get_app",
+    ),
+    "apps.create": (
+        "POST",
+        "/api/applications",
+        ("apps", "create"),
+        "bifrost_create_app",
+    ),
+    "apps.update": (
+        "PATCH",
+        "/api/applications/{app_id}",
+        ("apps", "update"),
+        "bifrost_update_app",
+    ),
+    "apps.delete": (
+        "DELETE",
+        "/api/applications/{app_id}",
+        ("apps", "delete"),
+        "bifrost_delete_app",
+    ),
+    "apps.dependencies.get": (
+        "GET",
+        "/api/applications/{app_id}/dependencies",
+        ("apps", "get-dependencies"),
+        "bifrost_get_app_dependencies",
+    ),
+    "apps.dependencies.update": (
+        "PUT",
+        "/api/applications/{app_id}/dependencies",
+        ("apps", "update-dependencies"),
+        "bifrost_update_app_dependencies",
+    ),
+    "apps.validate": (
+        "POST",
+        "/api/applications/{app_id}/validate",
+        ("apps", "validate"),
+        "bifrost_validate_app",
+    ),
+    "apps.publish": (
+        "POST",
+        "/api/applications/{app_id}/publish",
+        ("apps", "publish"),
+        "bifrost_publish_app",
+    ),
+    "apps.replace": (
+        "POST",
+        "/api/applications/{app_id}/replace",
+        ("apps", "replace"),
+        "bifrost_replace_app",
+    ),
+}
+
 CANONICAL_OPERATIONS = {
     **AGENT_OPERATIONS,
     **FORM_OPERATIONS,
     **TABLE_OPERATIONS,
+    **APP_OPERATIONS,
 }
 
 

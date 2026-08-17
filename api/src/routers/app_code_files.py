@@ -37,7 +37,13 @@ from src.models.contracts.applications import (
     SimpleFileResponse,
 )
 from src.models.orm.applications import Application
-from src.routers.applications import ApplicationRepository
+from src.routers.applications import (
+    ApplicationRepository,
+    get_application_to_manage_or_404,
+)
+from src.services.audit import emit_audit
+from src.services.operation_catalog import operation_route
+from src.services.repo_sync_writer import RepoSyncWriter
 from src.services.app_storage import AppStorageService
 from src.services.repo_storage import RepoStorage
 from src.services.file_storage.service import get_file_storage_service
@@ -291,7 +297,7 @@ async def list_app_files(
     Compiled content is read from _apps/{app_id}/{mode}/.
     The compiled field is only set when it differs from source.
     """
-    app = await get_application_or_404(ctx, app_id)
+    app = await get_application_to_manage_or_404(ctx, app_id)
     app_storage = AppStorageService()
     repo = RepoStorage()
 
@@ -356,7 +362,7 @@ async def read_app_file(
     Compiled content is read from _apps/{app_id}/{mode}/.
     The compiled field is only set when it differs from source.
     """
-    app = await get_application_or_404(ctx, app_id)
+    app = await get_application_to_manage_or_404(ctx, app_id)
     app_storage = AppStorageService()
 
     # Source from S3 (_repo/)
@@ -862,6 +868,7 @@ async def get_v2_dist_asset(
     "/dependencies",
     response_model=dict[str, str],
     summary="Get app dependencies",
+    **operation_route("apps.dependencies.get"),
 )
 async def get_dependencies(
     app_id: UUID = Path(..., description="Application UUID"),
@@ -878,6 +885,7 @@ async def get_dependencies(
     "/dependencies",
     response_model=dict[str, str],
     summary="Update app dependencies",
+    **operation_route("apps.dependencies.update"),
 )
 async def put_dependencies(
     deps: dict[str, str],
@@ -890,7 +898,7 @@ async def put_dependencies(
 
     Validates every package name and version, enforces the max-dependency limit.
     """
-    app = await get_application_or_404(ctx, app_id)
+    app = await get_application_to_manage_or_404(ctx, app_id)
     # Dependencies are solution-owned metadata — read-only for managed apps.
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
 
@@ -914,10 +922,22 @@ async def put_dependencies(
 
     # Update DB
     app.dependencies = deps if deps else None
-    await ctx.db.commit()
 
     # Invalidate render cache
     app_storage = AppStorageService()
     await app_storage.invalidate_render_cache(str(app.id))
+
+    await emit_audit(
+        ctx.db,
+        "app.dependencies.update",
+        resource_type="application",
+        resource_id=app.id,
+        details={
+            "name": app.name,
+            "dependencies": sorted(deps),
+        },
+    )
+    await RepoSyncWriter(ctx.db).regenerate_manifest()
+    await ctx.db.commit()
 
     return deps

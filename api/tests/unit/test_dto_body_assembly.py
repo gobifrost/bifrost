@@ -452,7 +452,7 @@ async def test_role_update_omit_unset() -> None:
 
 
 @pytest.mark.asyncio
-async def test_application_create_resolves_org_only() -> None:
+async def test_application_create_org_target_is_owned_by_command_adapter() -> None:
     resolver = _resolver()
     body = await assemble_body(
         ApplicationCreate,
@@ -461,27 +461,28 @@ async def test_application_create_resolves_org_only() -> None:
             {
                 "name": "App",
                 "slug": "app",
-                "organization_id": "Acme",
                 "access_level": "authenticated",
             },
         ),
         resolver=resolver,  # type: ignore[arg-type]
     )
-    assert body["organization_id"] == ORG_UUID
     assert body["slug"] == "app"
     assert body["access_level"] == "authenticated"
+    assert "organization_id" not in body
+    assert "organization_id" not in DTO_REF_LOOKUPS.get("ApplicationCreate", {})
 
 
 @pytest.mark.asyncio
-async def test_application_update_no_ref_resolution_for_scope() -> None:
-    """ApplicationUpdate's ``scope`` is free-form (``global`` or org UUID)."""
+async def test_application_update_org_target_is_owned_by_command_adapter() -> None:
+    """The shared ``--org`` adapter, not DTO assembly, sets organization_id."""
     resolver = _resolver()
     body = await assemble_body(
         ApplicationUpdate,
-        _parsed(ApplicationUpdate, {"scope": "global", "name": "Renamed"}),
+        _parsed(ApplicationUpdate, {"name": "Renamed"}),
         resolver=resolver,  # type: ignore[arg-type]
     )
-    assert body == {"scope": "global", "name": "Renamed"}
+    assert body == {"name": "Renamed"}
+    assert "organization_id" not in DTO_REF_LOOKUPS.get("ApplicationUpdate", {})
 
 
 @pytest.mark.asyncio

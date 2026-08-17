@@ -2,7 +2,7 @@
 
 **Owner:** Jack Musick / Bifrost engineering
 **Created:** 2026-08-17
-**Status:** In progress — Phases 0–1 complete; Phase 2 Agent, Form, and Table slices complete
+**Status:** In progress — Phases 0–1 complete; Phase 2 Agent, Form, Table, and App slices complete
 **Execution branch:** `codex/code-builder-pydantic-integration-20260816`
 **Base:** `origin/main@16e317e62`
 **Depends on:** the reconstructed Builder and shared Pydantic runtime described
@@ -222,9 +222,12 @@ environment-skipped mirror tests; API Pyright and Ruff are clean.
 - [x] Complete the Table metadata vertical slice with canonical DTO schema and
       policy fields, home/global/organization retargeting, audit/manifest/policy
       side effects, strict reference resolution, and persisted tool-name migration.
+- [x] Complete the App metadata/dependency vertical slice with canonical DTOs,
+      home/global/organization targeting, publish/replace/validation operations,
+      REST-owned audit and manifest side effects, and persisted tool-name migration.
 - [ ] Convert legacy direct-ORM MCP implementations to thin HTTP wrappers using
       `_http_bridge.py`; do not create a second service path for MCP.
-- [ ] Reconcile known drift in Tables, Apps, Events, and remaining domains:
+- [ ] Reconcile known drift in Events and remaining domains:
       authorization, role propagation, cache invalidation, RepoSyncWriter,
       scheduler wiring, audit registration, validation, and partial-success
       behavior.
@@ -291,8 +294,24 @@ catalog/DTO/contract/wrapper/migration/Solution-guard selection passed 231/231,
 and the final contract/regression selection passed 176/176. API
 Pyright/Ruff and client TypeScript are clean; ESLint has zero errors and only
 the pre-existing React Compiler warning in `FormRenderer.tsx`. Generated
-operation, CLI, OpenAPI, and browser type references were refreshed. Apps and
-Events remain in this phase.
+operation, CLI, OpenAPI, and browser type references were refreshed. The App
+slice follows below; Events remains in this phase.
+
+**App-slice evidence:** the legacy App MCP metadata, dependency, validation,
+publish, and replace implementations were removed in favor of thin REST
+adapters with canonical `bifrost_<verb>_app` names. Forward migration
+`20260817_app_mcp_names` renames persisted grants and is the sole Alembic head.
+REST now owns strict organization and role validation, Solution management
+guards, audit records, manifest regeneration, cache invalidation, and durable
+publish-job creation. CLI dependency commands and validation mirror the same
+operations, and the App UI uses the same explicit-null organization contract;
+the breaking wire change raises the minimum CLI version to 1.2.3. The final
+architecture/DTO/contract selection passed 186/186, live MCP passed 2/2,
+REST authorization passed 2/2, CLI passed 8/8, and the focused UI contract
+passed 3/3. API Pyright/Ruff, client TypeScript, generated operation/Skill
+freshness, and diff checks are clean; ESLint has zero errors and only the
+pre-existing React Compiler warning in `FormRenderer.tsx`. Events remain in
+this phase.
 
 ### Phase 3 — Finish Agent Skill portability
 

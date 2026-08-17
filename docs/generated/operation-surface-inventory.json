@@ -1012,12 +1012,681 @@
         "summary": "Delete a Table the caller may manage",
         "target_kind": "resource"
       }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "apps",
+            "list"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_list_apps",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "apps.list",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "apps.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "ApplicationRepository.list_applications",
+        "cli": {
+          "path": [
+            "apps",
+            "list"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Manifests reconcile Application state; they do not perform collection reads.",
+          "sdk": "Application administration is not available to the in-app runtime SDK."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_list_apps"
+        },
+        "native_builder": true,
+        "operation_id": "apps.list",
+        "rest": {
+          "method": "GET",
+          "path": "/api/applications",
+          "request_model": null,
+          "response_model": "ApplicationListResponse"
+        },
+        "side_effects": [],
+        "summary": "List Applications visible to the caller",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "apps",
+            "get"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_get_app",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "apps.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "apps.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "ApplicationRepository plus role and Solution visibility",
+        "cli": {
+          "path": [
+            "apps",
+            "get"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Manifests reconcile Application state; they do not perform resource reads.",
+          "sdk": "Application administration is not available to the in-app runtime SDK."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_get_app"
+        },
+        "native_builder": true,
+        "operation_id": "apps.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/applications/{slug}",
+          "request_model": null,
+          "response_model": "ApplicationPublic"
+        },
+        "side_effects": [],
+        "summary": "Get one Application visible to the caller",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "apps",
+            "create"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "apps",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_create_app",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "apps.create",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "apps.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "app.create",
+        "authorization_resolver": "Application create and target-organization policy",
+        "cli": {
+          "path": [
+            "apps",
+            "create"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Application administration is not available to the in-app runtime SDK."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "apps"
+        },
+        "mcp": {
+          "name": "bifrost_create_app"
+        },
+        "native_builder": true,
+        "operation_id": "apps.create",
+        "rest": {
+          "method": "POST",
+          "path": "/api/applications",
+          "request_model": "ApplicationCreate",
+          "response_model": "ApplicationPublic"
+        },
+        "side_effects": [
+          "persist Application metadata and role grants",
+          "scaffold loose inline-v1 source when the target path is empty",
+          "write manifest change through RepoSyncWriter"
+        ],
+        "summary": "Create a loose Application in an allowed target",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "apps",
+            "update"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "apps",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_update_app",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "apps.update",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "apps.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "app.update",
+        "authorization_resolver": "Application management and Solution-management guards",
+        "cli": {
+          "path": [
+            "apps",
+            "update"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Application administration is not available to the in-app runtime SDK."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "apps"
+        },
+        "mcp": {
+          "name": "bifrost_update_app"
+        },
+        "native_builder": true,
+        "operation_id": "apps.update",
+        "rest": {
+          "method": "PATCH",
+          "path": "/api/applications/{app_id}",
+          "request_model": "ApplicationUpdate",
+          "response_model": "ApplicationPublic"
+        },
+        "side_effects": [
+          "replace selected metadata and role grants",
+          "publish Application draft metadata updates",
+          "write manifest change through RepoSyncWriter"
+        ],
+        "summary": "Update an Application the caller may manage",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "apps",
+            "delete"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "apps",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_delete_app",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "apps.delete",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "apps.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "app.delete",
+        "authorization_resolver": "Application management and Solution-management guards",
+        "cli": {
+          "path": [
+            "apps",
+            "delete"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Application administration is not available to the in-app runtime SDK."
+        },
+        "manifest": {
+          "behavior": "remove",
+          "entity": "apps"
+        },
+        "mcp": {
+          "name": "bifrost_delete_app"
+        },
+        "native_builder": true,
+        "operation_id": "apps.delete",
+        "rest": {
+          "method": "DELETE",
+          "path": "/api/applications/{app_id}",
+          "request_model": null,
+          "response_model": null
+        },
+        "side_effects": [
+          "delete Application metadata and relation grants",
+          "remove the manifest entry through RepoSyncWriter"
+        ],
+        "summary": "Delete an Application the caller may manage",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "apps",
+            "get-dependencies"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_get_app_dependencies",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "apps.dependencies.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "apps.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "ApplicationRepository access check",
+        "cli": {
+          "path": [
+            "apps",
+            "get-dependencies"
+          ]
+        },
+        "exclusions": {
+          "manifest": "The read does not mutate the Application manifest.",
+          "sdk": "Application administration is not available to the in-app runtime SDK."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_get_app_dependencies"
+        },
+        "native_builder": true,
+        "operation_id": "apps.dependencies.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/applications/{app_id}/dependencies",
+          "request_model": null,
+          "response_model": "dict[str, str]"
+        },
+        "side_effects": [],
+        "summary": "Get an Application's npm dependencies",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "apps",
+            "update-dependencies"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "apps",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_update_app_dependencies",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "apps.dependencies.update",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "apps.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "app.dependencies.update",
+        "authorization_resolver": "Application management and Solution-management guards",
+        "cli": {
+          "path": [
+            "apps",
+            "update-dependencies"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Application administration is not available to the in-app runtime SDK."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "apps"
+        },
+        "mcp": {
+          "name": "bifrost_update_app_dependencies"
+        },
+        "native_builder": true,
+        "operation_id": "apps.dependencies.update",
+        "rest": {
+          "method": "PUT",
+          "path": "/api/applications/{app_id}/dependencies",
+          "request_model": "dict[str, str]",
+          "response_model": "dict[str, str]"
+        },
+        "side_effects": [
+          "replace dependency metadata",
+          "invalidate the Application render cache",
+          "write manifest change through RepoSyncWriter"
+        ],
+        "summary": "Replace an Application's npm dependencies",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "apps",
+            "validate"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_validate_app",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "apps.validate",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "apps.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "ApplicationRepository access check",
+        "cli": {
+          "path": [
+            "apps",
+            "validate"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Validation does not mutate the Application manifest.",
+          "sdk": "Application administration is not available to the in-app runtime SDK."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_validate_app"
+        },
+        "native_builder": true,
+        "operation_id": "apps.validate",
+        "rest": {
+          "method": "POST",
+          "path": "/api/applications/{app_id}/validate",
+          "request_model": null,
+          "response_model": "AppValidationResponse"
+        },
+        "side_effects": [],
+        "summary": "Compile and statically validate Application source",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "apps",
+            "publish"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_publish_app",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "apps.publish",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "apps.publish"
+        ],
+        "async_policy": "platform_job",
+        "audit_event": "app.publish",
+        "authorization_resolver": "Application management and Solution-management guards",
+        "cli": {
+          "path": [
+            "apps",
+            "publish"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Publishing does not change portable Application source metadata.",
+          "sdk": "Application administration is not available to the in-app runtime SDK."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_publish_app"
+        },
+        "native_builder": true,
+        "operation_id": "apps.publish",
+        "rest": {
+          "method": "POST",
+          "path": "/api/applications/{app_id}/publish",
+          "request_model": "ApplicationPublishRequest",
+          "response_model": "PlatformJobAccepted"
+        },
+        "side_effects": [
+          "enqueue or reuse the canonical Application publish Platform Job"
+        ],
+        "summary": "Queue a durable build and publish for a loose Application",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "apps",
+            "replace"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "apps",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_replace_app",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "apps.replace",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "apps.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "app.replace",
+        "authorization_resolver": "Application management and Solution-management guards",
+        "cli": {
+          "path": [
+            "apps",
+            "replace"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Application administration is not available to the in-app runtime SDK."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "apps"
+        },
+        "mcp": {
+          "name": "bifrost_replace_app"
+        },
+        "native_builder": true,
+        "operation_id": "apps.replace",
+        "rest": {
+          "method": "POST",
+          "path": "/api/applications/{app_id}/replace",
+          "request_model": "ApplicationReplaceRequest",
+          "response_model": "ApplicationPublic"
+        },
+        "side_effects": [
+          "write the new source path to the Application manifest"
+        ],
+        "summary": "Repoint a loose Application to a workspace source directory",
+        "target_kind": "resource"
+      }
     }
   ],
   "counts": {
-    "cli": 129,
+    "cli": 131,
     "manifest": 16,
-    "mcp": 99,
+    "mcp": 100,
     "native_builder": 10,
     "rest": 656,
     "sdk": 19
@@ -1032,78 +1701,6 @@
         ],
         "reason": "Local authentication, source-control, or lifecycle command.",
         "status": "transport_only"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "apps",
-          "create"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "apps",
-          "delete"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "apps",
-          "get"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "apps",
-          "list"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "apps",
-          "publish"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "apps",
-          "replace"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "apps",
-          "set-deps"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "apps",
-          "update"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
       },
       {
         "kind": "lifecycle",
@@ -2050,11 +2647,6 @@
     ],
     "manifest": [
       {
-        "entity": "apps",
-        "reason": "Manifest entity has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "entity": "claims",
         "reason": "Manifest entity has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -2130,7 +2722,7 @@
       },
       {
         "hidden": false,
-        "name": "create_app",
+        "name": "bifrost_get_app_publish_status",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -2256,24 +2848,6 @@
       },
       {
         "hidden": false,
-        "name": "get_app",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "get_app_dependencies",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "get_app_publish_status",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "get_claim",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -2341,12 +2915,6 @@
       {
         "hidden": false,
         "name": "grant_workflow_role",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "list_apps",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -2448,12 +3016,6 @@
       },
       {
         "hidden": false,
-        "name": "publish_app",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "push_files",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -2479,12 +3041,6 @@
       {
         "hidden": false,
         "name": "register_workflow",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "replace_app",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -2527,18 +3083,6 @@
       {
         "hidden": true,
         "name": "test_solution_build",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "update_app",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "update_app_dependencies",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -2593,12 +3137,6 @@
       {
         "hidden": false,
         "name": "update_workflow",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "validate_app",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -3151,37 +3689,9 @@
         "status": "missing_surface"
       },
       {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/applications",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/applications",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "method": "POST",
         "operation_id": "",
         "path": "/api/applications/swap-slugs",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "DELETE",
-        "operation_id": "",
-        "path": "/api/applications/{app_id}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "PATCH",
-        "operation_id": "",
-        "path": "/api/applications/{app_id}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -3196,20 +3706,6 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/applications/{app_id}/bundle-manifest",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/applications/{app_id}/dependencies",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "PUT",
-        "operation_id": "",
-        "path": "/api/applications/{app_id}/dependencies",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -3326,13 +3822,6 @@
         "status": "missing_surface"
       },
       {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/applications/{app_id}/publish",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "method": "GET",
         "operation_id": "",
         "path": "/api/applications/{app_id}/render",
@@ -3342,28 +3831,7 @@
       {
         "method": "POST",
         "operation_id": "",
-        "path": "/api/applications/{app_id}/replace",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
         "path": "/api/applications/{app_id}/rollback",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/applications/{app_id}/validate",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/applications/{slug}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

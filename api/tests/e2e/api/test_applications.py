@@ -421,6 +421,138 @@ class TestApplicationAccess:
 
 
 @pytest.mark.e2e
+class TestApplicationRoleAndTargetValidation:
+    """Application writes share strict role and organization targeting rules."""
+
+    def test_create_persists_role_assignments_and_rejects_bad_roles(
+        self,
+        e2e_client,
+        platform_admin,
+    ):
+        role_response = e2e_client.post(
+            "/api/roles",
+            headers=platform_admin.headers,
+            json={
+                "name": f"Application Builder {uuid.uuid4().hex[:8]}",
+                "description": "Application role validation",
+            },
+        )
+        assert role_response.status_code == 201, role_response.text
+        role = role_response.json()
+        app_id = None
+        try:
+            slug = f"role-assigned-app-{uuid.uuid4().hex[:8]}"
+            created = e2e_client.post(
+                "/api/applications",
+                headers=platform_admin.headers,
+                json={
+                    "name": "Role-assigned Application",
+                    "slug": slug,
+                    "app_model": "inline_v1",
+                    "access_level": "authenticated",
+                    "role_ids": [role["id"]],
+                },
+            )
+            assert created.status_code == 201, created.text
+            app = created.json()
+            app_id = app["id"]
+            assert app["role_ids"] == [role["id"]]
+
+            duplicate_slug = f"duplicate-role-app-{uuid.uuid4().hex[:8]}"
+            duplicate = e2e_client.post(
+                "/api/applications",
+                headers=platform_admin.headers,
+                json={
+                    "name": "Duplicate role Application",
+                    "slug": duplicate_slug,
+                    "app_model": "inline_v1",
+                    "role_ids": [role["id"], role["id"]],
+                },
+            )
+            assert duplicate.status_code == 422, duplicate.text
+            assert "duplicate references" in duplicate.text
+
+            roles = e2e_client.get(
+                "/api/roles",
+                headers=platform_admin.headers,
+            )
+            assert roles.status_code == 200, roles.text
+            capability_role = next(
+                item
+                for item in roles.json()
+                if item["assignable_to_resources"] is False
+            )
+            capability_slug = f"capability-role-app-{uuid.uuid4().hex[:8]}"
+            capability = e2e_client.post(
+                "/api/applications",
+                headers=platform_admin.headers,
+                json={
+                    "name": "Capability role Application",
+                    "slug": capability_slug,
+                    "app_model": "inline_v1",
+                    "role_ids": [capability_role["id"]],
+                },
+            )
+            assert capability.status_code == 409, capability.text
+            assert "Capability role" in capability.text
+        finally:
+            if app_id is not None:
+                _delete_app(e2e_client, platform_admin.headers, app_id)
+            e2e_client.delete(
+                f"/api/roles/{role['id']}",
+                headers=platform_admin.headers,
+            )
+
+    def test_regular_user_targets_home_org_only(
+        self,
+        e2e_client,
+        platform_admin,
+        org1_user,
+        org2,
+    ):
+        slug = f"home-org-app-{uuid.uuid4().hex[:8]}"
+        created = e2e_client.post(
+            "/api/applications",
+            headers=org1_user.headers,
+            json={
+                "name": "Home organization Application",
+                "slug": slug,
+                "app_model": "inline_v1",
+            },
+        )
+        assert created.status_code == 201, created.text
+        app = created.json()
+        try:
+            assert app["organization_id"] == str(org1_user.organization_id)
+
+            global_attempt = e2e_client.post(
+                "/api/applications",
+                headers=org1_user.headers,
+                json={
+                    "name": "Forbidden global Application",
+                    "slug": f"forbidden-global-app-{uuid.uuid4().hex[:8]}",
+                    "app_model": "inline_v1",
+                    "organization_id": None,
+                },
+            )
+            assert global_attempt.status_code == 403, global_attempt.text
+
+            foreign_attempt = e2e_client.post(
+                "/api/applications",
+                headers=org1_user.headers,
+                json={
+                    "name": "Forbidden foreign Application",
+                    "slug": f"forbidden-foreign-app-{uuid.uuid4().hex[:8]}",
+                    "app_model": "inline_v1",
+                    "organization_id": org2["id"],
+                },
+            )
+            assert foreign_attempt.status_code == 403, foreign_attempt.text
+        finally:
+            _delete_app(e2e_client, platform_admin.headers, app["id"])
+
+
+@pytest.mark.e2e
 class TestApplicationScopeFiltering:
     """Test application scope filtering."""
 

@@ -214,8 +214,10 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         # Scaffold initial files via FileStorageService
         await self._scaffold_code_files(application.slug)
 
-        # Add role associations if role_based access
-        if data.access_level == "role_based" and data.role_ids:
+        # Persist assignments independently from the active access level. This
+        # matches the update and role-consumer APIs and lets an administrator
+        # stage role grants before switching the Application to role-based.
+        if data.role_ids:
             for role_id in data.role_ids:
                 app_role = AppRole(
                     app_id=application.id,
@@ -244,9 +246,9 @@ class ApplicationRepository(OrgScopedRepository[Application]):
 
         if data.name is not None:
             application.name = data.name
-        if data.description is not None:
+        if "description" in data.model_fields_set:
             application.description = data.description
-        if data.icon is not None:
+        if "icon" in data.model_fields_set:
             application.icon = data.icon
         if data.access_level is not None:
             application.access_level = data.access_level
@@ -259,15 +261,11 @@ class ApplicationRepository(OrgScopedRepository[Application]):
                 raise ValueError(f"Application with slug '{data.slug}' already exists")
             application.slug = data.slug
 
-        # Handle scope change (platform admin only)
-        if data.scope is not None and is_platform_admin:
-            if data.scope == "global":
-                application.organization_id = None
-            else:
-                try:
-                    application.organization_id = UUID(data.scope)
-                except ValueError:
-                    pass  # Invalid UUID, ignore
+        # The router validates authorization and target existence before the
+        # repository applies an explicit scope change. Omission preserves the
+        # current organization; explicit null moves the Application global.
+        if "organization_id" in data.model_fields_set and is_platform_admin:
+            application.organization_id = data.organization_id
 
         # Update role associations if provided
         if data.role_ids is not None:
