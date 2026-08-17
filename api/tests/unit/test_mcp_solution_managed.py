@@ -1,13 +1,8 @@
-"""MCP direct-ORM mutation tools refuse solution-managed entities with the
-locked read-only message (criterion 6, MCP surface).
+"""MCP mutations refuse Solution-managed entities without partial writes.
 
-The MCP tools for tables/agents/forms/events mutate the ORM object directly
-(e.g. ``table.name = ...``) and rely on the session-wide before_flush backstop
-(``install_solution_write_guard``), which fires on AsyncSession flush. The tool's
-``except Exception`` wraps the raised ``SolutionManagedWriteError`` — whose
-message IS the locked wording — into a clean ``error_result``. So an MCP edit of
-a managed entity returns the same read-only message the REST guard returns, not
-a generic 500.
+Canonical thin REST adapters (Agents and Forms) are tested at the shared HTTP
+guard. Legacy direct-ORM tools remain covered at the session-wide
+``before_flush`` guard until their domain reaches the same parity architecture.
 """
 from __future__ import annotations
 
@@ -552,10 +547,7 @@ async def _managed_form_with_field(db) -> uuid.UUID:
 
 
 async def test_mcp_update_form_refuses_managed_without_deleting_fields(db_session, monkeypatch):
-    """Codex #13: update_form on a solution-managed form returns the read-only
-    error AND does NOT bulk-delete its FormField rows."""
-    from contextlib import asynccontextmanager
-
+    """The canonical Form REST boundary refuses a managed Form update."""
     from sqlalchemy import func, select
 
     from src.models.orm.forms import FormField
@@ -563,15 +555,39 @@ async def test_mcp_update_form_refuses_managed_without_deleting_fields(db_sessio
 
     fid = await _managed_form_with_field(db_session)
 
-    @asynccontextmanager
-    async def _fake_tool_db(_context):
-        yield db_session
+    async def _fake_resolve(_context, kind, value):
+        assert (kind, value) == ("form", str(fid))
+        return str(fid)
 
-    monkeypatch.setattr(mcp_forms, "get_tool_db", _fake_tool_db)
+    async def _fake_assemble(_context, fields, *, is_update, scope):
+        assert fields["form_schema"] == {
+            "fields": [{"name": "new", "type": "text", "label": "New"}]
+        }
+        assert is_update is True
+        assert scope is None
+        return {"form_schema": fields["form_schema"]}
+
+    async def _fake_call_rest(_context, method, path, *, json_body=None, params=None):
+        assert (method, path) == ("PATCH", f"/api/forms/{fid}")
+        assert json_body == {
+            "form_schema": {
+                "fields": [{"name": "new", "type": "text", "label": "New"}]
+            }
+        }
+        assert params is None
+        return 409, {"detail": SOLUTION_MANAGED_MESSAGE}
+
+    monkeypatch.setattr(mcp_forms, "_resolve_ref", _fake_resolve)
+    monkeypatch.setattr(mcp_forms, "_assemble_form_body", _fake_assemble)
+    monkeypatch.setattr(mcp_forms, "call_rest", _fake_call_rest)
 
     context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
-    result = await mcp_forms.update_form(
-        context, form_id=str(fid), fields=[{"name": "new", "field_type": "text", "label": "New"}]
+    result = await mcp_forms.bifrost_update_form(
+        context,
+        form_ref=str(fid),
+        form_schema={
+            "fields": [{"name": "new", "type": "text", "label": "New"}]
+        },
     )
 
     text = str(result.model_dump() if hasattr(result, "model_dump") else result)
@@ -580,6 +596,39 @@ async def test_mcp_update_form_refuses_managed_without_deleting_fields(db_sessio
         select(func.count()).select_from(FormField).where(FormField.form_id == fid)
     )).scalar()
     assert count == 1
+
+
+async def test_mcp_delete_form_refuses_managed(db_session, monkeypatch):
+    """The canonical Form REST boundary refuses a managed Form delete."""
+    from sqlalchemy import select
+
+    from src.models.orm.forms import Form
+    from src.services.mcp_server.tools import forms as mcp_forms
+
+    fid = await _managed_form_with_field(db_session)
+
+    async def _fake_resolve(_context, kind, value):
+        assert (kind, value) == ("form", str(fid))
+        return str(fid)
+
+    async def _fake_call_rest(_context, method, path, *, json_body=None, params=None):
+        assert (method, path) == ("DELETE", f"/api/forms/{fid}")
+        assert json_body is None
+        assert params == {"purge": False}
+        return 409, {"detail": SOLUTION_MANAGED_MESSAGE}
+
+    monkeypatch.setattr(mcp_forms, "_resolve_ref", _fake_resolve)
+    monkeypatch.setattr(mcp_forms, "call_rest", _fake_call_rest)
+
+    context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
+    result = await mcp_forms.bifrost_delete_form(context, form_ref=str(fid))
+
+    text = str(result.model_dump() if hasattr(result, "model_dump") else result)
+    assert SOLUTION_MANAGED_MESSAGE in text, text
+    is_active = (
+        await db_session.execute(select(Form.is_active).where(Form.id == fid))
+    ).scalar_one()
+    assert is_active is True
 
 
 # ── audit M-MCP: legacy tools that lacked the EARLY guard ────────────────────

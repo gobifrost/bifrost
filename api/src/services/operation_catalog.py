@@ -1,7 +1,8 @@
 """Canonical Bifrost operation identities and transport bindings.
 
-Agent CRUD is the first vertical slice.  Additional domains must enter this
-catalog before gaining new CLI, MCP, or native Builder implementations.
+Agent and Form CRUD are the first vertical slices. Additional domains must
+enter this catalog before gaining new CLI, MCP, or native Builder
+implementations.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ from src.models.contracts.operation_catalog import (
 
 
 _AGENT_SDK_EXCLUSION = "Agent administration is not available to application SDKs."
+_FORM_SDK_EXCLUSION = "Form administration is not available to application SDKs."
 
 
 OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
@@ -130,6 +132,116 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             "remove manifest entry through RepoSyncWriter when applicable",
         ),
         exclusions={"sdk": _AGENT_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="forms.list",
+        summary="List Forms visible to the caller",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/forms",
+            response_model="list[FormPublic]",
+        ),
+        cli=CliOperationBinding(path=("forms", "list")),
+        mcp=McpOperationBinding(name="bifrost_list_forms"),
+        native_builder=True,
+        action_scopes=("forms.read",),
+        authorization_resolver="FormRepository.list_forms",
+        exclusions={
+            "manifest": "Manifests reconcile Form state; they do not perform collection reads.",
+            "sdk": _FORM_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="forms.get",
+        summary="Get one Form visible to the caller",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/forms/{form_id}",
+            response_model="FormPublic",
+        ),
+        cli=CliOperationBinding(path=("forms", "get")),
+        mcp=McpOperationBinding(name="bifrost_get_form"),
+        native_builder=True,
+        action_scopes=("forms.read",),
+        authorization_resolver="FormRepository plus form access policy",
+        exclusions={
+            "manifest": "Manifests reconcile Form state; they do not perform resource reads.",
+            "sdk": _FORM_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="forms.create",
+        summary="Create a Form in an allowed target",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/forms",
+            request_model="FormCreate",
+            response_model="FormPublic",
+        ),
+        cli=CliOperationBinding(path=("forms", "create")),
+        mcp=McpOperationBinding(name="bifrost_create_form"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="forms"),
+        action_scopes=("forms.write",),
+        authorization_resolver="Platform-admin gate and target organization resolver",
+        audit_event="form.create",
+        side_effects=(
+            "persist Form fields and role assignments",
+            "synchronize Form roles to referenced workflows",
+            "invalidate Form caches",
+            "write manifest change through RepoSyncWriter when applicable",
+        ),
+        exclusions={"sdk": _FORM_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="forms.update",
+        summary="Update a Form the caller may manage",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="PATCH",
+            path="/api/forms/{form_id}",
+            request_model="FormUpdate",
+            response_model="FormPublic",
+        ),
+        cli=CliOperationBinding(path=("forms", "update")),
+        mcp=McpOperationBinding(name="bifrost_update_form"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="forms"),
+        action_scopes=("forms.write",),
+        authorization_resolver="Platform-admin and Solution-management guards",
+        audit_event="form.update",
+        side_effects=(
+            "replace selected Form fields and role assignments",
+            "synchronize Form roles to referenced workflows",
+            "invalidate Form caches",
+            "write manifest change through RepoSyncWriter when applicable",
+        ),
+        exclusions={"sdk": _FORM_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="forms.delete",
+        summary="Deactivate or purge a Form the caller may manage",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="DELETE",
+            path="/api/forms/{form_id}",
+        ),
+        cli=CliOperationBinding(path=("forms", "delete")),
+        mcp=McpOperationBinding(name="bifrost_delete_form"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="forms", behavior="remove"),
+        action_scopes=("forms.write",),
+        authorization_resolver="Platform-admin and Solution-management guards",
+        audit_event="form.delete",
+        side_effects=(
+            "deactivate the Form or purge its persisted relations",
+            "invalidate Form caches",
+            "remove the active manifest entry through RepoSyncWriter",
+        ),
+        exclusions={"sdk": _FORM_SDK_EXCLUSION},
     ),
 )
 

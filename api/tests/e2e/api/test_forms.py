@@ -95,6 +95,69 @@ class TestFormCRUD:
         updated = response.json()
         assert updated["description"] == "Updated description"
 
+    def test_update_form_clears_nullable_fields(self, e2e_client, platform_admin):
+        """Explicit JSON null clears Form values instead of meaning omitted."""
+        workflow_content = '''from bifrost import workflow
+
+@workflow(name="e2e_form_clear_workflow")
+async def e2e_form_clear_workflow():
+    return {"ok": True}
+'''
+        workflow = write_and_register(
+            e2e_client,
+            platform_admin.headers,
+            "e2e_form_clear_workflow.py",
+            workflow_content,
+            "e2e_form_clear_workflow",
+        )
+        form_id = None
+        try:
+            created = e2e_client.post(
+                "/api/forms",
+                headers=platform_admin.headers,
+                json={
+                    "name": "E2E Nullable Form",
+                    "description": "clear me",
+                    "workflow_id": workflow["id"],
+                    "launch_workflow_id": workflow["id"],
+                    "default_launch_params": {"seed": True},
+                    "allowed_query_params": ["seed"],
+                    "form_schema": {"fields": []},
+                    "access_level": "authenticated",
+                },
+            )
+            assert created.status_code == 201, created.text
+            form_id = created.json()["id"]
+
+            cleared = e2e_client.patch(
+                f"/api/forms/{form_id}",
+                headers=platform_admin.headers,
+                json={
+                    "description": None,
+                    "workflow_id": None,
+                    "launch_workflow_id": None,
+                    "default_launch_params": None,
+                    "allowed_query_params": None,
+                },
+            )
+            assert cleared.status_code == 200, cleared.text
+            payload = cleared.json()
+            assert payload["description"] is None
+            assert payload["workflow_id"] is None
+            assert payload["launch_workflow_id"] is None
+            assert payload["default_launch_params"] is None
+            assert payload["allowed_query_params"] is None
+        finally:
+            if form_id is not None:
+                e2e_client.delete(
+                    f"/api/forms/{form_id}",
+                    headers=platform_admin.headers,
+                )
+            e2e_client.delete(
+                "/api/files/editor?path=e2e_form_clear_workflow.py",
+                headers=platform_admin.headers,
+            )
+
     def test_confirmation_markdown_defaults_and_updates(
         self, e2e_client, platform_admin, test_form
     ):
@@ -1261,3 +1324,117 @@ class TestFormRoleIdsAtCreateUpdate:
         )
         assert resp.status_code == 404, resp.text
         assert bogus in resp.text
+
+    def test_create_form_rejects_duplicate_role_ids(
+        self, e2e_client, platform_admin
+    ):
+        role = self._make_role(e2e_client, platform_admin, "Issue162 Duplicate")
+        form_name = "Issue162 Duplicate Role Form"
+        try:
+            resp = e2e_client.post(
+                "/api/forms",
+                headers=platform_admin.headers,
+                json={
+                    "name": form_name,
+                    "form_schema": {"fields": []},
+                    "access_level": "role_based",
+                    "role_ids": [role["id"], role["id"]],
+                },
+            )
+            assert resp.status_code == 422, resp.text
+            assert "duplicate references" in resp.text
+
+            listed = e2e_client.get(
+                "/api/forms",
+                headers=platform_admin.headers,
+            )
+            assert listed.status_code == 200, listed.text
+            assert all(form["name"] != form_name for form in listed.json())
+        finally:
+            e2e_client.delete(
+                f"/api/roles/{role['id']}",
+                headers=platform_admin.headers,
+            )
+
+    def test_create_form_rejects_capability_role(
+        self, e2e_client, platform_admin
+    ):
+        roles = e2e_client.get(
+            "/api/roles",
+            headers=platform_admin.headers,
+        )
+        assert roles.status_code == 200, roles.text
+        capability_role = next(
+            role
+            for role in roles.json()
+            if role["assignable_to_resources"] is False
+        )
+        form_name = "Issue162 Capability Role Form"
+
+        resp = e2e_client.post(
+            "/api/forms",
+            headers=platform_admin.headers,
+            json={
+                "name": form_name,
+                "form_schema": {"fields": []},
+                "access_level": "role_based",
+                "role_ids": [capability_role["id"]],
+            },
+        )
+        assert resp.status_code == 409, resp.text
+        assert "Capability role" in resp.text
+
+        listed = e2e_client.get(
+            "/api/forms",
+            headers=platform_admin.headers,
+        )
+        assert listed.status_code == 200, listed.text
+        assert all(form["name"] != form_name for form in listed.json())
+
+    def test_update_form_relationship_error_rolls_back_other_changes(
+        self, e2e_client, platform_admin
+    ):
+        role = self._make_role(e2e_client, platform_admin, "Issue162 Atomic")
+        form_id = None
+        try:
+            created = e2e_client.post(
+                "/api/forms",
+                headers=platform_admin.headers,
+                json={
+                    "name": "Issue162 Atomic Form",
+                    "description": "original",
+                    "form_schema": {"fields": []},
+                    "access_level": "role_based",
+                    "role_ids": [role["id"]],
+                },
+            )
+            assert created.status_code == 201, created.text
+            form_id = created.json()["id"]
+
+            rejected = e2e_client.patch(
+                f"/api/forms/{form_id}",
+                headers=platform_admin.headers,
+                json={
+                    "description": "must roll back",
+                    "role_ids": [role["id"], role["id"]],
+                },
+            )
+            assert rejected.status_code == 422, rejected.text
+
+            fetched = e2e_client.get(
+                f"/api/forms/{form_id}",
+                headers=platform_admin.headers,
+            )
+            assert fetched.status_code == 200, fetched.text
+            assert fetched.json()["description"] == "original"
+            assert fetched.json()["role_ids"] == [role["id"]]
+        finally:
+            if form_id is not None:
+                e2e_client.delete(
+                    f"/api/forms/{form_id}",
+                    headers=platform_admin.headers,
+                )
+            e2e_client.delete(
+                f"/api/roles/{role['id']}",
+                headers=platform_admin.headers,
+            )

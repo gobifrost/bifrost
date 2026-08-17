@@ -2,7 +2,7 @@
 
 **Owner:** Jack Musick / Bifrost engineering
 **Created:** 2026-08-17
-**Status:** In progress — Phases 0–1 complete; Phase 2 Agent slice complete
+**Status:** In progress — Phases 0–1 complete; Phase 2 Agent and Form slices complete
 **Execution branch:** `codex/code-builder-pydantic-integration-20260816`
 **Base:** `origin/main@16e317e62`
 **Depends on:** the reconstructed Builder and shared Pydantic runtime described
@@ -199,25 +199,29 @@ configured, provisioned, connected, enabled, and ready with no blockers.
 **Gate:** every existing surface is accounted for and a representative Agent
 operation is generated end to end from one catalog entry.
 
-**Evidence:** schema-versioned inventory captures 656 REST method/path pairs,
-129 CLI leaves, 98 registered MCP tools, 10 native Builder primitives, 16
-manifest fields, and 19 app-SDK bindings. Agent CRUD is the first catalog
-slice; the same definitions now drive explicit OpenAPI identities/extensions
-and the generated `bifrost-build` operation reference. Inventory deliberately
-reports the five legacy Agent MCP names as divergent and their native Builder
-entity bindings as missing so Phase 2 cannot hide the work. Catalog, inventory,
-generated-file, mirror, Compose-harness, and cross-event-loop regression
-selection: 25 passed and 2 environment-skipped mirror tests; API Pyright and
-Ruff are clean.
+**Evidence:** the current schema-versioned inventory captures 656 REST
+method/path pairs, 129 CLI leaves, 99 registered MCP tools, 10 native Builder
+primitives, 16 manifest fields, and 19 app-SDK bindings. Agent and Form CRUD
+are the first
+catalog slices; the same definitions drive explicit OpenAPI
+identities/extensions and the generated `bifrost-build` operation reference.
+Inventory confirms their REST, CLI, and MCP names are in exact parity while
+still reporting their native Builder entity bindings as missing so later
+phases cannot hide that work. Catalog, inventory, generated-file, mirror,
+Compose-harness, and cross-event-loop regression selection: 25 passed and 2
+environment-skipped mirror tests; API Pyright and Ruff are clean.
 
 ### Phase 2 — Make REST behavior canonical
 
 - [x] Complete the Agent vertical slice: canonical public MCP names, thin REST
       adapters, forward migration of persisted tool IDs, REST-owned audit and
       manifest side effects, and success/error/access parity tests.
+- [x] Complete the Form vertical slice with the same canonical REST boundary,
+      including soft-delete/purge parity, atomic relationship validation,
+      audit and manifest side effects, and persisted tool-name migration.
 - [ ] Convert legacy direct-ORM MCP implementations to thin HTTP wrappers using
       `_http_bridge.py`; do not create a second service path for MCP.
-- [ ] Reconcile known drift in Agents, Forms, Tables, Apps, and Events:
+- [ ] Reconcile known drift in Tables, Apps, Events, and remaining domains:
       authorization, role propagation, cache invalidation, RepoSyncWriter,
       scheduler wiring, audit registration, validation, and partial-success
       behavior.
@@ -248,8 +252,24 @@ passed 31/31. Unknown and cross-organization relationship IDs now fail
 atomically instead of being discarded, and the Agent settings UI exposes MCP
 grants only to platform admins (13/13 component tests). API Pyright/Ruff and
 client TypeScript are clean; ESLint reports zero errors and the pre-existing
-React Compiler warning in `FormRenderer.tsx`. Forms, Tables, Apps, and Events
-remain in this phase.
+React Compiler warning in `FormRenderer.tsx`. Tables, Apps, and Events remain
+in this phase.
+
+**Form-slice evidence:** the former direct-ORM implementation was removed and
+replaced by five REST adapters registered only as `bifrost_list_forms`,
+`bifrost_get_form`, `bifrost_create_form`, `bifrost_update_form`, and
+`bifrost_delete_form`. Forward migration `20260817_form_mcp_names` is the sole
+Alembic head and renames persisted Form tool grants without reviving any
+withdrawn Builder migration. The live MCP Form journey passed 3/3 across real
+auth, REST, manifest, audit, deactivation, purge, org-user denial, and strict
+cross-scope name-ambiguity paths. The final combined Form REST/MCP matrix
+passed 40/40, including duplicate-role, capability-role, rollback, and
+explicit-null clearing coverage. Nullable CLI/MCP refs now use an empty value
+as the shared explicit-clear representation, with required refs still
+rejecting it. The focused architecture, DTO/body/contract, migration,
+signature, and mirror selection passed 238 with two environment-skipped mirror
+tests. Generated operation and Skill references are fresh, and API
+Pyright/Ruff are clean. Tables, Apps, and Events remain in this phase.
 
 ### Phase 3 — Finish Agent Skill portability
 

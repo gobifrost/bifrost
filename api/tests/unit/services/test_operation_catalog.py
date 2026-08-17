@@ -1,4 +1,4 @@
-"""Canonical operation identity and Agent vertical-slice tripwires."""
+"""Canonical operation identity and vertical-slice tripwires."""
 
 from copy import deepcopy
 
@@ -41,12 +41,47 @@ AGENT_OPERATIONS = {
     ),
 }
 
+FORM_OPERATIONS = {
+    "forms.list": ("GET", "/api/forms", ("forms", "list"), "bifrost_list_forms"),
+    "forms.get": (
+        "GET",
+        "/api/forms/{form_id}",
+        ("forms", "get"),
+        "bifrost_get_form",
+    ),
+    "forms.create": (
+        "POST",
+        "/api/forms",
+        ("forms", "create"),
+        "bifrost_create_form",
+    ),
+    "forms.update": (
+        "PATCH",
+        "/api/forms/{form_id}",
+        ("forms", "update"),
+        "bifrost_update_form",
+    ),
+    "forms.delete": (
+        "DELETE",
+        "/api/forms/{form_id}",
+        ("forms", "delete"),
+        "bifrost_delete_form",
+    ),
+}
 
-def test_agent_vertical_slice_has_stable_surface_bindings() -> None:
+CANONICAL_OPERATIONS = {**AGENT_OPERATIONS, **FORM_OPERATIONS}
+
+
+def test_canonical_vertical_slices_have_stable_surface_bindings() -> None:
     assert {operation.operation_id for operation in OPERATION_CATALOG} == set(
-        AGENT_OPERATIONS
+        CANONICAL_OPERATIONS
     )
-    for operation_id, (method, path, cli_path, mcp_name) in AGENT_OPERATIONS.items():
+    for operation_id, (
+        method,
+        path,
+        cli_path,
+        mcp_name,
+    ) in CANONICAL_OPERATIONS.items():
         operation = get_operation(operation_id)
         assert (operation.rest.method, operation.rest.path) == (method, path)
         assert operation.cli is not None and operation.cli.path == cli_path
@@ -54,9 +89,14 @@ def test_agent_vertical_slice_has_stable_surface_bindings() -> None:
         assert operation.native_builder is True
 
 
-def test_agent_routes_publish_catalog_identity_in_openapi() -> None:
+def test_catalog_routes_publish_identity_in_openapi() -> None:
     schema = app.openapi()
-    for operation_id, (method, path, cli_path, mcp_name) in AGENT_OPERATIONS.items():
+    for operation_id, (
+        method,
+        path,
+        cli_path,
+        mcp_name,
+    ) in CANONICAL_OPERATIONS.items():
         route = schema["paths"][path][method.lower()]
         assert route["operationId"] == operation_id
         extension = route["x-bifrost-operation"]
@@ -65,14 +105,14 @@ def test_agent_routes_publish_catalog_identity_in_openapi() -> None:
         assert extension["mcp"] == mcp_name
 
 
-def test_agent_mcp_registration_uses_only_catalog_names() -> None:
+def test_mcp_registration_uses_only_catalog_names() -> None:
     from src.services.mcp_server.server import (
         get_system_tool_function,
         get_system_tools,
     )
 
     registered = {tool["id"] for tool in get_system_tools()}
-    catalog_names = {binding[3] for binding in AGENT_OPERATIONS.values()}
+    catalog_names = {binding[3] for binding in CANONICAL_OPERATIONS.values()}
     legacy_names = {name.removeprefix("bifrost_") for name in catalog_names}
 
     assert catalog_names <= registered

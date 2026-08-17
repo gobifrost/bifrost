@@ -49,6 +49,7 @@ from src.services.mcp_server.tools import (  # noqa: E402
     claims as claims_mod,
     configs as configs_mod,
     files as files_mod,
+    forms as forms_mod,
     gateway as gateway_mod,
     integrations as integrations_mod,
     organizations as organizations_mod,
@@ -66,6 +67,13 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "bifrost_create_agent",
         "bifrost_update_agent",
         "bifrost_delete_agent",
+    },
+    "forms": {
+        "bifrost_list_forms",
+        "bifrost_get_form",
+        "bifrost_create_form",
+        "bifrost_update_form",
+        "bifrost_delete_form",
     },
     "roles": {"list_roles", "create_role", "update_role", "delete_role"},
     "configs": {
@@ -120,6 +128,7 @@ PARITY_HANDLERS: dict[str, set[str]] = {
 
 MODULES = {
     "agents": agents_mod,
+    "forms": forms_mod,
     "roles": roles_mod,
     "claims": claims_mod,
     "configs": configs_mod,

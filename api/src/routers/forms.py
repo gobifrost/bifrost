@@ -39,6 +39,9 @@ from src.models import Workflow as WorkflowORM
 from src.models.orm.solutions import Solution
 from src.models import FormCreate, FormUpdate, FormPublic
 from src.models.contracts.forms import FormField, FormSchema
+from src.services.audit import emit_audit
+from src.services.operation_catalog import operation_route
+from src.services.repo_sync_writer import RepoSyncWriter
 from src.models import FileUploadRequest, FileUploadResponse, UploadedFileMetadata
 from src.models import FormStartupResponse
 from src.models.enums import ExecutionStatus
@@ -273,6 +276,7 @@ async def _validate_form_references(
     response_model=list[FormPublic],
     summary="List forms",
     description="List all forms visible to the user based on their permissions",
+    **operation_route("forms.list"),
 )
 async def list_forms(
     ctx: Context,
@@ -356,15 +360,30 @@ async def _replace_form_roles(
     form and inserts the new set. Empty list clears all assignments.
     """
     if role_ids:
+        if len(role_ids) != len(set(role_ids)):
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="role_ids contains duplicate references",
+            )
         existing = await db.execute(
-            select(RoleORM.id).where(RoleORM.id.in_(role_ids))
+            select(RoleORM).where(RoleORM.id.in_(role_ids))
         )
-        found = set(existing.scalars().all())
+        roles = list(existing.scalars().all())
+        found = {role.id for role in roles}
         missing = [str(rid) for rid in role_ids if rid not in found]
         if missing:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Role(s) not found: {', '.join(missing)}",
+            )
+        unassignable = [str(role.id) for role in roles if not role.assignable_to_resources]
+        if unassignable:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "Capability role(s) cannot be assigned to Forms: "
+                    + ", ".join(sorted(unassignable))
+                ),
             )
 
     await db.execute(
@@ -445,6 +464,7 @@ async def _publication_response(
     status_code=status.HTTP_201_CREATED,
     summary="Create a new form",
     description="Create a new form (Platform admin only)",
+    **operation_route("forms.create"),
 )
 async def create_form(
     request: FormCreate,
@@ -529,6 +549,25 @@ async def create_form(
     if CACHE_INVALIDATION_AVAILABLE and invalidate_form:
         org_id = str(form.organization_id) if form.organization_id else None
         await invalidate_form(org_id, str(form.id))
+
+    await emit_audit(
+        db,
+        "form.create",
+        resource_type="form",
+        resource_id=form.id,
+        details={
+            "name": form.name,
+            "organization_id": (
+                str(form.organization_id) if form.organization_id else None
+            ),
+            "access_level": (
+                form.access_level.value
+                if isinstance(form.access_level, FormAccessLevel)
+                else form.access_level
+            ),
+        },
+    )
+    await RepoSyncWriter(db).regenerate_manifest()
 
     form.role_ids = await _load_form_role_ids(db, form.id)  # type: ignore[attr-defined]
     return FormPublic.model_validate(form)
@@ -773,6 +812,7 @@ async def create_form_captcha(
     response_model=FormPublic,
     summary="Get form by ID",
     description="Get a specific form by ID. User must have access to the form.",
+    **operation_route("forms.get"),
 )
 async def get_form(
     form_id: UUID,
@@ -848,6 +888,7 @@ async def get_form(
     response_model=FormPublic,
     summary="Update a form",
     description="Update an existing form (Platform admin only)",
+    **operation_route("forms.update"),
 )
 async def update_form(
     form_id: UUID,
@@ -894,17 +935,17 @@ async def update_form(
 
     if request.name is not None:
         form.name = request.name
-    if request.description is not None:
+    if "description" in request.model_fields_set:
         form.description = request.description
     if request.confirmation_markdown is not None:
         form.confirmation_markdown = request.confirmation_markdown
-    if request.workflow_id is not None:
+    if "workflow_id" in request.model_fields_set:
         form.workflow_id = request.workflow_id
-    if request.launch_workflow_id is not None:
+    if "launch_workflow_id" in request.model_fields_set:
         form.launch_workflow_id = request.launch_workflow_id
-    if request.default_launch_params is not None:
+    if "default_launch_params" in request.model_fields_set:
         form.default_launch_params = request.default_launch_params
-    if request.allowed_query_params is not None:
+    if "allowed_query_params" in request.model_fields_set:
         form.allowed_query_params = request.allowed_query_params
     if request.form_schema is not None:
         # Delete all existing fields using bulk delete
@@ -971,6 +1012,18 @@ async def update_form(
         org_id = str(form.organization_id) if form.organization_id else None
         await invalidate_form(org_id, str(form_id))
 
+    await emit_audit(
+        db,
+        "form.update",
+        resource_type="form",
+        resource_id=form.id,
+        details={
+            "name": form.name,
+            "fields": sorted(request.model_fields_set),
+        },
+    )
+    await RepoSyncWriter(db).regenerate_manifest()
+
     form.role_ids = await _load_form_role_ids(db, form_id)  # type: ignore[attr-defined]
     return FormPublic.model_validate(form)
 
@@ -999,6 +1052,7 @@ async def update_form_put(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a form",
     description="Delete a form. Use ?purge=true to permanently remove it from the database (Platform admin only)",
+    **operation_route("forms.delete"),
 )
 async def delete_form(
     form_id: UUID,
@@ -1027,6 +1081,8 @@ async def delete_form(
 
     # Solution-managed forms are read-only here; deploy is the writer.
     assert_not_solution_managed(form)
+    form_name = form.name
+    form_org_id = form.organization_id
 
     if purge:
         if form.is_active:
@@ -1058,8 +1114,17 @@ async def delete_form(
 
     # Invalidate cache
     if CACHE_INVALIDATION_AVAILABLE and invalidate_form:
-        org_id = str(form.organization_id) if form.organization_id else None
+        org_id = str(form_org_id) if form_org_id else None
         await invalidate_form(org_id, str(form_id))
+
+    await emit_audit(
+        db,
+        "form.delete",
+        resource_type="form",
+        resource_id=form_id,
+        details={"name": form_name, "purged": purge},
+    )
+    await RepoSyncWriter(db).regenerate_manifest()
 
 
 # =============================================================================
