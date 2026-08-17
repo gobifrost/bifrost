@@ -1793,7 +1793,7 @@ export interface paths {
          * List workflow executions
          * @description List workflow executions with filtering and pagination
          */
-        get: operations["list_executions_api_executions_get"];
+        get: operations["executions.list"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1833,7 +1833,7 @@ export interface paths {
          * Get execution details
          * @description Get detailed information about a specific execution
          */
-        get: operations["get_execution_api_executions__execution_id__get"];
+        get: operations["executions.get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -31504,7 +31504,7 @@ export interface operations {
             };
         };
     };
-    list_executions_api_executions_get: {
+    "executions.list": {
         parameters: {
             query?: {
                 /** @description Filter scope: omit for all (superusers), 'global' for global only, or org UUID for specific org + global. */
@@ -31598,7 +31598,7 @@ export interface operations {
             };
         };
     };
-    get_execution_api_executions__execution_id__get: {
+    "executions.get": {
         parameters: {
             query?: never;
             header?: never;

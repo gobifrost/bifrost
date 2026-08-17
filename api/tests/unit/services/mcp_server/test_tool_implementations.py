@@ -145,14 +145,16 @@ class TestGetWorkflowImpl:
 
 
 class TestGetExecutionImpl:
-    """Tests for get_execution tool."""
+    """Tests for bifrost_get_workflow_execution tool."""
 
     @pytest.mark.asyncio
     async def test_returns_error_when_id_empty(self, context):
         """Should return error when execution_id is empty."""
-        from src.services.mcp_server.tools.execution import get_execution
+        from src.services.mcp_server.tools.execution import (
+            bifrost_get_workflow_execution,
+        )
 
-        result = await get_execution(context, "")
+        result = await bifrost_get_workflow_execution(context, "")
         assert is_error_result(result)
         assert result.structured_content is not None
         assert result.structured_content["error"] == "execution_id is required"
@@ -202,8 +204,8 @@ class TestSystemToolsRegistry:
         workflow_tool_ids = [
             "bifrost_execute_workflow",
             "bifrost_list_workflows",
-            "list_executions",
-            "get_execution",
+            "bifrost_list_workflow_executions",
+            "bifrost_get_workflow_execution",
         ]
 
         for tool_id in workflow_tool_ids:

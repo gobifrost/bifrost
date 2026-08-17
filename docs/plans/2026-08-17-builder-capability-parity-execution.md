@@ -2,7 +2,7 @@
 
 **Owner:** Jack Musick / Bifrost engineering
 **Created:** 2026-08-17
-**Status:** In progress — Phases 0–1 complete; Phase 2 Agent, Form, Table, App, Event, Workflow, Organization, Integration, and Workspace Files slices complete
+**Status:** In progress — Phases 0–1 complete; Phase 2 Agent, Form, Table, App, Event, Workflow, Organization, Integration, Workspace Files, and Execution History slices complete
 **Execution branch:** `codex/code-builder-pydantic-integration-20260816`
 **Base:** `origin/main@16e317e62`
 **Depends on:** the reconstructed Builder and shared Pydantic runtime described
@@ -200,7 +200,7 @@ configured, provisioned, connected, enabled, and ready with no blockers.
 operation is generated end to end from one catalog entry.
 
 **Evidence:** the current schema-versioned inventory captures 659 REST
-method/path pairs, 136 CLI leaves, 101 registered MCP tools, 10 native Builder
+method/path pairs, 138 CLI leaves, 101 registered MCP tools, 10 native Builder
 primitives, 16 manifest fields, and 19 app-SDK bindings. Agent and Form CRUD
 are the first
 catalog slices; the same definitions drive explicit OpenAPI
@@ -245,6 +245,10 @@ environment-skipped mirror tests; API Pyright and Ruff are clean.
       exists/write/patch/delete operations, platform-admin-only `_repo`
       authorization, Solution-managed source guards, conflict-safe editing,
       thin REST adapters, and persisted tool-name migration.
+- [x] Complete the Workflow Execution History slice with canonical list/get
+      operations, complete REST filter parity, thin REST adapters, unambiguous
+      CLI/MCP names distinct from the asynchronous gateway receipt, and
+      persisted tool-name migration.
 - [ ] Convert legacy direct-ORM MCP implementations to thin HTTP wrappers using
       `_http_bridge.py`; do not create a second service path for MCP.
 - [ ] Reconcile known drift in the remaining domains:
@@ -431,6 +435,25 @@ Skill, CLI, OpenAPI, and browser references are fresh; API Pyright/Ruff and
 client TypeScript are clean, while ESLint has zero errors and only the
 pre-existing React Compiler warning in `FormRenderer.tsx`. The inventory now
 accounts for 64 canonical operations, with 37 uncatalogued MCP tools remaining.
+
+**Execution-History-slice evidence:** the two remaining direct-ORM Workflow
+execution-history tools are replaced by thin REST adapters. The CLI now exposes
+`bifrost workflows list-executions` and `bifrost workflows get-execution`; MCP
+uses `bifrost_list_workflow_executions` and
+`bifrost_get_workflow_execution`, keeping the gateway/bootstrap
+`bifrost_get_execution` receipt tool unambiguous. List filters are identical
+across REST, CLI, and MCP, including scope, workflow identity, status, date,
+local-run, pagination, and continuation-token fields. Forward migration
+`20260817_execution_mcp_names` preserves persisted Agent grants without
+reviving withdrawn Builder revisions. The focused architecture/MCP/CLI/
+migration selection passed 148/148, the generated-inventory selection passed
+109/109, the live REST/MCP Worker-backed lifecycle passed, and DTO/contract
+checks passed 64/64. Fresh and live debug databases both report the revision as
+the sole Alembic head. Generated operation, Skill, CLI, OpenAPI, and browser
+references are fresh; API Pyright/Ruff and client TypeScript are clean, while
+ESLint has zero errors and only the pre-existing React Compiler warning in
+`FormRenderer.tsx`. The inventory now accounts for 66 canonical operations,
+with 35 uncatalogued MCP tools remaining.
 
 ### Phase 3 — Finish Agent Skill portability
 
