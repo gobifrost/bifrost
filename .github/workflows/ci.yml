@@ -245,7 +245,7 @@ jobs:
         run: cosign sign --yes ghcr.io/${{ env.API_IMAGE }}@${{ steps.api.outputs.digest }}
 
       - name: Attest API candidate provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ghcr.io/${{ env.API_IMAGE }}
           subject-digest: ${{ steps.api.outputs.digest }}
@@ -271,7 +271,7 @@ jobs:
         run: cosign sign --yes ghcr.io/${{ env.CLIENT_IMAGE }}@${{ steps.client.outputs.digest }}
 
       - name: Attest client candidate provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ghcr.io/${{ env.CLIENT_IMAGE }}
           subject-digest: ${{ steps.client.outputs.digest }}
@@ -946,7 +946,7 @@ jobs:
             ghcr.io/${{ env.API_IMAGE }}@${{ steps.build-api.outputs.digest }}
 
       - name: Attest API image provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ghcr.io/${{ env.API_IMAGE }}
           subject-digest: ${{ steps.build-api.outputs.digest }}
@@ -1047,7 +1047,7 @@ jobs:
             ghcr.io/${{ env.CLIENT_IMAGE }}@${{ steps.build-client.outputs.digest }}
 
       - name: Attest client image provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ghcr.io/${{ env.CLIENT_IMAGE }}
           subject-digest: ${{ steps.build-client.outputs.digest }}
@@ -1149,7 +1149,7 @@ jobs:
       # discoverable via `gh attestation verify`. Independent signal from the
       # cosign blob signatures above.
       - name: Generate SLSA build provenance attestation
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ steps.source_tarball.outputs.tarball }}
 
