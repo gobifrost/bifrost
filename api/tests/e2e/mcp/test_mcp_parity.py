@@ -11,9 +11,8 @@ Covers the thin-wrapper surface added in
   ``add_integration_mapping``, ``update_integration_mapping``.
 * Organizations: ``update_organization``, ``delete_organization``
   (``list`` / ``get`` / ``create`` already existed and are not touched).
-* Workflow lifecycle: ``update_workflow``, ``delete_workflow``,
-  ``grant_workflow_role``, ``revoke_workflow_role``
-  (``list`` / ``register`` / ``execute`` already existed and are not touched).
+* Workflow catalog, validation, registration, execution, metadata, deletion,
+  and role lifecycle through canonical ``bifrost_*`` thin wrappers.
 
 Each tool is invoked directly (bypassing FastMCP transport) with a
 ``MockMCPContext`` that carries the platform admin's identity. The
@@ -320,9 +319,21 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
         "field_renames": {},
     },
     {
+        "model_path": "src.models.contracts.workflows:RegisterWorkflowRequest",
+        "tool_path": "src.services.mcp_server.tools.workflow:bifrost_register_workflow",
+        "extra_args": {"scope"},
+        "field_renames": {},
+    },
+    {
+        "model_path": "src.models.contracts.workflows:WorkflowValidationRequest",
+        "tool_path": "src.services.mcp_server.tools.workflow:bifrost_validate_workflow",
+        "extra_args": set(),
+        "field_renames": {},
+    },
+    {
         "model_path": "src.models.contracts.workflows:WorkflowUpdateRequest",
-        "tool_path": "src.services.mcp_server.tools.workflow:update_workflow",
-        "extra_args": {"workflow_ref"},
+        "tool_path": "src.services.mcp_server.tools.workflow:bifrost_update_workflow",
+        "extra_args": {"workflow_ref", "scope"},
         "field_renames": {},
     },
 ]
@@ -1819,16 +1830,160 @@ class TestMcpParityIntegrations:
 @pytest.mark.e2e
 @pytest.mark.asyncio
 class TestMcpParityWorkflow:
+    async def test_workflow_roundtrip_execution_manifest_and_audit(
+        self,
+        admin_context,
+        org_context,
+        e2e_client,
+        platform_admin,
+    ) -> None:
+        from src.services.mcp_server.tools.workflow import (
+            bifrost_delete_workflow,
+            bifrost_execute_workflow,
+            bifrost_get_workflow,
+            bifrost_list_workflows,
+            bifrost_register_workflow,
+            bifrost_update_workflow,
+            bifrost_validate_workflow,
+        )
+        from src.services.repo_storage import RepoStorage
+
+        suffix = uuid4().hex[:8]
+        function_name = f"mcp_workflow_{suffix}"
+        path = f"workflows/{function_name}.py"
+        content = (
+            "from bifrost import workflow\n\n"
+            "@workflow(description='canonical MCP workflow')\n"
+            f"async def {function_name}(value: str = '') -> dict:\n"
+            "    return {'echo': value}\n"
+        )
+        workflow_id: str | None = None
+
+        validation_result = await bifrost_validate_workflow(
+            admin_context,
+            path=path,
+            content=content,
+        )
+        validation = validation_result.structured_content or {}
+        assert validation.get("valid") is True, validation
+
+        write_resp = e2e_client.put(
+            "/api/files/editor/content",
+            headers=platform_admin.headers,
+            json={"path": path, "content": content, "encoding": "utf-8"},
+        )
+        assert write_resp.status_code in (200, 201), write_resp.text
+
+        try:
+            registered_result = await bifrost_register_workflow(
+                admin_context,
+                path=path,
+                function_name=function_name,
+                access_level="authenticated",
+                scope="global",
+            )
+            registered = registered_result.structured_content or {}
+            assert "error" not in registered, registered
+            workflow_id = str(registered["id"])
+
+            manifest = (
+                await RepoStorage().read(".bifrost/workflows.yaml")
+            ).decode("utf-8")
+            assert workflow_id in manifest
+
+            listed_result = await bifrost_list_workflows(
+                org_context,
+                query=function_name,
+                type="workflow",
+            )
+            listed = listed_result.structured_content or {}
+            assert [item["id"] for item in listed.get("workflows", [])] == [
+                workflow_id
+            ]
+
+            fetched_result = await bifrost_get_workflow(
+                org_context,
+                workflow_ref=function_name,
+            )
+            fetched = fetched_result.structured_content or {}
+            assert fetched.get("id") == workflow_id
+            assert fetched.get("function_name") == function_name
+
+            execution_result = await bifrost_execute_workflow(
+                org_context,
+                workflow_ref=function_name,
+                input_data={"value": "hello"},
+                sync=True,
+            )
+            execution = execution_result.structured_content or {}
+            assert execution.get("status") == "Success", execution
+            assert execution.get("result") == {"echo": "hello"}
+
+            updated_result = await bifrost_update_workflow(
+                admin_context,
+                workflow_ref=workflow_id,
+                description="updated through canonical MCP",
+            )
+            updated = updated_result.structured_content or {}
+            assert updated.get("description") == "updated through canonical MCP"
+
+            deleted_result = await bifrost_delete_workflow(
+                admin_context,
+                workflow_ref=workflow_id,
+                force_deactivation=True,
+            )
+            deleted = deleted_result.structured_content or {}
+            assert "error" not in deleted, deleted
+
+            manifest_paths = await RepoStorage().list(".bifrost/")
+            if ".bifrost/workflows.yaml" in manifest_paths:
+                manifest_after_delete = (
+                    await RepoStorage().read(".bifrost/workflows.yaml")
+                ).decode("utf-8")
+                assert workflow_id not in manifest_after_delete
+
+            audit = e2e_client.get(
+                "/api/audit",
+                headers=platform_admin.headers,
+                params={
+                    "action": "workflow.",
+                    "resource_type": "workflow",
+                    "limit": 50,
+                },
+            )
+            assert audit.status_code == 200, audit.text
+            actions = {
+                entry["action"]
+                for entry in audit.json()["entries"]
+                if entry["resource_id"] == workflow_id
+            }
+            assert actions == {
+                "workflow.register",
+                "workflow.update",
+                "workflow.delete",
+            }
+        finally:
+            if workflow_id is not None:
+                await bifrost_delete_workflow(
+                    admin_context,
+                    workflow_ref=workflow_id,
+                    force_deactivation=True,
+                )
+            e2e_client.delete(
+                f"/api/files/editor?path={path}",
+                headers=platform_admin.headers,
+            )
+
     async def test_workflow_update_grant_revoke(
         self, admin_context, e2e_client, platform_admin
     ) -> None:
         from src.services.mcp_server.tools.workflow import (
-            grant_workflow_role,
-            revoke_workflow_role,
-            update_workflow,
+            bifrost_grant_workflow_role,
+            bifrost_revoke_workflow_role,
+            bifrost_update_workflow,
         )
 
-        # Create a workflow via the register endpoint so delete_workflow has
+        # Create a workflow via the register endpoint so bifrost_delete_workflow has
         # something to operate on; our parity tool for update/delete does not
         # create workflows.
         path = f"apps/mcp_parity/wf_{uuid4().hex[:6]}.py"
@@ -1855,7 +2010,7 @@ class TestMcpParityWorkflow:
         UUID(workflow_id)
 
         # update: change description
-        update_result = await update_workflow(
+        update_result = await bifrost_update_workflow(
             admin_context,
             workflow_ref=workflow_id,
             description="updated via MCP parity",
@@ -1874,13 +2029,13 @@ class TestMcpParityWorkflow:
         role_id = role_resp.json()["id"]
 
         try:
-            grant_result = await grant_workflow_role(
+            grant_result = await bifrost_grant_workflow_role(
                 admin_context, workflow_ref=workflow_id, role_ref=role_name
             )
             assert grant_result.structured_content is not None
             assert "error" not in grant_result.structured_content
 
-            revoke_result = await revoke_workflow_role(
+            revoke_result = await bifrost_revoke_workflow_role(
                 admin_context, workflow_ref=workflow_id, role_ref=role_name
             )
             assert revoke_result.structured_content is not None
@@ -1891,7 +2046,7 @@ class TestMcpParityWorkflow:
     async def test_workflow_delete_with_force(
         self, admin_context, e2e_client, platform_admin
     ) -> None:
-        from src.services.mcp_server.tools.workflow import delete_workflow
+        from src.services.mcp_server.tools.workflow import bifrost_delete_workflow
 
         # Register a fresh workflow, then delete it via the parity tool.
         # We pass force_deactivation=True to short-circuit any history check.
@@ -1916,7 +2071,7 @@ class TestMcpParityWorkflow:
         assert register_resp.status_code in (200, 201), register_resp.text
         workflow_id = register_resp.json()["id"]
 
-        delete_result = await delete_workflow(
+        delete_result = await bifrost_delete_workflow(
             admin_context,
             workflow_ref=workflow_id,
             force_deactivation=True,

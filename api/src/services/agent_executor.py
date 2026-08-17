@@ -776,7 +776,7 @@ class AgentExecutor:
         Get tool definitions for an agent from its assigned tools.
 
         Delegates to the shared resolve_agent_tools helper which handles:
-        1. System tools (unprefixed, e.g., "execute_workflow", "search_knowledge")
+        1. System tools (for example, "bifrost_execute_workflow", "search_knowledge")
         2. Workflow tools (prefixed, e.g., "halopsa_list_tickets", "wf_add_comment")
         3. Delegation tools (e.g., "delegate_to_agent_name")
         4. External MCP tools (prefixed ``mcp__<connection_id>__<tool>``)

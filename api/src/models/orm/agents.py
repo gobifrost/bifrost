@@ -70,7 +70,8 @@ class Agent(Base):
     knowledge_sources: Mapped[list[str]] = mapped_column(
         ARRAY(String), nullable=False, default=list, server_default='{}'
     )
-    # System tools enabled for this agent (e.g., ["execute_workflow", "search_knowledge"])
+    # System tools enabled for this agent (for example,
+    # ["bifrost_execute_workflow", "search_knowledge"])
     system_tools: Mapped[list[str]] = mapped_column(
         ARRAY(String), nullable=False, default=list, server_default='{}'
     )

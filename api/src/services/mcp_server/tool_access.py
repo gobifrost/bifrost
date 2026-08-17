@@ -52,7 +52,8 @@ class MCPToolAccessService:
     4. Return the final tool list
 
     Tool sources per agent:
-    - System tools: agent.system_tools array (e.g., ["execute_workflow", "list_workflows"])
+    - System tools: agent.system_tools array (for example,
+      ["bifrost_execute_workflow", "bifrost_list_workflows"])
     - Workflow tools: agent.tools relationship (workflows assigned via agent_tools table)
     """
 

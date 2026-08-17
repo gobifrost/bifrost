@@ -2353,15 +2353,16 @@ Options:
 Commands:
   delete         Delete a workflow by removing its function from the...
   execute        Execute a registered workflow remotely and stream logs...
-  get            Get a single workflow by UUID, name, or ``path::func`` ref.
+  get            Get a single Workflow by UUID, name, or ``path::func`` ref.
   grant-role     Grant a role access to a workflow.
-  list           List all workflows visible to the caller.
+  list           List Workflows visible to the caller.
   list-orphaned  List all orphaned workflows (backing file deleted or...
   register       Register a decorated function from an existing workspace...
   remap          Move references from one workflow ID to another active...
   replace        Repoint an orphaned workflow to a new file location.
   revoke-role    Revoke a role's access from a workflow.
   update         Update a workflow's editable properties.
+  validate       Validate a workspace Workflow file or supplied Python...
 ```
 
 ### `workflows delete`
@@ -2416,11 +2417,7 @@ Options:
 ```
 Usage: workflows get [OPTIONS] REF
 
-  Get a single workflow by UUID, name, or ``path::func`` ref.
-
-  The server does not expose a per-record GET endpoint for workflows, so this
-  resolves the ref via :class:`RefResolver` and locates the entry in the ``GET
-  /api/workflows`` list payload.
+  Get a single Workflow by UUID, name, or ``path::func`` ref.
 
 Options:
   --json  Emit JSON instead of human-readable output.
@@ -2448,11 +2445,21 @@ Options:
 ```
 Usage: workflows list [OPTIONS]
 
-  List all workflows visible to the caller.
+  List Workflows visible to the caller.
 
 Options:
-  --json  Emit JSON instead of human-readable output.
-  --help  Show this message and exit.
+  --query TEXT                    Search Workflow names and descriptions.
+  --category TEXT                 Filter by exact category.
+  --type [workflow|tool|data_provider]
+                                  Filter by executable type.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ### `workflows list-orphaned`
@@ -2578,7 +2585,6 @@ Usage: workflows update [OPTIONS] REF
   :mod:`bifrost.refs` for resolution rules.
 
 Options:
-  --organization-id TEXT          organization_id
   --access-level TEXT             access_level
   --clear-roles / --no-clear-roles
                                   clear_roles (tri-state; omit to leave
@@ -2596,7 +2602,28 @@ Options:
   --public-endpoint / --no-public-endpoint
                                   public_endpoint (tri-state; omit to leave
                                   unchanged).
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
   --json                          Emit JSON instead of human-readable output.
   --help                          Show this message and exit.
+```
+
+### `workflows validate`
+
+```
+Usage: workflows validate [OPTIONS] PATH
+
+  Validate a workspace Workflow file or supplied Python content.
+
+Options:
+  --content TEXT       Validate supplied Python content instead of reading the
+                       workspace file.
+  --content-file FILE  Read validation content from a local file.
+  --json               Emit JSON instead of human-readable output.
+  --help               Show this message and exit.
 ```
 

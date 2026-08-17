@@ -516,7 +516,7 @@ def get_system_tool_function(tool_id: str) -> Any | None:
     Get the callable function for a system tool by ID.
 
     Args:
-        tool_id: The tool ID (e.g., "execute_workflow", "bifrost_list_agents")
+        tool_id: The tool ID (e.g., "bifrost_execute_workflow", "bifrost_list_agents")
 
     Returns:
         The async callable function, or None if not found.

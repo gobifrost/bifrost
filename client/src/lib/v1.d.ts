@@ -1973,7 +1973,7 @@ export interface paths {
          * List all workflows
          * @description Returns metadata for all registered workflows in the system
          */
-        get: operations["list_workflows_api_workflows_get"];
+        get: operations["workflows.list"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2015,7 +2015,7 @@ export interface paths {
          * Execute a workflow, data provider, or script
          * @description Execute a workflow or data provider by ID. For data providers, returns options list in result field. Requires platform admin, API key, or access via form/app/integration.
          */
-        post: operations["execute_workflow_api_workflows_execute_post"];
+        post: operations["workflows.execute"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2055,7 +2055,7 @@ export interface paths {
          * Validate a workflow file
          * @description Validate a workflow file for syntax errors and decorator issues
          */
-        post: operations["validate_workflow_api_workflows_validate_post"];
+        post: operations["workflows.validate"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2075,7 +2075,7 @@ export interface paths {
          * Register a workflow function
          * @description Register a decorated function from an existing .py file as a workflow.
          */
-        post: operations["register_workflow_api_workflows_register_post"];
+        post: operations["workflows.register"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2089,21 +2089,25 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Get one workflow
+         * @description Return one workflow visible to the caller.
+         */
+        get: operations["workflows.get"];
         put?: never;
         post?: never;
         /**
          * Delete a workflow
          * @description Delete a workflow by removing its function from the source file. Returns 409 with deactivation details if the workflow has history or dependencies.
          */
-        delete: operations["delete_workflow_api_workflows__workflow_id__delete"];
+        delete: operations["workflows.delete"];
         options?: never;
         head?: never;
         /**
          * Update a workflow
          * @description Update editable workflow properties like organization scope (Platform admin only)
          */
-        patch: operations["update_workflow_api_workflows__workflow_id__patch"];
+        patch: operations["workflows.update"];
         trace?: never;
     };
     "/api/workflows/orphaned": {
@@ -2243,7 +2247,7 @@ export interface paths {
          * Assign roles to workflow
          * @description Assign roles to a workflow (batch operation, Platform admin only)
          */
-        post: operations["assign_roles_to_workflow_api_workflows__workflow_id__roles_post"];
+        post: operations["workflows.roles.grant"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2264,7 +2268,7 @@ export interface paths {
          * Remove role from workflow
          * @description Remove a role from a workflow (Platform admin only)
          */
-        delete: operations["remove_role_from_workflow_api_workflows__workflow_id__roles__role_id__delete"];
+        delete: operations["workflows.roles.revoke"];
         options?: never;
         head?: never;
         patch?: never;
@@ -30133,11 +30137,15 @@ export interface operations {
             };
         };
     };
-    list_workflows_api_workflows_get: {
+    "workflows.list": {
         parameters: {
             query?: {
                 type?: string | null;
                 is_tool?: boolean | null;
+                /** @description Case-insensitive search across workflow name and description. */
+                query?: string | null;
+                /** @description Filter by exact category. */
+                category?: string | null;
                 /** @description Filter scope: omit for user's org + global, 'global' for global only, 'all' for all workflows (platform admins only), or org UUID for specific org. */
                 scope?: string | null;
                 /** @description Filter to workflows used by a specific form */
@@ -30205,7 +30213,7 @@ export interface operations {
             };
         };
     };
-    execute_workflow_api_workflows_execute_post: {
+    "workflows.execute": {
         parameters: {
             query?: never;
             header?: never;
@@ -30271,7 +30279,7 @@ export interface operations {
             };
         };
     };
-    validate_workflow_api_workflows_validate_post: {
+    "workflows.validate": {
         parameters: {
             query?: never;
             header?: never;
@@ -30304,7 +30312,7 @@ export interface operations {
             };
         };
     };
-    register_workflow_api_workflows_register_post: {
+    "workflows.register": {
         parameters: {
             query?: never;
             header?: never;
@@ -30337,7 +30345,38 @@ export interface operations {
             };
         };
     };
-    delete_workflow_api_workflows__workflow_id__delete: {
+    "workflows.get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowMetadata"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workflows.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -30386,7 +30425,7 @@ export interface operations {
             };
         };
     };
-    update_workflow_api_workflows__workflow_id__patch: {
+    "workflows.update": {
         parameters: {
             query?: never;
             header?: never;
@@ -30635,7 +30674,7 @@ export interface operations {
             };
         };
     };
-    assign_roles_to_workflow_api_workflows__workflow_id__roles_post: {
+    "workflows.roles.grant": {
         parameters: {
             query?: never;
             header?: never;
@@ -30668,7 +30707,7 @@ export interface operations {
             };
         };
     };
-    remove_role_from_workflow_api_workflows__workflow_id__roles__role_id__delete: {
+    "workflows.roles.revoke": {
         parameters: {
             query?: never;
             header?: never;

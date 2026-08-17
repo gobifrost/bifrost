@@ -217,6 +217,49 @@ def test_workflows_register_org_via_name(monkeypatch):
     assert body["organization_id"] == "uuid-acme"
 
 
+def test_workflows_update_omit_preserves_scope(monkeypatch):
+    from bifrost.commands.workflows import workflows_group
+
+    sent, res = _run(
+        monkeypatch,
+        workflows_group,
+        ["update", "workflow-a", "--description", "Updated"],
+    )
+    assert res.exit_code == 0
+    _, body, _ = sent["patch"]
+    assert "organization_id" not in body
+
+
+def test_workflows_update_global_sends_explicit_null(monkeypatch):
+    from bifrost.commands.workflows import workflows_group
+
+    sent, res = _run(
+        monkeypatch,
+        workflows_group,
+        ["update", "workflow-a", "--description", "Updated", "--global"],
+    )
+    assert res.exit_code == 0
+    _, body, _ = sent["patch"]
+    assert body.get("organization_id", "MISSING") is None
+
+
+def test_workflows_list_org_resolves_scope(monkeypatch):
+    from bifrost.commands.workflows import workflows_group
+
+    sent, res = _run(
+        monkeypatch,
+        workflows_group,
+        ["list", "--org", "acme", "--query", "invoice", "--type", "workflow"],
+    )
+    assert res.exit_code == 0
+    _, params = sent["get"]
+    assert params == {
+        "query": "invoice",
+        "type": "workflow",
+        "scope": "uuid-acme",
+    }
+
+
 # ── tables / forms / agents / events (the entity --org standard) ────────────
 
 

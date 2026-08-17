@@ -254,11 +254,11 @@ Current-branch evidence collected in this integration worktree includes:
 - Settings → Builder now reports the Cloudflare provider configured,
   provisioned, connected, enabled, and ready with no setup blockers;
 - `builder-runner/runner.py` bytecode compilation and `git diff --check`: clean.
-- canonical operation inventory currently accounts for 657 REST pairs, 134
+- canonical operation inventory currently accounts for 658 REST pairs, 135
   CLI leaves, 101 MCP tools, 10 native Builder primitives, 16 manifest fields,
-  and 19 app-SDK bindings; 36 Agent, Form, Table, App, and Event operations now
-  supply stable OpenAPI, CLI, MCP, scope, authorization, side-effect, and
-  generated Skill metadata;
+  and 19 app-SDK bindings; 45 Agent, Form, Table, App, Event, and Workflow
+  operations now supply stable OpenAPI, CLI, MCP, scope, authorization,
+  side-effect, and generated Skill metadata;
 - operation-catalog, generated-reference, Compose-harness, Skill-mirror, and
   cross-event-loop regression selection: 25 passed and 2 environment-skipped
   mirror checks; API Pyright and Ruff remain clean;
@@ -269,6 +269,14 @@ Current-branch evidence collected in this integration worktree includes:
   post-generation contract selection passed 343/343, live MCP passed 25/25,
   the 45 focused REST/CLI/Solution checks are green, and shared
   Scheduler/Event processor coverage passed 39/39;
+- the Workflow slice removes its direct-ORM MCP path in favor of nine canonical
+  REST adapters, adds ordinary-user list/get visibility, reuses the existing
+  execution worker and execution envelope, and makes audit, manifest,
+  validation, cache/MCP refresh, and Solution guards consistent across
+  REST/CLI/MCP. Forward migration `20260817_workflow_mcp_names` preserves
+  persisted Agent grants; the focused unit selection passed 360/360, REST/MCP
+  protocol and refresh coverage passed 60/60, Solution read-only coverage
+  passed 2/2, and the full MCP lifecycle is green;
 - the candidate CI E2E shard exposed one real test-harness defect: the global
   asyncpg queue pool retained connections across pytest's function-scoped
   event loops. Testing now uses `NullPool` while development and production
@@ -287,17 +295,17 @@ state was discarded during resume.
   not part of this version. The shared ledger records provider tokens, cache
   tokens, media usage, reported cost, user, organization, and Solution; Builder
   currently enforces only its per-turn request/token ceilings.
-- Agent, Form, Table, App, and Event administration now use REST-canonical MCP
+- Agent, Form, Table, App, Event, and Workflow administration now use REST-canonical MCP
   adapters. Remaining uncatalogued domains, native Builder dispatch parity,
   revision-bound Agent Skill hydration, generated transport bindings, and the
   maintained coding profile remain sequenced work in the capability-parity
   execution plan.
 - The recovered foundation is committed and pushed through `014d212ea`; the
-  canonical App checkpoint is pushed through `fb1c7c7e9`; the Event checkpoint
-  is being prepared on the same integration branch. It remains an integration
-  branch: no pull request or merge action has been taken, and merge still
-  requires Jack's explicit approval after the remaining phases and delivery QA
-  are complete.
+  canonical App and Event checkpoints are pushed through `3c717d110`; the
+  Workflow checkpoint is complete on the same integration branch. It remains
+  an integration branch: no pull request or merge action has been taken, and
+  merge still requires Jack's explicit approval after the remaining phases and
+  delivery QA are complete.
 
 No merge is authorized until the remaining execution phases and final delivery
 QA are green and Jack explicitly approves the branch.
