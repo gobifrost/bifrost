@@ -22,6 +22,7 @@ from src.services.solutions.guard import (
     assert_role_not_bound_to_solution_managed,
 )
 from src.services.audit import emit_audit
+from src.services.operation_catalog import operation_route
 from src.services.user_provisioning import validate_platform_admin_removal
 from src.models import (
     Role as RoleORM,
@@ -130,6 +131,7 @@ async def _assert_role_assignable_to_resources(
     response_model=list[RolePublic],
     summary="List all roles",
     description="Get all roles (Platform admin only)",
+    **operation_route("roles.list"),
 )
 async def list_roles(
     user: CurrentSuperuser,
@@ -205,6 +207,7 @@ async def list_authorization_scopes(
     status_code=status.HTTP_201_CREATED,
     summary="Create a role",
     description="Create a new role (Platform admin only)",
+    **operation_route("roles.create"),
 )
 async def create_role(
     request: RoleCreate,
@@ -248,6 +251,7 @@ async def create_role(
     response_model=RolePublic,
     summary="Get a role",
     description="Get a role by ID (Platform admin only)",
+    **operation_route("roles.get"),
 )
 async def get_role(
     role_id: UUID,
@@ -274,6 +278,7 @@ async def get_role(
     response_model=RolePublic,
     summary="Update a role",
     description="Update a role (Platform admin only)",
+    **operation_route("roles.update"),
 )
 async def update_role(
     role_id: UUID,
@@ -352,6 +357,7 @@ async def update_role_put(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a role",
     description="Delete a role (Platform admin only). CASCADE removes all role assignments.",
+    **operation_route("roles.delete"),
 )
 async def delete_role(
     role_id: UUID,

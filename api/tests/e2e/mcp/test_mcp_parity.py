@@ -4,7 +4,7 @@ Covers the thin-wrapper surface added in
 ``docs/plans/2026-04-18-cli-mutation-surface-and-mcp-parity.md`` (lines
 350-390):
 
-* Roles: ``list_roles``, ``create_role``, ``update_role``, ``delete_role``.
+* Roles: canonical ``bifrost_<verb>_role`` tools.
 * Configs: ``list_configs``, ``create_config``, ``update_config``,
   ``delete_config``.
 * Integrations: canonical list/get/create/update and mapping ``bifrost_*``
@@ -388,13 +388,13 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
     },
     {
         "model_path": "src.models.contracts.users:RoleCreate",
-        "tool_path": "src.services.mcp_server.tools.roles:create_role",
+        "tool_path": "src.services.mcp_server.tools.roles:bifrost_create_role",
         "extra_args": set(),
         "field_renames": {},
     },
     {
         "model_path": "src.models.contracts.users:RoleUpdate",
-        "tool_path": "src.services.mcp_server.tools.roles:update_role",
+        "tool_path": "src.services.mcp_server.tools.roles:bifrost_update_role",
         "extra_args": {"role_ref"},
         "field_renames": {},
     },
@@ -1687,8 +1687,8 @@ class TestMcpParityRoles:
     async def test_get_role_by_uuid(
         self, admin_context, e2e_client, platform_admin
     ) -> None:
-        """``get_role`` thin-wrapper round-trips a created role via UUID ref."""
-        from src.services.mcp_server.tools.roles import get_role
+        """Canonical get-Role wrapper round-trips a created Role by UUID."""
+        from src.services.mcp_server.tools.roles import bifrost_get_role
 
         name = f"mcp-parity-get-role-{uuid4().hex[:8]}"
         create_resp = e2e_client.post(
@@ -1700,7 +1700,7 @@ class TestMcpParityRoles:
         role_id = create_resp.json()["id"]
 
         try:
-            result = await get_role(admin_context, role_ref=role_id)
+            result = await bifrost_get_role(admin_context, role_ref=role_id)
             payload = result.structured_content or {}
             assert "error" not in payload, payload
             assert str(payload.get("id")) == str(role_id)
@@ -1712,21 +1712,21 @@ class TestMcpParityRoles:
         self, admin_context, e2e_client, platform_admin
     ) -> None:
         from src.services.mcp_server.tools.roles import (
-            create_role,
-            delete_role,
-            list_roles,
-            update_role,
+            bifrost_create_role,
+            bifrost_delete_role,
+            bifrost_list_roles,
+            bifrost_update_role,
         )
 
         # list
-        list_result = await list_roles(admin_context)
+        list_result = await bifrost_list_roles(admin_context)
         assert list_result.structured_content is not None
         assert list_result.structured_content.get("count", -1) >= 0
 
         # create
         name = f"mcp-parity-role-{uuid4().hex[:8]}"
         perms = {"workflows.read": True}
-        create_result = await create_role(
+        create_result = await bifrost_create_role(
             admin_context,
             name=name,
             description="created by test_mcp_parity",
@@ -1738,7 +1738,7 @@ class TestMcpParityRoles:
 
         # update (by name ref)
         renamed = f"mcp-parity-role-renamed-{uuid4().hex[:8]}"
-        update_result = await update_role(
+        update_result = await bifrost_update_role(
             admin_context,
             role_ref=name,
             name=renamed,
@@ -1754,7 +1754,7 @@ class TestMcpParityRoles:
         assert get_resp.status_code == 200
 
         # delete (by renamed ref)
-        delete_result = await delete_role(admin_context, role_ref=renamed)
+        delete_result = await bifrost_delete_role(admin_context, role_ref=renamed)
         assert delete_result.structured_content is not None
         assert delete_result.structured_content.get("deleted") == role_id
         get_after = e2e_client.get(

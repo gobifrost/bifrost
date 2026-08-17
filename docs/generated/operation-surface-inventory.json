@@ -2892,6 +2892,344 @@
       "observed": {
         "cli": {
           "path": [
+            "roles",
+            "list"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_list_roles",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "roles.list",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "roles.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate",
+        "cli": {
+          "path": [
+            "roles",
+            "list"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Manifests reconcile Role state; they do not perform collection reads.",
+          "sdk": "Role administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_list_roles"
+        },
+        "native_builder": true,
+        "operation_id": "roles.list",
+        "rest": {
+          "method": "GET",
+          "path": "/api/roles",
+          "request_model": null,
+          "response_model": "list[RolePublic]"
+        },
+        "side_effects": [],
+        "summary": "List platform Roles",
+        "target_kind": "platform"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "roles",
+            "get"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_get_role",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "roles.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "roles.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate",
+        "cli": {
+          "path": [
+            "roles",
+            "get"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Manifests reconcile Role state; they do not perform resource reads.",
+          "sdk": "Role administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_get_role"
+        },
+        "native_builder": true,
+        "operation_id": "roles.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/roles/{role_id}",
+          "request_model": null,
+          "response_model": "RolePublic"
+        },
+        "side_effects": [],
+        "summary": "Get one platform Role",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "roles",
+            "create"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "roles",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_create_role",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "roles.create",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "roles.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "role.create",
+        "authorization_resolver": "Platform-admin gate",
+        "cli": {
+          "path": [
+            "roles",
+            "create"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Role administration is not available to application SDKs."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "roles"
+        },
+        "mcp": {
+          "name": "bifrost_create_role"
+        },
+        "native_builder": true,
+        "operation_id": "roles.create",
+        "rest": {
+          "method": "POST",
+          "path": "/api/roles",
+          "request_model": "RoleCreate",
+          "response_model": "RolePublic"
+        },
+        "side_effects": [
+          "persist the Role definition",
+          "invalidate Role caches",
+          "publish the Role change for manifest synchronization"
+        ],
+        "summary": "Create a platform Role",
+        "target_kind": "platform"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "roles",
+            "update"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "roles",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_update_role",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "roles.update",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "roles.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "role.update",
+        "authorization_resolver": "Platform-admin gate plus built-in Role guard",
+        "cli": {
+          "path": [
+            "roles",
+            "update"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Role administration is not available to application SDKs."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "roles"
+        },
+        "mcp": {
+          "name": "bifrost_update_role"
+        },
+        "native_builder": true,
+        "operation_id": "roles.update",
+        "rest": {
+          "method": "PATCH",
+          "path": "/api/roles/{role_id}",
+          "request_model": "RoleUpdate",
+          "response_model": "RolePublic"
+        },
+        "side_effects": [
+          "update the Role definition",
+          "invalidate Role and affected user-role caches",
+          "publish the Role change for manifest synchronization"
+        ],
+        "summary": "Update a platform Role",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "roles",
+            "delete"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "roles",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_delete_role",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "roles.delete",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "roles.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "role.delete",
+        "authorization_resolver": "Platform-admin gate plus built-in and Solution-management guards",
+        "cli": {
+          "path": [
+            "roles",
+            "delete"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Role administration is not available to application SDKs."
+        },
+        "manifest": {
+          "behavior": "remove",
+          "entity": "roles"
+        },
+        "mcp": {
+          "name": "bifrost_delete_role"
+        },
+        "native_builder": true,
+        "operation_id": "roles.delete",
+        "rest": {
+          "method": "DELETE",
+          "path": "/api/roles/{role_id}",
+          "request_model": null,
+          "response_model": null
+        },
+        "side_effects": [
+          "delete Role assignments through database cascades",
+          "invalidate Role and affected user-role caches",
+          "publish the Role removal for manifest synchronization"
+        ],
+        "summary": "Delete a platform Role",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
             "organizations",
             "list"
           ],
@@ -4881,51 +5219,6 @@
         "status": "missing_surface"
       },
       {
-        "kind": "operation",
-        "path": [
-          "roles",
-          "create"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "roles",
-          "delete"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "roles",
-          "get"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "roles",
-          "list"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "roles",
-          "update"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "kind": "lifecycle",
         "path": [
           "run"
@@ -5187,11 +5480,6 @@
         "status": "missing_surface"
       },
       {
-        "entity": "roles",
-        "reason": "Manifest entity has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "entity": "solution_files",
         "reason": "Manifest entity has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -5230,12 +5518,6 @@
       },
       {
         "hidden": false,
-        "name": "create_role",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "delete_claim",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -5266,12 +5548,6 @@
       },
       {
         "hidden": false,
-        "name": "delete_role",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "get_claim",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -5291,12 +5567,6 @@
       {
         "hidden": false,
         "name": "get_file_policy",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "get_role",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -5327,12 +5597,6 @@
       {
         "hidden": false,
         "name": "list_policy_rules",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "list_roles",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -5381,12 +5645,6 @@
       {
         "hidden": false,
         "name": "update_config",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "update_role",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -8168,42 +8426,7 @@
       {
         "method": "GET",
         "operation_id": "",
-        "path": "/api/roles",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/roles",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
         "path": "/api/roles/scopes",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "DELETE",
-        "operation_id": "",
-        "path": "/api/roles/{role_id}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/roles/{role_id}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "PATCH",
-        "operation_id": "",
-        "path": "/api/roles/{role_id}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
