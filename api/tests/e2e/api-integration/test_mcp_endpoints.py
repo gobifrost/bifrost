@@ -211,8 +211,8 @@ class TestMCPToolsEndpoint:
                 "system_tools": [
                     "bifrost_execute_workflow",
                     "bifrost_list_workflows",
-                    "list_integrations",
-                    "list_forms",
+                    "bifrost_list_integrations",
+                    "bifrost_list_forms",
                     "get_docs",
                     "search_knowledge",
                 ],
@@ -289,8 +289,8 @@ class TestMCPToolsEndpoint:
         expected_tools = [
             "bifrost_execute_workflow",
             "bifrost_list_workflows",
-            "list_integrations",
-            "list_forms",
+            "bifrost_list_integrations",
+            "bifrost_list_forms",
             "get_docs",
             "search_knowledge",
         ]

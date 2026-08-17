@@ -319,6 +319,45 @@ ORGANIZATION_OPERATIONS = {
     ),
 }
 
+INTEGRATION_OPERATIONS = {
+    "integrations.list": (
+        "GET",
+        "/api/integrations",
+        ("integrations", "list"),
+        "bifrost_list_integrations",
+    ),
+    "integrations.get": (
+        "GET",
+        "/api/integrations/{integration_id}",
+        ("integrations", "get"),
+        "bifrost_get_integration",
+    ),
+    "integrations.create": (
+        "POST",
+        "/api/integrations",
+        ("integrations", "create"),
+        "bifrost_create_integration",
+    ),
+    "integrations.update": (
+        "PUT",
+        "/api/integrations/{integration_id}",
+        ("integrations", "update"),
+        "bifrost_update_integration",
+    ),
+    "integrations.mappings.create": (
+        "POST",
+        "/api/integrations/{integration_id}/mappings",
+        ("integrations", "create-mapping"),
+        "bifrost_create_integration_mapping",
+    ),
+    "integrations.mappings.update": (
+        "PUT",
+        "/api/integrations/{integration_id}/mappings/{mapping_id}",
+        ("integrations", "update-mapping"),
+        "bifrost_update_integration_mapping",
+    ),
+}
+
 CANONICAL_OPERATIONS = {
     **AGENT_OPERATIONS,
     **FORM_OPERATIONS,
@@ -327,6 +366,7 @@ CANONICAL_OPERATIONS = {
     **WORKFLOW_OPERATIONS,
     **EVENT_OPERATIONS,
     **ORGANIZATION_OPERATIONS,
+    **INTEGRATION_OPERATIONS,
 }
 
 

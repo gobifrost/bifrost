@@ -1363,37 +1363,12 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  add-mapping     Create a mapping between an integration and an...
   create          Create a new integration.
+  create-mapping  Create a mapping between an integration and an...
   get             Get a single integration by UUID or name (with mappings...
   list            List all integrations (wrapped ``{items, total}``...
   update          Update an integration.
   update-mapping  Update an existing integration mapping.
-```
-
-### `integrations add-mapping`
-
-```
-Usage: integrations add-mapping [OPTIONS] INTEGRATION_REF
-
-  Create a mapping between an integration and an organization.
-
-  ``INTEGRATION_REF`` is a UUID or integration name. ``--organization`` is a
-  UUID or org name (resolved via :class:`RefResolver`).
-
-  ``--oauth-token-id`` is an opt-in flag outside the DTO-generated flag set —
-  the DTO excludes ``oauth_token_id`` to avoid accidentally surfacing the UI-
-  managed OAuth handshake data as a writable CLI field.
-
-Options:
-  --organization TEXT    org ref (UUID or name) for organization_id.
-                         [required]
-  --entity-id TEXT       entity_id  [required]
-  --entity-name TEXT     entity_name
-  --config TEXT          config as JSON literal or @path to a YAML/JSON file.
-  --oauth-token-id TEXT  OAuth token UUID (opt-in; empty means leave unset).
-  --json                 Emit JSON instead of human-readable output.
-  --help                 Show this message and exit.
 ```
 
 ### `integrations create`
@@ -1415,6 +1390,28 @@ Options:
   --default-entity-id TEXT  default_entity_id
   --json                    Emit JSON instead of human-readable output.
   --help                    Show this message and exit.
+```
+
+### `integrations create-mapping`
+
+```
+Usage: integrations create-mapping [OPTIONS] INTEGRATION_REF
+
+  Create a mapping between an integration and an organization.
+
+  ``INTEGRATION_REF`` is a UUID or integration name. ``--organization`` is a
+  UUID or org name (resolved via :class:`RefResolver`).
+
+  OAuth token IDs are intentionally excluded because the UI authorization flow
+  owns credential creation and rotation.
+
+Options:
+  --organization TEXT  org ref (UUID or name) for organization_id.  [required]
+  --entity-id TEXT     entity_id  [required]
+  --entity-name TEXT   entity_name
+  --config TEXT        config as JSON literal or @path to a YAML/JSON file.
+  --json               Emit JSON instead of human-readable output.
+  --help               Show this message and exit.
 ```
 
 ### `integrations get`
@@ -1479,20 +1476,17 @@ Usage: integrations update-mapping [OPTIONS] INTEGRATION_REF
 
   Resolves ``INTEGRATION_REF`` + ``--organization`` to the mapping UUID via
   ``GET /api/integrations/{id}/mappings/by-org/{org_id}``, then PUTs the
-  update body. ``oauth_token_id`` is only sent when ``--oauth-token-id`` is
-  explicitly passed — this preserves the server's existing token on unrelated
-  updates (it's set by the OAuth flow, not by CLI users).
+  update body. OAuth token IDs are intentionally excluded because they are
+  managed by the UI authorization flow.
 
 Options:
-  --organization TEXT    organization ref (UUID or name) — identifies the
-                         mapping to update.  [required]
-  --entity-id TEXT       entity_id
-  --entity-name TEXT     entity_name
-  --config TEXT          config as JSON literal or @path to a YAML/JSON file.
-  --oauth-token-id TEXT  OAuth token UUID (opt-in; omitted means leave
-                         unchanged).
-  --json                 Emit JSON instead of human-readable output.
-  --help                 Show this message and exit.
+  --organization TEXT  organization ref (UUID or name) — identifies the
+                       mapping to update.  [required]
+  --entity-id TEXT     entity_id
+  --entity-name TEXT   entity_name
+  --config TEXT        config as JSON literal or @path to a YAML/JSON file.
+  --json               Emit JSON instead of human-readable output.
+  --help               Show this message and exit.
 ```
 
 ## `organizations`

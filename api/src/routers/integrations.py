@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from typing import Any
 
-from sqlalchemy import and_, delete, select
+from sqlalchemy import and_, delete, func, select
 
 from src.core.auth import Context, CurrentSuperuser
 from src.core.log_safety import log_safe
@@ -51,6 +51,9 @@ from src.services.oauth_provider import (
     resolve_url_template,
 )
 from src.services.oauth_state import encode_state, remember_nonce
+from src.services.audit import emit_audit
+from src.services.operation_catalog import operation_route
+from src.services.repo_sync_writer import RepoSyncWriter
 
 logger = logging.getLogger(__name__)
 
@@ -99,16 +102,24 @@ class IntegrationsRepository:
     def __init__(self, db_session):
         self.db = db_session
 
-    async def list_integrations(self) -> list[Integration]:
-        """List all integrations (excluding deleted)."""
+    async def list_integrations(
+        self,
+        *,
+        organization_id: UUID | None = None,
+    ) -> list[Integration]:
+        """List non-deleted integrations, optionally restricted to one org mapping."""
         query = (
             select(Integration)
             .where(Integration.is_deleted.is_(False))
             .options(selectinload(Integration.config_schema))
-            .order_by(Integration.name)
         )
+        if organization_id is not None:
+            query = query.join(IntegrationMapping).where(
+                IntegrationMapping.organization_id == organization_id
+            )
+        query = query.order_by(Integration.name)
         result = await self.db.execute(query)
-        return list(result.scalars().all())
+        return list(result.unique().scalars().all())
 
     async def get_integration_by_id(self, integration_id: UUID) -> Integration | None:
         """Get integration by ID."""
@@ -682,6 +693,7 @@ class IntegrationsRepository:
     status_code=status.HTTP_201_CREATED,
     summary="Create integration",
     description="Create a new integration (Platform admin only)",
+    **operation_route("integrations.create"),
 )
 async def create_integration(
     request: IntegrationCreate,
@@ -702,6 +714,15 @@ async def create_integration(
     integration = await repo.create_integration(request)
     logger.info(f"Created integration: {log_safe(integration.name)}")
 
+    await emit_audit(
+        ctx.db,
+        "integration.create",
+        resource_type="integration",
+        resource_id=integration.id,
+        details={"name": integration.name},
+    )
+    await RepoSyncWriter(ctx.db).regenerate_manifest()
+
     return IntegrationResponse.model_validate(integration)
 
 
@@ -709,15 +730,24 @@ async def create_integration(
     "",
     response_model=IntegrationListResponse,
     summary="List integrations",
-    description="List all integrations (Platform admin only)",
+    description=(
+        "List all integrations for Platform admins; other active users see "
+        "integrations mapped to their organization"
+    ),
+    **operation_route("integrations.list"),
 )
 async def list_integrations(
     ctx: Context,
-    user: CurrentSuperuser,
 ) -> IntegrationListResponse:
-    """List all integrations."""
+    """List integrations visible to the caller's platform or organization scope."""
+    if ctx.user.is_external or ctx.user.embed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Integration administration is unavailable to external or embed sessions",
+        )
     repo = IntegrationsRepository(ctx.db)
-    integrations = await repo.list_integrations()
+    organization_id = None if ctx.user.is_platform_admin else ctx.org_id
+    integrations = await repo.list_integrations(organization_id=organization_id)
 
     items = [IntegrationResponse.model_validate(i) for i in integrations]
     return IntegrationListResponse(items=items, total=len(items))
@@ -728,6 +758,7 @@ async def list_integrations(
     response_model=IntegrationDetailResponse,
     summary="Get integration by ID",
     description="Get a specific integration by ID with mappings and OAuth config (Platform admin only)",
+    **operation_route("integrations.get"),
 )
 async def get_integration(
     integration_id: UUID,
@@ -833,15 +864,55 @@ async def get_integration_by_name(
     response_model=IntegrationResponse,
     summary="Update integration",
     description="Update an existing integration (Platform admin only)",
+    **operation_route("integrations.update"),
 )
 async def update_integration(
     integration_id: UUID,
     request: IntegrationUpdate,
     ctx: Context,
     user: CurrentSuperuser,
+    force_remove_keys: bool = Query(
+        False,
+        description=(
+            "Confirm deletion of config-schema keys and their stored values"
+        ),
+    ),
 ) -> IntegrationResponse:
     """Update an integration."""
     repo = IntegrationsRepository(ctx.db)
+
+    current = await repo.get_integration_by_id(integration_id)
+    if not current:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Integration not found",
+        )
+
+    if request.config_schema is not None:
+        current_by_key = {item.key: item for item in current.config_schema}
+        incoming_keys = {item.key for item in request.config_schema}
+        removed_keys = sorted(set(current_by_key) - incoming_keys)
+        if removed_keys and not force_remove_keys:
+            removed_ids = [current_by_key[key].id for key in removed_keys]
+            affected_values = await ctx.db.scalar(
+                select(func.count())
+                .select_from(ConfigModel)
+                .where(ConfigModel.config_schema_id.in_(removed_ids))
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "integration_schema_removal_requires_confirmation",
+                    "message": (
+                        "Removing integration config-schema keys deletes stored "
+                        "default and organization values"
+                    ),
+                    "removed_keys": removed_keys,
+                    "affected_config_values": int(affected_values or 0),
+                    "force_remove_keys": True,
+                },
+            )
+
     integration = await repo.update_integration(integration_id, request)
 
     if not integration:
@@ -851,6 +922,15 @@ async def update_integration(
         )
 
     logger.info(f"Updated integration: {log_safe(integration.name)}")
+    changed_fields = sorted(request.model_dump(exclude_unset=True))
+    await emit_audit(
+        ctx.db,
+        "integration.update",
+        resource_type="integration",
+        resource_id=integration.id,
+        details={"name": integration.name, "changed_fields": changed_fields},
+    )
+    await RepoSyncWriter(ctx.db).regenerate_manifest()
     return IntegrationResponse.model_validate(integration)
 
 
@@ -1017,6 +1097,7 @@ async def _mapping_to_response(
     status_code=status.HTTP_201_CREATED,
     summary="Create integration mapping",
     description="Create a new mapping between an integration and organization (Platform admin only)",
+    **operation_route("integrations.mappings.create"),
 )
 async def create_mapping(
     integration_id: UUID,
@@ -1050,6 +1131,18 @@ async def create_mapping(
 
     # Get org-specific overrides only (not merged with defaults)
     org_config = await repo.get_org_config_overrides(integration_id, request.organization_id)
+
+    await emit_audit(
+        ctx.db,
+        "integration_mapping.create",
+        resource_type="integration_mapping",
+        resource_id=mapping.id,
+        details={
+            "integration_id": str(integration_id),
+            "organization_id": str(request.organization_id),
+        },
+    )
+    await RepoSyncWriter(ctx.db).regenerate_manifest()
 
     return await _mapping_to_response(ctx.db, mapping, config=org_config if org_config else None)
 
@@ -1143,6 +1236,7 @@ async def get_mapping_by_org(
     response_model=IntegrationMappingResponse,
     summary="Update integration mapping",
     description="Update an existing mapping (Platform admin only)",
+    **operation_route("integrations.mappings.update"),
 )
 async def update_mapping(
     integration_id: UUID,
@@ -1167,6 +1261,19 @@ async def update_mapping(
 
     # Get org-specific overrides only (not merged with defaults)
     org_config = await repo.get_org_config_overrides(integration_id, mapping.organization_id)
+
+    await emit_audit(
+        ctx.db,
+        "integration_mapping.update",
+        resource_type="integration_mapping",
+        resource_id=mapping.id,
+        details={
+            "integration_id": str(integration_id),
+            "organization_id": str(mapping.organization_id),
+            "changed_fields": sorted(request.model_dump(exclude_unset=True)),
+        },
+    )
+    await RepoSyncWriter(ctx.db).regenerate_manifest()
 
     return await _mapping_to_response(ctx.db, mapping, config=org_config if org_config else None)
 

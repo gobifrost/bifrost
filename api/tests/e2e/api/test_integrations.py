@@ -1184,13 +1184,58 @@ class TestIntegrationConfigSecrets:
 class TestIntegrationsAuthorization:
     """Test authorization for integrations endpoints."""
 
-    def test_non_superuser_cannot_list_integrations(self, e2e_client, org1_user):
-        """Non-superuser should get 403 when listing integrations."""
-        response = e2e_client.get(
+    def test_non_superuser_lists_only_mapped_integrations(
+        self,
+        e2e_client,
+        org1_user,
+        platform_admin,
+        org1,
+    ):
+        """An active user discovers mapped Integrations without seeing others."""
+        mapped_name = f"mapped_{uuid4().hex[:8]}"
+        hidden_name = f"hidden_{uuid4().hex[:8]}"
+        mapped_response = e2e_client.post(
             "/api/integrations",
-            headers=org1_user.headers,
+            headers=platform_admin.headers,
+            json={"name": mapped_name},
         )
-        assert response.status_code == 403
+        hidden_response = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={"name": hidden_name},
+        )
+        assert mapped_response.status_code == 201, mapped_response.text
+        assert hidden_response.status_code == 201, hidden_response.text
+        mapped_id = mapped_response.json()["id"]
+        hidden_id = hidden_response.json()["id"]
+        mapping_response = e2e_client.post(
+            f"/api/integrations/{mapped_id}/mappings",
+            headers=platform_admin.headers,
+            json={
+                "organization_id": str(org1["id"]),
+                "entity_id": "mapped-tenant",
+            },
+        )
+        assert mapping_response.status_code == 201, mapping_response.text
+
+        try:
+            response = e2e_client.get(
+                "/api/integrations",
+                headers=org1_user.headers,
+            )
+            assert response.status_code == 200, response.text
+            names = {item["name"] for item in response.json()["items"]}
+            assert mapped_name in names
+            assert hidden_name not in names
+        finally:
+            e2e_client.delete(
+                f"/api/integrations/{mapped_id}",
+                headers=platform_admin.headers,
+            )
+            e2e_client.delete(
+                f"/api/integrations/{hidden_id}",
+                headers=platform_admin.headers,
+            )
 
     def test_non_superuser_cannot_create_integration(self, e2e_client, org1_user):
         """Non-superuser should get 403 when creating integrations."""

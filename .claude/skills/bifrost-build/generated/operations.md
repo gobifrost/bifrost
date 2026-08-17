@@ -40,6 +40,12 @@ harness.
 | `workflows.delete` | `bifrost workflows delete` | `bifrost_delete_workflow` | `workflows.write` |
 | `workflows.roles.grant` | `bifrost workflows grant-role` | `bifrost_grant_workflow_role` | `workflows.write` |
 | `workflows.roles.revoke` | `bifrost workflows revoke-role` | `bifrost_revoke_workflow_role` | `workflows.write` |
+| `integrations.list` | `bifrost integrations list` | `bifrost_list_integrations` | `integrations.read` |
+| `integrations.get` | `bifrost integrations get` | `bifrost_get_integration` | `integrations.read` |
+| `integrations.create` | `bifrost integrations create` | `bifrost_create_integration` | `integrations.write` |
+| `integrations.update` | `bifrost integrations update` | `bifrost_update_integration` | `integrations.write` |
+| `integrations.mappings.create` | `bifrost integrations create-mapping` | `bifrost_create_integration_mapping` | `integrations.write` |
+| `integrations.mappings.update` | `bifrost integrations update-mapping` | `bifrost_update_integration_mapping` | `integrations.write` |
 | `organizations.list` | `bifrost organizations list` | `bifrost_list_organizations` | `organizations.read` |
 | `organizations.get` | `bifrost organizations get` | `bifrost_get_organization` | `organizations.read` |
 | `organizations.create` | `bifrost organizations create` | `bifrost_create_organization` | `organizations.write` |

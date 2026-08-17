@@ -175,17 +175,19 @@ function CreateIntegrationForm({
 		await performSave();
 	};
 
-	const performSave = async () => {
+	const performSave = async (forceRemoveKeys = false) => {
 		try {
 			if (isEditing && editIntegrationId) {
 				await updateMutation.mutateAsync({
-					params: { path: { integration_id: editIntegrationId } },
+					params: {
+						path: { integration_id: editIntegrationId },
+						query: { force_remove_keys: forceRemoveKeys },
+					},
 					body: {
 						name,
 						list_entities_data_provider_id:
 							dataProviderId || undefined,
-						config_schema:
-							configSchema.length > 0 ? configSchema : undefined,
+						config_schema: configSchema,
 						default_entity_id: defaultEntityId || undefined,
 					},
 				});
@@ -459,6 +461,7 @@ function CreateIntegrationForm({
 										type="button"
 										variant="ghost"
 										size="icon"
+										aria-label={`Remove ${field.key || "configuration field"}`}
 										onClick={() => removeConfigField(index)}
 										className="text-destructive"
 									>
@@ -576,7 +579,7 @@ function CreateIntegrationForm({
 						<AlertDialogAction
 							onClick={() => {
 								setShowConfigFieldRemovalConfirm(false);
-								performSave();
+								performSave(true);
 							}}
 							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 						>
