@@ -378,10 +378,10 @@ export function AgentSettingsTab({
 			delegated_agent_ids: values.delegated_agent_ids,
 			role_ids: values.role_ids,
 			knowledge_sources: values.knowledge_sources,
-			mcp_connection_ids: values.mcp_connection_ids,
 			llm_model: values.llm_model,
 			...(isPlatformAdmin
 				? {
+						mcp_connection_ids: values.mcp_connection_ids,
 						llm_max_tokens: values.llm_max_tokens,
 						max_iterations: values.max_iterations,
 						max_token_budget: values.max_token_budget,
@@ -1169,17 +1169,19 @@ export function AgentSettingsTab({
 					 * for platform-level (organization_id=null) agents
 					 * since MCP connections are strictly per-org.
 					 */}
-					<FormField
-						control={form.control}
-						name="mcp_connection_ids"
-						render={({ field }) => (
-							<AgentMCPConnectionsPanel
-								organizationId={watchedOrgId}
-								value={field.value ?? []}
-								onChange={field.onChange}
-							/>
-						)}
-					/>
+					{isPlatformAdmin ? (
+						<FormField
+							control={form.control}
+							name="mcp_connection_ids"
+							render={({ field }) => (
+								<AgentMCPConnectionsPanel
+									organizationId={watchedOrgId}
+									value={field.value ?? []}
+									onChange={field.onChange}
+								/>
+							)}
+						/>
+					) : null}
 
 					<FormField
 						control={form.control}

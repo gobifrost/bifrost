@@ -69,8 +69,10 @@ from src.services.agent_skill_import import (
     skill_instruction_body,
 )
 from src.services.agent_skill_storage import AgentSkillStorage
+from src.services.audit import emit_audit
 from src.services.builder.fs_tools import WorkspaceViolation
 from src.services.operation_catalog import operation_route
+from src.services.repo_sync_writer import RepoSyncWriter
 from src.services.solutions.guard import assert_not_solution_managed
 from src.routers.tools import get_system_tool_ids
 from src.services.agent_stats import get_agent_stats, get_agent_stats_batch, get_fleet_stats
@@ -103,6 +105,9 @@ async def _validate_agent_references(
     db: DbSession,
     tool_ids: list[str] | None,
     delegated_agent_ids: list[str] | None,
+    role_ids: list[str] | None,
+    mcp_connection_ids: list[UUID] | None,
+    organization_id: UUID | None,
     agent_id: UUID | None = None,  # For self-delegation check
 ) -> None:
     """
@@ -112,12 +117,32 @@ async def _validate_agent_references(
         db: Database session
         tool_ids: List of tool IDs to validate (must be type='tool')
         delegated_agent_ids: List of agent IDs to delegate to
+        role_ids: List of resource-assignable role IDs
+        mcp_connection_ids: List of MCP connection IDs to grant
+        organization_id: Effective Agent organization after the mutation
         agent_id: The agent being created/updated (for self-delegation check)
 
     Raises:
         HTTPException: 422 if any reference is invalid
     """
     errors: list[str] = []
+
+    for field_name, values in (
+        ("tool_ids", tool_ids),
+        ("delegated_agent_ids", delegated_agent_ids),
+        ("role_ids", role_ids),
+        ("mcp_connection_ids", mcp_connection_ids),
+    ):
+        if not values:
+            continue
+        seen: set[str] = set()
+        for value in values:
+            normalized = str(value)
+            if normalized in seen:
+                errors.append(
+                    f"{field_name} contains duplicate reference '{normalized}'"
+                )
+            seen.add(normalized)
 
     # Validate tool_ids
     if tool_ids:
@@ -160,6 +185,45 @@ async def _validate_agent_references(
                     errors.append(f"delegated_agent_id '{delegate_id}' references an inactive agent")
             except ValueError:
                 errors.append(f"delegated_agent_id '{delegate_id}' is not a valid UUID")
+
+    if role_ids:
+        for role_id in role_ids:
+            try:
+                role_uuid = UUID(role_id)
+                result = await db.execute(select(Role).where(Role.id == role_uuid))
+                role = result.scalar_one_or_none()
+                if role is None:
+                    errors.append(
+                        f"role_id '{role_id}' does not reference an existing role"
+                    )
+                elif not role.assignable_to_resources:
+                    errors.append(
+                        f"role_id '{role_id}' is a capability role and cannot be "
+                        "assigned to Agents"
+                    )
+            except ValueError:
+                errors.append(f"role_id '{role_id}' is not a valid UUID")
+
+    if mcp_connection_ids:
+        if organization_id is None:
+            errors.append(
+                "Global Agents cannot be granted organization MCP connections"
+            )
+        else:
+            for connection_id in mcp_connection_ids:
+                result = await db.execute(
+                    select(MCPConnection).where(MCPConnection.id == connection_id)
+                )
+                connection = result.scalar_one_or_none()
+                if connection is None:
+                    errors.append(
+                        f"mcp_connection_id '{connection_id}' does not reference "
+                        "an existing connection"
+                    )
+                elif connection.organization_id != organization_id:
+                    errors.append(
+                        f"mcp_connection_id '{connection_id}' belongs to a different organization"
+                    )
 
     if errors:
         raise HTTPException(
@@ -489,6 +553,25 @@ async def create_agent(
         # Non-admin: enforce private-only creation
         if agent_data.access_level != AgentAccessLevel.PRIVATE:
             raise HTTPException(403, "Non-admin users can only create private agents")
+        privileged_fields = [
+            field_name
+            for field_name, value in (
+                ("system_tools", agent_data.system_tools),
+                ("knowledge_sources", agent_data.knowledge_sources),
+                ("delegated_agent_ids", agent_data.delegated_agent_ids),
+                ("role_ids", agent_data.role_ids),
+                ("mcp_connection_ids", agent_data.mcp_connection_ids),
+            )
+            if value
+        ]
+        if privileged_fields:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "Only platform administrators can set Agent fields: "
+                    + ", ".join(privileged_fields)
+                ),
+            )
         agent_data.organization_id = user.organization_id
         await _validate_user_tool_access(
             db, user.user_id, agent_data.tool_ids, is_external=user.is_external
@@ -507,6 +590,9 @@ async def create_agent(
         db=db,
         tool_ids=agent_data.tool_ids,
         delegated_agent_ids=agent_data.delegated_agent_ids,
+        role_ids=agent_data.role_ids,
+        mcp_connection_ids=agent_data.mcp_connection_ids,
+        organization_id=agent_data.organization_id,
         agent_id=None,
     )
 
@@ -543,82 +629,42 @@ async def create_agent(
     db.add(agent)
 
     # Add tool relationships
-    tools: list[Workflow] = []
     if agent_data.tool_ids:
         for tool_id in agent_data.tool_ids:
-            try:
-                workflow_uuid = UUID(tool_id)
-                result = await db.execute(
-                    select(Workflow)
-                    .where(Workflow.id == workflow_uuid)
-                    .where(Workflow.type == "tool")
-                    .where(Workflow.is_active.is_(True))
-                )
-                workflow = result.scalar_one_or_none()
-                if workflow:
-                    tools.append(workflow)
-                    db.add(AgentTool(agent_id=agent_id, workflow_id=workflow.id))
-            except ValueError:
-                logger.warning(f"Invalid tool ID: {log_safe(tool_id)}")
+            db.add(AgentTool(agent_id=agent_id, workflow_id=UUID(tool_id)))
 
     # Add delegation relationships
-    delegated_agents: list[Agent] = []
     if agent_data.delegated_agent_ids:
         for delegate_id in agent_data.delegated_agent_ids:
-            try:
-                delegate_uuid = UUID(delegate_id)
-                result = await db.execute(
-                    select(Agent)
-                    .where(Agent.id == delegate_uuid)
-                    .where(Agent.is_active.is_(True))
+            db.add(
+                AgentDelegation(
+                    parent_agent_id=agent_id,
+                    child_agent_id=UUID(delegate_id),
                 )
-                delegate = result.scalar_one_or_none()
-                if delegate:
-                    delegated_agents.append(delegate)
-                    db.add(AgentDelegation(
-                        parent_agent_id=agent_id,
-                        child_agent_id=delegate.id,
-                    ))
-            except ValueError:
-                logger.warning(f"Invalid delegate agent ID: {log_safe(delegate_id)}")
+            )
 
     # Add role relationships
     if agent_data.role_ids:
         for role_id in agent_data.role_ids:
-            try:
-                role_uuid = UUID(role_id)
-                result = await db.execute(
-                    select(Role).where(Role.id == role_uuid)
+            db.add(
+                AgentRole(
+                    agent_id=agent_id,
+                    role_id=UUID(role_id),
+                    assigned_by=user.email,
                 )
-                role = result.scalar_one_or_none()
-                if role:
-                    db.add(AgentRole(
-                        agent_id=agent_id,
-                        role_id=role.id,
-                        assigned_by=user.email,
-                    ))
-            except ValueError:
-                logger.warning(f"Invalid role ID: {log_safe(role_id)}")
-
-    # Add MCP connection grants. Connections must belong to the same org
-    # as the agent — connections are strictly per-org so a grant from
-    # another org is silently dropped here. Platform-level agents
-    # (organization_id IS NULL) cannot carry MCP grants.
-    if agent_data.mcp_connection_ids and agent_data.organization_id is not None:
-        valid_result = await db.execute(
-            select(MCPConnection.id).where(
-                MCPConnection.id.in_(agent_data.mcp_connection_ids),
-                MCPConnection.organization_id == agent_data.organization_id,
             )
-        )
-        valid_ids = {row[0] for row in valid_result.all()}
+
+    # Reference validation above guarantees that every connection exists and
+    # belongs to this Agent's organization.
+    if agent_data.mcp_connection_ids:
         for cid in agent_data.mcp_connection_ids:
-            if cid in valid_ids:
-                db.add(AgentMCPConnection(
+            db.add(
+                AgentMCPConnection(
                     agent_id=agent_id,
                     connection_id=cid,
                     granted_by=user.user_id,
-                ))
+                )
+            )
 
     await db.flush()
 
@@ -638,6 +684,21 @@ async def create_agent(
 
     # Sync agent roles to referenced workflows (tools) - additive
     await sync_agent_roles_to_workflows(db, agent, assigned_by=user.email)
+
+    await emit_audit(
+        db,
+        "agent.create",
+        resource_type="agent",
+        resource_id=agent.id,
+        details={
+            "name": agent.name,
+            "organization_id": (
+                str(agent.organization_id) if agent.organization_id else None
+            ),
+            "access_level": agent.access_level.value if agent.access_level else None,
+        },
+    )
+    await RepoSyncWriter(db).regenerate_manifest()
 
     return _agent_to_public(agent)
 
@@ -1058,20 +1119,69 @@ async def update_agent(
             await _validate_user_tool_access(
                 db, user.user_id, agent_data.tool_ids, is_external=user.is_external
             )
+        privileged_fields = [
+            field_name
+            for field_name, value in (
+                ("system_tools", agent_data.system_tools),
+                ("knowledge_sources", agent_data.knowledge_sources),
+                ("delegated_agent_ids", agent_data.delegated_agent_ids),
+                ("role_ids", agent_data.role_ids),
+            )
+            if value
+        ]
+        if agent_data.clear_roles:
+            privileged_fields.append("clear_roles")
+        if privileged_fields:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=(
+                    "Only platform administrators can set Agent fields: "
+                    + ", ".join(privileged_fields)
+                ),
+            )
         agent_data.system_tools = None
         agent_data.knowledge_sources = None
         agent_data.delegated_agent_ids = None
         agent_data.role_ids = None
-        # Non-admins cannot manage MCP connection grants — those are an
-        # org-admin tool. Silently drop the field rather than 403 so the
-        # UI can submit a single payload regardless of role.
-        agent_data.mcp_connection_ids = None
+        if agent_data.mcp_connection_ids is not None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only platform administrators can manage Agent MCP connections",
+            )
+
+    if agent_data.clear_roles and agent_data.role_ids is not None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="clear_roles and role_ids cannot be provided together",
+        )
+
+    target_organization_id = (
+        agent_data.organization_id
+        if "organization_id" in agent_data.model_fields_set
+        else agent.organization_id
+    )
+    if (
+        "organization_id" in agent_data.model_fields_set
+        and target_organization_id != agent.organization_id
+        and agent.mcp_connections
+        and agent_data.mcp_connection_ids is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                "Rescoping an Agent with MCP connections requires an explicit "
+                "mcp_connection_ids list; pass [] to revoke all grants"
+            ),
+        )
 
     # Validate references being updated
     await _validate_agent_references(
         db=db,
         tool_ids=agent_data.tool_ids,
         delegated_agent_ids=agent_data.delegated_agent_ids,
+        role_ids=agent_data.role_ids,
+        mcp_connection_ids=agent_data.mcp_connection_ids,
+        organization_id=target_organization_id,
         agent_id=agent_id,  # For self-delegation check
     )
 
@@ -1107,50 +1217,25 @@ async def update_agent(
     agent.updated_at = datetime.now(timezone.utc)
 
     # Update tool relationships if provided
-    tools: list[Workflow] = []
     if agent_data.tool_ids is not None:
         await db.execute(
             delete(AgentTool).where(AgentTool.agent_id == agent_id)
         )
         for tool_id in agent_data.tool_ids:
-            try:
-                workflow_uuid = UUID(tool_id)
-                result = await db.execute(
-                    select(Workflow)
-                    .where(Workflow.id == workflow_uuid)
-                    .where(Workflow.type == "tool")
-                    .where(Workflow.is_active.is_(True))
-                )
-                workflow = result.scalar_one_or_none()
-                if workflow:
-                    tools.append(workflow)
-                    db.add(AgentTool(agent_id=agent_id, workflow_id=workflow.id))
-            except ValueError:
-                logger.warning(f"Invalid tool ID: {log_safe(tool_id)}")
+            db.add(AgentTool(agent_id=agent_id, workflow_id=UUID(tool_id)))
 
     # Update delegation relationships if provided
-    delegated_agents: list[Agent] = []
     if agent_data.delegated_agent_ids is not None:
         await db.execute(
             delete(AgentDelegation).where(AgentDelegation.parent_agent_id == agent_id)
         )
         for delegate_id in agent_data.delegated_agent_ids:
-            try:
-                delegate_uuid = UUID(delegate_id)
-                result = await db.execute(
-                    select(Agent)
-                    .where(Agent.id == delegate_uuid)
-                    .where(Agent.is_active.is_(True))
+            db.add(
+                AgentDelegation(
+                    parent_agent_id=agent_id,
+                    child_agent_id=UUID(delegate_id),
                 )
-                delegate = result.scalar_one_or_none()
-                if delegate:
-                    delegated_agents.append(delegate)
-                    db.add(AgentDelegation(
-                        parent_agent_id=agent_id,
-                        child_agent_id=delegate.id,
-                    ))
-            except ValueError:
-                logger.warning(f"Invalid delegate agent ID: {log_safe(delegate_id)}")
+            )
 
     # Clear all role assignments if requested
     if agent_data.clear_roles:
@@ -1167,20 +1252,13 @@ async def update_agent(
             delete(AgentRole).where(AgentRole.agent_id == agent_id)
         )
         for role_id in agent_data.role_ids:
-            try:
-                role_uuid = UUID(role_id)
-                result = await db.execute(
-                    select(Role).where(Role.id == role_uuid)
+            db.add(
+                AgentRole(
+                    agent_id=agent_id,
+                    role_id=UUID(role_id),
+                    assigned_by=user.email,
                 )
-                role = result.scalar_one_or_none()
-                if role:
-                    db.add(AgentRole(
-                        agent_id=agent_id,
-                        role_id=role.id,
-                        assigned_by=user.email,
-                    ))
-            except ValueError:
-                logger.warning(f"Invalid role ID: {log_safe(role_id)}")
+            )
 
     # Sync MCP connection grants if provided. ``mcp_connection_ids=None``
     # means "leave grants alone"; an empty list explicitly revokes all.
@@ -1216,6 +1294,18 @@ async def update_agent(
 
     # Sync agent roles to referenced workflows (tools) - additive
     await sync_agent_roles_to_workflows(db, agent, assigned_by=user.email)
+
+    await emit_audit(
+        db,
+        "agent.update",
+        resource_type="agent",
+        resource_id=agent.id,
+        details={
+            "name": agent.name,
+            "fields": sorted(agent_data.model_fields_set),
+        },
+    )
+    await RepoSyncWriter(db).regenerate_manifest()
 
     return _agent_to_public(agent)
 
@@ -1255,10 +1345,19 @@ async def delete_agent(
         if agent.owner_user_id != user.user_id:
             raise HTTPException(403, "You can only delete your own private agents")
 
+    agent_name = agent.name
     # Use a SQL DELETE so database-level cascades remove run history and agent
     # memberships while SET NULL references (such as conversations) are preserved.
     await db.execute(delete(Agent).where(Agent.id == agent_id))
     await db.flush()
+    await emit_audit(
+        db,
+        "agent.delete",
+        resource_type="agent",
+        resource_id=agent_id,
+        details={"name": agent_name},
+    )
+    await RepoSyncWriter(db).regenerate_manifest()
 
 
 @router.post("/{agent_id}/promote")

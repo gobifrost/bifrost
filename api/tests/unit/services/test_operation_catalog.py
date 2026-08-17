@@ -65,6 +65,21 @@ def test_agent_routes_publish_catalog_identity_in_openapi() -> None:
         assert extension["mcp"] == mcp_name
 
 
+def test_agent_mcp_registration_uses_only_catalog_names() -> None:
+    from src.services.mcp_server.server import (
+        get_system_tool_function,
+        get_system_tools,
+    )
+
+    registered = {tool["id"] for tool in get_system_tools()}
+    catalog_names = {binding[3] for binding in AGENT_OPERATIONS.values()}
+    legacy_names = {name.removeprefix("bifrost_") for name in catalog_names}
+
+    assert catalog_names <= registered
+    assert registered.isdisjoint(legacy_names)
+    assert all(callable(get_system_tool_function(name)) for name in catalog_names)
+
+
 def test_catalog_rejects_duplicate_operation_ids() -> None:
     duplicate = OperationDefinition.model_validate(
         deepcopy(OPERATION_CATALOG[0].model_dump())

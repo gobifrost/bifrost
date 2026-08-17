@@ -98,6 +98,18 @@ def admin_context(platform_admin, mcp_bridge_env) -> MockMCPContext:
     )
 
 
+@pytest.fixture
+def org_context(org1_user, mcp_bridge_env) -> MockMCPContext:
+    """Real organization user context for REST-equivalent MCP auth tests."""
+    return MockMCPContext(
+        user_id=str(org1_user.user_id),
+        user_email=org1_user.email,
+        is_platform_admin=False,
+        org_id=str(org1_user.organization_id),
+        user_name=org1_user.name,
+    )
+
+
 # =============================================================================
 # Field-parity: MCP tool signature covers every writable DTO field
 # =============================================================================
@@ -116,6 +128,22 @@ def admin_context(platform_admin, mcp_bridge_env) -> MockMCPContext:
 # map is a deliberate act — an unexpected divergence should leave the test
 # failing so the drift is visible.
 SIGNATURE_PARITY_SPECS: list[dict] = [
+    {
+        "model_path": "src.models.contracts.agents:AgentCreate",
+        "tool_path": (
+            "src.services.mcp_server.tools.agents:bifrost_create_agent"
+        ),
+        "extra_args": {"scope"},
+        "field_renames": {},
+    },
+    {
+        "model_path": "src.models.contracts.agents:AgentUpdate",
+        "tool_path": (
+            "src.services.mcp_server.tools.agents:bifrost_update_agent"
+        ),
+        "extra_args": {"agent_ref", "scope"},
+        "field_renames": {},
+    },
     {
         "model_path": "src.models.contracts.users:RoleCreate",
         "tool_path": "src.services.mcp_server.tools.roles:create_role",
@@ -284,6 +312,184 @@ class TestMcpParitySchemas:
             f"DTO_EXCLUDES['{model_name}'], or document the rename in "
             f"SIGNATURE_PARITY_SPECS."
         )
+
+
+# =============================================================================
+# Agents
+# =============================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestMcpParityAgents:
+    async def test_agents_crud_roundtrip_and_audit(
+        self,
+        admin_context,
+        e2e_client,
+        platform_admin,
+    ) -> None:
+        from src.services.mcp_server.tools.agents import (
+            bifrost_create_agent,
+            bifrost_delete_agent,
+            bifrost_get_agent,
+            bifrost_list_agents,
+            bifrost_update_agent,
+        )
+
+        listed = await bifrost_list_agents(admin_context)
+        assert listed.structured_content is not None
+        assert listed.structured_content.get("count", -1) >= 0
+
+        name = f"mcp-parity-agent-{uuid4().hex[:8]}"
+        created_result = await bifrost_create_agent(
+            admin_context,
+            name=name,
+            system_prompt="You verify Agent transport parity.",
+            description="created through canonical MCP",
+            access_level="authenticated",
+            scope="global",
+        )
+        created = created_result.structured_content or {}
+        assert "error" not in created, created
+        agent_id = str(created["id"])
+
+        from src.services.repo_storage import RepoStorage
+
+        manifest_after_create = (
+            await RepoStorage().read(".bifrost/agents.yaml")
+        ).decode("utf-8")
+        assert agent_id in manifest_after_create
+
+        fetched_result = await bifrost_get_agent(admin_context, agent_ref=name)
+        fetched = fetched_result.structured_content or {}
+        assert fetched.get("id") == agent_id
+        assert fetched.get("system_prompt") == "You verify Agent transport parity."
+
+        renamed = f"mcp-parity-agent-renamed-{uuid4().hex[:8]}"
+        updated_result = await bifrost_update_agent(
+            admin_context,
+            agent_ref=name,
+            name=renamed,
+            description="updated through canonical MCP",
+        )
+        updated = updated_result.structured_content or {}
+        assert "error" not in updated, updated
+        assert updated.get("name") == renamed
+
+        rest_get = e2e_client.get(
+            f"/api/agents/{agent_id}",
+            headers=platform_admin.headers,
+        )
+        assert rest_get.status_code == 200, rest_get.text
+        assert rest_get.json()["description"] == "updated through canonical MCP"
+
+        deleted_result = await bifrost_delete_agent(
+            admin_context,
+            agent_ref=renamed,
+        )
+        deleted = deleted_result.structured_content or {}
+        assert deleted.get("deleted") == agent_id
+        assert e2e_client.get(
+            f"/api/agents/{agent_id}",
+            headers=platform_admin.headers,
+        ).status_code == 404
+        manifest_paths = await RepoStorage().list(".bifrost/")
+        if ".bifrost/agents.yaml" in manifest_paths:
+            manifest_after_delete = (
+                await RepoStorage().read(".bifrost/agents.yaml")
+            ).decode("utf-8")
+            assert agent_id not in manifest_after_delete
+
+        audit = e2e_client.get(
+            "/api/audit",
+            headers=platform_admin.headers,
+            params={"action": "agent.", "resource_type": "agent", "limit": 50},
+        )
+        assert audit.status_code == 200, audit.text
+        actions = {
+            entry["action"]
+            for entry in audit.json()["entries"]
+            if entry["resource_id"] == agent_id
+        }
+        assert actions == {"agent.create", "agent.update", "agent.delete"}
+
+    async def test_private_agent_authorization_matches_rest(
+        self,
+        admin_context,
+        org_context,
+        org2,
+    ) -> None:
+        from src.services.mcp_server.tools.agents import (
+            bifrost_create_agent,
+            bifrost_delete_agent,
+            bifrost_get_agent,
+            bifrost_update_agent,
+        )
+
+        forbidden_create = await bifrost_create_agent(
+            org_context,
+            name=f"forbidden-agent-{uuid4().hex[:8]}",
+            system_prompt="This must not be created.",
+            access_level="authenticated",
+        )
+        assert "error" in (forbidden_create.structured_content or {})
+
+        name = f"private-mcp-agent-{uuid4().hex[:8]}"
+        private_result = await bifrost_create_agent(
+            org_context,
+            name=name,
+            system_prompt="Private Agent instructions.",
+            access_level="private",
+        )
+        private_agent = private_result.structured_content or {}
+        assert "error" not in private_agent, private_agent
+        private_id = str(private_agent["id"])
+        foreign_id: str | None = None
+        try:
+            assert private_agent["organization_id"] == str(org_context.org_id)
+            assert private_agent["owner_user_id"] == str(org_context.user_id)
+
+            updated = await bifrost_update_agent(
+                org_context,
+                agent_ref=name,
+                description="owner update",
+            )
+            assert (updated.structured_content or {}).get("description") == (
+                "owner update"
+            )
+
+            foreign_name = f"foreign-mcp-agent-{uuid4().hex[:8]}"
+            foreign_result = await bifrost_create_agent(
+                admin_context,
+                name=foreign_name,
+                system_prompt="Foreign organization Agent.",
+                access_level="authenticated",
+                scope=str(org2["id"]),
+            )
+            foreign = foreign_result.structured_content or {}
+            assert "error" not in foreign, foreign
+            foreign_id = str(foreign["id"])
+            forbidden_get = await bifrost_get_agent(
+                org_context,
+                agent_ref=foreign_id,
+            )
+            assert "error" in (forbidden_get.structured_content or {})
+        finally:
+            if foreign_id is not None:
+                deleted_foreign = await bifrost_delete_agent(
+                    admin_context,
+                    agent_ref=foreign_id,
+                )
+                assert (deleted_foreign.structured_content or {}).get(
+                    "deleted"
+                ) == foreign_id
+            deleted_private = await bifrost_delete_agent(
+                org_context,
+                agent_ref=private_id,
+            )
+            assert (deleted_private.structured_content or {}).get(
+                "deleted"
+            ) == private_id
 
 
 # =============================================================================

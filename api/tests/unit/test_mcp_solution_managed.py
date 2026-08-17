@@ -490,11 +490,7 @@ async def _managed_agent_with_tool(db) -> tuple[uuid.UUID, uuid.UUID]:
 
 
 async def test_mcp_update_agent_refuses_managed_without_deleting_tools(db_session, monkeypatch):
-    """Codex #13: update_agent on a solution-managed agent returns the read-only
-    error AND does NOT bulk-delete its AgentTool bindings (the Core delete must
-    not run / persist)."""
-    from contextlib import asynccontextmanager
-
+    """The REST-backed update preserves the managed Agent and its tool binding."""
     from sqlalchemy import func, select
 
     from src.models.orm.agents import AgentTool
@@ -502,14 +498,31 @@ async def test_mcp_update_agent_refuses_managed_without_deleting_tools(db_sessio
 
     aid, _wf = await _managed_agent_with_tool(db_session)
 
-    @asynccontextmanager
-    async def _fake_tool_db(_context):
-        yield db_session
+    async def _fake_resolve(_context, kind, value):
+        assert (kind, value) == ("agent", str(aid))
+        return str(aid)
 
-    monkeypatch.setattr(mcp_agents, "get_tool_db", _fake_tool_db)
+    async def _fake_assemble(_context, fields, *, is_update, scope):
+        assert is_update is True
+        assert scope is None
+        return {"tool_ids": fields["tool_ids"]}
+
+    async def _fake_call_rest(_context, method, path, *, json_body=None, params=None):
+        assert (method, path) == ("PUT", f"/api/agents/{aid}")
+        assert json_body == {"tool_ids": []}
+        assert params is None
+        return 409, {"detail": SOLUTION_MANAGED_MESSAGE}
+
+    monkeypatch.setattr(mcp_agents, "_resolve_ref", _fake_resolve)
+    monkeypatch.setattr(mcp_agents, "_assemble_agent_body", _fake_assemble)
+    monkeypatch.setattr(mcp_agents, "call_rest", _fake_call_rest)
 
     context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
-    result = await mcp_agents.update_agent(context, agent_id=str(aid), tool_ids=[])
+    result = await mcp_agents.bifrost_update_agent(
+        context,
+        agent_ref=str(aid),
+        tool_ids=[],
+    )
 
     text = str(result.model_dump() if hasattr(result, "model_dump") else result)
     assert SOLUTION_MANAGED_MESSAGE in text, text
@@ -585,15 +598,22 @@ async def test_mcp_delete_agent_refuses_managed(db_session, monkeypatch):
 
     aid, _wf = await _managed_agent_with_tool(db_session)
 
-    async def _fake_call_rest(_context, method, path):
+    async def _fake_resolve(_context, kind, value):
+        assert (kind, value) == ("agent", str(aid))
+        return str(aid)
+
+    async def _fake_call_rest(_context, method, path, *, json_body=None, params=None):
         assert method == "DELETE"
         assert path == f"/api/agents/{aid}"
+        assert json_body is None
+        assert params is None
         return 409, {"detail": SOLUTION_MANAGED_MESSAGE}
 
+    monkeypatch.setattr(mcp_agents, "_resolve_ref", _fake_resolve)
     monkeypatch.setattr(mcp_agents, "call_rest", _fake_call_rest)
 
     context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
-    result = await mcp_agents.delete_agent(context, agent_id=str(aid))
+    result = await mcp_agents.bifrost_delete_agent(context, agent_ref=str(aid))
 
     text = str(result.model_dump() if hasattr(result, "model_dump") else result)
     assert SOLUTION_MANAGED_MESSAGE in text, text

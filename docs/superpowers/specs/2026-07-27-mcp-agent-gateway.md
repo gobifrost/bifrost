@@ -253,9 +253,9 @@ Create active agents and drive JSON-RPC over Streamable HTTP:
    gateway tools.
 3. Agent search returns a relevant accessible agent and hides an inaccessible
    agent.
-4. `get_agent` returns live instructions and compact references.
-5. Updating an agent prompt is visible on the next `get_agent` without a new
-   MCP initialization.
+4. `bifrost_get_agent` returns live instructions and compact references.
+5. Updating an agent prompt is visible on the next `bifrost_get_agent` without
+   a new MCP initialization.
 6. `get_tool_schema` returns the selected live schema.
 7. `execute_tool` successfully invokes a harmless system tool.
 8. Invalid arguments produce `INVALID_ARGUMENTS` with JSON-pointer paths.

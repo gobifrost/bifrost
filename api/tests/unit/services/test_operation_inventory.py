@@ -27,26 +27,19 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
             assert row["reason"]
 
 
-def test_agent_vertical_slice_reports_current_drift_without_hiding_it() -> None:
+def test_agent_vertical_slice_reports_rest_cli_and_mcp_parity() -> None:
     inventory = build_operation_inventory(app, REPO_ROOT)
     operations = {
         row["operation"]["operation_id"]: row
         for row in inventory["catalog_operations"]
-    }
-    legacy_names = {
-        "agents.list": "list_agents",
-        "agents.get": "get_agent",
-        "agents.create": "create_agent",
-        "agents.update": "update_agent",
-        "agents.delete": "delete_agent",
     }
     for operation_id, row in operations.items():
         observed = row["observed"]
         assert observed["rest"]["status"] == "exact_parity"
         assert observed["cli"]["status"] == "exact_parity"
         assert observed["mcp"] == {
-            "status": "divergent_behavior",
-            "name": legacy_names[operation_id],
+            "status": "exact_parity",
+            "name": row["operation"]["mcp"]["name"],
         }
         assert observed["native_builder"]["status"] == "missing_surface"
 

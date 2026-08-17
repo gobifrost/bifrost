@@ -45,6 +45,7 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from src.services.mcp_server.tools import (  # noqa: E402
+    agents as agents_mod,
     claims as claims_mod,
     configs as configs_mod,
     files as files_mod,
@@ -59,6 +60,13 @@ from src.services.mcp_server.tools import (  # noqa: E402
 
 
 PARITY_HANDLERS: dict[str, set[str]] = {
+    "agents": {
+        "bifrost_list_agents",
+        "bifrost_get_agent",
+        "bifrost_create_agent",
+        "bifrost_update_agent",
+        "bifrost_delete_agent",
+    },
     "roles": {"list_roles", "create_role", "update_role", "delete_role"},
     "configs": {
         "list_configs",
@@ -111,6 +119,7 @@ PARITY_HANDLERS: dict[str, set[str]] = {
 
 
 MODULES = {
+    "agents": agents_mod,
     "roles": roles_mod,
     "claims": claims_mod,
     "configs": configs_mod,

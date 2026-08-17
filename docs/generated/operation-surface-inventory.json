@@ -14,8 +14,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "list_agents",
-          "status": "divergent_behavior"
+          "name": "bifrost_list_agents",
+          "status": "exact_parity"
         },
         "native_builder": {
           "name": null,
@@ -78,8 +78,8 @@
           "status": "intentionally_unsupported"
         },
         "mcp": {
-          "name": "get_agent",
-          "status": "divergent_behavior"
+          "name": "bifrost_get_agent",
+          "status": "exact_parity"
         },
         "native_builder": {
           "name": null,
@@ -142,8 +142,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "create_agent",
-          "status": "divergent_behavior"
+          "name": "bifrost_create_agent",
+          "status": "exact_parity"
         },
         "native_builder": {
           "name": null,
@@ -212,8 +212,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "update_agent",
-          "status": "divergent_behavior"
+          "name": "bifrost_update_agent",
+          "status": "exact_parity"
         },
         "native_builder": {
           "name": null,
@@ -282,8 +282,8 @@
           "status": "exact_parity"
         },
         "mcp": {
-          "name": "delete_agent",
-          "status": "divergent_behavior"
+          "name": "bifrost_delete_agent",
+          "status": "exact_parity"
         },
         "native_builder": {
           "name": null,
