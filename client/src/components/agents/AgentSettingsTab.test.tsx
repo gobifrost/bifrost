@@ -16,9 +16,10 @@ vi.mock("@/contexts/AuthContext", () => ({
 const mockCreateMutation = vi.fn();
 const mockUpdateMutation = vi.fn();
 vi.mock("@/hooks/useAgents", async () => {
-	const actual = await vi.importActual<typeof import("@/hooks/useAgents")>(
-		"@/hooks/useAgents",
-	);
+	const actual =
+		await vi.importActual<typeof import("@/hooks/useAgents")>(
+			"@/hooks/useAgents",
+		);
 	return {
 		...actual,
 		useCreateAgent: () => ({
@@ -39,13 +40,54 @@ vi.mock("@/hooks/useTools", () => ({
 }));
 
 vi.mock("@/hooks/useRoles", () => ({
-	useRoles: () => ({ data: [] }),
+	useResourceRoles: () => ({ data: [] }),
 }));
 vi.mock("@/hooks/useKnowledge", () => ({
 	useKnowledgeNamespaces: () => ({ data: [] }),
 }));
 vi.mock("@/hooks/useLLMConfig", () => ({
 	useLLMModels: () => ({ models: [] }),
+}));
+vi.mock("@/lib/api-client", () => ({
+	$api: {
+		useQuery: () => ({ data: [], isLoading: false }),
+	},
+}));
+vi.mock("@/components/ui/tiptap-editor", () => ({
+	TiptapEditor: ({
+		content,
+		onChange,
+		readOnly,
+		ariaLabel,
+	}: {
+		content: string;
+		onChange?: (value: string) => void;
+		readOnly?: boolean;
+		ariaLabel?: string;
+	}) => (
+		<textarea
+			aria-label={ariaLabel}
+			value={content}
+			readOnly={readOnly}
+			onChange={(event) => onChange?.(event.target.value)}
+		/>
+	),
+}));
+vi.mock("@/services/agentSkills", () => ({
+	getAgentSkill: async () => ({
+		name: "Inline agent instructions",
+		description: "",
+		bundle_path: null,
+		skill_markdown: "",
+		files: ["SKILL.md"],
+		companion_files: [],
+		automatic_capabilities: [],
+		source: "inline",
+		is_managed: false,
+	}),
+	getAgentSkillFile: vi.fn(),
+	uploadAgentSkill: vi.fn(),
+	detachAgentSkill: vi.fn(),
 }));
 
 beforeEach(() => {
@@ -101,10 +143,10 @@ describe("AgentSettingsTab — edit mode", () => {
 			name: /^name$/i,
 		}) as HTMLInputElement;
 		expect(nameInput.value).toBe("Tier-1 Triage");
-		const promptInput = screen.getByRole("textbox", {
-			name: /system prompt/i,
-		}) as HTMLTextAreaElement;
-		expect(promptInput.value).toBe("You are a triage bot.");
+		const promptInput = await screen.findByRole("textbox", {
+			name: /inline instructions/i,
+		});
+		expect(promptInput).toHaveTextContent("You are a triage bot.");
 	});
 
 	it("submits via update mutation on Save", async () => {
@@ -112,9 +154,7 @@ describe("AgentSettingsTab — edit mode", () => {
 			mode: "edit",
 			agent: existingAgent,
 		});
-		await user.click(
-			screen.getByRole("button", { name: /save changes/i }),
-		);
+		await user.click(screen.getByRole("button", { name: /save changes/i }));
 		await waitFor(() => {
 			expect(mockUpdateMutation).toHaveBeenCalledTimes(1);
 		});
@@ -141,6 +181,27 @@ describe("AgentSettingsTab — edit mode", () => {
 			screen.getByText("Optional cumulative limit (1k–1M tokens)."),
 		).toBeInTheDocument();
 	});
+
+	it("makes every managed runtime field read-only while leaving Skill content viewable", async () => {
+		await renderTab({
+			mode: "edit",
+			agent: { ...existingAgent, is_solution_managed: true },
+		});
+
+		expect(
+			screen.getByTestId("solution-managed-banner"),
+		).toBeInTheDocument();
+		expect(screen.getByRole("textbox", { name: /^name$/i })).toBeDisabled();
+		expect(
+			screen.getByRole("combobox", { name: /access level/i }),
+		).toBeDisabled();
+		expect(screen.getByTestId("save-agent-button")).toBeDisabled();
+		const instructions = await screen.findByLabelText("Inline instructions");
+		expect(instructions).toHaveAttribute("readonly");
+		expect(
+			screen.queryByRole("radio", { name: /edit markdown/i }),
+		).not.toBeInTheDocument();
+	});
 });
 
 describe("AgentSettingsTab — create mode", () => {
@@ -153,14 +214,10 @@ describe("AgentSettingsTab — create mode", () => {
 
 	it("blocks submission when name + system prompt are empty", async () => {
 		const { user } = await renderTab({ mode: "create", agent: null });
-		await user.click(
-			screen.getByRole("button", { name: /create agent/i }),
-		);
+		await user.click(screen.getByRole("button", { name: /create agent/i }));
 		// Validation prevents the create mutation from firing.
 		await waitFor(() => {
-			expect(
-				screen.getAllByText(/required/i).length,
-			).toBeGreaterThan(0);
+			expect(screen.getAllByText(/required/i).length).toBeGreaterThan(0);
 		});
 		expect(mockCreateMutation).not.toHaveBeenCalled();
 	});
@@ -176,19 +233,15 @@ describe("AgentSettingsTab — create mode", () => {
 			screen.getByRole("textbox", { name: /^name$/i }),
 			"Sales Bot",
 		);
-		await user.type(
-			screen.getByRole("textbox", { name: /system prompt/i }),
-			"Be helpful.",
-		);
-		await user.click(
-			screen.getByRole("button", { name: /create agent/i }),
-		);
+		const instructions = await screen.findByRole("textbox", {
+			name: /inline instructions/i,
+		});
+		await user.type(instructions, "Be helpful.");
+		await user.click(screen.getByRole("button", { name: /create agent/i }));
 		await waitFor(() => {
 			expect(mockCreateMutation).toHaveBeenCalledTimes(1);
 		});
-		expect(mockCreateMutation.mock.calls[0][0].body.name).toBe(
-			"Sales Bot",
-		);
+		expect(mockCreateMutation.mock.calls[0][0].body.name).toBe("Sales Bot");
 		expect(onCreated).toHaveBeenCalledWith("new-agent-id");
 	});
 });

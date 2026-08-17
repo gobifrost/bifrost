@@ -23,7 +23,6 @@ import redis.asyncio as aioredis
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
-from pydantic_ai import Agent as PydanticAgent
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.usage import RunUsage
 
@@ -35,18 +34,17 @@ from src.core.pubsub import publish_agent_run_step
 from src.services.execution.agent_helpers import (
     build_agent_system_prompt,
     find_delegated_agent,
+    is_agent_system_tool,
     parse_mcp_tool_name,
     resolve_agent_tools,
 )
 from src.services.agent_runtime import (
     AgentRunBudget,
     AgentRunCancelled,
-    BifrostToolset,
+    AgentRuntimeRunner,
     ModelCallEvent,
-    ObservedModel,
     ToolEvent,
     agent_model_settings,
-    build_runtime_capabilities,
     create_agent_model,
     provider_reported_cost,
 )
@@ -363,31 +361,23 @@ class AutonomousAgentExecutor:
                 duration_ms=event.duration_ms,
             )
 
-        base_model = create_agent_model(llm_config, model=model_name)
-        observed_model = ObservedModel(base_model, record_model_event)
-        toolset = BifrostToolset(
-            tool_definitions,
-            execute_tool,
-            event_handler=record_tool_event,
-            toolset_id=f"bifrost-{agent.id}",
-        )
-        runtime = PydanticAgent(
-            observed_model,
-            system_prompt=build_agent_system_prompt(
+        runtime = AgentRuntimeRunner(
+            model=create_agent_model(llm_config, model=model_name),
+            instructions=build_agent_system_prompt(
                 agent,
                 execution_context={"mode": "autonomous"},
             ),
-            toolsets=[toolset] if tool_definitions else [],
-            capabilities=build_runtime_capabilities(budget),
+            budget=budget,
             model_settings=agent_model_settings(
                 llm_config,
                 max_tokens=agent.llm_max_tokens or llm_config.max_tokens,
                 session_id=run_id,
             ),
-            # One bounded correction for malformed tool names/arguments. The
-            # shared UsageLimits ledger charges the retry to the parent run.
-            retries=1,
-            end_strategy="exhaustive",
+            tool_definitions=tool_definitions,
+            tool_executor=execute_tool,
+            model_event_handler=record_model_event,
+            tool_event_handler=record_tool_event,
+            toolset_id=f"bifrost-{agent.id}",
         )
 
         user_content = json.dumps(input_data) if input_data else "Run your task."
@@ -512,7 +502,7 @@ class AutonomousAgentExecutor:
             return await self._execute_delegation(tool_call, agent)
 
         # System tools
-        if tool_call.name in (agent.system_tools or []):
+        if is_agent_system_tool(agent, tool_call.name):
             return await self._execute_system_tool(tool_call, agent)
 
         # External MCP tools — namespaced ``mcp__<connection_id>__<tool>``.
@@ -1076,6 +1066,9 @@ class AutonomousAgentExecutor:
                         and self._caller.get("name")
                         else agent.name
                     ),
+                    agent_bundle_path=agent.bundle_path,
+                    agent_skill_id=agent.id if agent.bundle_path else None,
+                    agent_solution_id=agent.solution_id,
                     session=db,
                 )
 

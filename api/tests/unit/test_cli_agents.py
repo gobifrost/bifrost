@@ -77,6 +77,18 @@ def test_update_tool_ids_fails_when_persisted_ids_differ(_patch_client) -> None:
     assert fake.calls[0] == ("PUT", f"/api/agents/{agent_id}", {"tool_ids": [tool_id]})
 
 
+def test_create_and_update_do_not_expose_manifest_owned_bundle_path_flag() -> None:
+    runner = CliRunner()
+
+    create = runner.invoke(agents_group, ["create", "--help"])
+    update = runner.invoke(agents_group, ["update", "--help"])
+
+    assert create.exit_code == 0
+    assert update.exit_code == 0
+    assert "--bundle-path" not in create.output
+    assert "--bundle-path" not in update.output
+
+
 def test_list_include_inactive_requests_all_agents(_patch_client) -> None:
     fake = _patch_client(_FakeClient(put_body=[]))
 

@@ -73,6 +73,7 @@ async def get_llm_config(
         default_system_prompt=config.default_system_prompt,
         summarization_model=config.summarization_model,
         tuning_model=config.tuning_model,
+        builder_model=config.builder_model,
         image_generation_model=config.image_generation_model,
         video_generation_model=config.video_generation_model,
         chat_fast_label=config.chat_fast_label,
@@ -84,6 +85,7 @@ async def get_llm_config(
         chat_fast_capabilities=config.resolve_chat_capabilities("fast") if config.chat_fast_model else None,
         chat_balanced_capabilities=config.resolve_chat_capabilities("balanced"),
         chat_pro_capabilities=config.resolve_chat_capabilities("pro") if config.chat_pro_model else None,
+        builder_capabilities=config.resolve_builder_capabilities(),
         is_configured=config.is_configured,
         api_key_set=config.api_key_set,
     )
@@ -113,6 +115,7 @@ async def set_llm_config(
             default_system_prompt=request.default_system_prompt,
             summarization_model=request.summarization_model,
             tuning_model=request.tuning_model,
+            builder_model=request.builder_model,
             image_generation_model=request.image_generation_model,
             video_generation_model=request.video_generation_model,
             chat_fast_label=request.chat_fast_label,
@@ -124,6 +127,7 @@ async def set_llm_config(
             chat_fast_capabilities=request.chat_fast_capabilities,
             chat_balanced_capabilities=request.chat_balanced_capabilities,
             chat_pro_capabilities=request.chat_pro_capabilities,
+            builder_capabilities=request.builder_capabilities,
             updated_by=user.email,
         )
     except ValueError as e:
@@ -160,6 +164,7 @@ async def set_llm_config(
                 request.chat_pro_model,
                 request.summarization_model,
                 request.tuning_model,
+                request.builder_model,
                 request.image_generation_model,
                 request.video_generation_model,
             )
@@ -198,6 +203,7 @@ async def set_llm_config(
         default_system_prompt=request.default_system_prompt,
         summarization_model=request.summarization_model,
         tuning_model=request.tuning_model,
+        builder_model=request.builder_model,
         image_generation_model=request.image_generation_model,
         video_generation_model=request.video_generation_model,
         chat_fast_label=request.chat_fast_label,
@@ -209,6 +215,7 @@ async def set_llm_config(
         chat_fast_capabilities=config.resolve_chat_capabilities("fast") if config and config.chat_fast_model else None,
         chat_balanced_capabilities=config.resolve_chat_capabilities("balanced") if config else None,
         chat_pro_capabilities=config.resolve_chat_capabilities("pro") if config and config.chat_pro_model else None,
+        builder_capabilities=config.resolve_builder_capabilities() if config else None,
         is_configured=True,
         api_key_set=api_key_set,
     )

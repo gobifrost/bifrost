@@ -31,6 +31,7 @@ RUNNER_RETRY_DELAY = timedelta(seconds=5)
 PLATFORM_JOB_IDLE_SECONDS = 2.0
 
 logger = logging.getLogger(__name__)
+OCCUPIES_PLATFORM_JOB_CAPACITY_STATUSES = ("running", "waiting", "cancel_requested")
 
 
 def _now() -> datetime:
@@ -173,7 +174,7 @@ async def claim_platform_job() -> ClaimedPlatformJob | None:
                     await db.execute(
                         select(func.count(PlatformJob.id)).where(
                             PlatformJob.job_type == job.job_type,
-                            PlatformJob.status.in_(("running", "cancel_requested")),
+                            PlatformJob.status.in_(OCCUPIES_PLATFORM_JOB_CAPACITY_STATUSES),
                         )
                     )
                 ).scalar_one()
@@ -192,7 +193,7 @@ async def claim_platform_job() -> ClaimedPlatformJob | None:
                     await db.execute(
                         select(func.count(PlatformJob.id)).where(
                             PlatformJob.resource_lock_key == job.resource_lock_key,
-                            PlatformJob.status.in_(("running", "cancel_requested")),
+                            PlatformJob.status.in_(OCCUPIES_PLATFORM_JOB_CAPACITY_STATUSES),
                         )
                     )
                 ).scalar_one()

@@ -16,9 +16,10 @@ import asyncio
 import base64
 import logging
 import re
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -33,6 +34,7 @@ from src.models.contracts.applications import (
     ApplicationDefinition,
     ApplicationDraftSave,
     ApplicationListResponse,
+    ApplicationLaunchResponse,
     ApplicationPublic,
     ApplicationPublishRequest,
     ApplicationReplaceRequest,
@@ -46,6 +48,9 @@ from src.jobs.platform.application_publish import (
 )
 from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.models.orm.applications import Application
+from src.models.orm.solutions import Solution
+from src.core.cache.redis_client import get_shared_redis
+from src.services.builder.app_session import AppLaunchService
 from src.services.platform_jobs import (
     enqueue_platform_job,
     ensure_platform_job_notification,
@@ -62,6 +67,16 @@ from shared.logo_processing import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/applications", tags=["Applications"])
+
+
+async def get_application_launch_service() -> AppLaunchService:
+    return AppLaunchService(await get_shared_redis())
+
+
+ApplicationLaunchService = Annotated[
+    AppLaunchService,
+    Depends(get_application_launch_service),
+]
 
 
 class AppValidationIssue(BaseModel):
@@ -150,6 +165,7 @@ async def application_to_public(
         has_unpublished_changes=application.has_unpublished_changes,
         access_level=application.access_level,
         app_model=application.app_model,
+        runtime_mode=application.runtime_mode,
         role_ids=role_ids,
         repo_path=application.repo_path,
         logo=(
@@ -404,6 +420,51 @@ async def get_application(
     )
     application = await get_application_or_404(ctx, slug)
     return await application_to_public(application, repo)
+
+
+@router.post(
+    "/{app_id}/isolated-launch",
+    response_model=ApplicationLaunchResponse,
+    summary="Create a one-time launch for an isolated application",
+)
+async def create_isolated_application_launch(
+    app_id: UUID,
+    ctx: Context,
+    launches: ApplicationLaunchService,
+    path: str = Query(default="/"),
+) -> ApplicationLaunchResponse:
+    """Hand an authorized platform user into the app's opaque runtime."""
+
+    application = await get_application_by_id_or_404(ctx, app_id)
+    if application.runtime_mode != "isolated" or application.solution_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This application does not use the isolated runtime",
+        )
+    solution = await ctx.db.get(Solution, application.solution_id)
+    if solution is None or solution.status != "active":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    runtime_org_id = application.organization_id or ctx.org_id
+    if (
+        runtime_org_id is None
+        or solution.organization_id != application.organization_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This application needs a consistent organization runtime scope",
+        )
+
+    launch_path = path if path.startswith("/") else f"/{path}"
+    code = await launches.create_launch_code(
+        user_id=ctx.user.user_id,
+        solution_id=solution.id,
+        app_id=application.id,
+        organization_id=runtime_org_id,
+        path=launch_path,
+    )
+    return ApplicationLaunchResponse(
+        launch_url=f"/api/builder-runtime/launch/{code}",
+    )
 
 
 @router.patch(

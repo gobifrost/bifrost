@@ -24,6 +24,8 @@ from src.jobs.rabbitmq import rabbitmq
 from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
 from src.jobs.consumers.package_install import PackageInstallConsumer
 from src.jobs.consumers.agent_run import AgentRunConsumer
+from src.jobs.consumers.solution_builder_turn import SolutionBuilderTurnConsumer
+from src.jobs.consumers.solution_build import SolutionBuildConsumer
 from src.jobs.summarize_worker import (
     SummarizeBackfillConsumer,
     SummarizeConsumer,
@@ -137,6 +139,8 @@ class Worker:
             SummarizeConsumer(),
             SummarizeBackfillConsumer(),
             TuneChatConsumer(),
+            SolutionBuilderTurnConsumer(),
+            SolutionBuildConsumer(),
         ]
 
         # Start each consumer

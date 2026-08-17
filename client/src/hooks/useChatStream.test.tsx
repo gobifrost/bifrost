@@ -243,6 +243,38 @@ describe("useChatStream video jobs", () => {
 		);
 	});
 
+	it("surfaces context compaction as an inline activity event", async () => {
+		const queryClient = new QueryClient();
+		const wrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+		);
+		renderHook(
+			() => useChatStream({ conversationId: "conversation-1" }),
+			{ wrapper },
+		);
+		await waitFor(() => expect(mocks.callbacks.chat).toBeDefined());
+
+		act(() => {
+			mocks.callbacks.chat?.({
+				type: "context_warning",
+				context_warning: {
+					current_tokens: 18_000,
+					max_tokens: 24_000,
+					action: "compacted",
+					message: "Compacted the active context.",
+				},
+			});
+		});
+
+		expect(mocks.store.addSystemEvent).toHaveBeenCalledWith(
+			"conversation-1",
+			expect.objectContaining({
+				type: "info",
+				message: "Compacted the active context.",
+			}),
+		);
+	});
+
 	it("refreshes Chat and Artifacts when durable video generation finishes", async () => {
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false } },

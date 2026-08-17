@@ -8,6 +8,29 @@ Use the available list/get tools to identify the target organization, existing e
 
 MCP tools primarily operate on live instance entities and `_repo` content. If an entity is Solution-managed, stop and route the change through its Solution source/deploy workflow; do not create a loose duplicate to bypass ownership.
 
+## Private Solution Builder sessions
+
+The progressive Agent gateway exposes a private Solution's deterministic
+Builder Agent when the caller has `solutions.build` and can access that
+Solution. Search for the Builder Agent, hydrate its instructions, and use its
+existing workspace tools; do not create loose `_repo` files or a second Agent.
+
+Every Builder workspace call requires the `builder_session_id` shown by the
+native Builder session. Read tools inspect that session's current immutable
+revision. Mutating tools create a new auditable revision and accept
+`finalize`:
+
+- leave `finalize` false while making intermediate edits;
+- set `finalize` true only on the final successful mutation to validate the
+  revision and enqueue the app build;
+- inspect the returned `revision_id` and `deploy_job_id` before claiming the
+  build is ready.
+
+This is the bring-your-own-harness path: the external model performs the
+coding loop, while Bifrost keeps authorization, revision history, validation,
+build dispatch, and deployment inside the same Solution boundary as the native
+Builder.
+
 ## Discover, read, then write
 
 Tool names can vary by installed server version. Search the available tools and use their provided schemas rather than inventing a name or argument.

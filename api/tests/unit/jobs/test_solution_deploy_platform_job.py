@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -46,7 +47,11 @@ async def test_failed_repo_install_cleanup_commits_before_job_failure(monkeypatc
         yield db
         transaction_committed = True
 
-    context = AsyncMock()
+    context = SimpleNamespace(
+        report=AsyncMock(),
+        log=AsyncMock(),
+        requested_by_user_id=str(uuid4()),
+    )
     monkeypatch.setattr(
         "src.jobs.platform.solution_deploy.SolutionDeployJobStorage.copy_to_path",
         AsyncMock(return_value=1),

@@ -23,7 +23,14 @@ from src.services.llm.base import (
     ToolCallRequest,
     ToolDefinition,
 )
-from src.services.llm.factory import get_llm_client
+
+
+async def get_llm_client(session):
+    """Resolve the configured client without importing API/database code eagerly."""
+
+    from src.services.llm.factory import get_llm_client as resolve_client
+
+    return await resolve_client(session)
 
 __all__ = [
     "BaseLLMClient",

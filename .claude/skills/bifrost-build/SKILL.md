@@ -11,6 +11,28 @@ Bifrost is an open-source platform for building apps, workflows, forms, and agen
 
 Follow the process below for every task. Load only the references routed for the current artifact.
 
+## Native Builder workspace
+
+When this Skill is running inside Bifrost's native Builder, the current
+workspace is already a private Solution and the available bounded workspace
+tools replace the workstation CLI:
+
+- Do not ask the user to choose Workspace versus Solution ownership, configure
+  CLI authentication, or approve an initial plan. The native Builder has
+  already made those choices from the project the user opened.
+- Inspect the existing tree first. Use `read_skill_asset` for the routed
+  references and use the workspace mutation tools for source changes.
+- For every new app, read `references/apps-v2.md` before writing its manifest
+  or source. The `.bifrost/apps.yaml` entry must use the exact
+  `app_model: standalone_v2` field; `type`, `entry`, and `mount_function` are
+  not substitutes for the manifest contract.
+- Call `validate_solution`, then `test_solution_build`, after the final change.
+  Fix every structural, dependency, type, CSS, and production-compiler error,
+  then repeat both checks until they pass. A prose claim that the Solution is
+  valid or buildable is not enough.
+- Do not claim deployment or publication. Bifrost validates the resulting
+  revision and queues the isolated preview after the turn completes.
+
 ## Prerequisites
 
 This Solution workflow requires Bifrost CLI 1.2.2 or newer. The selected

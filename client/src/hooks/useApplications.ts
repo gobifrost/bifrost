@@ -19,6 +19,8 @@ export type ApplicationPublishRequest =
 	components["schemas"]["ApplicationPublishRequest"];
 export type PlatformJobAccepted =
 	components["schemas"]["PlatformJobAccepted"];
+export type ApplicationLaunchResponse =
+	components["schemas"]["ApplicationLaunchResponse"];
 
 // Export type for applications
 export type ApplicationExport = ApplicationPublic;
@@ -85,7 +87,7 @@ export function useApplication(slug: string | undefined) {
 				path: { slug: slug ?? "" },
 			},
 		},
-		{ enabled: !!slug, staleTime: 60_000 },
+		{ enabled: !!slug },
 	);
 }
 
@@ -279,6 +281,27 @@ export async function getApplication(
 	});
 	if (error)
 		throw new Error(getErrorMessage(error, "Failed to get application"));
+	return data;
+}
+
+/** Create a one-time handoff into an isolated Solution app. */
+export async function createIsolatedApplicationLaunch(
+	appId: string,
+	path: string,
+	options: { signal?: AbortSignal } = {},
+): Promise<ApplicationLaunchResponse> {
+	const { data, error } = await apiClient.POST(
+		"/api/applications/{app_id}/isolated-launch",
+		{
+			params: { path: { app_id: appId }, query: { path } },
+			signal: options.signal,
+		},
+	);
+	if (error) {
+		throw new Error(
+			getErrorMessage(error, "Failed to start isolated application"),
+		);
+	}
 	return data;
 }
 

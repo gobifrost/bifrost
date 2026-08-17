@@ -10,7 +10,7 @@ from pydantic_ai.models import Model
 from pydantic_ai.usage import RequestUsage
 
 from src.services.llm.base import LLMConfig
-from src.services.model_pricing import is_openrouter_endpoint
+from src.services.llm.provider_identity import is_openrouter_endpoint
 
 
 def provider_name_for_config(config: LLMConfig) -> str:

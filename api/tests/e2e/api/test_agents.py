@@ -4,7 +4,9 @@ Agents E2E Tests.
 Tests agent CRUD operations and role assignment.
 """
 
+import io
 import logging
+import zipfile
 from uuid import UUID, uuid4
 
 import pytest
@@ -14,6 +16,10 @@ from src.models.orm.agents import Agent
 from src.models.orm.agent_runs import AgentRun
 
 logger = logging.getLogger(__name__)
+
+
+def _upload_headers(headers: dict[str, str]) -> dict[str, str]:
+    return {k: v for k, v in headers.items() if k.lower() != "content-type"}
 
 
 class TestAgentsCRUD:
@@ -76,6 +82,144 @@ class TestAgentsCRUD:
         data = response.json()
         assert data["id"] == test_agent["id"]
         assert data["name"] == test_agent["name"]
+        assert "bundle_path" in data
+
+    def test_agent_create_rejects_bundle_path(
+        self,
+        e2e_client,
+        platform_admin,
+    ):
+        """Generic Agent creation cannot bind a bundle root directly."""
+        response = e2e_client.post(
+            "/api/agents",
+            json={
+                "name": "Bundled by API",
+                "system_prompt": "Use me.",
+                "bundle_path": "skills/not-allowed",
+                "channels": ["chat"],
+                "access_level": "authenticated",
+            },
+            headers=platform_admin.headers,
+        )
+        assert response.status_code == 422
+
+    def test_agent_skill_projection_and_download(
+        self,
+        e2e_client,
+        platform_admin,
+        test_agent,
+    ):
+        """Every Agent exposes the portable skill users are configuring."""
+        skill = e2e_client.get(
+            f"/api/agents/{test_agent['id']}/skill",
+            headers=platform_admin.headers,
+        )
+        assert skill.status_code == 200, skill.text
+        body = skill.json()
+        assert body["name"] == "e2e-test-agent"
+        assert "SKILL.md" not in body["companion_files"]
+        assert body["skill_markdown"].startswith("---\nname:")
+        assert test_agent["system_prompt"] in body["skill_markdown"]
+
+        download = e2e_client.get(
+            f"/api/agents/{test_agent['id']}/skill/download",
+            headers=platform_admin.headers,
+        )
+        assert download.status_code == 200, download.text
+        assert download.headers["content-type"] == "application/zip"
+        assert "attachment" in download.headers["content-disposition"]
+        archive = zipfile.ZipFile(io.BytesIO(download.content))
+        assert archive.namelist() == ["e2e-test-agent/SKILL.md"]
+        assert (
+            archive.read("e2e-test-agent/SKILL.md").decode("utf-8")
+            == body["skill_markdown"]
+        )
+
+    def test_upload_browse_and_detach_agent_skill(
+        self,
+        e2e_client,
+        platform_admin,
+        test_agent,
+    ):
+        """Uploaded SKILL.md becomes canonical without writing into _repo."""
+        skill_markdown = (
+            "---\n"
+            "name: expense-tracker\n"
+            "description: Track expenses safely\n"
+            "---\n\n"
+            "# Instructions\n\nUse the expense policy.\n"
+        )
+        archive_bytes = io.BytesIO()
+        with zipfile.ZipFile(archive_bytes, "w") as archive:
+            archive.writestr("expense/SKILL.md", skill_markdown)
+            archive.writestr(
+                "expense/references/policy.md",
+                "# Expense policy\n",
+            )
+
+        uploaded = e2e_client.put(
+            f"/api/agents/{test_agent['id']}/skill/bundle",
+            files={
+                "file": (
+                    "expense.skill",
+                    archive_bytes.getvalue(),
+                    "application/zip",
+                )
+            },
+            headers=_upload_headers(platform_admin.headers),
+        )
+        assert uploaded.status_code == 200, uploaded.text
+        body = uploaded.json()
+        assert body["bundle_path"] == "skills/expense-tracker"
+        assert body["skill_markdown"] == skill_markdown
+        assert body["files"] == ["SKILL.md", "references/policy.md"]
+        assert body["source"] == "upload"
+
+        agent = e2e_client.get(
+            f"/api/agents/{test_agent['id']}",
+            headers=platform_admin.headers,
+        )
+        assert agent.status_code == 200
+        assert agent.json()["bundle_path"] == "skills/expense-tracker"
+        assert agent.json()["system_prompt"] == skill_markdown
+
+        reference = e2e_client.get(
+            f"/api/agents/{test_agent['id']}/skill/file",
+            params={"path": "references/policy.md"},
+            headers=platform_admin.headers,
+        )
+        assert reference.status_code == 200, reference.text
+        assert reference.json() == {
+            "path": "references/policy.md",
+            "encoding": "utf-8",
+            "content": "# Expense policy\n",
+        }
+
+        bundle_path_update = e2e_client.put(
+            f"/api/agents/{test_agent['id']}",
+            json={"bundle_path": "skills/other"},
+            headers=platform_admin.headers,
+        )
+        assert bundle_path_update.status_code == 422
+
+        split_brain_update = e2e_client.put(
+            f"/api/agents/{test_agent['id']}",
+            json={"system_prompt": "Inline prompt should not win"},
+            headers=platform_admin.headers,
+        )
+        assert split_brain_update.status_code == 409
+
+        detached = e2e_client.delete(
+            f"/api/agents/{test_agent['id']}/skill/bundle",
+            headers=platform_admin.headers,
+        )
+        assert detached.status_code == 204, detached.text
+        inline = e2e_client.get(
+            f"/api/agents/{test_agent['id']}",
+            headers=platform_admin.headers,
+        ).json()
+        assert inline["bundle_path"] is None
+        assert inline["system_prompt"].startswith("# Instructions")
 
     def test_update_agent(
         self,

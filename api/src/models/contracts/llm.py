@@ -21,6 +21,7 @@ class LLMConfigResponse(BaseModel):
     default_system_prompt: str | None = None
     summarization_model: str | None = None
     tuning_model: str | None = None
+    builder_model: str | None = None
     image_generation_model: str | None = None
     video_generation_model: str | None = None
     chat_fast_label: str = "Fast"
@@ -32,6 +33,7 @@ class LLMConfigResponse(BaseModel):
     chat_fast_capabilities: ModelCapabilities | None = None
     chat_balanced_capabilities: ModelCapabilities | None = None
     chat_pro_capabilities: ModelCapabilities | None = None
+    builder_capabilities: ModelCapabilities | None = None
     is_configured: bool = True
     api_key_set: bool = False
 
@@ -74,6 +76,10 @@ class LLMConfigRequest(BaseModel):
         default=None,
         description="Model override for tuning chat + dry-run. Falls back to primary model if unset.",
     )
+    builder_model: str | None = Field(
+        default=None,
+        description="Optional model for Solution Builder coding turns; falls back to the primary model.",
+    )
     image_generation_model: str | None = Field(
         default=None,
         description="Optional dedicated model for image generation.",
@@ -100,6 +106,7 @@ class LLMConfigRequest(BaseModel):
     chat_fast_capabilities: ModelCapabilities | None = None
     chat_balanced_capabilities: ModelCapabilities | None = None
     chat_pro_capabilities: ModelCapabilities | None = None
+    builder_capabilities: ModelCapabilities | None = None
 
 
 class LLMTestRequest(BaseModel):

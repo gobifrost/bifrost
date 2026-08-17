@@ -50,6 +50,9 @@ from src.routers.hooks import router as hooks_router
 from src.routers.tables import router as tables_router
 from src.routers.claims import router as claims_router
 from src.routers.solutions import router as solutions_router
+from src.routers.solution_builder import router as solution_builder_router
+from src.routers.solution_promotions import router as solution_promotions_router
+from src.routers.solution_app_host import control_router as solution_app_launch_router
 from src.routers.knowledge_sources import router as knowledge_sources_router
 from src.routers.app_embed_secrets import router as app_embed_secrets_router
 from src.routers.applications import router as applications_router
@@ -63,6 +66,8 @@ from src.routers.docs import router as docs_router
 from src.routers.jobs import router as jobs_router
 from src.routers.platform_jobs import router as platform_jobs_router
 from src.routers.scheduler_diagnostics import router as scheduler_diagnostics_router
+from src.routers.sandbox_jobs import router as sandbox_jobs_router
+from src.routers.sandbox_runner_admin import router as sandbox_runner_admin_router
 from src.routers.platform import (
     workers_router as platform_workers_router,
     queue_router as platform_queue_router,
@@ -130,6 +135,9 @@ __all__ = [
     "tables_router",
     "claims_router",
     "solutions_router",
+    "solution_builder_router",
+    "solution_promotions_router",
+    "solution_app_launch_router",
     "knowledge_sources_router",
     "app_embed_secrets_router",
     "applications_router",
@@ -143,6 +151,8 @@ __all__ = [
     "jobs_router",
     "platform_jobs_router",
     "scheduler_diagnostics_router",
+    "sandbox_jobs_router",
+    "sandbox_runner_admin_router",
     "platform_workers_router",
     "platform_queue_router",
     "platform_stuck_router",

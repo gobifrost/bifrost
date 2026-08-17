@@ -214,7 +214,12 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     #
     # SDK AI completion requests gained optional file inputs (2026-08-15).
     # ADDITIVE: old SDK clients omit the field and keep text-only behavior.
-    "aedcecc04849f529fb42278841f5ff3edea769d40b8ba39c131162033dc96ceb"
+    #
+    # Builder reinstatement adds optional Agent bundle metadata and PlatformJob
+    # external-execution/result fields (2026-08-16). ADDITIVE: old clients omit
+    # the Agent field and ignore the new job metadata. Skill bundle mutation is
+    # manifest/upload-owned and is intentionally excluded from generic CLI flags.
+    "baa1cabde61447cf2eec9ffce8f5714fd92b36558b6df390cf79d27cffbadeb0"
 )
 
 

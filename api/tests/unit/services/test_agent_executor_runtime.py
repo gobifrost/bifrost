@@ -110,7 +110,10 @@ async def test_chat_stream_contract_is_driven_by_pydantic_runtime(
         return_value=client,
     ), patch(
         "src.services.agent_executor.create_agent_model",
-        return_value=CountingTestModel(custom_output_text="Hello from Pydantic"),
+        return_value=CountingTestModel(
+            call_tools=[],
+            custom_output_text="Hello from Pydantic",
+        ),
     ):
         chunks = [
             chunk
@@ -128,7 +131,56 @@ async def test_chat_stream_contract_is_driven_by_pydantic_runtime(
     )
     done = next(chunk for chunk in chunks if chunk.type == "done")
     assert done.content == "Hello from Pydantic"
+    assert executor.active_usage is not None
+    assert executor.active_usage.requests > 0
     executor._record_ai_usage.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_runtime_model_observer_receives_request_lifecycle(
+    conversation,
+) -> None:
+    observer = AsyncMock()
+    observed = AgentExecutor(
+        MagicMock(),
+        runtime_model_event_handler=observer,
+    )
+    observed._save_message = AsyncMock(side_effect=_saved_message)
+    observed._record_ai_usage = AsyncMock()
+    observed._build_message_history = AsyncMock(
+        return_value=[
+            LLMMessage(role="system", content="Be useful"),
+            LLMMessage(role="user", content="Hello"),
+        ]
+    )
+    client = PydanticAIClient(
+        LLMConfig(provider="openai", model="test-model", api_key="test-key")
+    )
+
+    with patch(
+        "src.services.agent_executor.get_llm_client",
+        new_callable=AsyncMock,
+        return_value=client,
+    ), patch(
+        "src.services.agent_executor.create_agent_model",
+        return_value=CountingTestModel(
+            call_tools=[],
+            custom_output_text="Observed",
+        ),
+    ):
+        _ = [
+            chunk
+            async for chunk in observed.chat(
+                None,
+                conversation,
+                "Hello",
+                stream=True,
+                enable_routing=False,
+            )
+        ]
+
+    event_types = [call.args[0].type for call in observer.await_args_list]
+    assert event_types == ["request", "response"]
 
 
 @pytest.mark.asyncio
@@ -149,7 +201,10 @@ async def test_chat_reapplies_agent_instructions_when_stored_history_exists(
     client = PydanticAIClient(
         LLMConfig(provider="openai", model="test-model", api_key="test-key")
     )
-    model = CapturingTestModel(custom_output_text="Current response")
+    model = CapturingTestModel(
+        call_tools=[],
+        custom_output_text="Current response",
+    )
 
     with patch(
         "src.services.agent_executor.get_llm_client",

@@ -66,6 +66,7 @@ services:
       RABBITMQ_DEFAULT_PASS: bifrost_debug
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+      - ./config/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "check_running"]
       interval: 10s

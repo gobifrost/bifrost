@@ -556,6 +556,19 @@ export function useChatStream({
 					break;
 				}
 
+				case "context_warning": {
+					const convId = currentConversationIdRef.current;
+					if (convId && chunk.context_warning?.message) {
+						addSystemEvent(convId, {
+							id: `context-${Date.now()}`,
+							type: "info",
+							timestamp: new Date().toISOString(),
+							message: chunk.context_warning.message,
+						});
+					}
+					break;
+				}
+
 				case "ask_user_question": {
 					// SDK is asking user a question - show modal
 					if (chunk.questions && chunk.request_id) {

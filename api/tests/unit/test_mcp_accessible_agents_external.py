@@ -75,6 +75,19 @@ class TestAccessibleAgentsOrgScope:
         # Superuser: no org filter (full visibility).
         assert "organization_id" not in sql
 
+    async def test_superuser_query_still_applies_private_solution_parent_gate(
+        self, session
+    ):
+        svc = MCPToolAccessService(session)
+        actor_id = uuid4()
+        await svc._get_accessible_agents(
+            user_roles=[], is_superuser=True, user_id=actor_id
+        )
+        sql = _executed_sql(session)
+        assert "solutions.visibility" in sql
+        assert "solutions.owner_user_id" in sql
+        assert actor_id.hex in sql
+
 
 @pytest.mark.asyncio
 class TestGetToolsForAgentByIdOrgScope:
@@ -101,3 +114,14 @@ class TestGetToolsForAgentByIdOrgScope:
         sql = _executed_sql(session)
         assert "organization_id" in sql
         assert "IS NULL" in sql
+
+    async def test_by_id_query_applies_private_solution_parent_gate(self, session):
+        svc = MCPToolAccessService(session)
+        actor_id = uuid4()
+        await svc.get_tools_for_agent(
+            agent_id=str(uuid4()), user_roles=[], is_superuser=True,
+            user_id=actor_id,
+        )
+        sql = _executed_sql(session)
+        assert "solutions.visibility" in sql
+        assert "solutions.owner_user_id" in sql

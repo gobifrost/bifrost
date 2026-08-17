@@ -43,7 +43,9 @@ class Solution(Base):
 
     __tablename__ = "solutions"
 
-    # A Solution installs AT MOST ONCE per scope (one org, or global). Two
+    # A shared Solution installs at most once per scope. Private Builder
+    # Solutions are unique per owner so different users in one organization
+    # can independently develop the same slug before promotion.
     # installs of the same slug in one org would let a v2 app's path::fn workflow
     # ref resolve a sibling install's workflow (Codex #8 P1); the constraint makes
     # that state unreachable. organization_id is nullable and NULLs don't compare
@@ -55,13 +57,22 @@ class Solution(Base):
             "slug",
             "organization_id",
             unique=True,
-            postgresql_where=text("organization_id IS NOT NULL"),
+            postgresql_where=text(
+                "organization_id IS NOT NULL AND visibility = 'shared'"
+            ),
         ),
         Index(
             "ix_solutions_slug_global_unique",
             "slug",
             unique=True,
-            postgresql_where=text("organization_id IS NULL"),
+            postgresql_where=text("organization_id IS NULL AND visibility = 'shared'"),
+        ),
+        Index(
+            "ix_solutions_owner_slug_private_unique",
+            "owner_user_id",
+            "slug",
+            unique=True,
+            postgresql_where=text("visibility = 'private'"),
         ),
     )
 
@@ -85,6 +96,16 @@ class Solution(Base):
     # resources and are not governed by this flag.
     global_repo_access: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
+    )
+
+    owner_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        default=None,
+        index=True,
+    )
+    visibility: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="shared", server_default="shared"
     )
 
     # Version bookkeeping (Task 20). ``version`` is the deployed bundle's

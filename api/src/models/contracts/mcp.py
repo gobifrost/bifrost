@@ -101,6 +101,8 @@ class MCPGatewayCapabilityAgent(BaseModel):
     id: str
     name: str
     description: str | None = None
+    builder: bool = False
+    builder_session_required: bool = False
     instructions: str | None = None
     instructions_included: bool = False
     matching_tools: list[MCPGatewayToolSummary]

@@ -44,6 +44,31 @@ def test_message_is_the_locked_wording() -> None:
     )
 
 
+def test_builder_control_plane_rows_are_not_deploy_managed() -> None:
+    """Builder state remains writable while portable Solution entities stay locked."""
+    from src.models.orm.solution_build_jobs import SolutionBuildJob
+    from src.models.orm.solution_builder import (
+        SolutionBuilderCollaborator,
+        SolutionBuilderProject,
+        SolutionBuilderSession,
+        SolutionGlobalWorkspaceApply,
+        SolutionSourceRevision,
+    )
+    from src.services.solutions.guard import _instance_is_managed
+
+    solution_id = uuid.uuid4()
+    operational_rows = [
+        SolutionBuildJob(solution_id=solution_id),
+        SolutionBuilderProject(solution_id=solution_id),
+        SolutionBuilderCollaborator(solution_id=solution_id),
+        SolutionGlobalWorkspaceApply(solution_id=solution_id),
+        SolutionSourceRevision(solution_id=solution_id),
+        SolutionBuilderSession(solution_id=solution_id),
+    ]
+
+    assert all(not _instance_is_managed(row) for row in operational_rows)
+
+
 @pytest.mark.e2e
 class TestAssertEntityIdNotSolutionManaged:
     async def test_raw_lookup_rejects_managed_row(self, db_session) -> None:

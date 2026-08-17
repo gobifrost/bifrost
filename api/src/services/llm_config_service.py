@@ -43,6 +43,7 @@ class LLMProviderConfig:
     default_system_prompt: str | None = None  # Default system prompt for agentless chat
     summarization_model: str | None = None  # Override for post-run summarization
     tuning_model: str | None = None  # Override for tuning chat + dry-run
+    builder_model: str | None = None  # Override for Solution Builder coding turns
     image_generation_model: str | None = None
     video_generation_model: str | None = None
     chat_fast_label: str = "Fast"
@@ -54,6 +55,7 @@ class LLMProviderConfig:
     chat_fast_capabilities: ModelCapabilities | None = None
     chat_balanced_capabilities: ModelCapabilities | None = None
     chat_pro_capabilities: ModelCapabilities | None = None
+    builder_capabilities: ModelCapabilities | None = None
     is_configured: bool = False
     api_key_set: bool = False  # Indicates if API key is configured (never return actual key)
 
@@ -84,6 +86,17 @@ class LLMProviderConfig:
             capabilities,
             provider=self.provider,
             model=model,
+            endpoint=self.endpoint,
+        )
+
+    def resolve_builder_model(self) -> str:
+        return self.builder_model or self.model
+
+    def resolve_builder_capabilities(self) -> ModelCapabilities:
+        return normalize_capabilities(
+            self.builder_capabilities,
+            provider=self.provider,
+            model=self.resolve_builder_model(),
             endpoint=self.endpoint,
         )
 
@@ -271,6 +284,7 @@ class LLMConfigService:
             default_system_prompt=config_data.get("default_system_prompt"),
             summarization_model=config_data.get("summarization_model"),
             tuning_model=config_data.get("tuning_model"),
+            builder_model=config_data.get("builder_model"),
             image_generation_model=config_data.get("image_generation_model"),
             video_generation_model=config_data.get("video_generation_model"),
             chat_fast_label=config_data.get("chat_fast_label", "Fast"),
@@ -282,6 +296,7 @@ class LLMConfigService:
             chat_fast_capabilities=stored_capabilities("chat_fast_capabilities"),
             chat_balanced_capabilities=stored_capabilities("chat_balanced_capabilities"),
             chat_pro_capabilities=stored_capabilities("chat_pro_capabilities"),
+            builder_capabilities=stored_capabilities("builder_capabilities"),
             is_configured=True,
             api_key_set=bool(config_data.get("encrypted_api_key")),
         )
@@ -296,6 +311,7 @@ class LLMConfigService:
         default_system_prompt: str | None = None,
         summarization_model: str | None = None,
         tuning_model: str | None = None,
+        builder_model: str | None = None,
         image_generation_model: str | None = None,
         video_generation_model: str | None = None,
         chat_fast_label: str = "Fast",
@@ -307,6 +323,7 @@ class LLMConfigService:
         chat_fast_capabilities: ModelCapabilities | None = None,
         chat_balanced_capabilities: ModelCapabilities | None = None,
         chat_pro_capabilities: ModelCapabilities | None = None,
+        builder_capabilities: ModelCapabilities | None = None,
         updated_by: str = "system",
     ) -> None:
         """
@@ -376,6 +393,10 @@ class LLMConfigService:
             chat_balanced_capabilities, chat_balanced_model or model
         )
         prepared_pro = prepare_capabilities(chat_pro_capabilities, chat_pro_model)
+        prepared_builder = prepare_capabilities(
+            builder_capabilities,
+            builder_model or model,
+        )
 
         config_data = {
             "provider": provider,
@@ -386,6 +407,7 @@ class LLMConfigService:
             "default_system_prompt": default_system_prompt,
             "summarization_model": summarization_model,
             "tuning_model": tuning_model,
+            "builder_model": builder_model,
             "image_generation_model": image_generation_model,
             "video_generation_model": video_generation_model,
             "chat_fast_label": chat_fast_label,
@@ -407,6 +429,11 @@ class LLMConfigService:
             "chat_pro_capabilities": (
                 prepared_pro.model_dump(mode="json")
                 if prepared_pro
+                else None
+            ),
+            "builder_capabilities": (
+                prepared_builder.model_dump(mode="json")
+                if prepared_builder
                 else None
             ),
         }

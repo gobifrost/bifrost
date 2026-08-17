@@ -22,13 +22,7 @@ import { useQueries } from "@tanstack/react-query";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import * as z from "zod";
-import {
-	AlertTriangle,
-	ChevronsUpDown,
-	Info,
-	Loader2,
-	X,
-} from "lucide-react";
+import { AlertTriangle, ChevronsUpDown, Info, Loader2, X } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { SolutionManagedBanner } from "@/components/solutions/SolutionManagedBanner";
@@ -54,6 +48,7 @@ import {
 	FormMessage,
 } from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
+import { MarkdownEditorField } from "@/components/ui/markdown-editor-field";
 import { MultiCombobox } from "@/components/ui/multi-combobox";
 import {
 	Popover,
@@ -75,6 +70,7 @@ import {
 	CARD_SURFACE,
 	TYPE_LABEL_UPPERCASE,
 } from "@/components/agents/design-tokens";
+import { AgentSkillBundleManager } from "@/components/agents/AgentSkillBundleManager";
 
 import { useAuth } from "@/contexts/AuthContext";
 import {
@@ -85,7 +81,7 @@ import {
 } from "@/hooks/useAgents";
 import { useKnowledgeNamespaces } from "@/hooks/useKnowledge";
 import { useLLMModels } from "@/hooks/useLLMConfig";
-import { useRoles } from "@/hooks/useRoles";
+import { useResourceRoles } from "@/hooks/useRoles";
 import { useToolsGrouped } from "@/hooks/useTools";
 import { $api } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
@@ -105,6 +101,11 @@ const ACCESS_LEVELS: {
 	description: string;
 }[] = [
 	{
+		value: "private",
+		label: "Private",
+		description: "Only you can access and edit this agent",
+	},
+	{
 		value: "authenticated",
 		label: "Everyone except external users",
 		description: "Available to all signed-in users except external users",
@@ -112,7 +113,8 @@ const ACCESS_LEVELS: {
 	{
 		value: "everyone",
 		label: "Everyone",
-		description: "Available to all signed-in users, including external users",
+		description:
+			"Available to all signed-in users, including external users",
 	},
 	{
 		value: "role_based",
@@ -125,8 +127,14 @@ const formSchema = z.object({
 	name: z.string().min(1, "Name is required").max(100),
 	description: z.string().max(500).optional(),
 	system_prompt: z.string().min(1, "System prompt is required"),
+	bundle_path: z.string().max(1024).nullable(),
 	channels: z.array(z.enum(["chat", "voice", "teams", "slack"])),
-	access_level: z.enum(["authenticated", "everyone", "role_based"]),
+	access_level: z.enum([
+		"private",
+		"authenticated",
+		"everyone",
+		"role_based",
+	]),
 	organization_id: z.string().nullable(),
 	tool_ids: z.array(z.string()),
 	system_tools: z.array(z.string()),
@@ -157,10 +165,12 @@ function FormSection({
 	title,
 	children,
 	testId,
+	disabled = false,
 }: {
 	title: string;
 	children: React.ReactNode;
 	testId?: string;
+	disabled?: boolean;
 }) {
 	return (
 		<section
@@ -168,7 +178,16 @@ function FormSection({
 			data-testid={testId}
 		>
 			<h3 className={cn("mb-3.5", TYPE_LABEL_UPPERCASE)}>{title}</h3>
-			<div className="flex flex-col gap-3.5">{children}</div>
+			<fieldset
+				disabled={disabled}
+				aria-disabled={disabled}
+				className={cn(
+					"flex min-w-0 flex-col gap-3.5",
+					disabled && "pointer-events-none opacity-65",
+				)}
+			>
+				{children}
+			</fieldset>
 		</section>
 	);
 }
@@ -184,11 +203,13 @@ export function AgentSettingsTab({
 
 	// Solution-managed agents are read-only on the platform (criterion 6):
 	// show the banner and block Save. Only meaningful in edit mode.
-	const isSolutionManaged = mode === "edit" && (agent?.is_solution_managed ?? false);
+	const isSolutionManaged =
+		mode === "edit" && (agent?.is_solution_managed ?? false);
+	const isBundled = mode === "edit" && Boolean(agent?.bundle_path);
 
 	const { data: allAgents } = useAgents();
 	const { data: toolsGrouped } = useToolsGrouped({ include_inactive: true });
-	const { data: roles } = useRoles();
+	const { data: roles } = useResourceRoles();
 	const { models: availableModels } = useLLMModels();
 
 	const [toolsOpen, setToolsOpen] = useState(false);
@@ -196,7 +217,9 @@ export function AgentSettingsTab({
 	const [rolesOpen, setRolesOpen] = useState(false);
 
 	// Default: admin → null (global), org user → their own org.
-	const defaultOrgId = isPlatformAdmin ? null : (user?.organizationId ?? null);
+	const defaultOrgId = isPlatformAdmin
+		? null
+		: (user?.organizationId ?? null);
 
 	const formDefaults = useMemo<FormValues>(() => {
 		if (agent) {
@@ -213,11 +236,12 @@ export function AgentSettingsTab({
 				name: a.name ?? "",
 				description: a.description ?? "",
 				system_prompt: a.system_prompt ?? "",
-				channels: ((a.channels as AgentChannel[]) ?? ["chat"]) as AgentChannel[],
+				bundle_path: a.bundle_path ?? null,
+				channels: ((a.channels as AgentChannel[]) ?? [
+					"chat",
+				]) as AgentChannel[],
 				access_level: (a.access_level ?? "role_based") as
-					| "authenticated"
-					| "everyone"
-					| "role_based",
+					"private" | "authenticated" | "everyone" | "role_based",
 				organization_id: a.organization_id ?? null,
 				tool_ids: a.tool_ids ?? [],
 				system_tools: a.system_tools ?? [],
@@ -236,8 +260,9 @@ export function AgentSettingsTab({
 			name: "",
 			description: "",
 			system_prompt: "",
+			bundle_path: null,
 			channels: ["chat"],
-			access_level: "role_based",
+			access_level: isPlatformAdmin ? "role_based" : "private",
 			organization_id: defaultOrgId,
 			tool_ids: [],
 			system_tools: [],
@@ -251,7 +276,7 @@ export function AgentSettingsTab({
 			max_token_budget: null,
 			is_active: true,
 		};
-	}, [agent, defaultOrgId]);
+	}, [agent, defaultOrgId, isPlatformAdmin]);
 
 	const form = useForm<FormValues>({
 		resolver: zodResolver(formSchema),
@@ -267,10 +292,19 @@ export function AgentSettingsTab({
 	// Use `useWatch` (rather than `form.watch(name)`) so the React Compiler
 	// can memoize this component — `watch()` returns a function reference
 	// that cannot be memoized safely (react-hooks/incompatible-library).
-	const accessLevel = useWatch({ control: form.control, name: "access_level" });
-	const systemTools = useWatch({ control: form.control, name: "system_tools" });
+	const accessLevel = useWatch({
+		control: form.control,
+		name: "access_level",
+	});
+	const systemTools = useWatch({
+		control: form.control,
+		name: "system_tools",
+	});
 	const toolIds = useWatch({ control: form.control, name: "tool_ids" });
-	const watchedOrgId = useWatch({ control: form.control, name: "organization_id" });
+	const watchedOrgId = useWatch({
+		control: form.control,
+		name: "organization_id",
+	});
 
 	const { data: knowledgeNamespaces } = useKnowledgeNamespaces(watchedOrgId);
 
@@ -334,7 +368,7 @@ export function AgentSettingsTab({
 		const body = {
 			name: values.name,
 			description: values.description || null,
-			system_prompt: values.system_prompt,
+			...(!isBundled ? { system_prompt: values.system_prompt } : {}),
 			channels: values.channels,
 			access_level: values.access_level as AgentAccessLevel,
 			organization_id: values.organization_id,
@@ -388,7 +422,7 @@ export function AgentSettingsTab({
 					</div>
 				)}
 				{/* Identity */}
-				<FormSection title="Identity">
+				<FormSection title="Identity" disabled={isSolutionManaged}>
 					{isPlatformAdmin ? (
 						<FormField
 							control={form.control}
@@ -404,7 +438,8 @@ export function AgentSettingsTab({
 										/>
 									</FormControl>
 									<FormDescription>
-										Global agents are available to every organization.
+										Global agents are available to every
+										organization.
 									</FormDescription>
 									<FormMessage />
 								</FormItem>
@@ -418,7 +453,10 @@ export function AgentSettingsTab({
 							<FormItem>
 								<FormLabel>Name</FormLabel>
 								<FormControl>
-									<Input placeholder="Sales Assistant" {...field} />
+									<Input
+										placeholder="Sales Assistant"
+										{...field}
+									/>
 								</FormControl>
 								<FormMessage />
 							</FormItem>
@@ -439,8 +477,8 @@ export function AgentSettingsTab({
 									/>
 								</FormControl>
 								<FormDescription>
-									Used for AI routing — describe what this agent specializes
-									in.
+									Used for AI routing — describe what this
+									agent specializes in.
 								</FormDescription>
 								<FormMessage />
 							</FormItem>
@@ -458,12 +496,17 @@ export function AgentSettingsTab({
 								>
 									<FormControl>
 										<SelectTrigger aria-label="Access level">
-											<SelectValue />
+											<SelectValue placeholder="Access level" />
 										</SelectTrigger>
 									</FormControl>
 									<SelectContent>
 										{ACCESS_LEVELS.map((lvl) => (
-											<SelectItem key={lvl.value} value={lvl.value}>
+											<SelectItem
+												key={lvl.value}
+												value={lvl.value}
+												textValue={lvl.label}
+												className="h-auto items-start py-2"
+											>
 												<div className="flex flex-col">
 													<span>{lvl.label}</span>
 													<span className="text-xs text-muted-foreground">
@@ -490,7 +533,10 @@ export function AgentSettingsTab({
 											? ` (${field.value.length})`
 											: ""}
 									</FormLabel>
-									<Popover open={rolesOpen} onOpenChange={setRolesOpen}>
+									<Popover
+										open={rolesOpen}
+										onOpenChange={setRolesOpen}
+									>
 										<PopoverTrigger asChild>
 											<FormControl>
 												<Button
@@ -515,39 +561,67 @@ export function AgentSettingsTab({
 											<Command>
 												<CommandInput placeholder="Search roles…" />
 												<CommandList>
-													<CommandEmpty>No roles found.</CommandEmpty>
+													<CommandEmpty>
+														No roles found.
+													</CommandEmpty>
 													<CommandGroup>
-														{(roles ?? []).map((role: RolePublic) => (
-															<CommandItem
-																key={role.id}
-																value={role.name ?? ""}
-																data-checked={
-																	field.value?.includes(role.id) ??
-																	false
-																}
-																onSelect={() => {
-																	const current = field.value ?? [];
-																	field.onChange(
-																		current.includes(role.id)
-																			? current.filter(
-																					(id) => id !== role.id,
-																				)
-																			: [...current, role.id],
-																	);
-																}}
-															>
-																<div className="flex flex-col flex-1">
-																	<span className="font-medium">
-																		{role.name}
-																	</span>
-																	{role.description ? (
-																		<span className="text-xs text-muted-foreground">
-																			{role.description}
+														{(roles ?? []).map(
+															(
+																role: RolePublic,
+															) => (
+																<CommandItem
+																	key={
+																		role.id
+																	}
+																	value={
+																		role.name ??
+																		""
+																	}
+																	data-checked={
+																		field.value?.includes(
+																			role.id,
+																		) ??
+																		false
+																	}
+																	onSelect={() => {
+																		const current =
+																			field.value ??
+																			[];
+																		field.onChange(
+																			current.includes(
+																				role.id,
+																			)
+																				? current.filter(
+																						(
+																							id,
+																						) =>
+																							id !==
+																							role.id,
+																					)
+																				: [
+																						...current,
+																						role.id,
+																					],
+																		);
+																	}}
+																>
+																	<div className="flex flex-col flex-1">
+																		<span className="font-medium">
+																			{
+																				role.name
+																			}
 																		</span>
-																	) : null}
-																</div>
-															</CommandItem>
-														))}
+																		{role.description ? (
+																			<span className="text-xs text-muted-foreground">
+																				{
+																					role.description
+																				}
+																			</span>
+																		) : null}
+																	</div>
+																</CommandItem>
+															),
+														)}
 													</CommandGroup>
 												</CommandList>
 											</Command>
@@ -557,7 +631,8 @@ export function AgentSettingsTab({
 										<div className="flex flex-wrap gap-1.5 rounded-md bg-muted/50 ring-1 ring-foreground/5 p-2">
 											{field.value.map((roleId) => {
 												const role = roles?.find(
-													(r: RolePublic) => r.id === roleId,
+													(r: RolePublic) =>
+														r.id === roleId,
 												);
 												return (
 													<Badge
@@ -573,7 +648,9 @@ export function AgentSettingsTab({
 																e.preventDefault();
 																field.onChange(
 																	field.value.filter(
-																		(id) => id !== roleId,
+																		(id) =>
+																			id !==
+																			roleId,
 																	),
 																);
 															}}
@@ -588,8 +665,8 @@ export function AgentSettingsTab({
 										</div>
 									) : null}
 									<FormDescription>
-										Users must have at least one of these roles to access this
-										agent.
+										Users must have at least one of these
+										roles to access this agent.
 									</FormDescription>
 									<FormMessage />
 								</FormItem>
@@ -603,7 +680,9 @@ export function AgentSettingsTab({
 							<FormItem className="flex items-center justify-between gap-3 rounded-md bg-muted/50 ring-1 ring-foreground/5 px-3 py-2.5">
 								<div className="flex flex-col">
 									<FormLabel className="m-0">
-										{field.value ? "Agent is active" : "Agent is paused"}
+										{field.value
+											? "Agent is active"
+											: "Agent is paused"}
 									</FormLabel>
 									<FormDescription>
 										{field.value
@@ -623,57 +702,96 @@ export function AgentSettingsTab({
 					/>
 				</FormSection>
 
-				{/* Behavior */}
-				<FormSection title="Behavior">
-					<FormField
-						control={form.control}
-						name="system_prompt"
-						render={({ field }) => (
-							<FormItem>
-								<FormLabel>System prompt</FormLabel>
-								<FormControl>
-									<Textarea
-										className="min-h-[200px] font-mono text-sm"
-										placeholder="You are a helpful assistant…"
-										{...field}
-									/>
-								</FormControl>
-								<FormDescription>
-									Instructions the agent follows on every run.
-								</FormDescription>
-								<FormMessage />
-							</FormItem>
-						)}
+				{/* Skill */}
+				<FormSection title="Skill">
+					<Alert>
+						<Info className="h-4 w-4" />
+						<AlertTitle>
+							{isBundled
+								? "SKILL.md is the canonical instruction source"
+								: "This agent exports as a portable Skill"}
+						</AlertTitle>
+						<AlertDescription>
+							{isBundled
+								? "Replace the bundle to change its instructions. Tool, knowledge, model, and access bindings remain Bifrost runtime configuration."
+								: "The instructions below become SKILL.md when exported. You can also attach a complete Skill bundle."}
+						</AlertDescription>
+					</Alert>
+					<AgentSkillBundleManager
+						agentId={
+							mode === "edit"
+								? (agent?.id ?? undefined)
+								: undefined
+						}
+						isSolutionManaged={isSolutionManaged}
 					/>
-					<FormField
-						control={form.control}
-						name="channels"
-						render={({ field }) => (
-							<FormItem>
-								<FormLabel>Channels</FormLabel>
-								<FormControl>
-									<MultiCombobox
-										options={CHANNELS.map((c) => ({
-											value: c.value,
-											label: c.label,
-										}))}
-										value={field.value ?? []}
-										onValueChange={field.onChange}
-										placeholder="Select channels…"
-										emptyText="No channels available."
-									/>
-								</FormControl>
-								<FormDescription>
-									Communication channels this agent is available on.
-								</FormDescription>
-								<FormMessage />
-							</FormItem>
+					{!isBundled ? (
+						<FormField
+							control={form.control}
+							name="system_prompt"
+							render={({ field }) => (
+								<FormItem>
+									<FormLabel>Inline instructions</FormLabel>
+									<FormControl>
+										<MarkdownEditorField
+											value={field.value}
+											onChange={field.onChange}
+											ariaLabel="Inline instructions"
+											placeholder="Describe the agent's role, behavior, boundaries, and expected output…"
+											readOnly={isSolutionManaged}
+										/>
+									</FormControl>
+									<FormDescription>
+										Markdown instructions used on every run
+										and exported as SKILL.md.
+									</FormDescription>
+									<FormMessage />
+								</FormItem>
+							)}
+						/>
+					) : null}
+					<fieldset
+						disabled={isSolutionManaged}
+						aria-disabled={isSolutionManaged}
+						className={cn(
+							isSolutionManaged &&
+								"pointer-events-none opacity-65",
 						)}
-					/>
+					>
+						<FormField
+							control={form.control}
+							name="channels"
+							render={({ field }) => (
+								<FormItem>
+									<FormLabel>Channels</FormLabel>
+									<FormControl>
+										<MultiCombobox
+											options={CHANNELS.map((c) => ({
+												value: c.value,
+												label: c.label,
+											}))}
+											value={field.value ?? []}
+											onValueChange={field.onChange}
+											placeholder="Select channels…"
+											emptyText="No channels available."
+										/>
+									</FormControl>
+									<FormDescription>
+										Communication channels this agent is
+										available on.
+									</FormDescription>
+									<FormMessage />
+								</FormItem>
+							)}
+						/>
+					</fieldset>
 				</FormSection>
 
 				{/* Tools & Knowledge */}
-				<FormSection title="Tools & Knowledge">
+				<FormSection
+					title="Tools & Knowledge"
+					disabled={isSolutionManaged}
+				>
 					<FormItem>
 						<FormLabel>
 							Tools{totalTools > 0 ? ` (${totalTools})` : ""}
@@ -686,29 +804,37 @@ export function AgentSettingsTab({
 							>
 								<AlertTriangle className="h-4 w-4" />
 								<AlertTitle>
-									Tools don&apos;t match this agent&apos;s organization
+									Tools don&apos;t match this agent&apos;s
+									organization
 								</AlertTitle>
 								<AlertDescription>
 									<span>
-										Remove these tools or change the agent&apos;s
-										organization:
+										Remove these tools or change the
+										agent&apos;s organization:
 									</span>
 									<ul className="list-disc pl-5">
 										{mismatchedToolIds.map((id) => {
-											const tool = toolsGrouped?.workflow.find(
-												(t) => t.id === id,
-											);
+											const tool =
+												toolsGrouped?.workflow.find(
+													(t) => t.id === id,
+												);
 											if (!tool) return null;
-											const toolWithOrg = tool as typeof tool & {
-												organization_name?: string | null;
-											};
+											const toolWithOrg =
+												tool as typeof tool & {
+													organization_name?:
+														string | null;
+												};
 											return (
 												<li key={id}>
 													{tool.name}
 													{toolWithOrg.organization_name ? (
 														<span className="text-muted-foreground">
 															{" "}
-															({toolWithOrg.organization_name})
+															(
+															{
+																toolWithOrg.organization_name
+															}
+															)
 														</span>
 													) : null}
 												</li>
@@ -723,8 +849,8 @@ export function AgentSettingsTab({
 							<Alert data-testid="tool-global-info-banner">
 								<Info className="h-4 w-4" />
 								<AlertDescription>
-									This global agent uses {infoToolIds.length} org-scoped
-									tool
+									This global agent uses {infoToolIds.length}{" "}
+									org-scoped tool
 									{infoToolIds.length === 1 ? "" : "s"}.
 								</AlertDescription>
 							</Alert>
@@ -741,9 +867,10 @@ export function AgentSettingsTab({
 									{totalTools > 0 ? (
 										<div className="flex flex-wrap gap-1">
 											{systemTools?.map((toolId) => {
-												const tool = toolsGrouped?.system.find(
-													(t) => t.id === toolId,
-												);
+												const tool =
+													toolsGrouped?.system.find(
+														(t) => t.id === toolId,
+													);
 												if (!tool) return null;
 												return (
 													<Badge
@@ -761,18 +888,29 @@ export function AgentSettingsTab({
 																form.setValue(
 																	"system_tools",
 																	systemTools.filter(
-																		(id) => id !== toolId,
+																		(id) =>
+																			id !==
+																			toolId,
 																	),
 																);
 															}}
 															onKeyDown={(e) => {
-																if (e.key === "Enter" || e.key === " ") {
+																if (
+																	e.key ===
+																		"Enter" ||
+																	e.key ===
+																		" "
+																) {
 																	e.stopPropagation();
 																	e.preventDefault();
 																	form.setValue(
 																		"system_tools",
 																		systemTools.filter(
-																			(id) => id !== toolId,
+																			(
+																				id,
+																			) =>
+																				id !==
+																				toolId,
 																		),
 																	);
 																}
@@ -786,15 +924,21 @@ export function AgentSettingsTab({
 												);
 											})}
 											{toolIds?.map((toolId) => {
-												const tool = toolsGrouped?.workflow.find(
-													(t) => t.id === toolId,
-												);
+												const tool =
+													toolsGrouped?.workflow.find(
+														(t) => t.id === toolId,
+													);
 												if (!tool) return null;
-												const deactivated = !tool.is_active;
+												const deactivated =
+													!tool.is_active;
 												return (
 													<Badge
 														key={toolId}
-														variant={deactivated ? "outline" : "secondary"}
+														variant={
+															deactivated
+																? "outline"
+																: "secondary"
+														}
 														className={cn(
 															"mr-1",
 															deactivated &&
@@ -813,17 +957,30 @@ export function AgentSettingsTab({
 																e.preventDefault();
 																form.setValue(
 																	"tool_ids",
-																	toolIds.filter((id) => id !== toolId),
+																	toolIds.filter(
+																		(id) =>
+																			id !==
+																			toolId,
+																	),
 																);
 															}}
 															onKeyDown={(e) => {
-																if (e.key === "Enter" || e.key === " ") {
+																if (
+																	e.key ===
+																		"Enter" ||
+																	e.key ===
+																		" "
+																) {
 																	e.stopPropagation();
 																	e.preventDefault();
 																	form.setValue(
 																		"tool_ids",
 																		toolIds.filter(
-																			(id) => id !== toolId,
+																			(
+																				id,
+																			) =>
+																				id !==
+																				toolId,
 																		),
 																	);
 																}
@@ -845,95 +1002,150 @@ export function AgentSettingsTab({
 									<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
 								</Button>
 							</PopoverTrigger>
-							<PopoverContent className="w-[400px] p-0" align="start">
+							<PopoverContent
+								className="w-[400px] p-0"
+								align="start"
+							>
 								<Command>
 									<CommandInput placeholder="Search tools…" />
 									<CommandList>
-										<CommandEmpty>No tools found.</CommandEmpty>
+										<CommandEmpty>
+											No tools found.
+										</CommandEmpty>
 										{toolsGrouped?.system?.length ? (
 											<CommandGroup heading="System Tools">
-												{toolsGrouped.system.map((tool) => (
-													<CommandItem
-														key={tool.id}
-														value={`system-${tool.name}`}
-														data-checked={
-															systemTools?.includes(tool.id) ?? false
-														}
-														onSelect={() => {
-															const current = systemTools ?? [];
-															form.setValue(
-																"system_tools",
-																current.includes(tool.id)
-																	? current.filter((id) => id !== tool.id)
-																	: [...current, tool.id],
-															);
-														}}
-													>
-														<div className="flex flex-col">
-															<span className="font-mono text-sm">
-																{tool.id}
-															</span>
-															<span className="text-xs text-muted-foreground">
-																{tool.description}
-															</span>
-														</div>
-													</CommandItem>
-												))}
-											</CommandGroup>
-										) : null}
-										{toolsGrouped?.workflow?.length ? (
-											<CommandGroup heading="Workflow Tools">
-												{toolsGrouped.workflow.map((tool) => {
-													const audience = toolAudience(tool);
-													const isMismatch = audience === "mismatch";
-													const isInfo =
-														audience === "info-global-agent";
-													return (
+												{toolsGrouped.system.map(
+													(tool) => (
 														<CommandItem
 															key={tool.id}
-															value={`workflow-${tool.name}`}
-															disabled={isMismatch}
-															data-mismatch={
-																isMismatch ? "true" : undefined
-															}
+															value={`system-${tool.name}`}
 															data-checked={
-																toolIds?.includes(tool.id) ?? false
+																systemTools?.includes(
+																	tool.id,
+																) ?? false
 															}
 															onSelect={() => {
-																if (isMismatch) return;
-																const current = toolIds ?? [];
+																const current =
+																	systemTools ??
+																	[];
 																form.setValue(
-																	"tool_ids",
-																	current.includes(tool.id)
+																	"system_tools",
+																	current.includes(
+																		tool.id,
+																	)
 																		? current.filter(
-																				(id) => id !== tool.id,
+																				(
+																					id,
+																				) =>
+																					id !==
+																					tool.id,
 																			)
-																		: [...current, tool.id],
+																		: [
+																				...current,
+																				tool.id,
+																			],
 																);
 															}}
 														>
 															<div className="flex flex-col">
-																<span>
-																	{tool.name}
-																	{isMismatch ? (
-																		<span className="ml-2 text-[11px] text-rose-500">
-																			Different org
-																		</span>
-																	) : isInfo ? (
-																		<span className="ml-2 text-[11px] text-muted-foreground">
-																			Org-scoped
-																		</span>
-																	) : null}
+																<span className="font-mono text-sm">
+																	{tool.id}
 																</span>
-																{tool.description ? (
-																	<span className="text-xs text-muted-foreground">
-																		{tool.description}
-																	</span>
-																) : null}
+																<span className="text-xs text-muted-foreground">
+																	{
+																		tool.description
+																	}
+																</span>
 															</div>
 														</CommandItem>
-													);
-												})}
+													),
+												)}
+											</CommandGroup>
+										) : null}
+										{toolsGrouped?.workflow?.length ? (
+											<CommandGroup heading="Workflow Tools">
+												{toolsGrouped.workflow.map(
+													(tool) => {
+														const audience =
+															toolAudience(tool);
+														const isMismatch =
+															audience ===
+															"mismatch";
+														const isInfo =
+															audience ===
+															"info-global-agent";
+														return (
+															<CommandItem
+																key={tool.id}
+																value={`workflow-${tool.name}`}
+																disabled={
+																	isMismatch
+																}
+																data-mismatch={
+																	isMismatch
+																		? "true"
+																		: undefined
+																}
+																data-checked={
+																	toolIds?.includes(
+																		tool.id,
+																	) ?? false
+																}
+																onSelect={() => {
+																	if (
+																		isMismatch
+																	)
+																		return;
+																	const current =
+																		toolIds ??
+																		[];
+																	form.setValue(
+																		"tool_ids",
+																		current.includes(
+																			tool.id,
+																		)
+																			? current.filter(
+																					(
+																						id,
+																					) =>
+																						id !==
+																						tool.id,
+																				)
+																			: [
+																					...current,
+																					tool.id,
+																				],
+																	);
+																}}
+															>
+																<div className="flex flex-col">
+																	<span>
+																		{
+																			tool.name
+																		}
+																		{isMismatch ? (
+																			<span className="ml-2 text-[11px] text-rose-500">
+																				Different
+																				org
+																			</span>
+																		) : isInfo ? (
+																			<span className="ml-2 text-[11px] text-muted-foreground">
+																				Org-scoped
+																			</span>
+																		) : null}
+																	</span>
+																	{tool.description ? (
+																		<span className="text-xs text-muted-foreground">
+																			{
+																				tool.description
+																			}
+																		</span>
+																	) : null}
+																</div>
+															</CommandItem>
+														);
+													},
+												)}
 											</CommandGroup>
 										) : null}
 									</CommandList>
@@ -989,51 +1201,73 @@ export function AgentSettingsTab({
 											>
 												{field.value?.length ? (
 													<div className="flex flex-wrap gap-1">
-														{field.value.map((id) => {
-															const delegate = delegationOptions.find(
-																(a) => a.id === id,
-															);
-															return (
-																<Badge
-																	key={id}
-																	variant="secondary"
-																	className="mr-1"
-																>
-																	{delegate?.name ?? id}
-																	<span
-																		role="button"
-																		tabIndex={0}
-																		onClick={(e) => {
-																			e.stopPropagation();
-																			e.preventDefault();
-																			field.onChange(
-																				field.value.filter(
-																					(x) => x !== id,
-																				),
-																			);
-																		}}
-																		onKeyDown={(e) => {
-																			if (
-																				e.key === "Enter" ||
-																				e.key === " "
-																			) {
+														{field.value.map(
+															(id) => {
+																const delegate =
+																	delegationOptions.find(
+																		(a) =>
+																			a.id ===
+																			id,
+																	);
+																return (
+																	<Badge
+																		key={id}
+																		variant="secondary"
+																		className="mr-1"
+																	>
+																		{delegate?.name ??
+																			id}
+																		<span
+																			role="button"
+																			tabIndex={
+																				0
+																			}
+																			onClick={(
+																				e,
+																			) => {
 																				e.stopPropagation();
 																				e.preventDefault();
 																				field.onChange(
 																					field.value.filter(
-																						(x) => x !== id,
+																						(
+																							x,
+																						) =>
+																							x !==
+																							id,
 																					),
 																				);
-																			}
-																		}}
-																		className="ml-1 cursor-pointer rounded-full p-0.5 transition-colors hover:bg-muted-foreground/20"
-																		aria-label={`Remove ${delegate?.name ?? id}`}
-																	>
-																		<X className="h-3 w-3" />
-																	</span>
-																</Badge>
-															);
-														})}
+																			}}
+																			onKeyDown={(
+																				e,
+																			) => {
+																				if (
+																					e.key ===
+																						"Enter" ||
+																					e.key ===
+																						" "
+																				) {
+																					e.stopPropagation();
+																					e.preventDefault();
+																					field.onChange(
+																						field.value.filter(
+																							(
+																								x,
+																							) =>
+																								x !==
+																								id,
+																						),
+																					);
+																				}
+																			}}
+																			className="ml-1 cursor-pointer rounded-full p-0.5 transition-colors hover:bg-muted-foreground/20"
+																			aria-label={`Remove ${delegate?.name ?? id}`}
+																		>
+																			<X className="h-3 w-3" />
+																		</span>
+																	</Badge>
+																);
+															},
+														)}
 													</div>
 												) : (
 													<span className="text-muted-foreground">
@@ -1044,48 +1278,78 @@ export function AgentSettingsTab({
 											</Button>
 										</FormControl>
 									</PopoverTrigger>
-									<PopoverContent className="w-[400px] p-0" align="start">
+									<PopoverContent
+										className="w-[400px] p-0"
+										align="start"
+									>
 										<Command>
 											<CommandInput placeholder="Search agents…" />
 											<CommandList>
-												<CommandEmpty>No agents found.</CommandEmpty>
+												<CommandEmpty>
+													No agents found.
+												</CommandEmpty>
 												<CommandGroup>
-													{delegationOptions.map((delegate) => (
-														<CommandItem
-															key={delegate.id}
-															value={delegate.name}
-															data-checked={
-																field.value?.includes(delegate.id) ??
-																false
-															}
-															onSelect={() => {
-																const current = field.value ?? [];
-																field.onChange(
-																	current.includes(delegate.id)
-																		? current.filter(
-																				(id) => id !== delegate.id,
-																			)
-																		: [...current, delegate.id],
-																);
-															}}
-														>
-															<div className="flex flex-col">
-																<span>{delegate.name}</span>
-																{delegate.description ? (
-																	<span className="text-xs text-muted-foreground">
-																		{delegate.description}
+													{delegationOptions.map(
+														(delegate) => (
+															<CommandItem
+																key={
+																	delegate.id
+																}
+																value={
+																	delegate.name
+																}
+																data-checked={
+																	field.value?.includes(
+																		delegate.id,
+																	) ?? false
+																}
+																onSelect={() => {
+																	const current =
+																		field.value ??
+																		[];
+																	field.onChange(
+																		current.includes(
+																			delegate.id,
+																		)
+																			? current.filter(
+																					(
+																						id,
+																					) =>
+																						id !==
+																						delegate.id,
+																				)
+																			: [
+																					...current,
+																					delegate.id,
+																				],
+																	);
+																}}
+															>
+																<div className="flex flex-col">
+																	<span>
+																		{
+																			delegate.name
+																		}
 																	</span>
-																) : null}
-															</div>
-														</CommandItem>
-													))}
+																	{delegate.description ? (
+																		<span className="text-xs text-muted-foreground">
+																			{
+																				delegate.description
+																			}
+																		</span>
+																	) : null}
+																</div>
+															</CommandItem>
+														),
+													)}
 												</CommandGroup>
 											</CommandList>
 										</Command>
 									</PopoverContent>
 								</Popover>
 								<FormDescription>
-									Other agents this agent can delegate tasks to.
+									Other agents this agent can delegate tasks
+									to.
 								</FormDescription>
 								<FormMessage />
 							</FormItem>
@@ -1100,7 +1364,9 @@ export function AgentSettingsTab({
 								<FormLabel>Knowledge sources</FormLabel>
 								<FormControl>
 									<MultiCombobox
-										options={(knowledgeNamespaces ?? []).map((ns) => ({
+										options={(
+											knowledgeNamespaces ?? []
+										).map((ns) => ({
 											value: ns.namespace,
 											label: ns.namespace,
 											description: `${ns.scopes.total} documents`,
@@ -1126,7 +1392,8 @@ export function AgentSettingsTab({
 									</div>
 								) : null}
 								<FormDescription>
-									Namespaces this agent can search for context.
+									Namespaces this agent can search for
+									context.
 								</FormDescription>
 								<FormMessage />
 							</FormItem>
@@ -1135,7 +1402,11 @@ export function AgentSettingsTab({
 				</FormSection>
 
 				{/* Model + Budgets */}
-				<FormSection title="Model" testId="model-section">
+				<FormSection
+					title="Model"
+					testId="model-section"
+					disabled={isSolutionManaged}
+				>
 					<FormField
 						control={form.control}
 						name="llm_model"
@@ -1147,7 +1418,11 @@ export function AgentSettingsTab({
 										<Combobox
 											value={field.value ?? "__default__"}
 											onValueChange={(v) =>
-												field.onChange(v === "__default__" ? null : v)
+												field.onChange(
+													v === "__default__"
+														? null
+														: v,
+												)
 											}
 											placeholder="Use platform default"
 											searchPlaceholder="Search models…"
@@ -1168,13 +1443,16 @@ export function AgentSettingsTab({
 											placeholder="Enter model identifier (leave empty for default)"
 											value={field.value ?? ""}
 											onChange={(e) =>
-												field.onChange(e.target.value || null)
+												field.onChange(
+													e.target.value || null,
+												)
 											}
 										/>
 									)}
 								</FormControl>
 								<FormDescription>
-									Override the platform default for this agent only.
+									Override the platform default for this agent
+									only.
 								</FormDescription>
 								<FormMessage />
 							</FormItem>
@@ -1182,7 +1460,10 @@ export function AgentSettingsTab({
 					/>
 
 					{isPlatformAdmin ? (
-						<div className="grid grid-cols-1 gap-3.5 md:grid-cols-3" data-testid="budget-card">
+						<div
+							className="grid grid-cols-1 gap-3.5 md:grid-cols-3"
+							data-testid="budget-card"
+						>
 							<FormField
 								control={form.control}
 								name="max_iterations"
@@ -1197,7 +1478,10 @@ export function AgentSettingsTab({
 												onChange={(e) =>
 													field.onChange(
 														e.target.value
-															? Number(e.target.value)
+															? Number(
+																	e.target
+																		.value,
+																)
 															: null,
 													)
 												}
@@ -1224,14 +1508,18 @@ export function AgentSettingsTab({
 												onChange={(e) =>
 													field.onChange(
 														e.target.value
-															? Number(e.target.value)
+															? Number(
+																	e.target
+																		.value,
+																)
 															: null,
 													)
 												}
 											/>
 										</FormControl>
 										<FormDescription>
-											Optional cumulative limit (1k–1M tokens).
+											Optional cumulative limit (1k–1M
+											tokens).
 										</FormDescription>
 										<FormMessage />
 									</FormItem>
@@ -1242,7 +1530,9 @@ export function AgentSettingsTab({
 								name="llm_max_tokens"
 								render={({ field }) => (
 									<FormItem>
-										<FormLabel>Max tokens / response</FormLabel>
+										<FormLabel>
+											Max tokens / response
+										</FormLabel>
 										<FormControl>
 											<Input
 												type="number"
@@ -1250,7 +1540,10 @@ export function AgentSettingsTab({
 												onChange={(e) =>
 													field.onChange(
 														e.target.value
-															? Number(e.target.value)
+															? Number(
+																	e.target
+																		.value,
+																)
 															: null,
 													)
 												}
@@ -1270,7 +1563,9 @@ export function AgentSettingsTab({
 				<div className="flex items-center justify-end gap-2 border-t bg-muted/30 px-5 py-3">
 					<Button
 						type="submit"
-						disabled={pending || hasMismatchedTools || isSolutionManaged}
+						disabled={
+							pending || hasMismatchedTools || isSolutionManaged
+						}
 						data-testid="save-agent-button"
 					>
 						{pending ? (
@@ -1289,7 +1584,6 @@ export function AgentSettingsTab({
 		</Form>
 	);
 }
-
 
 /**
  * AgentMCPConnectionsPanel — per-agent MCP connection grants.
@@ -1352,11 +1646,9 @@ function AgentMCPConnectionsPanelInner({
 		"/api/mcp-connections",
 		{ params: { query: { scope: organizationId } } },
 	);
-	const { data: servers = [] } = $api.useQuery(
-		"get",
-		"/api/mcp-servers",
-		{ params: { query: { active_only: false } } },
-	);
+	const { data: servers = [] } = $api.useQuery("get", "/api/mcp-servers", {
+		params: { query: { active_only: false } },
+	});
 
 	const serverNameById = useMemo(() => {
 		const map = new Map<string, string>();
@@ -1406,8 +1698,8 @@ function AgentMCPConnectionsPanelInner({
 				</div>
 				<p className="mt-1 text-xs text-muted-foreground">
 					Check each connection this agent should be allowed to call.
-					Unchecked connections are denied — the agent will not see any
-					of their tools.
+					Unchecked connections are denied — the agent will not see
+					any of their tools.
 				</p>
 			</div>
 			<div className="space-y-3">
@@ -1441,7 +1733,7 @@ function AgentMCPConnectionsPanelInner({
 									</div>
 								) : (
 									<div className="text-xs text-muted-foreground">
-										Grants access to: {" "}
+										Grants access to:{" "}
 										{enabledTools
 											.map((t) => t.tool_name)
 											.join(", ")}

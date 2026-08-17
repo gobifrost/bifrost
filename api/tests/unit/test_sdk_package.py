@@ -88,6 +88,25 @@ def test_build_sdk_tarball_cached_per_version(monkeypatch):
 
 
 @pytest.mark.e2e
+def test_build_sdk_tarball_is_reproducible_across_process_cache_boundaries(
+    monkeypatch,
+):
+    """The gzip header cannot make identical build inputs hash differently."""
+    import src.services.sdk_package as sdkpkg
+
+    monkeypatch.setattr(sdkpkg, "_built_bundle", lambda _version: b"//bundle")
+    sdkpkg.build_sdk_tarball.cache_clear()
+    first = sdkpkg.build_sdk_tarball("v9.9.8-reproducible")
+    sdkpkg.build_sdk_tarball.cache_clear()
+    second = sdkpkg.build_sdk_tarball("v9.9.8-reproducible")
+    sdkpkg.build_sdk_tarball.cache_clear()
+
+    assert first == second
+    assert first[:2] == b"\x1f\x8b"
+    assert first[4:8] == b"\x00\x00\x00\x00"
+
+
+@pytest.mark.e2e
 def test_build_sdk_tarball_shape_and_exports():
     if not _ensure_sdk_src():
         pytest.skip("SDK source not available (no image copy, no client tree)")

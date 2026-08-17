@@ -224,6 +224,18 @@ class TestCheckMcpAccess:
             assert result is False
 
 
+class TestVerifyToken:
+    @pytest.mark.asyncio
+    async def test_rejects_solution_app_actor_token(self, auth_provider):
+        payload = {
+            "sub": "actor-id",
+            "type": "access",
+            "actor_type": "solution_app",
+        }
+        with patch("src.core.security.decode_token", return_value=payload):
+            assert await auth_provider.verify_token("actor.jwt") is None
+
+
 # ==================== Redis Key Functions Tests ====================
 
 

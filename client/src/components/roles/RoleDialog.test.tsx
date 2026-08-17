@@ -17,6 +17,19 @@ const mockUpdateMutate = vi.fn();
 vi.mock("@/hooks/useRoles", () => ({
 	useCreateRole: () => ({ mutateAsync: mockCreateMutate, isPending: false }),
 	useUpdateRole: () => ({ mutateAsync: mockUpdateMutate, isPending: false }),
+	useAuthorizationScopes: () => ({
+		data: [
+			{
+				key: "solutions.build",
+				display_name: "Build Solutions",
+				description: "Create and modify Builder projects.",
+				category: "Solutions",
+				is_privileged: true,
+				assignable_to_custom_roles: true,
+			},
+		],
+		isLoading: false,
+	}),
 }));
 
 import { RoleDialog } from "./RoleDialog";
@@ -29,6 +42,7 @@ function makeRole(overrides: Partial<NonNullable<Role>> = {}): NonNullable<Role>
 		name: "Admin",
 		description: "Admin role",
 		permissions: { can_promote_agent: true },
+		scopes: ["solutions.build"],
 		created_at: "2026-04-20T00:00:00Z",
 		updated_at: "2026-04-20T00:00:00Z",
 		organization_id: null,
@@ -71,6 +85,7 @@ describe("RoleDialog — create mode", () => {
 		);
 		// Toggle permission on.
 		await user.click(screen.getByRole("switch"));
+		await user.click(screen.getByRole("checkbox", { name: "Build Solutions" }));
 
 		await user.click(screen.getByRole("button", { name: /^create$/i }));
 
@@ -82,6 +97,7 @@ describe("RoleDialog — create mode", () => {
 				name: "Viewer",
 				description: "Read-only access",
 				permissions: { can_promote_agent: true },
+				scopes: ["solutions.build"],
 			},
 		});
 		expect(onClose).toHaveBeenCalled();
@@ -126,6 +142,7 @@ describe("RoleDialog — edit mode", () => {
 				name: "Admin Edited",
 				description: "Admin role",
 				permissions: { can_promote_agent: true },
+				scopes: ["solutions.build"],
 			},
 		});
 	});

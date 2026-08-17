@@ -57,6 +57,7 @@ function makeApp(overrides: Partial<ApplicationPublic> = {}): ApplicationPublic 
 		has_unpublished_changes: false,
 		access_level: "authenticated",
 		app_model: "inline_v1",
+		runtime_mode: "trusted",
 		is_solution_managed: false,
 		role_ids: [],
 		repo_path: "apps/my-app",

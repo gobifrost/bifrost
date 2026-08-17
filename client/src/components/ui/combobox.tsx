@@ -34,6 +34,9 @@ interface ComboboxProps {
 	isLoading?: boolean;
 	className?: string;
 	id?: string;
+	"aria-label"?: string;
+	"aria-labelledby"?: string;
+	"aria-describedby"?: string;
 }
 
 export function Combobox({
@@ -47,6 +50,9 @@ export function Combobox({
 	isLoading = false,
 	className,
 	id,
+	"aria-label": ariaLabel,
+	"aria-labelledby": ariaLabelledBy,
+	"aria-describedby": ariaDescribedBy,
 }: ComboboxProps) {
 	const [open, setOpen] = React.useState(false);
 	const filter = React.useCallback(
@@ -70,6 +76,9 @@ export function Combobox({
 					variant="outline"
 					role="combobox"
 					aria-expanded={open}
+					aria-label={ariaLabel}
+					aria-labelledby={ariaLabelledBy}
+					aria-describedby={ariaDescribedBy}
 					className={cn(
 						"w-full justify-between font-normal",
 						className,

@@ -33,6 +33,10 @@ from src.models.contracts.policies import FileAction
 from src.models.orm import Agent
 from src.models.orm.applications import Application
 from src.models.orm.tables import Table as TableOrm
+from src.services.builder.conversation_access import (
+    BUILDER_CONVERSATION_CHANNEL,
+    can_access_conversation as can_access_builder_conversation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -680,12 +684,16 @@ async def can_access_conversation(user: UserPrincipal, conversation_id: str) -> 
                 selectinload(Conversation.user),
             )
             .where(Conversation.id == conv_uuid)
-            .where(Conversation.user_id == user.user_id)
             .where(Conversation.is_active.is_(True))
         )
         conversation = result.scalar_one_or_none()
 
-        if conversation is None:
+        if conversation is None or not await can_access_builder_conversation(
+            db,
+            conversation=conversation,
+            principal=user,
+            action="view",
+        ):
             return False, None
 
         return True, conversation
@@ -1251,6 +1259,12 @@ async def websocket_connect(
                     await websocket.send_json({
                         "type": "error",
                         "error": "Conversation not found or access denied"
+                    })
+                    continue
+                if conversation.channel == BUILDER_CONVERSATION_CHANNEL:
+                    await websocket.send_json({
+                        "type": "error",
+                        "error": "Builder conversations must be changed through a Builder turn",
                     })
                     continue
 
