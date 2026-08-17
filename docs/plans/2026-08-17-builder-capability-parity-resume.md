@@ -115,12 +115,20 @@ intentional runtime/Builder-local tools.
 
 Public slices still to canonicalize:
 
-1. App publish-status read: `bifrost_get_app_publish_status` (already
-   namespaced; catalog/CLI disposition still needed).
-2. Configs: list/get/create/update/delete.
-3. Claims: list/get/create/update/delete.
-4. File policies: list/get/set/delete.
-5. Policy rules: list/create/delete.
+1. Configs: list/get/create/update/delete.
+2. Claims: list/get/create/update/delete.
+3. File policies: list/get/set/delete.
+4. Policy rules: list/create/delete.
+
+The durable platform-job status read is done: it became the canonical
+`platform.jobs.get` operation (`bifrost_get_platform_job` /
+`bifrost platform-jobs get`) rather than staying an app-scoped name over a
+shared route. Alembic head is now `20260817_platform_job_names`.
+
+Note for the Configs slice: there is no per-ID REST GET for configs, so the
+current MCP `get_config` resolves a ref and filters the list payload
+client-side. That divergence needs an explicit decision (add the REST route or
+catalog the read as list-derived) before the slice can claim parity.
 
 For each slice: inventory existing REST/CLI/MCP behavior, make MCP a thin REST
 adapter, add catalog definitions and `operation_route` metadata, align the CLI

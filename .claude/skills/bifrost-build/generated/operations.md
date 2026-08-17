@@ -30,6 +30,7 @@ harness.
 | `apps.dependencies.update` | `bifrost apps update-dependencies` | `bifrost_update_app_dependencies` | `apps.write` |
 | `apps.validate` | `bifrost apps validate` | `bifrost_validate_app` | `apps.read` |
 | `apps.publish` | `bifrost apps publish` | `bifrost_publish_app` | `apps.publish` |
+| `platform.jobs.get` | `bifrost platform-jobs get` | `bifrost_get_platform_job` | — |
 | `apps.replace` | `bifrost apps replace` | `bifrost_replace_app` | `apps.write` |
 | `workflows.list` | `bifrost workflows list` | `bifrost_list_workflows` | `workflows.read` |
 | `workflows.get` | `bifrost workflows get` | `bifrost_get_workflow` | `workflows.read` |

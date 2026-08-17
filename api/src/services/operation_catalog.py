@@ -44,6 +44,9 @@ _INTEGRATION_SDK_EXCLUSION = (
 _ROLE_SDK_EXCLUSION = (
     "Role administration is not available to application SDKs."
 )
+_PLATFORM_JOB_SDK_EXCLUSION = (
+    "Platform-job status is a platform operation surface, not an application SDK binding."
+)
 
 
 OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
@@ -562,6 +565,25 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         exclusions={
             "manifest": "Publishing does not change portable Application source metadata.",
             "sdk": _APP_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="platform.jobs.get",
+        summary="Read durable status for one queued platform job",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/platform-jobs/{job_id}",
+            response_model="PlatformJobPublic",
+        ),
+        cli=CliOperationBinding(path=("platform-jobs", "get")),
+        mcp=McpOperationBinding(name="bifrost_get_platform_job"),
+        native_builder=True,
+        action_scopes=(),
+        authorization_resolver="Platform-job requester identity or platform administrator",
+        exclusions={
+            "manifest": "Reading job progress does not change manifest state.",
+            "sdk": _PLATFORM_JOB_SDK_EXCLUSION,
         },
     ),
     OperationDefinition(
@@ -1670,7 +1692,8 @@ def validate_operation_catalog(
 
     for operation in materialized:
         if operation.cli and operation.mcp:
-            resource, verb = operation.cli.path[0], operation.cli.path[-1]
+            resource = operation.cli.path[0].replace("-", "_")
+            verb = operation.cli.path[-1]
             verb_parts = verb.replace("-", "_").split("_")
             action, subresource = verb_parts[0], verb_parts[1:]
             noun = (

@@ -2349,3 +2349,72 @@ class TestMcpParityWorkflow:
         # The delete endpoint returns either a plain dict (deleted OK) or a
         # 409 we surface as error. Happy path: no "error" in structured.
         assert delete_result.structured_content is not None
+
+
+# =============================================================================
+# Platform jobs
+# =============================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestMcpParityPlatformJobs:
+    async def test_get_platform_job_reads_a_real_publish_job(
+        self, admin_context, e2e_client, platform_admin
+    ) -> None:
+        """``bifrost_get_platform_job`` reads the durable job an app publish queued."""
+        from src.services.mcp_server.tools.platform_jobs import (
+            bifrost_get_platform_job,
+        )
+
+        slug = f"mcp-pjob-{uuid4().hex[:8]}"
+        create_resp = e2e_client.post(
+            "/api/applications",
+            headers=platform_admin.headers,
+            json={
+                "name": f"MCP PJob {slug}",
+                "slug": slug,
+                "app_model": "inline_v1",
+                "repo_path": f"apps/{slug}",
+            },
+        )
+        assert create_resp.status_code in (200, 201), create_resp.text
+        app_id = create_resp.json()["id"]
+
+        try:
+            publish_resp = e2e_client.post(
+                f"/api/applications/{app_id}/publish",
+                headers=platform_admin.headers,
+                json={},
+            )
+            assert publish_resp.status_code == 202, publish_resp.text
+            job_id = publish_resp.json()["job_id"]
+
+            result = await bifrost_get_platform_job(admin_context, job_id=job_id)
+            payload = result.structured_content or {}
+            # ``error`` is a real PlatformJobPublic field, so a successful read
+            # carries it as ``None`` rather than omitting it.
+            assert payload.get("error") is None, payload
+            assert str(payload.get("id")) == str(job_id)
+            assert payload.get("resource_id") == app_id
+            assert payload.get("resource_type") == "application"
+            assert payload.get("status_code") is None, payload
+        finally:
+            e2e_client.delete(
+                f"/api/applications/{app_id}", headers=platform_admin.headers
+            )
+
+    async def test_get_platform_job_reports_unknown_job_as_error(
+        self, admin_context
+    ) -> None:
+        """An unknown job surfaces the REST 404 rather than a synthetic success."""
+        from src.services.mcp_server.tools.platform_jobs import (
+            bifrost_get_platform_job,
+        )
+
+        result = await bifrost_get_platform_job(
+            admin_context, job_id=str(uuid4())
+        )
+        payload = result.structured_content or {}
+        assert payload.get("error"), payload
+        assert payload.get("status_code") == 404

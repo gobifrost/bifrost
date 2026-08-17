@@ -14,6 +14,7 @@ from src.models.contracts.platform_jobs import (
     PlatformJobPublic,
 )
 from src.models.orm.platform_jobs import PlatformJob
+from src.services.operation_catalog import operation_route
 from src.services.platform_jobs import (
     ACTIVE_PLATFORM_JOB_STATUSES,
     platform_job_to_public,
@@ -74,6 +75,7 @@ async def list_platform_jobs(
     "/{job_id}",
     response_model=PlatformJobPublic,
     summary="Get durable platform-job status",
+    **operation_route("platform.jobs.get"),
 )
 async def get_platform_job_status(
     job_id: UUID,

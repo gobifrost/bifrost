@@ -340,6 +340,23 @@ Current-branch evidence collected in this integration worktree includes:
   passes 14/14, and generated inventory/tool-access checks pass 67/67. API
   Pyright/Ruff and client TypeScript are clean. The operation inventory now
   contains 72 canonical operations and 29 uncatalogued MCP tools;
+- the platform-job slice corrects a misleading identity rather than adding a
+  surface. `bifrost_get_app_publish_status` read the shared
+  `GET /api/platform-jobs/{job_id}` route under an app-specific name, so it is
+  now the canonical `platform.jobs.get` operation registered only as
+  `bifrost_get_platform_job`, with a matching `bifrost platform-jobs get` CLI
+  leaf and its own thin-wrapper module. `bifrost apps publish` still polls the
+  same job inline, so no second status contract exists. REST retains
+  requester-or-platform-admin visibility. The catalog naming rule now
+  normalizes hyphenated CLI resources, which the previous slices never
+  exercised. Forward migration `20260817_platform_job_names` renames the
+  persisted Agent grant and platform MCP configuration entry. The focused
+  catalog/wrapper/migration selection passes 108/108, inventory/DTO/contract
+  tripwires pass 67/67, and the live MCP publish-job read plus unknown-job
+  denial pass 2/2. A live CLI drive read a real completed publish job and
+  returned the REST 404 for an unknown job. The operation inventory now
+  contains 73 canonical operations, 140 CLI leaves, and 28 uncatalogued MCP
+  tools;
 - the candidate CI E2E shard exposed one real test-harness defect: the global
   asyncpg queue pool retained connections across pytest's function-scoped
   event loops. Testing now uses `NullPool` while development and production

@@ -253,6 +253,11 @@ environment-skipped mirror tests; API Pyright and Ruff are clean.
       service, canonical REST/CLI/MCP bindings, Agent-bound namespace
       enforcement, native Chat/autonomous reuse, and persisted Agent plus MCP
       configuration migration.
+- [x] Complete the durable platform-job status slice with a canonical
+      `platform.jobs.get` identity over the shared
+      `GET /api/platform-jobs/{job_id}` route, a `bifrost platform-jobs get`
+      CLI leaf, canonical `bifrost_get_platform_job` MCP registration, and a
+      persisted tool-ID migration off the former app-scoped name.
 - [x] Convert legacy direct-ORM MCP implementations to thin HTTP wrappers using
       `_http_bridge.py`; do not create a second service path for MCP.
 - [ ] Reconcile known drift in the remaining domains:
@@ -481,6 +486,27 @@ Pyright/Ruff and client TypeScript are clean, while ESLint has zero errors and
 only the pre-existing React Compiler warning in `FormRenderer.tsx`. The
 inventory now accounts for 67 canonical operations, with 34 uncatalogued MCP
 tools remaining.
+
+**Platform-job-slice evidence:** `bifrost_get_app_publish_status` named an
+app-specific operation while reading the shared durable-job route. It is now
+the canonical `platform.jobs.get` operation over
+`GET /api/platform-jobs/{job_id}`, registered only as
+`bifrost_get_platform_job` in its own thin-wrapper module, with a matching
+`bifrost platform-jobs get` CLI leaf. `bifrost apps publish` continues to poll
+the same job inline; no second status contract was introduced. REST keeps
+ownership of requester-or-platform-admin visibility. The catalog naming rule
+now normalizes hyphenated CLI resources so `platform-jobs` derives
+`bifrost_get_platform_job` rather than an invalid hyphenated tool name.
+Forward migration `20260817_platform_job_names` renames the persisted Agent
+grant and platform MCP configuration entry, and is the sole applied Alembic
+head on a live debug database. The focused catalog/wrapper/migration selection
+passed 108/108; inventory freshness, DTO, and contract-version tripwires passed
+67/67; the live MCP publish-job read and unknown-job denial passed 2/2. A live
+CLI drive against the debug stack read a real completed publish job
+(`files_published: 5`) and returned the REST 404 for an unknown job. API
+Pyright and Ruff are clean, and generated operation/Skill references are fresh.
+The inventory now accounts for 73 canonical operations and 140 CLI leaves, with
+28 uncatalogued MCP tools remaining.
 
 ### Phase 3 — Finish Agent Skill portability
 

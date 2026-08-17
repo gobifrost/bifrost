@@ -13,7 +13,7 @@ REPO_ROOT = API_ROOT.parent
 def test_every_observed_surface_is_classified_with_a_reason() -> None:
     inventory = build_operation_inventory(app, REPO_ROOT)
     assert inventory["counts"] == {
-        "cli": 139,
+        "cli": 140,
         "manifest": 16,
         "mcp": 101,
         "native_builder": 10,
