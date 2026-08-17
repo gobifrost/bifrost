@@ -41,7 +41,12 @@ def test_catalog_vertical_slices_report_rest_cli_and_mcp_parity() -> None:
             "status": "exact_parity",
             "name": row["operation"]["mcp"]["name"],
         }
-        assert observed["native_builder"]["status"] == "missing_surface"
+        expected_builder_status = (
+            "intentionally_unsupported"
+            if row["operation"]["exclusions"].get("native_builder")
+            else "missing_surface"
+        )
+        assert observed["native_builder"]["status"] == expected_builder_status
 
 
 def test_generated_operation_files_are_fresh() -> None:

@@ -155,7 +155,7 @@ def test_nested_help_does_not_check_cli_version(
 
 
 EXPECTED_CRUD_COMMANDS: dict[str, set[str]] = {
-    "orgs": {"list", "get", "create", "update", "delete"},
+    "organizations": {"list", "get", "create", "update", "delete"},
     "roles": {"list", "get", "create", "update", "delete"},
     "forms": {"list", "get", "create", "update", "delete"},
     "agents": {"list", "get", "create", "update", "delete"},

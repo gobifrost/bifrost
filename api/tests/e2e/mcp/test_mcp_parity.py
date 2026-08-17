@@ -9,8 +9,7 @@ Covers the thin-wrapper surface added in
   ``delete_config``.
 * Integrations: ``create_integration``, ``update_integration``,
   ``add_integration_mapping``, ``update_integration_mapping``.
-* Organizations: ``update_organization``, ``delete_organization``
-  (``list`` / ``get`` / ``create`` already existed and are not touched).
+* Organizations: canonical list/get/create/update/delete ``bifrost_*`` tools.
 * Workflow catalog, validation, registration, execution, metadata, deletion,
   and role lifecycle through canonical ``bifrost_*`` thin wrappers.
 
@@ -276,9 +275,17 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
         "field_renames": {},
     },
     {
+        "model_path": "src.models.contracts.organizations:OrganizationCreate",
+        "tool_path": (
+            "src.services.mcp_server.tools.organizations:bifrost_create_organization"
+        ),
+        "extra_args": set(),
+        "field_renames": {},
+    },
+    {
         "model_path": "src.models.contracts.organizations:OrganizationUpdate",
         "tool_path": (
-            "src.services.mcp_server.tools.organizations:update_organization"
+            "src.services.mcp_server.tools.organizations:bifrost_update_organization"
         ),
         "extra_args": {"organization_ref"},
         "field_renames": {},
@@ -1680,45 +1687,101 @@ class TestMcpParityConfigs:
 
 
 # =============================================================================
-# Organizations (update + delete only; list/get/create already existed)
+# Organizations
 # =============================================================================
 
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
 class TestMcpParityOrganizations:
-    async def test_organization_update_and_delete(
-        self, admin_context, e2e_client, platform_admin
+    async def test_organization_roundtrip_access_cache_and_audit(
+        self,
+        admin_context,
+        org_context,
+        e2e_client,
+        platform_admin,
     ) -> None:
         from src.services.mcp_server.tools.organizations import (
-            delete_organization,
-            update_organization,
+            bifrost_create_organization,
+            bifrost_delete_organization,
+            bifrost_get_organization,
+            bifrost_list_organizations,
+            bifrost_update_organization,
         )
 
-        # Create an org via REST (create_organization is the existing ORM tool;
-        # the parity surface only adds update + delete).
         name = f"mcp-parity-org-{uuid4().hex[:8]}"
-        create_resp = e2e_client.post(
-            "/api/organizations",
-            headers=platform_admin.headers,
-            json={"name": name, "domain": f"{uuid4().hex[:8]}.mcp-parity.test"},
+        create_result = await bifrost_create_organization(
+            admin_context,
+            name=name,
         )
-        assert create_resp.status_code == 201
-        org_id = create_resp.json()["id"]
+        created = create_result.structured_content or {}
+        assert "error" not in created, created
+        org_id = str(created["id"])
+
+        get_result = await bifrost_get_organization(
+            admin_context,
+            organization_ref=name,
+        )
+        fetched = get_result.structured_content or {}
+        assert fetched.get("id") == org_id
+
+        list_result = await bifrost_list_organizations(admin_context)
+        listed = list_result.structured_content or {}
+        assert org_id in {str(org["id"]) for org in listed["organizations"]}
+
+        denied_result = await bifrost_list_organizations(org_context)
+        denied = denied_result.structured_content or {}
+        assert denied.get("status_code") == 403, denied
 
         renamed = f"mcp-parity-org-renamed-{uuid4().hex[:8]}"
-        update_result = await update_organization(
+        update_result = await bifrost_update_organization(
             admin_context, organization_ref=org_id, name=renamed
         )
         updated = update_result.structured_content or {}
         assert "error" not in updated, updated
         assert updated.get("name") == renamed
 
-        delete_result = await delete_organization(
+        delete_result = await bifrost_delete_organization(
             admin_context, organization_ref=org_id
         )
-        assert delete_result.structured_content is not None
-        assert delete_result.structured_content.get("deleted") == org_id
+        deleted = delete_result.structured_content or {}
+        assert deleted.get("deleted") == org_id
+
+        active_result = await bifrost_list_organizations(admin_context)
+        active = active_result.structured_content or {}
+        assert org_id not in {str(org["id"]) for org in active["organizations"]}
+
+        all_result = await bifrost_list_organizations(
+            admin_context,
+            include_inactive=True,
+        )
+        all_organizations = all_result.structured_content or {}
+        inactive = {
+            str(org["id"]): org
+            for org in all_organizations["organizations"]
+        }
+        assert inactive[org_id]["is_active"] is False
+
+        audit = e2e_client.get(
+            "/api/audit",
+            headers=platform_admin.headers,
+            params={
+                "action": "organization.",
+                "resource_type": "organization",
+                "limit": 50,
+            },
+        )
+        assert audit.status_code == 200, audit.text
+        actions = {
+            entry["action"]
+            for entry in audit.json()["entries"]
+            if entry["resource_id"] == org_id
+        }
+        assert actions == {
+            "organization.create",
+            "organization.update",
+            "organization.delete",
+        }
 
 
 # =============================================================================

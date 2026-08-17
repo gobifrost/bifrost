@@ -256,7 +256,8 @@ Current-branch evidence collected in this integration worktree includes:
 - `builder-runner/runner.py` bytecode compilation and `git diff --check`: clean.
 - canonical operation inventory currently accounts for 658 REST pairs, 135
   CLI leaves, 101 MCP tools, 10 native Builder primitives, 16 manifest fields,
-  and 19 app-SDK bindings; 45 Agent, Form, Table, App, Event, and Workflow
+  and 19 app-SDK bindings; 50 Agent, Form, Table, App, Event, Workflow, and
+  Organization
   operations now supply stable OpenAPI, CLI, MCP, scope, authorization,
   side-effect, and generated Skill metadata;
 - operation-catalog, generated-reference, Compose-harness, Skill-mirror, and
@@ -277,6 +278,13 @@ Current-branch evidence collected in this integration worktree includes:
   persisted Agent grants; the focused unit selection passed 360/360, REST/MCP
   protocol and refresh coverage passed 60/60, Solution read-only coverage
   passed 2/2, and the full MCP lifecycle is green;
+- the Organization slice removes all five direct-ORM MCP paths in favor of
+  canonical REST adapters, aligns the public CLI at `bifrost organizations`,
+  and keeps platform administration explicitly outside native coding Builder
+  targets. Forward migration `20260817_organization_mcp_names` preserves
+  persisted Agent grants; 374 focused unit checks, 49 live MCP/CLI/REST checks,
+  and 112 contract/tool-access checks pass, with Alembic current at the sole
+  head and generated references fresh;
 - the candidate CI E2E shard exposed one real test-harness defect: the global
   asyncpg queue pool retained connections across pytest's function-scoped
   event loops. Testing now uses `NullPool` while development and production
@@ -295,14 +303,15 @@ state was discarded during resume.
   not part of this version. The shared ledger records provider tokens, cache
   tokens, media usage, reported cost, user, organization, and Solution; Builder
   currently enforces only its per-turn request/token ceilings.
-- Agent, Form, Table, App, Event, and Workflow administration now use REST-canonical MCP
+- Agent, Form, Table, App, Event, Workflow, and Organization administration now use REST-canonical MCP
   adapters. Remaining uncatalogued domains, native Builder dispatch parity,
   revision-bound Agent Skill hydration, generated transport bindings, and the
   maintained coding profile remain sequenced work in the capability-parity
   execution plan.
 - The recovered foundation is committed and pushed through `014d212ea`; the
   canonical App and Event checkpoints are pushed through `3c717d110`; the
-  Workflow checkpoint is complete on the same integration branch. It remains
+  Workflow checkpoint is pushed through `c6251e790`; and the Organization
+  checkpoint is complete on the same integration branch. It remains
   an integration branch: no pull request or merge action has been taken, and
   merge still requires Jack's explicit approval after the remaining phases and
   delivery QA are complete.

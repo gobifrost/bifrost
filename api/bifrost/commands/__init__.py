@@ -1,6 +1,6 @@
 """CLI entity-mutation command package.
 
-Each module in this package defines a Click sub-group (``bifrost orgs ...``,
+Each module in this package defines a Click sub-group (``bifrost organizations ...``,
 ``bifrost roles ...``, etc.) that issues dedicated commands for mutating a
 specific entity type. The command surface and MCP parity tool surface are
 peers — both generate their parameter shape from the DTO-driven helpers in
@@ -35,7 +35,7 @@ from .workflows import workflows_group
 # Map first-arg subcommand name to Click group. Argparse-style ``main`` in
 # ``bifrost.cli`` consults this table and hands off ``args[1:]`` to the group.
 ENTITY_GROUPS: dict[str, click.Group] = {
-    "orgs": orgs_group,
+    "organizations": orgs_group,
     "roles": roles_group,
     "workflows": workflows_group,
     "forms": forms_group,
