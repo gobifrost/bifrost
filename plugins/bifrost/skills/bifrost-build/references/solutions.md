@@ -59,6 +59,12 @@ The `.bifrost/*.yaml` files are Solution source of truth. Edit content fields of
 
 Forms and agents store portable content inline under their UUID in their manifests. Environment-specific organization, access, role, creator, and timestamp data remain outside that portable content. Do not move those fields into the shareable content block.
 
+For a bundle-backed Agent, `bundle_path` is Solution-root-relative (for
+example, `skills/expense-tracker`) and that directory's `SKILL.md` is the
+Agent's canonical instruction source. Keep companion files under `assets/`,
+`references/`, or `scripts/`; deploy carries the bundle with the Agent. Read
+`entities.md` for the complete Agent Skill contract.
+
 Runtime file bytes are not source. Declare their locations in `.bifrost/files.yaml` and access them through managed-file APIs; read `files.md`.
 
 ## Add apps and workflows

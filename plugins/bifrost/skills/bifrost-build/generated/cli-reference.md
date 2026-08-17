@@ -1695,6 +1695,7 @@ Options:
   --description TEXT  description
   --permissions TEXT  permissions as JSON literal or @path to a YAML/JSON
                       file.
+  --scopes TEXT       scopes (repeat for multiple).
   --json              Emit JSON instead of human-readable output.
   --help              Show this message and exit.
 ```
@@ -1752,6 +1753,7 @@ Options:
   --description TEXT  description
   --permissions TEXT  permissions as JSON literal or @path to a YAML/JSON
                       file.
+  --scopes TEXT       scopes (repeat for multiple).
   --json              Emit JSON instead of human-readable output.
   --help              Show this message and exit.
 ```
