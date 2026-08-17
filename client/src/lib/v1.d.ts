@@ -9515,13 +9515,13 @@ export interface paths {
          * List applications
          * @description List all applications in the current scope.
          */
-        get: operations["list_applications_api_applications_get"];
+        get: operations["apps.list"];
         put?: never;
         /**
          * Create an application
          * @description Create a new application.
          */
-        post: operations["create_application_api_applications_post"];
+        post: operations["apps.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9539,7 +9539,7 @@ export interface paths {
          * Get application metadata
          * @description Get application metadata by slug (globally unique).
          */
-        get: operations["get_application_api_applications__slug__get"];
+        get: operations["apps.get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -9582,14 +9582,14 @@ export interface paths {
          * Delete application
          * @description Delete an application by ID.
          */
-        delete: operations["delete_application_api_applications__app_id__delete"];
+        delete: operations["apps.delete"];
         options?: never;
         head?: never;
         /**
          * Update application metadata
          * @description Update application metadata and access control by ID.
          */
-        patch: operations["update_application_api_applications__app_id__patch"];
+        patch: operations["apps.update"];
         trace?: never;
     };
     "/api/applications/{app_id}/draft": {
@@ -9640,7 +9640,7 @@ export interface paths {
          *     request while the same app is queued or running returns the existing
          *     operation instead of launching a conflicting publish.
          */
-        post: operations["publish_application_api_applications__app_id__publish_post"];
+        post: operations["apps.publish"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9663,7 +9663,7 @@ export interface paths {
          *     Validates that the new path is unique, non-nested with other apps, and has
          *     source files under it. ``force: true`` bypasses all three checks.
          */
-        post: operations["replace_application_endpoint_api_applications__app_id__replace_post"];
+        post: operations["apps.replace"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9711,7 +9711,7 @@ export interface paths {
          *     Checks for: unknown components, workflow ID format/existence,
          *     bad imports, forbidden patterns, required file structure.
          */
-        post: operations["validate_application_api_applications__app_id__validate_post"];
+        post: operations["apps.validate"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9959,14 +9959,14 @@ export interface paths {
          * Get app dependencies
          * @description Return the app's npm dependencies.
          */
-        get: operations["get_dependencies_api_applications__app_id__dependencies_get"];
+        get: operations["apps.dependencies.get"];
         /**
          * Update app dependencies
          * @description Replace the app's npm dependencies.
          *
          *     Validates every package name and version, enforces the max-dependency limit.
          */
-        put: operations["put_dependencies_api_applications__app_id__dependencies_put"];
+        put: operations["apps.dependencies.update"];
         post?: never;
         delete?: never;
         options?: never;
@@ -12111,7 +12111,7 @@ export interface components {
             app_model: string;
             /**
              * Role Ids
-             * @description Role IDs for role_based access (ignored if access_level is 'authenticated')
+             * @description Role assignments used when access_level is 'role_based'
              */
             role_ids?: string[];
             /**
@@ -12353,10 +12353,10 @@ export interface components {
             /** Icon */
             icon?: string | null;
             /**
-             * Scope
-             * @description Organization scope: 'global' for platform-wide, or org UUID string. Platform admin only.
+             * Organization Id
+             * @description Organization ID. Explicit null moves the Application to global scope; omission preserves its current scope. Platform admin only.
              */
-            scope?: string | null;
+            organization_id?: string | null;
             /**
              * Access Level
              * @description Access level: 'authenticated' (any logged-in user) or 'role_based' (specific roles)
@@ -45597,7 +45597,7 @@ export interface operations {
             };
         };
     };
-    list_applications_api_applications_get: {
+    "apps.list": {
         parameters: {
             query?: {
                 /** @description Filter scope: 'global' for global only, org UUID for specific org. */
@@ -45629,7 +45629,7 @@ export interface operations {
             };
         };
     };
-    create_application_api_applications_post: {
+    "apps.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -45662,7 +45662,7 @@ export interface operations {
             };
         };
     };
-    get_application_api_applications__slug__get: {
+    "apps.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -45726,7 +45726,7 @@ export interface operations {
             };
         };
     };
-    delete_application_api_applications__app_id__delete: {
+    "apps.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -45755,7 +45755,7 @@ export interface operations {
             };
         };
     };
-    update_application_api_applications__app_id__patch: {
+    "apps.update": {
         parameters: {
             query?: never;
             header?: never;
@@ -45856,7 +45856,7 @@ export interface operations {
             };
         };
     };
-    publish_application_api_applications__app_id__publish_post: {
+    "apps.publish": {
         parameters: {
             query?: never;
             header?: never;
@@ -45891,7 +45891,7 @@ export interface operations {
             };
         };
     };
-    replace_application_endpoint_api_applications__app_id__replace_post: {
+    "apps.replace": {
         parameters: {
             query?: never;
             header?: never;
@@ -45959,7 +45959,7 @@ export interface operations {
             };
         };
     };
-    validate_application_api_applications__app_id__validate_post: {
+    "apps.validate": {
         parameters: {
             query?: never;
             header?: never;
@@ -46447,7 +46447,7 @@ export interface operations {
             };
         };
     };
-    get_dependencies_api_applications__app_id__dependencies_get: {
+    "apps.dependencies.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -46481,7 +46481,7 @@ export interface operations {
             };
         };
     };
-    put_dependencies_api_applications__app_id__dependencies_put: {
+    "apps.dependencies.update": {
         parameters: {
             query?: never;
             header?: never;

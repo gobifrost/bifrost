@@ -84,6 +84,7 @@ import {
 import { Trash2 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import type { components } from "@/lib/v1";
+import { buildApplicationUpdateBody } from "./AppInfoDialogPayload";
 
 type RolePublic = components["schemas"]["RolePublic"];
 
@@ -238,17 +239,7 @@ export function AppInfoDialog({
 					params: {
 						path: { app_id: existingApp.id },
 					},
-					body: {
-						name: values.name,
-						slug: values.slug,
-						description: values.description || null,
-						access_level: values.access_level,
-						role_ids: values.role_ids,
-						// scope is passed in body for platform admins
-						scope: isPlatformAdmin
-							? (values.organization_id ?? "global")
-							: undefined,
-					},
+					body: buildApplicationUpdateBody(values, isPlatformAdmin),
 				});
 				handleClose();
 

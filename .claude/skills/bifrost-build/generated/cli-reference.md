@@ -170,14 +170,16 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  create    Create a new application, optionally seeding npm dependencies.
-  delete    Delete an application.
-  get       Get a single application by slug, UUID, or name.
-  list      List all applications (wrapped ``{applications, total}``...
-  publish   Rebuild and publish an application, polling durable progress.
-  replace   Repoint an application's source directory.
-  set-deps  Replace an application's npm dependencies.
-  update    Update application metadata (patch-without-draft).
+  create               Create a new application, optionally seeding npm...
+  delete               Delete an application.
+  get                  Get a single application by slug, UUID, or name.
+  get-dependencies     Get an application's npm dependencies.
+  list                 List all applications (wrapped ``{applications,...
+  publish              Rebuild and publish an application, polling...
+  replace              Repoint an application's source directory.
+  update               Update application metadata (patch-without-draft).
+  update-dependencies  Replace an application's npm dependencies.
+  validate             Compile and statically validate an application's...
 ```
 
 ### `apps create`
@@ -187,7 +189,7 @@ Usage: apps create [OPTIONS]
 
   Create a new application, optionally seeding npm dependencies.
 
-  ``--organization`` accepts a UUID or org name. ``--role-ids`` accepts
+  Org targeting follows the unified ``--org`` standard. ``--role-ids`` accepts
   repeated values or a comma-separated list; entries may be role names or
   UUIDs.
 
@@ -198,19 +200,25 @@ Usage: apps create [OPTIONS]
   in place — there is no rollback.
 
 Options:
-  --name TEXT          name  [required]
-  --description TEXT   description
-  --slug TEXT          slug  [required]
-  --access-level TEXT  access_level
-  --app-model TEXT     app_model
-  --role-ids TEXT      role_ids (repeat for multiple; comma-split also
-                       accepted).
-  --organization TEXT  org ref (UUID or name) for organization_id.
-  --deps TEXT          Dependencies as a JSON literal or @path to a
-                       package.json / {name: version} file. Triggers a follow-
-                       up PUT to /dependencies after the app is created.
-  --json               Emit JSON instead of human-readable output.
-  --help               Show this message and exit.
+  --name TEXT                     name  [required]
+  --description TEXT              description
+  --slug TEXT                     slug  [required]
+  --access-level TEXT             access_level
+  --app-model TEXT                app_model
+  --role-ids TEXT                 role_ids (repeat for multiple; comma-split
+                                  also accepted).
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --deps TEXT                     Dependencies as a JSON literal or @path to a
+                                  package.json / {name: version} file.
+                                  Triggers a follow-up PUT to /dependencies
+                                  after the app is created.
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ### `apps delete`
@@ -243,6 +251,18 @@ Usage: apps get [OPTIONS] REF
   OWN apps are preferred: a generic ref like "portal" must not silently
   resolve an unrelated global app when the workspace's app matches by slug or
   name.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `apps get-dependencies`
+
+```
+Usage: apps get-dependencies [OPTIONS] REF
+
+  Get an application's npm dependencies.
 
 Options:
   --json  Emit JSON instead of human-readable output.
@@ -299,24 +319,6 @@ Options:
   --help            Show this message and exit.
 ```
 
-### `apps set-deps`
-
-```
-Usage: apps set-deps [OPTIONS] REF
-
-  Replace an application's npm dependencies.
-
-  ``REF`` is a slug, UUID, or application name. The ``--deps`` value is either
-  a JSON object literal or ``@path/to/package.json``; package.json's
-  ``dependencies`` key is extracted automatically.
-
-Options:
-  --deps TEXT  Dependencies as a JSON literal or @path to a package.json /
-               {name: version} file.  [required]
-  --json       Emit JSON instead of human-readable output.
-  --help       Show this message and exit.
-```
-
 ### `apps update`
 
 ```
@@ -336,19 +338,55 @@ Usage: apps update [OPTIONS] REF
   leaves the metadata change in place — there is no rollback.
 
 Options:
-  --name TEXT          name
-  --slug TEXT          slug
-  --description TEXT   description
-  --scope TEXT         scope
-  --access-level TEXT  access_level
-  --role-ids TEXT      role_ids (repeat for multiple; comma-split also
-                       accepted).
-  --deps TEXT          Dependencies as a JSON literal or @path to a
-                       package.json / {name: version} file. Triggers a follow-
-                       up PUT to /dependencies after the metadata patch.
-                       Mirrors `apps create --deps`.
-  --json               Emit JSON instead of human-readable output.
-  --help               Show this message and exit.
+  --name TEXT                     name
+  --slug TEXT                     slug
+  --description TEXT              description
+  --access-level TEXT             access_level
+  --role-ids TEXT                 role_ids (repeat for multiple; comma-split
+                                  also accepted).
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --deps TEXT                     Dependencies as a JSON literal or @path to a
+                                  package.json / {name: version} file.
+                                  Triggers a follow-up PUT to /dependencies
+                                  after the metadata patch. Mirrors `apps
+                                  create --deps`.
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
+### `apps update-dependencies`
+
+```
+Usage: apps update-dependencies [OPTIONS] REF
+
+  Replace an application's npm dependencies.
+
+  ``REF`` is a slug, UUID, or application name. The ``--deps`` value is either
+  a JSON object literal or ``@path/to/package.json``; package.json's
+  ``dependencies`` key is extracted automatically.
+
+Options:
+  --deps TEXT  Dependencies as a JSON literal or @path to a package.json /
+               {name: version} file.  [required]
+  --json       Emit JSON instead of human-readable output.
+  --help       Show this message and exit.
+```
+
+### `apps validate`
+
+```
+Usage: apps validate [OPTIONS] REF
+
+  Compile and statically validate an application's current source.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
 ```
 
 ## `claims`

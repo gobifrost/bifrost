@@ -14,7 +14,8 @@ parity follow-up:
   :class:`ApplicationUpdate`; unset flags omitted by :func:`assemble_body`).
   This is patch-without-draft per the audit — metadata is applied to the
   live application without a staging step.
-* ``bifrost apps set-deps <ref>`` → ``PUT /api/applications/{uuid}/dependencies``
+* ``bifrost apps get-dependencies <ref>`` → ``GET /api/applications/{uuid}/dependencies``
+* ``bifrost apps update-dependencies <ref>`` → ``PUT /api/applications/{uuid}/dependencies``
   with ``--deps @package.json`` (or a JSON literal).
 * ``bifrost apps publish <ref>`` → enqueue a durable rebuild/publish operation
   and poll its short status requests to a terminal result.
@@ -54,6 +55,7 @@ from bifrost.dto_flags import (
     build_cli_flags,
     load_dict_value,
 )
+from bifrost.org_target import org_option, resolve_org_target
 from bifrost.refs import RefResolver
 from bifrost.contracts import (
     ApplicationCreate,
@@ -216,6 +218,7 @@ async def get_app(
 
 @apps_group.command("create")
 @_apply_flags(_CREATE_FLAGS)
+@org_option
 @click.option(
     "--deps",
     "deps_raw",
@@ -232,6 +235,8 @@ async def get_app(
 @run_async
 async def create_app(
     ctx: click.Context,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
@@ -240,9 +245,9 @@ async def create_app(
 ) -> None:
     """Create a new application, optionally seeding npm dependencies.
 
-    ``--organization`` accepts a UUID or org name. ``--role-ids`` accepts
-    repeated values or a comma-separated list; entries may be role names
-    or UUIDs.
+    Org targeting follows the unified ``--org`` standard. ``--role-ids``
+    accepts repeated values or a comma-separated list; entries may be role
+    names or UUIDs.
 
     When ``--deps`` is passed this runs as a two-call orchestration: the
     app is created first, then a ``PUT /dependencies`` applies the parsed
@@ -251,6 +256,9 @@ async def create_app(
     non-zero, and leaves the app in place — there is no rollback.
     """
     body = await assemble_body(ApplicationCreate, fields, resolver=resolver)
+    target = await resolve_org_target(org, is_global, resolver)
+    if target.is_set:
+        body["organization_id"] = target.organization_id
     response = await client.post("/api/applications", json=body)
     response.raise_for_status()
     created = response.json()
@@ -294,6 +302,7 @@ async def create_app(
 @apps_group.command("update")
 @click.argument("ref")
 @_apply_flags(_UPDATE_FLAGS)
+@org_option
 @click.option(
     "--deps",
     "deps_raw",
@@ -311,6 +320,8 @@ async def create_app(
 async def update_app(
     ctx: click.Context,
     ref: str,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
@@ -333,6 +344,9 @@ async def update_app(
     """
     app_uuid = await resolver.resolve("app", ref)
     body = await assemble_body(ApplicationUpdate, fields, resolver=resolver)
+    target = await resolve_org_target(org, is_global, resolver)
+    if target.is_set:
+        body["organization_id"] = target.organization_id
     response = await client.patch(f"/api/applications/{app_uuid}", json=body)
     response.raise_for_status()
     updated = response.json()
@@ -371,7 +385,26 @@ async def update_app(
     )
 
 
-@apps_group.command("set-deps")
+@apps_group.command("get-dependencies")
+@click.argument("ref")
+@click.pass_context
+@pass_resolver
+@run_async
+async def get_dependencies(
+    ctx: click.Context,
+    ref: str,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+) -> None:
+    """Get an application's npm dependencies."""
+    app_uuid = await resolver.resolve("app", ref)
+    response = await client.get(f"/api/applications/{app_uuid}/dependencies")
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
+
+
+@apps_group.command("update-dependencies")
 @click.argument("ref")
 @click.option(
     "--deps",
@@ -386,7 +419,7 @@ async def update_app(
 @click.pass_context
 @pass_resolver
 @run_async
-async def set_deps(
+async def update_dependencies(
     ctx: click.Context,
     ref: str,
     deps_raw: str,
@@ -402,9 +435,26 @@ async def set_deps(
     """
     app_uuid = await resolver.resolve("app", ref)
     deps = _parse_deps(deps_raw)
-    response = await client.put(
-        f"/api/applications/{app_uuid}/dependencies", json=deps
-    )
+    response = await client.put(f"/api/applications/{app_uuid}/dependencies", json=deps)
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
+
+
+@apps_group.command("validate")
+@click.argument("ref")
+@click.pass_context
+@pass_resolver
+@run_async
+async def validate_app(
+    ctx: click.Context,
+    ref: str,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+) -> None:
+    """Compile and statically validate an application's current source."""
+    app_uuid = await resolver.resolve("app", ref)
+    response = await client.post(f"/api/applications/{app_uuid}/validate")
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
 
@@ -421,9 +471,7 @@ async def _poll_publish_job(
     last_progress: tuple[str | None, int, int | None] | None = None
     while True:
         try:
-            response = await client.get(
-                f"/api/platform-jobs/{job_id}"
-            )
+            response = await client.get(f"/api/platform-jobs/{job_id}")
         except httpx.TimeoutException as exc:
             raise click.ClickException(
                 f"Timed out reading application publish job {job_id}. "
@@ -576,9 +624,7 @@ async def replace_app(
     """
     app_uuid = await resolver.resolve("app", ref)
     body: dict[str, Any] = {"repo_path": repo_path, "force": force}
-    response = await client.post(
-        f"/api/applications/{app_uuid}/replace", json=body
-    )
+    response = await client.post(f"/api/applications/{app_uuid}/replace", json=body)
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
 

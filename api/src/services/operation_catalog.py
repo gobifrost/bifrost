@@ -15,6 +15,7 @@ from src.models.contracts.operation_catalog import (
     CliOperationBinding,
     ManifestOperationBinding,
     McpOperationBinding,
+    OperationAsyncPolicy,
     OperationDefinition,
     OperationTargetKind,
     RestOperationBinding,
@@ -26,6 +27,9 @@ _FORM_SDK_EXCLUSION = "Form administration is not available to application SDKs.
 _TABLE_SDK_EXCLUSION = (
     "Table metadata administration is not available to application SDKs; "
     "SDK table methods operate on documents."
+)
+_APP_SDK_EXCLUSION = (
+    "Application administration is not available to the in-app runtime SDK."
 )
 
 
@@ -353,6 +357,220 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         ),
         exclusions={"sdk": _TABLE_SDK_EXCLUSION},
     ),
+    OperationDefinition(
+        operation_id="apps.list",
+        summary="List Applications visible to the caller",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/applications",
+            response_model="ApplicationListResponse",
+        ),
+        cli=CliOperationBinding(path=("apps", "list")),
+        mcp=McpOperationBinding(name="bifrost_list_apps"),
+        native_builder=True,
+        action_scopes=("apps.read",),
+        authorization_resolver="ApplicationRepository.list_applications",
+        exclusions={
+            "manifest": "Manifests reconcile Application state; they do not perform collection reads.",
+            "sdk": _APP_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="apps.get",
+        summary="Get one Application visible to the caller",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/applications/{slug}",
+            response_model="ApplicationPublic",
+        ),
+        cli=CliOperationBinding(path=("apps", "get")),
+        mcp=McpOperationBinding(name="bifrost_get_app"),
+        native_builder=True,
+        action_scopes=("apps.read",),
+        authorization_resolver="ApplicationRepository plus role and Solution visibility",
+        exclusions={
+            "manifest": "Manifests reconcile Application state; they do not perform resource reads.",
+            "sdk": _APP_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="apps.create",
+        summary="Create a loose Application in an allowed target",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/applications",
+            request_model="ApplicationCreate",
+            response_model="ApplicationPublic",
+        ),
+        cli=CliOperationBinding(path=("apps", "create")),
+        mcp=McpOperationBinding(name="bifrost_create_app"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="apps"),
+        action_scopes=("apps.write",),
+        authorization_resolver="Application create and target-organization policy",
+        audit_event="app.create",
+        side_effects=(
+            "persist Application metadata and role grants",
+            "scaffold loose inline-v1 source when the target path is empty",
+            "write manifest change through RepoSyncWriter",
+        ),
+        exclusions={"sdk": _APP_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="apps.update",
+        summary="Update an Application the caller may manage",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="PATCH",
+            path="/api/applications/{app_id}",
+            request_model="ApplicationUpdate",
+            response_model="ApplicationPublic",
+        ),
+        cli=CliOperationBinding(path=("apps", "update")),
+        mcp=McpOperationBinding(name="bifrost_update_app"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="apps"),
+        action_scopes=("apps.write",),
+        authorization_resolver="Application management and Solution-management guards",
+        audit_event="app.update",
+        side_effects=(
+            "replace selected metadata and role grants",
+            "publish Application draft metadata updates",
+            "write manifest change through RepoSyncWriter",
+        ),
+        exclusions={"sdk": _APP_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="apps.delete",
+        summary="Delete an Application the caller may manage",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="DELETE",
+            path="/api/applications/{app_id}",
+        ),
+        cli=CliOperationBinding(path=("apps", "delete")),
+        mcp=McpOperationBinding(name="bifrost_delete_app"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="apps", behavior="remove"),
+        action_scopes=("apps.write",),
+        authorization_resolver="Application management and Solution-management guards",
+        audit_event="app.delete",
+        side_effects=(
+            "delete Application metadata and relation grants",
+            "remove the manifest entry through RepoSyncWriter",
+        ),
+        exclusions={"sdk": _APP_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="apps.dependencies.get",
+        summary="Get an Application's npm dependencies",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/applications/{app_id}/dependencies",
+            response_model="dict[str, str]",
+        ),
+        cli=CliOperationBinding(path=("apps", "get-dependencies")),
+        mcp=McpOperationBinding(name="bifrost_get_app_dependencies"),
+        native_builder=True,
+        action_scopes=("apps.read",),
+        authorization_resolver="ApplicationRepository access check",
+        exclusions={
+            "manifest": "The read does not mutate the Application manifest.",
+            "sdk": _APP_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="apps.dependencies.update",
+        summary="Replace an Application's npm dependencies",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="PUT",
+            path="/api/applications/{app_id}/dependencies",
+            request_model="dict[str, str]",
+            response_model="dict[str, str]",
+        ),
+        cli=CliOperationBinding(path=("apps", "update-dependencies")),
+        mcp=McpOperationBinding(name="bifrost_update_app_dependencies"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="apps"),
+        action_scopes=("apps.write",),
+        authorization_resolver="Application management and Solution-management guards",
+        audit_event="app.dependencies.update",
+        side_effects=(
+            "replace dependency metadata",
+            "invalidate the Application render cache",
+            "write manifest change through RepoSyncWriter",
+        ),
+        exclusions={"sdk": _APP_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="apps.validate",
+        summary="Compile and statically validate Application source",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/applications/{app_id}/validate",
+            response_model="AppValidationResponse",
+        ),
+        cli=CliOperationBinding(path=("apps", "validate")),
+        mcp=McpOperationBinding(name="bifrost_validate_app"),
+        native_builder=True,
+        action_scopes=("apps.read",),
+        authorization_resolver="ApplicationRepository access check",
+        exclusions={
+            "manifest": "Validation does not mutate the Application manifest.",
+            "sdk": _APP_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="apps.publish",
+        summary="Queue a durable build and publish for a loose Application",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/applications/{app_id}/publish",
+            request_model="ApplicationPublishRequest",
+            response_model="PlatformJobAccepted",
+        ),
+        cli=CliOperationBinding(path=("apps", "publish")),
+        mcp=McpOperationBinding(name="bifrost_publish_app"),
+        native_builder=True,
+        action_scopes=("apps.publish",),
+        authorization_resolver="Application management and Solution-management guards",
+        audit_event="app.publish",
+        side_effects=(
+            "enqueue or reuse the canonical Application publish Platform Job",
+        ),
+        async_policy=OperationAsyncPolicy.PLATFORM_JOB,
+        exclusions={
+            "manifest": "Publishing does not change portable Application source metadata.",
+            "sdk": _APP_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="apps.replace",
+        summary="Repoint a loose Application to a workspace source directory",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/applications/{app_id}/replace",
+            request_model="ApplicationReplaceRequest",
+            response_model="ApplicationPublic",
+        ),
+        cli=CliOperationBinding(path=("apps", "replace")),
+        mcp=McpOperationBinding(name="bifrost_replace_app"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="apps"),
+        action_scopes=("apps.write",),
+        authorization_resolver="Application management and Solution-management guards",
+        audit_event="app.replace",
+        side_effects=("write the new source path to the Application manifest",),
+        exclusions={"sdk": _APP_SDK_EXCLUSION},
+    ),
 )
 
 
@@ -428,8 +646,15 @@ def validate_operation_catalog(
     for operation in materialized:
         if operation.cli and operation.mcp:
             resource, verb = operation.cli.path[0], operation.cli.path[-1]
-            noun = resource[:-1] if verb not in {"list", "search"} and resource.endswith("s") else resource
-            expected = f"bifrost_{verb}_{noun}"
+            verb_parts = verb.replace("-", "_").split("_")
+            action, subresource = verb_parts[0], verb_parts[1:]
+            noun = (
+                resource[:-1]
+                if action not in {"list", "search"} and resource.endswith("s")
+                else resource
+            )
+            suffix = "_".join((noun, *subresource))
+            expected = f"bifrost_{action}_{suffix}"
             if operation.mcp.name != expected:
                 errors.append(
                     f"{operation.operation_id} maps {operation.cli.path!r} to "

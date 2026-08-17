@@ -21,3 +21,13 @@ harness.
 | `tables.create` | `bifrost tables create` | `bifrost_create_table` | `tables.write` |
 | `tables.update` | `bifrost tables update` | `bifrost_update_table` | `tables.write` |
 | `tables.delete` | `bifrost tables delete` | `bifrost_delete_table` | `tables.write` |
+| `apps.list` | `bifrost apps list` | `bifrost_list_apps` | `apps.read` |
+| `apps.get` | `bifrost apps get` | `bifrost_get_app` | `apps.read` |
+| `apps.create` | `bifrost apps create` | `bifrost_create_app` | `apps.write` |
+| `apps.update` | `bifrost apps update` | `bifrost_update_app` | `apps.write` |
+| `apps.delete` | `bifrost apps delete` | `bifrost_delete_app` | `apps.write` |
+| `apps.dependencies.get` | `bifrost apps get-dependencies` | `bifrost_get_app_dependencies` | `apps.read` |
+| `apps.dependencies.update` | `bifrost apps update-dependencies` | `bifrost_update_app_dependencies` | `apps.write` |
+| `apps.validate` | `bifrost apps validate` | `bifrost_validate_app` | `apps.read` |
+| `apps.publish` | `bifrost apps publish` | `bifrost_publish_app` | `apps.publish` |
+| `apps.replace` | `bifrost apps replace` | `bifrost_replace_app` | `apps.write` |

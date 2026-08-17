@@ -130,17 +130,13 @@ def org_context(org1_user, mcp_bridge_env) -> MockMCPContext:
 SIGNATURE_PARITY_SPECS: list[dict] = [
     {
         "model_path": "src.models.contracts.agents:AgentCreate",
-        "tool_path": (
-            "src.services.mcp_server.tools.agents:bifrost_create_agent"
-        ),
+        "tool_path": ("src.services.mcp_server.tools.agents:bifrost_create_agent"),
         "extra_args": {"scope"},
         "field_renames": {},
     },
     {
         "model_path": "src.models.contracts.agents:AgentUpdate",
-        "tool_path": (
-            "src.services.mcp_server.tools.agents:bifrost_update_agent"
-        ),
+        "tool_path": ("src.services.mcp_server.tools.agents:bifrost_update_agent"),
         "extra_args": {"agent_ref", "scope"},
         "field_renames": {},
     },
@@ -166,6 +162,18 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
         "model_path": "src.models.contracts.tables:TableUpdate",
         "tool_path": "src.services.mcp_server.tools.tables:bifrost_update_table",
         "extra_args": {"table_ref", "scope"},
+        "field_renames": {},
+    },
+    {
+        "model_path": "src.models.contracts.applications:ApplicationCreate",
+        "tool_path": "src.services.mcp_server.tools.apps:bifrost_create_app",
+        "extra_args": {"scope"},
+        "field_renames": {},
+    },
+    {
+        "model_path": "src.models.contracts.applications:ApplicationUpdate",
+        "tool_path": "src.services.mcp_server.tools.apps:bifrost_update_app",
+        "extra_args": {"app_ref", "scope"},
         "field_renames": {},
     },
     {
@@ -220,17 +228,13 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
     },
     {
         "model_path": "src.models.contracts.integrations:IntegrationCreate",
-        "tool_path": (
-            "src.services.mcp_server.tools.integrations:create_integration"
-        ),
+        "tool_path": ("src.services.mcp_server.tools.integrations:create_integration"),
         "extra_args": set(),
         "field_renames": {},
     },
     {
         "model_path": "src.models.contracts.integrations:IntegrationUpdate",
-        "tool_path": (
-            "src.services.mcp_server.tools.integrations:update_integration"
-        ),
+        "tool_path": ("src.services.mcp_server.tools.integrations:update_integration"),
         "extra_args": {"integration_ref"},
         # ``list_entities_data_provider_id`` is a workflow ref the tool
         # accepts as a name/UUID/path::func and resolves to a UUID before
@@ -240,9 +244,7 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
         },
     },
     {
-        "model_path": (
-            "src.models.contracts.integrations:IntegrationMappingCreate"
-        ),
+        "model_path": ("src.models.contracts.integrations:IntegrationMappingCreate"),
         "tool_path": (
             "src.services.mcp_server.tools.integrations:add_integration_mapping"
         ),
@@ -252,12 +254,9 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
         "field_renames": {"organization_id": "organization"},
     },
     {
-        "model_path": (
-            "src.models.contracts.integrations:IntegrationMappingUpdate"
-        ),
+        "model_path": ("src.models.contracts.integrations:IntegrationMappingUpdate"),
         "tool_path": (
-            "src.services.mcp_server.tools.integrations:"
-            "update_integration_mapping"
+            "src.services.mcp_server.tools.integrations:update_integration_mapping"
         ),
         "extra_args": {"integration_ref", "mapping_id"},
         "field_renames": {},
@@ -413,10 +412,13 @@ class TestMcpParityAgents:
         )
         deleted = deleted_result.structured_content or {}
         assert deleted.get("deleted") == agent_id
-        assert e2e_client.get(
-            f"/api/agents/{agent_id}",
-            headers=platform_admin.headers,
-        ).status_code == 404
+        assert (
+            e2e_client.get(
+                f"/api/agents/{agent_id}",
+                headers=platform_admin.headers,
+            ).status_code
+            == 404
+        )
         manifest_paths = await RepoStorage().list(".bifrost/")
         if ".bifrost/agents.yaml" in manifest_paths:
             manifest_after_delete = (
@@ -630,10 +632,13 @@ class TestMcpParityForms:
         )
         purged = purged_result.structured_content or {}
         assert purged == {"deleted": form_id, "purged": True}
-        assert e2e_client.get(
-            f"/api/forms/{form_id}",
-            headers=platform_admin.headers,
-        ).status_code == 404
+        assert (
+            e2e_client.get(
+                f"/api/forms/{form_id}",
+                headers=platform_admin.headers,
+            ).status_code
+            == 404
+        )
 
         audit = e2e_client.get(
             "/api/audit",
@@ -865,10 +870,13 @@ class TestMcpParityTables:
         )
         deleted = deleted_result.structured_content or {}
         assert deleted == {"success": True, "id": table_id}
-        assert e2e_client.get(
-            f"/api/tables/{table_id}",
-            headers=platform_admin.headers,
-        ).status_code == 404
+        assert (
+            e2e_client.get(
+                f"/api/tables/{table_id}",
+                headers=platform_admin.headers,
+            ).status_code
+            == 404
+        )
 
         manifest_paths = await RepoStorage().list(".bifrost/")
         if ".bifrost/tables.yaml" in manifest_paths:
@@ -1000,6 +1008,200 @@ class TestMcpParityTables:
 
 
 # =============================================================================
+# Applications
+# =============================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestMcpParityApplications:
+    async def test_apps_roundtrip_dependencies_validation_manifest_and_audit(
+        self,
+        admin_context,
+        e2e_client,
+        platform_admin,
+        org_context,
+    ) -> None:
+        from src.services.mcp_server.tools.apps import (
+            bifrost_create_app,
+            bifrost_delete_app,
+            bifrost_get_app,
+            bifrost_get_app_dependencies,
+            bifrost_list_apps,
+            bifrost_update_app,
+            bifrost_update_app_dependencies,
+            bifrost_validate_app,
+        )
+        from src.services.repo_storage import RepoStorage
+
+        listed = await bifrost_list_apps(admin_context)
+        assert listed.structured_content is not None
+        assert listed.structured_content.get("count", -1) >= 0
+
+        slug = f"mcp-parity-app-{uuid4().hex[:8]}"
+        created_result = await bifrost_create_app(
+            admin_context,
+            name="MCP parity App",
+            slug=slug,
+            description="created through canonical MCP",
+            access_level="authenticated",
+            app_model="inline_v1",
+            scope="global",
+        )
+        created = created_result.structured_content or {}
+        assert "error" not in created, created
+        app_id = str(created["id"])
+
+        manifest_after_create = (await RepoStorage().read(".bifrost/apps.yaml")).decode(
+            "utf-8"
+        )
+        assert app_id in manifest_after_create
+
+        fetched_result = await bifrost_get_app(admin_context, app_ref=slug)
+        fetched = fetched_result.structured_content or {}
+        assert fetched.get("id") == app_id
+        assert fetched.get("repo_path") == f"apps/{slug}"
+
+        dependencies = {"lodash": "^4.17.21"}
+        dependency_update = await bifrost_update_app_dependencies(
+            admin_context,
+            app_ref=slug,
+            dependencies=dependencies,
+        )
+        assert (dependency_update.structured_content or {}).get(
+            "dependencies"
+        ) == dependencies
+        dependency_get = await bifrost_get_app_dependencies(
+            admin_context,
+            app_ref=app_id,
+        )
+        assert (dependency_get.structured_content or {}).get(
+            "dependencies"
+        ) == dependencies
+
+        validation_result = await bifrost_validate_app(
+            admin_context,
+            app_ref=app_id,
+        )
+        validation = validation_result.structured_content or {}
+        assert "error" not in validation, validation
+        assert isinstance(validation.get("valid"), bool)
+        assert isinstance(validation.get("errors"), list)
+        assert isinstance(validation.get("warnings"), list)
+
+        renamed = f"mcp-parity-app-renamed-{uuid4().hex[:8]}"
+        updated_result = await bifrost_update_app(
+            admin_context,
+            app_ref=slug,
+            name="MCP parity App updated",
+            slug=renamed,
+            description="updated through canonical MCP",
+            scope=str(org_context.org_id),
+        )
+        updated = updated_result.structured_content or {}
+        assert "error" not in updated, updated
+        assert updated.get("slug") == renamed
+        assert updated.get("organization_id") == str(org_context.org_id)
+
+        rest_get = e2e_client.get(
+            f"/api/applications/{renamed}",
+            headers=platform_admin.headers,
+        )
+        assert rest_get.status_code == 200, rest_get.text
+        assert rest_get.json()["description"] == "updated through canonical MCP"
+
+        deleted_result = await bifrost_delete_app(
+            admin_context,
+            app_ref=renamed,
+        )
+        deleted = deleted_result.structured_content or {}
+        assert deleted == {"success": True, "id": app_id}
+        assert (
+            e2e_client.get(
+                f"/api/applications/{renamed}",
+                headers=platform_admin.headers,
+            ).status_code
+            == 404
+        )
+
+        manifest_paths = await RepoStorage().list(".bifrost/")
+        if ".bifrost/apps.yaml" in manifest_paths:
+            manifest_after_delete = (
+                await RepoStorage().read(".bifrost/apps.yaml")
+            ).decode("utf-8")
+            assert app_id not in manifest_after_delete
+
+        audit = e2e_client.get(
+            "/api/audit",
+            headers=platform_admin.headers,
+            params={"action": "app.", "resource_type": "application", "limit": 50},
+        )
+        assert audit.status_code == 200, audit.text
+        actions = {
+            entry["action"]
+            for entry in audit.json()["entries"]
+            if entry["resource_id"] == app_id
+        }
+        assert actions == {
+            "app.create",
+            "app.update",
+            "app.dependencies.update",
+            "app.delete",
+        }
+
+    async def test_global_app_management_authorization_matches_rest(
+        self,
+        admin_context,
+        org_context,
+    ) -> None:
+        from src.services.mcp_server.tools.apps import (
+            bifrost_create_app,
+            bifrost_delete_app,
+            bifrost_get_app,
+            bifrost_update_app,
+            bifrost_update_app_dependencies,
+        )
+
+        slug = f"global-mcp-app-{uuid4().hex[:8]}"
+        created_result = await bifrost_create_app(
+            admin_context,
+            name="Global MCP App",
+            slug=slug,
+            app_model="inline_v1",
+            scope="global",
+        )
+        created = created_result.structured_content or {}
+        assert "error" not in created, created
+        app_id = str(created["id"])
+        try:
+            visible = await bifrost_get_app(org_context, app_ref=slug)
+            assert (visible.structured_content or {}).get("id") == app_id
+
+            forbidden_update = await bifrost_update_app(
+                org_context,
+                app_ref=app_id,
+                description="must not persist",
+            )
+            assert "error" in (forbidden_update.structured_content or {})
+
+            forbidden_dependencies = await bifrost_update_app_dependencies(
+                org_context,
+                app_ref=app_id,
+                dependencies={"lodash": "^4.17.21"},
+            )
+            assert "error" in (forbidden_dependencies.structured_content or {})
+
+            forbidden_delete = await bifrost_delete_app(
+                org_context,
+                app_ref=app_id,
+            )
+            assert "error" in (forbidden_delete.structured_content or {})
+        finally:
+            deleted = await bifrost_delete_app(admin_context, app_ref=app_id)
+            assert (deleted.structured_content or {}).get("id") == app_id
+
+
+# =============================================================================
 # Roles
 # =============================================================================
 
@@ -1029,9 +1231,7 @@ class TestMcpParityRoles:
             assert str(payload.get("id")) == str(role_id)
             assert payload.get("name") == name
         finally:
-            e2e_client.delete(
-                f"/api/roles/{role_id}", headers=platform_admin.headers
-            )
+            e2e_client.delete(f"/api/roles/{role_id}", headers=platform_admin.headers)
 
     async def test_roles_crud_roundtrip(
         self, admin_context, e2e_client, platform_admin
@@ -1387,9 +1587,7 @@ class TestMcpParityWorkflow:
             assert revoke_result.structured_content is not None
             assert "error" not in revoke_result.structured_content
         finally:
-            e2e_client.delete(
-                f"/api/roles/{role_id}", headers=platform_admin.headers
-            )
+            e2e_client.delete(f"/api/roles/{role_id}", headers=platform_admin.headers)
 
     async def test_workflow_delete_with_force(
         self, admin_context, e2e_client, platform_admin

@@ -48,14 +48,19 @@ from src.jobs.platform.application_publish import (
 )
 from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.models.orm.applications import Application
+from src.models.orm.organizations import Organization
 from src.models.orm.solutions import Solution
+from src.models.orm.users import Role
 from src.core.cache.redis_client import get_shared_redis
 from src.services.builder.app_session import AppLaunchService
+from src.services.audit import emit_audit
+from src.services.operation_catalog import operation_route
 from src.services.platform_jobs import (
     enqueue_platform_job,
     ensure_platform_job_notification,
     publish_platform_job_update,
 )
+from src.services.repo_sync_writer import RepoSyncWriter
 from src.services.solutions.guard import assert_entity_id_not_solution_managed
 from src.core.exceptions import AccessDeniedError
 from shared.logo_processing import (
@@ -299,6 +304,99 @@ async def get_application_by_id_or_404(
         )
 
 
+async def get_application_to_manage_or_404(
+    ctx: Context,
+    app_id: UUID,
+) -> Application:
+    """Return an accessible Application the caller may mutate.
+
+    Platform administrators may manage any accessible Application. Ordinary
+    users may manage only loose Applications owned by their active
+    organization; global Applications are platform-owned even though they can
+    be visible and runnable from every organization.
+    """
+
+    application = await get_application_by_id_or_404(ctx, app_id)
+    if ctx.user.is_platform_admin:
+        return application
+    if (
+        application.organization_id is None
+        or application.organization_id != ctx.org_id
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only platform administrators can manage global Applications",
+        )
+    return application
+
+
+async def _validate_application_target(
+    ctx: Context,
+    organization_id: UUID | None,
+) -> None:
+    """Validate one explicit Application target before database mutation."""
+
+    if not ctx.user.is_platform_admin and organization_id != ctx.org_id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Applications may only be created in your organization",
+        )
+    if organization_id is None:
+        return
+    exists = await ctx.db.scalar(
+        select(Organization.id).where(Organization.id == organization_id)
+    )
+    if exists is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Invalid Application target",
+                "errors": [
+                    f"organization_id '{organization_id}' does not reference "
+                    "an existing organization"
+                ],
+            },
+        )
+
+
+async def _validate_application_roles(
+    ctx: Context,
+    role_ids: list[UUID],
+) -> None:
+    """Reject missing, duplicate, or capability-only Application roles."""
+
+    if not role_ids:
+        return
+    if len(role_ids) != len(set(role_ids)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="role_ids contains duplicate references",
+        )
+    roles = list(
+        (
+            await ctx.db.execute(select(Role).where(Role.id.in_(role_ids)))
+        ).scalars().all()
+    )
+    found = {role.id for role in roles}
+    missing = sorted(str(role_id) for role_id in role_ids if role_id not in found)
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Role(s) not found: {', '.join(missing)}",
+        )
+    unassignable = sorted(
+        str(role.id) for role in roles if not role.assignable_to_resources
+    )
+    if unassignable:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Capability role(s) cannot be assigned to Applications: "
+                + ", ".join(unassignable)
+            ),
+        )
+
+
 # =============================================================================
 # CRUD Endpoints
 # =============================================================================
@@ -309,6 +407,7 @@ async def get_application_by_id_or_404(
     response_model=ApplicationPublic,
     status_code=status.HTTP_201_CREATED,
     summary="Create an application",
+    **operation_route("apps.create"),
 )
 async def create_application(
     data: ApplicationCreate,
@@ -321,6 +420,8 @@ async def create_application(
         target_org_id = data.organization_id
     else:
         target_org_id = ctx.org_id
+    await _validate_application_target(ctx, target_org_id)
+    await _validate_application_roles(ctx, data.role_ids)
     repo = ApplicationRepository(
         ctx.db,
         target_org_id,
@@ -331,6 +432,22 @@ async def create_application(
 
     try:
         application = await repo.create_application(data, created_by=user.email)
+        await emit_audit(
+            ctx.db,
+            "app.create",
+            resource_type="application",
+            resource_id=application.id,
+            details={
+                "name": application.name,
+                "organization_id": (
+                    str(application.organization_id)
+                    if application.organization_id
+                    else None
+                ),
+                "access_level": application.access_level,
+            },
+        )
+        await RepoSyncWriter(ctx.db).regenerate_manifest()
         response = await application_to_public(application, repo)
         # The default request-scoped database dependency commits during
         # teardown, after the response may already have been sent.  A caller
@@ -355,6 +472,7 @@ async def create_application(
     "",
     response_model=ApplicationListResponse,
     summary="List applications",
+    **operation_route("apps.list"),
 )
 async def list_applications(
     ctx: Context,
@@ -404,6 +522,7 @@ async def list_applications(
     "/{slug}",
     response_model=ApplicationPublic,
     summary="Get application metadata",
+    **operation_route("apps.get"),
 )
 async def get_application(
     slug: str,
@@ -471,6 +590,7 @@ async def create_isolated_application_launch(
     "/{app_id}",
     response_model=ApplicationPublic,
     summary="Update application metadata",
+    **operation_route("apps.update"),
 )
 async def update_application(
     app_id: UUID,
@@ -479,7 +599,20 @@ async def update_application(
     user: CurrentUser,
 ) -> ApplicationPublic:
     """Update application metadata and access control by ID."""
+    current = await get_application_to_manage_or_404(ctx, app_id)
+    previous_organization_id = (
+        str(current.organization_id) if current.organization_id else None
+    )
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
+    if "organization_id" in data.model_fields_set:
+        if not user.is_platform_admin:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only platform administrators can change Application scope",
+            )
+        await _validate_application_target(ctx, data.organization_id)
+    if data.role_ids is not None:
+        await _validate_application_roles(ctx, data.role_ids)
     repo = ApplicationRepository(
         ctx.db,
         ctx.org_id,
@@ -521,6 +654,19 @@ async def update_application(
         entity_id=str(application.id),
     )
 
+    await emit_audit(
+        ctx.db,
+        "app.update",
+        resource_type="application",
+        resource_id=application.id,
+        details={
+            "name": application.name,
+            "fields": sorted(data.model_fields_set),
+            "previous_organization_id": previous_organization_id,
+        },
+    )
+    await RepoSyncWriter(ctx.db).regenerate_manifest()
+
     return await application_to_public(application, repo)
 
 
@@ -528,6 +674,7 @@ async def update_application(
     "/{app_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete application",
+    **operation_route("apps.delete"),
 )
 async def delete_application(
     app_id: UUID,
@@ -535,6 +682,7 @@ async def delete_application(
     user: CurrentUser,
 ) -> None:
     """Delete an application by ID."""
+    application = await get_application_to_manage_or_404(ctx, app_id)
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
     repo = ApplicationRepository(
         ctx.db,
@@ -550,6 +698,14 @@ async def delete_application(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Application '{app_id}' not found",
         )
+    await emit_audit(
+        ctx.db,
+        "app.delete",
+        resource_type="application",
+        resource_id=app_id,
+        details={"name": application.name},
+    )
+    await RepoSyncWriter(ctx.db).regenerate_manifest()
 
 
 # =============================================================================
@@ -604,6 +760,7 @@ async def save_draft(
 
     Replaces all existing draft files with the provided definition.
     """
+    await get_application_to_manage_or_404(ctx, app_id)
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
     repo = ApplicationRepository(
         ctx.db,
@@ -636,6 +793,7 @@ async def save_draft(
     response_model=PlatformJobAccepted,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Publish draft to live",
+    **operation_route("apps.publish"),
 )
 async def publish_application(
     app_id: UUID,
@@ -655,6 +813,7 @@ async def publish_application(
     operation instead of launching a conflicting publish.
     """
     # Publishing a solution-managed app is a deploy-owned action.
+    await get_application_to_manage_or_404(ctx, app_id)
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
     application = await get_application_by_id_or_404(ctx, app_id)
     job, reused = await enqueue_platform_job(
@@ -689,6 +848,18 @@ async def publish_application(
                 exc_info=True,
             )
 
+    await emit_audit(
+        ctx.db,
+        "app.publish",
+        resource_type="application",
+        resource_id=application.id,
+        details={
+            "name": application.name,
+            "job_id": str(job.id),
+            "reused": reused,
+        },
+    )
+
     # Make the durable row visible to the scheduler only after its optional
     # notification ID is attached. This removes the claim-before-notification
     # race while still allowing publishes to proceed when Redis is unavailable.
@@ -714,6 +885,7 @@ async def publish_application(
     "/{app_id}/replace",
     response_model=ApplicationPublic,
     summary="Repoint application source directory",
+    **operation_route("apps.replace"),
 )
 async def replace_application_endpoint(
     app_id: UUID,
@@ -727,6 +899,7 @@ async def replace_application_endpoint(
     source files under it. ``force: true`` bypasses all three checks.
     """
     # Repointing a solution-managed app's source is a deploy-owned action.
+    await get_application_to_manage_or_404(ctx, app_id)
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
     repo = ApplicationRepository(
         ctx.db,
@@ -752,6 +925,19 @@ async def replace_application_endpoint(
             detail=f"Application '{app_id}' not found",
         )
 
+    await emit_audit(
+        ctx.db,
+        "app.replace",
+        resource_type="application",
+        resource_id=application.id,
+        details={
+            "name": application.name,
+            "repo_path": application.repo_path,
+            "force": data.force,
+        },
+    )
+    await RepoSyncWriter(ctx.db).regenerate_manifest()
+
     return await application_to_public(application, repo)
 
 
@@ -773,6 +959,8 @@ async def swap_application_slugs(
     leave the live slug momentarily unowned.
     """
     # Slug is a deploy-owned property for solution-managed apps — refuse both.
+    await get_application_to_manage_or_404(ctx, data.app_a)
+    await get_application_to_manage_or_404(ctx, data.app_b)
     await assert_entity_id_not_solution_managed(ctx.db, Application, data.app_a)
     await assert_entity_id_not_solution_managed(ctx.db, Application, data.app_b)
     repo = ApplicationRepository(
@@ -803,6 +991,7 @@ async def swap_application_slugs(
     "/{app_id}/validate",
     response_model=AppValidationResponse,
     summary="Validate application files",
+    **operation_route("apps.validate"),
 )
 async def validate_application(
     app_id: UUID,
@@ -1041,6 +1230,7 @@ async def rollback_application(
     The draft version remains unchanged.
     """
     # Version rollback of a solution-managed app is a deploy-owned action.
+    await get_application_to_manage_or_404(ctx, app_id)
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
     repo = ApplicationRepository(
         ctx.db,
@@ -1083,7 +1273,7 @@ async def upload_application_logo(
     Requires the same permissions as updating the application.
     """
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
-    application = await get_application_by_id_or_404(ctx, app_id)
+    application = await get_application_to_manage_or_404(ctx, app_id)
 
     content = await file.read()
     try:
@@ -1168,7 +1358,7 @@ async def delete_application_logo(
     ctx: Context,
 ) -> Response:
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
-    application = await get_application_by_id_or_404(ctx, app_id)
+    application = await get_application_to_manage_or_404(ctx, app_id)
     application.logo_data = None
     application.logo_content_type = None
     application.logo_thumbnail_data = None

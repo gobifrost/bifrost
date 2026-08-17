@@ -57,7 +57,7 @@ class ApplicationCreate(ApplicationBase):
     )
     role_ids: list[UUID] = Field(
         default_factory=list,
-        description="Role IDs for role_based access (ignored if access_level is 'authenticated')",
+        description="Role assignments used when access_level is 'role_based'",
     )
     organization_id: UUID | None = Field(
         default=None,
@@ -99,9 +99,12 @@ class ApplicationUpdate(BaseModel):
     )
     description: str | None = None
     icon: str | None = Field(default=None, max_length=50)
-    scope: str | None = Field(
+    organization_id: UUID | None = Field(
         default=None,
-        description="Organization scope: 'global' for platform-wide, or org UUID string. Platform admin only.",
+        description=(
+            "Organization ID. Explicit null moves the Application to global "
+            "scope; omission preserves its current scope. Platform admin only."
+        ),
     )
     access_level: str | None = Field(
         default=None,

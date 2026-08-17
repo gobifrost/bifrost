@@ -223,7 +223,12 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # external-execution/result fields (2026-08-16). ADDITIVE: old clients omit
     # the Agent field and ignore the new job metadata. Skill bundle mutation is
     # manifest/upload-owned and is intentionally excluded from generic CLI flags.
-    "bb6072044cce00e63168b8995b767265a4fc7f11ef6f1e8f14ce6239a25e13ce"
+    #
+    # ApplicationUpdate replaces the ambiguous `scope` string with the common
+    # optional `organization_id` wire field (2026-08-17). BREAKING: an older CLI
+    # would send `scope`, which the server ignores, so MIN_CLI_VERSION is raised
+    # to 1.2.3 while the frozen legacy CONTRACT_VERSION remains unchanged.
+    "5f900a5e87c5bde7beebae55b73fefe3b9b4841597371a65cb9094a3bb5c05e4"
 )
 
 
