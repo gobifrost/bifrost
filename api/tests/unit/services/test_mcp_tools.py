@@ -5,6 +5,7 @@ Tests the MCP tools for the Bifrost platform:
 - get_docs: Returns unified platform documentation
 - list_workflows: Lists registered workflows
 - bifrost_list_forms: Lists forms through the canonical REST API
+- bifrost_list_tables: Lists table definitions through the canonical REST API
 - search_knowledge: Searches the knowledge base
 - list_integrations: Lists available integrations
 - execute_workflow: Executes workflows and returns results
@@ -25,6 +26,7 @@ from src.services.mcp_server.server import MCPContext
 from src.services.mcp_server.tools.forms import bifrost_list_forms
 from src.services.mcp_server.tools.integrations import list_integrations
 from src.services.mcp_server.tools.knowledge import search_knowledge
+from src.services.mcp_server.tools.tables import bifrost_list_tables
 from src.services.mcp_server.tools.workflow import execute_workflow, list_workflows
 
 
@@ -237,6 +239,56 @@ class TestListForms:
             "GET",
             "/api/forms",
             params={"scope": "Acme"},
+        )
+
+
+# ==================== bifrost_list_tables Tests ====================
+
+
+class TestListTables:
+    """Tests for the canonical Table metadata list MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_preserves_wrapped_rest_response(self, platform_admin_context):
+        tables = [
+            {
+                "id": str(uuid4()),
+                "name": "tickets",
+                "description": "Support tickets",
+            }
+        ]
+        with patch(
+            "src.services.mcp_server.tools.tables.call_rest",
+            new=AsyncMock(return_value=(200, {"tables": tables, "total": 1})),
+        ) as call_rest:
+            result = await bifrost_list_tables(platform_admin_context)
+
+        data = result.structured_content
+        assert data == {"tables": tables, "count": 1}
+        call_rest.assert_awaited_once_with(
+            platform_admin_context,
+            "GET",
+            "/api/tables",
+            params=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_forwards_scope(self, platform_admin_context):
+        with patch(
+            "src.services.mcp_server.tools.tables.call_rest",
+            new=AsyncMock(return_value=(200, {"tables": [], "total": 0})),
+        ) as call_rest:
+            result = await bifrost_list_tables(
+                platform_admin_context,
+                scope="global",
+            )
+
+        assert result.structured_content == {"tables": [], "count": 0}
+        call_rest.assert_awaited_once_with(
+            platform_admin_context,
+            "GET",
+            "/api/tables",
+            params={"scope": "global"},
         )
 
     @pytest.mark.asyncio

@@ -16,3 +16,8 @@ harness.
 | `forms.create` | `bifrost forms create` | `bifrost_create_form` | `forms.write` |
 | `forms.update` | `bifrost forms update` | `bifrost_update_form` | `forms.write` |
 | `forms.delete` | `bifrost forms delete` | `bifrost_delete_form` | `forms.write` |
+| `tables.list` | `bifrost tables list` | `bifrost_list_tables` | `tables.read` |
+| `tables.get` | `bifrost tables get` | `bifrost_get_table` | `tables.read` |
+| `tables.create` | `bifrost tables create` | `bifrost_create_table` | `tables.write` |
+| `tables.update` | `bifrost tables update` | `bifrost_update_table` | `tables.write` |
+| `tables.delete` | `bifrost tables delete` | `bifrost_delete_table` | `tables.write` |

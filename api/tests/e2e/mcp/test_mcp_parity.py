@@ -157,6 +157,18 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
         "field_renames": {},
     },
     {
+        "model_path": "src.models.contracts.tables:TableCreate",
+        "tool_path": "src.services.mcp_server.tools.tables:bifrost_create_table",
+        "extra_args": {"scope"},
+        "field_renames": {},
+    },
+    {
+        "model_path": "src.models.contracts.tables:TableUpdate",
+        "tool_path": "src.services.mcp_server.tools.tables:bifrost_update_table",
+        "extra_args": {"table_ref", "scope"},
+        "field_renames": {},
+    },
+    {
         "model_path": "src.models.contracts.users:RoleCreate",
         "tool_path": "src.services.mcp_server.tools.roles:create_role",
         "extra_args": set(),
@@ -762,6 +774,229 @@ class TestMcpParityForms:
                     purge=True,
                 )
                 assert (purged.structured_content or {}).get("purged") is True
+
+
+# =============================================================================
+# Tables
+# =============================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestMcpParityTables:
+    async def test_tables_crud_roundtrip_manifest_and_audit(
+        self,
+        admin_context,
+        e2e_client,
+        platform_admin,
+        org_context,
+    ) -> None:
+        from src.services.mcp_server.tools.tables import (
+            bifrost_create_table,
+            bifrost_delete_table,
+            bifrost_get_table,
+            bifrost_list_tables,
+            bifrost_update_table,
+        )
+        from src.services.repo_storage import RepoStorage
+
+        listed = await bifrost_list_tables(admin_context)
+        assert listed.structured_content is not None
+        assert listed.structured_content.get("count", -1) >= 0
+
+        name = f"mcp_parity_table_{uuid4().hex[:8]}"
+        created_result = await bifrost_create_table(
+            admin_context,
+            name=name,
+            description="created through canonical MCP",
+            schema={"columns": [{"name": "summary", "type": "string"}]},
+            policies={
+                "policies": [
+                    {
+                        "name": "admin_bypass",
+                        "actions": ["read", "create", "update", "delete"],
+                        "when": {"user": "is_platform_admin"},
+                    }
+                ]
+            },
+            scope="global",
+        )
+        created = created_result.structured_content or {}
+        assert "error" not in created, created
+        table_id = str(created["id"])
+
+        manifest_after_create = (
+            await RepoStorage().read(".bifrost/tables.yaml")
+        ).decode("utf-8")
+        assert table_id in manifest_after_create
+
+        fetched_result = await bifrost_get_table(admin_context, table_ref=name)
+        fetched = fetched_result.structured_content or {}
+        assert fetched.get("id") == table_id
+        assert fetched["schema"]["columns"][0]["name"] == "summary"
+
+        renamed = f"mcp_parity_table_renamed_{uuid4().hex[:8]}"
+        updated_result = await bifrost_update_table(
+            admin_context,
+            table_ref=name,
+            name=renamed,
+            description="updated through canonical MCP",
+            schema={"columns": [{"name": "details", "type": "string"}]},
+            policies={"policies": []},
+            scope=str(org_context.org_id),
+        )
+        updated = updated_result.structured_content or {}
+        assert "error" not in updated, updated
+        assert updated.get("name") == renamed
+        assert updated.get("organization_id") == str(org_context.org_id)
+        assert updated["schema"]["columns"][0]["name"] == "details"
+        assert updated["policies"] == {"policies": []}
+
+        rest_get = e2e_client.get(
+            f"/api/tables/{table_id}",
+            headers=platform_admin.headers,
+        )
+        assert rest_get.status_code == 200, rest_get.text
+        assert rest_get.json()["description"] == "updated through canonical MCP"
+
+        deleted_result = await bifrost_delete_table(
+            admin_context,
+            table_ref=renamed,
+        )
+        deleted = deleted_result.structured_content or {}
+        assert deleted == {"success": True, "id": table_id}
+        assert e2e_client.get(
+            f"/api/tables/{table_id}",
+            headers=platform_admin.headers,
+        ).status_code == 404
+
+        manifest_paths = await RepoStorage().list(".bifrost/")
+        if ".bifrost/tables.yaml" in manifest_paths:
+            manifest_after_delete = (
+                await RepoStorage().read(".bifrost/tables.yaml")
+            ).decode("utf-8")
+            assert table_id not in manifest_after_delete
+
+        audit = e2e_client.get(
+            "/api/audit",
+            headers=platform_admin.headers,
+            params={"action": "table.", "resource_type": "table", "limit": 50},
+        )
+        assert audit.status_code == 200, audit.text
+        entries = [
+            entry
+            for entry in audit.json()["entries"]
+            if entry["resource_id"] == table_id
+        ]
+        assert {entry["action"] for entry in entries} == {
+            "table.create",
+            "table.update",
+            "table.delete",
+        }
+
+    async def test_table_authorization_matches_rest(
+        self,
+        admin_context,
+        org_context,
+    ) -> None:
+        from src.services.mcp_server.tools.tables import (
+            bifrost_create_table,
+            bifrost_delete_table,
+            bifrost_get_table,
+            bifrost_list_tables,
+            bifrost_update_table,
+        )
+
+        forbidden_create = await bifrost_create_table(
+            org_context,
+            name=f"forbidden_table_{uuid4().hex[:8]}",
+        )
+        assert "error" in (forbidden_create.structured_content or {})
+
+        name = f"admin_table_{uuid4().hex[:8]}"
+        created_result = await bifrost_create_table(
+            admin_context,
+            name=name,
+            scope="global",
+        )
+        created = created_result.structured_content or {}
+        assert "error" not in created, created
+        table_id = str(created["id"])
+        try:
+            assert "error" in (
+                (await bifrost_list_tables(org_context)).structured_content or {}
+            )
+            assert "error" in (
+                (
+                    await bifrost_get_table(org_context, table_ref=table_id)
+                ).structured_content
+                or {}
+            )
+            assert "error" in (
+                (
+                    await bifrost_update_table(
+                        org_context,
+                        table_ref=table_id,
+                        description="must not persist",
+                    )
+                ).structured_content
+                or {}
+            )
+            assert "error" in (
+                (
+                    await bifrost_delete_table(org_context, table_ref=table_id)
+                ).structured_content
+                or {}
+            )
+        finally:
+            deleted = await bifrost_delete_table(admin_context, table_ref=table_id)
+            assert (deleted.structured_content or {}).get("id") == table_id
+
+    async def test_table_name_ambiguity_requires_uuid(
+        self,
+        admin_context,
+        org_context,
+    ) -> None:
+        from src.services.mcp_server.tools.tables import (
+            bifrost_create_table,
+            bifrost_delete_table,
+            bifrost_get_table,
+        )
+
+        name = f"ambiguous_table_{uuid4().hex[:8]}"
+        created_ids: list[str] = []
+        try:
+            for scope in ("global", str(org_context.org_id)):
+                created_result = await bifrost_create_table(
+                    admin_context,
+                    name=name,
+                    scope=scope,
+                )
+                created = created_result.structured_content or {}
+                assert "error" not in created, created
+                created_ids.append(str(created["id"]))
+
+            ambiguous_result = await bifrost_get_table(
+                admin_context,
+                table_ref=name,
+            )
+            ambiguous = ambiguous_result.structured_content or {}
+            assert "error" in ambiguous
+            assert ambiguous["kind"] == "table"
+            assert {candidate["uuid"] for candidate in ambiguous["candidates"]} == set(
+                created_ids
+            )
+
+            for table_id in created_ids:
+                fetched = await bifrost_get_table(admin_context, table_ref=table_id)
+                assert (fetched.structured_content or {}).get("id") == table_id
+        finally:
+            for table_id in created_ids:
+                deleted = await bifrost_delete_table(
+                    admin_context,
+                    table_ref=table_id,
+                )
+                assert (deleted.structured_content or {}).get("id") == table_id
 
 
 # =============================================================================

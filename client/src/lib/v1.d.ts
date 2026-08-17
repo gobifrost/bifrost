@@ -2281,13 +2281,13 @@ export interface paths {
          * List forms
          * @description List all forms visible to the user based on their permissions
          */
-        get: operations["list_forms_api_forms_get"];
+        get: operations["forms.list"];
         put?: never;
         /**
          * Create a new form
          * @description Create a new form (Platform admin only)
          */
-        post: operations["create_form_api_forms_post"];
+        post: operations["forms.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2392,21 +2392,21 @@ export interface paths {
          * Get form by ID
          * @description Get a specific form by ID. User must have access to the form.
          */
-        get: operations["get_form_api_forms__form_id__get"];
+        get: operations["forms.get"];
         put?: never;
         post?: never;
         /**
          * Delete a form
          * @description Delete a form. Use ?purge=true to permanently remove it from the database (Platform admin only)
          */
-        delete: operations["delete_form_api_forms__form_id__delete"];
+        delete: operations["forms.delete"];
         options?: never;
         head?: never;
         /**
          * Update a form
          * @description Update an existing form (Platform admin only)
          */
-        patch: operations["update_form_api_forms__form_id__patch"];
+        patch: operations["forms.update"];
         trace?: never;
     };
     "/api/forms/{form_id}/submissions": {
@@ -5345,7 +5345,7 @@ export interface paths {
          *     - Platform admins see all agents
          *     - Users see AUTHENTICATED agents + ROLE_BASED agents assigned to their roles
          */
-        get: operations["list_agents_api_agents_get"];
+        get: operations["agents.list"];
         put?: never;
         /**
          * Create Agent
@@ -5354,7 +5354,7 @@ export interface paths {
          *     Platform admins can create any agent type.
          *     Regular users can only create private agents with tools they have access to.
          */
-        post: operations["create_agent_api_agents_post"];
+        post: operations["agents.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5436,12 +5436,12 @@ export interface paths {
          * Get Agent
          * @description Get agent by ID.
          */
-        get: operations["get_agent_api_agents__agent_id__get"];
+        get: operations["agents.get"];
         /**
          * Update Agent
          * @description Update an agent. Admins can update any agent. Users can update their own private agents.
          */
-        put: operations["update_agent_api_agents__agent_id__put"];
+        put: operations["agents.update"];
         post?: never;
         /**
          * Delete Agent
@@ -5450,7 +5450,7 @@ export interface paths {
          *     System agents can be deleted - they will be recreated on next startup
          *     if they are still defined in the system agent definitions.
          */
-        delete: operations["delete_agent_api_agents__agent_id__delete"];
+        delete: operations["agents.delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -7929,13 +7929,13 @@ export interface paths {
          * List tables
          * @description List all tables in the current scope (platform admin only).
          */
-        get: operations["list_tables_api_tables_get"];
+        get: operations["tables.list"];
         put?: never;
         /**
          * Create a table
          * @description Create a new table for storing documents (platform admin only).
          */
-        post: operations["create_table_api_tables_post"];
+        post: operations["tables.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7973,14 +7973,14 @@ export interface paths {
          * Get table metadata
          * @description Get table metadata by UUID (platform admin only).
          */
-        get: operations["get_table_api_tables__table_id__get"];
+        get: operations["tables.get"];
         put?: never;
         post?: never;
         /**
          * Delete table
          * @description Delete a table and all its documents by ID (platform admin only).
          */
-        delete: operations["delete_table_api_tables__table_id__delete"];
+        delete: operations["tables.delete"];
         options?: never;
         head?: never;
         /**
@@ -7990,7 +7990,7 @@ export interface paths {
          *     Solution-managed tables are read-only here: deploy owns schema + policies.
          *     Row DATA (documents) stays editable — that's runtime state (criterion 7).
          */
-        patch: operations["update_table_api_tables__table_id__patch"];
+        patch: operations["tables.update"];
         trace?: never;
     };
     "/api/tables/{table_id}/documents": {
@@ -25087,6 +25087,11 @@ export interface components {
             schema?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Organization Id
+             * @description Organization ID. Null for global table.
+             */
+            organization_id?: string | null;
             /** @description Optional row-level access policies. See docs/superpowers/specs/2026-04-30-table-policies-design.md. */
             policies?: components["schemas"]["TablePolicies"] | null;
         };
@@ -30665,7 +30670,7 @@ export interface operations {
             };
         };
     };
-    list_forms_api_forms_get: {
+    "forms.list": {
         parameters: {
             query?: {
                 /** @description Filter scope: omit for all (superusers), 'global' for global only, or org UUID for specific org + global. */
@@ -30697,7 +30702,7 @@ export interface operations {
             };
         };
     };
-    create_form_api_forms_post: {
+    "forms.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -30949,7 +30954,7 @@ export interface operations {
             };
         };
     };
-    get_form_api_forms__form_id__get: {
+    "forms.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -30980,7 +30985,7 @@ export interface operations {
             };
         };
     };
-    delete_form_api_forms__form_id__delete: {
+    "forms.delete": {
         parameters: {
             query?: {
                 /** @description Permanently remove the form from the database instead of soft-deleting */
@@ -31012,7 +31017,7 @@ export interface operations {
             };
         };
     };
-    update_form_api_forms__form_id__patch: {
+    "forms.update": {
         parameters: {
             query?: never;
             header?: never;
@@ -36168,7 +36173,7 @@ export interface operations {
             };
         };
     };
-    list_agents_api_agents_get: {
+    "agents.list": {
         parameters: {
             query?: {
                 /** @description Filter scope: omit for all (superusers), 'global' for global only, or org UUID for specific org. */
@@ -36204,7 +36209,7 @@ export interface operations {
             };
         };
     };
-    create_agent_api_agents_post: {
+    "agents.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -36308,7 +36313,7 @@ export interface operations {
             };
         };
     };
-    get_agent_api_agents__agent_id__get: {
+    "agents.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -36339,7 +36344,7 @@ export interface operations {
             };
         };
     };
-    update_agent_api_agents__agent_id__put: {
+    "agents.update": {
         parameters: {
             query?: never;
             header?: never;
@@ -36374,7 +36379,7 @@ export interface operations {
             };
         };
     };
-    delete_agent_api_agents__agent_id__delete: {
+    "agents.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -41015,7 +41020,7 @@ export interface operations {
             };
         };
     };
-    list_tables_api_tables_get: {
+    "tables.list": {
         parameters: {
             query?: {
                 /** @description Filter scope: 'global' for global only, org UUID for specific org. */
@@ -41047,7 +41052,7 @@ export interface operations {
             };
         };
     };
-    create_table_api_tables_post: {
+    "tables.create": {
         parameters: {
             query?: {
                 /** @description Target scope: 'global' or org UUID. Defaults to current org. */
@@ -41116,7 +41121,7 @@ export interface operations {
             };
         };
     };
-    get_table_api_tables__table_id__get: {
+    "tables.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -41147,7 +41152,7 @@ export interface operations {
             };
         };
     };
-    delete_table_api_tables__table_id__delete: {
+    "tables.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -41176,7 +41181,7 @@ export interface operations {
             };
         };
     };
-    update_table_api_tables__table_id__patch: {
+    "tables.update": {
         parameters: {
             query?: never;
             header?: never;

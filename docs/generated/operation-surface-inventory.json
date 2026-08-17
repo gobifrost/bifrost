@@ -676,6 +676,342 @@
         "summary": "Deactivate or purge a Form the caller may manage",
         "target_kind": "resource"
       }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "tables",
+            "list"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_list_tables",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "tables.list",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "tables.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate and organization filter",
+        "cli": {
+          "path": [
+            "tables",
+            "list"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Manifests reconcile Table state; they do not perform collection reads.",
+          "sdk": "Table metadata administration is not available to application SDKs; SDK table methods operate on documents."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_list_tables"
+        },
+        "native_builder": true,
+        "operation_id": "tables.list",
+        "rest": {
+          "method": "GET",
+          "path": "/api/tables",
+          "request_model": null,
+          "response_model": "TableListResponse"
+        },
+        "side_effects": [],
+        "summary": "List Tables visible to the caller",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "tables",
+            "get"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_get_table",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "tables.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "tables.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate",
+        "cli": {
+          "path": [
+            "tables",
+            "get"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Manifests reconcile Table state; they do not perform resource reads.",
+          "sdk": "Table metadata administration is not available to application SDKs; SDK table methods operate on documents."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_get_table"
+        },
+        "native_builder": true,
+        "operation_id": "tables.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/tables/{table_id}",
+          "request_model": null,
+          "response_model": "TablePublic"
+        },
+        "side_effects": [],
+        "summary": "Get one Table visible to the caller",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "tables",
+            "create"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "tables",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_create_table",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "tables.create",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "tables.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "table.create",
+        "authorization_resolver": "Platform-admin gate and target organization resolver",
+        "cli": {
+          "path": [
+            "tables",
+            "create"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Table metadata administration is not available to application SDKs; SDK table methods operate on documents."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "tables"
+        },
+        "mcp": {
+          "name": "bifrost_create_table"
+        },
+        "native_builder": true,
+        "operation_id": "tables.create",
+        "rest": {
+          "method": "POST",
+          "path": "/api/tables",
+          "request_model": "TableCreate",
+          "response_model": "TablePublic"
+        },
+        "side_effects": [
+          "persist Table schema and row-access policies",
+          "write manifest change through RepoSyncWriter"
+        ],
+        "summary": "Create a Table in an allowed target",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "tables",
+            "update"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "tables",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_update_table",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "tables.update",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "tables.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "table.update",
+        "authorization_resolver": "Platform-admin and Solution-management guards",
+        "cli": {
+          "path": [
+            "tables",
+            "update"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Table metadata administration is not available to application SDKs; SDK table methods operate on documents."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "tables"
+        },
+        "mcp": {
+          "name": "bifrost_update_table"
+        },
+        "native_builder": true,
+        "operation_id": "tables.update",
+        "rest": {
+          "method": "PATCH",
+          "path": "/api/tables/{table_id}",
+          "request_model": "TableUpdate",
+          "response_model": "TablePublic"
+        },
+        "side_effects": [
+          "replace selected Table metadata and row-access policies",
+          "publish policy changes to connected runtimes",
+          "write manifest change through RepoSyncWriter"
+        ],
+        "summary": "Update a Table the caller may manage",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "tables",
+            "delete"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "tables",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_delete_table",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "tables.delete",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "tables.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "table.delete",
+        "authorization_resolver": "Platform-admin and Solution-management guards",
+        "cli": {
+          "path": [
+            "tables",
+            "delete"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Table metadata administration is not available to application SDKs; SDK table methods operate on documents."
+        },
+        "manifest": {
+          "behavior": "remove",
+          "entity": "tables"
+        },
+        "mcp": {
+          "name": "bifrost_delete_table"
+        },
+        "native_builder": true,
+        "operation_id": "tables.delete",
+        "rest": {
+          "method": "DELETE",
+          "path": "/api/tables/{table_id}",
+          "request_model": null,
+          "response_model": null
+        },
+        "side_effects": [
+          "delete the Table and its documents through database cascades",
+          "remove the manifest entry through RepoSyncWriter"
+        ],
+        "summary": "Delete a Table the caller may manage",
+        "target_kind": "resource"
+      }
     }
   ],
   "counts": {
@@ -1580,42 +1916,6 @@
         "kind": "operation",
         "path": [
           "tables",
-          "create"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "tables",
-          "delete"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "tables",
-          "get"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "tables",
-          "list"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "tables",
           "policies",
           "get"
         ],
@@ -1628,15 +1928,6 @@
           "tables",
           "policies",
           "set"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "tables",
-          "update"
         ],
         "reason": "CLI operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -1819,11 +2110,6 @@
         "status": "missing_surface"
       },
       {
-        "entity": "tables",
-        "reason": "Manifest entity has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "entity": "workflows",
         "reason": "Manifest entity has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -1898,12 +2184,6 @@
       },
       {
         "hidden": false,
-        "name": "create_table",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "delete_claim",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -1959,12 +2239,6 @@
       {
         "hidden": false,
         "name": "delete_role",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "delete_table",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -2060,12 +2334,6 @@
       },
       {
         "hidden": false,
-        "name": "get_table",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "get_workflow",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -2151,12 +2419,6 @@
       {
         "hidden": false,
         "name": "list_roles",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "list_tables",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -2325,12 +2587,6 @@
       {
         "hidden": false,
         "name": "update_role",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "update_table",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -6227,44 +6483,9 @@
         "status": "missing_surface"
       },
       {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/tables",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/tables",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "method": "POST",
         "operation_id": "",
         "path": "/api/tables/policies/validate",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "DELETE",
-        "operation_id": "",
-        "path": "/api/tables/{table_id}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/tables/{table_id}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "PATCH",
-        "operation_id": "",
-        "path": "/api/tables/{table_id}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
