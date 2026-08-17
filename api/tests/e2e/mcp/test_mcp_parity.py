@@ -7,8 +7,8 @@ Covers the thin-wrapper surface added in
 * Roles: ``list_roles``, ``create_role``, ``update_role``, ``delete_role``.
 * Configs: ``list_configs``, ``create_config``, ``update_config``,
   ``delete_config``.
-* Integrations: ``create_integration``, ``update_integration``,
-  ``add_integration_mapping``, ``update_integration_mapping``.
+* Integrations: canonical list/get/create/update and mapping ``bifrost_*``
+  tools.
 * Organizations: canonical list/get/create/update/delete ``bifrost_*`` tools.
 * Workflow catalog, validation, registration, execution, metadata, deletion,
   and role lifecycle through canonical ``bifrost_*`` thin wrappers.
@@ -292,14 +292,18 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
     },
     {
         "model_path": "src.models.contracts.integrations:IntegrationCreate",
-        "tool_path": ("src.services.mcp_server.tools.integrations:create_integration"),
+        "tool_path": (
+            "src.services.mcp_server.tools.integrations:bifrost_create_integration"
+        ),
         "extra_args": set(),
         "field_renames": {},
     },
     {
         "model_path": "src.models.contracts.integrations:IntegrationUpdate",
-        "tool_path": ("src.services.mcp_server.tools.integrations:update_integration"),
-        "extra_args": {"integration_ref"},
+        "tool_path": (
+            "src.services.mcp_server.tools.integrations:bifrost_update_integration"
+        ),
+        "extra_args": {"integration_ref", "force_remove_keys"},
         # ``list_entities_data_provider_id`` is a workflow ref the tool
         # accepts as a name/UUID/path::func and resolves to a UUID before
         # POSTing — it is exposed under the shorter ``_data_provider`` name.
@@ -310,7 +314,7 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
     {
         "model_path": ("src.models.contracts.integrations:IntegrationMappingCreate"),
         "tool_path": (
-            "src.services.mcp_server.tools.integrations:add_integration_mapping"
+            "src.services.mcp_server.tools.integrations:bifrost_create_integration_mapping"
         ),
         "extra_args": {"integration_ref"},
         # ``organization_id`` is a UUID on the DTO but the MCP tool accepts
@@ -320,9 +324,9 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
     {
         "model_path": ("src.models.contracts.integrations:IntegrationMappingUpdate"),
         "tool_path": (
-            "src.services.mcp_server.tools.integrations:update_integration_mapping"
+            "src.services.mcp_server.tools.integrations:bifrost_update_integration_mapping"
         ),
-        "extra_args": {"integration_ref", "mapping_id"},
+        "extra_args": {"integration_ref", "organization"},
         "field_renames": {},
     },
     {
@@ -1795,8 +1799,10 @@ class TestMcpParityIntegrations:
     async def test_get_integration_by_uuid(
         self, admin_context, e2e_client, platform_admin
     ) -> None:
-        """``get_integration`` thin-wrapper round-trips a created integration."""
-        from src.services.mcp_server.tools.integrations import get_integration
+        """Canonical get thin-wrapper round-trips a created Integration."""
+        from src.services.mcp_server.tools.integrations import (
+            bifrost_get_integration,
+        )
 
         name = f"mcp-parity-get-int-{uuid4().hex[:8]}"
         create_resp = e2e_client.post(
@@ -1808,7 +1814,7 @@ class TestMcpParityIntegrations:
         integration_id = create_resp.json()["id"]
 
         try:
-            result = await get_integration(
+            result = await bifrost_get_integration(
                 admin_context, integration_ref=integration_id
             )
             payload = result.structured_content or {}
@@ -1824,18 +1830,19 @@ class TestMcpParityIntegrations:
             )
 
     async def test_integration_and_mapping_roundtrip(
-        self, admin_context, e2e_client, platform_admin, org1
+        self, admin_context, org_context, e2e_client, platform_admin, org1
     ) -> None:
         from src.services.mcp_server.tools.integrations import (
-            add_integration_mapping,
-            create_integration,
-            update_integration,
-            update_integration_mapping,
+            bifrost_create_integration,
+            bifrost_create_integration_mapping,
+            bifrost_list_integrations,
+            bifrost_update_integration,
+            bifrost_update_integration_mapping,
         )
 
         # create integration
         name = f"mcp-parity-int-{uuid4().hex[:8]}"
-        create_result = await create_integration(
+        create_result = await bifrost_create_integration(
             admin_context,
             name=name,
             entity_id_name="Tenant",
@@ -1846,14 +1853,14 @@ class TestMcpParityIntegrations:
 
         # update integration (rename)
         renamed = f"mcp-parity-int-renamed-{uuid4().hex[:8]}"
-        update_result = await update_integration(
+        update_result = await bifrost_update_integration(
             admin_context, integration_ref=integration_id, name=renamed
         )
         updated = update_result.structured_content or {}
         assert "error" not in updated, updated
 
         # add mapping (by org name ref)
-        add_result = await add_integration_mapping(
+        add_result = await bifrost_create_integration_mapping(
             admin_context,
             integration_ref=renamed,
             organization=org1["name"],
@@ -1864,15 +1871,61 @@ class TestMcpParityIntegrations:
         assert "error" not in mapping, mapping
         mapping_id = str(mapping["id"])
 
+        visible_result = await bifrost_list_integrations(org_context)
+        visible = visible_result.structured_content or {}
+        assert integration_id in {
+            str(item["id"]) for item in visible.get("integrations", [])
+        }
+
         # update mapping
-        update_m_result = await update_integration_mapping(
+        update_m_result = await bifrost_update_integration_mapping(
             admin_context,
             integration_ref=renamed,
-            mapping_id=mapping_id,
+            organization=org1["name"],
             entity_name="E2E Tenant (renamed)",
         )
         assert update_m_result.structured_content is not None
         assert "error" not in update_m_result.structured_content
+
+        from src.services.repo_storage import RepoStorage
+
+        manifest = (
+            await RepoStorage().read(".bifrost/integrations.yaml")
+        ).decode("utf-8")
+        assert integration_id in manifest
+        assert str(org1["id"]) in manifest
+
+        integration_audit = e2e_client.get(
+            "/api/audit",
+            headers=platform_admin.headers,
+            params={
+                "action": "integration.",
+                "resource_type": "integration",
+                "limit": 50,
+            },
+        )
+        assert integration_audit.status_code == 200, integration_audit.text
+        assert {
+            entry["action"]
+            for entry in integration_audit.json()["entries"]
+            if entry["resource_id"] == integration_id
+        } == {"integration.create", "integration.update"}
+
+        mapping_audit = e2e_client.get(
+            "/api/audit",
+            headers=platform_admin.headers,
+            params={
+                "action": "integration_mapping.",
+                "resource_type": "integration_mapping",
+                "limit": 50,
+            },
+        )
+        assert mapping_audit.status_code == 200, mapping_audit.text
+        assert {
+            entry["action"]
+            for entry in mapping_audit.json()["entries"]
+            if entry["resource_id"] == mapping_id
+        } == {"integration_mapping.create", "integration_mapping.update"}
 
         # Cleanup via REST.
         e2e_client.delete(

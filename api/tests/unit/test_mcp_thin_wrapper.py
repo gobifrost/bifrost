@@ -106,10 +106,12 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "bifrost_delete_organization",
     },
     "integrations": {
-        "create_integration",
-        "update_integration",
-        "add_integration_mapping",
-        "update_integration_mapping",
+        "bifrost_list_integrations",
+        "bifrost_get_integration",
+        "bifrost_create_integration",
+        "bifrost_update_integration",
+        "bifrost_create_integration_mapping",
+        "bifrost_update_integration_mapping",
     },
     "workflow": {
         "bifrost_list_workflows",

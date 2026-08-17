@@ -111,6 +111,52 @@ describe("CreateIntegrationDialog — edit mode", () => {
 		await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(1));
 		const payload = mockUpdate.mock.calls[0]![0];
 		expect(payload.params.path.integration_id).toBe("int-1");
+		expect(payload.params.query.force_remove_keys).toBe(false);
 		expect(payload.body.name).toBe("New Name");
+	});
+
+	it("sends destructive schema confirmation to REST and can remove the final field", async () => {
+		mockIntegration = {
+			id: "int-1",
+			name: "Original",
+			config_schema: [
+				{
+					key: "api_key",
+					type: "secret",
+					required: true,
+				},
+			],
+			list_entities_data_provider_id: null,
+			default_entity_id: "",
+		};
+
+		const { user } = renderWithProviders(
+			<CreateIntegrationDialog
+				open
+				onOpenChange={() => {}}
+				editIntegrationId="int-1"
+			/>,
+		);
+
+		await user.click(
+			screen.getByRole("button", { name: /remove api_key/i }),
+		);
+		await user.click(
+			screen.getByRole("button", { name: /update integration/i }),
+		);
+
+		expect(mockUpdate).not.toHaveBeenCalled();
+		expect(
+			screen.getByRole("heading", {
+				name: /remove configuration fields/i,
+			}),
+		).toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: /delete fields/i }));
+
+		await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(1));
+		const payload = mockUpdate.mock.calls[0]![0];
+		expect(payload.params.query.force_remove_keys).toBe(true);
+		expect(payload.body.config_schema).toEqual([]);
 	});
 });

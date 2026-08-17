@@ -38,6 +38,9 @@ _ORGANIZATION_SDK_EXCLUSION = (
 _ORGANIZATION_BUILDER_EXCLUSION = (
     "Organization lifecycle belongs to platform Settings, not a coding target."
 )
+_INTEGRATION_SDK_EXCLUSION = (
+    "Integration administration is separate from the application SDK's runtime mapping lookup."
+)
 
 
 OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
@@ -774,6 +777,143 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             "write manifest change through RepoSyncWriter",
         ),
         exclusions={"sdk": _WORKFLOW_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="integrations.list",
+        summary="List Integrations visible to the caller",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/integrations",
+            response_model="IntegrationListResponse",
+        ),
+        cli=CliOperationBinding(path=("integrations", "list")),
+        mcp=McpOperationBinding(name="bifrost_list_integrations"),
+        native_builder=True,
+        action_scopes=("integrations.read",),
+        authorization_resolver=(
+            "Platform admins see all Integrations; internal active users see their Organization mappings"
+        ),
+        exclusions={
+            "manifest": "Manifests reconcile Integration state; they do not perform collection reads.",
+            "sdk": _INTEGRATION_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="integrations.get",
+        summary="Get one Integration",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/integrations/{integration_id}",
+            response_model="IntegrationDetailResponse",
+        ),
+        cli=CliOperationBinding(path=("integrations", "get")),
+        mcp=McpOperationBinding(name="bifrost_get_integration"),
+        native_builder=True,
+        action_scopes=("integrations.read",),
+        authorization_resolver="Platform-admin gate and Integration reference resolver",
+        exclusions={
+            "manifest": "The read does not mutate the Integration manifest.",
+            "sdk": _INTEGRATION_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="integrations.create",
+        summary="Create an Integration",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/integrations",
+            request_model="IntegrationCreate",
+            response_model="IntegrationResponse",
+        ),
+        cli=CliOperationBinding(path=("integrations", "create")),
+        mcp=McpOperationBinding(name="bifrost_create_integration"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="integrations"),
+        action_scopes=("integrations.write",),
+        authorization_resolver="Platform-admin gate",
+        audit_event="integration.create",
+        side_effects=(
+            "persist Integration metadata and config schema",
+            "write the Integration manifest through RepoSyncWriter",
+        ),
+        exclusions={"sdk": _INTEGRATION_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="integrations.update",
+        summary="Update an Integration",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="PUT",
+            path="/api/integrations/{integration_id}",
+            request_model="IntegrationUpdate",
+            response_model="IntegrationResponse",
+        ),
+        cli=CliOperationBinding(path=("integrations", "update")),
+        mcp=McpOperationBinding(name="bifrost_update_integration"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="integrations"),
+        action_scopes=("integrations.write",),
+        authorization_resolver="Platform-admin gate and Integration reference resolver",
+        audit_event="integration.update",
+        side_effects=(
+            "update Integration metadata and config schema",
+            "require explicit confirmation before cascading removed config keys",
+            "write the Integration manifest through RepoSyncWriter",
+        ),
+        exclusions={"sdk": _INTEGRATION_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="integrations.mappings.create",
+        summary="Create an Integration mapping",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/integrations/{integration_id}/mappings",
+            request_model="IntegrationMappingCreate",
+            response_model="IntegrationMappingResponse",
+        ),
+        cli=CliOperationBinding(path=("integrations", "create-mapping")),
+        mcp=McpOperationBinding(name="bifrost_create_integration_mapping"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="integrations"),
+        action_scopes=("integrations.write",),
+        authorization_resolver=(
+            "Platform-admin gate plus Integration and Organization reference resolvers"
+        ),
+        audit_event="integration_mapping.create",
+        side_effects=(
+            "persist the Organization mapping and non-OAuth config overrides",
+            "write the Integration manifest through RepoSyncWriter",
+        ),
+        exclusions={"sdk": _INTEGRATION_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="integrations.mappings.update",
+        summary="Update an Integration mapping",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="PUT",
+            path="/api/integrations/{integration_id}/mappings/{mapping_id}",
+            request_model="IntegrationMappingUpdate",
+            response_model="IntegrationMappingResponse",
+        ),
+        cli=CliOperationBinding(path=("integrations", "update-mapping")),
+        mcp=McpOperationBinding(name="bifrost_update_integration_mapping"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="integrations"),
+        action_scopes=("integrations.write",),
+        authorization_resolver=(
+            "Platform-admin gate plus Integration and Organization mapping resolution"
+        ),
+        audit_event="integration_mapping.update",
+        side_effects=(
+            "update the Organization mapping and non-OAuth config overrides",
+            "write the Integration manifest through RepoSyncWriter",
+        ),
+        exclusions={"sdk": _INTEGRATION_SDK_EXCLUSION},
     ),
     OperationDefinition(
         operation_id="organizations.list",

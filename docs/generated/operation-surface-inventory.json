@@ -2296,6 +2296,411 @@
       "observed": {
         "cli": {
           "path": [
+            "integrations",
+            "list"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_list_integrations",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "integrations.list",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "integrations.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform admins see all Integrations; internal active users see their Organization mappings",
+        "cli": {
+          "path": [
+            "integrations",
+            "list"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Manifests reconcile Integration state; they do not perform collection reads.",
+          "sdk": "Integration administration is separate from the application SDK's runtime mapping lookup."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_list_integrations"
+        },
+        "native_builder": true,
+        "operation_id": "integrations.list",
+        "rest": {
+          "method": "GET",
+          "path": "/api/integrations",
+          "request_model": null,
+          "response_model": "IntegrationListResponse"
+        },
+        "side_effects": [],
+        "summary": "List Integrations visible to the caller",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "integrations",
+            "get"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_get_integration",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "integrations.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "integrations.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate and Integration reference resolver",
+        "cli": {
+          "path": [
+            "integrations",
+            "get"
+          ]
+        },
+        "exclusions": {
+          "manifest": "The read does not mutate the Integration manifest.",
+          "sdk": "Integration administration is separate from the application SDK's runtime mapping lookup."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_get_integration"
+        },
+        "native_builder": true,
+        "operation_id": "integrations.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/integrations/{integration_id}",
+          "request_model": null,
+          "response_model": "IntegrationDetailResponse"
+        },
+        "side_effects": [],
+        "summary": "Get one Integration",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "integrations",
+            "create"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "integrations",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_create_integration",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "integrations.create",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "integrations.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "integration.create",
+        "authorization_resolver": "Platform-admin gate",
+        "cli": {
+          "path": [
+            "integrations",
+            "create"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Integration administration is separate from the application SDK's runtime mapping lookup."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "integrations"
+        },
+        "mcp": {
+          "name": "bifrost_create_integration"
+        },
+        "native_builder": true,
+        "operation_id": "integrations.create",
+        "rest": {
+          "method": "POST",
+          "path": "/api/integrations",
+          "request_model": "IntegrationCreate",
+          "response_model": "IntegrationResponse"
+        },
+        "side_effects": [
+          "persist Integration metadata and config schema",
+          "write the Integration manifest through RepoSyncWriter"
+        ],
+        "summary": "Create an Integration",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "integrations",
+            "update"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "integrations",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_update_integration",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "integrations.update",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "integrations.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "integration.update",
+        "authorization_resolver": "Platform-admin gate and Integration reference resolver",
+        "cli": {
+          "path": [
+            "integrations",
+            "update"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Integration administration is separate from the application SDK's runtime mapping lookup."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "integrations"
+        },
+        "mcp": {
+          "name": "bifrost_update_integration"
+        },
+        "native_builder": true,
+        "operation_id": "integrations.update",
+        "rest": {
+          "method": "PUT",
+          "path": "/api/integrations/{integration_id}",
+          "request_model": "IntegrationUpdate",
+          "response_model": "IntegrationResponse"
+        },
+        "side_effects": [
+          "update Integration metadata and config schema",
+          "require explicit confirmation before cascading removed config keys",
+          "write the Integration manifest through RepoSyncWriter"
+        ],
+        "summary": "Update an Integration",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "integrations",
+            "create-mapping"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "integrations",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_create_integration_mapping",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "integrations.mappings.create",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "integrations.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "integration_mapping.create",
+        "authorization_resolver": "Platform-admin gate plus Integration and Organization reference resolvers",
+        "cli": {
+          "path": [
+            "integrations",
+            "create-mapping"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Integration administration is separate from the application SDK's runtime mapping lookup."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "integrations"
+        },
+        "mcp": {
+          "name": "bifrost_create_integration_mapping"
+        },
+        "native_builder": true,
+        "operation_id": "integrations.mappings.create",
+        "rest": {
+          "method": "POST",
+          "path": "/api/integrations/{integration_id}/mappings",
+          "request_model": "IntegrationMappingCreate",
+          "response_model": "IntegrationMappingResponse"
+        },
+        "side_effects": [
+          "persist the Organization mapping and non-OAuth config overrides",
+          "write the Integration manifest through RepoSyncWriter"
+        ],
+        "summary": "Create an Integration mapping",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "integrations",
+            "update-mapping"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "integrations",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_update_integration_mapping",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "integrations.mappings.update",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "integrations.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "integration_mapping.update",
+        "authorization_resolver": "Platform-admin gate plus Integration and Organization mapping resolution",
+        "cli": {
+          "path": [
+            "integrations",
+            "update-mapping"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Integration administration is separate from the application SDK's runtime mapping lookup."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "integrations"
+        },
+        "mcp": {
+          "name": "bifrost_update_integration_mapping"
+        },
+        "native_builder": true,
+        "operation_id": "integrations.mappings.update",
+        "rest": {
+          "method": "PUT",
+          "path": "/api/integrations/{integration_id}/mappings/{mapping_id}",
+          "request_model": "IntegrationMappingUpdate",
+          "response_model": "IntegrationMappingResponse"
+        },
+        "side_effects": [
+          "update the Organization mapping and non-OAuth config overrides",
+          "write the Integration manifest through RepoSyncWriter"
+        ],
+        "summary": "Update an Integration mapping",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
             "organizations",
             "list"
           ],
@@ -3692,60 +4097,6 @@
         "status": "transport_only"
       },
       {
-        "kind": "operation",
-        "path": [
-          "integrations",
-          "add-mapping"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "integrations",
-          "create"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "integrations",
-          "get"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "integrations",
-          "list"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "integrations",
-          "update"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "integrations",
-          "update-mapping"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "kind": "lifecycle",
         "path": [
           "login"
@@ -4158,11 +4509,6 @@
         "status": "missing_surface"
       },
       {
-        "entity": "integrations",
-        "reason": "Manifest entity has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "entity": "mcp_servers",
         "reason": "Manifest entity has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -4190,12 +4536,6 @@
     ],
     "mcp": [
       {
-        "hidden": false,
-        "name": "add_integration_mapping",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "hidden": true,
         "name": "apply_patch",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
@@ -4216,12 +4556,6 @@
       {
         "hidden": false,
         "name": "create_config",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "create_integration",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -4317,12 +4651,6 @@
       },
       {
         "hidden": false,
-        "name": "get_integration",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "get_role",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -4360,12 +4688,6 @@
       {
         "hidden": true,
         "name": "list_files",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "list_integrations",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -4462,18 +4784,6 @@
       {
         "hidden": false,
         "name": "update_config",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "update_integration",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "update_integration_mapping",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -6316,40 +6626,12 @@
       {
         "method": "GET",
         "operation_id": "",
-        "path": "/api/integrations",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/integrations",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
         "path": "/api/integrations/by-name/{name}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
       {
         "method": "DELETE",
-        "operation_id": "",
-        "path": "/api/integrations/{integration_id}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/integrations/{integration_id}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "PUT",
         "operation_id": "",
         "path": "/api/integrations/{integration_id}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
@@ -6386,13 +6668,6 @@
       {
         "method": "POST",
         "operation_id": "",
-        "path": "/api/integrations/{integration_id}/mappings",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
         "path": "/api/integrations/{integration_id}/mappings/batch",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -6413,13 +6688,6 @@
       },
       {
         "method": "GET",
-        "operation_id": "",
-        "path": "/api/integrations/{integration_id}/mappings/{mapping_id}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "PUT",
         "operation_id": "",
         "path": "/api/integrations/{integration_id}/mappings/{mapping_id}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",

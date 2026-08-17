@@ -6615,15 +6615,15 @@ export interface paths {
         };
         /**
          * List integrations
-         * @description List all integrations (Platform admin only)
+         * @description List all integrations for Platform admins; other active users see integrations mapped to their organization
          */
-        get: operations["list_integrations_api_integrations_get"];
+        get: operations["integrations.list"];
         put?: never;
         /**
          * Create integration
          * @description Create a new integration (Platform admin only)
          */
-        post: operations["create_integration_api_integrations_post"];
+        post: operations["integrations.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6641,12 +6641,12 @@ export interface paths {
          * Get integration by ID
          * @description Get a specific integration by ID with mappings and OAuth config (Platform admin only)
          */
-        get: operations["get_integration_api_integrations__integration_id__get"];
+        get: operations["integrations.get"];
         /**
          * Update integration
          * @description Update an existing integration (Platform admin only)
          */
-        put: operations["update_integration_api_integrations__integration_id__put"];
+        put: operations["integrations.update"];
         post?: never;
         /**
          * Delete integration
@@ -6719,7 +6719,7 @@ export interface paths {
          * Create integration mapping
          * @description Create a new mapping between an integration and organization (Platform admin only)
          */
-        post: operations["create_mapping_api_integrations__integration_id__mappings_post"];
+        post: operations["integrations.mappings.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6742,7 +6742,7 @@ export interface paths {
          * Update integration mapping
          * @description Update an existing mapping (Platform admin only)
          */
-        put: operations["update_mapping_api_integrations__integration_id__mappings__mapping_id__put"];
+        put: operations["integrations.mappings.update"];
         post?: never;
         /**
          * Delete integration mapping
@@ -40036,7 +40036,7 @@ export interface operations {
             };
         };
     };
-    list_integrations_api_integrations_get: {
+    "integrations.list": {
         parameters: {
             query?: never;
             header?: never;
@@ -40056,7 +40056,7 @@ export interface operations {
             };
         };
     };
-    create_integration_api_integrations_post: {
+    "integrations.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -40089,7 +40089,7 @@ export interface operations {
             };
         };
     };
-    get_integration_api_integrations__integration_id__get: {
+    "integrations.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -40120,9 +40120,12 @@ export interface operations {
             };
         };
     };
-    update_integration_api_integrations__integration_id__put: {
+    "integrations.update": {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Confirm deletion of config-schema keys and their stored values */
+                force_remove_keys?: boolean;
+            };
             header?: never;
             path: {
                 integration_id: string;
@@ -40312,7 +40315,7 @@ export interface operations {
             };
         };
     };
-    create_mapping_api_integrations__integration_id__mappings_post: {
+    "integrations.mappings.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -40379,7 +40382,7 @@ export interface operations {
             };
         };
     };
-    update_mapping_api_integrations__integration_id__mappings__mapping_id__put: {
+    "integrations.mappings.update": {
         parameters: {
             query?: never;
             header?: never;

@@ -199,6 +199,17 @@ class TestExternalIntegrationsGet:
     """OPEN-E: sdk_integrations_get must return NONE of the global tier to an
     external caller on default scope."""
 
+    def test_external_cannot_list_administration_catalog(
+        self,
+        e2e_client,
+        external_user,
+    ) -> None:
+        response = e2e_client.get(
+            "/api/integrations",
+            headers=external_user.headers,
+        )
+        assert response.status_code == 403, response.text
+
     def _get(self, e2e_client, user, name):
         return e2e_client.post(
             "/api/sdk/integrations/get",

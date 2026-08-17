@@ -2,7 +2,7 @@
 
 **Owner:** Jack Musick / Bifrost engineering
 **Created:** 2026-08-17
-**Status:** In progress — Phases 0–1 complete; Phase 2 Agent, Form, Table, App, Event, Workflow, and Organization slices complete
+**Status:** In progress — Phases 0–1 complete; Phase 2 Agent, Form, Table, App, Event, Workflow, Organization, and Integration slices complete
 **Execution branch:** `codex/code-builder-pydantic-integration-20260816`
 **Base:** `origin/main@16e317e62`
 **Depends on:** the reconstructed Builder and shared Pydantic runtime described
@@ -237,6 +237,10 @@ environment-skipped mirror tests; API Pyright and Ruff are clean.
       list/get/create/update/delete operations, platform-admin authorization,
       REST-owned audit/cache/provider invariants, and persisted tool-name
       migration; keep it explicitly outside native coding Builder targets.
+- [x] Complete the Integration slice with canonical list/get/create/update and
+      mapping create/update operations, mapped-Organization discovery for
+      internal users, REST-owned schema-removal confirmation, audit/manifest
+      side effects, and persisted tool-name migration.
 - [ ] Convert legacy direct-ORM MCP implementations to thin HTTP wrappers using
       `_http_bridge.py`; do not create a second service path for MCP.
 - [ ] Reconcile known drift in the remaining domains:
@@ -377,6 +381,30 @@ explicit native Builder exclusions rather than reporting them as missing.
 Generated operation/Skill/OpenAPI/browser references are fresh, API
 Pyright/Ruff and client TypeScript are clean, and ESLint has zero errors with
 only the pre-existing React Compiler warning in `FormRenderer.tsx`.
+
+**Integration-slice evidence:** all six Integration tools are thin REST
+adapters registered only as `bifrost_list_integrations`,
+`bifrost_get_integration`, `bifrost_create_integration`,
+`bifrost_update_integration`, `bifrost_create_integration_mapping`, and
+`bifrost_update_integration_mapping`. CLI mapping creation is the matching
+`bifrost integrations create-mapping` command; the old `add-mapping` spelling
+and manual OAuth-token-ID flags are not retained as parallel contracts.
+Internal active users keep the former MCP behavior of discovering only
+Integrations mapped to their Organization, while external and embed sessions
+remain denied and Platform admins see the full catalog. Destructive config
+schema removal now requires the same REST-owned `force_remove_keys`
+confirmation from browser, CLI, MCP, or direct API callers; the browser can
+also remove the final schema field and forwards its existing confirmation.
+REST owns Integration/mapping audit events and `RepoSyncWriter` manifest
+updates. Forward migration `20260817_integration_mcp_names` preserves all six
+persisted Agent grants and is the sole applied Alembic head. The focused
+catalog/DTO/wrapper/CLI/contract selection passed 446/446, live MCP/CLI/REST
+coverage passed 33/33, MCP endpoint/protocol coverage passed 35/35, the
+external-session denial passed, and the focused browser component passed 3/3.
+The generated inventory now accounts for 56 catalog operations. Generated
+operation/Skill/OpenAPI/browser references are fresh, API Pyright/Ruff and
+client TypeScript are clean, and ESLint has zero errors with only the
+pre-existing React Compiler warning in `FormRenderer.tsx`.
 
 ### Phase 3 — Finish Agent Skill portability
 
