@@ -67,8 +67,11 @@ DTO_EXCLUDES: dict[str, set[str]] = {
     "FilePolicyCreate": set(_ORG_TARGET_EXCLUDE),
     "FormCreate": set(_ORG_TARGET_EXCLUDE),
     "FormUpdate": set(_ORG_TARGET_EXCLUDE),
-    "AgentCreate": set(_ORG_TARGET_EXCLUDE),
-    "AgentUpdate": set(_ORG_TARGET_EXCLUDE),
+    # Agent Skill bundle paths are Solution-manifest/upload owned. Generic
+    # create/update deliberately reject direct assignment so the CLI must not
+    # advertise a flag that can only return HTTP 422.
+    "AgentCreate": set(_ORG_TARGET_EXCLUDE) | {"bundle_path"},
+    "AgentUpdate": set(_ORG_TARGET_EXCLUDE) | {"bundle_path"},
     # Organizations: ``domain`` is auto-provisioning policy; ``settings`` is a
     # UI-managed JSON blob; ``is_provider`` is immutable post-create.
     "OrganizationCreate": {"domain", "settings", "is_provider"},

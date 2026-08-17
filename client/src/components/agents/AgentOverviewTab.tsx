@@ -32,6 +32,7 @@ import {
 import { Sparkline } from "@/components/agents/Sparkline";
 import { StatCard } from "@/components/agents/StatCard";
 import { RunSummaryContent } from "@/components/agents/RunSummaryContent";
+import { AgentSkillPanel } from "@/components/agents/AgentSkillPanel";
 import { useAgent } from "@/hooks/useAgents";
 import { useAgentRunUpdates } from "@/hooks/useAgentRunUpdates";
 import { useAgentRuns } from "@/services/agentRuns";
@@ -234,10 +235,11 @@ export function AgentOverviewTab({ agentId }: AgentOverviewTabProps) {
 			{/* Side column */}
 			<div
 				className={cn(
-					"agent-overview-sidebar flex min-w-0 flex-col",
+					"agent-overview-sidebar flex min-w-0 flex-col [&>*]:shrink-0",
 					GAP_CARD,
 				)}
 			>
+				<AgentSkillPanel agentId={agentId} />
 				{needsReview > 0 ? (
 					<Link
 						to={`/agents/${agentId}/review`}

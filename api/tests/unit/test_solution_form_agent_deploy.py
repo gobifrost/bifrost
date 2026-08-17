@@ -124,6 +124,56 @@ class TestSolutionFormAgentDeploy:
         assert agent.organization_id == sol.organization_id
         assert result.agents_upserted == 1
 
+    async def test_deploy_agent_bundle_path_materializes_skill_prompt(self, db_session):
+        db = db_session
+        sol = await self._install(db)
+        aid = str(uuid.uuid4())
+        result = await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol,
+            bundle_files={"skills/helper/SKILL.md": b"# Helper\n\nUse the tool."},
+            agents=[{
+                "id": aid,
+                "name": "helper",
+                "system_prompt": "placeholder",
+                "bundle_path": "skills/helper",
+            }],
+        ))
+        await db.flush()
+
+        agent = await db.get(Agent, solution_entity_id(sol.id, uuid.UUID(aid)))
+        assert agent.system_prompt == "# Helper\n\nUse the tool."
+        assert agent.bundle_path == "skills/helper"
+        assert result.agents_upserted == 1
+
+    async def test_private_deploy_suppresses_roles_and_marks_agent_inactive(self, db_session):
+        db = db_session
+        sol = Solution(
+            id=uuid.uuid4(),
+            slug=f"private-{uuid.uuid4().hex[:8]}",
+            name="Private",
+            organization_id=None,
+            visibility="private",
+        )
+        db.add(sol)
+        await db.flush()
+        aid = str(uuid.uuid4())
+
+        result = await SolutionDeployer(db).deploy(SolutionBundle(
+            solution=sol,
+            agents=[{
+                "id": aid,
+                "name": "helper",
+                "system_prompt": "hi",
+                "role_names": ["Missing Reviewer"],
+            }],
+        ))
+        await db.flush()
+
+        agent = await db.get(Agent, solution_entity_id(sol.id, uuid.UUID(aid)))
+        assert agent.is_active is False
+        assert result.roles_created == []
+        assert result.roles_unresolved == ["Missing Reviewer"]
+
     async def test_deploy_auto_creates_missing_role(self, db_session):
         """A bundle that references a role not yet in the target env auto-creates
         it (global, empty) instead of failing the deploy, and reports it on the

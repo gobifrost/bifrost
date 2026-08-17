@@ -340,6 +340,12 @@ export interface ChatStreamChunk {
 		size_bytes: number;
 	} | null;
 	agent_switch?: ChatAgentSwitch | null;
+	context_warning?: {
+		current_tokens: number;
+		max_tokens: number;
+		action: "warning" | "compacted";
+		message: string;
+	} | null;
 	message_id?: string | null;
 	// message_start fields - real UUIDs sent before streaming begins
 	user_message_id?: string | null;

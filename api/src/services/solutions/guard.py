@@ -62,6 +62,15 @@ _OPERATIONAL_SOLUTION_ROW_NAMES = {
     # Job bookkeeping belongs to the platform scheduler/API, not the deploy-owned
     # portable entity surface protected by this guard.
     "SolutionExportJob",
+    "SolutionBuildJob",
+    # Builder rows describe private source history, sessions, collaboration,
+    # and workspace bookkeeping. They are platform control-plane state rather
+    # than portable entities materialized by Solution deployment.
+    "SolutionBuilderProject",
+    "SolutionBuilderCollaborator",
+    "SolutionGlobalWorkspaceApply",
+    "SolutionSourceRevision",
+    "SolutionBuilderSession",
 }
 
 _WORKFLOW_RUNTIME_KEY_FIELDS = {

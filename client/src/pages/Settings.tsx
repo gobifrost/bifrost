@@ -19,6 +19,7 @@ import { MemorySettings } from "@/pages/settings/MemorySettings";
 import { RequiredInstructionsSettings } from "@/pages/settings/RequiredInstructionsSettings";
 import { MCP } from "@/pages/settings/MCP";
 import { Maintenance } from "@/pages/settings/Maintenance";
+import { BuilderSettings } from "@/pages/settings/Builder";
 import { cn } from "@/lib/utils";
 import {
 	Bot,
@@ -33,6 +34,7 @@ import {
 	Plug,
 	ScrollText,
 	Shield,
+	Sparkles,
 	Wrench,
 	type LucideIcon,
 } from "lucide-react";
@@ -129,6 +131,12 @@ const settingsSections: SettingsSection[] = [
 		label: "Platform",
 		icon: Palette,
 		items: [
+			{
+				value: "builder",
+				label: "Builder",
+				icon: Sparkles,
+				content: BuilderSettings,
+			},
 			{
 				value: "branding",
 				label: "Branding",

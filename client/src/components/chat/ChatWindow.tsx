@@ -180,12 +180,29 @@ function MessageWithToolCards({
 interface ChatWindowProps {
 	conversationId: string | undefined;
 	agentName?: string | null;
+	onSend?: (
+		message: string,
+		attachmentIds: string[],
+		modelProfileId: ChatModelProfileId | null,
+	) => void | Promise<void>;
+	isSending?: boolean;
+	inputDisabled?: boolean;
+	inputPlaceholder?: string;
+	onStop?: () => void;
 }
 
 // Threshold in pixels - if within this distance from bottom, consider "at bottom"
 const SCROLL_THRESHOLD = 100;
 
-export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
+export function ChatWindow({
+	conversationId,
+	agentName,
+	onSend,
+	isSending,
+	inputDisabled = false,
+	inputPlaceholder,
+	onStop,
+}: ChatWindowProps) {
 	const navigate = useNavigate();
 	const messagesEndRef = useRef<HTMLDivElement>(null);
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -382,12 +399,20 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 					await uploadChatAttachments(targetConversationId, files)
 				).attachments;
 			}
-			await sendMessage(
-				message,
-				targetConversationId,
-				uploaded,
-				modelProfileId,
-			);
+			if (onSend) {
+				await onSend(
+					message,
+					uploaded.map((attachment) => attachment.id),
+					modelProfileId,
+				);
+			} else {
+				await sendMessage(
+					message,
+					targetConversationId,
+					uploaded,
+					modelProfileId,
+				);
+			}
 		} catch (error) {
 			if (targetConversationId && uploaded.length > 0) {
 				const cleanupConversationId = targetConversationId;
@@ -426,11 +451,12 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 				</div>
 				<ChatInput
 					onSend={handleSendMessage}
-					disabled={createConversation.isPending}
-					placeholder="Send a message..."
+					disabled={createConversation.isPending || inputDisabled}
+					placeholder={inputPlaceholder ?? "Send a message..."}
 					modelProfiles={modelProfiles}
 					modelProfileId={effectiveModelProfileId}
 					onModelProfileChange={setSelectedModelProfileId}
+					showModelSelector={!onSend}
 				/>
 			</div>
 		);
@@ -457,6 +483,7 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 					modelProfiles={modelProfiles}
 					modelProfileId={effectiveModelProfileId}
 					onModelProfileChange={setSelectedModelProfileId}
+					showModelSelector={!onSend}
 				/>
 			</div>
 		);
@@ -482,10 +509,13 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 				</div>
 				<ChatInput
 					onSend={handleSendMessage}
-					placeholder="Send a message..."
+					disabled={inputDisabled}
+					isLoading={isSending}
+					placeholder={inputPlaceholder ?? "Send a message..."}
 					modelProfiles={modelProfiles}
 					modelProfileId={effectiveModelProfileId}
 					onModelProfileChange={setSelectedModelProfileId}
+					showModelSelector={!onSend}
 				/>
 			</div>
 		);
@@ -739,14 +769,17 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 			{/* Input Area */}
 			<ChatInput
 				onSend={handleSendMessage}
-				isLoading={isStreaming}
-				onStop={stopStreaming}
+				disabled={inputDisabled}
+				isLoading={isSending ?? isStreaming}
+				onStop={onStop ?? (onSend ? undefined : stopStreaming)}
 				placeholder={
-					agentName ? `Message ${agentName}...` : "Send a message..."
+					inputPlaceholder ??
+					(agentName ? `Message ${agentName}...` : "Send a message...")
 				}
 				modelProfiles={modelProfiles}
 				modelProfileId={effectiveModelProfileId}
 				onModelProfileChange={setSelectedModelProfileId}
+				showModelSelector={!onSend}
 			/>
 		</div>
 	);

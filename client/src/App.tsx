@@ -60,6 +60,19 @@ const SolutionDetail = lazyWithReload(() =>
 		default: m.SolutionDetail,
 	})),
 );
+const SolutionBuilder = lazyWithReload(() =>
+	import("@/pages/SolutionBuilder").then((m) => ({
+		default: m.SolutionBuilder,
+	})),
+);
+const SolutionPromotions = lazyWithReload(() =>
+	import("@/pages/SolutionPromotions").then((m) => ({
+		default: m.SolutionPromotions,
+	})),
+);
+const Build = lazyWithReload(() =>
+	import("@/pages/Build").then((m) => ({ default: m.Build })),
+);
 const Users = lazyWithReload(() =>
 	import("@/pages/Users").then((m) => ({ default: m.Users })),
 );
@@ -505,6 +518,22 @@ const routeElements = (
 					</ProtectedRoute>
 				}
 			/>
+			<Route
+				path="solution-promotions"
+				element={
+					<ProtectedRoute requirePlatformAdmin>
+						<SolutionPromotions />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="solutions/:solutionId/builder"
+				element={
+					<ProtectedRoute>
+						<SolutionBuilder />
+					</ProtectedRoute>
+				}
+			/>
 
 			{/* Config - PlatformAdmin only */}
 			<Route
@@ -540,6 +569,16 @@ const routeElements = (
 				element={
 					<ProtectedRoute requirePlatformAdmin>
 						<Files />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Builder is capability-gated by the API and useBuilderAccess. */}
+			<Route
+				path="build"
+				element={
+					<ProtectedRoute>
+						<Build />
 					</ProtectedRoute>
 				}
 			/>

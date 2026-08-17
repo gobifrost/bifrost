@@ -126,6 +126,145 @@ def test_live_config_filters_underlying_tools_by_name_or_source_id():
     assert [tool.definition.name for tool in tools] == ["lookup_ticket"]
 
 
+def test_builder_tool_schema_requires_session_and_supports_explicit_finalize():
+    service = MCPAgentGatewayService(_context())
+    agent = _agent()
+    original_schema = {
+        "type": "object",
+        "properties": {
+            "path": {"type": "string"},
+            "content": {"type": "string"},
+        },
+        "required": ["path", "content"],
+        "additionalProperties": False,
+    }
+
+    tools = service._resolve_gateway_tools(
+        agent,
+        [
+            ToolDefinition(
+                name="write_file",
+                description="Write a file",
+                parameters=original_schema,
+            )
+        ],
+        {},
+        MCPConfig(),
+        builder_agent=True,
+    )
+
+    assert len(tools) == 1
+    tool = tools[0]
+    assert tool.source == "builder_workspace"
+    assert tool.definition.parameters["required"] == [
+        "path",
+        "content",
+        "builder_session_id",
+    ]
+    assert tool.definition.parameters["properties"]["finalize"]["default"] is False
+    assert "builder_session_id" not in original_schema["properties"]
+
+    with pytest.raises(GatewayError) as exc_info:
+        service.validate_arguments(tool, {"path": "README.md", "content": "Hi"})
+    assert exc_info.value.code == "INVALID_ARGUMENTS"
+
+    service.validate_arguments(
+        tool,
+        {
+            "path": "README.md",
+            "content": "Hi",
+            "builder_session_id": str(uuid4()),
+            "finalize": True,
+        },
+    )
+
+
+def test_builder_build_check_requires_session_without_finalize():
+    service = MCPAgentGatewayService(_context())
+    agent = _agent()
+
+    tools = service._resolve_gateway_tools(
+        agent,
+        [
+            ToolDefinition(
+                name="test_solution_build",
+                description="Compile source apps",
+                parameters={
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": False,
+                },
+            )
+        ],
+        {},
+        MCPConfig(),
+        builder_agent=True,
+    )
+
+    assert len(tools) == 1
+    tool = tools[0]
+    assert tool.source == "builder_workspace"
+    assert tool.definition.parameters["required"] == ["builder_session_id"]
+    assert "finalize" not in tool.definition.parameters["properties"]
+
+
+@pytest.mark.asyncio
+async def test_builder_dispatch_routes_through_session_scoped_harness():
+    context = _context()
+    service = MCPAgentGatewayService(context)
+    agent = _agent()
+    tool = ResolvedGatewayTool(
+        tool_ref=str(uuid4()),
+        definition=ToolDefinition(
+            name="write_file",
+            description="Write a file",
+            parameters={"type": "object"},
+        ),
+        source="builder_workspace",
+        source_identity="builder_workspace:write_file",
+    )
+    session_id = uuid4()
+    db = AsyncMock()
+    db_context = MagicMock()
+    db_context.__aenter__ = AsyncMock(return_value=db)
+    db_context.__aexit__ = AsyncMock(return_value=None)
+
+    with (
+        patch("src.core.database.get_db_context", return_value=db_context),
+        patch.object(
+            service,
+            "_builder_access",
+            new=AsyncMock(return_value=(True, False)),
+        ),
+        patch(
+            "src.services.builder.mcp_harness.BuilderMCPHarness.execute",
+            new=AsyncMock(return_value={"revision_id": str(uuid4())}),
+        ) as execute,
+    ):
+        result = await service._dispatch_builder_workspace(
+            agent,
+            tool,
+            {
+                "builder_session_id": str(session_id),
+                "path": "README.md",
+                "content": "Hi",
+                "finalize": True,
+            },
+        )
+
+    assert result["revision_id"]
+    assert execute.await_args.kwargs == {
+        "agent": agent,
+        "tool_name": "write_file",
+        "builder_session_id": session_id,
+        "arguments": {
+            "path": "README.md",
+            "content": "Hi",
+            "finalize": True,
+        },
+    }
+
+
 def test_validation_error_is_model_repairable():
     tool = _resolved_tool()
 

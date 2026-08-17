@@ -10,7 +10,12 @@ vi.mock("@/lib/api-client", () => ({
 	},
 }));
 
-import { cancelPlatformJob, getPlatformJobs } from "./platformJobs";
+import {
+	cancelPlatformJob,
+	getPlatformJob,
+	getPlatformJobs,
+	listPlatformJobs,
+} from "./platformJobs";
 
 describe("platform jobs service", () => {
 	beforeEach(() => {
@@ -44,6 +49,31 @@ describe("platform jobs service", () => {
 			},
 			signal: undefined,
 		});
+	});
+
+	it("loads one durable job snapshot", async () => {
+		const job = { id: "job-1", status: "waiting" };
+		mockGet.mockResolvedValue({ data: job });
+
+		await expect(getPlatformJob("job-1")).resolves.toBe(job);
+		expect(mockGet).toHaveBeenCalledWith(
+			"/api/platform-jobs/{job_id}",
+			{
+				params: { path: { job_id: "job-1" } },
+				signal: undefined,
+			},
+		);
+	});
+
+	it("returns only jobs for Builder diagnostics", async () => {
+		const jobs = [{ id: "job-1", status: "succeeded" }];
+		mockGet.mockResolvedValue({
+			data: { jobs, total: 1, limit: 100, offset: 0 },
+		});
+
+		await expect(
+			listPlatformJobs({ activeOnly: false, limit: 100 }),
+		).resolves.toBe(jobs);
 	});
 
 	it("cancels through the shared platform-job endpoint", async () => {

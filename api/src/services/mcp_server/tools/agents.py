@@ -15,6 +15,7 @@ from fastmcp.tools import ToolResult
 from src.services.mcp_server.tool_result import error_result, success_result
 from src.services.mcp_server.tools._http_bridge import call_rest
 from src.services.mcp_server.tools.db import get_tool_db
+from src.services.solutions.access import visible_solution_child_criterion
 
 # MCPContext is imported where needed to avoid circular imports
 
@@ -160,6 +161,17 @@ async def get_agent(
                 selectinload(Agent.delegated_agents),
                 selectinload(Agent.roles),
             )
+            query = query.where(
+                visible_solution_child_criterion(
+                    child_solution_id=Agent.solution_id,
+                    actor_user_id=(
+                        UUID(str(context.user_id))
+                        if getattr(context, "user_id", None)
+                        else None
+                    ),
+                    is_external=getattr(context, "is_external", False),
+                )
+            )
 
             if agent_id:
                 # ID-based lookup: IDs are unique, so cascade filter is safe
@@ -192,6 +204,7 @@ async def get_agent(
                 "name": agent.name,
                 "description": agent.description,
                 "system_prompt": agent.system_prompt,
+                "bundle_path": agent.bundle_path,
                 "channels": agent.channels,
                 "access_level": agent.access_level.value if agent.access_level else "role_based",
                 "organization_id": str(agent.organization_id) if agent.organization_id else None,

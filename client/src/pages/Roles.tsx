@@ -7,6 +7,7 @@ import {
 	Bot,
 	FileText,
 	LayoutGrid,
+	Eye,
 	Pencil,
 	Plus,
 	RefreshCw,
@@ -46,6 +47,7 @@ import { SearchBox } from "@/components/search/SearchBox";
 import { useSearch } from "@/hooks/useSearch";
 import { useRoles, useDeleteRole } from "@/hooks/useRoles";
 import { RoleDialog } from "@/components/roles/RoleDialog";
+import { Badge } from "@/components/ui/badge";
 
 import type { components } from "@/lib/v1";
 type Role = components["schemas"]["RolePublic"];
@@ -335,6 +337,11 @@ function RoleRow({
 				>
 					{role.name}
 				</Link>
+				{role.is_builtin ? (
+					<Badge variant="secondary" className="ml-2 align-middle font-normal">
+						Built-in
+					</Badge>
+				) : null}
 			</DataTableCell>
 			<DataTableCell className="max-w-xs truncate text-muted-foreground">
 				{role.description || "-"}
@@ -344,7 +351,9 @@ function RoleRow({
 				onClick={(e) => e.stopPropagation()}
 			>
 				<div className="flex flex-wrap gap-1">
-					{CHIP_DEFS.map(({ key, label, icon: Icon }) => {
+					{CHIP_DEFS.filter(
+						({ key }) => role.assignable_to_resources || key === "users",
+					).map(({ key, label, icon: Icon }) => {
 						const count = counts ? counts[key] : 0;
 						return (
 							<Tooltip key={key}>
@@ -379,12 +388,16 @@ function RoleRow({
 						size="icon"
 						className="h-8 w-8"
 						onClick={onEdit}
-						aria-label={`Edit ${role.name}`}
-						title="Edit role"
+						aria-label={`${role.is_builtin ? "View" : "Edit"} ${role.name}`}
+						title={role.is_builtin ? "View built-in role" : "Edit role"}
 					>
-						<Pencil className="h-4 w-4" />
+						{role.is_builtin ? (
+							<Eye className="h-4 w-4" />
+						) : (
+							<Pencil className="h-4 w-4" />
+						)}
 					</Button>
-					<Button
+					{!role.is_builtin ? <Button
 						variant="ghost"
 						size="icon"
 						className="h-8 w-8"
@@ -393,7 +406,7 @@ function RoleRow({
 						title="Delete role"
 					>
 						<Trash2 className="h-4 w-4" />
-					</Button>
+					</Button> : null}
 				</div>
 			</DataTableCell>
 		</DataTableRow>

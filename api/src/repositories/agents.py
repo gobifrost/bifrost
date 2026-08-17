@@ -49,6 +49,7 @@ class AgentRepository(OrgScopedRepository[Agent]):
             .defer(Agent.logo_thumbnail_data),
             selectinload(self.model.roles),
         )
+        query = self._apply_solution_visibility(query)
 
         # Build scope filter: cascade (org + global) OR user's own private agents.
         cascade_conditions = []
@@ -115,6 +116,7 @@ class AgentRepository(OrgScopedRepository[Agent]):
             .defer(Agent.logo_thumbnail_data),
             selectinload(self.model.roles),
         )
+        query = self._apply_solution_visibility(query)
 
         # Apply org filtering based on filter type
         if filter_type == OrgFilterType.ALL:
@@ -155,7 +157,7 @@ class AgentRepository(OrgScopedRepository[Agent]):
         Returns:
             Agent ORM object or None if not found
         """
-        result = await self.session.execute(
+        query = self._apply_solution_visibility(
             select(self.model)
             .options(
                 selectinload(self.model.tools),
@@ -166,6 +168,7 @@ class AgentRepository(OrgScopedRepository[Agent]):
             )
             .where(self.model.id == agent_id)
         )
+        result = await self.session.execute(query)
         return result.scalar_one_or_none()
 
     async def get_agent_with_access_check(self, agent_id: UUID) -> Agent | None:
@@ -194,6 +197,7 @@ class AgentRepository(OrgScopedRepository[Agent]):
             )
             .where(self.model.id == agent_id)
         )
+        query = self._apply_solution_visibility(query)
 
         # Superuser: no scoping. IDs are globally unique; trust the ID lookup.
         if self.is_superuser:

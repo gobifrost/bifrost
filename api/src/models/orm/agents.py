@@ -40,6 +40,7 @@ class Agent(Base):
     logo_thumbnail_content_type: Mapped[str | None] = mapped_column(String(50), default=None)
     logo_thumbnail_version: Mapped[str | None] = mapped_column(String(64), default=None)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    bundle_path: Mapped[str | None] = mapped_column(String(1024), default=None)
     channels: Mapped[list] = mapped_column(JSONB, default=["chat"])
     access_level: Mapped[AgentAccessLevel] = mapped_column(
         SQLAlchemyEnum(

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { AlertCircle } from "lucide-react";
 import { WorkersTab } from "./components/WorkersTab";
 import { SchedulerTab } from "./components/SchedulerTab";
+import { BuilderTab } from "./components/BuilderTab";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export function DiagnosticsPage() {
@@ -35,22 +36,39 @@ export function DiagnosticsPage() {
 					Diagnostics
 				</h1>
 				<p className="mt-2 text-muted-foreground">
-					Monitor system health, process pools, and troubleshoot issues
+					Monitor system health, process pools, and troubleshoot
+					issues
 				</p>
 			</div>
 
-			<Tabs defaultValue="workers" className="flex min-h-0 flex-1 flex-col">
+			<Tabs
+				defaultValue="workers"
+				className="flex min-h-0 flex-1 flex-col"
+			>
 				<div className="max-w-[1100px] mx-auto w-full">
 					<TabsList>
 						<TabsTrigger value="workers">Workers</TabsTrigger>
 						<TabsTrigger value="scheduler">Scheduler</TabsTrigger>
+						<TabsTrigger value="builder">Builder</TabsTrigger>
 					</TabsList>
 				</div>
-				<TabsContent value="workers" className="min-h-0 flex-1 overflow-auto pt-4">
+				<TabsContent
+					value="workers"
+					className="min-h-0 flex-1 overflow-auto pt-4"
+				>
 					<WorkersTab />
 				</TabsContent>
-				<TabsContent value="scheduler" className="min-h-0 flex-1 overflow-auto pt-4">
+				<TabsContent
+					value="scheduler"
+					className="min-h-0 flex-1 overflow-auto pt-4"
+				>
 					<SchedulerTab />
+				</TabsContent>
+				<TabsContent
+					value="builder"
+					className="min-h-0 flex-1 overflow-auto pt-4"
+				>
+					<BuilderTab />
 				</TabsContent>
 			</Tabs>
 		</div>

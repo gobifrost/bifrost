@@ -54,6 +54,31 @@ An agent combines a system prompt, tools, delegated agents, knowledge sources, m
 - Keep tool names/descriptions distinctive enough for deferred discovery; see `workflows.md`.
 - Server-side tool permissions still apply after the agent can see a tool.
 
+### Portable Agent Skills
+
+An Agent may be backed by a portable Agent Skill bundle. In that mode,
+`SKILL.md` is the canonical instruction source: deploy/upload projects its
+exact Markdown into the runtime prompt, direct prompt editing is disabled, and
+the runtime injects the hidden `read_skill_asset` tool for referenced files.
+
+- In a Solution, set `bundle_path` in `.bifrost/agents.yaml` to a path relative
+  to the Solution root, such as `skills/expense-tracker`. Put `SKILL.md` at
+  `skills/expense-tracker/SKILL.md`.
+- Do not point `bundle_path` at `.bifrost/` or `_repo/`, and do not pass it to
+  generic `agents create/update`; Solution manifests and the dedicated Skill
+  upload flow own that field.
+- A loose Agent receives a `.skill` or `.zip` through the Agent Skill UI/API.
+  Its bundle is stored under Agent-owned storage, never the shared `_repo`.
+- Portable companion files may live only under `assets/`, `references/`, and
+  `scripts/`. Scripts are inert readable assets; an Agent does not gain code
+  execution merely because a bundle contains one.
+- Capture, export, git sync, and Solution deploy preserve the complete bundle.
+  A missing/invalid `SKILL.md`, traversal, symlink, duplicate, or oversized
+  bundle is rejected instead of silently falling back to a second prompt.
+
+When no bundle is present, `system_prompt` remains the editable instruction
+source.
+
 Evaluate the agent with representative prompts, tool failures, permission boundaries, and an answer that requires no tool. Do not judge it only from successful tool registration.
 
 ## Configs and secrets

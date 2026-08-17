@@ -47,6 +47,10 @@ from src.services.chat_attachments import (
     ChatAttachmentError,
     ChatAttachmentService,
 )
+from src.services.builder.conversation_access import (
+    BUILDER_CONVERSATION_CHANNEL,
+    can_access_conversation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -212,11 +216,15 @@ async def get_conversation(
         select(Conversation)
         .options(selectinload(Conversation.agent), selectinload(Conversation.messages))
         .where(Conversation.id == conversation_id)
-        .where(Conversation.user_id == user.user_id)
     )
     conversation = result.scalar_one_or_none()
 
-    if not conversation:
+    if not conversation or not await can_access_conversation(
+        db,
+        conversation=conversation,
+        principal=user,
+        action="view",
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Conversation {conversation_id} not found",
@@ -430,10 +438,14 @@ async def upload_attachments(
         await db.execute(
             select(Conversation)
             .where(Conversation.id == conversation_id)
-            .where(Conversation.user_id == user.user_id)
         )
     ).scalar_one_or_none()
-    if conversation is None:
+    if conversation is None or not await can_access_conversation(
+        db,
+        conversation=conversation,
+        principal=user,
+        action="edit",
+    ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
     if len(files) > MAX_FILES_PER_MESSAGE:
         raise HTTPException(
@@ -488,14 +500,20 @@ async def delete_unbound_attachment(
     attachment = (
         await db.execute(
             select(MessageAttachment)
-            .join(Conversation, Conversation.id == MessageAttachment.conversation_id)
             .where(MessageAttachment.artifact_id == attachment_id)
             .where(MessageAttachment.conversation_id == conversation_id)
             .where(MessageAttachment.message_id.is_(None))
-            .where(Conversation.user_id == user.user_id)
         )
     ).scalar_one_or_none()
     if attachment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+    conversation = await db.get(Conversation, conversation_id)
+    if conversation is None or not await can_access_conversation(
+        db,
+        conversation=conversation,
+        principal=user,
+        action="edit",
+    ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
 
     from src.services.artifacts import ArtifactService
@@ -522,14 +540,20 @@ async def get_attachment_content(
     attachment = (
         await db.execute(
             select(MessageAttachment)
-            .join(Conversation, Conversation.id == MessageAttachment.conversation_id)
             .where(MessageAttachment.artifact_id == attachment_id)
             .where(MessageAttachment.conversation_id == conversation_id)
-            .where(Conversation.user_id == user.user_id)
             .limit(1)
         )
     ).scalar_one_or_none()
     if attachment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+    conversation = await db.get(Conversation, conversation_id)
+    if conversation is None or not await can_access_conversation(
+        db,
+        conversation=conversation,
+        principal=user,
+        action="view",
+    ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
 
     from src.services.artifacts import ArtifactService
@@ -584,11 +608,15 @@ async def get_messages(
     result = await db.execute(
         select(Conversation)
         .where(Conversation.id == conversation_id)
-        .where(Conversation.user_id == user.user_id)
     )
     conversation = result.scalar_one_or_none()
 
-    if not conversation:
+    if not conversation or not await can_access_conversation(
+        db,
+        conversation=conversation,
+        principal=user,
+        action="view",
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Conversation {conversation_id} not found",
@@ -683,14 +711,23 @@ async def send_message(
             selectinload(Conversation.agent).selectinload(Agent.delegated_agents),
         )
         .where(Conversation.id == conversation_id)
-        .where(Conversation.user_id == user.user_id)
     )
     conversation = result.scalar_one_or_none()
 
-    if not conversation:
+    if not conversation or not await can_access_conversation(
+        db,
+        conversation=conversation,
+        principal=user,
+        action="edit",
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Conversation {conversation_id} not found",
+        )
+    if conversation.channel == BUILDER_CONVERSATION_CHANNEL:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Builder conversations must be changed through a Builder turn.",
         )
 
     if conversation.agent and not await _check_agent_access(db, user, conversation.agent):

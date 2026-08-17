@@ -1,5 +1,6 @@
 {
   "access_level": "role_based",
+  "bundle_path": "agents/rt-agent",
   "channels": [
     "chat"
   ],

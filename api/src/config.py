@@ -328,6 +328,42 @@ class Settings(BaseSettings):
     )
 
     # ==========================================================================
+    # Solution Builder execution and artifact limits
+    # ==========================================================================
+    builder_max_concurrent_builds: int = Field(
+        default=1,
+        description="Maximum concurrent canonical app builds admitted per worker",
+    )
+    builder_max_concurrent_turns: int = Field(
+        default=1,
+        description="Maximum concurrent Builder agent turns admitted per worker",
+    )
+    builder_build_timeout_s: int = Field(
+        default=600,
+        description="Maximum seconds for one canonical npm/Vite app build",
+    )
+    builder_log_limit_bytes: int = Field(
+        default=1_048_576,
+        description="Maximum retained log bytes for one Builder operation",
+    )
+    builder_output_limit_bytes: int = Field(
+        default=104_857_600,
+        description="Maximum accepted Builder workspace or compiled output size",
+    )
+    builder_staged_retention_hours: int = Field(
+        default=6,
+        description="Hours uncommitted Builder output is retained before cleanup",
+    )
+    builder_runner_image_repository: str = Field(
+        default="ghcr.io/gobifrost/bifrost-build",
+        description="Signed source repository for the managed Builder harness",
+    )
+    builder_runner_image_tag: str | None = Field(
+        default=None,
+        description="Optional Builder image tag override; otherwise use the Bifrost version",
+    )
+
+    # ==========================================================================
     # Anthropic API (for Claude Agent SDK)
     # ==========================================================================
     anthropic_api_key: str | None = Field(

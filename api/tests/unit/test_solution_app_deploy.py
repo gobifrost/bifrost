@@ -107,6 +107,83 @@ class TestSolutionAppDeploy:
         assert result.apps_upserted == 1
         # dist was uploaded for this app (under the per-install remapped id)
         assert str(expected_id) in _stub_app_build
+        assert result.build_job_ids == []
+
+    async def test_isolated_app_build_uses_builder_jobs_with_revision_and_requester(
+        self, db_session, monkeypatch
+    ):
+        from types import SimpleNamespace
+
+        captured: dict[str, object] = {}
+        build_job_id = uuid.uuid4()
+        revision_id = uuid.uuid4()
+        requester_id = uuid.uuid4()
+
+        async def _fake_request_app_build(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(id=build_job_id)
+
+        async def _fake_await_build_jobs(jobs):
+            assert [job.id for job in jobs] == [build_job_id]
+            return [
+                SimpleNamespace(
+                    id=build_job_id,
+                    output_manifest=[{"path": "index.html", "sha256": "abc"}],
+                )
+            ]
+
+        copied: dict[str, object] = {}
+
+        class _FakeStagedBuildArtifactStorage:
+            def __init__(self, job_id):
+                copied["job_id"] = job_id
+
+            async def copy_outputs_to_app_dist(self, app_id, manifest):
+                copied["app_id"] = app_id
+                copied["manifest"] = manifest
+
+        monkeypatch.setattr(
+            "src.services.builder.build_requests.request_app_build",
+            _fake_request_app_build,
+        )
+        monkeypatch.setattr(
+            "src.services.builder.build_requests.await_build_jobs",
+            _fake_await_build_jobs,
+        )
+        monkeypatch.setattr(
+            "src.services.builder.staged_artifacts.StagedBuildArtifactStorage",
+            _FakeStagedBuildArtifactStorage,
+        )
+
+        db = db_session
+        sol = await self._install(db)
+        app_id = str(uuid.uuid4())
+        result = await SolutionDeployer(db).deploy(
+            SolutionBundle(
+                solution=sol,
+                apps=[{
+                    **_app_entry(app_id, f"iso-{uuid.uuid4().hex[:6]}"),
+                    "dist_files": {},
+                    "src_files": {"src/main.tsx": "export default null"},
+                }],
+            ),
+            isolated_app_builds=True,
+            source_revision_id=revision_id,
+            requested_by=requester_id,
+        )
+        await result.finalize_s3()
+
+        expected_id = solution_entity_id(sol.id, uuid.UUID(app_id))
+        assert captured["solution_id"] == sol.id
+        assert captured["app_id"] == expected_id
+        assert captured["requested_by"] == requester_id
+        assert captured["source_revision_id"] == revision_id
+        assert result.build_job_ids == [build_job_id]
+        assert copied == {
+            "job_id": build_job_id,
+            "app_id": expected_id,
+            "manifest": [{"path": "index.html", "sha256": "abc"}],
+        }
 
     async def test_inline_v1_solution_app_is_rejected(self, db_session, _stub_app_build):
         """Codex #11: a Solution app must be standalone_v2. An inline_v1 app

@@ -152,6 +152,10 @@ class ApplicationPublic(ApplicationBase):
     has_unpublished_changes: bool
     access_level: str = Field(default="authenticated")
     app_model: str = Field(default="inline_v1", description="Render model: inline_v1 (legacy inline) | standalone_v2")
+    runtime_mode: Literal["trusted", "isolated"] = Field(
+        default="trusted",
+        description="Server-authoritative browser runtime boundary",
+    )
     is_solution_managed: bool = Field(default=False, description="True if managed by a deployed Solution (read-only on platform)")
     solution_id: UUID | None = Field(default=None, description="UUID of the owning Solution install (null if not solution-managed)")
     role_ids: list[UUID] = Field(default_factory=list)
@@ -178,6 +182,12 @@ class ApplicationListResponse(BaseModel):
 
     applications: list[ApplicationPublic]
     total: int
+
+
+class ApplicationLaunchResponse(BaseModel):
+    """One-time handoff into an isolated application document."""
+
+    launch_url: str
 
 
 # ==================== DEFINITION MODELS ====================

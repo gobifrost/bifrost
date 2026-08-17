@@ -5,6 +5,22 @@ import { renderWithProviders, screen } from "@/test-utils";
 import { Combobox } from "./combobox";
 
 describe("Combobox", () => {
+	it("forwards an accessible name to its trigger", () => {
+		renderWithProviders(
+			<Combobox
+				aria-label="Access for Taylor Reviewer"
+				options={[{ value: "view", label: "Can view" }]}
+				value="view"
+			/>,
+		);
+
+		expect(
+			screen.getByRole("combobox", {
+				name: "Access for Taylor Reviewer",
+			}),
+		).toHaveTextContent("Can view");
+	});
+
 	it("filters options by literal label and value text", async () => {
 		const { user } = renderWithProviders(
 			<Combobox

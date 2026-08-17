@@ -19,14 +19,23 @@ import tempfile
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
-from uuid import UUID, uuid4
+from uuid import UUID
 
-from fastapi import APIRouter, Body, File, HTTPException, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    File,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from fastapi import Form as FastapiForm
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, noload
 from starlette.background import BackgroundTask
 
@@ -88,13 +97,9 @@ from src.jobs.platform.solution_export import (
     SOLUTION_EXPORT_DEFINITION,
     SolutionExportPayload,
 )
-from src.jobs.platform.solution_deploy import (
-    SOLUTION_DEPLOY_DEFINITION,
-    SolutionDeployPayload,
-)
 from src.services.platform_jobs import enqueue_platform_job, publish_platform_job_update
 from src.services.platform_job_memory_profiles import build_solution_memory_profile_key
-from src.services.solutions.deploy_job_storage import SolutionDeployJobStorage
+from src.services.solutions.deploy_jobs import create_staged_deploy_job
 from src.services.solutions.deploy import (
     SolutionDeployConflict,
     SolutionDowngradeBlocked,
@@ -106,13 +111,43 @@ from src.services.solutions.export_jobs import (
     list_export_jobs,
     public_job,
 )
+from src.services.solutions.access import VISIBILITY_PRIVATE, VISIBILITY_SHARED
 
 if TYPE_CHECKING:
     from src.services.solutions.zip_install import PreviewResult
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/solutions", tags=["Solutions"])
+async def _hide_private_builder_solution(request: Request, ctx: Context) -> None:
+    """Keep private Builder source out of the ordinary install surface.
+
+    Support users and administrators reach private projects through the
+    Builder catalog, which applies owner/collaborator/support semantics.  A
+    route-wide dependency prevents any nested legacy Solution endpoint from
+    becoming an accidental alternate read or mutation path.
+    """
+    raw_solution_id = request.path_params.get("solution_id")
+    if raw_solution_id is None:
+        return
+    try:
+        solution_id = UUID(str(raw_solution_id))
+    except (TypeError, ValueError):
+        return
+    visibility = await ctx.db.scalar(
+        select(SolutionORM.visibility).where(SolutionORM.id == solution_id)
+    )
+    if visibility == VISIBILITY_PRIVATE:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Solution not found",
+        )
+
+
+router = APIRouter(
+    prefix="/api/solutions",
+    tags=["Solutions"],
+    dependencies=[Depends(_hide_private_builder_solution)],
+)
 
 UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024
 _ZIP_FILENAME_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -142,72 +177,6 @@ async def _spool_upload_to_temp(file: UploadFile, *, prefix: str) -> Path:
         _cleanup_file(path)
         raise
     return path
-
-
-async def _enqueue_solution_deploy_job(
-    db: AsyncSession,
-    *,
-    kind: str,
-    install_id: UUID | None,
-    organization_id: UUID | None,
-    options: dict,
-    requested_by_user_id: UUID,
-    requested_by_email: str,
-    requested_by_name: str,
-    input_path: Path | None = None,
-    input_bytes: bytes | None = None,
-    memory_profile_key: str | None = None,
-) -> SolutionDeployJob:
-    """Stage one validated input and atomically expose its central job row."""
-    if (input_path is None) == (input_bytes is None):
-        raise ValueError("exactly one staged input is required")
-    job_id = uuid4()
-    storage = SolutionDeployJobStorage(job_id)
-    if input_path is not None:
-        digest, _ = await storage.write_path(input_path)
-    else:
-        assert input_bytes is not None
-        digest, _ = await storage.write_bytes(input_bytes)
-
-    projection = SolutionDeployJob(
-        id=job_id,
-        install_id=install_id,
-        status="queued",
-    )
-    db.add(projection)
-    try:
-        platform_job, _ = await enqueue_platform_job(
-            db,
-            SOLUTION_DEPLOY_DEFINITION,
-            SolutionDeployPayload(
-                deploy_job_id=job_id,
-                kind=kind,
-                install_id=install_id,
-                input_sha256=digest,
-                options=options,
-            ),
-            dedupe_key=str(job_id),
-            resource_lock_key=f"solution:{install_id}" if install_id else None,
-            priority=500,
-            organization_id=organization_id,
-            requested_by_user_id=requested_by_user_id,
-            requested_by_email=requested_by_email,
-            requested_by_name=requested_by_name,
-            resource_type="solution_deploy",
-            resource_id=str(job_id),
-            title=f"Solution {kind.replace('_', ' ')}",
-            action_url=(f"/solutions/{install_id}" if install_id else "/solutions"),
-            job_id=job_id,
-            memory_profile_key=memory_profile_key,
-        )
-        await db.commit()
-        await db.refresh(projection)
-    except Exception:
-        await db.rollback()
-        await storage.delete()
-        raise
-    await publish_platform_job_update(platform_job)
-    return projection
 
 
 @router.post("", response_model=SolutionDTO, status_code=status.HTTP_201_CREATED, summary="Create a Solution install (admin only)")
@@ -286,6 +255,7 @@ async def list_solutions(ctx: Context, user: CurrentSuperuser) -> SolutionsList:
         (
             await ctx.db.execute(
                 select(SolutionORM)
+                .where(SolutionORM.visibility == VISIBILITY_SHARED)
                 .options(
                     defer(SolutionORM.logo_data),
                     defer(SolutionORM.logo_thumbnail_data),
@@ -1417,6 +1387,10 @@ async def _run_deploy_job(
     zip_path: Path,
     *,
     force: bool,
+    promotion: bool = False,
+    isolated_app_builds: bool = False,
+    source_revision_id: UUID | None = None,
+    requested_by: UUID | None = None,
 ) -> None:
     """Execute the deploy under a fresh session (background task).
 
@@ -1432,6 +1406,8 @@ async def _run_deploy_job(
         UnmetDependency,
         deploy_zip_to_solution_path,
     )
+    from src.services.builder.build_requests import BuildFailed
+    from src.services.builder.solution_build_check import model_visible_build_failure
     from src.services.solutions.write_lock import (
         SolutionWriteLockHeld,
         solution_write_lock,
@@ -1468,9 +1444,16 @@ async def _run_deploy_job(
                 solution = await db.get(SolutionORM, solution_id)
                 if solution is None:
                     raise SolutionDeployConflict("Solution not found")
-                await _set_phase("parsing workspace zip and building app dist")
+                await _set_phase("parsing workspace zip and preparing application builds")
                 result = await deploy_zip_to_solution_path(
-                    db, solution, zip_path, force=force
+                    db,
+                    solution,
+                    zip_path,
+                    force=force,
+                    promotion=promotion,
+                    isolated_app_builds=isolated_app_builds,
+                    source_revision_id=source_revision_id,
+                    requested_by=requested_by,
                 )
                 await db.commit()
                 # S3 only after the DB is durable — a failed commit changes no running
@@ -1493,6 +1476,10 @@ async def _run_deploy_job(
                     "claims_deleted": result.claims_deleted,
                     "integrations_shell_created": result.integrations_shell_created,
                     "roles_created": list(result.roles_created),
+                    "roles_unresolved": list(result.roles_unresolved),
+                    "build_job_ids": [
+                        str(build_id) for build_id in result.build_job_ids
+                    ],
                 }
     try:
         await asyncio.wait_for(
@@ -1514,6 +1501,12 @@ async def _run_deploy_job(
             "Deploy committed but storage was unavailable after retries. "
             "Re-run the deploy to complete it (it is idempotent).",
         )
+    except BuildFailed as exc:
+        # A source compile failure is actionable input feedback, not an opaque
+        # deploy infrastructure error. Keep the bounded compiler tail on the
+        # durable job so native Builder, CLI, and support views see the same
+        # repair details.
+        await _set_status("failed", model_visible_build_failure(exc))
     except (
         SolutionDowngradeBlocked,
         SolutionDeployConflict,
@@ -1739,7 +1732,7 @@ async def deploy_solution(
 
     memory_profile_key = build_solution_memory_profile_key(preview)
     try:
-        job = await _enqueue_solution_deploy_job(
+        job = await create_staged_deploy_job(
             ctx.db,
             kind="deploy",
             install_id=solution_id,
@@ -2212,7 +2205,7 @@ async def install_from_repo(
                 ),
             )
         archive = _build_deploy_zip(root, extra_text_files={})
-        job = await _enqueue_solution_deploy_job(
+        job = await create_staged_deploy_job(
             ctx.db,
             kind="install_from_repo",
             install_id=solution.id,
@@ -2345,7 +2338,7 @@ async def install_solution(
 
     memory_profile_key = build_solution_memory_profile_key(preview)
     try:
-        job = await _enqueue_solution_deploy_job(
+        job = await create_staged_deploy_job(
             ctx.db,
             kind="install",
             install_id=None,

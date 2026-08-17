@@ -93,6 +93,12 @@ class PlatformJob(Base):
         server_default=text("NOW()"),
     )
 
+    external_provider: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    external_run_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    external_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     lease_owner: Mapped[str | None] = mapped_column(String(255), nullable=True)
     lease_token: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), nullable=True
