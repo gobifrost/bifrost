@@ -2,8 +2,7 @@
 
 **Owner:** Jack Musick / Bifrost engineering
 **Created:** 2026-08-17
-**Status:** Ready for implementation after the recovered-Builder checkpoint is
-approved
+**Status:** In progress — Phase 0 complete; Phase 1 next
 **Execution branch:** `codex/code-builder-pydantic-integration-20260816`
 **Base:** `origin/main@16e317e62`
 **Depends on:** the reconstructed Builder and shared Pydantic runtime described
@@ -159,20 +158,28 @@ contracts must land before adding more Builder-specific tools.
 
 ### Phase 0 — Freeze and checkpoint the recovered foundation
 
-- [ ] Re-run the Builder inventory against immutable backup `1696d8693` and
+- [x] Re-run the Builder inventory against immutable backup `1696d8693` and
       confirm every recovered, generalized, and retired path remains accounted
       for after Chat V3 integration.
-- [ ] Ensure the worktree contains no unrelated changes or untracked artifacts.
-- [ ] Run the existing focused Builder/shared-runtime gates recorded in the
+- [x] Ensure the worktree contains no unrelated changes or untracked artifacts.
+- [x] Run the existing focused Builder/shared-runtime gates recorded in the
       reconstructed status document.
-- [ ] Commit the recovered foundation as one reviewable checkpoint and push the
+- [x] Commit the recovered foundation as one reviewable checkpoint and push the
       candidate branch only after Jack explicitly authorizes commit/push.
-- [ ] Publish `ghcr.io/gobifrost/bifrost-build` through CI and complete the
+- [x] Publish `ghcr.io/gobifrost/bifrost-build` through CI and complete the
       first live Cloudflare acceptance run before treating Cloudflare as
       delivery-proven.
 
 **Gate:** immutable remote checkpoint, green local Worker path, green candidate
 image probe, and no merge action.
+
+**Evidence:** recovered checkpoint `ebfa68fd2`, integration repairs
+`684f700ac`, CI candidate run
+[`32034513881`](https://github.com/gobifrost/bifrost/actions/runs/32034513881),
+and a live Cloudflare Workflow/container self-test using exact candidate tag
+`candidate-684f700ac263b6cabd91672cc36019669128e88f`. The container reported
+`schema_version: 1` and `harness: pydantic-ai`; the saved admin setup reports
+configured, provisioned, connected, enabled, and ready with no blockers.
 
 ### Phase 1 — Canonical operation catalog and parity inventory
 

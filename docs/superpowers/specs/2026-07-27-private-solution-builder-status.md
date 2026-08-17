@@ -235,6 +235,8 @@ Current-branch evidence collected in this integration worktree includes:
 - PlatformJob/cancellation/scheduler service: 25 passed;
 - restored app-session, token-gate, and filesystem/archive safety: 77 passed;
 - final focused Builder/shared runtime unit aggregate: 228 passed;
+- complete backend unit suite after recovery integration repairs: 5,902 passed,
+  3 skipped, and 20 deselected;
 - final Builder integration aggregate (forward migrations, private/support
   access, Skills, same-origin runtime, MCP, real Worker build): 57 passed;
 - real Scheduler → Worker → npm/Vite build, dist finalization, and exact-input
@@ -246,6 +248,11 @@ Current-branch evidence collected in this integration worktree includes:
   Compiler warning in unchanged `FormRenderer.tsx`;
 - production `bifrost-build` Docker image build and exact CI `--probe`: green
   (`schema_version: 1`, `harness: pydantic-ai`);
+- exact candidate `684f700ac` published by CI, independently pulled and probed,
+  mirrored into Cloudflare's account registry, deployed as the managed
+  Workflow/Container runtime, and booted successfully for a live self-test;
+- Settings → Builder now reports the Cloudflare provider configured,
+  provisioned, connected, enabled, and ready with no setup blockers;
 - `builder-runner/runner.py` bytecode compilation and `git diff --check`: clean.
 
 Live-stack proof restored an accumulated conversation, compacted its context,
@@ -254,22 +261,19 @@ repaired a real Tailwind v4 compiler failure, invoked `validate_solution` and
 automatically deployed the resulting private preview. No transcript or source
 state was discarded during resume.
 
-## Remaining acceptance gates
+## Remaining work and limitations
 
 - Hierarchical platform → organization → user → Solution quota enforcement is
   not part of this version. The shared ledger records provider tokens, cache
   tokens, media usage, reported cost, user, organization, and Solution; Builder
   currently enforces only its per-turn request/token ceilings.
-- The supplied Cloudflare Workers token successfully authenticated to the
-  configured account. Provisioning logic, image mirroring, Workflow deployment,
-  and callbacks have automated coverage, and the production image builds and
-  probes locally. A live remote Cloudflare container run requires the current
-  `bifrost-build` candidate to exist in GHCR, which cannot happen until this
-  dirty worktree is committed and pushed for CI. The default local Worker path
-  has the complete live resume/build/deploy proof.
-- The branch is intentionally still uncommitted and unpushed. Commit, candidate
-  publication, live Cloudflare acceptance, and merge each require Jack's
-  explicit approval.
+- Full CLI/MCP/native Builder operation parity, revision-bound Agent Skill
+  hydration, generated transport bindings, and the maintained coding profile
+  remain sequenced work in the capability-parity execution plan.
+- The branch is committed and pushed through `684f700ac`, but remains an
+  integration branch. No pull request or merge action has been taken; merge
+  still requires Jack's explicit approval after the remaining phases and
+  delivery QA are complete.
 
-No commit, push, or merge is authorized until the final focused aggregate is
-green and Jack explicitly approves the branch.
+No merge is authorized until the remaining execution phases and final delivery
+QA are green and Jack explicitly approves the branch.
