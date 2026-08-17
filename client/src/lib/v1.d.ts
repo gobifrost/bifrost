@@ -9020,6 +9020,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/knowledge/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hybrid-search knowledge documents
+         * @description Search direct scope or an accessible Agent's trusted knowledge boundary.
+         */
+        post: operations["knowledge.search"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/applications/{app_id}/embed-secrets": {
         parameters: {
             query?: never;
@@ -18875,6 +18895,74 @@ export interface components {
             role_id: string;
             /** Assigned By */
             assigned_by?: string | null;
+        };
+        /**
+         * KnowledgeSearchRequest
+         * @description Canonical direct or Agent-bound knowledge-search request.
+         */
+        KnowledgeSearchRequest: {
+            /**
+             * Query
+             * @description Search query
+             */
+            query: string;
+            /**
+             * Namespace
+             * @description Namespaces to search. Direct searches default to 'default'; Agent-bound searches default to every namespace granted to the Agent.
+             */
+            namespace?: string[] | null;
+            /**
+             * Limit
+             * @description Maximum results
+             * @default 5
+             */
+            limit: number;
+            /** Min Score */
+            min_score?: number | null;
+            /** Metadata Filter */
+            metadata_filter?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Scope
+             * @description Direct-search scope: omitted, 'global', or an organization UUID
+             */
+            scope?: string | null;
+            /**
+             * Agent Id
+             * @description Accessible Agent whose organization and knowledge grants define the search boundary
+             */
+            agent_id?: string | null;
+            /**
+             * Fallback
+             * @description Also search global knowledge when searching an organization
+             * @default true
+             */
+            fallback: boolean;
+        };
+        /**
+         * KnowledgeSearchResult
+         * @description One canonical hybrid knowledge-search result.
+         */
+        KnowledgeSearchResult: {
+            /** Id */
+            id: string;
+            /** Namespace */
+            namespace: string;
+            /** Content */
+            content: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /** Score */
+            score?: number | null;
+            /** Organization Id */
+            organization_id?: string | null;
+            /** Key */
+            key?: string | null;
+            /** Created At */
+            created_at?: string | null;
         };
         /**
          * KnowledgeStorageTrend
@@ -43274,6 +43362,39 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "knowledge.search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeSearchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeSearchResult"][];
+                };
             };
             /** @description Validation Error */
             422: {

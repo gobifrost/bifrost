@@ -164,10 +164,10 @@ class TestGetToolsForAgent:
         assert result is not None
         assert result.accessible_namespaces == ["docs", "wiki"]
         # Canonical execute/list Workflow tools from system_tools, plus
-        # search_knowledge auto-injected because knowledge_sources is non-empty
+        # bifrost_search_knowledge auto-injected because knowledge_sources is non-empty
         # (mirrors the native chat path in agent_helpers.py).
         tool_ids = {t.id for t in result.tools}
-        assert tool_ids == {"bifrost_execute_workflow", "bifrost_list_workflows", "search_knowledge"}
+        assert tool_ids == {"bifrost_execute_workflow", "bifrost_list_workflows", "bifrost_search_knowledge"}
 
     @pytest.mark.asyncio
     async def test_returns_none_for_nonexistent_agent(self):

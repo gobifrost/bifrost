@@ -114,7 +114,7 @@ class MCPToolAccessService:
         )
 
         for agent in accessible_agents:
-            # Add system tools from agent.system_tools, plus search_knowledge
+            # Add system tools from agent.system_tools, plus canonical knowledge search
             # auto-injected when the agent has knowledge_sources. Mirrors the
             # native chat path in agent_helpers.py so MCP listing matches.
             for system_tool_id in self._effective_system_tool_ids(
@@ -353,7 +353,7 @@ class MCPToolAccessService:
         *,
         include_bundle: bool,
     ) -> list[str]:
-        """Return ``agent.system_tools`` with ``search_knowledge`` auto-appended
+        """Return ``agent.system_tools`` with ``bifrost_search_knowledge`` auto-appended
         when the agent has knowledge sources.
 
         Mirrors the native chat path in
@@ -372,8 +372,8 @@ class MCPToolAccessService:
         bundle_path = getattr(agent, "bundle_path", None)
         if include_bundle and isinstance(bundle_path, str) and bundle_path:
             ids.append(READ_SKILL_ASSET_TOOL_ID)
-        if agent.knowledge_sources and "search_knowledge" not in ids:
-            ids.append("search_knowledge")
+        if agent.knowledge_sources and "bifrost_search_knowledge" not in ids:
+            ids.append("bifrost_search_knowledge")
         return ids
 
     @staticmethod

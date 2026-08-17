@@ -776,7 +776,7 @@ class AgentExecutor:
         Get tool definitions for an agent from its assigned tools.
 
         Delegates to the shared resolve_agent_tools helper which handles:
-        1. System tools (for example, "bifrost_execute_workflow", "search_knowledge")
+        1. System tools (for example, "bifrost_execute_workflow", "bifrost_search_knowledge")
         2. Workflow tools (prefixed, e.g., "halopsa_list_tickets", "wf_add_comment")
         3. Delegation tools (e.g., "delegate_to_agent_name")
         4. External MCP tools (prefixed ``mcp__<connection_id>__<tool>``)
@@ -1281,7 +1281,7 @@ class AgentExecutor:
                 )
 
         # Check if this is a knowledge search tool call
-        if tool_call.name == "search_knowledge" and agent:
+        if tool_call.name == "bifrost_search_knowledge" and agent:
             return await self._execute_knowledge_search(tool_call, agent)
 
         # Check if this is a delegation tool call
@@ -1566,8 +1566,7 @@ class AgentExecutor:
         start_time = time.time()
 
         try:
-            from src.repositories.knowledge import KnowledgeRepository
-            from src.services.embeddings import get_embedding_client
+            from src.services.knowledge.search import search_knowledge_documents
 
             # Get search parameters
             query = tool_call.arguments.get("query", "")
@@ -1605,20 +1604,12 @@ class AgentExecutor:
                     duration_ms=int((time.time() - start_time) * 1000),
                 )
 
-            # Generate query embedding
             async with self._db() as session:
-                embedding_client = await get_embedding_client(session)
-            query_embedding = await embedding_client.embed_single(query)
-
-            # Search knowledge store
-            async with self._db() as session:
-                repo = KnowledgeRepository(
-                    session, org_id=agent.organization_id, is_superuser=True
-                )
-                results = await repo.search(
-                    query_embedding=query_embedding,
-                    namespace=namespaces,
-                    query_text=query,
+                results = await search_knowledge_documents(
+                    session,
+                    query=query,
+                    namespaces=namespaces,
+                    organization_id=agent.organization_id,
                     limit=limit,
                     fallback=True,
                 )

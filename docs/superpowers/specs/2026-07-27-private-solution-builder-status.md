@@ -254,10 +254,11 @@ Current-branch evidence collected in this integration worktree includes:
 - Settings → Builder now reports the Cloudflare provider configured,
   provisioned, connected, enabled, and ready with no setup blockers;
 - `builder-runner/runner.py` bytecode compilation and `git diff --check`: clean.
-- canonical operation inventory currently accounts for 659 REST pairs, 138
+- canonical operation inventory currently accounts for 659 REST pairs, 139
   CLI leaves, 101 MCP tools, 10 native Builder primitives, 16 manifest fields,
-  and 19 app-SDK bindings; 66 Agent, Form, Table, App, Event, Workflow,
-  Organization, Integration, Workspace Files, and Execution History
+  and 19 app-SDK bindings; 67 Agent, Form, Table, App, Event, Workflow,
+  Organization, Integration, Workspace Files, Execution History, and Knowledge
+  Search
   operations now supply stable OpenAPI, CLI, MCP, scope, authorization,
   side-effect, and generated Skill metadata;
 - operation-catalog, generated-reference, Compose-harness, Skill-mirror, and
@@ -311,6 +312,22 @@ Current-branch evidence collected in this integration worktree includes:
   live Worker-backed REST/MCP lifecycle, and 64 DTO/contract checks pass. The
   operation inventory now contains 66 canonical operations and 35 uncatalogued
   MCP tools;
+- the Knowledge Search slice removes the final legacy direct-database public
+  MCP path. REST, native Chat, and autonomous Agent runs reuse one embedding
+  and repository-search service; the MCP adapter calls canonical
+  `POST /api/knowledge/search`, where REST independently verifies the Agent
+  and derives its organization and namespace boundary. This preserves global
+  Agent grounding for authorized organization users without granting them
+  direct global-search rights. CLI adds
+  `bifrost knowledge search`, and MCP is registered only as
+  `bifrost_search_knowledge`. Forward migration
+  `20260817_knowledge_mcp_name` preserves Agent grants and platform MCP
+  allow/block decisions. The focused architecture/runtime/tool-access/
+  manifest/CLI/migration/inventory aggregate passes 464/464; the combined MCP
+  protocol/config, complete round-trip, DTO/contract, and context-boundary
+  selection passes 129/129. Seven live embedding-backed namespace checks and
+  13 Agent Settings component checks also pass. The operation inventory now
+  contains 67 canonical operations and 34 uncatalogued MCP tools;
 - the candidate CI E2E shard exposed one real test-harness defect: the global
   asyncpg queue pool retained connections across pytest's function-scoped
   event loops. Testing now uses `NullPool` while development and production
@@ -330,8 +347,8 @@ state was discarded during resume.
   tokens, media usage, reported cost, user, organization, and Solution; Builder
   currently enforces only its per-turn request/token ceilings.
 - Agent, Form, Table, App, Event, Workflow, Organization, Integration,
-  Workspace Files, and Execution History administration now use REST-canonical
-  MCP adapters.
+  Workspace Files, Execution History, and Knowledge Search now use
+  REST-canonical MCP adapters.
   Remaining uncatalogued domains, native Builder dispatch parity,
   revision-bound Agent Skill hydration, generated transport bindings, and the
   maintained coding profile remain sequenced work in the capability-parity
@@ -341,7 +358,8 @@ state was discarded during resume.
   Workflow checkpoint is pushed through `c6251e790`; the Organization
   checkpoint is pushed through `367ca7d2c`; and the Integration checkpoint is
   pushed through `85ee5b2a0`; and the Workspace Files checkpoint is pushed
-  through `3b3f9a868`. The Execution History checkpoint is complete on the same
+  through `3b3f9a868`. The Execution History checkpoint is pushed through
+  `000645e85`; the Knowledge Search checkpoint is complete on the same
   integration branch. It remains
   an integration branch: no pull request or merge action has been taken, and
   merge still requires Jack's explicit approval after the remaining phases and

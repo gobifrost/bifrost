@@ -2871,26 +2871,20 @@ async def cli_knowledge_search(
     """Search knowledge using fused lexical and vector rankings."""
     _deny_external_knowledge(current_user)
     from src.models.contracts.cli import CLIKnowledgeDocumentResponse
-    from src.repositories.knowledge import KnowledgeRepository
-    from src.services.embeddings import get_embedding_client
+    from src.services.knowledge.search import search_knowledge_documents
 
     try:
         org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
-        # Generate query embedding
-        embedding_client = await get_embedding_client(db)
-        query_embedding = await embedding_client.embed_single(request.query)
-
-        # Search
         # Externals were 403'd at the top of this endpoint
         # (_deny_external_knowledge); every caller past the gate gets the
         # SDK trust this surface has always extended.
-        repo = KnowledgeRepository(db, org_id=org_uuid)
-        results = await repo.search(
-            query_embedding=query_embedding,
-            namespace=request.namespace,
-            query_text=request.query,
+        results = await search_knowledge_documents(
+            db,
+            query=request.query,
+            namespaces=request.namespace,
+            organization_id=org_uuid,
             limit=request.limit,
             min_score=request.min_score,
             metadata_filter=request.metadata_filter,

@@ -1508,6 +1508,47 @@ Options:
   --help               Show this message and exit.
 ```
 
+## `knowledge`
+
+```
+Usage: knowledge [OPTIONS] COMMAND [ARGS]...
+
+  Search the knowledge store.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  search  Hybrid-search knowledge documents visible in an organization...
+```
+
+### `knowledge search`
+
+```
+Usage: knowledge search [OPTIONS] QUERY
+
+  Hybrid-search knowledge documents visible in an organization scope.
+
+Options:
+  --namespace TEXT                Namespace to search. Repeat to search more
+                                  than one.
+  --limit INTEGER RANGE           [default: 5; x>=1]
+  --min-score FLOAT RANGE         [0<=x<=1]
+  --metadata-filter TEXT          JSON object matched against document
+                                  metadata.
+  --fallback / --no-fallback      Include global knowledge when searching an
+                                  organization.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
 ## `organizations`
 
 ```

@@ -954,6 +954,27 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         },
     ),
     OperationDefinition(
+        operation_id="knowledge.search",
+        summary="Hybrid-search knowledge documents",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/knowledge/search",
+            request_model="KnowledgeSearchRequest",
+            response_model="list[KnowledgeSearchResult]",
+        ),
+        cli=CliOperationBinding(path=("knowledge", "search")),
+        mcp=McpOperationBinding(name="bifrost_search_knowledge"),
+        native_builder=True,
+        action_scopes=("knowledge.read",),
+        authorization_resolver=(
+            "User scope resolver or AgentRepository access plus Agent-bound namespace intersection"
+        ),
+        exclusions={
+            "manifest": "Knowledge search reads runtime content; it does not reconcile portable state."
+        },
+    ),
+    OperationDefinition(
         operation_id="organizations.list",
         summary="List Organizations",
         target_kind=OperationTargetKind.PLATFORM,

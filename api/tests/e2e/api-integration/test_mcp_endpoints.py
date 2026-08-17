@@ -214,7 +214,7 @@ class TestMCPToolsEndpoint:
                     "bifrost_list_integrations",
                     "bifrost_list_forms",
                     "get_docs",
-                    "search_knowledge",
+                    "bifrost_search_knowledge",
                 ],
             },
         )
@@ -292,7 +292,7 @@ class TestMCPToolsEndpoint:
             "bifrost_list_integrations",
             "bifrost_list_forms",
             "get_docs",
-            "search_knowledge",
+            "bifrost_search_knowledge",
         ]
 
         tool_ids = [t["id"] for t in tools]
@@ -594,20 +594,20 @@ class TestMCPConfigToolFiltering:
             f"{TEST_API_URL}/api/mcp/config",
             json={
                 "enabled": True,
-                "blocked_tool_ids": ["search_knowledge"],
+                "blocked_tool_ids": ["bifrost_search_knowledge"],
             },
             headers=headers,
         )
 
         assert response.status_code == 200
         data = response.json()
-        assert data["blocked_tool_ids"] == ["search_knowledge"]
+        assert data["blocked_tool_ids"] == ["bifrost_search_knowledge"]
 
         # Verify it persisted
         response = requests.get(f"{TEST_API_URL}/api/mcp/config", headers=headers)
         assert response.status_code == 200
         data = response.json()
-        assert data["blocked_tool_ids"] == ["search_knowledge"]
+        assert data["blocked_tool_ids"] == ["bifrost_search_knowledge"]
 
     @pytest.mark.e2e
     def test_config_allows_null_for_all_tools(self):

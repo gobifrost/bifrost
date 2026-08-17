@@ -215,7 +215,7 @@ def test_parse_mcp_tool_name_round_trip():
 
 def test_parse_mcp_tool_name_rejects_non_mcp_prefix():
     assert parse_mcp_tool_name("delegate_to_reporter") is None
-    assert parse_mcp_tool_name("search_knowledge") is None
+    assert parse_mcp_tool_name("bifrost_search_knowledge") is None
 
 
 def test_parse_mcp_tool_name_rejects_malformed_uuid():

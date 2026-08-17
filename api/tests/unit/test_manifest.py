@@ -2083,8 +2083,8 @@ class TestInlineAgentContent:
             tool_ids=[tool_id],
             delegated_agent_ids=[delegate_id],
             knowledge_sources=["faq", "runbooks"],
-			system_tools=["bifrost_execute_workflow", "search_knowledge"],
-			llm_profile="Fast Chat",
+            system_tools=["bifrost_execute_workflow", "bifrost_search_knowledge"],
+            llm_profile="Fast Chat",
             llm_max_tokens=8000,
             max_iterations=15,
             max_token_budget=120000,
@@ -2101,8 +2101,8 @@ class TestInlineAgentContent:
         assert rt.tool_ids == [tool_id]
         assert rt.delegated_agent_ids == [delegate_id]
         assert rt.knowledge_sources == ["faq", "runbooks"]
-		assert rt.system_tools == ["bifrost_execute_workflow", "search_knowledge"]
-		assert rt.llm_profile == "Fast Chat"
+        assert rt.system_tools == ["bifrost_execute_workflow", "bifrost_search_knowledge"]
+        assert rt.llm_profile == "Fast Chat"
         assert rt.llm_max_tokens == 8000
         assert rt.max_iterations == 15
         assert rt.max_token_budget == 120000

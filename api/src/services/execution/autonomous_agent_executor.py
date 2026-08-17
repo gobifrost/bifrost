@@ -499,7 +499,7 @@ class AutonomousAgentExecutor:
     async def _execute_tool(self, tool_call: ToolCallRequest, agent: Agent) -> str:
         """Execute a tool call, mirroring AgentExecutor's dispatch logic."""
         # Knowledge search
-        if tool_call.name == "search_knowledge" and agent.knowledge_sources:
+        if tool_call.name == "bifrost_search_knowledge" and agent.knowledge_sources:
             return await self._execute_knowledge_search(tool_call, agent)
 
         # Delegation
@@ -653,8 +653,7 @@ class AutonomousAgentExecutor:
     async def _execute_knowledge_search(self, tool_call: ToolCallRequest, agent: Agent) -> str:
         """Execute knowledge search using the agent's configured namespaces."""
         try:
-            from src.repositories.knowledge import KnowledgeRepository
-            from src.services.embeddings import get_embedding_client
+            from src.services.knowledge.search import search_knowledge_documents
 
             query = tool_call.arguments.get("query", "")
             limit = clamp_knowledge_result_limit(
@@ -672,18 +671,13 @@ class AutonomousAgentExecutor:
             if not decision.allowed:
                 return json.dumps(knowledge_search_rejection_payload(decision))
 
-            # Brief DB session for embedding client config + knowledge search
+            # Brief DB session for canonical embedding + knowledge search.
             async with self._session_factory() as db:
-                embedding_client = await get_embedding_client(db)
-                query_embedding = await embedding_client.embed_single(query)
-
-                repo = KnowledgeRepository(
-                    db, org_id=agent.organization_id, is_superuser=True
-                )
-                results = await repo.search(
-                    query_embedding=query_embedding,
-                    namespace=namespaces,
-                    query_text=query,
+                results = await search_knowledge_documents(
+                    db,
+                    query=query,
+                    namespaces=namespaces,
+                    organization_id=agent.organization_id,
                     limit=limit,
                     fallback=True,
                 )

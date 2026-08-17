@@ -288,6 +288,7 @@
 | DELETE | `/api/knowledge-sources/{namespace}/documents/{doc_id}` |
 | GET | `/api/knowledge-sources/{namespace}/documents/{doc_id}` |
 | PUT | `/api/knowledge-sources/{namespace}/documents/{doc_id}` |
+| POST | `/api/knowledge/search` |
 | GET | `/api/llms.txt` |
 | POST | `/api/maintenance/artifact-retention/cleanup` |
 | GET | `/api/maintenance/artifact-retention/settings` |

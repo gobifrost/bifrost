@@ -1148,7 +1148,7 @@ class MCPAgentGatewayService:
                     source_identity = (
                         f"external_mcp:{source_id}:{remote_tool_name}"
                     )
-                elif definition.name == "search_knowledge":
+                elif definition.name == "bifrost_search_knowledge":
                     source = "knowledge"
                     source_identity = f"knowledge:{definition.name}"
                 elif definition.name in (agent.system_tools or []):
@@ -1497,6 +1497,7 @@ class MCPAgentGatewayService:
             user_email=self.context.user_email,
             user_name=self.context.user_name,
             accessible_namespaces=list(agent.knowledge_sources or []),
+            agent_id=agent.id,
         )
         result = await func(context, **arguments)
         structured = getattr(result, "structured_content", None)

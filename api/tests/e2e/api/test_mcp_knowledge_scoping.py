@@ -1,5 +1,5 @@
 """
-E2E: search_knowledge exposure and scoping over the MCP HTTP transport.
+E2E: bifrost_search_knowledge exposure and scoping over the MCP HTTP transport.
 
 Two MCP surfaces:
 
@@ -10,7 +10,7 @@ Two MCP surfaces:
 
 Regression coverage:
 
-1. search_knowledge is auto-injected into tools/list when an agent has
+1. bifrost_search_knowledge is auto-injected into tools/list when an agent has
    knowledge_sources, even if system_tools doesn't list it (mirror of
    agent_helpers.py:140 behavior in native chat).
 2. /mcp dispatches search through one explicitly selected agent, rather than
@@ -19,8 +19,10 @@ Regression coverage:
 4. /mcp/{agent_id} rejects explicit cross-namespace queries — a user with
    broader token access cannot bypass the per-agent boundary by passing
    namespace="other_namespace" in the call args.
+5. A regular organization user can use an accessible global Agent's global
+   knowledge without receiving direct global-scope privileges.
 
-Skipped without ``EMBEDDINGS_AI_TEST_KEY`` since search_knowledge calls
+Skipped without ``EMBEDDINGS_AI_TEST_KEY`` since bifrost_search_knowledge calls
 the embedding provider.
 """
 
@@ -124,7 +126,7 @@ def _gateway_call(
 
 @pytest.fixture(scope="module")
 def _embedding_config(e2e_client, platform_admin):
-    """Configure OpenAI embeddings (required for search_knowledge)."""
+    """Configure OpenAI embeddings (required for bifrost_search_knowledge)."""
     if not EMBEDDINGS_AVAILABLE:
         pytest.skip("EMBEDDINGS_AI_TEST_KEY not set")
 
@@ -192,7 +194,7 @@ def _knowledge_scoping_setup(e2e_client, platform_admin, _embedding_config):
                     "namespace": ns,
                     "key": key,
                     "metadata": {},
-                    "scope": None,  # global scope
+                    "scope": "global",
                 },
             )
             assert resp.status_code == 200, (
@@ -206,6 +208,8 @@ def _knowledge_scoping_setup(e2e_client, platform_admin, _embedding_config):
                 "name": f"MCP KS Alpha {suffix}",
                 "system_prompt": "Alpha agent with knowledge.",
                 "channels": ["chat"],
+                "access_level": "authenticated",
+                "organization_id": None,
                 "system_tools": [],
                 "knowledge_sources": [ns_alpha],
             },
@@ -220,6 +224,8 @@ def _knowledge_scoping_setup(e2e_client, platform_admin, _embedding_config):
                 "name": f"MCP KS Beta {suffix}",
                 "system_prompt": "Beta agent with knowledge.",
                 "channels": ["chat"],
+                "access_level": "authenticated",
+                "organization_id": None,
                 "system_tools": [],
                 "knowledge_sources": [ns_beta],
             },
@@ -250,7 +256,7 @@ def _knowledge_scoping_setup(e2e_client, platform_admin, _embedding_config):
                 e2e_client.post(
                     "/api/sdk/knowledge/delete",
                     headers=platform_admin.headers,
-                    json={"key": key, "namespace": ns, "scope": None},
+                    json={"key": key, "namespace": ns, "scope": "global"},
                 )
             except Exception as e:
                 logger.warning(f"Failed to clean up namespace {ns}: {e}")
@@ -287,22 +293,22 @@ class TestMCPKnowledgeScoping:
             },
         )
         assert any(
-            tool["name"] == "search_knowledge"
+            tool["name"] == "bifrost_search_knowledge"
             for tool in loaded["agents"][0]["matching_tools"]
         )
 
     def test_agent_scoped_lists_search_knowledge(
         self, e2e_client, platform_admin, _knowledge_scoping_setup
     ):
-        """/mcp/{agent_id} tools/list includes search_knowledge for an
+        """/mcp/{agent_id} tools/list includes bifrost_search_knowledge for an
         agent with knowledge_sources, even if system_tools is empty."""
         url = f"/mcp/{_knowledge_scoping_setup['agent_alpha_id']}"
         _mcp_initialize(e2e_client, url, platform_admin.headers)
         tools = _mcp_list_tools(e2e_client, url, platform_admin.headers)
 
         names = [t["name"] for t in tools]
-        assert "search_knowledge" in names, (
-            f"search_knowledge missing from agent-scoped /mcp/<agent>: {names}"
+        assert "bifrost_search_knowledge" in names, (
+            f"bifrost_search_knowledge missing from agent-scoped /mcp/<agent>: {names}"
         )
 
     def test_gateway_search_uses_the_selected_agent(
@@ -323,7 +329,7 @@ class TestMCPKnowledgeScoping:
         alpha_ref = next(
             tool["tool_ref"]
             for tool in loaded_alpha["agents"][0]["matching_tools"]
-            if tool["name"] == "search_knowledge"
+            if tool["name"] == "bifrost_search_knowledge"
         )
         result = _gateway_call(
             e2e_client,
@@ -368,7 +374,7 @@ class TestMCPKnowledgeScoping:
         _mcp_initialize(e2e_client, url, platform_admin.headers)
 
         result = _mcp_call_tool(
-            e2e_client, url, platform_admin.headers, "search_knowledge",
+            e2e_client, url, platform_admin.headers, "bifrost_search_knowledge",
             {"query": _knowledge_scoping_setup["marker_alpha"]},
         )
         text_blob = str(result.get("result", ""))
@@ -377,7 +383,7 @@ class TestMCPKnowledgeScoping:
         )
 
         result = _mcp_call_tool(
-            e2e_client, url, platform_admin.headers, "search_knowledge",
+            e2e_client, url, platform_admin.headers, "bifrost_search_knowledge",
             {"query": _knowledge_scoping_setup["marker_beta"]},
         )
         text_blob = str(result.get("result", ""))
@@ -385,6 +391,39 @@ class TestMCPKnowledgeScoping:
             f"agent-scoped session leaked ns_beta into a query "
             f"that should only see ns_alpha. Result: {result}"
         )
+
+    def test_regular_org_user_can_search_accessible_global_agent(
+        self, e2e_client, org1_user, _knowledge_scoping_setup
+    ):
+        """The Agent grant supplies the global knowledge boundary.
+
+        The same user cannot issue a direct global knowledge search, but an
+        authenticated global Agent can ground its exposed search tool in its
+        own global knowledge.
+        """
+        url = f"/mcp/{_knowledge_scoping_setup['agent_alpha_id']}"
+        _mcp_initialize(e2e_client, url, org1_user.headers)
+
+        result = _mcp_call_tool(
+            e2e_client,
+            url,
+            org1_user.headers,
+            "bifrost_search_knowledge",
+            {"query": _knowledge_scoping_setup["marker_alpha"]},
+        )
+        text_blob = str(result.get("result", ""))
+        assert _knowledge_scoping_setup["ns_alpha"] in text_blob, result
+
+        direct = e2e_client.post(
+            "/api/knowledge/search",
+            headers=org1_user.headers,
+            json={
+                "query": _knowledge_scoping_setup["marker_alpha"],
+                "namespace": [_knowledge_scoping_setup["ns_alpha"]],
+                "scope": "global",
+            },
+        )
+        assert direct.status_code == 403, direct.text
 
     def test_agent_scoped_rejects_explicit_cross_namespace(
         self, e2e_client, platform_admin, _knowledge_scoping_setup
@@ -397,7 +436,7 @@ class TestMCPKnowledgeScoping:
         _mcp_initialize(e2e_client, url, platform_admin.headers)
 
         result = _mcp_call_tool(
-            e2e_client, url, platform_admin.headers, "search_knowledge",
+            e2e_client, url, platform_admin.headers, "bifrost_search_knowledge",
             {
                 "query": _knowledge_scoping_setup["marker_beta"],
                 "namespace": _knowledge_scoping_setup["ns_beta"],
@@ -426,7 +465,7 @@ class TestMCPKnowledgeScoping:
         search_ref = next(
             tool["tool_ref"]
             for tool in loaded["agents"][0]["matching_tools"]
-            if tool["name"] == "search_knowledge"
+            if tool["name"] == "bifrost_search_knowledge"
         )
         result = _gateway_call(
             e2e_client,
