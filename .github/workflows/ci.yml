@@ -186,7 +186,9 @@ jobs:
   # reaches main may build-dev promote these exact digests to :dev.
   # =============================================================================
   build-dev-candidate:
-    if: github.event_name == 'merge_group'
+    # Manual branch runs publish the same immutable candidates so external
+    # runtime acceptance can happen before a PR enters the merge queue.
+    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     name: Build Dev Candidate
     permissions:
