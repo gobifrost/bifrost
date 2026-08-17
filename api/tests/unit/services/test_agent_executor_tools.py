@@ -74,10 +74,10 @@ class TestAutoAddSearchKnowledge:
     ):
         """search_knowledge is auto-added when agent has knowledge_sources."""
         mock_agent.knowledge_sources = ["docs", "faq"]
-        mock_agent.system_tools = ["list_organizations"]
+        mock_agent.system_tools = ["bifrost_list_organizations"]
 
         mock_tools = [
-            ToolDefinition(name="list_organizations", description="List all orgs", parameters={"type": "object", "properties": {}}),
+            ToolDefinition(name="bifrost_list_organizations", description="List all orgs", parameters={"type": "object", "properties": {}}),
             ToolDefinition(name="search_knowledge", description="Search the knowledge base", parameters={"type": "object", "properties": {}}),
         ]
 
@@ -86,7 +86,7 @@ class TestAutoAddSearchKnowledge:
 
         tool_names = [t.name for t in tools]
         assert "search_knowledge" in tool_names
-        assert "list_organizations" in tool_names
+        assert "bifrost_list_organizations" in tool_names
 
     @pytest.mark.asyncio
     async def test_search_knowledge_not_duplicated_if_already_in_system_tools(
@@ -112,10 +112,10 @@ class TestAutoAddSearchKnowledge:
     ):
         """search_knowledge is not added when agent has no knowledge_sources."""
         mock_agent.knowledge_sources = []
-        mock_agent.system_tools = ["list_organizations"]
+        mock_agent.system_tools = ["bifrost_list_organizations"]
 
         mock_tools = [
-            ToolDefinition(name="list_organizations", description="List all orgs", parameters={"type": "object", "properties": {}}),
+            ToolDefinition(name="bifrost_list_organizations", description="List all orgs", parameters={"type": "object", "properties": {}}),
         ]
 
         with patch("src.services.agent_executor.resolve_agent_tools", new_callable=AsyncMock, return_value=(mock_tools, {})):

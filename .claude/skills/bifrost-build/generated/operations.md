@@ -40,6 +40,11 @@ harness.
 | `workflows.delete` | `bifrost workflows delete` | `bifrost_delete_workflow` | `workflows.write` |
 | `workflows.roles.grant` | `bifrost workflows grant-role` | `bifrost_grant_workflow_role` | `workflows.write` |
 | `workflows.roles.revoke` | `bifrost workflows revoke-role` | `bifrost_revoke_workflow_role` | `workflows.write` |
+| `organizations.list` | `bifrost organizations list` | `bifrost_list_organizations` | `organizations.read` |
+| `organizations.get` | `bifrost organizations get` | `bifrost_get_organization` | `organizations.read` |
+| `organizations.create` | `bifrost organizations create` | `bifrost_create_organization` | `organizations.write` |
+| `organizations.update` | `bifrost organizations update` | `bifrost_update_organization` | `organizations.write` |
+| `organizations.delete` | `bifrost organizations delete` | `bifrost_delete_organization` | `organizations.write` |
 | `events.sources.list` | `bifrost events list-sources` | `bifrost_list_event_sources` | `events.read` |
 | `events.sources.get` | `bifrost events get-source` | `bifrost_get_event_source` | `events.read` |
 | `events.sources.create` | `bifrost events create-source` | `bifrost_create_event_source` | `events.write` |

@@ -453,3 +453,28 @@ def test_events_create_source_org_forms(monkeypatch):
     )
     assert res.exit_code == 0
     assert sent["post"][1]["organization_id"] == "uuid-acme"
+
+
+# ── organization lifecycle ─────────────────────────────────────────────────
+
+
+def test_orgs_list_excludes_inactive_by_default(monkeypatch):
+    from bifrost.commands.orgs import orgs_group
+
+    sent, res = _run(monkeypatch, orgs_group, ["list"])
+    assert res.exit_code == 0
+    assert sent["get"] == (
+        "/api/organizations",
+        {"include_inactive": False},
+    )
+
+
+def test_orgs_list_can_include_inactive(monkeypatch):
+    from bifrost.commands.orgs import orgs_group
+
+    sent, res = _run(monkeypatch, orgs_group, ["list", "--include-inactive"])
+    assert res.exit_code == 0
+    assert sent["get"] == (
+        "/api/organizations",
+        {"include_inactive": True},
+    )

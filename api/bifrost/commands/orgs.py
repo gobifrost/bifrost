@@ -2,14 +2,14 @@
 
 Implements Task 5a of the CLI mutation surface plan:
 
-* ``bifrost orgs list`` → ``GET /api/organizations``
-* ``bifrost orgs get <ref>`` → ``GET /api/organizations/{uuid}``
-* ``bifrost orgs create`` → ``POST /api/organizations`` (body from
+* ``bifrost organizations list`` → ``GET /api/organizations``
+* ``bifrost organizations get <ref>`` → ``GET /api/organizations/{uuid}``
+* ``bifrost organizations create`` → ``POST /api/organizations`` (body from
   :class:`OrganizationCreate`)
-* ``bifrost orgs update <ref>`` → ``PATCH /api/organizations/{uuid}`` (body
+* ``bifrost organizations update <ref>`` → ``PATCH /api/organizations/{uuid}`` (body
   from :class:`OrganizationUpdate`; unset flags omitted by
   :func:`assemble_body`)
-* ``bifrost orgs delete <ref>`` → ``DELETE /api/organizations/{uuid}``
+* ``bifrost organizations delete <ref>`` → ``DELETE /api/organizations/{uuid}``
 
 Flags are generated from the DTOs via :func:`build_cli_flags` with the
 exclude list in :data:`DTO_EXCLUDES` — so ``domain``, ``settings`` and
@@ -38,7 +38,7 @@ from bifrost.contracts import (
 
 from .base import _apply_flags, entity_group, output_result, pass_resolver, run_async
 
-orgs_group = entity_group("orgs", "Manage organizations.")
+orgs_group = entity_group("organizations", "Manage organizations.")
 
 
 _CREATE_FLAGS = build_cli_flags(
@@ -55,17 +55,26 @@ _UPDATE_FLAGS = build_cli_flags(
 
 
 @orgs_group.command("list")
+@click.option(
+    "--include-inactive",
+    is_flag=True,
+    help="Include disabled Organizations.",
+)
 @click.pass_context
 @pass_resolver
 @run_async
 async def list_orgs(
     ctx: click.Context,
+    include_inactive: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,  # noqa: ARG001 - kept for signature parity
 ) -> None:
     """List all organizations."""
-    response = await client.get("/api/organizations")
+    response = await client.get(
+        "/api/organizations",
+        params={"include_inactive": include_inactive},
+    )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
 

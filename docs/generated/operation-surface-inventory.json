@@ -2296,6 +2296,339 @@
       "observed": {
         "cli": {
           "path": [
+            "organizations",
+            "list"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_list_organizations",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "organizations.list",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "organizations.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate",
+        "cli": {
+          "path": [
+            "organizations",
+            "list"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Organization records are deployment-local, not portable manifest content.",
+          "native_builder": "Organization lifecycle belongs to platform Settings, not a coding target.",
+          "sdk": "Organization administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_list_organizations"
+        },
+        "native_builder": false,
+        "operation_id": "organizations.list",
+        "rest": {
+          "method": "GET",
+          "path": "/api/organizations",
+          "request_model": null,
+          "response_model": "list[OrganizationPublic]"
+        },
+        "side_effects": [],
+        "summary": "List Organizations",
+        "target_kind": "platform"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "organizations",
+            "get"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_get_organization",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "organizations.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "organizations.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate",
+        "cli": {
+          "path": [
+            "organizations",
+            "get"
+          ]
+        },
+        "exclusions": {
+          "manifest": "The read does not mutate deployment-local Organization state.",
+          "native_builder": "Organization lifecycle belongs to platform Settings, not a coding target.",
+          "sdk": "Organization administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_get_organization"
+        },
+        "native_builder": false,
+        "operation_id": "organizations.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/organizations/{org_id}",
+          "request_model": null,
+          "response_model": "OrganizationPublic"
+        },
+        "side_effects": [],
+        "summary": "Get one Organization",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "organizations",
+            "create"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_create_organization",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "organizations.create",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "organizations.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "organization.create",
+        "authorization_resolver": "Platform-admin gate",
+        "cli": {
+          "path": [
+            "organizations",
+            "create"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Organizations are deployment-local and are not portable manifest content.",
+          "native_builder": "Organization lifecycle belongs to platform Settings, not a coding target.",
+          "sdk": "Organization administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_create_organization"
+        },
+        "native_builder": false,
+        "operation_id": "organizations.create",
+        "rest": {
+          "method": "POST",
+          "path": "/api/organizations",
+          "request_model": "OrganizationCreate",
+          "response_model": "OrganizationPublic"
+        },
+        "side_effects": [
+          "persist the deployment-local Organization record",
+          "upsert the Organization cache"
+        ],
+        "summary": "Create an Organization",
+        "target_kind": "platform"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "organizations",
+            "update"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_update_organization",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "organizations.update",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "organizations.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "organization.update",
+        "authorization_resolver": "Platform-admin and provider-Organization invariant",
+        "cli": {
+          "path": [
+            "organizations",
+            "update"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Organizations are deployment-local and are not portable manifest content.",
+          "native_builder": "Organization lifecycle belongs to platform Settings, not a coding target.",
+          "sdk": "Organization administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_update_organization"
+        },
+        "native_builder": false,
+        "operation_id": "organizations.update",
+        "rest": {
+          "method": "PATCH",
+          "path": "/api/organizations/{org_id}",
+          "request_model": "OrganizationUpdate",
+          "response_model": "OrganizationPublic"
+        },
+        "side_effects": [
+          "update the Organization cache"
+        ],
+        "summary": "Update an Organization",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "organizations",
+            "delete"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_delete_organization",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "organizations.delete",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "organizations.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "organization.delete",
+        "authorization_resolver": "Platform-admin and provider-Organization invariant",
+        "cli": {
+          "path": [
+            "organizations",
+            "delete"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Organizations are deployment-local and are not portable manifest content.",
+          "native_builder": "Organization lifecycle belongs to platform Settings, not a coding target.",
+          "sdk": "Organization administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_delete_organization"
+        },
+        "native_builder": false,
+        "operation_id": "organizations.delete",
+        "rest": {
+          "method": "DELETE",
+          "path": "/api/organizations/{org_id}",
+          "request_model": null,
+          "response_model": null
+        },
+        "side_effects": [
+          "soft-disable the Organization",
+          "invalidate the Organization cache"
+        ],
+        "summary": "Disable an Organization",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
             "events",
             "list-sources"
           ],
@@ -3439,51 +3772,6 @@
       {
         "kind": "operation",
         "path": [
-          "orgs",
-          "create"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "orgs",
-          "delete"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "orgs",
-          "get"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "orgs",
-          "list"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "orgs",
-          "update"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
           "policy-rule",
           "create"
         ],
@@ -3939,12 +4227,6 @@
       },
       {
         "hidden": false,
-        "name": "create_organization",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "create_policy_rule",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -3982,12 +4264,6 @@
       {
         "hidden": false,
         "name": "delete_file_policy",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "delete_organization",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -4047,12 +4323,6 @@
       },
       {
         "hidden": false,
-        "name": "get_organization",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "get_role",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -4096,12 +4366,6 @@
       {
         "hidden": false,
         "name": "list_integrations",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "list_organizations",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -4210,12 +4474,6 @@
       {
         "hidden": false,
         "name": "update_integration_mapping",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "update_organization",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -6864,41 +7122,6 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/oauth/refresh_job_status",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/organizations",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/organizations",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "DELETE",
-        "operation_id": "",
-        "path": "/api/organizations/{org_id}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/organizations/{org_id}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "PATCH",
-        "operation_id": "",
-        "path": "/api/organizations/{org_id}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

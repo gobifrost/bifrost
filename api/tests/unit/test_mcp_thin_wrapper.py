@@ -24,9 +24,9 @@ and reject any import from ``src.repositories.*``, ``src.models.orm.*``,
 or ``sqlalchemy.ext.asyncio.AsyncSession`` that is scoped to a Task 6
 handler.
 
-Existing tool handlers (``list_integrations``, ``list_organizations``,
-etc.) intentionally still use ORM — this test only inspects the Task 6
-additions. Adding new parity tools: extend ``PARITY_HANDLERS`` below.
+Existing uncatalogued handlers may still use the ORM; this test expands as each
+vertical slice moves behind REST. Adding new parity tools: extend
+``PARITY_HANDLERS`` below.
 """
 
 from __future__ import annotations
@@ -98,7 +98,13 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "update_claim",
         "delete_claim",
     },
-    "organizations": {"update_organization", "delete_organization"},
+    "organizations": {
+        "bifrost_list_organizations",
+        "bifrost_get_organization",
+        "bifrost_create_organization",
+        "bifrost_update_organization",
+        "bifrost_delete_organization",
+    },
     "integrations": {
         "create_integration",
         "update_integration",

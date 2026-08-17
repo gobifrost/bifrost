@@ -286,6 +286,39 @@ EVENT_OPERATIONS = {
     ),
 }
 
+ORGANIZATION_OPERATIONS = {
+    "organizations.list": (
+        "GET",
+        "/api/organizations",
+        ("organizations", "list"),
+        "bifrost_list_organizations",
+    ),
+    "organizations.get": (
+        "GET",
+        "/api/organizations/{org_id}",
+        ("organizations", "get"),
+        "bifrost_get_organization",
+    ),
+    "organizations.create": (
+        "POST",
+        "/api/organizations",
+        ("organizations", "create"),
+        "bifrost_create_organization",
+    ),
+    "organizations.update": (
+        "PATCH",
+        "/api/organizations/{org_id}",
+        ("organizations", "update"),
+        "bifrost_update_organization",
+    ),
+    "organizations.delete": (
+        "DELETE",
+        "/api/organizations/{org_id}",
+        ("organizations", "delete"),
+        "bifrost_delete_organization",
+    ),
+}
+
 CANONICAL_OPERATIONS = {
     **AGENT_OPERATIONS,
     **FORM_OPERATIONS,
@@ -293,6 +326,7 @@ CANONICAL_OPERATIONS = {
     **APP_OPERATIONS,
     **WORKFLOW_OPERATIONS,
     **EVENT_OPERATIONS,
+    **ORGANIZATION_OPERATIONS,
 }
 
 
@@ -310,7 +344,9 @@ def test_canonical_vertical_slices_have_stable_surface_bindings() -> None:
         assert (operation.rest.method, operation.rest.path) == (method, path)
         assert operation.cli is not None and operation.cli.path == cli_path
         assert operation.mcp is not None and operation.mcp.name == mcp_name
-        assert operation.native_builder is True
+        assert operation.native_builder is (
+            operation_id not in ORGANIZATION_OPERATIONS
+        )
 
 
 def test_catalog_routes_publish_identity_in_openapi() -> None:

@@ -1276,13 +1276,13 @@ export interface paths {
          * List organizations
          * @description Get active organizations, optionally including inactive ones (Platform admin only)
          */
-        get: operations["list_organizations_api_organizations_get"];
+        get: operations["organizations.list"];
         put?: never;
         /**
          * Create a new organization
          * @description Create a new client organization (Platform admin only)
          */
-        post: operations["create_organization_api_organizations_post"];
+        post: operations["organizations.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1300,21 +1300,21 @@ export interface paths {
          * Get organization by ID
          * @description Get a specific organization by ID (Platform admin only)
          */
-        get: operations["get_organization_api_organizations__org_id__get"];
+        get: operations["organizations.get"];
         put?: never;
         post?: never;
         /**
          * Delete an organization
          * @description Soft delete an organization (sets is_active=False, Platform admin only)
          */
-        delete: operations["delete_organization_api_organizations__org_id__delete"];
+        delete: operations["organizations.delete"];
         options?: never;
         head?: never;
         /**
          * Update an organization
          * @description Update an existing organization (Platform admin only)
          */
-        patch: operations["update_organization_api_organizations__org_id__patch"];
+        patch: operations["organizations.update"];
         trace?: never;
     };
     "/api/users": {
@@ -28421,7 +28421,7 @@ export interface operations {
             };
         };
     };
-    list_organizations_api_organizations_get: {
+    "organizations.list": {
         parameters: {
             query?: {
                 /** @description Include inactive (disabled) organizations */
@@ -28453,7 +28453,7 @@ export interface operations {
             };
         };
     };
-    create_organization_api_organizations_post: {
+    "organizations.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -28486,7 +28486,7 @@ export interface operations {
             };
         };
     };
-    get_organization_api_organizations__org_id__get: {
+    "organizations.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -28517,7 +28517,7 @@ export interface operations {
             };
         };
     };
-    delete_organization_api_organizations__org_id__delete: {
+    "organizations.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -28546,7 +28546,7 @@ export interface operations {
             };
         };
     };
-    update_organization_api_organizations__org_id__patch: {
+    "organizations.update": {
         parameters: {
             query?: never;
             header?: never;

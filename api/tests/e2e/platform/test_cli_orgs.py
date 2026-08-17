@@ -1,12 +1,12 @@
-"""E2E tests for ``bifrost orgs`` CLI commands.
+"""E2E tests for ``bifrost organizations`` CLI commands.
 
 Covers the CRUD surface from Task 5a of the CLI mutation surface plan:
 
-* ``bifrost orgs list`` — sees the seeded platform org.
-* ``bifrost orgs create --name foo [--is-active/--no-is-active]`` — POSTs a new
+* ``bifrost organizations list`` — sees the seeded platform org.
+* ``bifrost organizations create --name foo [--is-active/--no-is-active]`` — POSTs a new
   org and returns the created entity.
-* ``bifrost orgs update <ref> --name bar`` — PATCHes by UUID or name ref.
-* ``bifrost orgs delete <ref>`` — soft-deletes the org; subsequent GETs via
+* ``bifrost organizations update <ref> --name bar`` — PATCHes by UUID or name ref.
+* ``bifrost organizations delete <ref>`` — soft-deletes the org; subsequent GETs via
   the admin API return 404 (or mark the record inactive).
 
 The commands are invoked via :class:`click.testing.CliRunner` against the
@@ -33,15 +33,15 @@ def _invoke(invoke_cli):
 
 @pytest.mark.e2e
 class TestCliOrgs:
-    """End-to-end coverage for ``bifrost orgs`` commands."""
+    """End-to-end coverage for ``bifrost organizations`` commands."""
 
     def test_list_returns_platform_admin_org(self, cli_client, _invoke) -> None:
-        """``orgs list --json`` returns at least the seeded provider org."""
+        """``organizations list --json`` returns the seeded provider org."""
         result = _invoke(["--json", "list"])
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)
         assert isinstance(payload, list)
-        assert payload, "expected at least one org to be returned by orgs list"
+        assert payload, "expected at least one org from organizations list"
         # Every item has an id and a name; the provider org is always present.
         for item in payload:
             assert "id" in item
@@ -99,7 +99,7 @@ class TestCliOrgs:
     def test_get_by_uuid_returns_org(
         self, cli_client, _invoke, e2e_client, platform_admin
     ) -> None:
-        """``orgs get <uuid>`` round-trips the created org body."""
+        """``organizations get <uuid>`` round-trips the created org body."""
         name = f"cli-org-get-{uuid4().hex[:8]}"
         create_resp = e2e_client.post(
             "/api/organizations",

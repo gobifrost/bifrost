@@ -32,6 +32,12 @@ _EVENT_SDK_EXCLUSION = (
 _WORKFLOW_SDK_EXCLUSION = (
     "Workflow catalog administration is not available to application SDKs."
 )
+_ORGANIZATION_SDK_EXCLUSION = (
+    "Organization administration is not available to application SDKs."
+)
+_ORGANIZATION_BUILDER_EXCLUSION = (
+    "Organization lifecycle belongs to platform Settings, not a coding target."
+)
 
 
 OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
@@ -768,6 +774,114 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             "write manifest change through RepoSyncWriter",
         ),
         exclusions={"sdk": _WORKFLOW_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="organizations.list",
+        summary="List Organizations",
+        target_kind=OperationTargetKind.PLATFORM,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/organizations",
+            response_model="list[OrganizationPublic]",
+        ),
+        cli=CliOperationBinding(path=("organizations", "list")),
+        mcp=McpOperationBinding(name="bifrost_list_organizations"),
+        action_scopes=("organizations.read",),
+        authorization_resolver="Platform-admin gate",
+        exclusions={
+            "native_builder": _ORGANIZATION_BUILDER_EXCLUSION,
+            "manifest": "Organization records are deployment-local, not portable manifest content.",
+            "sdk": _ORGANIZATION_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="organizations.get",
+        summary="Get one Organization",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/organizations/{org_id}",
+            response_model="OrganizationPublic",
+        ),
+        cli=CliOperationBinding(path=("organizations", "get")),
+        mcp=McpOperationBinding(name="bifrost_get_organization"),
+        action_scopes=("organizations.read",),
+        authorization_resolver="Platform-admin gate",
+        exclusions={
+            "native_builder": _ORGANIZATION_BUILDER_EXCLUSION,
+            "manifest": "The read does not mutate deployment-local Organization state.",
+            "sdk": _ORGANIZATION_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="organizations.create",
+        summary="Create an Organization",
+        target_kind=OperationTargetKind.PLATFORM,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/organizations",
+            request_model="OrganizationCreate",
+            response_model="OrganizationPublic",
+        ),
+        cli=CliOperationBinding(path=("organizations", "create")),
+        mcp=McpOperationBinding(name="bifrost_create_organization"),
+        action_scopes=("organizations.write",),
+        authorization_resolver="Platform-admin gate",
+        audit_event="organization.create",
+        side_effects=(
+            "persist the deployment-local Organization record",
+            "upsert the Organization cache",
+        ),
+        exclusions={
+            "native_builder": _ORGANIZATION_BUILDER_EXCLUSION,
+            "manifest": "Organizations are deployment-local and are not portable manifest content.",
+            "sdk": _ORGANIZATION_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="organizations.update",
+        summary="Update an Organization",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="PATCH",
+            path="/api/organizations/{org_id}",
+            request_model="OrganizationUpdate",
+            response_model="OrganizationPublic",
+        ),
+        cli=CliOperationBinding(path=("organizations", "update")),
+        mcp=McpOperationBinding(name="bifrost_update_organization"),
+        action_scopes=("organizations.write",),
+        authorization_resolver="Platform-admin and provider-Organization invariant",
+        audit_event="organization.update",
+        side_effects=("update the Organization cache",),
+        exclusions={
+            "native_builder": _ORGANIZATION_BUILDER_EXCLUSION,
+            "manifest": "Organizations are deployment-local and are not portable manifest content.",
+            "sdk": _ORGANIZATION_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="organizations.delete",
+        summary="Disable an Organization",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="DELETE",
+            path="/api/organizations/{org_id}",
+        ),
+        cli=CliOperationBinding(path=("organizations", "delete")),
+        mcp=McpOperationBinding(name="bifrost_delete_organization"),
+        action_scopes=("organizations.write",),
+        authorization_resolver="Platform-admin and provider-Organization invariant",
+        audit_event="organization.delete",
+        side_effects=(
+            "soft-disable the Organization",
+            "invalidate the Organization cache",
+        ),
+        exclusions={
+            "native_builder": _ORGANIZATION_BUILDER_EXCLUSION,
+            "manifest": "Organizations are deployment-local and are not portable manifest content.",
+            "sdk": _ORGANIZATION_SDK_EXCLUSION,
+        },
     ),
     OperationDefinition(
         operation_id="events.sources.list",

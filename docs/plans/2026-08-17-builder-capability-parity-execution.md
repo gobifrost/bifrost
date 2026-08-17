@@ -2,7 +2,7 @@
 
 **Owner:** Jack Musick / Bifrost engineering
 **Created:** 2026-08-17
-**Status:** In progress — Phases 0–1 complete; Phase 2 Agent, Form, Table, App, Event, and Workflow slices complete
+**Status:** In progress — Phases 0–1 complete; Phase 2 Agent, Form, Table, App, Event, Workflow, and Organization slices complete
 **Execution branch:** `codex/code-builder-pydantic-integration-20260816`
 **Base:** `origin/main@16e317e62`
 **Depends on:** the reconstructed Builder and shared Pydantic runtime described
@@ -199,8 +199,8 @@ configured, provisioned, connected, enabled, and ready with no blockers.
 **Gate:** every existing surface is accounted for and a representative Agent
 operation is generated end to end from one catalog entry.
 
-**Evidence:** the current schema-versioned inventory captures 656 REST
-method/path pairs, 129 CLI leaves, 99 registered MCP tools, 10 native Builder
+**Evidence:** the current schema-versioned inventory captures 658 REST
+method/path pairs, 135 CLI leaves, 101 registered MCP tools, 10 native Builder
 primitives, 16 manifest fields, and 19 app-SDK bindings. Agent and Form CRUD
 are the first
 catalog slices; the same definitions drive explicit OpenAPI
@@ -233,6 +233,10 @@ environment-skipped mirror tests; API Pyright and Ruff are clean.
       register/execute/update/delete/role operations, thin REST adapters,
       ordinary-user visibility enforcement, audit/manifest/cache/MCP-refresh
       side effects, execution-worker reuse, and persisted tool-name migration.
+- [x] Complete the Organization administration slice with canonical
+      list/get/create/update/delete operations, platform-admin authorization,
+      REST-owned audit/cache/provider invariants, and persisted tool-name
+      migration; keep it explicitly outside native coding Builder targets.
 - [ ] Convert legacy direct-ORM MCP implementations to thin HTTP wrappers using
       `_http_bridge.py`; do not create a second service path for MCP.
 - [ ] Reconcile known drift in the remaining domains:
@@ -355,6 +359,24 @@ discovery/execution, update, delete, and audit. Generated operation and Skill
 references are fresh, Alembic current equals the sole head, API Pyright/Ruff
 and client TypeScript are clean, and ESLint has zero errors with only the
 pre-existing React Compiler warning in `FormRenderer.tsx`.
+
+**Organization-slice evidence:** all five Organization tools are thin REST
+adapters registered only as `bifrost_list_organizations`,
+`bifrost_get_organization`, `bifrost_create_organization`,
+`bifrost_update_organization`, and `bifrost_delete_organization`. The public
+CLI group is now the matching `bifrost organizations ...` surface; the old
+`orgs` spelling is not retained as a second public contract. REST continues to
+own platform-admin authorization, provider-organization invariants, audit,
+soft deletion, and organization-cache invalidation. Forward migration
+`20260817_organization_mcp_names` atomically preserves persisted Agent grants
+and is the sole applied Alembic head. The focused catalog/DTO/wrapper/CLI/
+migration selection passed 374/374, live MCP/CLI/REST/protocol coverage passed
+49/49, and contract/tool-access coverage passed 112/112. The generated
+inventory now accounts for 50 catalog operations and correctly represents
+explicit native Builder exclusions rather than reporting them as missing.
+Generated operation/Skill/OpenAPI/browser references are fresh, API
+Pyright/Ruff and client TypeScript are clean, and ESLint has zero errors with
+only the pre-existing React Compiler warning in `FormRenderer.tsx`.
 
 ### Phase 3 — Finish Agent Skill portability
 

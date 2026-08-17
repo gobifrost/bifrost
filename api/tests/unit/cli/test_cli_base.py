@@ -215,7 +215,7 @@ class TestSubgroupRegistration:
         from bifrost.commands import ENTITY_GROUPS
 
         assert set(ENTITY_GROUPS) == {
-            "orgs",
+            "organizations",
             "roles",
             "workflows",
             "forms",

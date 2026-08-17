@@ -1495,10 +1495,10 @@ Options:
   --help                 Show this message and exit.
 ```
 
-## `orgs`
+## `organizations`
 
 ```
-Usage: orgs [OPTIONS] COMMAND [ARGS]...
+Usage: organizations [OPTIONS] COMMAND [ARGS]...
 
   Manage organizations.
 
@@ -1514,10 +1514,10 @@ Commands:
   update  Update an organization.
 ```
 
-### `orgs create`
+### `organizations create`
 
 ```
-Usage: orgs create [OPTIONS]
+Usage: organizations create [OPTIONS]
 
   Create a new organization.
 
@@ -1529,10 +1529,10 @@ Options:
   --help                        Show this message and exit.
 ```
 
-### `orgs delete`
+### `organizations delete`
 
 ```
-Usage: orgs delete [OPTIONS] REF
+Usage: organizations delete [OPTIONS] REF
 
   Delete (soft-delete) an organization.
 
@@ -1543,10 +1543,10 @@ Options:
   --help  Show this message and exit.
 ```
 
-### `orgs get`
+### `organizations get`
 
 ```
-Usage: orgs get [OPTIONS] REF
+Usage: organizations get [OPTIONS] REF
 
   Get a single organization by UUID or name.
 
@@ -1555,22 +1555,23 @@ Options:
   --help  Show this message and exit.
 ```
 
-### `orgs list`
+### `organizations list`
 
 ```
-Usage: orgs list [OPTIONS]
+Usage: organizations list [OPTIONS]
 
   List all organizations.
 
 Options:
-  --json  Emit JSON instead of human-readable output.
-  --help  Show this message and exit.
+  --include-inactive  Include disabled Organizations.
+  --json              Emit JSON instead of human-readable output.
+  --help              Show this message and exit.
 ```
 
-### `orgs update`
+### `organizations update`
 
 ```
-Usage: orgs update [OPTIONS] REF
+Usage: organizations update [OPTIONS] REF
 
   Update an organization.
 

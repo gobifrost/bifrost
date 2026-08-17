@@ -239,6 +239,8 @@ def build_operation_inventory(app: FastAPI, repo_root: Path) -> dict[str, Any]:
                         "status": (
                             OperationSurfaceStatus.EXACT
                             if builder_name
+                            else OperationSurfaceStatus.INTENTIONALLY_UNSUPPORTED
+                            if operation.exclusions.get("native_builder")
                             else OperationSurfaceStatus.MISSING
                         ).value,
                         "name": builder_name,

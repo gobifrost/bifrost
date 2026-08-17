@@ -277,7 +277,7 @@ class TestGetAccessibleAgents:
         """Agent accessible when any user role matches any agent role."""
         agent = mock_agent(
             access_level=AgentAccessLevel.ROLE_BASED,
-            system_tools=["list_forms"],
+            system_tools=["bifrost_list_forms"],
             roles=["Developers", "QA"],
         )
 
@@ -532,7 +532,7 @@ class TestSystemToolMetadata:
             "bifrost_execute_workflow",
             "bifrost_list_workflows",
             "list_integrations",
-            "list_forms",
+            "bifrost_list_forms",
             "get_docs",
             "search_knowledge",
             # Code editor tools (precision editing)
