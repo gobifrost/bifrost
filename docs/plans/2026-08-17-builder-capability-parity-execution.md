@@ -2,7 +2,7 @@
 
 **Owner:** Jack Musick / Bifrost engineering
 **Created:** 2026-08-17
-**Status:** In progress — Phases 0–1 complete; Phase 2 next
+**Status:** In progress — Phases 0–1 complete; Phase 2 Agent slice complete
 **Execution branch:** `codex/code-builder-pydantic-integration-20260816`
 **Base:** `origin/main@16e317e62`
 **Depends on:** the reconstructed Builder and shared Pydantic runtime described
@@ -212,6 +212,9 @@ Ruff are clean.
 
 ### Phase 2 — Make REST behavior canonical
 
+- [x] Complete the Agent vertical slice: canonical public MCP names, thin REST
+      adapters, forward migration of persisted tool IDs, REST-owned audit and
+      manifest side effects, and success/error/access parity tests.
 - [ ] Convert legacy direct-ORM MCP implementations to thin HTTP wrappers using
       `_http_bridge.py`; do not create a second service path for MCP.
 - [ ] Reconcile known drift in Agents, Forms, Tables, Apps, and Events:
@@ -234,6 +237,19 @@ remaining inventory gaps.
 **Gate:** no Bifrost platform MCP mutation bypasses its REST behavior, and each
 operation produces the same success, failure, side effects, and audit result
 from CLI, MCP, and REST.
+
+**Agent-slice evidence:** all five CRUD tools are registered only as
+`bifrost_list_agents`, `bifrost_get_agent`, `bifrost_create_agent`,
+`bifrost_update_agent`, and `bifrost_delete_agent`; persisted Agent assignments
+move through forward migration `20260817_agent_mcp_names`. The focused unit and
+signature matrix passed 90/90, DTO/contract gates passed 67/67, the live MCP
+Agent journey passed 2/2, and the REST/scoped-lookup/fresh-migration matrix
+passed 31/31. Unknown and cross-organization relationship IDs now fail
+atomically instead of being discarded, and the Agent settings UI exposes MCP
+grants only to platform admins (13/13 component tests). API Pyright/Ruff and
+client TypeScript are clean; ESLint reports zero errors and the pre-existing
+React Compiler warning in `FormRenderer.tsx`. Forms, Tables, Apps, and Events
+remain in this phase.
 
 ### Phase 3 — Finish Agent Skill portability
 

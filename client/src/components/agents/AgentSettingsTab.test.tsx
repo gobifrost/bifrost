@@ -142,6 +142,7 @@ describe("AgentSettingsTab — edit mode", () => {
 		expect(args.params.path.agent_id).toBe("agent-1");
 		expect(args.body.name).toBe("Tier-1 Triage");
 		expect(args.body.llm_profile_id).toBeNull();
+		expect(args.body).not.toHaveProperty("mcp_connection_ids");
 		expect(mockCreateMutation).not.toHaveBeenCalled();
 	});
 
@@ -162,6 +163,26 @@ describe("AgentSettingsTab — edit mode", () => {
 		});
 		expect(mockUpdateMutation.mock.calls[0][0].body.llm_profile_id).toBe(
 			"profile-support",
+		);
+	});
+
+	it("submits MCP connection grants only for platform admins", async () => {
+		mockAuth.mockReturnValue({ isPlatformAdmin: true });
+		const { user } = await renderTab({
+			mode: "edit",
+			agent: {
+				...existingAgent,
+				organization_id: "org-1",
+				mcp_connection_ids: ["connection-1"],
+			},
+		});
+
+		await user.click(screen.getByRole("button", { name: /save changes/i }));
+		await waitFor(() => {
+			expect(mockUpdateMutation).toHaveBeenCalledTimes(1);
+		});
+		expect(mockUpdateMutation.mock.calls[0][0].body.mcp_connection_ids).toEqual(
+			["connection-1"],
 		);
 	});
 

@@ -66,6 +66,41 @@ class TestAgentsCRUD:
         assert data["is_active"] is True
         assert "id" in data
 
+    @pytest.mark.parametrize(
+        ("field_name", "error_fragment"),
+        [
+            ("role_ids", "does not reference an existing role"),
+            (
+                "mcp_connection_ids",
+                "does not reference an existing connection",
+            ),
+        ],
+    )
+    def test_create_agent_rejects_unknown_relationships(
+        self,
+        e2e_client,
+        platform_admin,
+        field_name,
+        error_fragment,
+    ):
+        """Invalid relationship IDs fail atomically instead of being dropped."""
+        unknown_id = str(uuid4())
+        response = e2e_client.post(
+            "/api/agents",
+            json={
+                "name": f"Invalid {field_name}",
+                "system_prompt": "This Agent must not be created.",
+                "access_level": "authenticated",
+                field_name: [unknown_id],
+            },
+            headers=platform_admin.headers,
+        )
+
+        assert response.status_code == 422, response.text
+        detail = response.json()["detail"]
+        assert detail["message"] == "Invalid agent references"
+        assert any(error_fragment in error for error in detail["errors"])
+
     def test_get_agent(
         self,
         e2e_client,
