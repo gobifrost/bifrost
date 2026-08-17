@@ -160,11 +160,81 @@ APP_OPERATIONS = {
     ),
 }
 
+EVENT_OPERATIONS = {
+    "events.sources.list": (
+        "GET",
+        "/api/events/sources",
+        ("events", "list-sources"),
+        "bifrost_list_event_sources",
+    ),
+    "events.sources.get": (
+        "GET",
+        "/api/events/sources/{source_id}",
+        ("events", "get-source"),
+        "bifrost_get_event_source",
+    ),
+    "events.sources.create": (
+        "POST",
+        "/api/events/sources",
+        ("events", "create-source"),
+        "bifrost_create_event_source",
+    ),
+    "events.sources.update": (
+        "PATCH",
+        "/api/events/sources/{source_id}",
+        ("events", "update-source"),
+        "bifrost_update_event_source",
+    ),
+    "events.sources.delete": (
+        "DELETE",
+        "/api/events/sources/{source_id}",
+        ("events", "delete-source"),
+        "bifrost_delete_event_source",
+    ),
+    "events.subscriptions.list": (
+        "GET",
+        "/api/events/sources/{source_id}/subscriptions",
+        ("events", "list-subscriptions"),
+        "bifrost_list_event_subscriptions",
+    ),
+    "events.subscriptions.get": (
+        "GET",
+        "/api/events/sources/{source_id}/subscriptions/{subscription_id}",
+        ("events", "get-subscription"),
+        "bifrost_get_event_subscription",
+    ),
+    "events.subscriptions.create": (
+        "POST",
+        "/api/events/sources/{source_id}/subscriptions",
+        ("events", "create-subscription"),
+        "bifrost_create_event_subscription",
+    ),
+    "events.subscriptions.update": (
+        "PATCH",
+        "/api/events/sources/{source_id}/subscriptions/{subscription_id}",
+        ("events", "update-subscription"),
+        "bifrost_update_event_subscription",
+    ),
+    "events.subscriptions.delete": (
+        "DELETE",
+        "/api/events/sources/{source_id}/subscriptions/{subscription_id}",
+        ("events", "delete-subscription"),
+        "bifrost_delete_event_subscription",
+    ),
+    "events.webhook_adapters.list": (
+        "GET",
+        "/api/events/adapters",
+        ("events", "list-webhook-adapters"),
+        "bifrost_list_event_webhook_adapters",
+    ),
+}
+
 CANONICAL_OPERATIONS = {
     **AGENT_OPERATIONS,
     **FORM_OPERATIONS,
     **TABLE_OPERATIONS,
     **APP_OPERATIONS,
+    **EVENT_OPERATIONS,
 }
 
 

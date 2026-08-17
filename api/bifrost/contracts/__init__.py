@@ -31,6 +31,7 @@ from bifrost.contracts.enums import (
     ConfigType,
     EventSourceType,
     FormAccessLevel,
+    ScheduleOverlapPolicy,
 )
 from bifrost.contracts.events import (
     EventSourceCreate,
@@ -38,6 +39,7 @@ from bifrost.contracts.events import (
     EventSubscriptionCreate,
     EventSubscriptionUpdate,
     ScheduleSourceConfig,
+    ScheduleSourceUpdate,
     WebhookSourceConfig,
 )
 from bifrost.contracts.files import FilePolicyCreate, FilePolicyUpdate
@@ -62,6 +64,7 @@ __all__ = [
     "ConfigType",
     "EventSourceType",
     "FormAccessLevel",
+    "ScheduleOverlapPolicy",
     # Organizations
     "OrganizationCreate",
     "OrganizationUpdate",
@@ -106,5 +109,6 @@ __all__ = [
     "EventSubscriptionCreate",
     "EventSubscriptionUpdate",
     "ScheduleSourceConfig",
+    "ScheduleSourceUpdate",
     "WebhookSourceConfig",
 ]

@@ -31,3 +31,14 @@ harness.
 | `apps.validate` | `bifrost apps validate` | `bifrost_validate_app` | `apps.read` |
 | `apps.publish` | `bifrost apps publish` | `bifrost_publish_app` | `apps.publish` |
 | `apps.replace` | `bifrost apps replace` | `bifrost_replace_app` | `apps.write` |
+| `events.sources.list` | `bifrost events list-sources` | `bifrost_list_event_sources` | `events.read` |
+| `events.sources.get` | `bifrost events get-source` | `bifrost_get_event_source` | `events.read` |
+| `events.sources.create` | `bifrost events create-source` | `bifrost_create_event_source` | `events.write` |
+| `events.sources.update` | `bifrost events update-source` | `bifrost_update_event_source` | `events.write` |
+| `events.sources.delete` | `bifrost events delete-source` | `bifrost_delete_event_source` | `events.write` |
+| `events.subscriptions.list` | `bifrost events list-subscriptions` | `bifrost_list_event_subscriptions` | `events.read` |
+| `events.subscriptions.get` | `bifrost events get-subscription` | `bifrost_get_event_subscription` | `events.read` |
+| `events.subscriptions.create` | `bifrost events create-subscription` | `bifrost_create_event_subscription` | `events.write` |
+| `events.subscriptions.update` | `bifrost events update-subscription` | `bifrost_update_event_subscription` | `events.write` |
+| `events.subscriptions.delete` | `bifrost events delete-subscription` | `bifrost_delete_event_subscription` | `events.write` |
+| `events.webhook_adapters.list` | `bifrost events list-webhook-adapters` | `bifrost_list_event_webhook_adapters` | `events.read` |

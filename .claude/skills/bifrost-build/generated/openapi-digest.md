@@ -159,6 +159,7 @@
 | GET | `/api/events/sources/{source_id}/subscriptions` |
 | POST | `/api/events/sources/{source_id}/subscriptions` |
 | DELETE | `/api/events/sources/{source_id}/subscriptions/{subscription_id}` |
+| GET | `/api/events/sources/{source_id}/subscriptions/{subscription_id}` |
 | PATCH | `/api/events/sources/{source_id}/subscriptions/{subscription_id}` |
 | GET | `/api/events/topics` |
 | GET | `/api/events/{event_id}` |

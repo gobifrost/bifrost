@@ -23,7 +23,7 @@ bifrost events create-source --name "User Invited" --source-type topic --event-t
 Subscriptions on a topic source fire for every event emitted to that topic, regardless of scope. All active subscriptions on the matching source are triggered.
 
 ```bash
-bifrost events subscribe <source-id> --workflow send-invite-email
+bifrost events create-subscription <source-id> --workflow send-invite-email
 ```
 
 ## Emitting events from workflows (SDK)

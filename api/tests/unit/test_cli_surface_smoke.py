@@ -169,10 +169,13 @@ EXPECTED_CRUD_COMMANDS: dict[str, set[str]] = {
         "get-source",
         "create-source",
         "update-source",
+        "delete-source",
         "list-subscriptions",
         "get-subscription",
-        "subscribe",
+        "create-subscription",
         "update-subscription",
+        "delete-subscription",
+        "list-webhook-adapters",
     },
 }
 

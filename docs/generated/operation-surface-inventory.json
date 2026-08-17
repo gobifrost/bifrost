@@ -1681,14 +1681,751 @@
         "summary": "Repoint a loose Application to a workspace source directory",
         "target_kind": "resource"
       }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "events",
+            "list-sources"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_list_event_sources",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "events.sources.list",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "events.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate and organization filter",
+        "cli": {
+          "path": [
+            "events",
+            "list-sources"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Manifests reconcile Event Source state; they do not perform collection reads.",
+          "sdk": "Event source and subscription administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_list_event_sources"
+        },
+        "native_builder": true,
+        "operation_id": "events.sources.list",
+        "rest": {
+          "method": "GET",
+          "path": "/api/events/sources",
+          "request_model": null,
+          "response_model": "EventSourceListResponse"
+        },
+        "side_effects": [],
+        "summary": "List Event Sources",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "events",
+            "get-source"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_get_event_source",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "events.sources.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "events.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate",
+        "cli": {
+          "path": [
+            "events",
+            "get-source"
+          ]
+        },
+        "exclusions": {
+          "manifest": "The read does not mutate the Event Source manifest.",
+          "sdk": "Event source and subscription administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_get_event_source"
+        },
+        "native_builder": true,
+        "operation_id": "events.sources.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/events/sources/{source_id}",
+          "request_model": null,
+          "response_model": "EventSourceResponse"
+        },
+        "side_effects": [],
+        "summary": "Get one Event Source",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "events",
+            "create-source"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "events",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_create_event_source",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "events.sources.create",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "events.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "event_source.create",
+        "authorization_resolver": "Platform-admin gate and target organization resolver",
+        "cli": {
+          "path": [
+            "events",
+            "create-source"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Event source and subscription administration is not available to application SDKs."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "events"
+        },
+        "mcp": {
+          "name": "bifrost_create_event_source"
+        },
+        "native_builder": true,
+        "operation_id": "events.sources.create",
+        "rest": {
+          "method": "POST",
+          "path": "/api/events/sources",
+          "request_model": "EventSourceCreate",
+          "response_model": "EventSourceResponse"
+        },
+        "side_effects": [
+          "persist type-specific Event Source configuration",
+          "create an external webhook subscription when required",
+          "write manifest change through RepoSyncWriter"
+        ],
+        "summary": "Create an Event Source in an allowed target",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "events",
+            "update-source"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "events",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_update_event_source",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "events.sources.update",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "events.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "event_source.update",
+        "authorization_resolver": "Platform-admin and Solution-management guards",
+        "cli": {
+          "path": [
+            "events",
+            "update-source"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Event source and subscription administration is not available to application SDKs."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "events"
+        },
+        "mcp": {
+          "name": "bifrost_update_event_source"
+        },
+        "native_builder": true,
+        "operation_id": "events.sources.update",
+        "rest": {
+          "method": "PATCH",
+          "path": "/api/events/sources/{source_id}",
+          "request_model": "EventSourceUpdate",
+          "response_model": "EventSourceResponse"
+        },
+        "side_effects": [
+          "replace selected Event Source and type-specific fields",
+          "preserve subscription scope invariants when retargeting",
+          "write manifest change through RepoSyncWriter"
+        ],
+        "summary": "Update an Event Source",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "events",
+            "delete-source"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "events",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_delete_event_source",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "events.sources.delete",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "events.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "event_source.delete",
+        "authorization_resolver": "Platform-admin and Solution-management guards",
+        "cli": {
+          "path": [
+            "events",
+            "delete-source"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Event source and subscription administration is not available to application SDKs."
+        },
+        "manifest": {
+          "behavior": "remove",
+          "entity": "events"
+        },
+        "mcp": {
+          "name": "bifrost_delete_event_source"
+        },
+        "native_builder": true,
+        "operation_id": "events.sources.delete",
+        "rest": {
+          "method": "DELETE",
+          "path": "/api/events/sources/{source_id}",
+          "request_model": null,
+          "response_model": null
+        },
+        "side_effects": [
+          "unsubscribe external webhook state when applicable",
+          "cascade-delete subscriptions, events, and deliveries",
+          "remove the Event Source manifest entry through RepoSyncWriter"
+        ],
+        "summary": "Delete an Event Source and its dependent history",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "events",
+            "list-subscriptions"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_list_event_subscriptions",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "events.subscriptions.list",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "events.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate and parent Event Source lookup",
+        "cli": {
+          "path": [
+            "events",
+            "list-subscriptions"
+          ]
+        },
+        "exclusions": {
+          "manifest": "The read does not mutate Event Subscription manifest state.",
+          "sdk": "Event source and subscription administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_list_event_subscriptions"
+        },
+        "native_builder": true,
+        "operation_id": "events.subscriptions.list",
+        "rest": {
+          "method": "GET",
+          "path": "/api/events/sources/{source_id}/subscriptions",
+          "request_model": null,
+          "response_model": "EventSubscriptionListResponse"
+        },
+        "side_effects": [],
+        "summary": "List subscriptions for an Event Source",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "events",
+            "get-subscription"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_get_event_subscription",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "events.subscriptions.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "events.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate and parent Event Source lookup",
+        "cli": {
+          "path": [
+            "events",
+            "get-subscription"
+          ]
+        },
+        "exclusions": {
+          "manifest": "The read does not mutate Event Subscription manifest state.",
+          "sdk": "Event source and subscription administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_get_event_subscription"
+        },
+        "native_builder": true,
+        "operation_id": "events.subscriptions.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/events/sources/{source_id}/subscriptions/{subscription_id}",
+          "request_model": null,
+          "response_model": "EventSubscriptionResponse"
+        },
+        "side_effects": [],
+        "summary": "Get one Event Subscription",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "events",
+            "create-subscription"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "events",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_create_event_subscription",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "events.subscriptions.create",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "events.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "event_subscription.create",
+        "authorization_resolver": "Platform-admin, parent-source, and target-resource validation",
+        "cli": {
+          "path": [
+            "events",
+            "create-subscription"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Event source and subscription administration is not available to application SDKs."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "events"
+        },
+        "mcp": {
+          "name": "bifrost_create_event_subscription"
+        },
+        "native_builder": true,
+        "operation_id": "events.subscriptions.create",
+        "rest": {
+          "method": "POST",
+          "path": "/api/events/sources/{source_id}/subscriptions",
+          "request_model": "EventSubscriptionCreate",
+          "response_model": "EventSubscriptionResponse"
+        },
+        "side_effects": [
+          "persist a validated Workflow or Agent target",
+          "write manifest change through RepoSyncWriter"
+        ],
+        "summary": "Create an Event Subscription",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "events",
+            "update-subscription"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "events",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_update_event_subscription",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "events.subscriptions.update",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "events.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "event_subscription.update",
+        "authorization_resolver": "Platform-admin and Solution-management guards",
+        "cli": {
+          "path": [
+            "events",
+            "update-subscription"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Event source and subscription administration is not available to application SDKs."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "events"
+        },
+        "mcp": {
+          "name": "bifrost_update_event_subscription"
+        },
+        "native_builder": true,
+        "operation_id": "events.subscriptions.update",
+        "rest": {
+          "method": "PATCH",
+          "path": "/api/events/sources/{source_id}/subscriptions/{subscription_id}",
+          "request_model": "EventSubscriptionUpdate",
+          "response_model": "EventSubscriptionResponse"
+        },
+        "side_effects": [
+          "replace selected filter, mapping, and activation fields",
+          "write manifest change through RepoSyncWriter"
+        ],
+        "summary": "Update an Event Subscription",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "events",
+            "delete-subscription"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "events",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_delete_event_subscription",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "events.subscriptions.delete",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "events.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "event_subscription.delete",
+        "authorization_resolver": "Platform-admin and Solution-management guards",
+        "cli": {
+          "path": [
+            "events",
+            "delete-subscription"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Event source and subscription administration is not available to application SDKs."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "events"
+        },
+        "mcp": {
+          "name": "bifrost_delete_event_subscription"
+        },
+        "native_builder": true,
+        "operation_id": "events.subscriptions.delete",
+        "rest": {
+          "method": "DELETE",
+          "path": "/api/events/sources/{source_id}/subscriptions/{subscription_id}",
+          "request_model": null,
+          "response_model": null
+        },
+        "side_effects": [
+          "delete the subscription and dependent deliveries",
+          "write manifest change through RepoSyncWriter"
+        ],
+        "summary": "Delete an Event Subscription",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "events",
+            "list-webhook-adapters"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_list_event_webhook_adapters",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "events.webhook_adapters.list",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "events.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate",
+        "cli": {
+          "path": [
+            "events",
+            "list-webhook-adapters"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Webhook adapter discovery is runtime metadata, not portable state.",
+          "sdk": "Event source and subscription administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_list_event_webhook_adapters"
+        },
+        "native_builder": true,
+        "operation_id": "events.webhook_adapters.list",
+        "rest": {
+          "method": "GET",
+          "path": "/api/events/adapters",
+          "request_model": null,
+          "response_model": "WebhookAdapterListResponse"
+        },
+        "side_effects": [],
+        "summary": "List Event webhook adapters",
+        "target_kind": "collection"
+      }
     }
   ],
   "counts": {
-    "cli": 131,
+    "cli": 134,
     "manifest": 16,
-    "mcp": 100,
+    "mcp": 101,
     "native_builder": 10,
-    "rest": 656,
+    "rest": 657,
     "sdk": 19
   },
   "schema_version": 1,
@@ -1844,78 +2581,6 @@
         ],
         "reason": "Local authentication, source-control, or lifecycle command.",
         "status": "transport_only"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "events",
-          "create-source"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "events",
-          "get-source"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "events",
-          "get-subscription"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "events",
-          "list-sources"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "events",
-          "list-subscriptions"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "events",
-          "subscribe"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "events",
-          "update-source"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "events",
-          "update-subscription"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
       },
       {
         "kind": "operation",
@@ -2657,11 +3322,6 @@
         "status": "missing_surface"
       },
       {
-        "entity": "events",
-        "reason": "Manifest entity has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "entity": "file_policies",
         "reason": "Manifest entity has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -2740,18 +3400,6 @@
       },
       {
         "hidden": false,
-        "name": "create_event_source",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "create_event_subscription",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "create_integration",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -2789,18 +3437,6 @@
       {
         "hidden": false,
         "name": "delete_content",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "delete_event_source",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "delete_event_subscription",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -2872,12 +3508,6 @@
       },
       {
         "hidden": false,
-        "name": "get_event_source",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "get_execution",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -2938,18 +3568,6 @@
       },
       {
         "hidden": false,
-        "name": "list_event_sources",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "list_event_subscriptions",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "list_executions",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -2987,12 +3605,6 @@
       {
         "hidden": false,
         "name": "list_roles",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "list_webhook_adapters",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -3095,18 +3707,6 @@
       {
         "hidden": false,
         "name": "update_config",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "update_event_source",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "update_event_subscription",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -4319,13 +4919,6 @@
         "status": "missing_surface"
       },
       {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/events/adapters",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "method": "POST",
         "operation_id": "",
         "path": "/api/events/adapters/{adapter_name}/dynamic-values",
@@ -4349,70 +4942,7 @@
       {
         "method": "GET",
         "operation_id": "",
-        "path": "/api/events/sources",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/events/sources",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "DELETE",
-        "operation_id": "",
-        "path": "/api/events/sources/{source_id}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/events/sources/{source_id}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "PATCH",
-        "operation_id": "",
-        "path": "/api/events/sources/{source_id}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
         "path": "/api/events/sources/{source_id}/events",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/events/sources/{source_id}/subscriptions",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/events/sources/{source_id}/subscriptions",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "DELETE",
-        "operation_id": "",
-        "path": "/api/events/sources/{source_id}/subscriptions/{subscription_id}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "PATCH",
-        "operation_id": "",
-        "path": "/api/events/sources/{source_id}/subscriptions/{subscription_id}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
