@@ -20,7 +20,7 @@ def test_run_method_has_pause_check_before_runtime_construction():
     """
     source = inspect.getsource(AutonomousAgentExecutor.run)
     pause_pos = source.find("if not agent.is_active")
-    runtime_pos = source.find("runtime = PydanticAgent(")
+    runtime_pos = source.find("runtime = AgentRuntimeRunner(")
 
     assert pause_pos > 0, "No pause check (`if not agent.is_active`) found in run()"
     assert runtime_pos > 0, "Could not locate Pydantic AI runtime construction in run()"

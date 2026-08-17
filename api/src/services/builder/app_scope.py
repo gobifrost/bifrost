@@ -23,6 +23,8 @@ do not add a fallback here for any other reason.
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,14 +35,18 @@ from src.models.orm.tables import Table
 
 
 async def resolve_solution_table(
-    db: AsyncSession, principal: SolutionAppPrincipal, name: str
+    db: AsyncSession, principal: SolutionAppPrincipal, name_or_id: str
 ) -> Table | None:
-    """Resolve a table by name within the principal's Solution only."""
+    """Resolve a table by name or UUID within the principal's Solution only."""
+    try:
+        predicate = Table.id == UUID(name_or_id)
+    except ValueError:
+        predicate = Table.name == name_or_id
     return (
         await db.execute(
             select(Table).where(
                 Table.solution_id == principal.solution_id,
-                Table.name == name,
+                predicate,
             )
         )
     ).scalar_one_or_none()
