@@ -254,6 +254,18 @@ Current-branch evidence collected in this integration worktree includes:
 - Settings → Builder now reports the Cloudflare provider configured,
   provisioned, connected, enabled, and ready with no setup blockers;
 - `builder-runner/runner.py` bytecode compilation and `git diff --check`: clean.
+- canonical operation inventory currently accounts for 656 REST pairs, 129
+  CLI leaves, 98 MCP tools, 10 native Builder primitives, 16 manifest fields,
+  and 19 app-SDK bindings; the Agent CRUD slice supplies stable OpenAPI,
+  CLI, MCP, scope, authorization, side-effect, and generated Skill metadata;
+- operation-catalog, generated-reference, Compose-harness, Skill-mirror, and
+  cross-event-loop regression selection: 25 passed and 2 environment-skipped
+  mirror checks; API Pyright and Ruff remain clean;
+- the candidate CI E2E shard exposed one real test-harness defect: the global
+  asyncpg queue pool retained connections across pytest's function-scoped
+  event loops. Testing now uses `NullPool` while development and production
+  retain configured pooling; a two-loop regression test and the real
+  Scheduler → Worker Solution build E2E both pass.
 
 Live-stack proof restored an accumulated conversation, compacted its context,
 repaired a real Tailwind v4 compiler failure, invoked `validate_solution` and
@@ -267,10 +279,13 @@ state was discarded during resume.
   not part of this version. The shared ledger records provider tokens, cache
   tokens, media usage, reported cost, user, organization, and Solution; Builder
   currently enforces only its per-turn request/token ceilings.
-- Full CLI/MCP/native Builder operation parity, revision-bound Agent Skill
-  hydration, generated transport bindings, and the maintained coding profile
-  remain sequenced work in the capability-parity execution plan.
-- The branch is committed and pushed through `684f700ac`, but remains an
+- REST-canonical Agent MCP conversion, followed by the remaining
+  CLI/MCP/native Builder parity, revision-bound Agent Skill hydration,
+  generated transport bindings, and the maintained coding profile remain
+  sequenced work in the capability-parity execution plan.
+- The recovered foundation is committed and pushed through `014d212ea`; the
+  operation-catalog checkpoint is being prepared on the same integration
+  branch, which remains an
   integration branch. No pull request or merge action has been taken; merge
   still requires Jack's explicit approval after the remaining phases and
   delivery QA are complete.

@@ -404,6 +404,7 @@ services:
       - ./client/playwright.config.ts:/app/client/playwright.config.ts:ro
       - ./client/nginx.conf:/app/client/nginx.conf:ro  # Production routing contract.
       - ./client/Dockerfile:/app/client/Dockerfile:ro  # Production asset-mode contract.
+      - ./docs/generated:/app/docs/generated:ro  # Canonical operation inventory freshness.
       - ./.claude/skills:/.claude/skills:ro  # Read-only — the drift test in
                                       # tests/unit/test_platform_api_docs.py reads
                                       # bifrost-build/platform-api.md to enforce docs
