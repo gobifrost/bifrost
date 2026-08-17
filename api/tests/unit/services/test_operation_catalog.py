@@ -217,6 +217,21 @@ WORKFLOW_OPERATIONS = {
     ),
 }
 
+EXECUTION_OPERATIONS = {
+    "executions.list": (
+        "GET",
+        "/api/executions",
+        ("workflows", "list-executions"),
+        "bifrost_list_workflow_executions",
+    ),
+    "executions.get": (
+        "GET",
+        "/api/executions/{execution_id}",
+        ("workflows", "get-execution"),
+        "bifrost_get_workflow_execution",
+    ),
+}
+
 EVENT_OPERATIONS = {
     "events.sources.list": (
         "GET",
@@ -415,6 +430,7 @@ CANONICAL_OPERATIONS = {
     **TABLE_OPERATIONS,
     **APP_OPERATIONS,
     **WORKFLOW_OPERATIONS,
+    **EXECUTION_OPERATIONS,
     **EVENT_OPERATIONS,
     **ORGANIZATION_OPERATIONS,
     **INTEGRATION_OPERATIONS,

@@ -10,6 +10,8 @@ Implements Task 5c of the CLI mutation surface plan:
 * ``bifrost workflows execute <ref>`` → ``POST /api/workflows/execute`` plus
   WebSocket tail of ``/ws/execution/{id}`` so logs stream as the workflow
   runs and the command exits when the execution reaches a terminal status.
+* ``bifrost workflows list-executions`` and ``get-execution <id>`` inspect
+  authorized execution history through ``GET /api/executions``.
 * ``bifrost workflows update <ref>`` → ``PATCH /api/workflows/{uuid}`` (body
   from :class:`WorkflowUpdateRequest`).
 * ``bifrost workflows delete <ref>`` → ``DELETE /api/workflows/{uuid}``
@@ -70,6 +72,78 @@ _UPDATE_FLAGS = build_cli_flags(
     exclude=DTO_EXCLUDES.get("WorkflowUpdateRequest", set()),
     verb_ref_lookups=DTO_REF_LOOKUPS.get("WorkflowUpdateRequest", {}),
 )
+
+
+def _set_execution_param(params: dict[str, Any], key: str, value: Any) -> None:
+    if value is not None:
+        params[key] = value
+
+
+@workflows_group.command("list-executions")
+@click.option("--scope", default=None, help="Global or organization UUID scope.")
+@click.option("--workflow-name", default=None, help="Filter by workflow name.")
+@click.option("--workflow-id", default=None, help="Filter by workflow UUID.")
+@click.option("--status", "status_filter", default=None, help="Comma-separated statuses.")
+@click.option("--start-date", default=None, help="Inclusive ISO start date.")
+@click.option("--end-date", default=None, help="Inclusive ISO end date.")
+@click.option(
+    "--exclude-local/--include-local",
+    default=True,
+    help="Exclude or include local-runner executions.",
+)
+@click.option("--limit", type=click.IntRange(1, 1000), default=25, show_default=True)
+@click.option("--continuation-token", default=None, help="Opaque next-page token.")
+@click.pass_context
+@pass_resolver
+@run_async
+async def list_executions(
+    ctx: click.Context,
+    scope: str | None,
+    workflow_name: str | None,
+    workflow_id: str | None,
+    status_filter: str | None,
+    start_date: str | None,
+    end_date: str | None,
+    exclude_local: bool,
+    limit: int,
+    continuation_token: str | None,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,  # noqa: ARG001
+) -> None:
+    """List workflow execution summaries visible to the caller."""
+    params: dict[str, Any] = {
+        "excludeLocal": exclude_local,
+        "limit": limit,
+    }
+    _set_execution_param(params, "scope", scope)
+    _set_execution_param(params, "workflowName", workflow_name)
+    _set_execution_param(params, "workflowId", workflow_id)
+    _set_execution_param(params, "status", status_filter)
+    _set_execution_param(params, "startDate", start_date)
+    _set_execution_param(params, "endDate", end_date)
+    _set_execution_param(params, "continuationToken", continuation_token)
+    response = await client.get("/api/executions", params=params)
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
+
+
+@workflows_group.command("get-execution")
+@click.argument("execution_id")
+@click.pass_context
+@pass_resolver
+@run_async
+async def get_execution(
+    ctx: click.Context,
+    execution_id: str,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,  # noqa: ARG001
+) -> None:
+    """Get one workflow execution, including its result and bounded logs."""
+    response = await client.get(f"/api/executions/{execution_id}")
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
 
 
 @workflows_group.command("list")

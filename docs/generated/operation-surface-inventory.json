@@ -2701,6 +2701,134 @@
       "observed": {
         "cli": {
           "path": [
+            "workflows",
+            "list-executions"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_list_workflow_executions",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "executions.list",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "executions.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "ExecutionRepository.list_executions and caller scope resolver",
+        "cli": {
+          "path": [
+            "workflows",
+            "list-executions"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Execution history is runtime state, not portable manifest content.",
+          "sdk": "Application runtimes follow their own execution by ID rather than enumerate platform history."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_list_workflow_executions"
+        },
+        "native_builder": true,
+        "operation_id": "executions.list",
+        "rest": {
+          "method": "GET",
+          "path": "/api/executions",
+          "request_model": null,
+          "response_model": "ExecutionsListResponse"
+        },
+        "side_effects": [],
+        "summary": "List workflow execution history",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "workflows",
+            "get-execution"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_get_workflow_execution",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "executions.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "executions.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "ExecutionRepository.get_execution access check",
+        "cli": {
+          "path": [
+            "workflows",
+            "get-execution"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Execution results are runtime state, not portable manifest content.",
+          "sdk": "The v2 runtime uses an execution-ID wire binding with a transport-specific path parameter name."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_get_workflow_execution"
+        },
+        "native_builder": true,
+        "operation_id": "executions.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/executions/{execution_id}",
+          "request_model": null,
+          "response_model": "WorkflowExecution"
+        },
+        "side_effects": [],
+        "summary": "Get one workflow execution",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
             "organizations",
             "list"
           ],
@@ -4304,7 +4432,7 @@
     }
   ],
   "counts": {
-    "cli": 136,
+    "cli": 138,
     "manifest": 16,
     "mcp": 101,
     "native_builder": 10,
@@ -5099,12 +5227,6 @@
       },
       {
         "hidden": false,
-        "name": "get_execution",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "get_file_policy",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -5124,12 +5246,6 @@
       {
         "hidden": false,
         "name": "list_configs",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "list_executions",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -6446,13 +6562,6 @@
         "status": "missing_surface"
       },
       {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/executions",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "method": "POST",
         "operation_id": "",
         "path": "/api/executions/cleanup/redis-orphans",
@@ -6477,13 +6586,6 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/executions/logs",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/executions/{execution_id}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

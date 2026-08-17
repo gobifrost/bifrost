@@ -50,6 +50,7 @@ from src.services.mcp_server.tools import (  # noqa: E402
     code_editor as code_editor_mod,
     configs as configs_mod,
     events as events_mod,
+    execution as execution_mod,
     files as files_mod,
     forms as forms_mod,
     gateway as gateway_mod,
@@ -167,6 +168,10 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "bifrost_delete_event_subscription",
         "bifrost_list_event_webhook_adapters",
     },
+    "execution": {
+        "bifrost_list_workflow_executions",
+        "bifrost_get_workflow_execution",
+    },
     "policy_rules": {
         "list_policy_rules",
         "create_policy_rule",
@@ -199,6 +204,7 @@ MODULES = {
     "policy_rules": policy_rules_mod,
     "apps": apps_mod,
     "events": events_mod,
+    "execution": execution_mod,
     "gateway": gateway_mod,
 }
 

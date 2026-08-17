@@ -2365,18 +2365,20 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  delete         Delete a workflow by removing its function from the...
-  execute        Execute a registered workflow remotely and stream logs...
-  get            Get a single Workflow by UUID, name, or ``path::func`` ref.
-  grant-role     Grant a role access to a workflow.
-  list           List Workflows visible to the caller.
-  list-orphaned  List all orphaned workflows (backing file deleted or...
-  register       Register a decorated function from an existing workspace...
-  remap          Move references from one workflow ID to another active...
-  replace        Repoint an orphaned workflow to a new file location.
-  revoke-role    Revoke a role's access from a workflow.
-  update         Update a workflow's editable properties.
-  validate       Validate a workspace Workflow file or supplied Python...
+  delete           Delete a workflow by removing its function from the...
+  execute          Execute a registered workflow remotely and stream logs...
+  get              Get a single Workflow by UUID, name, or ``path::func``...
+  get-execution    Get one workflow execution, including its result and...
+  grant-role       Grant a role access to a workflow.
+  list             List Workflows visible to the caller.
+  list-executions  List workflow execution summaries visible to the caller.
+  list-orphaned    List all orphaned workflows (backing file deleted or...
+  register         Register a decorated function from an existing...
+  remap            Move references from one workflow ID to another active...
+  replace          Repoint an orphaned workflow to a new file location.
+  revoke-role      Revoke a role's access from a workflow.
+  update           Update a workflow's editable properties.
+  validate         Validate a workspace Workflow file or supplied Python...
 ```
 
 ### `workflows delete`
@@ -2438,6 +2440,18 @@ Options:
   --help  Show this message and exit.
 ```
 
+### `workflows get-execution`
+
+```
+Usage: workflows get-execution [OPTIONS] EXECUTION_ID
+
+  Get one workflow execution, including its result and bounded logs.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
 ### `workflows grant-role`
 
 ```
@@ -2472,6 +2486,28 @@ Options:
                                   Org UUID/name, or 'none'/'global' for global
                                   scope. Omit = your org. (--organization /
                                   --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
+### `workflows list-executions`
+
+```
+Usage: workflows list-executions [OPTIONS]
+
+  List workflow execution summaries visible to the caller.
+
+Options:
+  --scope TEXT                    Global or organization UUID scope.
+  --workflow-name TEXT            Filter by workflow name.
+  --workflow-id TEXT              Filter by workflow UUID.
+  --status TEXT                   Comma-separated statuses.
+  --start-date TEXT               Inclusive ISO start date.
+  --end-date TEXT                 Inclusive ISO end date.
+  --exclude-local / --include-local
+                                  Exclude or include local-runner executions.
+  --limit INTEGER RANGE           [default: 25; 1<=x<=1000]
+  --continuation-token TEXT       Opaque next-page token.
   --json                          Emit JSON instead of human-readable output.
   --help                          Show this message and exit.
 ```

@@ -191,6 +191,78 @@ class TestWorkspaceFileMCPParity:
             await bifrost_delete_file(admin_context, path=path)
 
 
+class TestWorkflowExecutionHistoryMCPParity:
+    async def test_execution_history_uses_live_rest_boundary(
+        self,
+        admin_context,
+        e2e_client,
+        platform_admin,
+    ) -> None:
+        from src.services.mcp_server.tools.execution import (
+            bifrost_get_workflow_execution,
+            bifrost_list_workflow_executions,
+        )
+
+        suffix = uuid4().hex[:8]
+        function_name = f"mcp_execution_history_{suffix}"
+        path = f"workflows/{function_name}.py"
+        source = (
+            "from bifrost import workflow\n\n"
+            f"@workflow(name='{function_name}')\n"
+            f"async def {function_name}(value: str = ''):\n"
+            "    return {'value': value}\n"
+        )
+        workflow = write_and_register(
+            e2e_client,
+            platform_admin.headers,
+            path,
+            source,
+            function_name,
+        )
+        workflow_id = workflow["id"]
+        try:
+            executed = e2e_client.post(
+                "/api/workflows/execute",
+                headers=platform_admin.headers,
+                json={
+                    "workflow_id": workflow_id,
+                    "input_data": {"value": "from-rest"},
+                    "sync": True,
+                },
+            )
+            assert executed.status_code == 200, executed.text
+            execution_id = executed.json()["execution_id"]
+
+            listed = await bifrost_list_workflow_executions(
+                admin_context,
+                workflow_name=function_name,
+                limit=10,
+            )
+            listed_body = listed.structured_content or {}
+            assert execution_id in {
+                item["execution_id"] for item in listed_body["executions"]
+            }
+
+            fetched = await bifrost_get_workflow_execution(
+                admin_context,
+                execution_id,
+            )
+            fetched_body = fetched.structured_content or {}
+            assert fetched_body["execution_id"] == execution_id
+            assert fetched_body["result"] == {"value": "from-rest"}
+        finally:
+            e2e_client.delete(
+                f"/api/workflows/{workflow_id}",
+                headers=platform_admin.headers,
+                params={"force_deactivation": True},
+            )
+            e2e_client.delete(
+                "/api/files/editor",
+                headers=platform_admin.headers,
+                params={"path": path},
+            )
+
+
 # =============================================================================
 # Field-parity: MCP tool signature covers every writable DTO field
 # =============================================================================
