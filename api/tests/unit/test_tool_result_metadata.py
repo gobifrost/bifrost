@@ -17,7 +17,7 @@ def test_tool_result_defaults_have_no_error_type_or_metadata():
     new fields gets ``None`` for both."""
     result = ToolResult(
         tool_call_id="tc-1",
-        tool_name="search_knowledge",
+        tool_name="bifrost_search_knowledge",
         result={"documents": []},
     )
     assert result.error_type is None

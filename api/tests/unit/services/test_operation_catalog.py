@@ -232,6 +232,15 @@ EXECUTION_OPERATIONS = {
     ),
 }
 
+KNOWLEDGE_OPERATIONS = {
+    "knowledge.search": (
+        "POST",
+        "/api/knowledge/search",
+        ("knowledge", "search"),
+        "bifrost_search_knowledge",
+    ),
+}
+
 EVENT_OPERATIONS = {
     "events.sources.list": (
         "GET",
@@ -431,6 +440,7 @@ CANONICAL_OPERATIONS = {
     **APP_OPERATIONS,
     **WORKFLOW_OPERATIONS,
     **EXECUTION_OPERATIONS,
+    **KNOWLEDGE_OPERATIONS,
     **EVENT_OPERATIONS,
     **ORGANIZATION_OPERATIONS,
     **INTEGRATION_OPERATIONS,

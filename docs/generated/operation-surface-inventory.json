@@ -2829,6 +2829,69 @@
       "observed": {
         "cli": {
           "path": [
+            "knowledge",
+            "search"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_search_knowledge",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "knowledge.search",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "missing_surface"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "knowledge.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "User scope resolver or AgentRepository access plus Agent-bound namespace intersection",
+        "cli": {
+          "path": [
+            "knowledge",
+            "search"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Knowledge search reads runtime content; it does not reconcile portable state."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_search_knowledge"
+        },
+        "native_builder": true,
+        "operation_id": "knowledge.search",
+        "rest": {
+          "method": "POST",
+          "path": "/api/knowledge/search",
+          "request_model": "KnowledgeSearchRequest",
+          "response_model": "list[KnowledgeSearchResult]"
+        },
+        "side_effects": [],
+        "summary": "Hybrid-search knowledge documents",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
             "organizations",
             "list"
           ],
@@ -4432,11 +4495,11 @@
     }
   ],
   "counts": {
-    "cli": 138,
+    "cli": 139,
     "manifest": 16,
     "mcp": 101,
     "native_builder": 10,
-    "rest": 659,
+    "rest": 660,
     "sdk": 19
   },
   "schema_version": 1,
@@ -5288,12 +5351,6 @@
       {
         "hidden": true,
         "name": "read_skill_asset",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "search_knowledge",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

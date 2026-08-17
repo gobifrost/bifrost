@@ -53,7 +53,7 @@ class TestMCPProtocol:
                     "bifrost_list_integrations",
                     "bifrost_list_forms",
                     "get_docs",
-                    "search_knowledge",
+                    "bifrost_search_knowledge",
                 ],
             },
         )

@@ -169,9 +169,9 @@ async def resolve_agent_tools(
     if _bundle_path(agent):
         system_tool_ids.append(READ_SKILL_ASSET_TOOL_ID)
 
-    # Auto-add search_knowledge when agent has knowledge sources
-    if agent.knowledge_sources and "search_knowledge" not in system_tool_ids:
-        system_tool_ids.append("search_knowledge")
+    # Auto-add canonical knowledge search when the Agent has knowledge sources.
+    if agent.knowledge_sources and "bifrost_search_knowledge" not in system_tool_ids:
+        system_tool_ids.append("bifrost_search_knowledge")
 
     if system_tool_ids:
         from src.services.mcp_server.server import get_system_tools

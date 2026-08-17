@@ -2,7 +2,7 @@
 
 **Owner:** Jack Musick / Bifrost engineering
 **Created:** 2026-08-17
-**Status:** In progress — Phases 0–1 complete; Phase 2 Agent, Form, Table, App, Event, Workflow, Organization, Integration, Workspace Files, and Execution History slices complete
+**Status:** In progress — Phases 0–1 complete; Phase 2 Agent, Form, Table, App, Event, Workflow, Organization, Integration, Workspace Files, Execution History, and Knowledge Search slices complete
 **Execution branch:** `codex/code-builder-pydantic-integration-20260816`
 **Base:** `origin/main@16e317e62`
 **Depends on:** the reconstructed Builder and shared Pydantic runtime described
@@ -200,7 +200,7 @@ configured, provisioned, connected, enabled, and ready with no blockers.
 operation is generated end to end from one catalog entry.
 
 **Evidence:** the current schema-versioned inventory captures 659 REST
-method/path pairs, 138 CLI leaves, 101 registered MCP tools, 10 native Builder
+method/path pairs, 139 CLI leaves, 101 registered MCP tools, 10 native Builder
 primitives, 16 manifest fields, and 19 app-SDK bindings. Agent and Form CRUD
 are the first
 catalog slices; the same definitions drive explicit OpenAPI
@@ -249,7 +249,11 @@ environment-skipped mirror tests; API Pyright and Ruff are clean.
       operations, complete REST filter parity, thin REST adapters, unambiguous
       CLI/MCP names distinct from the asynchronous gateway receipt, and
       persisted tool-name migration.
-- [ ] Convert legacy direct-ORM MCP implementations to thin HTTP wrappers using
+- [x] Complete the Knowledge Search slice with one shared embedding/search
+      service, canonical REST/CLI/MCP bindings, Agent-bound namespace
+      enforcement, native Chat/autonomous reuse, and persisted Agent plus MCP
+      configuration migration.
+- [x] Convert legacy direct-ORM MCP implementations to thin HTTP wrappers using
       `_http_bridge.py`; do not create a second service path for MCP.
 - [ ] Reconcile known drift in the remaining domains:
       authorization, role propagation, cache invalidation, RepoSyncWriter,
@@ -454,6 +458,29 @@ references are fresh; API Pyright/Ruff and client TypeScript are clean, while
 ESLint has zero errors and only the pre-existing React Compiler warning in
 `FormRenderer.tsx`. The inventory now accounts for 66 canonical operations,
 with 35 uncatalogued MCP tools remaining.
+
+**Knowledge-Search-slice evidence:** the final legacy direct-database public
+MCP implementation is replaced by a thin adapter over
+`POST /api/knowledge/search`. REST independently verifies the selected Agent
+and derives its organization and namespace boundary, so ordinary users can
+use an accessible global Agent without gaining direct global-search rights.
+The embedding/repository service is shared by this canonical route, the
+historical SDK route, native Chat, and autonomous Agent runs. CLI adds
+`bifrost knowledge search`, while MCP is registered only as
+`bifrost_search_knowledge`. Forward migration
+`20260817_knowledge_mcp_name` preserves both Agent system-tool grants and the
+platform MCP allow/block configuration. The focused architecture, runtime,
+MCP, Agent/tool-access, manifest, CLI, migration, and generated-reference
+aggregate passed 464/464. A combined MCP protocol/config, complete
+repository/Solution round-trip, DTO/contract, and context-boundary selection
+passed 129/129; 7 live embedding-backed MCP namespace checks and the focused
+Agent Settings component's 13/13 checks also passed. Fresh and live debug
+databases report the new revision as the sole Alembic head. Generated
+operation, Skill, CLI, OpenAPI, and browser references are fresh; API
+Pyright/Ruff and client TypeScript are clean, while ESLint has zero errors and
+only the pre-existing React Compiler warning in `FormRenderer.tsx`. The
+inventory now accounts for 67 canonical operations, with 34 uncatalogued MCP
+tools remaining.
 
 ### Phase 3 — Finish Agent Skill portability
 

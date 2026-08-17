@@ -13,11 +13,11 @@ REPO_ROOT = API_ROOT.parent
 def test_every_observed_surface_is_classified_with_a_reason() -> None:
     inventory = build_operation_inventory(app, REPO_ROOT)
     assert inventory["counts"] == {
-        "cli": 138,
+        "cli": 139,
         "manifest": 16,
         "mcp": 101,
         "native_builder": 10,
-        "rest": 659,
+        "rest": 660,
         "sdk": 19,
     }
     for surface, rows in inventory["uncataloged"].items():

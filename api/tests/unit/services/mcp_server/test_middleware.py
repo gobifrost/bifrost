@@ -99,7 +99,7 @@ class TestOnListTools:
         all_tools = [
             *[mock_tool(name) for name in GATEWAY_TOOL_NAMES],
             mock_tool("bifrost_execute_workflow"),
-            mock_tool("search_knowledge"),
+            mock_tool("bifrost_search_knowledge"),
         ]
         call_next = AsyncMock(return_value=all_tools)
         context = MagicMock()

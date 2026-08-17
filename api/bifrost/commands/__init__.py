@@ -25,6 +25,7 @@ from .events import events_group
 from .files import files_group
 from .forms import forms_group
 from .integrations import integrations_group
+from .knowledge import knowledge_group
 from .orgs import orgs_group
 from .policy_rules import policy_rule_group
 from .requirements import requirements_group
@@ -43,6 +44,7 @@ ENTITY_GROUPS: dict[str, click.Group] = {
     "apps": apps_group,
     "claims": claims_group,
     "integrations": integrations_group,
+    "knowledge": knowledge_group,
     "configs": configs_group,
     "tables": tables_group,
     "events": events_group,

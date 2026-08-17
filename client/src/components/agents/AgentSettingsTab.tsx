@@ -1386,7 +1386,7 @@ export function AgentSettingsTab({
 											variant="secondary"
 											className="font-mono text-xs"
 										>
-											search_knowledge
+											bifrost_search_knowledge
 										</Badge>
 										<span className="text-xs text-muted-foreground">
 											tool auto-enabled

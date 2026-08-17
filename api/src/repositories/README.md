@@ -103,7 +103,7 @@ developer may use to self-filter.
 One carve-out family sits OUTSIDE the tiers because those surfaces have no
 grant axis at all:
 
-- **Knowledge content** (CLI `/api/cli/knowledge/*`, MCP `search_knowledge`,
+- **Knowledge content** (SDK `/api/sdk/knowledge/*`, MCP `bifrost_search_knowledge`,
   `/api/knowledge-sources/*` reads): externals are 403'd outright; their
   agents/workflows still ground on KB via the engine.
 - **Decrypted global secrets** (SDK config `merged_for_sdk(external=True)`

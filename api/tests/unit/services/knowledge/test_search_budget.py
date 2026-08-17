@@ -160,7 +160,7 @@ def test_search_knowledge_tool_schema_advertises_runtime_limit():
     from src.services.mcp_server.server import get_system_tools
 
     tool = next(
-        item for item in get_system_tools() if item["id"] == "search_knowledge"
+        item for item in get_system_tools() if item["id"] == "bifrost_search_knowledge"
     )
     limit_schema = tool["parameters"]["properties"]["limit"]
 

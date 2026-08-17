@@ -43,10 +43,10 @@ class TestResolveAgentTools:
     @pytest.mark.asyncio
     @patch("src.services.mcp_server.server.get_system_tools")
     async def test_adds_search_knowledge_when_sources_exist(self, mock_get_system_tools):
-        """Auto-adds search_knowledge tool when agent has knowledge sources."""
+        """Auto-adds bifrost_search_knowledge tool when agent has knowledge sources."""
         mock_get_system_tools.return_value = [
             {
-                "id": "search_knowledge",
+                "id": "bifrost_search_knowledge",
                 "description": "Search knowledge",
                 "parameters": {"type": "object", "properties": {}},
             }
@@ -64,7 +64,7 @@ class TestResolveAgentTools:
 
         tools, _ = await resolve_agent_tools(mock_agent, mock_session)
         tool_names = [t.name for t in tools]
-        assert "search_knowledge" in tool_names
+        assert "bifrost_search_knowledge" in tool_names
 
     @pytest.mark.asyncio
     @patch("src.services.mcp_server.server.get_system_tools", return_value=[])

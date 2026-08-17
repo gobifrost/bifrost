@@ -142,6 +142,7 @@ class MCPContext:
 
     # Knowledge namespaces accessible to this user (from agent.knowledge_sources)
     accessible_namespaces: list[str] = field(default_factory=list)
+    agent_id: UUID | str | None = None
 
     # Agent/Builder execution-scoped capabilities. Ordinary HTTP MCP contexts
     # leave these unset, so skill and workspace tools fail closed.
@@ -164,6 +165,8 @@ class MCPContext:
             self.user_id = UUID(self.user_id)
         if isinstance(self.org_id, str) and self.org_id:
             self.org_id = UUID(self.org_id)
+        if isinstance(self.agent_id, str) and self.agent_id:
+            self.agent_id = UUID(self.agent_id)
         if isinstance(self.agent_skill_id, str) and self.agent_skill_id:
             self.agent_skill_id = UUID(self.agent_skill_id)
         if isinstance(self.agent_solution_id, str) and self.agent_solution_id:
@@ -236,6 +239,7 @@ async def _get_runtime_context() -> MCPContext:
     agent_id = _get_agent_id_from_scope()
 
     accessible_namespaces: list[str] = []
+    resolved_agent_id: UUID | None = None
     agent_bundle_path: str | None = None
     agent_skill_in_repo = False
     agent_solution_id: UUID | None = None
@@ -253,6 +257,7 @@ async def _get_runtime_context() -> MCPContext:
                 )
                 if agent_result is not None:
                     accessible_namespaces = list(agent_result.accessible_namespaces)
+                    resolved_agent_id = agent_id
                     agent_bundle_path = agent_result.bundle_path
                     agent_skill_in_repo = agent_result.bundle_in_repo
                     agent_solution_id = agent_result.solution_id
@@ -267,6 +272,7 @@ async def _get_runtime_context() -> MCPContext:
         user_email=token.claims.get("email", ""),
         user_name=token.claims.get("name", ""),
         accessible_namespaces=accessible_namespaces,
+        agent_id=resolved_agent_id,
         agent_bundle_path=agent_bundle_path,
         agent_skill_id=agent_id if agent_bundle_path else None,
         agent_skill_in_repo=agent_skill_in_repo,
@@ -490,7 +496,7 @@ def get_system_tools() -> list[dict[str, Any]]:
                         if param.default is inspect.Parameter.empty:
                             parameters["required"].append(param_name)
 
-                if tool_id == "search_knowledge":
+                if tool_id == "bifrost_search_knowledge":
                     from src.services.knowledge.search_budget import (
                         MAX_KNOWLEDGE_RESULTS,
                     )

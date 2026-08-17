@@ -123,7 +123,7 @@ class TestAutonomousAgentExecutor:
                 await executor._execute_knowledge_search(
                     ToolCallRequest(
                         id="first",
-                        name="search_knowledge",
+                        name="bifrost_search_knowledge",
                         arguments={"query": "technical poc"},
                     ),
                     mock_agent,
@@ -133,7 +133,7 @@ class TestAutonomousAgentExecutor:
                 await executor._execute_knowledge_search(
                     ToolCallRequest(
                         id="second",
-                        name="search_knowledge",
+                        name="bifrost_search_knowledge",
                         arguments={"query": "billing contact role"},
                     ),
                     mock_agent,

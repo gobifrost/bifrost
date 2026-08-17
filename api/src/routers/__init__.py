@@ -54,6 +54,7 @@ from src.routers.solution_builder import router as solution_builder_router
 from src.routers.solution_promotions import router as solution_promotions_router
 from src.routers.solution_app_host import control_router as solution_app_launch_router
 from src.routers.knowledge_sources import router as knowledge_sources_router
+from src.routers.knowledge import router as knowledge_router
 from src.routers.app_embed_secrets import router as app_embed_secrets_router
 from src.routers.applications import router as applications_router
 from src.routers.app_code_files import router as app_code_files_router
@@ -139,6 +140,7 @@ __all__ = [
     "solution_promotions_router",
     "solution_app_launch_router",
     "knowledge_sources_router",
+    "knowledge_router",
     "app_embed_secrets_router",
     "applications_router",
     "app_code_files_router",

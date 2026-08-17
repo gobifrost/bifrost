@@ -45,6 +45,7 @@ def context():
         is_platform_admin=False,
         user_email="test@example.com",
         user_name="Test User",
+        agent_id=uuid4(),
     )
 
 
@@ -64,14 +65,14 @@ def admin_context():
 
 
 class TestSearchKnowledgeImpl:
-    """Tests for search_knowledge tool."""
+    """Tests for bifrost_search_knowledge tool."""
 
     @pytest.mark.asyncio
     async def test_returns_error_when_query_empty(self, context):
         """Should return error ToolResult when query is empty."""
-        from src.services.mcp_server.tools.knowledge import search_knowledge
+        from src.services.mcp_server.tools.knowledge import bifrost_search_knowledge
 
-        result = await search_knowledge(context, "")
+        result = await bifrost_search_knowledge(context, "")
         assert is_error_result(result)
         assert result.structured_content is not None
         assert result.structured_content["error"] == "query is required"
@@ -79,10 +80,10 @@ class TestSearchKnowledgeImpl:
     @pytest.mark.asyncio
     async def test_returns_empty_when_no_namespaces_accessible(self, context):
         """Should return empty results when user has no accessible namespaces."""
-        from src.services.mcp_server.tools.knowledge import search_knowledge
+        from src.services.mcp_server.tools.knowledge import bifrost_search_knowledge
 
         # Context has empty accessible_namespaces by default
-        result = await search_knowledge(context, "test query")
+        result = await bifrost_search_knowledge(context, "test query")
         assert not is_error_result(result)
         assert result.structured_content is not None
         assert result.structured_content["results"] == []
@@ -93,10 +94,10 @@ class TestSearchKnowledgeImpl:
     @pytest.mark.asyncio
     async def test_returns_access_denied_for_unauthorized_namespace(self, context):
         """Should deny access to namespace not in accessible list."""
-        from src.services.mcp_server.tools.knowledge import search_knowledge
+        from src.services.mcp_server.tools.knowledge import bifrost_search_knowledge
 
         context.accessible_namespaces = ["allowed-ns"]
-        result = await search_knowledge(context, "test query", namespace="forbidden-ns")
+        result = await bifrost_search_knowledge(context, "test query", namespace="forbidden-ns")
         assert is_error_result(result)
         assert result.structured_content is not None
         assert "Access denied" in result.structured_content["error"]

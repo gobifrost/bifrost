@@ -55,6 +55,7 @@ from src.services.mcp_server.tools import (  # noqa: E402
     forms as forms_mod,
     gateway as gateway_mod,
     integrations as integrations_mod,
+    knowledge as knowledge_mod,
     organizations as organizations_mod,
     apps as apps_mod,
     policy_rules as policy_rules_mod,
@@ -172,6 +173,7 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "bifrost_list_workflow_executions",
         "bifrost_get_workflow_execution",
     },
+    "knowledge": {"bifrost_search_knowledge"},
     "policy_rules": {
         "list_policy_rules",
         "create_policy_rule",
@@ -205,6 +207,7 @@ MODULES = {
     "apps": apps_mod,
     "events": events_mod,
     "execution": execution_mod,
+    "knowledge": knowledge_mod,
     "gateway": gateway_mod,
 }
 

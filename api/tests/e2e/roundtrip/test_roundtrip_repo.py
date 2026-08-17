@@ -305,7 +305,7 @@ async def seed_agent(db: AsyncSession, work_dir: Path) -> str:
         channels=["chat"],
         access_level=AgentAccessLevel.AUTHENTICATED,
         knowledge_sources=["kb-alpha"],
-        system_tools=["search_knowledge"],
+        system_tools=["bifrost_search_knowledge"],
         llm_model="claude-test",
         llm_max_tokens=2048,
         max_iterations=11,
