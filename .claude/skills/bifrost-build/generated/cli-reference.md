@@ -666,14 +666,17 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  create-source        Create a new event source.
-  get-source           Get a single event source by UUID or name.
-  get-subscription     Get a single subscription by source ref +...
-  list-sources         List all event sources (wrapped ``{items, total}``...
-  list-subscriptions   List subscriptions for an event source.
-  subscribe            Subscribe a workflow or agent to an event source.
-  update-source        Update an event source.
-  update-subscription  Update an event subscription.
+  create-source          Create a new event source.
+  create-subscription    Subscribe a workflow or agent to an event source.
+  delete-source          Permanently delete an Event Source by UUID or name.
+  delete-subscription    Permanently delete one Event Subscription.
+  get-source             Get a single event source by UUID or name.
+  get-subscription       Get a single subscription by source ref +...
+  list-sources           List all event sources (wrapped ``{items,...
+  list-subscriptions     List subscriptions for an event source.
+  list-webhook-adapters  List webhook adapters available for Event Source...
+  update-source          Update an event source.
+  update-subscription    Update an event subscription.
 ```
 
 ### `events create-source`
@@ -705,6 +708,9 @@ Options:
   --schedule-enabled / --no-schedule-enabled
                                   Whether the schedule is enabled (collapses
                                   into schedule config).
+  --overlap-policy [skip|queue|replace]
+                                  Behavior when the prior scheduled run is
+                                  still active.
   --adapter TEXT                  Webhook adapter name (collapses into webhook
                                   config).
   --webhook-integration TEXT      Integration ref (UUID or name) for OAuth-
@@ -713,6 +719,15 @@ Options:
   --webhook-config TEXT           Webhook adapter config as JSON literal or
                                   @path/to/file.yaml (collapses into webhook
                                   config).
+  --rate-limit-per-minute INTEGER RANGE
+                                  Maximum webhook events per configured
+                                  window.  [x>=1]
+  --rate-limit-window-seconds INTEGER RANGE
+                                  Webhook ingress rate-limit window in
+                                  seconds.  [x>=1]
+  --rate-limit-enabled / --no-rate-limit-enabled
+                                  Enable or disable ingress rate limiting for
+                                  this source.
   --global                        Target global scope (org=NULL). Alias for
                                   --org global.
   --org, --organization, --scope TEXT
@@ -721,6 +736,53 @@ Options:
                                   --scope are synonyms.)
   --json                          Emit JSON instead of human-readable output.
   --help                          Show this message and exit.
+```
+
+### `events create-subscription`
+
+```
+Usage: events create-subscription [OPTIONS] SOURCE_REF
+
+  Subscribe a workflow or agent to an event source.
+
+  ``SOURCE_REF`` is a UUID or event source name. Supply exactly one of
+  ``--workflow`` or ``--agent`` (portable refs). ``target_type`` is inferred
+  from which flag was used and overrides any ``--target-type`` the DTO
+  generator may surface.
+
+Options:
+  --workflow TEXT           workflow ref (UUID or name) for workflow_id.
+  --agent TEXT              agent ref (UUID or name) for agent_id.
+  --event-type TEXT         event_type
+  --filter-expression TEXT  filter_expression
+  --input-mapping TEXT      input_mapping as JSON literal or @path to a
+                            YAML/JSON file.
+  --json                    Emit JSON instead of human-readable output.
+  --help                    Show this message and exit.
+```
+
+### `events delete-source`
+
+```
+Usage: events delete-source [OPTIONS] REF
+
+  Permanently delete an Event Source by UUID or name.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `events delete-subscription`
+
+```
+Usage: events delete-subscription [OPTIONS] SOURCE_REF SUBSCRIPTION_ID
+
+  Permanently delete one Event Subscription.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
 ```
 
 ### `events get-source`
@@ -742,9 +804,6 @@ Usage: events get-subscription [OPTIONS] SOURCE_REF SUBSCRIPTION_ID
 
   Get a single subscription by source ref + subscription UUID.
 
-  The server has no per-subscription GET endpoint, so this lists the source's
-  subscriptions and filters client-side.
-
 Options:
   --json  Emit JSON instead of human-readable output.
   --help  Show this message and exit.
@@ -758,8 +817,15 @@ Usage: events list-sources [OPTIONS]
   List all event sources (wrapped ``{items, total}`` payload).
 
 Options:
-  --json  Emit JSON instead of human-readable output.
-  --help  Show this message and exit.
+  --source-type [webhook|schedule|topic]
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ### `events list-subscriptions`
@@ -776,28 +842,16 @@ Options:
   --help  Show this message and exit.
 ```
 
-### `events subscribe`
+### `events list-webhook-adapters`
 
 ```
-Usage: events subscribe [OPTIONS] SOURCE_REF
+Usage: events list-webhook-adapters [OPTIONS]
 
-  Subscribe a workflow or agent to an event source.
-
-  ``SOURCE_REF`` is a UUID or event source name. Supply exactly one of
-  ``--workflow`` or ``--agent`` (portable refs). ``target_type`` is inferred
-  from which flag was used and overrides any ``--target-type`` the DTO
-  generator may surface.
+  List webhook adapters available for Event Source configuration.
 
 Options:
-  --target-type TEXT        target_type
-  --workflow TEXT           workflow ref (UUID or name) for workflow_id.
-  --agent TEXT              agent ref (UUID or name) for agent_id.
-  --event-type TEXT         event_type
-  --filter-expression TEXT  filter_expression
-  --input-mapping TEXT      input_mapping as JSON literal or @path to a
-                            YAML/JSON file.
-  --json                    Emit JSON instead of human-readable output.
-  --help                    Show this message and exit.
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
 ```
 
 ### `events update-source`
@@ -825,6 +879,9 @@ Options:
   --schedule-enabled / --no-schedule-enabled
                                   Whether the schedule is enabled (collapses
                                   into schedule config).
+  --overlap-policy [skip|queue|replace]
+                                  Behavior when the prior scheduled run is
+                                  still active.
   --adapter TEXT                  Webhook adapter name (collapses into webhook
                                   config).
   --webhook-integration TEXT      Integration ref (UUID or name) for OAuth-
@@ -833,6 +890,18 @@ Options:
   --webhook-config TEXT           Webhook adapter config as JSON literal or
                                   @path/to/file.yaml (collapses into webhook
                                   config).
+  --rate-limit-per-minute INTEGER RANGE
+                                  Maximum webhook events per configured
+                                  window.  [x>=1]
+  --rate-limit-window-seconds INTEGER RANGE
+                                  Webhook ingress rate-limit window in
+                                  seconds.  [x>=1]
+  --rate-limit-enabled / --no-rate-limit-enabled
+                                  Enable or disable ingress rate limiting for
+                                  this source.
+  --clear-webhook-integration     Clear the webhook integration reference.
+  --clear-rate-limit              Clear the per-window webhook rate limit
+                                  (disables limiting).
   --global                        Target global scope (org=NULL). Alias for
                                   --org global.
   --org, --organization, --scope TEXT
@@ -869,6 +938,9 @@ Options:
                                   delete + recreate.
   --target-type [workflow|agent]  Rejected: changing the target type requires
                                   delete + recreate.
+  --clear-event-type              Clear the optional event-type filter.
+  --clear-filter-expression       Clear the optional filter expression.
+  --clear-input-mapping           Clear the optional input mapping.
   --json                          Emit JSON instead of human-readable output.
   --help                          Show this message and exit.
 ```

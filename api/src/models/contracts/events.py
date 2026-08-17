@@ -5,7 +5,7 @@ Defines request/response models for event sources, subscriptions, and deliveries
 """
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -64,10 +64,12 @@ class WebhookSourceConfig(BaseModel):
     )
     rate_limit_per_minute: int | None = Field(
         default=60,
+        ge=1,
         description="Max events per window. Null disables.",
     )
     rate_limit_window_seconds: int = Field(
         default=60,
+        ge=1,
         description="Window in seconds.",
     )
     rate_limit_enabled: bool = Field(
@@ -94,6 +96,27 @@ class ScheduleSourceConfig(BaseModel):
     overlap_policy: ScheduleOverlapPolicy = Field(
         default=ScheduleOverlapPolicy.SKIP,
         description="Behavior when a schedule fires while a previous run is still active",
+    )
+
+
+class ScheduleSourceUpdate(BaseModel):
+    """Partial schedule configuration used by Event Source updates."""
+
+    cron_expression: str | None = Field(
+        default=None,
+        description="Cron expression for the schedule",
+    )
+    timezone: str | None = Field(
+        default=None,
+        description="Timezone for the schedule",
+    )
+    enabled: bool | None = Field(
+        default=None,
+        description="Whether the schedule is enabled",
+    )
+    overlap_policy: ScheduleOverlapPolicy | None = Field(
+        default=None,
+        description="Behavior when a prior scheduled run is still active",
     )
 
 
@@ -160,7 +183,7 @@ class EventSourceUpdate(BaseModel):
         default=None,
         description="Webhook configuration updates",
     )
-    schedule: ScheduleSourceConfig | None = Field(
+    schedule: ScheduleSourceUpdate | None = Field(
         default=None,
         description="Schedule configuration updates",
     )
@@ -175,7 +198,7 @@ class EventSubscriptionCreate(BaseModel):
     POST /api/events/sources/{source_id}/subscriptions
     """
 
-    target_type: str = Field(
+    target_type: Literal["workflow", "agent"] = Field(
         default="workflow",
         description="Target type: 'workflow' or 'agent'",
     )

@@ -1,9 +1,4 @@
-"""Canonical Bifrost operation identities and transport bindings.
-
-Agent, Form, and Table metadata CRUD are the first vertical slices. Additional
-domains must enter this catalog before gaining new CLI, MCP, or native Builder
-implementations.
-"""
+"""Canonical Bifrost operation identities and transport bindings."""
 
 from __future__ import annotations
 
@@ -30,6 +25,9 @@ _TABLE_SDK_EXCLUSION = (
 )
 _APP_SDK_EXCLUSION = (
     "Application administration is not available to the in-app runtime SDK."
+)
+_EVENT_SDK_EXCLUSION = (
+    "Event source and subscription administration is not available to application SDKs."
 )
 
 
@@ -571,6 +569,238 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         side_effects=("write the new source path to the Application manifest",),
         exclusions={"sdk": _APP_SDK_EXCLUSION},
     ),
+    OperationDefinition(
+        operation_id="events.sources.list",
+        summary="List Event Sources",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/events/sources",
+            response_model="EventSourceListResponse",
+        ),
+        cli=CliOperationBinding(path=("events", "list-sources")),
+        mcp=McpOperationBinding(name="bifrost_list_event_sources"),
+        native_builder=True,
+        action_scopes=("events.read",),
+        authorization_resolver="Platform-admin gate and organization filter",
+        exclusions={
+            "manifest": "Manifests reconcile Event Source state; they do not perform collection reads.",
+            "sdk": _EVENT_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="events.sources.get",
+        summary="Get one Event Source",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/events/sources/{source_id}",
+            response_model="EventSourceResponse",
+        ),
+        cli=CliOperationBinding(path=("events", "get-source")),
+        mcp=McpOperationBinding(name="bifrost_get_event_source"),
+        native_builder=True,
+        action_scopes=("events.read",),
+        authorization_resolver="Platform-admin gate",
+        exclusions={
+            "manifest": "The read does not mutate the Event Source manifest.",
+            "sdk": _EVENT_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="events.sources.create",
+        summary="Create an Event Source in an allowed target",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/events/sources",
+            request_model="EventSourceCreate",
+            response_model="EventSourceResponse",
+        ),
+        cli=CliOperationBinding(path=("events", "create-source")),
+        mcp=McpOperationBinding(name="bifrost_create_event_source"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="events"),
+        action_scopes=("events.write",),
+        authorization_resolver="Platform-admin gate and target organization resolver",
+        audit_event="event_source.create",
+        side_effects=(
+            "persist type-specific Event Source configuration",
+            "create an external webhook subscription when required",
+            "write manifest change through RepoSyncWriter",
+        ),
+        exclusions={"sdk": _EVENT_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="events.sources.update",
+        summary="Update an Event Source",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="PATCH",
+            path="/api/events/sources/{source_id}",
+            request_model="EventSourceUpdate",
+            response_model="EventSourceResponse",
+        ),
+        cli=CliOperationBinding(path=("events", "update-source")),
+        mcp=McpOperationBinding(name="bifrost_update_event_source"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="events"),
+        action_scopes=("events.write",),
+        authorization_resolver="Platform-admin and Solution-management guards",
+        audit_event="event_source.update",
+        side_effects=(
+            "replace selected Event Source and type-specific fields",
+            "preserve subscription scope invariants when retargeting",
+            "write manifest change through RepoSyncWriter",
+        ),
+        exclusions={"sdk": _EVENT_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="events.sources.delete",
+        summary="Delete an Event Source and its dependent history",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="DELETE",
+            path="/api/events/sources/{source_id}",
+        ),
+        cli=CliOperationBinding(path=("events", "delete-source")),
+        mcp=McpOperationBinding(name="bifrost_delete_event_source"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="events", behavior="remove"),
+        action_scopes=("events.write",),
+        authorization_resolver="Platform-admin and Solution-management guards",
+        audit_event="event_source.delete",
+        side_effects=(
+            "unsubscribe external webhook state when applicable",
+            "cascade-delete subscriptions, events, and deliveries",
+            "remove the Event Source manifest entry through RepoSyncWriter",
+        ),
+        exclusions={"sdk": _EVENT_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="events.subscriptions.list",
+        summary="List subscriptions for an Event Source",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/events/sources/{source_id}/subscriptions",
+            response_model="EventSubscriptionListResponse",
+        ),
+        cli=CliOperationBinding(path=("events", "list-subscriptions")),
+        mcp=McpOperationBinding(name="bifrost_list_event_subscriptions"),
+        native_builder=True,
+        action_scopes=("events.read",),
+        authorization_resolver="Platform-admin gate and parent Event Source lookup",
+        exclusions={
+            "manifest": "The read does not mutate Event Subscription manifest state.",
+            "sdk": _EVENT_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="events.subscriptions.get",
+        summary="Get one Event Subscription",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/events/sources/{source_id}/subscriptions/{subscription_id}",
+            response_model="EventSubscriptionResponse",
+        ),
+        cli=CliOperationBinding(path=("events", "get-subscription")),
+        mcp=McpOperationBinding(name="bifrost_get_event_subscription"),
+        native_builder=True,
+        action_scopes=("events.read",),
+        authorization_resolver="Platform-admin gate and parent Event Source lookup",
+        exclusions={
+            "manifest": "The read does not mutate Event Subscription manifest state.",
+            "sdk": _EVENT_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="events.subscriptions.create",
+        summary="Create an Event Subscription",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/events/sources/{source_id}/subscriptions",
+            request_model="EventSubscriptionCreate",
+            response_model="EventSubscriptionResponse",
+        ),
+        cli=CliOperationBinding(path=("events", "create-subscription")),
+        mcp=McpOperationBinding(name="bifrost_create_event_subscription"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="events"),
+        action_scopes=("events.write",),
+        authorization_resolver="Platform-admin, parent-source, and target-resource validation",
+        audit_event="event_subscription.create",
+        side_effects=(
+            "persist a validated Workflow or Agent target",
+            "write manifest change through RepoSyncWriter",
+        ),
+        exclusions={"sdk": _EVENT_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="events.subscriptions.update",
+        summary="Update an Event Subscription",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="PATCH",
+            path="/api/events/sources/{source_id}/subscriptions/{subscription_id}",
+            request_model="EventSubscriptionUpdate",
+            response_model="EventSubscriptionResponse",
+        ),
+        cli=CliOperationBinding(path=("events", "update-subscription")),
+        mcp=McpOperationBinding(name="bifrost_update_event_subscription"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="events"),
+        action_scopes=("events.write",),
+        authorization_resolver="Platform-admin and Solution-management guards",
+        audit_event="event_subscription.update",
+        side_effects=(
+            "replace selected filter, mapping, and activation fields",
+            "write manifest change through RepoSyncWriter",
+        ),
+        exclusions={"sdk": _EVENT_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="events.subscriptions.delete",
+        summary="Delete an Event Subscription",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="DELETE",
+            path="/api/events/sources/{source_id}/subscriptions/{subscription_id}",
+        ),
+        cli=CliOperationBinding(path=("events", "delete-subscription")),
+        mcp=McpOperationBinding(name="bifrost_delete_event_subscription"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="events"),
+        action_scopes=("events.write",),
+        authorization_resolver="Platform-admin and Solution-management guards",
+        audit_event="event_subscription.delete",
+        side_effects=(
+            "delete the subscription and dependent deliveries",
+            "write manifest change through RepoSyncWriter",
+        ),
+        exclusions={"sdk": _EVENT_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="events.webhook_adapters.list",
+        summary="List Event webhook adapters",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/events/adapters",
+            response_model="WebhookAdapterListResponse",
+        ),
+        cli=CliOperationBinding(path=("events", "list-webhook-adapters")),
+        mcp=McpOperationBinding(name="bifrost_list_event_webhook_adapters"),
+        native_builder=True,
+        action_scopes=("events.read",),
+        authorization_resolver="Platform-admin gate",
+        exclusions={
+            "manifest": "Webhook adapter discovery is runtime metadata, not portable state.",
+            "sdk": _EVENT_SDK_EXCLUSION,
+        },
+    ),
 )
 
 
@@ -650,7 +880,8 @@ def validate_operation_catalog(
             action, subresource = verb_parts[0], verb_parts[1:]
             noun = (
                 resource[:-1]
-                if action not in {"list", "search"} and resource.endswith("s")
+                if resource.endswith("s")
+                and (action not in {"list", "search"} or subresource)
                 else resource
             )
             suffix = "_".join((noun, *subresource))

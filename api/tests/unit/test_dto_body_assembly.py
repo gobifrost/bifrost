@@ -266,12 +266,12 @@ async def test_empty_required_ref_still_resolves_or_fails() -> None:
 @pytest.mark.asyncio
 async def test_event_subscription_resolves_workflow_or_agent() -> None:
     resolver = _resolver()
+    parsed = _parsed(EventSubscriptionCreate, {"agent_id": "Helper"})
+    # The command infers this excluded field from the selected target flag.
+    parsed["target_type"] = "agent"
     body = await assemble_body(
         EventSubscriptionCreate,
-        _parsed(
-            EventSubscriptionCreate,
-            {"target_type": "agent", "agent_id": "Helper"},
-        ),
+        parsed,
         resolver=resolver,  # type: ignore[arg-type]
     )
     assert body["agent_id"] == AGENT_UUID

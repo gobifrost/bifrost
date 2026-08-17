@@ -42,6 +42,7 @@ from typing import AsyncIterator
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3]))
 
 from bifrost.dto_flags import DTO_EXCLUDES  # noqa: E402
+from tests.e2e.conftest import write_and_register  # noqa: E402
 
 
 # =============================================================================
@@ -174,6 +175,63 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
         "model_path": "src.models.contracts.applications:ApplicationUpdate",
         "tool_path": "src.services.mcp_server.tools.apps:bifrost_update_app",
         "extra_args": {"app_ref", "scope"},
+        "field_renames": {},
+    },
+    {
+        "model_path": "src.models.contracts.events:EventSourceCreate",
+        "tool_path": "src.services.mcp_server.tools.events:bifrost_create_event_source",
+        "extra_args": {
+            "scope",
+            "adapter_name",
+            "integration_id",
+            "webhook_config",
+            "rate_limit_per_minute",
+            "rate_limit_window_seconds",
+            "rate_limit_enabled",
+            "cron_expression",
+            "timezone",
+            "schedule_enabled",
+            "overlap_policy",
+        },
+        "field_renames": {},
+    },
+    {
+        "model_path": "src.models.contracts.events:EventSourceUpdate",
+        "tool_path": "src.services.mcp_server.tools.events:bifrost_update_event_source",
+        "extra_args": {
+            "source_ref",
+            "scope",
+            "adapter_name",
+            "integration_id",
+            "webhook_config",
+            "rate_limit_per_minute",
+            "rate_limit_window_seconds",
+            "rate_limit_enabled",
+            "clear_webhook_integration",
+            "clear_rate_limit",
+            "cron_expression",
+            "timezone",
+            "schedule_enabled",
+            "overlap_policy",
+        },
+        "field_renames": {},
+    },
+    {
+        "model_path": "src.models.contracts.events:EventSubscriptionCreate",
+        "tool_path": "src.services.mcp_server.tools.events:bifrost_create_event_subscription",
+        "extra_args": {"source_ref"},
+        "field_renames": {},
+    },
+    {
+        "model_path": "src.models.contracts.events:EventSubscriptionUpdate",
+        "tool_path": "src.services.mcp_server.tools.events:bifrost_update_event_subscription",
+        "extra_args": {
+            "source_ref",
+            "subscription_id",
+            "clear_event_type",
+            "clear_filter_expression",
+            "clear_input_mapping",
+        },
         "field_renames": {},
     },
     {
@@ -1199,6 +1257,247 @@ class TestMcpParityApplications:
         finally:
             deleted = await bifrost_delete_app(admin_context, app_ref=app_id)
             assert (deleted.structured_content or {}).get("id") == app_id
+
+
+# =============================================================================
+# Events
+# =============================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestMcpParityEvents:
+    async def test_event_source_and_subscription_roundtrip_manifest_and_audit(
+        self,
+        admin_context,
+        e2e_client,
+        platform_admin,
+        org_context,
+    ) -> None:
+        from src.services.mcp_server.tools.events import (
+            bifrost_create_event_source,
+            bifrost_create_event_subscription,
+            bifrost_delete_event_source,
+            bifrost_delete_event_subscription,
+            bifrost_get_event_source,
+            bifrost_get_event_subscription,
+            bifrost_list_event_sources,
+            bifrost_list_event_subscriptions,
+            bifrost_list_event_webhook_adapters,
+            bifrost_update_event_source,
+            bifrost_update_event_subscription,
+        )
+        from src.services.repo_storage import RepoStorage
+
+        suffix = uuid4().hex[:8]
+        workflow_path = f"workflows/mcp_event_parity_{suffix}.py"
+        function_name = f"mcp_event_parity_{suffix}"
+        workflow = write_and_register(
+            e2e_client,
+            platform_admin.headers,
+            path=workflow_path,
+            content=(
+                "from bifrost import workflow\n\n"
+                f"@workflow\nasync def {function_name}(event: dict) -> dict:\n"
+                "    return {'received': event}\n"
+            ),
+            function_name=function_name,
+            organization_id=None,
+        )
+        workflow_ref = f"{workflow_path}::{function_name}"
+        source_name = f"mcp-event-parity-{suffix}"
+        source_id: str | None = None
+        subscription_id: str | None = None
+        audit_source_id: str | None = None
+        audit_subscription_id: str | None = None
+        try:
+            adapters = await bifrost_list_event_webhook_adapters(admin_context)
+            assert any(
+                adapter["name"] == "generic"
+                for adapter in (adapters.structured_content or {}).get("adapters", [])
+            )
+
+            created_result = await bifrost_create_event_source(
+                admin_context,
+                name=source_name,
+                source_type="schedule",
+                cron_expression="0 9 * * *",
+                timezone="America/New_York",
+                overlap_policy="queue",
+                scope="global",
+            )
+            created = created_result.structured_content or {}
+            assert "error" not in created, created
+            source_id = str(created["id"])
+            audit_source_id = source_id
+            assert created["schedule"]["overlap_policy"] == "queue"
+
+            listed = await bifrost_list_event_sources(
+                admin_context,
+                source_type="schedule",
+                scope="global",
+            )
+            assert source_id in {
+                str(item["id"])
+                for item in (listed.structured_content or {}).get("items", [])
+            }
+            fetched = await bifrost_get_event_source(
+                admin_context,
+                source_ref=source_name,
+            )
+            assert (fetched.structured_content or {}).get("id") == source_id
+
+            manifest = (await RepoStorage().read(".bifrost/events.yaml")).decode(
+                "utf-8"
+            )
+            assert source_id in manifest
+
+            subscribed_result = await bifrost_create_event_subscription(
+                admin_context,
+                source_ref=source_name,
+                workflow_id=workflow_ref,
+                event_type="daily.report",
+                input_mapping={"report_type": "daily"},
+            )
+            subscribed = subscribed_result.structured_content or {}
+            assert "error" not in subscribed, subscribed
+            subscription_id = str(subscribed["id"])
+            audit_subscription_id = subscription_id
+            assert str(subscribed["workflow_id"]) == str(workflow["id"])
+
+            duplicate = await bifrost_create_event_subscription(
+                admin_context,
+                source_ref=source_id,
+                workflow_id=workflow_ref,
+            )
+            assert (duplicate.structured_content or {}).get("status_code") == 409
+
+            fetched_subscription = await bifrost_get_event_subscription(
+                admin_context,
+                source_ref=source_id,
+                subscription_id=subscription_id,
+            )
+            assert (fetched_subscription.structured_content or {}).get(
+                "id"
+            ) == subscription_id
+            subscriptions = await bifrost_list_event_subscriptions(
+                admin_context,
+                source_ref=source_id,
+            )
+            assert subscription_id in {
+                str(item["id"])
+                for item in (subscriptions.structured_content or {}).get("items", [])
+            }
+
+            updated_subscription = await bifrost_update_event_subscription(
+                admin_context,
+                source_ref=source_id,
+                subscription_id=subscription_id,
+                event_type="daily.rollup",
+                is_active=False,
+            )
+            assert (updated_subscription.structured_content or {}).get(
+                "event_type"
+            ) == "daily.rollup"
+
+            cleared_subscription = await bifrost_update_event_subscription(
+                admin_context,
+                source_ref=source_id,
+                subscription_id=subscription_id,
+                clear_event_type=True,
+                clear_input_mapping=True,
+            )
+            cleared_subscription_body = cleared_subscription.structured_content or {}
+            assert cleared_subscription_body.get("event_type") is None
+            assert cleared_subscription_body.get("input_mapping") is None
+
+            updated_source = await bifrost_update_event_source(
+                admin_context,
+                source_ref=source_id,
+                name=f"{source_name}-updated",
+                scope=str(org_context.org_id),
+                cron_expression="30 9 * * *",
+            )
+            updated_source_body = updated_source.structured_content or {}
+            assert updated_source_body.get("organization_id") == str(
+                org_context.org_id
+            )
+            assert updated_source_body["schedule"]["cron_expression"] == (
+                "30 9 * * *"
+            )
+
+            rest_source = e2e_client.get(
+                f"/api/events/sources/{source_id}",
+                headers=platform_admin.headers,
+            )
+            assert rest_source.status_code == 200, rest_source.text
+            assert rest_source.json()["name"] == f"{source_name}-updated"
+
+            denied = await bifrost_list_event_sources(org_context)
+            assert "error" in (denied.structured_content or {})
+
+            deleted_subscription = await bifrost_delete_event_subscription(
+                admin_context,
+                source_ref=source_id,
+                subscription_id=subscription_id,
+            )
+            assert (deleted_subscription.structured_content or {}).get(
+                "id"
+            ) == subscription_id
+            subscription_id = None
+
+            deleted_source = await bifrost_delete_event_source(
+                admin_context,
+                source_ref=source_id,
+            )
+            assert (deleted_source.structured_content or {}).get("id") == source_id
+            source_id = None
+
+            manifest_paths = await RepoStorage().list(".bifrost/")
+            if ".bifrost/events.yaml" in manifest_paths:
+                after_delete = (
+                    await RepoStorage().read(".bifrost/events.yaml")
+                ).decode("utf-8")
+                assert source_id not in after_delete
+
+            audit = e2e_client.get(
+                "/api/audit",
+                headers=platform_admin.headers,
+                params={"action": "event_", "limit": 50},
+            )
+            assert audit.status_code == 200, audit.text
+            actions = {
+                entry["action"]
+                for entry in audit.json()["entries"]
+                if entry["resource_id"] in {
+                    audit_source_id,
+                    audit_subscription_id,
+                }
+            }
+            assert actions == {
+                "event_source.create",
+                "event_source.update",
+                "event_source.delete",
+                "event_subscription.create",
+                "event_subscription.update",
+                "event_subscription.delete",
+            }
+        finally:
+            if subscription_id is not None and source_id is not None:
+                await bifrost_delete_event_subscription(
+                    admin_context,
+                    source_ref=source_id,
+                    subscription_id=subscription_id,
+                )
+            if source_id is not None:
+                await bifrost_delete_event_source(
+                    admin_context,
+                    source_ref=source_id,
+                )
+            e2e_client.delete(
+                f"/api/files/editor?path={workflow_path}",
+                headers=platform_admin.headers,
+            )
 
 
 # =============================================================================

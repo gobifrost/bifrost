@@ -2,7 +2,7 @@
 
 **Owner:** Jack Musick / Bifrost engineering
 **Created:** 2026-08-17
-**Status:** In progress — Phases 0–1 complete; Phase 2 Agent, Form, Table, and App slices complete
+**Status:** In progress — Phases 0–1 complete; Phase 2 Agent, Form, Table, App, and Event slices complete
 **Execution branch:** `codex/code-builder-pydantic-integration-20260816`
 **Base:** `origin/main@16e317e62`
 **Depends on:** the reconstructed Builder and shared Pydantic runtime described
@@ -225,9 +225,13 @@ environment-skipped mirror tests; API Pyright and Ruff are clean.
 - [x] Complete the App metadata/dependency vertical slice with canonical DTOs,
       home/global/organization targeting, publish/replace/validation operations,
       REST-owned audit and manifest side effects, and persisted tool-name migration.
+- [x] Complete the Event Source/Subscription vertical slice with canonical
+      DTOs and tool names, thin REST adapters, organization-safe targets,
+      schedule/webhook validation, audit/manifest/Scheduler side effects, and
+      persisted tool-name migration.
 - [ ] Convert legacy direct-ORM MCP implementations to thin HTTP wrappers using
       `_http_bridge.py`; do not create a second service path for MCP.
-- [ ] Reconcile known drift in Events and remaining domains:
+- [ ] Reconcile known drift in the remaining domains:
       authorization, role propagation, cache invalidation, RepoSyncWriter,
       scheduler wiring, audit registration, validation, and partial-success
       behavior.
@@ -295,7 +299,7 @@ and the final contract/regression selection passed 176/176. API
 Pyright/Ruff and client TypeScript are clean; ESLint has zero errors and only
 the pre-existing React Compiler warning in `FormRenderer.tsx`. Generated
 operation, CLI, OpenAPI, and browser type references were refreshed. The App
-slice follows below; Events remains in this phase.
+and Event slices follow below.
 
 **App-slice evidence:** the legacy App MCP metadata, dependency, validation,
 publish, and replace implementations were removed in favor of thin REST
@@ -310,8 +314,26 @@ architecture/DTO/contract selection passed 186/186, live MCP passed 2/2,
 REST authorization passed 2/2, CLI passed 8/8, and the focused UI contract
 passed 3/3. API Pyright/Ruff, client TypeScript, generated operation/Skill
 freshness, and diff checks are clean; ESLint has zero errors and only the
-pre-existing React Compiler warning in `FormRenderer.tsx`. Events remain in
-this phase.
+pre-existing React Compiler warning in `FormRenderer.tsx`. The Event slice
+follows below.
+
+**Event-slice evidence:** the 920-line direct-ORM Event MCP implementation and
+its divergent upsert/soft-delete behavior were removed in favor of eleven thin
+REST adapters registered only with canonical `bifrost_<verb>_event_*` names.
+REST now owns target existence and organization invariants, duplicate
+preflight, strict source-type/cron/timezone validation, Solution guards,
+external webhook lifecycle, audit records, and manifest regeneration. CLI and
+MCP both expose schedule overlap/rate-limit fields and explicit clears for
+nullable webhook/subscription fields. Forward migration
+`20260817_event_mcp_names` renames persisted grants and is the sole applied
+Alembic head. The post-generation catalog/DTO/wrapper/CLI/contract/migration
+selection passed 343/343; live MCP signature and Event behavior passed 25/25;
+all 45 focused CLI/REST/Solution checks are green across the initial 39 passing
+checks and corrected 12/12 subscription rerun; and the shared Scheduler/Event
+processor selection passed 39/39. Generated operation, Skill, CLI, OpenAPI, and
+browser references are fresh. API Pyright/Ruff and client TypeScript are clean;
+ESLint has zero errors and only the pre-existing React Compiler warning in
+`FormRenderer.tsx`.
 
 ### Phase 3 — Finish Agent Skill portability
 

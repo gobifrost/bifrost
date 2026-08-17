@@ -120,6 +120,9 @@ DTO_EXCLUDES: dict[str, set[str]] = {
     # --org standard (org_option), not the DTO flag generator.
     "EventSourceCreate": {"webhook", "schedule"} | _ORG_TARGET_EXCLUDE,
     "EventSourceUpdate": {"webhook", "schedule"} | _ORG_TARGET_EXCLUDE,
+    # The command and MCP tool infer target_type from the mutually-exclusive
+    # workflow/agent reference instead of accepting a contradictory flag.
+    "EventSubscriptionCreate": {"target_type"},
 }
 
 #: Per-DTO field renames applied to the assembled body.

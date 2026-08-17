@@ -7700,7 +7700,7 @@ export interface paths {
          * List available webhook adapters
          * @description List all available webhook adapters and their configuration schemas (Platform admin only).
          */
-        get: operations["list_adapters_api_events_adapters_get"];
+        get: operations["events.webhook_adapters.list"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7740,13 +7740,13 @@ export interface paths {
          * List event sources
          * @description List all event sources (Platform admin only).
          */
-        get: operations["list_sources_api_events_sources_get"];
+        get: operations["events.sources.list"];
         put?: never;
         /**
          * Create event source
          * @description Create a new event source (Platform admin only).
          */
-        post: operations["create_source_api_events_sources_post"];
+        post: operations["events.sources.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7764,21 +7764,21 @@ export interface paths {
          * Get event source
          * @description Get a specific event source by ID (Platform admin only).
          */
-        get: operations["get_source_api_events_sources__source_id__get"];
+        get: operations["events.sources.get"];
         put?: never;
         post?: never;
         /**
          * Delete event source
          * @description Permanently delete an event source and all its subscriptions, events, and deliveries (Platform admin only).
          */
-        delete: operations["delete_source_api_events_sources__source_id__delete"];
+        delete: operations["events.sources.delete"];
         options?: never;
         head?: never;
         /**
          * Update event source
          * @description Update an event source (Platform admin only).
          */
-        patch: operations["update_source_api_events_sources__source_id__patch"];
+        patch: operations["events.sources.update"];
         trace?: never;
     };
     "/api/events/sources/{source_id}/subscriptions": {
@@ -7792,13 +7792,13 @@ export interface paths {
          * List subscriptions
          * @description List subscriptions for an event source (Platform admin only).
          */
-        get: operations["list_subscriptions_api_events_sources__source_id__subscriptions_get"];
+        get: operations["events.subscriptions.list"];
         put?: never;
         /**
          * Create subscription
          * @description Create a subscription to an event source (Platform admin only).
          */
-        post: operations["create_subscription_api_events_sources__source_id__subscriptions_post"];
+        post: operations["events.subscriptions.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7812,21 +7812,25 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Get subscription
+         * @description Get one subscription for an event source (Platform admin only).
+         */
+        get: operations["events.subscriptions.get"];
         put?: never;
         post?: never;
         /**
          * Delete subscription
          * @description Permanently delete an event subscription (Platform admin only).
          */
-        delete: operations["delete_subscription_api_events_sources__source_id__subscriptions__subscription_id__delete"];
+        delete: operations["events.subscriptions.delete"];
         options?: never;
         head?: never;
         /**
          * Update subscription
          * @description Update an event subscription (Platform admin only).
          */
-        patch: operations["update_subscription_api_events_sources__source_id__subscriptions__subscription_id__patch"];
+        patch: operations["events.subscriptions.update"];
         trace?: never;
     };
     "/api/events/sources/{source_id}/events": {
@@ -16389,7 +16393,7 @@ export interface components {
             /** @description Webhook configuration updates */
             webhook?: components["schemas"]["WebhookSourceConfig"] | null;
             /** @description Schedule configuration updates */
-            schedule?: components["schemas"]["ScheduleSourceConfig"] | null;
+            schedule?: components["schemas"]["ScheduleSourceUpdate"] | null;
         };
         /**
          * EventStatus
@@ -16407,8 +16411,9 @@ export interface components {
              * Target Type
              * @description Target type: 'workflow' or 'agent'
              * @default workflow
+             * @enum {string}
              */
-            target_type: string;
+            target_type: "workflow" | "agent";
             /**
              * Workflow Id
              * @description Workflow ID (required when target_type='workflow')
@@ -24844,6 +24849,29 @@ export interface components {
              * @default skip
              */
             overlap_policy: components["schemas"]["ScheduleOverlapPolicy"];
+        };
+        /**
+         * ScheduleSourceUpdate
+         * @description Partial schedule configuration used by Event Source updates.
+         */
+        ScheduleSourceUpdate: {
+            /**
+             * Cron Expression
+             * @description Cron expression for the schedule
+             */
+            cron_expression?: string | null;
+            /**
+             * Timezone
+             * @description Timezone for the schedule
+             */
+            timezone?: string | null;
+            /**
+             * Enabled
+             * @description Whether the schedule is enabled
+             */
+            enabled?: boolean | null;
+            /** @description Behavior when a prior scheduled run is still active */
+            overlap_policy?: components["schemas"]["ScheduleOverlapPolicy"] | null;
         };
         /** SchedulerCapacityStatus */
         SchedulerCapacityStatus: {
@@ -41930,7 +41958,7 @@ export interface operations {
             };
         };
     };
-    list_adapters_api_events_adapters_get: {
+    "events.webhook_adapters.list": {
         parameters: {
             query?: never;
             header?: never;
@@ -41985,7 +42013,7 @@ export interface operations {
             };
         };
     };
-    list_sources_api_events_sources_get: {
+    "events.sources.list": {
         parameters: {
             query?: {
                 /** @description Filter by source type */
@@ -42025,7 +42053,7 @@ export interface operations {
             };
         };
     };
-    create_source_api_events_sources_post: {
+    "events.sources.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -42058,7 +42086,7 @@ export interface operations {
             };
         };
     };
-    get_source_api_events_sources__source_id__get: {
+    "events.sources.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -42089,7 +42117,7 @@ export interface operations {
             };
         };
     };
-    delete_source_api_events_sources__source_id__delete: {
+    "events.sources.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -42118,7 +42146,7 @@ export interface operations {
             };
         };
     };
-    update_source_api_events_sources__source_id__patch: {
+    "events.sources.update": {
         parameters: {
             query?: never;
             header?: never;
@@ -42153,7 +42181,7 @@ export interface operations {
             };
         };
     };
-    list_subscriptions_api_events_sources__source_id__subscriptions_get: {
+    "events.subscriptions.list": {
         parameters: {
             query?: {
                 /** @description Max results */
@@ -42189,7 +42217,7 @@ export interface operations {
             };
         };
     };
-    create_subscription_api_events_sources__source_id__subscriptions_post: {
+    "events.subscriptions.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -42224,7 +42252,39 @@ export interface operations {
             };
         };
     };
-    delete_subscription_api_events_sources__source_id__subscriptions__subscription_id__delete: {
+    "events.subscriptions.get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+                subscription_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventSubscriptionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "events.subscriptions.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -42254,7 +42314,7 @@ export interface operations {
             };
         };
     };
-    update_subscription_api_events_sources__source_id__subscriptions__subscription_id__patch: {
+    "events.subscriptions.update": {
         parameters: {
             query?: never;
             header?: never;

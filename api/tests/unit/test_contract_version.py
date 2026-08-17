@@ -228,7 +228,12 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # optional `organization_id` wire field (2026-08-17). BREAKING: an older CLI
     # would send `scope`, which the server ignores, so MIN_CLI_VERSION is raised
     # to 1.2.3 while the frozen legacy CONTRACT_VERSION remains unchanged.
-    "5f900a5e87c5bde7beebae55b73fefe3b9b4841597371a65cb9094a3bb5c05e4"
+    #
+    # Event schedules now distinguish required create configuration from partial
+    # update configuration, and subscription target_type is constrained to the
+    # two supported values (2026-08-17). These ship in the same unreleased 1.2.3
+    # compatibility floor as the canonical App/Event operation surfaces.
+    "de50dc892dad93d49d1bff9a18f790ae67e515cd97e7ad363dade7e6f6b2379a"
 )
 
 

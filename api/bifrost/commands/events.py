@@ -7,14 +7,14 @@ parity follow-up:
 * ``bifrost events get-source <ref>`` → ``GET /api/events/sources/{uuid}``
 * ``bifrost events list-subscriptions <source-ref>`` →
   ``GET /api/events/sources/{source_uuid}/subscriptions``
-* ``bifrost events get-subscription <source-ref> <subscription-id>`` —
-  list-and-filter (the server has no per-subscription GET endpoint).
+* ``bifrost events get-subscription <source-ref> <subscription-id>`` → the
+  canonical per-subscription REST endpoint.
 * ``bifrost events create-source`` → ``POST /api/events/sources`` (body from
   :class:`EventSourceCreate`)
 * ``bifrost events update-source <ref>`` → ``PATCH /api/events/sources/{uuid}``
   (body from :class:`EventSourceUpdate`; unset flags omitted by
   :func:`assemble_body`)
-* ``bifrost events subscribe <source-ref>`` →
+* ``bifrost events create-subscription <source-ref>`` →
   ``POST /api/events/sources/{source_uuid}/subscriptions``
   (body from :class:`EventSubscriptionCreate`)
 * ``bifrost events update-subscription <source-ref> <subscription-id>`` →
@@ -30,11 +30,11 @@ objects. Surfacing those as raw JSON-blob flags is hostile, so this module
 exposes flat top-level flags that the command body collapses back into the
 nested payload:
 
-* ``--cron`` / ``--timezone`` / ``--schedule-enabled`` →
-  ``schedule: {cron_expression, timezone, enabled}``
+* ``--cron`` / ``--timezone`` / ``--schedule-enabled`` /
+  ``--overlap-policy`` → schedule configuration.
 * ``--adapter`` / ``--webhook-integration`` (resolved via
   :class:`RefResolver` as an integration ref) / ``--webhook-config @file.yaml``
-  → ``webhook: {adapter_name, integration_id, config}``
+  / rate-limit flags → webhook configuration.
 
 These flat flags are registered manually because the DTO-level ``schedule`` /
 ``webhook`` fields are excluded from :func:`build_cli_flags` via
@@ -44,7 +44,7 @@ These flat flags are registered manually because the DTO-level ``schedule`` /
 Subscribe target
 ----------------
 
-``bifrost events subscribe`` accepts exactly one of ``--workflow`` or
+``bifrost events create-subscription`` accepts exactly one of ``--workflow`` or
 ``--agent`` (portable refs; ``path::func`` for workflows, name/UUID for
 agents). ``target_type`` is inferred from which flag was supplied.
 
@@ -122,6 +122,12 @@ def _schedule_flags(
     tri-state so omitting it leaves the default alone.
     """
     fn = click.option(
+        "--overlap-policy",
+        type=click.Choice(["skip", "queue", "replace"]),
+        default=None,
+        help="Behavior when the prior scheduled run is still active.",
+    )(fn)
+    fn = click.option(
         "--schedule-enabled/--no-schedule-enabled",
         "schedule_enabled",
         default=None,
@@ -154,6 +160,23 @@ def _webhook_flags(
     (UUID or name); ``--webhook-config`` accepts a JSON literal or
     ``@path/to/config.yaml``.
     """
+    fn = click.option(
+        "--rate-limit-enabled/--no-rate-limit-enabled",
+        default=None,
+        help="Enable or disable ingress rate limiting for this source.",
+    )(fn)
+    fn = click.option(
+        "--rate-limit-window-seconds",
+        type=click.IntRange(min=1),
+        default=None,
+        help="Webhook ingress rate-limit window in seconds.",
+    )(fn)
+    fn = click.option(
+        "--rate-limit-per-minute",
+        type=click.IntRange(min=1),
+        default=None,
+        help="Maximum webhook events per configured window.",
+    )(fn)
     fn = click.option(
         "--webhook-config",
         "webhook_config",
@@ -194,13 +217,14 @@ async def _build_schedule_config(
     cron: str | None,
     timezone: str | None,
     enabled: bool | None,
+    overlap_policy: str | None,
 ) -> dict[str, Any] | None:
     """Collapse ``--cron`` / ``--timezone`` / ``--schedule-enabled`` into a dict.
 
     Returns ``None`` when none of the three was supplied — the caller treats
     that as "leave the DTO's ``schedule`` field unset."
     """
-    if cron is None and timezone is None and enabled is None:
+    if cron is None and timezone is None and enabled is None and overlap_policy is None:
         return None
     config: dict[str, Any] = {}
     if cron is not None:
@@ -209,6 +233,8 @@ async def _build_schedule_config(
         config["timezone"] = timezone
     if enabled is not None:
         config["enabled"] = enabled
+    if overlap_policy is not None:
+        config["overlap_policy"] = overlap_policy
     return config
 
 
@@ -217,6 +243,11 @@ async def _build_webhook_config(
     adapter: str | None,
     integration_ref: str | None,
     config_raw: str | None,
+    rate_limit_per_minute: int | None,
+    rate_limit_window_seconds: int | None,
+    rate_limit_enabled: bool | None,
+    clear_integration: bool = False,
+    clear_rate_limit: bool = False,
     resolver: RefResolver,
 ) -> dict[str, Any] | None:
     """Collapse ``--adapter`` / ``--webhook-integration`` / ``--webhook-config``
@@ -224,33 +255,75 @@ async def _build_webhook_config(
 
     Returns ``None`` when none of the three was supplied.
     """
-    if adapter is None and integration_ref is None and config_raw is None:
+    if (
+        adapter is None
+        and integration_ref is None
+        and config_raw is None
+        and rate_limit_per_minute is None
+        and rate_limit_window_seconds is None
+        and rate_limit_enabled is None
+        and not clear_integration
+        and not clear_rate_limit
+    ):
         return None
+    if clear_integration and integration_ref is not None:
+        raise click.UsageError(
+            "--webhook-integration and --clear-webhook-integration are mutually exclusive."
+        )
+    if clear_rate_limit and rate_limit_per_minute is not None:
+        raise click.UsageError(
+            "--rate-limit-per-minute and --clear-rate-limit are mutually exclusive."
+        )
     config: dict[str, Any] = {}
     if adapter is not None:
         config["adapter_name"] = adapter
-    if integration_ref is not None:
+    if clear_integration:
+        config["integration_id"] = None
+    elif integration_ref is not None:
         config["integration_id"] = await resolver.resolve("integration", integration_ref)
     if config_raw is not None:
         config["config"] = load_dict_value(config_raw)
+    if clear_rate_limit:
+        config["rate_limit_per_minute"] = None
+    elif rate_limit_per_minute is not None:
+        config["rate_limit_per_minute"] = rate_limit_per_minute
+    if rate_limit_window_seconds is not None:
+        config["rate_limit_window_seconds"] = rate_limit_window_seconds
+    if rate_limit_enabled is not None:
+        config["rate_limit_enabled"] = rate_limit_enabled
     return config
 
 
-def _pop_schedule_fields(fields: dict[str, Any]) -> tuple[str | None, str | None, bool | None]:
+def _pop_schedule_fields(
+    fields: dict[str, Any],
+) -> tuple[str | None, str | None, bool | None, str | None]:
     """Remove schedule-flat fields from ``fields`` and return them."""
     return (
         fields.pop("schedule_cron", None),
         fields.pop("schedule_timezone", None),
         fields.pop("schedule_enabled", None),
+        fields.pop("overlap_policy", None),
     )
 
 
-def _pop_webhook_fields(fields: dict[str, Any]) -> tuple[str | None, str | None, str | None]:
+def _pop_webhook_fields(
+    fields: dict[str, Any],
+) -> tuple[
+    str | None,
+    str | None,
+    str | None,
+    int | None,
+    int | None,
+    bool | None,
+]:
     """Remove webhook-flat fields from ``fields`` and return them."""
     return (
         fields.pop("webhook_adapter", None),
         fields.pop("webhook_integration", None),
         fields.pop("webhook_config", None),
+        fields.pop("rate_limit_per_minute", None),
+        fields.pop("rate_limit_window_seconds", None),
+        fields.pop("rate_limit_enabled", None),
     )
 
 
@@ -260,17 +333,52 @@ def _pop_webhook_fields(fields: dict[str, Any]) -> tuple[str | None, str | None,
 
 
 @events_group.command("list-sources")
+@click.option(
+    "--source-type",
+    type=click.Choice(["webhook", "schedule", "topic"]),
+    default=None,
+)
+@org_option
 @click.pass_context
 @pass_resolver
 @run_async
 async def list_sources(
     ctx: click.Context,
+    source_type: str | None,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
-    resolver: RefResolver,  # noqa: ARG001 - kept for signature parity
+    resolver: RefResolver,
 ) -> None:
     """List all event sources (wrapped ``{items, total}`` payload)."""
-    response = await client.get("/api/events/sources")
+    params: dict[str, str] = {}
+    if source_type is not None:
+        params["source_type"] = source_type
+    target = await resolve_org_target(org, is_global, resolver)
+    if target.is_set:
+        if target.organization_id is None:
+            params["scope"] = "global"
+        else:
+            params["organization_id"] = target.organization_id
+    response = await client.get("/api/events/sources", params=params or None)
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
+
+
+@events_group.command("list-webhook-adapters")
+@click.pass_context
+@pass_resolver
+@run_async
+async def list_webhook_adapters(
+    ctx: click.Context,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,  # noqa: ARG001 - decorator contract
+) -> None:
+    """List webhook adapters available for Event Source configuration."""
+
+    response = await client.get("/api/events/adapters")
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
 
@@ -332,25 +440,13 @@ async def get_subscription(
     client: BifrostClient,
     resolver: RefResolver,
 ) -> None:
-    """Get a single subscription by source ref + subscription UUID.
-
-    The server has no per-subscription GET endpoint, so this lists the
-    source's subscriptions and filters client-side.
-    """
+    """Get a single subscription by source ref + subscription UUID."""
     source_uuid = await resolver.resolve("event_source", source_ref)
     response = await client.get(
-        f"/api/events/sources/{source_uuid}/subscriptions"
+        f"/api/events/sources/{source_uuid}/subscriptions/{subscription_id}"
     )
     response.raise_for_status()
-    data = response.json()
-    items = data.get("items", []) if isinstance(data, dict) else data
-    for item in items:
-        if str(item.get("id")) == subscription_id:
-            output_result(item, ctx=ctx)
-            return
-    raise click.ClickException(
-        f"subscription {subscription_id!r} not found on source {source_ref!r}"
-    )
+    output_result(response.json(), ctx=ctx)
 
 
 @events_group.command("create-source")
@@ -382,15 +478,27 @@ async def create_source(
     source to the caller's org, ``--global`` makes it global, ``--org
     <id|name>`` scopes it to that org.
     """
-    cron, tz, enabled = _pop_schedule_fields(fields)
-    adapter, integration_ref, webhook_config_raw = _pop_webhook_fields(fields)
+    cron, tz, enabled, overlap_policy = _pop_schedule_fields(fields)
+    (
+        adapter,
+        integration_ref,
+        webhook_config_raw,
+        rate_limit_per_minute,
+        rate_limit_window_seconds,
+        rate_limit_enabled,
+    ) = _pop_webhook_fields(fields)
 
     body = await assemble_body(EventSourceCreate, fields, resolver=resolver)
     target = await resolve_org_target(org, is_global, resolver)
     if target.is_set:
         body["organization_id"] = target.organization_id
 
-    schedule = await _build_schedule_config(cron=cron, timezone=tz, enabled=enabled)
+    schedule = await _build_schedule_config(
+        cron=cron,
+        timezone=tz,
+        enabled=enabled,
+        overlap_policy=overlap_policy,
+    )
     if schedule is not None:
         body["schedule"] = schedule
 
@@ -398,6 +506,11 @@ async def create_source(
         adapter=adapter,
         integration_ref=integration_ref,
         config_raw=webhook_config_raw,
+        rate_limit_per_minute=rate_limit_per_minute,
+        rate_limit_window_seconds=rate_limit_window_seconds,
+        rate_limit_enabled=rate_limit_enabled,
+        clear_integration=False,
+        clear_rate_limit=False,
         resolver=resolver,
     )
     if webhook is not None:
@@ -413,6 +526,16 @@ async def create_source(
 @_apply_flags(_SOURCE_UPDATE_FLAGS)
 @_schedule_flags
 @_webhook_flags
+@click.option(
+    "--clear-webhook-integration",
+    is_flag=True,
+    help="Clear the webhook integration reference.",
+)
+@click.option(
+    "--clear-rate-limit",
+    is_flag=True,
+    help="Clear the per-window webhook rate limit (disables limiting).",
+)
 @org_option
 @click.pass_context
 @pass_resolver
@@ -438,15 +561,30 @@ async def update_source(
     """
     source_uuid = await resolver.resolve("event_source", ref)
 
-    cron, tz, enabled = _pop_schedule_fields(fields)
-    adapter, integration_ref, webhook_config_raw = _pop_webhook_fields(fields)
+    clear_webhook_integration = bool(fields.pop("clear_webhook_integration", False))
+    clear_rate_limit = bool(fields.pop("clear_rate_limit", False))
+
+    cron, tz, enabled, overlap_policy = _pop_schedule_fields(fields)
+    (
+        adapter,
+        integration_ref,
+        webhook_config_raw,
+        rate_limit_per_minute,
+        rate_limit_window_seconds,
+        rate_limit_enabled,
+    ) = _pop_webhook_fields(fields)
 
     body = await assemble_body(EventSourceUpdate, fields, resolver=resolver)
     target = await resolve_org_target(org, is_global, resolver)
     if target.is_set:
         body["organization_id"] = target.organization_id
 
-    schedule = await _build_schedule_config(cron=cron, timezone=tz, enabled=enabled)
+    schedule = await _build_schedule_config(
+        cron=cron,
+        timezone=tz,
+        enabled=enabled,
+        overlap_policy=overlap_policy,
+    )
     if schedule is not None:
         body["schedule"] = schedule
 
@@ -454,6 +592,11 @@ async def update_source(
         adapter=adapter,
         integration_ref=integration_ref,
         config_raw=webhook_config_raw,
+        rate_limit_per_minute=rate_limit_per_minute,
+        rate_limit_window_seconds=rate_limit_window_seconds,
+        rate_limit_enabled=rate_limit_enabled,
+        clear_integration=clear_webhook_integration,
+        clear_rate_limit=clear_rate_limit,
         resolver=resolver,
     )
     if webhook is not None:
@@ -469,13 +612,13 @@ async def update_source(
 # ---------------------------------------------------------------------------
 
 
-@events_group.command("subscribe")
+@events_group.command("create-subscription")
 @click.argument("source_ref")
 @_apply_flags(_SUBSCRIPTION_CREATE_FLAGS)
 @click.pass_context
 @pass_resolver
 @run_async
-async def subscribe(
+async def create_subscription(
     ctx: click.Context,
     source_ref: str,
     *,
@@ -517,6 +660,26 @@ async def subscribe(
     output_result(response.json(), ctx=ctx)
 
 
+@events_group.command("delete-source")
+@click.argument("ref")
+@click.pass_context
+@pass_resolver
+@run_async
+async def delete_source(
+    ctx: click.Context,
+    ref: str,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+) -> None:
+    """Permanently delete an Event Source by UUID or name."""
+
+    source_uuid = await resolver.resolve("event_source", ref)
+    response = await client.delete(f"/api/events/sources/{source_uuid}")
+    response.raise_for_status()
+    output_result({"success": True, "id": source_uuid}, ctx=ctx)
+
+
 @events_group.command("update-subscription")
 @click.argument("source_ref")
 @click.argument("subscription_id")
@@ -545,6 +708,21 @@ async def subscribe(
     default=None,
     help="Rejected: changing the target type requires delete + recreate.",
 )
+@click.option(
+    "--clear-event-type",
+    is_flag=True,
+    help="Clear the optional event-type filter.",
+)
+@click.option(
+    "--clear-filter-expression",
+    is_flag=True,
+    help="Clear the optional filter expression.",
+)
+@click.option(
+    "--clear-input-mapping",
+    is_flag=True,
+    help="Clear the optional input mapping.",
+)
 @click.pass_context
 @pass_resolver
 @run_async
@@ -555,6 +733,9 @@ async def update_subscription(
     workflow_ref: str | None,
     agent_ref: str | None,
     target_type: str | None,
+    clear_event_type: bool,
+    clear_filter_expression: bool,
+    clear_input_mapping: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
@@ -581,6 +762,20 @@ async def update_subscription(
 
     source_uuid = await resolver.resolve("event_source", source_ref)
     body = await assemble_body(EventSubscriptionUpdate, fields, resolver=resolver)
+    clears = {
+        "event_type": clear_event_type,
+        "filter_expression": clear_filter_expression,
+        "input_mapping": clear_input_mapping,
+    }
+    conflicts = sorted(name for name, clear in clears.items() if clear and name in body)
+    if conflicts:
+        rendered = ", ".join(conflicts)
+        raise click.UsageError(
+            f"Cannot set and clear the same subscription field: {rendered}."
+        )
+    for name, clear in clears.items():
+        if clear:
+            body[name] = None
 
     response = await client.patch(
         f"/api/events/sources/{source_uuid}/subscriptions/{subscription_id}",
@@ -588,6 +783,30 @@ async def update_subscription(
     )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
+
+
+@events_group.command("delete-subscription")
+@click.argument("source_ref")
+@click.argument("subscription_id")
+@click.pass_context
+@pass_resolver
+@run_async
+async def delete_subscription(
+    ctx: click.Context,
+    source_ref: str,
+    subscription_id: str,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+) -> None:
+    """Permanently delete one Event Subscription."""
+
+    source_uuid = await resolver.resolve("event_source", source_ref)
+    response = await client.delete(
+        f"/api/events/sources/{source_uuid}/subscriptions/{subscription_id}"
+    )
+    response.raise_for_status()
+    output_result({"success": True, "id": subscription_id}, ctx=ctx)
 
 
 __all__ = ["events_group"]

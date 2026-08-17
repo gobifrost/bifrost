@@ -48,6 +48,7 @@ from src.services.mcp_server.tools import (  # noqa: E402
     agents as agents_mod,
     claims as claims_mod,
     configs as configs_mod,
+    events as events_mod,
     files as files_mod,
     forms as forms_mod,
     gateway as gateway_mod,
@@ -129,6 +130,19 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "bifrost_get_app_dependencies",
         "bifrost_update_app_dependencies",
     },
+    "events": {
+        "bifrost_list_event_sources",
+        "bifrost_get_event_source",
+        "bifrost_create_event_source",
+        "bifrost_update_event_source",
+        "bifrost_delete_event_source",
+        "bifrost_list_event_subscriptions",
+        "bifrost_get_event_subscription",
+        "bifrost_create_event_subscription",
+        "bifrost_update_event_subscription",
+        "bifrost_delete_event_subscription",
+        "bifrost_list_event_webhook_adapters",
+    },
     "policy_rules": {
         "list_policy_rules",
         "create_policy_rule",
@@ -159,6 +173,7 @@ MODULES = {
     "files": files_mod,
     "policy_rules": policy_rules_mod,
     "apps": apps_mod,
+    "events": events_mod,
     "gateway": gateway_mod,
 }
 
