@@ -2213,12 +2213,20 @@ Usage: tables update [OPTIONS] REF
   caller to grep their workspace before committing.
 
 Options:
-  --name TEXT         name
-  --description TEXT  description
-  --schema TEXT       schema as JSON literal or @path to a YAML/JSON file.
-  --policies TEXT     policies as JSON literal or @path to a YAML/JSON file.
-  --json              Emit JSON instead of human-readable output.
-  --help              Show this message and exit.
+  --name TEXT                     name
+  --description TEXT              description
+  --schema TEXT                   schema as JSON literal or @path to a
+                                  YAML/JSON file.
+  --policies TEXT                 policies as JSON literal or @path to a
+                                  YAML/JSON file.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ## `workflows`

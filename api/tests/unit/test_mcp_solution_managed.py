@@ -42,26 +42,48 @@ async def _managed_table(db) -> uuid.UUID:
 
 
 async def test_mcp_update_table_refuses_managed(db_session, monkeypatch):
-    from contextlib import asynccontextmanager
+    from sqlalchemy import select
 
+    from src.models.orm.tables import Table
     from src.services.mcp_server.tools import tables as mcp_tables
 
     tid = await _managed_table(db_session)
 
-    # Point the MCP tool's db at this test session (it normally opens its own).
-    @asynccontextmanager
-    async def _fake_tool_db(_context):
-        yield db_session
+    async def _fake_resolve(_context, kind, value):
+        assert (kind, value) == ("table", str(tid))
+        return str(tid)
 
-    monkeypatch.setattr(mcp_tables, "get_tool_db", _fake_tool_db)
+    async def _fake_assemble(_context, fields, *, is_update, scope):
+        assert fields["name"] == "hijacked-via-mcp"
+        assert is_update is True
+        assert scope is None
+        return {"name": fields["name"]}
+
+    async def _fake_call_rest(_context, method, path, *, json_body=None, params=None):
+        assert (method, path) == ("PATCH", f"/api/tables/{tid}")
+        assert json_body == {"name": "hijacked-via-mcp"}
+        assert params is None
+        return 409, {"detail": SOLUTION_MANAGED_MESSAGE}
+
+    monkeypatch.setattr(mcp_tables, "_resolve_ref", _fake_resolve)
+    monkeypatch.setattr(mcp_tables, "_assemble_table_body", _fake_assemble)
+    monkeypatch.setattr(mcp_tables, "call_rest", _fake_call_rest)
 
     context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
-    result = await mcp_tables.update_table(context, table_id=str(tid), name="hijacked-via-mcp")
+    result = await mcp_tables.bifrost_update_table(
+        context,
+        table_ref=str(tid),
+        name="hijacked-via-mcp",
+    )
 
     # The tool returns an error result carrying the locked read-only message.
     payload = result.model_dump() if hasattr(result, "model_dump") else result
     text = str(payload)
     assert SOLUTION_MANAGED_MESSAGE in text, text
+    name = (
+        await db_session.execute(select(Table.name).where(Table.id == tid))
+    ).scalar_one()
+    assert name != "hijacked-via-mcp"
 
 
 async def _managed_app(db, repo_path: str) -> uuid.UUID:
@@ -674,8 +696,6 @@ async def test_mcp_delete_agent_refuses_managed(db_session, monkeypatch):
 
 
 async def test_mcp_delete_table_refuses_managed(db_session, monkeypatch):
-    from contextlib import asynccontextmanager
-
     from sqlalchemy import select
 
     from src.models.orm.tables import Table
@@ -683,14 +703,21 @@ async def test_mcp_delete_table_refuses_managed(db_session, monkeypatch):
 
     tid = await _managed_table(db_session)
 
-    @asynccontextmanager
-    async def _fake_tool_db(_context):
-        yield db_session
+    async def _fake_resolve(_context, kind, value):
+        assert (kind, value) == ("table", str(tid))
+        return str(tid)
 
-    monkeypatch.setattr(mcp_tables, "get_tool_db", _fake_tool_db)
+    async def _fake_call_rest(_context, method, path, *, json_body=None, params=None):
+        assert (method, path) == ("DELETE", f"/api/tables/{tid}")
+        assert json_body is None
+        assert params is None
+        return 409, {"detail": SOLUTION_MANAGED_MESSAGE}
+
+    monkeypatch.setattr(mcp_tables, "_resolve_ref", _fake_resolve)
+    monkeypatch.setattr(mcp_tables, "call_rest", _fake_call_rest)
 
     context = SimpleNamespace(is_platform_admin=True, org_id=None, user_id=uuid.uuid4())
-    result = await mcp_tables.delete_table(context, table_id=str(tid))
+    result = await mcp_tables.bifrost_delete_table(context, table_ref=str(tid))
 
     text = str(result.model_dump() if hasattr(result, "model_dump") else result)
     assert SOLUTION_MANAGED_MESSAGE in text, text

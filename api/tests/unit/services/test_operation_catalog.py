@@ -69,7 +69,39 @@ FORM_OPERATIONS = {
     ),
 }
 
-CANONICAL_OPERATIONS = {**AGENT_OPERATIONS, **FORM_OPERATIONS}
+TABLE_OPERATIONS = {
+    "tables.list": ("GET", "/api/tables", ("tables", "list"), "bifrost_list_tables"),
+    "tables.get": (
+        "GET",
+        "/api/tables/{table_id}",
+        ("tables", "get"),
+        "bifrost_get_table",
+    ),
+    "tables.create": (
+        "POST",
+        "/api/tables",
+        ("tables", "create"),
+        "bifrost_create_table",
+    ),
+    "tables.update": (
+        "PATCH",
+        "/api/tables/{table_id}",
+        ("tables", "update"),
+        "bifrost_update_table",
+    ),
+    "tables.delete": (
+        "DELETE",
+        "/api/tables/{table_id}",
+        ("tables", "delete"),
+        "bifrost_delete_table",
+    ),
+}
+
+CANONICAL_OPERATIONS = {
+    **AGENT_OPERATIONS,
+    **FORM_OPERATIONS,
+    **TABLE_OPERATIONS,
+}
 
 
 def test_canonical_vertical_slices_have_stable_surface_bindings() -> None:

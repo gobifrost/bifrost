@@ -189,6 +189,10 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # of ApplicationPublic, and the CLI polls PlatformJobPublic for durable
     # progress/result/error (2026-07-28). CONTRACT_VERSION bumped to 8.
     #
+    # TableUpdate gained optional organization_id so CLI, MCP, and REST share
+    # the same home/global/organization retargeting contract (2026-08-17).
+    # ADDITIVE: old CLIs omit it and retain existing scope. Fingerprint only.
+    #
     # Forms gained optional confirmation_markdown (2026-08-04). ADDITIVE: old
     # clients omit it and continue receiving the prior default confirmation.
     #
@@ -219,7 +223,7 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # external-execution/result fields (2026-08-16). ADDITIVE: old clients omit
     # the Agent field and ignore the new job metadata. Skill bundle mutation is
     # manifest/upload-owned and is intentionally excluded from generic CLI flags.
-    "baa1cabde61447cf2eec9ffce8f5714fd92b36558b6df390cf79d27cffbadeb0"
+    "bb6072044cce00e63168b8995b767265a4fc7f11ef6f1e8f14ce6239a25e13ce"
 )
 
 

@@ -17,7 +17,7 @@ Implements Task 5i of the CLI mutation surface plan:
 
 Ref-lookup fields surface as user-friendly flags:
 
-* ``--organization`` (org ref) — ``TableCreate``
+* ``--organization`` (org ref) — ``TableCreate`` and ``TableUpdate``
 
 Rename safety: ``update`` fetches the current table first and, if ``--name``
 changes it, emits a prominent warning to stderr telling the user to grep
@@ -134,12 +134,15 @@ async def create_table(
 @tables_group.command("update")
 @click.argument("ref")
 @_apply_flags(_UPDATE_FLAGS)
+@org_option
 @click.pass_context
 @pass_resolver
 @run_async
 async def update_table(
     ctx: click.Context,
     ref: str,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
@@ -165,6 +168,9 @@ async def update_table(
     current_name = current_resp.json().get("name")
 
     body = await assemble_body(TableUpdate, fields, resolver=resolver)
+    target = await resolve_org_target(org, is_global, resolver)
+    if target.is_set:
+        body["organization_id"] = target.organization_id
 
     new_name = body.get("name")
     if new_name is not None and current_name is not None and new_name != current_name:

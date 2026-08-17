@@ -1,7 +1,7 @@
-"""E2E tests for the public tables PATCH endpoint.
+"""E2E tests for Table metadata and document endpoints.
 
-Covers the TableUpdate DTO's ability to rename tables and reassign the owning
-application, plus validation for bogus application references.
+Covers the TableUpdate DTO's ability to rename and retarget tables, including
+structured validation for invalid organizations and target-scope conflicts.
 Also covers the default-deny behaviour for non-admin users and the ?scope=
 query parameter on the document endpoints.
 """
@@ -53,6 +53,75 @@ class TestTableUpdatePublic:
         )
         assert get_resp.status_code == 200
         assert get_resp.json()["name"] == new_name
+
+    def test_create_and_update_reject_unknown_organization(
+        self,
+        e2e_client,
+        platform_admin,
+    ) -> None:
+        unknown_org = str(uuid4())
+        create = e2e_client.post(
+            "/api/tables",
+            headers=platform_admin.headers,
+            json={
+                "name": f"unknown_org_{uuid4().hex[:8]}",
+                "organization_id": unknown_org,
+            },
+        )
+        assert create.status_code == 422, create.text
+        assert create.json()["detail"]["message"] == "Invalid Table target"
+
+        table_id = _create_table(
+            e2e_client,
+            platform_admin.headers,
+            f"retarget_unknown_{uuid4().hex[:8]}",
+        )
+        update = e2e_client.patch(
+            f"/api/tables/{table_id}",
+            headers=platform_admin.headers,
+            json={"organization_id": unknown_org},
+        )
+        assert update.status_code == 422, update.text
+        assert update.json()["detail"]["message"] == "Invalid Table target"
+
+    def test_retarget_name_conflict_is_structured_and_atomic(
+        self,
+        e2e_client,
+        platform_admin,
+        org1,
+    ) -> None:
+        name = f"retarget_conflict_{uuid4().hex[:8]}"
+        global_create = e2e_client.post(
+            "/api/tables",
+            headers=platform_admin.headers,
+            json={"name": name, "organization_id": None},
+        )
+        assert global_create.status_code == 201, global_create.text
+        global_id = global_create.json()["id"]
+        org_id = _create_table(
+            e2e_client,
+            platform_admin.headers,
+            name,
+            organization_id=org1["id"],
+        )
+
+        conflict = e2e_client.patch(
+            f"/api/tables/{global_id}",
+            headers=platform_admin.headers,
+            json={"organization_id": org1["id"]},
+        )
+        assert conflict.status_code == 409, conflict.text
+        assert conflict.json()["detail"] == (
+            f"Table '{name}' already exists in the target scope"
+        )
+
+        unchanged = e2e_client.get(
+            f"/api/tables/{global_id}",
+            headers=platform_admin.headers,
+        )
+        assert unchanged.status_code == 200
+        assert unchanged.json()["organization_id"] is None
+        assert org_id != global_id
 
 
 @pytest.mark.e2e

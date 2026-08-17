@@ -56,6 +56,7 @@ from src.services.mcp_server.tools import (  # noqa: E402
     apps as apps_mod,
     policy_rules as policy_rules_mod,
     roles as roles_mod,
+    tables as tables_mod,
     workflow as workflow_mod,
 )
 
@@ -74,6 +75,13 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "bifrost_create_form",
         "bifrost_update_form",
         "bifrost_delete_form",
+    },
+    "tables": {
+        "bifrost_list_tables",
+        "bifrost_get_table",
+        "bifrost_create_table",
+        "bifrost_update_table",
+        "bifrost_delete_table",
     },
     "roles": {"list_roles", "create_role", "update_role", "delete_role"},
     "configs": {
@@ -129,6 +137,7 @@ PARITY_HANDLERS: dict[str, set[str]] = {
 MODULES = {
     "agents": agents_mod,
     "forms": forms_mod,
+    "tables": tables_mod,
     "roles": roles_mod,
     "claims": claims_mod,
     "configs": configs_mod,

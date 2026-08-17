@@ -2,7 +2,7 @@
 
 **Owner:** Jack Musick / Bifrost engineering
 **Created:** 2026-08-17
-**Status:** In progress — Phases 0–1 complete; Phase 2 Agent and Form slices complete
+**Status:** In progress — Phases 0–1 complete; Phase 2 Agent, Form, and Table slices complete
 **Execution branch:** `codex/code-builder-pydantic-integration-20260816`
 **Base:** `origin/main@16e317e62`
 **Depends on:** the reconstructed Builder and shared Pydantic runtime described
@@ -219,6 +219,9 @@ environment-skipped mirror tests; API Pyright and Ruff are clean.
 - [x] Complete the Form vertical slice with the same canonical REST boundary,
       including soft-delete/purge parity, atomic relationship validation,
       audit and manifest side effects, and persisted tool-name migration.
+- [x] Complete the Table metadata vertical slice with canonical DTO schema and
+      policy fields, home/global/organization retargeting, audit/manifest/policy
+      side effects, strict reference resolution, and persisted tool-name migration.
 - [ ] Convert legacy direct-ORM MCP implementations to thin HTTP wrappers using
       `_http_bridge.py`; do not create a second service path for MCP.
 - [ ] Reconcile known drift in Tables, Apps, Events, and remaining domains:
@@ -269,7 +272,27 @@ as the shared explicit-clear representation, with required refs still
 rejecting it. The focused architecture, DTO/body/contract, migration,
 signature, and mirror selection passed 238 with two environment-skipped mirror
 tests. Generated operation and Skill references are fresh, and API
-Pyright/Ruff are clean. Tables, Apps, and Events remain in this phase.
+Pyright/Ruff are clean. Apps and Events remain after the Table slice below.
+
+**Table-slice evidence:** the legacy Table MCP implementation and its dead
+schema helper were removed in favor of five REST adapters registered only as
+`bifrost_list_tables`, `bifrost_get_table`, `bifrost_create_table`,
+`bifrost_update_table`, and `bifrost_delete_table`. Forward migration
+`20260817_table_mcp_names` renames all five persisted grants. TableCreate and
+TableUpdate now expose the same schema, policies, and standard organization
+target across CLI/MCP/REST; PATCH preserves omitted fields while honoring
+explicit nulls. REST owns Solution guards, policy-claim validation and
+publication, audit, manifest regeneration, conflict handling, and destructive
+document cascades. The same forward migration repairs the `_repo` Table name
+indexes lost when the old orphan columns were removed; REST also preflights
+duplicates so callers receive an atomic 409 before the database race guard.
+The final live Table MCP/CLI/REST matrix passed 55/55, the broad focused
+catalog/DTO/contract/wrapper/migration/Solution-guard selection passed 231/231,
+and the final contract/regression selection passed 176/176. API
+Pyright/Ruff and client TypeScript are clean; ESLint has zero errors and only
+the pre-existing React Compiler warning in `FormRenderer.tsx`. Generated
+operation, CLI, OpenAPI, and browser type references were refreshed. Apps and
+Events remain in this phase.
 
 ### Phase 3 — Finish Agent Skill portability
 

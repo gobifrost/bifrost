@@ -1,499 +1,282 @@
-"""
-Table MCP Tools
+"""Table metadata MCP tools backed by the canonical REST API.
 
-Tools for listing, getting, creating, and updating tables.
-Tables are flexible document stores scoped to global, organization, or application level.
+These tools administer Table definitions. Application SDK table methods remain
+the document-data surface. MCP resolves human references and assembles the
+shared DTO, then reuses REST authorization, validation, audit, manifest, policy
+publication, and Solution-management behavior.
 """
 
-import logging
+from __future__ import annotations
+
 from typing import Any
-from uuid import UUID, uuid4
 
 from fastmcp.tools import ToolResult
 
 from src.services.mcp_server.tool_result import error_result, success_result
-from src.services.mcp_server.tools._org_scope import apply_mcp_org_scope
-from src.services.mcp_server.tools.db import get_tool_db
-
-logger = logging.getLogger(__name__)
+from src.services.mcp_server.tools._http_bridge import call_rest, rest_client
 
 
-async def list_tables(
+def _ref_error_payload(exc: Exception) -> dict[str, Any]:
+    from bifrost.refs import AmbiguousRefError, RefNotFoundError
+
+    if isinstance(exc, AmbiguousRefError):
+        return {"kind": exc.kind, "value": exc.value, "candidates": exc.candidates}
+    if isinstance(exc, RefNotFoundError):
+        return {"kind": exc.kind, "value": exc.value}
+    return {"detail": str(exc)}
+
+
+def _rest_error(action: str, status_code: int, body: Any) -> ToolResult:
+    detail = body.get("detail") if isinstance(body, dict) else None
+    if isinstance(detail, dict):
+        message = detail.get("message") or detail.get("detail")
+    else:
+        message = detail
+    return error_result(
+        str(message) if message else f"{action} failed: HTTP {status_code}",
+        {"status_code": status_code, "body": body},
+    )
+
+
+async def _resolve_ref(context: Any, kind: str, value: str) -> str:
+    from bifrost.refs import RefResolver
+
+    async with rest_client(context) as http:
+        return await RefResolver(http).resolve(kind, value)  # type: ignore[arg-type]
+
+
+async def _assemble_table_body(
+    context: Any,
+    fields: dict[str, Any],
+    *,
+    is_update: bool,
+    scope: str | None,
+) -> dict[str, Any]:
+    from bifrost.dto_flags import assemble_body
+    from bifrost.refs import RefResolver
+    from src.models.contracts.tables import TableCreate, TableUpdate
+
+    model_cls = TableUpdate if is_update else TableCreate
+    async with rest_client(context) as http:
+        resolver = RefResolver(http)
+        body = await assemble_body(model_cls, fields, resolver=resolver)
+        if scope is not None:
+            if scope == "global":
+                body["organization_id"] = None
+            else:
+                body["organization_id"] = await resolver.resolve("org", scope)
+    return body
+
+
+async def bifrost_list_tables(
     context: Any,
     scope: str | None = None,
 ) -> ToolResult:
-    """List tables with org filtering for non-admins."""
-    from sqlalchemy import select
+    """List Table definitions through ``GET /api/tables``.
 
-    from src.models.orm.tables import Table
+    ``scope`` is ``global``, an organization UUID, or omitted for every Table
+    visible to the platform administrator.
+    """
 
-    logger.info(f"MCP list_tables called with scope={scope}")
+    params = {"scope": scope} if scope is not None else None
+    status_code, body = await call_rest(
+        context,
+        "GET",
+        "/api/tables",
+        params=params,
+    )
+    if status_code != 200:
+        return _rest_error("List Tables", status_code, body)
+    tables = body.get("tables", []) if isinstance(body, dict) else []
+    return success_result(
+        f"Found {len(tables)} Table(s)",
+        {"tables": tables, "count": len(tables)},
+    )
 
+
+async def bifrost_get_table(context: Any, table_ref: str) -> ToolResult:
+    """Get one Table definition by UUID or unambiguous name."""
+
+    if not table_ref:
+        return error_result("table_ref is required")
     try:
-        async with get_tool_db(context) as db:
-            query = select(Table)
-
-            # Org cascade: own org + global (admins unscoped).
-            query = apply_mcp_org_scope(query, Table, context)
-
-            # Apply scope filter if provided.
-            if scope == "global":
-                query = query.where(Table.organization_id.is_(None))
-            elif scope == "organization":
-                query = query.where(Table.organization_id.isnot(None))
-
-            result = await db.execute(query.order_by(Table.name))
-            tables = result.scalars().all()
-
-            tables_data = []
-            for table in tables:
-                table_scope = "organization" if table.organization_id else "global"
-                tables_data.append({
-                    "id": str(table.id),
-                    "name": table.name,
-                    "description": table.description,
-                    "scope": table_scope,
-                    "organization_id": str(table.organization_id) if table.organization_id else None,
-                    "created_at": table.created_at.isoformat() if table.created_at else None,
-                })
-
-            display_text = f"Found {len(tables_data)} table(s)"
-            return success_result(display_text, {"tables": tables_data, "count": len(tables_data)})
-
-    except Exception as e:
-        logger.exception(f"Error listing tables via MCP: {e}")
-        return error_result(f"Error listing tables: {str(e)}")
+        table_id = await _resolve_ref(context, "table", table_ref)
+    except Exception as exc:
+        return error_result(
+            f"Could not resolve Table {table_ref!r}",
+            _ref_error_payload(exc),
+        )
+    status_code, body = await call_rest(
+        context,
+        "GET",
+        f"/api/tables/{table_id}",
+    )
+    if status_code != 200:
+        return _rest_error("Get Table", status_code, body)
+    payload = body if isinstance(body, dict) else {"body": body}
+    return success_result(f"Table: {payload.get('name', table_id)}", payload)
 
 
-async def get_table(
-    context: Any,
-    table_id: str | None = None,
-) -> ToolResult:
-    """Get table details including schema."""
-    from sqlalchemy import func, select
-
-    from src.models.orm.tables import Document, Table
-
-    logger.info(f"MCP get_table called with id={table_id}")
-
-    if not table_id:
-        return error_result("table_id is required")
-
-    try:
-        table_uuid = UUID(table_id)
-    except ValueError:
-        return error_result(f"Invalid table_id format: {table_id}")
-
-    try:
-        async with get_tool_db(context) as db:
-            query = select(Table).where(Table.id == table_uuid)
-
-            # Org cascade (external-aware): externals get no global tier.
-            query = apply_mcp_org_scope(query, Table, context)
-
-            result = await db.execute(query)
-            table = result.scalar_one_or_none()
-
-            if not table:
-                return error_result(f"Table not found: {table_id}")
-
-            # Get document count
-            count_query = (
-                select(func.count())
-                .select_from(Document)
-                .where(Document.table_id == table_uuid)
-            )
-            count_result = await db.execute(count_query)
-            document_count = count_result.scalar() or 0
-
-            table_scope = "organization" if table.organization_id else "global"
-
-            # Extract columns from schema if available
-            columns = []
-            if table.schema and isinstance(table.schema, dict):
-                columns = table.schema.get("columns", [])
-
-            table_data = {
-                "id": str(table.id),
-                "name": table.name,
-                "description": table.description,
-                "scope": table_scope,
-                "organization_id": str(table.organization_id) if table.organization_id else None,
-                "schema": table.schema,
-                "columns": columns,
-                "document_count": document_count,
-                "created_at": table.created_at.isoformat() if table.created_at else None,
-                "updated_at": table.updated_at.isoformat() if table.updated_at else None,
-                "created_by": table.created_by,
-            }
-
-            display_text = f"Table: {table.name} ({document_count} documents)"
-            return success_result(display_text, table_data)
-
-    except Exception as e:
-        logger.exception(f"Error getting table via MCP: {e}")
-        return error_result(f"Error getting table: {str(e)}")
-
-
-async def get_table_schema(context: Any) -> ToolResult:  # noqa: ARG001
-    """Return markdown documentation about table structure generated from Pydantic models."""
-    from src.models.contracts.tables import TableCreate, TableUpdate
-    from src.services.mcp_server.schema_utils import models_to_markdown
-
-    # Generate model documentation
-    model_docs = models_to_markdown([
-        (TableCreate, "TableCreate (for creating tables)"),
-        (TableUpdate, "TableUpdate (for updating tables)"),
-    ], "Table Schema Documentation")
-
-    # Additional conceptual documentation
-    context_docs = """
-## Table Scope
-
-Tables can be scoped at two levels:
-
-| Scope | organization_id | Visibility |
-|-------|-----------------|------------|
-| **global** | NULL | All organizations |
-| **organization** | UUID | Single organization |
-
-## Column Types
-
-Supported column types for schema hints:
-
-| Type | Description | Options |
-|------|-------------|---------|
-| `string` | Text value | `minLength`, `maxLength`, `pattern`, `enum` |
-| `number` | Numeric value | `minimum`, `maximum` |
-| `integer` | Whole number | `minimum`, `maximum` |
-| `boolean` | True/false | - |
-| `date` | ISO date string | - |
-| `datetime` | ISO datetime string | - |
-| `json` | Nested JSON object | - |
-| `array` | List of values | `items` (type of array elements) |
-
-## Column Properties
-
-Each column can have these properties:
-- `name` (required): Column identifier
-- `type` (required): One of the types above
-- `required`: Whether the field is required
-- `description`: Human-readable description
-- `default`: Default value
-- `enum`: Array of allowed values (for string type)
-
-## MCP Tools for Tables
-
-- `list_tables` - List all accessible tables
-- `get_table` - Get table details by ID
-- `create_table` - Create a new table
-- `update_table` - Update table properties
-
-## Multi-tenancy
-
-- **Platform admins**: See all tables
-- **Regular users**: See global tables + their organization's tables
-
-When creating: Set `scope` to 'global' or 'organization'
-"""
-
-    schema_doc = model_docs + context_docs
-    return success_result("Table schema documentation", {"schema": schema_doc})
-
-
-async def create_table(
+async def bifrost_create_table(
     context: Any,
     name: str,
     description: str | None = None,
-    scope: str = "organization",
-    organization_id: str | None = None,
-    columns: list[dict[str, Any]] | None = None,
+    schema: dict[str, Any] | None = None,
+    policies: dict[str, Any] | None = None,
+    scope: str | None = None,
 ) -> ToolResult:
-    """Create a new table with explicit scope."""
-    from sqlalchemy import select
+    """Create a Table definition through ``POST /api/tables``.
 
-    from shared.policies.probe import make_seed_admin_bypass
-    from src.models.orm.tables import Table
-
-    logger.info(f"MCP create_table called with name={name}, scope={scope}")
-
-    if not name:
-        return error_result("name is required")
-
-    # Validate scope parameters
-    if scope == "organization":
-        if not organization_id:
-            # Default to context org_id for non-admins
-            if context.org_id:
-                organization_id = str(context.org_id)
-            else:
-                return error_result("organization_id is required for organization scope")
-    elif scope == "global":
-        # Global tables can only be created by platform admins
-        if not context.is_platform_admin:
-            return error_result("Only platform admins can create global tables")
-        organization_id = None
-
-    # Parse UUIDs
-    org_uuid: UUID | None = None
-
-    if organization_id:
-        try:
-            org_uuid = UUID(organization_id)
-        except ValueError:
-            return error_result(f"Invalid organization_id format: {organization_id}")
-
-    # Non-admins can only create tables in their own org
-    if not context.is_platform_admin and context.org_id:
-        if org_uuid and org_uuid != context.org_id:
-            return error_result("Cannot create tables in other organizations")
+    ``scope`` is ``global``, an organization UUID/name, or omitted for the
+    caller's home organization. ``schema`` and ``policies`` use the same wire
+    shapes as the REST API, CLI, and Solution manifest.
+    """
 
     try:
-        async with get_tool_db(context) as db:
-            # Check for duplicate name within same scope. The global-scope
-            # branch (org_uuid is None) is only reachable by a platform admin —
-            # global table creation is admin-gated above, and an external
-            # principal can never target global scope.
-            query = select(Table).where(Table.name == name)
-            if org_uuid:
-                query = query.where(Table.organization_id == org_uuid)
-            elif context.is_platform_admin:
-                query = query.where(Table.organization_id.is_(None))
-            else:
-                # Defense-in-depth: a non-admin with no resolved org cannot
-                # create/check a global table.
-                return error_result("organization_id is required")
-
-            existing = await db.execute(query)
-            if existing.scalar_one_or_none():
-                return error_result(f"Table with name '{name}' already exists in this scope")
-
-            # Build schema from columns
-            schema: dict[str, Any] | None = None
-            if columns:
-                schema = {"columns": columns}
-
-            # Create table
-            # Default seed: admin_bypass so platform admins aren't locked out.
-            # Task 18 will wire policies into the MCP create path.
-            table = Table(
-                id=uuid4(),
-                name=name,
-                description=description,
-                organization_id=org_uuid,
-                schema=schema,
-                access=make_seed_admin_bypass(),
-                created_by=str(context.user_id),
-            )
-            db.add(table)
-            await db.commit()
-
-            display_text = f"Created table: {table.name}"
-            return success_result(display_text, {
-                "success": True,
-                "id": str(table.id),
-                "name": table.name,
-                "scope": scope,
-                "organization_id": str(org_uuid) if org_uuid else None,
-            })
-
-    except Exception as e:
-        logger.exception(f"Error creating table via MCP: {e}")
-        return error_result(f"Error creating table: {str(e)}")
+        body = await _assemble_table_body(
+            context,
+            {
+                "name": name,
+                "description": description,
+                "schema": schema,
+                "policies": policies,
+            },
+            is_update=False,
+            scope=scope,
+        )
+    except Exception as exc:
+        return error_result(f"Invalid Table input: {exc}", _ref_error_payload(exc))
+    status_code, response = await call_rest(
+        context,
+        "POST",
+        "/api/tables",
+        json_body=body,
+    )
+    if status_code != 201:
+        return _rest_error("Create Table", status_code, response)
+    payload = response if isinstance(response, dict) else {"body": response}
+    return success_result(f"Created Table: {payload.get('name', name)}", payload)
 
 
-async def update_table(
+async def bifrost_update_table(
     context: Any,
-    table_id: str,
+    table_ref: str,
     name: str | None = None,
     description: str | None = None,
+    schema: dict[str, Any] | None = None,
+    policies: dict[str, Any] | None = None,
     scope: str | None = None,
-    organization_id: str | None = None,
-    columns: list[dict[str, Any]] | None = None,
 ) -> ToolResult:
-    """Update table properties."""
-    from sqlalchemy import select
+    """Update a Table definition through ``PATCH /api/tables/{id}``.
 
-    from src.models.orm.tables import Table
+    ``scope`` may move the Table to ``global`` or an organization UUID/name.
+    Existing policies are revalidated against the destination organization.
+    """
 
-    logger.info(f"MCP update_table called with id={table_id}")
-
-    if not table_id:
-        return error_result("table_id is required")
-
+    if not table_ref:
+        return error_result("table_ref is required")
     try:
-        table_uuid = UUID(table_id)
-    except ValueError:
-        return error_result(f"Invalid table_id format: {table_id}")
+        table_id = await _resolve_ref(context, "table", table_ref)
+        body = await _assemble_table_body(
+            context,
+            {
+                "name": name,
+                "description": description,
+                "schema": schema,
+                "policies": policies,
+            },
+            is_update=True,
+            scope=scope,
+        )
+    except Exception as exc:
+        return error_result(f"Invalid Table input: {exc}", _ref_error_payload(exc))
+    if not body:
+        return error_result("No updates provided")
+    status_code, response = await call_rest(
+        context,
+        "PATCH",
+        f"/api/tables/{table_id}",
+        json_body=body,
+    )
+    if status_code != 200:
+        return _rest_error("Update Table", status_code, response)
+    payload = response if isinstance(response, dict) else {"body": response}
+    return success_result(
+        f"Updated Table: {payload.get('name', table_id)}",
+        payload,
+    )
 
+
+async def bifrost_delete_table(context: Any, table_ref: str) -> ToolResult:
+    """Delete a Table definition and all of its documents through REST."""
+
+    if not table_ref:
+        return error_result("table_ref is required")
     try:
-        async with get_tool_db(context) as db:
-            query = select(Table).where(Table.id == table_uuid)
-
-            # Non-admins can only update their org's tables (external-aware:
-            # externals can't reach global tables to mutate them).
-            query = apply_mcp_org_scope(query, Table, context)
-
-            result = await db.execute(query)
-            table = result.scalar_one_or_none()
-
-            if not table:
-                return error_result(f"Table not found: {table_id}")
-
-            # Solution-managed tables are read-only (criterion 6) — refuse before
-            # mutating so the caller gets the clean locked message, not a 500 from
-            # the before_flush backstop (audit M-MCP).
-            from src.services.solutions.guard import (
-                SOLUTION_MANAGED_MESSAGE,
-                is_solution_managed,
-            )
-
-            if is_solution_managed(table):
-                return error_result(SOLUTION_MANAGED_MESSAGE)
-
-            updates_made = []
-
-            if name is not None:
-                table.name = name
-                updates_made.append("name")
-
-            if description is not None:
-                table.description = description
-                updates_made.append("description")
-
-            # Handle scope changes
-            if scope is not None:
-                # Validate scope change permissions
-                if scope == "global" and not context.is_platform_admin:
-                    return error_result("Only platform admins can set global scope")
-
-                if scope == "global":
-                    table.organization_id = None
-                    updates_made.append("scope")
-                elif scope == "organization":
-                    if organization_id:
-                        try:
-                            table.organization_id = UUID(organization_id)
-                        except ValueError:
-                            return error_result(f"Invalid organization_id format: {organization_id}")
-                    elif not table.organization_id:
-                        # Default to context org_id
-                        if context.org_id:
-                            table.organization_id = context.org_id
-                        else:
-                            return error_result("organization_id required for organization scope")
-                    updates_made.append("scope")
-
-            if columns is not None:
-                if table.schema is None:
-                    table.schema = {}
-                table.schema = {**table.schema, "columns": columns}
-                updates_made.append("columns")
-
-            if not updates_made:
-                return error_result("No updates specified")
-
-            await db.commit()
-
-            current_scope = "organization" if table.organization_id else "global"
-
-            display_text = f"Updated table: {table.name} ({', '.join(updates_made)})"
-            return success_result(display_text, {
-                "success": True,
-                "id": str(table.id),
-                "name": table.name,
-                "scope": current_scope,
-                "updates": updates_made,
-            })
-
-    except Exception as e:
-        logger.exception(f"Error updating table via MCP: {e}")
-        return error_result(f"Error updating table: {str(e)}")
+        table_id = await _resolve_ref(context, "table", table_ref)
+    except Exception as exc:
+        return error_result(
+            f"Could not resolve Table {table_ref!r}",
+            _ref_error_payload(exc),
+        )
+    status_code, response = await call_rest(
+        context,
+        "DELETE",
+        f"/api/tables/{table_id}",
+    )
+    if status_code != 204:
+        return _rest_error("Delete Table", status_code, response)
+    return success_result("Deleted Table", {"success": True, "id": table_id})
 
 
-async def delete_table(
-    context: Any,
-    table_id: str,
-) -> ToolResult:
-    """Delete a table and all its documents by ID."""
-    from sqlalchemy import select
-
-    from src.models.orm.tables import Table
-
-    logger.info(f"MCP delete_table called with id={table_id}")
-
-    if not table_id:
-        return error_result("table_id is required")
-
-    try:
-        table_uuid = UUID(table_id)
-    except ValueError:
-        return error_result(f"Invalid table_id format: {table_id}")
-
-    try:
-        async with get_tool_db(context) as db:
-            query = select(Table).where(Table.id == table_uuid)
-
-            # Non-admins can only delete their org's tables
-            if not context.is_platform_admin and context.org_id:
-                query = query.where(
-                    (Table.organization_id == context.org_id)
-                )
-
-            result = await db.execute(query)
-            table = result.scalar_one_or_none()
-
-            if not table:
-                return error_result(f"Table not found: {table_id}")
-
-            # Solution-managed tables are read-only (criterion 6) — refuse before
-            # the delete so the caller gets the clean locked message, not a 500
-            # from the before_flush backstop (audit M-MCP).
-            from src.services.solutions.guard import (
-                SOLUTION_MANAGED_MESSAGE,
-                is_solution_managed,
-            )
-
-            if is_solution_managed(table):
-                return error_result(SOLUTION_MANAGED_MESSAGE)
-
-            table_name = table.name
-            await db.delete(table)
-            await db.commit()
-
-            display_text = f"Deleted table: {table_name}"
-            return success_result(display_text, {
-                "success": True,
-                "id": table_id,
-                "name": table_name,
-            })
-
-    except Exception as e:
-        logger.exception(f"Error deleting table via MCP: {e}")
-        return error_result(f"Error deleting table: {str(e)}")
-
-
-# Tool metadata for registration
 TOOLS = [
-    ("list_tables", "List Tables", "List tables in the platform. Platform admin only."),
-    ("get_table", "Get Table", "Get table details including schema by ID. Platform admin only."),
-("create_table", "Create Table", "Create a new table with specified scope. Requires platform admin for global scope."),
-    ("update_table", "Update Table", "Update table properties including name, description, scope, and columns."),
-    ("delete_table", "Delete Table", "Delete a table and all its documents by ID."),
+    (
+        "bifrost_list_tables",
+        "List Tables",
+        "List Table definitions. Platform admin only.",
+    ),
+    (
+        "bifrost_get_table",
+        "Get Table",
+        "Get a Table definition by UUID or unambiguous name. Platform admin only.",
+    ),
+    (
+        "bifrost_create_table",
+        "Create Table",
+        "Create a Table definition using the canonical schema and policy contract.",
+    ),
+    (
+        "bifrost_update_table",
+        "Update Table",
+        "Update a Table definition using the canonical schema and policy contract.",
+    ),
+    (
+        "bifrost_delete_table",
+        "Delete Table",
+        "Delete a Table definition and all of its documents.",
+    ),
 ]
 
 
 def register_tools(mcp: Any, get_context_fn: Any) -> None:
-    """Register all tables tools with FastMCP."""
-    from src.services.mcp_server.generators.fastmcp_generator import register_tool_with_context
+    """Register canonical Table tools with FastMCP."""
+
+    from src.services.mcp_server.generators.fastmcp_generator import (
+        register_tool_with_context,
+    )
 
     tool_funcs = {
-        "list_tables": list_tables,
-        "get_table": get_table,
-"create_table": create_table,
-        "update_table": update_table,
-        "delete_table": delete_table,
+        "bifrost_list_tables": bifrost_list_tables,
+        "bifrost_get_table": bifrost_get_table,
+        "bifrost_create_table": bifrost_create_table,
+        "bifrost_update_table": bifrost_update_table,
+        "bifrost_delete_table": bifrost_delete_table,
     }
-
-    for tool_id, name, description in TOOLS:
-        register_tool_with_context(mcp, tool_funcs[tool_id], tool_id, description, get_context_fn)
+    for tool_id, _name, description in TOOLS:
+        register_tool_with_context(
+            mcp,
+            tool_funcs[tool_id],
+            tool_id,
+            description,
+            get_context_fn,
+        )

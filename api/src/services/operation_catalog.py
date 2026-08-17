@@ -1,7 +1,7 @@
 """Canonical Bifrost operation identities and transport bindings.
 
-Agent and Form CRUD are the first vertical slices. Additional domains must
-enter this catalog before gaining new CLI, MCP, or native Builder
+Agent, Form, and Table metadata CRUD are the first vertical slices. Additional
+domains must enter this catalog before gaining new CLI, MCP, or native Builder
 implementations.
 """
 
@@ -23,6 +23,10 @@ from src.models.contracts.operation_catalog import (
 
 _AGENT_SDK_EXCLUSION = "Agent administration is not available to application SDKs."
 _FORM_SDK_EXCLUSION = "Form administration is not available to application SDKs."
+_TABLE_SDK_EXCLUSION = (
+    "Table metadata administration is not available to application SDKs; "
+    "SDK table methods operate on documents."
+)
 
 
 OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
@@ -242,6 +246,112 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             "remove the active manifest entry through RepoSyncWriter",
         ),
         exclusions={"sdk": _FORM_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="tables.list",
+        summary="List Tables visible to the caller",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/tables",
+            response_model="TableListResponse",
+        ),
+        cli=CliOperationBinding(path=("tables", "list")),
+        mcp=McpOperationBinding(name="bifrost_list_tables"),
+        native_builder=True,
+        action_scopes=("tables.read",),
+        authorization_resolver="Platform-admin gate and organization filter",
+        exclusions={
+            "manifest": "Manifests reconcile Table state; they do not perform collection reads.",
+            "sdk": _TABLE_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="tables.get",
+        summary="Get one Table visible to the caller",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/tables/{table_id}",
+            response_model="TablePublic",
+        ),
+        cli=CliOperationBinding(path=("tables", "get")),
+        mcp=McpOperationBinding(name="bifrost_get_table"),
+        native_builder=True,
+        action_scopes=("tables.read",),
+        authorization_resolver="Platform-admin gate",
+        exclusions={
+            "manifest": "Manifests reconcile Table state; they do not perform resource reads.",
+            "sdk": _TABLE_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="tables.create",
+        summary="Create a Table in an allowed target",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/tables",
+            request_model="TableCreate",
+            response_model="TablePublic",
+        ),
+        cli=CliOperationBinding(path=("tables", "create")),
+        mcp=McpOperationBinding(name="bifrost_create_table"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="tables"),
+        action_scopes=("tables.write",),
+        authorization_resolver="Platform-admin gate and target organization resolver",
+        audit_event="table.create",
+        side_effects=(
+            "persist Table schema and row-access policies",
+            "write manifest change through RepoSyncWriter",
+        ),
+        exclusions={"sdk": _TABLE_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="tables.update",
+        summary="Update a Table the caller may manage",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="PATCH",
+            path="/api/tables/{table_id}",
+            request_model="TableUpdate",
+            response_model="TablePublic",
+        ),
+        cli=CliOperationBinding(path=("tables", "update")),
+        mcp=McpOperationBinding(name="bifrost_update_table"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="tables"),
+        action_scopes=("tables.write",),
+        authorization_resolver="Platform-admin and Solution-management guards",
+        audit_event="table.update",
+        side_effects=(
+            "replace selected Table metadata and row-access policies",
+            "publish policy changes to connected runtimes",
+            "write manifest change through RepoSyncWriter",
+        ),
+        exclusions={"sdk": _TABLE_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="tables.delete",
+        summary="Delete a Table the caller may manage",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="DELETE",
+            path="/api/tables/{table_id}",
+        ),
+        cli=CliOperationBinding(path=("tables", "delete")),
+        mcp=McpOperationBinding(name="bifrost_delete_table"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="tables", behavior="remove"),
+        action_scopes=("tables.write",),
+        authorization_resolver="Platform-admin and Solution-management guards",
+        audit_event="table.delete",
+        side_effects=(
+            "delete the Table and its documents through database cascades",
+            "remove the manifest entry through RepoSyncWriter",
+        ),
+        exclusions={"sdk": _TABLE_SDK_EXCLUSION},
     ),
 )
 
