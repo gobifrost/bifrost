@@ -51,6 +51,59 @@ def test_superuser_write_then_read_workspace_without_policy(e2e_client, platform
     assert r.json()["content"] == content
 
 
+def test_superuser_patch_is_version_guarded_and_persists(e2e_client, platform_admin):
+    """The canonical patch route performs one unique, conflict-safe edit."""
+    path = "modules/_ws_patch_probe.py"
+    assert _write(
+        e2e_client,
+        platform_admin.headers,
+        path,
+        "value = 'old'\n",
+    ).status_code == 204
+
+    stat = e2e_client.post(
+        "/api/files/stat",
+        headers=platform_admin.headers,
+        json={"path": path, "mode": "cloud", "location": "workspace"},
+    )
+    assert stat.status_code == 200, stat.text
+
+    patched = e2e_client.post(
+        "/api/files/patch",
+        headers=platform_admin.headers,
+        json={
+            "path": path,
+            "old_string": "'old'",
+            "new_string": "'new'",
+            "expected_version": stat.json()["version"],
+        },
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["lines_changed"] == 1
+    assert patched.json()["version"] != stat.json()["version"]
+
+    read = e2e_client.post(
+        "/api/files/read",
+        headers=platform_admin.headers,
+        json={"path": path, "mode": "cloud", "location": "workspace"},
+    )
+    assert read.status_code == 200, read.text
+    assert read.json()["content"] == "value = 'new'\n"
+
+    stale = e2e_client.post(
+        "/api/files/patch",
+        headers=platform_admin.headers,
+        json={
+            "path": path,
+            "old_string": "'new'",
+            "new_string": "'stale'",
+            "expected_version": stat.json()["version"],
+        },
+    )
+    assert stale.status_code == 409, stale.text
+    assert stale.json()["detail"]["reason"] == "version_conflict"
+
+
 def test_superuser_list_metadata_etag_matches_local_md5(e2e_client, platform_admin):
     """The metadata listing returns plain-MD5 etags the CLI diff relies on."""
     path = "modules/_ws_etag_probe.py"

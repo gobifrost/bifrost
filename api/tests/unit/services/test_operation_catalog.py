@@ -358,6 +358,57 @@ INTEGRATION_OPERATIONS = {
     ),
 }
 
+WORKSPACE_FILE_OPERATIONS = {
+    "workspace.files.list": (
+        "POST",
+        "/api/files/list",
+        ("files", "list"),
+        "bifrost_list_files",
+    ),
+    "workspace.files.search": (
+        "POST",
+        "/api/files/search",
+        ("files", "search"),
+        "bifrost_search_files",
+    ),
+    "workspace.files.read": (
+        "POST",
+        "/api/files/read",
+        ("files", "read"),
+        "bifrost_read_file",
+    ),
+    "workspace.files.stat": (
+        "POST",
+        "/api/files/stat",
+        ("files", "stat"),
+        "bifrost_stat_file",
+    ),
+    "workspace.files.exists": (
+        "POST",
+        "/api/files/exists",
+        ("files", "exists"),
+        "bifrost_exists_file",
+    ),
+    "workspace.files.write": (
+        "POST",
+        "/api/files/write",
+        ("files", "write"),
+        "bifrost_write_file",
+    ),
+    "workspace.files.patch": (
+        "POST",
+        "/api/files/patch",
+        ("files", "patch"),
+        "bifrost_patch_file",
+    ),
+    "workspace.files.delete": (
+        "POST",
+        "/api/files/delete",
+        ("files", "delete"),
+        "bifrost_delete_file",
+    ),
+}
+
 CANONICAL_OPERATIONS = {
     **AGENT_OPERATIONS,
     **FORM_OPERATIONS,
@@ -367,6 +418,7 @@ CANONICAL_OPERATIONS = {
     **EVENT_OPERATIONS,
     **ORGANIZATION_OPERATIONS,
     **INTEGRATION_OPERATIONS,
+    **WORKSPACE_FILE_OPERATIONS,
 }
 
 
@@ -414,9 +466,15 @@ def test_mcp_registration_uses_only_catalog_names() -> None:
     registered = {tool["id"] for tool in get_system_tools()}
     catalog_names = {binding[3] for binding in CANONICAL_OPERATIONS.values()}
     legacy_names = {name.removeprefix("bifrost_") for name in catalog_names}
+    builder_workspace_names = {
+        "delete_file",
+        "list_files",
+        "read_file",
+        "write_file",
+    }
 
     assert catalog_names <= registered
-    assert registered.isdisjoint(legacy_names)
+    assert registered.isdisjoint(legacy_names - builder_workspace_names)
     assert all(callable(get_system_tool_function(name)) for name in catalog_names)
 
 

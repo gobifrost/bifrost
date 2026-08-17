@@ -3766,14 +3766,549 @@
         "summary": "List Event webhook adapters",
         "target_kind": "collection"
       }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "files",
+            "list"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_list_files",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "workspace.files.list",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": {
+            "method": "POST",
+            "path": "/api/files/list"
+          },
+          "status": "exact_parity"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "files.content.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "File policy resolver; global workspace requires platform admin",
+        "cli": {
+          "path": [
+            "files",
+            "list"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Workspace file listing observes source; it does not reconcile a manifest entity."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_list_files"
+        },
+        "native_builder": true,
+        "operation_id": "workspace.files.list",
+        "rest": {
+          "method": "POST",
+          "path": "/api/files/list",
+          "request_model": "FileListRequest",
+          "response_model": "FileListResponse"
+        },
+        "side_effects": [],
+        "summary": "List source workspace files",
+        "target_kind": "workspace"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "files",
+            "search"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_search_files",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "workspace.files.search",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "files.content.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin source workspace gate",
+        "cli": {
+          "path": [
+            "files",
+            "search"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Workspace search is a read operation, not manifest reconciliation.",
+          "sdk": "Application runtimes do not search the global source workspace."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_search_files"
+        },
+        "native_builder": true,
+        "operation_id": "workspace.files.search",
+        "rest": {
+          "method": "POST",
+          "path": "/api/files/search",
+          "request_model": "SearchRequest",
+          "response_model": "SearchResponse"
+        },
+        "side_effects": [],
+        "summary": "Search source workspace files",
+        "target_kind": "workspace"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "files",
+            "read"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_read_file",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "workspace.files.read",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": {
+            "method": "POST",
+            "path": "/api/files/read"
+          },
+          "status": "exact_parity"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "files.content.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "File policy resolver; global workspace requires platform admin",
+        "cli": {
+          "path": [
+            "files",
+            "read"
+          ]
+        },
+        "exclusions": {
+          "manifest": "File reads do not reconcile portable state."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_read_file"
+        },
+        "native_builder": true,
+        "operation_id": "workspace.files.read",
+        "rest": {
+          "method": "POST",
+          "path": "/api/files/read",
+          "request_model": "FileReadRequest",
+          "response_model": "FileReadResponse"
+        },
+        "side_effects": [],
+        "summary": "Read one workspace file",
+        "target_kind": "workspace"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "files",
+            "stat"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_stat_file",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "workspace.files.stat",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "files.content.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "File policy resolver; global workspace requires platform admin",
+        "cli": {
+          "path": [
+            "files",
+            "stat"
+          ]
+        },
+        "exclusions": {
+          "manifest": "File metadata reads do not reconcile portable state.",
+          "sdk": "Application runtimes use read/exists rather than authoring versions."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_stat_file"
+        },
+        "native_builder": true,
+        "operation_id": "workspace.files.stat",
+        "rest": {
+          "method": "POST",
+          "path": "/api/files/stat",
+          "request_model": "FileReadRequest",
+          "response_model": "FileStatResponse"
+        },
+        "side_effects": [],
+        "summary": "Get conflict-safe workspace file metadata",
+        "target_kind": "workspace"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "files",
+            "exists"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_exists_file",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "workspace.files.exists",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": {
+            "method": "POST",
+            "path": "/api/files/exists"
+          },
+          "status": "exact_parity"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "files.content.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "File policy resolver; global workspace requires platform admin",
+        "cli": {
+          "path": [
+            "files",
+            "exists"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Existence checks do not reconcile portable state.",
+          "sdk": "The runtime SDK wire binding is tracked separately from source authoring."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_exists_file"
+        },
+        "native_builder": true,
+        "operation_id": "workspace.files.exists",
+        "rest": {
+          "method": "POST",
+          "path": "/api/files/exists",
+          "request_model": "FileExistsRequest",
+          "response_model": "FileExistsResponse"
+        },
+        "side_effects": [],
+        "summary": "Check whether a workspace file exists",
+        "target_kind": "workspace"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "files",
+            "write"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_write_file",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "workspace.files.write",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": {
+            "method": "POST",
+            "path": "/api/files/write"
+          },
+          "status": "exact_parity"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "files.content.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "File policy and Solution-managed source guards",
+        "cli": {
+          "path": [
+            "files",
+            "write"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Workspace writes may regenerate manifests through entity indexing; no one manifest entry owns the operation."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_write_file"
+        },
+        "native_builder": true,
+        "operation_id": "workspace.files.write",
+        "rest": {
+          "method": "POST",
+          "path": "/api/files/write",
+          "request_model": "FileWriteRequest",
+          "response_model": null
+        },
+        "side_effects": [
+          "write source and search index",
+          "index platform entities and rebuild Application preview bundles",
+          "publish file activity and cache invalidations"
+        ],
+        "summary": "Create or replace one workspace file",
+        "target_kind": "workspace"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "files",
+            "patch"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_patch_file",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "workspace.files.patch",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "files.content.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin and Solution-managed source guards",
+        "cli": {
+          "path": [
+            "files",
+            "patch"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Workspace patches may regenerate manifests through entity indexing; no one manifest entry owns the operation.",
+          "sdk": "Application runtimes cannot patch the global source workspace."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_patch_file"
+        },
+        "native_builder": true,
+        "operation_id": "workspace.files.patch",
+        "rest": {
+          "method": "POST",
+          "path": "/api/files/patch",
+          "request_model": "WorkspaceFilePatchRequest",
+          "response_model": "WorkspaceFilePatchResponse"
+        },
+        "side_effects": [
+          "atomically replace one unique source fragment",
+          "index platform entities and rebuild Application preview bundles",
+          "publish file activity and cache invalidations"
+        ],
+        "summary": "Apply a conflict-safe unique-string workspace edit",
+        "target_kind": "workspace"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "files",
+            "delete"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_delete_file",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "workspace.files.delete",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": {
+            "method": "POST",
+            "path": "/api/files/delete"
+          },
+          "status": "exact_parity"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "files.content.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "File policy and Solution-managed source guards",
+        "cli": {
+          "path": [
+            "files",
+            "delete"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Workspace deletes may regenerate manifests through entity indexing; no one manifest entry owns the operation."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_delete_file"
+        },
+        "native_builder": true,
+        "operation_id": "workspace.files.delete",
+        "rest": {
+          "method": "POST",
+          "path": "/api/files/delete",
+          "request_model": "FileDeleteRequest",
+          "response_model": null
+        },
+        "side_effects": [
+          "delete source and search index metadata",
+          "remove platform metadata and Application preview artifacts",
+          "publish file activity and cache invalidations"
+        ],
+        "summary": "Delete one workspace file",
+        "target_kind": "workspace"
+      }
     }
   ],
   "counts": {
-    "cli": 135,
+    "cli": 136,
     "manifest": 16,
     "mcp": 101,
     "native_builder": 10,
-    "rest": 658,
+    "rest": 659,
     "sdk": 19
   },
   "schema_version": 1,
@@ -3934,33 +4469,6 @@
         "kind": "operation",
         "path": [
           "files",
-          "delete"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "files",
-          "exists"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "files",
-          "list"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "files",
           "policies",
           "delete"
         ],
@@ -3993,42 +4501,6 @@
           "files",
           "policies",
           "set"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "files",
-          "read"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "files",
-          "search"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "files",
-          "stat"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "files",
-          "write"
         ],
         "reason": "CLI operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -4584,12 +5056,6 @@
         "status": "missing_surface"
       },
       {
-        "hidden": false,
-        "name": "delete_content",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "hidden": true,
         "name": "delete_file",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
@@ -4622,12 +5088,6 @@
       {
         "hidden": false,
         "name": "get_config",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "get_content",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -4669,12 +5129,6 @@
       },
       {
         "hidden": false,
-        "name": "list_content",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "list_executions",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -4710,24 +5164,6 @@
         "status": "missing_surface"
       },
       {
-        "hidden": false,
-        "name": "patch_content",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "push_files",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "read_content_lines",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "hidden": true,
         "name": "read_file",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
@@ -4736,18 +5172,6 @@
       {
         "hidden": true,
         "name": "read_skill_asset",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "replace_content",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "search_content",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -6169,13 +6593,6 @@
         "status": "missing_surface"
       },
       {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/files/delete",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "method": "DELETE",
         "operation_id": "",
         "path": "/api/files/editor",
@@ -6214,20 +6631,6 @@
         "method": "POST",
         "operation_id": "",
         "path": "/api/files/editor/rename",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/files/exists",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/files/list",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -6283,20 +6686,6 @@
       {
         "method": "POST",
         "operation_id": "",
-        "path": "/api/files/read",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/files/search",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
         "path": "/api/files/signed-url",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -6305,13 +6694,6 @@
         "method": "POST",
         "operation_id": "",
         "path": "/api/files/signed-urls",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/files/stat",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -6333,13 +6715,6 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/files/watchers",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/files/write",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -9089,30 +9464,6 @@
       },
       {
         "method": "POST",
-        "path": "/api/files/delete",
-        "reason": "Application runtime SDK binding; not an administration operation.",
-        "status": "transport_only"
-      },
-      {
-        "method": "POST",
-        "path": "/api/files/exists",
-        "reason": "Application runtime SDK binding; not an administration operation.",
-        "status": "transport_only"
-      },
-      {
-        "method": "POST",
-        "path": "/api/files/list",
-        "reason": "Application runtime SDK binding; not an administration operation.",
-        "status": "transport_only"
-      },
-      {
-        "method": "POST",
-        "path": "/api/files/read",
-        "reason": "Application runtime SDK binding; not an administration operation.",
-        "status": "transport_only"
-      },
-      {
-        "method": "POST",
         "path": "/api/files/signed-url",
         "reason": "Application runtime SDK binding; not an administration operation.",
         "status": "transport_only"
@@ -9120,12 +9471,6 @@
       {
         "method": "POST",
         "path": "/api/files/signed-urls",
-        "reason": "Application runtime SDK binding; not an administration operation.",
-        "status": "transport_only"
-      },
-      {
-        "method": "POST",
-        "path": "/api/files/write",
         "reason": "Application runtime SDK binding; not an administration operation.",
         "status": "transport_only"
       },

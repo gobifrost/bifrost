@@ -31,6 +31,8 @@ from src.models.contracts.files import (
     FilePullRequest,
     FilePullResponse,
     WatchSessionRequest,
+    WorkspaceFilePatchRequest,
+    WorkspaceFilePatchResponse,
 )
 from src.models.contracts.policies import FileAction
 from src.models.contracts.policies import FilePolicies
@@ -54,6 +56,8 @@ from src.services.audit import emit_audit
 from src.services.editor.search import search_files_db
 from src.services.file_backend import get_backend
 from src.services.file_storage import FileStorageService
+from src.services.operation_catalog import operation_route
+from src.services.solutions.guard import assert_workspace_path_not_solution_managed
 from shared.role_cache import get_user_roles
 
 # Watch session TTL — must be > CLI heartbeat interval (WATCH_HEARTBEAT_SECONDS in bifrost.cli)
@@ -1087,7 +1091,11 @@ async def _record_completed_signed_upload(
 # =============================================================================
 
 
-@router.post("/read", response_model=FileReadResponse)
+@router.post(
+    "/read",
+    response_model=FileReadResponse,
+    **operation_route("workspace.files.read"),
+)
 async def read_file(
     request: FileReadRequest,
     ctx: Context,
@@ -1166,7 +1174,11 @@ async def read_file(
         )
 
 
-@router.post("/write", status_code=status.HTTP_204_NO_CONTENT)
+@router.post(
+    "/write",
+    status_code=status.HTTP_204_NO_CONTENT,
+    **operation_route("workspace.files.write"),
+)
 async def write_file(
     request: FileWriteRequest,
     ctx: Context,
@@ -1190,6 +1202,8 @@ async def write_file(
             path=request.path,
             solution_id=solution_id,
         )
+        if request.mode == "cloud" and request.location == "workspace":
+            await assert_workspace_path_not_solution_managed(db, request.path)
         backend = get_backend(request.mode, db)
 
         if request.create_only and request.expected_version is not None:
@@ -1296,7 +1310,11 @@ async def write_file(
         )
 
 
-@router.post("/delete", status_code=status.HTTP_204_NO_CONTENT)
+@router.post(
+    "/delete",
+    status_code=status.HTTP_204_NO_CONTENT,
+    **operation_route("workspace.files.delete"),
+)
 async def delete_file(
     request: FileDeleteRequest,
     ctx: Context,
@@ -1320,6 +1338,8 @@ async def delete_file(
             path=request.path,
             solution_id=solution_id,
         )
+        if request.mode == "cloud" and request.location == "workspace":
+            await assert_workspace_path_not_solution_managed(db, request.path)
         backend = get_backend(request.mode, db)
 
         await _lock_file_mutation(
@@ -1446,7 +1466,11 @@ async def _get_file_stat(
     )
 
 
-@router.post("/list", response_model=FileListResponse)
+@router.post(
+    "/list",
+    response_model=FileListResponse,
+    **operation_route("workspace.files.list"),
+)
 async def list_files_simple(
     request: FileListRequest,
     ctx: Context,
@@ -1599,7 +1623,11 @@ async def list_files_simple(
         )
 
 
-@router.post("/exists", response_model=FileExistsResponse)
+@router.post(
+    "/exists",
+    response_model=FileExistsResponse,
+    **operation_route("workspace.files.exists"),
+)
 async def file_exists(
     request: FileExistsRequest,
     ctx: Context,
@@ -1649,7 +1677,11 @@ async def file_exists(
         )
 
 
-@router.post("/stat", response_model=FileStatResponse)
+@router.post(
+    "/stat",
+    response_model=FileStatResponse,
+    **operation_route("workspace.files.stat"),
+)
 async def file_stat(
     request: FileReadRequest,
     ctx: Context,
@@ -1698,6 +1730,164 @@ async def file_stat(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+
+
+@router.post(
+    "/patch",
+    response_model=WorkspaceFilePatchResponse,
+    responses={409: {"model": FileConflictResponse, "description": "File conflict"}},
+    **operation_route("workspace.files.patch"),
+)
+async def patch_workspace_file(
+    request: WorkspaceFilePatchRequest,
+    ctx: Context,
+    user: CurrentSuperuser,
+    db: AsyncSession = Depends(get_db),
+) -> WorkspaceFilePatchResponse:
+    """Replace one unique text fragment in the global source workspace."""
+    await assert_workspace_path_not_solution_managed(db, request.path)
+    await _lock_file_mutation(
+        db,
+        location="workspace",
+        scope=None,
+        path=request.path,
+    )
+
+    current_stat = await _get_file_stat(
+        db,
+        request.path,
+        "workspace",
+        None,
+        "cloud",
+    )
+    if not current_stat.exists:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"File not found: {request.path}",
+        )
+    if (
+        request.expected_version is not None
+        and current_stat.version != request.expected_version
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "version_conflict",
+                "message": "File changed after it was read.",
+                "path": request.path,
+                "expected_version": request.expected_version,
+                "current_version": current_stat.version,
+                "current_last_modified": current_stat.last_modified,
+                "current_updated_by": current_stat.updated_by,
+            },
+        )
+
+    storage = FileStorageService(db)
+    raw_content, _ = await storage.read_file(request.path)
+    try:
+        content = raw_content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File is binary and cannot be patched as text.",
+        ) from exc
+
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+    old_string = request.old_string.replace("\r\n", "\n").replace("\r", "\n")
+    new_string = request.new_string.replace("\r\n", "\n").replace("\r", "\n")
+    match_count = content.count(old_string)
+    if match_count == 0:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "string_not_found",
+                "message": "old_string was not found in the file.",
+                "path": request.path,
+            },
+        )
+    if match_count > 1:
+        locations = [
+            {"line": index + 1, "preview": line.strip()[:80]}
+            for index, line in enumerate(content.split("\n"))
+            if old_string in line
+        ]
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "string_not_unique",
+                "message": (
+                    f"old_string matched {match_count} locations; include more "
+                    "context to make it unique."
+                ),
+                "path": request.path,
+                "match_locations": locations,
+            },
+        )
+
+    patched = content.replace(old_string, new_string, 1).encode("utf-8")
+    write_result = await storage.write_file(
+        request.path,
+        patched,
+        user.email or "system",
+        force_deactivation=request.force_deactivation,
+        replacements=request.replacements,
+        workflows_to_deactivate=request.workflows_to_deactivate,
+    )
+    if write_result.pending_deactivations:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "reason": "workflows_would_deactivate",
+                "message": (
+                    f"{len(write_result.pending_deactivations)} workflow(s) "
+                    "would be deactivated"
+                ),
+                "pending_deactivations": [
+                    {
+                        "id": item.id,
+                        "name": item.name,
+                        "function_name": item.function_name,
+                        "path": item.path,
+                        "description": item.description,
+                        "decorator_type": item.decorator_type,
+                        "has_executions": item.has_executions,
+                        "last_execution_at": item.last_execution_at,
+                        "endpoint_enabled": item.endpoint_enabled,
+                        "affected_entities": item.affected_entities,
+                    }
+                    for item in write_result.pending_deactivations
+                ],
+                "available_replacements": [
+                    {
+                        "function_name": item.function_name,
+                        "name": item.name,
+                        "decorator_type": item.decorator_type,
+                        "similarity_score": item.similarity_score,
+                    }
+                    for item in (write_result.available_replacements or [])
+                ],
+            },
+        )
+
+    await db.commit()
+    final_content = write_result.final_content
+    return WorkspaceFilePatchResponse(
+        path=request.path,
+        version=_content_version(final_content),
+        lines_changed=max(old_string.count("\n") + 1, new_string.count("\n") + 1),
+        content_modified=write_result.content_modified,
+        needs_indexing=write_result.needs_indexing,
+        diagnostics=[
+            {
+                "severity": item.severity,
+                "message": item.message,
+                "line": item.line,
+                "column": item.column,
+                "source": item.source,
+            }
+            for item in (write_result.diagnostics or [])
+        ],
+    )
 
 
 @router.post("/signed-url", response_model=SignedUrlResponse)
@@ -2039,6 +2229,7 @@ async def put_file_content_editor(
     Cloud mode only - used by browser editor.
     """
     try:
+        await assert_workspace_path_not_solution_managed(db, request.path)
         storage = FileStorageService(db)
         await _lock_file_mutation(
             db,
@@ -2204,6 +2395,7 @@ async def create_folder_editor(
     Cloud mode only - used by browser editor.
     """
     try:
+        await assert_workspace_path_not_solution_managed(db, path)
         storage = FileStorageService(db)
         updated_by = user.email if user else "system"
         await storage.create_folder(path, updated_by)
@@ -2242,6 +2434,7 @@ async def delete_file_editor(
     from src.services.repo_storage import RepoStorage
 
     try:
+        await assert_workspace_path_not_solution_managed(db, path, recursive=True)
         storage = FileStorageService(db)
         repo = RepoStorage()
 
@@ -2299,6 +2492,8 @@ async def rename_file_editor(
     Cloud mode only - used by browser editor.
     """
     try:
+        await assert_workspace_path_not_solution_managed(db, old_path, recursive=True)
+        await assert_workspace_path_not_solution_managed(db, new_path, recursive=True)
         storage = FileStorageService(db)
 
         # Use move_file which preserves entity associations
@@ -2326,6 +2521,7 @@ async def rename_file_editor(
     "/search",
     response_model=SearchResponse,
     summary="Search file contents",
+    **operation_route("workspace.files.search"),
 )
 async def search_file_contents(
     request: SearchRequest,

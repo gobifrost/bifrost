@@ -62,3 +62,11 @@ harness.
 | `events.subscriptions.update` | `bifrost events update-subscription` | `bifrost_update_event_subscription` | `events.write` |
 | `events.subscriptions.delete` | `bifrost events delete-subscription` | `bifrost_delete_event_subscription` | `events.write` |
 | `events.webhook_adapters.list` | `bifrost events list-webhook-adapters` | `bifrost_list_event_webhook_adapters` | `events.read` |
+| `workspace.files.list` | `bifrost files list` | `bifrost_list_files` | `files.content.read` |
+| `workspace.files.search` | `bifrost files search` | `bifrost_search_files` | `files.content.read` |
+| `workspace.files.read` | `bifrost files read` | `bifrost_read_file` | `files.content.read` |
+| `workspace.files.stat` | `bifrost files stat` | `bifrost_stat_file` | `files.content.read` |
+| `workspace.files.exists` | `bifrost files exists` | `bifrost_exists_file` | `files.content.read` |
+| `workspace.files.write` | `bifrost files write` | `bifrost_write_file` | `files.content.write` |
+| `workspace.files.patch` | `bifrost files patch` | `bifrost_patch_file` | `files.content.write` |
+| `workspace.files.delete` | `bifrost files delete` | `bifrost_delete_file` | `files.content.write` |

@@ -178,13 +178,14 @@ class TestSystemToolsRegistry:
 
         tools = get_system_tools()
         code_editor_tool_ids = [
-            "list_content",
-            "search_content",
-            "read_content_lines",
-            "get_content",
-            "patch_content",
-            "replace_content",
-            "delete_content",
+            "bifrost_list_files",
+            "bifrost_search_files",
+            "bifrost_read_file",
+            "bifrost_stat_file",
+            "bifrost_exists_file",
+            "bifrost_write_file",
+            "bifrost_patch_file",
+            "bifrost_delete_file",
         ]
 
         for tool_id in code_editor_tool_ids:

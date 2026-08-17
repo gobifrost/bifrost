@@ -346,6 +346,8 @@ from src.models.contracts.files import (
     FilePullRequest,
     FilePullResponse,
     WatchSessionRequest,
+    WorkspaceFilePatchRequest,
+    WorkspaceFilePatchResponse,
 )
 
 # Common models
@@ -1156,6 +1158,8 @@ __all__ = [
     "FilePullRequest",
     "FilePullResponse",
     "WatchSessionRequest",
+    "WorkspaceFilePatchRequest",
+    "WorkspaceFilePatchResponse",
     # Export/Import
     "ExportMetadata",
     "KnowledgeExportFile",

@@ -1255,6 +1255,175 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             "sdk": _EVENT_SDK_EXCLUSION,
         },
     ),
+    OperationDefinition(
+        operation_id="workspace.files.list",
+        summary="List source workspace files",
+        target_kind=OperationTargetKind.WORKSPACE,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/files/list",
+            request_model="FileListRequest",
+            response_model="FileListResponse",
+        ),
+        cli=CliOperationBinding(path=("files", "list")),
+        mcp=McpOperationBinding(name="bifrost_list_files"),
+        native_builder=True,
+        action_scopes=("files.content.read",),
+        authorization_resolver="File policy resolver; global workspace requires platform admin",
+        exclusions={
+            "manifest": "Workspace file listing observes source; it does not reconcile a manifest entity."
+        },
+    ),
+    OperationDefinition(
+        operation_id="workspace.files.search",
+        summary="Search source workspace files",
+        target_kind=OperationTargetKind.WORKSPACE,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/files/search",
+            request_model="SearchRequest",
+            response_model="SearchResponse",
+        ),
+        cli=CliOperationBinding(path=("files", "search")),
+        mcp=McpOperationBinding(name="bifrost_search_files"),
+        native_builder=True,
+        action_scopes=("files.content.read",),
+        authorization_resolver="Platform-admin source workspace gate",
+        exclusions={
+            "manifest": "Workspace search is a read operation, not manifest reconciliation.",
+            "sdk": "Application runtimes do not search the global source workspace.",
+        },
+    ),
+    OperationDefinition(
+        operation_id="workspace.files.read",
+        summary="Read one workspace file",
+        target_kind=OperationTargetKind.WORKSPACE,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/files/read",
+            request_model="FileReadRequest",
+            response_model="FileReadResponse",
+        ),
+        cli=CliOperationBinding(path=("files", "read")),
+        mcp=McpOperationBinding(name="bifrost_read_file"),
+        native_builder=True,
+        action_scopes=("files.content.read",),
+        authorization_resolver="File policy resolver; global workspace requires platform admin",
+        exclusions={
+            "manifest": "File reads do not reconcile portable state."
+        },
+    ),
+    OperationDefinition(
+        operation_id="workspace.files.stat",
+        summary="Get conflict-safe workspace file metadata",
+        target_kind=OperationTargetKind.WORKSPACE,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/files/stat",
+            request_model="FileReadRequest",
+            response_model="FileStatResponse",
+        ),
+        cli=CliOperationBinding(path=("files", "stat")),
+        mcp=McpOperationBinding(name="bifrost_stat_file"),
+        native_builder=True,
+        action_scopes=("files.content.read",),
+        authorization_resolver="File policy resolver; global workspace requires platform admin",
+        exclusions={
+            "manifest": "File metadata reads do not reconcile portable state.",
+            "sdk": "Application runtimes use read/exists rather than authoring versions.",
+        },
+    ),
+    OperationDefinition(
+        operation_id="workspace.files.exists",
+        summary="Check whether a workspace file exists",
+        target_kind=OperationTargetKind.WORKSPACE,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/files/exists",
+            request_model="FileExistsRequest",
+            response_model="FileExistsResponse",
+        ),
+        cli=CliOperationBinding(path=("files", "exists")),
+        mcp=McpOperationBinding(name="bifrost_exists_file"),
+        native_builder=True,
+        action_scopes=("files.content.read",),
+        authorization_resolver="File policy resolver; global workspace requires platform admin",
+        exclusions={
+            "manifest": "Existence checks do not reconcile portable state.",
+            "sdk": "The runtime SDK wire binding is tracked separately from source authoring.",
+        },
+    ),
+    OperationDefinition(
+        operation_id="workspace.files.write",
+        summary="Create or replace one workspace file",
+        target_kind=OperationTargetKind.WORKSPACE,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/files/write",
+            request_model="FileWriteRequest",
+        ),
+        cli=CliOperationBinding(path=("files", "write")),
+        mcp=McpOperationBinding(name="bifrost_write_file"),
+        native_builder=True,
+        action_scopes=("files.content.write",),
+        authorization_resolver="File policy and Solution-managed source guards",
+        side_effects=(
+            "write source and search index",
+            "index platform entities and rebuild Application preview bundles",
+            "publish file activity and cache invalidations",
+        ),
+        exclusions={
+            "manifest": "Workspace writes may regenerate manifests through entity indexing; no one manifest entry owns the operation."
+        },
+    ),
+    OperationDefinition(
+        operation_id="workspace.files.patch",
+        summary="Apply a conflict-safe unique-string workspace edit",
+        target_kind=OperationTargetKind.WORKSPACE,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/files/patch",
+            request_model="WorkspaceFilePatchRequest",
+            response_model="WorkspaceFilePatchResponse",
+        ),
+        cli=CliOperationBinding(path=("files", "patch")),
+        mcp=McpOperationBinding(name="bifrost_patch_file"),
+        native_builder=True,
+        action_scopes=("files.content.write",),
+        authorization_resolver="Platform-admin and Solution-managed source guards",
+        side_effects=(
+            "atomically replace one unique source fragment",
+            "index platform entities and rebuild Application preview bundles",
+            "publish file activity and cache invalidations",
+        ),
+        exclusions={
+            "manifest": "Workspace patches may regenerate manifests through entity indexing; no one manifest entry owns the operation.",
+            "sdk": "Application runtimes cannot patch the global source workspace.",
+        },
+    ),
+    OperationDefinition(
+        operation_id="workspace.files.delete",
+        summary="Delete one workspace file",
+        target_kind=OperationTargetKind.WORKSPACE,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/files/delete",
+            request_model="FileDeleteRequest",
+        ),
+        cli=CliOperationBinding(path=("files", "delete")),
+        mcp=McpOperationBinding(name="bifrost_delete_file"),
+        native_builder=True,
+        action_scopes=("files.content.write",),
+        authorization_resolver="File policy and Solution-managed source guards",
+        side_effects=(
+            "delete source and search index metadata",
+            "remove platform metadata and Application preview artifacts",
+            "publish file activity and cache invalidations",
+        ),
+        exclusions={
+            "manifest": "Workspace deletes may regenerate manifests through entity indexing; no one manifest entry owns the operation."
+        },
+    ),
 )
 
 

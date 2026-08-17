@@ -2766,7 +2766,7 @@ export interface paths {
          * Read File
          * @description Read a file from a managed or custom location.
          */
-        post: operations["read_file_api_files_read_post"];
+        post: operations["workspace.files.read"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2786,7 +2786,7 @@ export interface paths {
          * Write File
          * @description Write a file to a managed or custom location.
          */
-        post: operations["write_file_api_files_write_post"];
+        post: operations["workspace.files.write"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2806,7 +2806,7 @@ export interface paths {
          * Delete File
          * @description Delete a file from a managed or custom location.
          */
-        post: operations["delete_file_api_files_delete_post"];
+        post: operations["workspace.files.delete"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2826,7 +2826,7 @@ export interface paths {
          * List Files Simple
          * @description List files in a directory (simple SDK-focused endpoint).
          */
-        post: operations["list_files_simple_api_files_list_post"];
+        post: operations["workspace.files.list"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2846,7 +2846,7 @@ export interface paths {
          * File Exists
          * @description Check if a file exists.
          */
-        post: operations["file_exists_api_files_exists_post"];
+        post: operations["workspace.files.exists"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2866,7 +2866,27 @@ export interface paths {
          * File Stat
          * @description Return file metadata for guarded CLI workflows.
          */
-        post: operations["file_stat_api_files_stat_post"];
+        post: operations["workspace.files.stat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/files/patch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Patch Workspace File
+         * @description Replace one unique text fragment in the global source workspace.
+         */
+        post: operations["workspace.files.patch"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3142,7 +3162,7 @@ export interface paths {
          *
          *     Searches database directly - workflows, modules, forms, and agents.
          */
-        post: operations["search_file_contents_api_files_search_post"];
+        post: operations["workspace.files.search"];
         delete?: never;
         options?: never;
         head?: never;
@@ -16806,7 +16826,7 @@ export interface components {
              * @description Type of conflict
              * @enum {string}
              */
-            reason: "content_changed" | "file_exists" | "file_missing" | "path_not_found" | "version_conflict" | "workflows_would_deactivate";
+            reason: "content_changed" | "file_exists" | "file_missing" | "path_not_found" | "string_not_found" | "string_not_unique" | "version_conflict" | "workflows_would_deactivate";
             /**
              * Message
              * @description Human-readable conflict description
@@ -28614,6 +28634,77 @@ export interface components {
             metadata?: components["schemas"]["WorkflowMetadata"] | null;
         };
         /**
+         * WorkspaceFilePatchRequest
+         * @description Conflict-safe unique-string edit for the global source workspace.
+         */
+        WorkspaceFilePatchRequest: {
+            /**
+             * Path
+             * @description Workspace-relative file path
+             */
+            path: string;
+            /**
+             * Old String
+             * @description Unique text to replace
+             */
+            old_string: string;
+            /**
+             * New String
+             * @description Replacement text
+             * @default
+             */
+            new_string: string;
+            /**
+             * Expected Version
+             * @description Optional version returned by the file stat operation
+             */
+            expected_version?: string | null;
+            /**
+             * Force Deactivation
+             * @description Allow workflows removed by this edit to be deactivated
+             * @default false
+             */
+            force_deactivation: boolean;
+            /**
+             * Replacements
+             * @description Map old workflow IDs to replacement function names
+             */
+            replacements?: {
+                [key: string]: string;
+            } | null;
+            /**
+             * Workflows To Deactivate
+             * @description Workflow IDs explicitly selected for deactivation
+             */
+            workflows_to_deactivate?: string[] | null;
+        };
+        /**
+         * WorkspaceFilePatchResponse
+         * @description Result of a successful workspace patch.
+         */
+        WorkspaceFilePatchResponse: {
+            /** Path */
+            path: string;
+            /** Version */
+            version: string;
+            /** Lines Changed */
+            lines_changed: number;
+            /**
+             * Content Modified
+             * @default false
+             */
+            content_modified: boolean;
+            /**
+             * Needs Indexing
+             * @default false
+             */
+            needs_indexing: boolean;
+            /** Diagnostics */
+            diagnostics?: {
+                [key: string]: unknown;
+            }[];
+        };
+        /**
          * OAuthProviderInfo
          * @description OAuth provider information for login page
          */
@@ -33445,7 +33536,7 @@ export interface operations {
             };
         };
     };
-    read_file_api_files_read_post: {
+    "workspace.files.read": {
         parameters: {
             query?: never;
             header?: never;
@@ -33478,7 +33569,7 @@ export interface operations {
             };
         };
     };
-    write_file_api_files_write_post: {
+    "workspace.files.write": {
         parameters: {
             query?: never;
             header?: never;
@@ -33509,7 +33600,7 @@ export interface operations {
             };
         };
     };
-    delete_file_api_files_delete_post: {
+    "workspace.files.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -33540,7 +33631,7 @@ export interface operations {
             };
         };
     };
-    list_files_simple_api_files_list_post: {
+    "workspace.files.list": {
         parameters: {
             query?: never;
             header?: never;
@@ -33573,7 +33664,7 @@ export interface operations {
             };
         };
     };
-    file_exists_api_files_exists_post: {
+    "workspace.files.exists": {
         parameters: {
             query?: never;
             header?: never;
@@ -33606,7 +33697,7 @@ export interface operations {
             };
         };
     };
-    file_stat_api_files_stat_post: {
+    "workspace.files.stat": {
         parameters: {
             query?: never;
             header?: never;
@@ -33626,6 +33717,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FileStatResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workspace.files.patch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceFilePatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceFilePatchResponse"];
+                };
+            };
+            /** @description File conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileConflictResponse"];
                 };
             };
             /** @description Validation Error */
@@ -34052,7 +34185,7 @@ export interface operations {
             };
         };
     };
-    search_file_contents_api_files_search_post: {
+    "workspace.files.search": {
         parameters: {
             query?: never;
             header?: never;

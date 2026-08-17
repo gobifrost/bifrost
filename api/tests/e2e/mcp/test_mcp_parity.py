@@ -12,6 +12,8 @@ Covers the thin-wrapper surface added in
 * Organizations: canonical list/get/create/update/delete ``bifrost_*`` tools.
 * Workflow catalog, validation, registration, execution, metadata, deletion,
   and role lifecycle through canonical ``bifrost_*`` thin wrappers.
+* Workspace file list/search/read/stat/exists/write/patch/delete through the
+  same superuser-only REST routes used by the CLI.
 
 Each tool is invoked directly (bypassing FastMCP transport) with a
 ``MockMCPContext`` that carries the platform admin's identity. The
@@ -107,6 +109,86 @@ def org_context(org1_user, mcp_bridge_env) -> MockMCPContext:
         org_id=str(org1_user.organization_id),
         user_name=org1_user.name,
     )
+
+
+class TestWorkspaceFileMCPParity:
+    async def test_workspace_file_lifecycle_uses_live_rest_boundary(
+        self,
+        admin_context,
+    ) -> None:
+        from src.services.mcp_server.tools.code_editor import (
+            bifrost_delete_file,
+            bifrost_exists_file,
+            bifrost_list_files,
+            bifrost_patch_file,
+            bifrost_read_file,
+            bifrost_search_files,
+            bifrost_stat_file,
+            bifrost_write_file,
+        )
+
+        path = f"modules/_mcp_file_parity_{uuid4().hex[:8]}.txt"
+        created = await bifrost_write_file(
+            admin_context,
+            path=path,
+            content="status = old\n",
+            create_only=True,
+        )
+        assert created.structured_content == {
+            "success": True,
+            "path": path,
+            "created": True,
+        }
+
+        try:
+            exists = await bifrost_exists_file(admin_context, path=path)
+            assert exists.structured_content == {"path": path, "exists": True}
+
+            stat = await bifrost_stat_file(admin_context, path=path)
+            stat_body = stat.structured_content or {}
+            assert stat_body["exists"] is True
+            version = stat_body["version"]
+
+            read = await bifrost_read_file(admin_context, path=path)
+            assert (read.structured_content or {})["raw_content"] == "status = old\n"
+
+            patched = await bifrost_patch_file(
+                admin_context,
+                path=path,
+                old_string="old",
+                new_string="ready",
+                expected_version=version,
+            )
+            patched_body = patched.structured_content or {}
+            assert patched_body["success"] is True
+            assert patched_body["lines_changed"] == 1
+
+            searched = await bifrost_search_files(
+                admin_context,
+                pattern="status = ready",
+                path=path,
+            )
+            search_body = searched.structured_content or {}
+            assert any(match["path"] == path for match in search_body["matches"])
+
+            listed = await bifrost_list_files(
+                admin_context,
+                path_prefix="modules/",
+            )
+            assert path in {
+                item["path"] for item in (listed.structured_content or {})["files"]
+            }
+
+            current = await bifrost_stat_file(admin_context, path=path)
+            await bifrost_delete_file(
+                admin_context,
+                path=path,
+                expected_version=(current.structured_content or {})["version"],
+            )
+            missing = await bifrost_exists_file(admin_context, path=path)
+            assert missing.structured_content == {"path": path, "exists": False}
+        finally:
+            await bifrost_delete_file(admin_context, path=path)
 
 
 # =============================================================================

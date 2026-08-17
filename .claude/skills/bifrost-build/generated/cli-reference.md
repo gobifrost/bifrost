@@ -982,6 +982,7 @@ Commands:
   delete    Delete a workspace file, optionally guarded by its current...
   exists    Check if a file exists.
   list      List files in a directory (default: location root).
+  patch     Replace one unique text fragment in the global source workspace.
   policies  Manage file access policies.
   read      Read a workspace file and write its contents to stdout.
   search    Search workspace file contents.
@@ -1040,6 +1041,24 @@ Options:
                    Slug resolved via GET /api/solutions.
   --json           Emit JSON instead of human-readable output.
   --help           Show this message and exit.
+```
+
+### `files patch`
+
+```
+Usage: files patch [OPTIONS] PATH
+
+  Replace one unique text fragment in the global source workspace.
+
+Options:
+  --old TEXT               Unique text to replace.  [required]
+  --new TEXT               Replacement text; defaults to empty.
+  --expected-version TEXT  Patch only if the file still has this version from
+                           `files stat`.
+  --force-deactivation     Allow workflows removed by the patch to be
+                           deactivated.
+  --json                   Emit JSON instead of human-readable output.
+  --help                   Show this message and exit.
 ```
 
 ### `files policies`

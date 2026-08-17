@@ -47,6 +47,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 from src.services.mcp_server.tools import (  # noqa: E402
     agents as agents_mod,
     claims as claims_mod,
+    code_editor as code_editor_mod,
     configs as configs_mod,
     events as events_mod,
     files as files_mod,
@@ -63,6 +64,16 @@ from src.services.mcp_server.tools import (  # noqa: E402
 
 
 PARITY_HANDLERS: dict[str, set[str]] = {
+    "code_editor": {
+        "bifrost_list_files",
+        "bifrost_search_files",
+        "bifrost_read_file",
+        "bifrost_stat_file",
+        "bifrost_exists_file",
+        "bifrost_write_file",
+        "bifrost_patch_file",
+        "bifrost_delete_file",
+    },
     "agents": {
         "bifrost_list_agents",
         "bifrost_get_agent",
@@ -174,6 +185,7 @@ PARITY_HANDLERS: dict[str, set[str]] = {
 
 
 MODULES = {
+    "code_editor": code_editor_mod,
     "agents": agents_mod,
     "forms": forms_mod,
     "tables": tables_mod,

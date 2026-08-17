@@ -222,6 +222,7 @@
 | POST | `/api/files/exists` |
 | POST | `/api/files/list` |
 | GET | `/api/files/manifest` |
+| POST | `/api/files/patch` |
 | GET | `/api/files/policies` |
 | POST | `/api/files/policies/test` |
 | DELETE | `/api/files/policies/{policy_path}` |

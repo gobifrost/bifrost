@@ -245,6 +245,48 @@ class TestWrite:
         assert payload["current_version"] == "sha256:other"
 
 
+class TestPatch:
+    def test_patches_unique_text_with_version_guard(self) -> None:
+        captured: dict = {}
+        result = _invoke(
+            [
+                "patch",
+                "workflows/a.py",
+                "--old",
+                "old",
+                "--new",
+                "new",
+                "--expected-version",
+                "sha256:base",
+                "--force-deactivation",
+                "--json",
+            ],
+            captured,
+            {
+                "/api/files/patch": {
+                    "path": "workflows/a.py",
+                    "version": "sha256:new",
+                    "lines_changed": 1,
+                }
+            },
+        )
+
+        assert result.exit_code == 0, result.output
+        assert captured["calls"] == [
+            {
+                "path": "/api/files/patch",
+                "body": {
+                    "path": "workflows/a.py",
+                    "old_string": "old",
+                    "new_string": "new",
+                    "expected_version": "sha256:base",
+                    "force_deactivation": True,
+                },
+            }
+        ]
+        assert '"version": "sha256:new"' in result.output
+
+
 class TestList:
     def test_list_default_directory(self) -> None:
         captured: dict = {}

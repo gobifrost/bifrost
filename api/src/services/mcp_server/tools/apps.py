@@ -2,9 +2,8 @@
 
 Application metadata, dependency, validation, publish, and source-path tools
 reuse the same REST authorization, validation, audit, manifest, cache, and
-Platform Job behavior as the web client and CLI. ``push_files`` remains the
-legacy workspace batch operation until the workspace/file catalog slice moves
-it to its proper domain.
+Platform Job behavior as the web client and CLI. Workspace source edits live
+in the canonical file tools rather than this Application domain.
 """
 
 from __future__ import annotations
@@ -16,7 +15,6 @@ from fastmcp.tools import ToolResult
 
 from src.services.mcp_server.tool_result import error_result, success_result
 from src.services.mcp_server.tools._http_bridge import call_rest, rest_client
-from src.services.mcp_server.tools.db import get_tool_db
 
 logger = logging.getLogger(__name__)
 
@@ -371,213 +369,6 @@ async def bifrost_validate_app(context: Any, app_ref: str) -> ToolResult:
     )
 
 
-async def push_files(
-    context: Any,
-    files: dict[str, str],
-    delete_missing_prefix: str | None = None,
-) -> ToolResult:
-    """
-    Push multiple files to _repo/ in a single batch.
-
-    Useful for creating or updating multiple files at once (e.g., pushing
-    an entire app or workflow set).
-
-    Args:
-        files: Map of repo_path to content, e.g. {"apps/my-app/pages/index.tsx": "..."}
-        delete_missing_prefix: If set, delete files under this prefix not in batch
-    """
-    import hashlib
-
-    from sqlalchemy import select
-
-    from src.models.orm.applications import Application
-    from src.models.orm.file_index import FileIndex
-    from src.services.app_storage import AppStorageService
-    from src.services.file_storage import FileStorageService
-    from src.services.solutions.guard import (
-        SOLUTION_MANAGED_MESSAGE,
-        is_solution_managed,
-    )
-
-    logger.info(f"MCP push_files called with {len(files)} file(s)")
-
-    try:
-        async with get_tool_db(context) as db:
-            # Refuse before any S3 write: file_storage.write_file (_repo) and
-            # app_storage.write_preview_file (preview) both write S3 without
-            # dirtying the Application row, so the before_flush backstop never
-            # fires for them (criterion 6). Reject the whole batch if ANY pushed
-            # file lands under a solution-managed app's repo_path.
-            all_apps = (await db.execute(select(Application))).scalars().all()
-            managed_prefixes = [
-                app_obj.repo_path.rstrip("/") + "/"
-                for app_obj in all_apps
-                if is_solution_managed(app_obj)
-            ]
-            blocked = sorted(
-                repo_path
-                for repo_path in files
-                if any(repo_path.startswith(p) for p in managed_prefixes)
-            )
-            if blocked:
-                return error_result(
-                    SOLUTION_MANAGED_MESSAGE,
-                    {"blocked_paths": blocked},
-                )
-
-            file_storage = FileStorageService(db)
-            created = 0
-            updated = 0
-            unchanged = 0
-            deleted = 0
-            push_errors: list[str] = []
-
-            for repo_path, content in files.items():
-                try:
-                    existing = await db.execute(
-                        select(FileIndex.content_hash).where(
-                            FileIndex.path == repo_path
-                        )
-                    )
-                    existing_hash = existing.scalar_one_or_none()
-
-                    content_bytes = content.encode("utf-8")
-                    new_hash = hashlib.sha256(content_bytes).hexdigest()
-
-                    if existing_hash == new_hash:
-                        unchanged += 1
-                        continue
-
-                    was_new = existing_hash is None
-                    await file_storage.write_file(
-                        path=repo_path,
-                        content=content_bytes,
-                        updated_by=str(context.user_id),
-                    )
-
-                    if was_new:
-                        created += 1
-                    else:
-                        updated += 1
-                except Exception as e:
-                    push_errors.append(f"{repo_path}: {str(e)}")
-
-            if delete_missing_prefix:
-                prefix = delete_missing_prefix
-                if not prefix.endswith("/"):
-                    prefix += "/"
-                # The delete-sweep is a separate write path from the files-key
-                # guard above: an empty/partial `files` dict slips past the key
-                # check, but the sweep would still delete _repo files under
-                # `prefix`. Refuse if the sweep would touch ANY solution-managed
-                # app's files — in either direction: the delete prefix is under a
-                # managed prefix (delete "apps/managed/sub"), OR contains/equals
-                # one (delete "apps/" which would sweep "apps/managed/...").
-                if any(
-                    prefix.startswith(managed) or managed.startswith(prefix)
-                    for managed in managed_prefixes
-                ):
-                    return error_result(
-                        SOLUTION_MANAGED_MESSAGE,
-                        {"blocked_delete_prefix": delete_missing_prefix},
-                    )
-                existing_files = await db.execute(
-                    select(FileIndex.path).where(FileIndex.path.startswith(prefix))
-                )
-                existing_paths = {row[0] for row in existing_files.all()}
-                push_paths = set(files.keys())
-                for path_to_delete in existing_paths - push_paths:
-                    try:
-                        await file_storage.delete_file(path_to_delete)
-                        deleted += 1
-                    except Exception as e:
-                        push_errors.append(f"delete {path_to_delete}: {str(e)}")
-
-            await db.commit()
-
-            # Compile app files that were pushed
-            compile_warnings = []
-            app_file_groups: dict[str, list[dict[str, str]]] = {}  # app_id -> files
-
-            # Build prefix -> app mapping
-            app_by_prefix: dict[str, Application] = {}
-            for app_obj in all_apps:
-                prefix = app_obj.repo_path.rstrip("/") + "/"
-                app_by_prefix[prefix] = app_obj
-
-            for repo_path, content in files.items():
-                if not repo_path.endswith((".tsx", ".ts")):
-                    continue
-                for prefix, app_obj in app_by_prefix.items():
-                    if repo_path.startswith(prefix):
-                        rel_path = repo_path[len(prefix) :]
-                        app_file_groups.setdefault(str(app_obj.id), []).append(
-                            {"path": rel_path, "source": content}
-                        )
-                        break
-
-            if app_file_groups:
-                from src.services.app_compiler import AppCompilerService
-
-                compiler = AppCompilerService()
-                app_lookup = {str(a.id): a for a in all_apps}
-                for app_id_str, app_files in app_file_groups.items():
-                    app = app_lookup.get(app_id_str)
-                    if not app:
-                        continue
-
-                    # Batch compile
-                    results = await compiler.compile_batch(app_files)
-                    app_storage = AppStorageService()
-
-                    for result in results:
-                        if result.success and result.compiled:
-                            await app_storage.write_preview_file(
-                                str(app.id),
-                                result.path,
-                                result.compiled.encode("utf-8"),
-                            )
-                        else:
-                            compile_warnings.append(f"✗ {result.path}: {result.error}")
-
-            parts = []
-            if created:
-                parts.append(f"{created} created")
-            if updated:
-                parts.append(f"{updated} updated")
-            if deleted:
-                parts.append(f"{deleted} deleted")
-            if unchanged:
-                parts.append(f"{unchanged} unchanged")
-
-            summary = ", ".join(parts) if parts else "No changes"
-            display_text = f"Push complete: {summary}"
-            if push_errors:
-                display_text += f"\n\nErrors ({len(push_errors)}):\n" + "\n".join(
-                    f"  - {e}" for e in push_errors
-                )
-
-            if compile_warnings:
-                display_text += f"\n\nCompilation ({len(compile_warnings)} issue(s)):\n"
-                display_text += "\n".join(f"  {w}" for w in compile_warnings)
-
-            return success_result(
-                display_text,
-                {
-                    "created": created,
-                    "updated": updated,
-                    "deleted": deleted,
-                    "unchanged": unchanged,
-                    "errors": push_errors,
-                    "compile_warnings": compile_warnings,
-                },
-            )
-
-    except Exception as e:
-        logger.exception(f"Error pushing files: {e}")
-        return error_result(f"Error pushing files: {str(e)}")
-
-
 async def bifrost_get_app_dependencies(
     context: Any,
     app_ref: str,
@@ -678,11 +469,6 @@ TOOLS = [
         "Compile and validate an Application through REST.",
     ),
     (
-        "push_files",
-        "Push Files",
-        "Push multiple files to _repo/ in a single batch. Useful for creating or updating entire apps or workflow sets.",
-    ),
-    (
         "bifrost_get_app_dependencies",
         "Get Application Dependencies",
         "Get npm dependencies declared for an Application.",
@@ -711,7 +497,6 @@ def register_tools(mcp: Any, get_context_fn: Any) -> None:
         "bifrost_get_app_publish_status": bifrost_get_app_publish_status,
         "bifrost_replace_app": bifrost_replace_app,
         "bifrost_validate_app": bifrost_validate_app,
-        "push_files": push_files,
         "bifrost_get_app_dependencies": bifrost_get_app_dependencies,
         "bifrost_update_app_dependencies": bifrost_update_app_dependencies,
     }
