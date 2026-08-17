@@ -97,7 +97,13 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "bifrost_update_table",
         "bifrost_delete_table",
     },
-    "roles": {"list_roles", "create_role", "update_role", "delete_role"},
+    "roles": {
+        "bifrost_list_roles",
+        "bifrost_get_role",
+        "bifrost_create_role",
+        "bifrost_update_role",
+        "bifrost_delete_role",
+    },
     "configs": {
         "list_configs",
         "create_config",

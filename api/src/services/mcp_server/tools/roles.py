@@ -1,7 +1,6 @@
 """Role MCP Tools — thin wrappers around the REST API.
 
-Implements Task 6 of the CLI mutation surface + MCP parity plan:
-``list_roles``, ``create_role``, ``update_role``, ``delete_role``.
+Implements the canonical ``bifrost_*_role`` MCP operations.
 
 These tools are **thin wrappers**: they validate minimal inputs, resolve
 user-supplied refs, then call the corresponding REST endpoint via the
@@ -59,9 +58,9 @@ async def _assemble_role_body(
         )
 
 
-async def list_roles(context: Any) -> ToolResult:
+async def bifrost_list_roles(context: Any) -> ToolResult:
     """List all roles — thin wrapper over ``GET /api/roles``."""
-    logger.info("MCP list_roles (HTTP bridge)")
+    logger.info("MCP bifrost_list_roles (HTTP bridge)")
     status_code, body = await call_rest(context, "GET", "/api/roles")
     if status_code != 200:
         return error_result(f"list_roles failed: HTTP {status_code}", {"body": body})
@@ -72,7 +71,7 @@ async def list_roles(context: Any) -> ToolResult:
     )
 
 
-async def get_role(context: Any, role_ref: str) -> ToolResult:
+async def bifrost_get_role(context: Any, role_ref: str) -> ToolResult:
     """Get a single role — thin wrapper over ``GET /api/roles/{uuid}``.
 
     ``role_ref`` is a UUID or role name. Names are resolved via the shared
@@ -101,7 +100,7 @@ async def get_role(context: Any, role_ref: str) -> ToolResult:
     )
 
 
-async def create_role(
+async def bifrost_create_role(
     context: Any,
     name: str,
     description: str | None = None,
@@ -123,13 +122,22 @@ async def create_role(
     except Exception as exc:
         return error_result(f"invalid input: {exc}", _ref_error_payload(exc))
 
-    status_code, resp = await call_rest(context, "POST", "/api/roles", json_body=body)
+    status_code, resp = await call_rest(
+        context,
+        "POST",
+        "/api/roles",
+        json_body=body,
+    )
     if status_code not in (200, 201):
         return error_result(f"create_role failed: HTTP {status_code}", {"body": resp})
-    return success_result(f"Created role: {resp.get('name') if isinstance(resp, dict) else ''}", resp if isinstance(resp, dict) else {"body": resp})
+    payload = resp if isinstance(resp, dict) else {"body": resp}
+    return success_result(
+        f"Created role: {payload.get('name', name)}",
+        payload,
+    )
 
 
-async def update_role(
+async def bifrost_update_role(
     context: Any,
     role_ref: str,
     name: str | None = None,
@@ -178,7 +186,7 @@ async def update_role(
     )
 
 
-async def delete_role(context: Any, role_ref: str) -> ToolResult:
+async def bifrost_delete_role(context: Any, role_ref: str) -> ToolResult:
     """Delete a role — thin wrapper over ``DELETE /api/roles/{uuid}``.
 
     CASCADE removes all role assignments (matches the REST handler).
@@ -204,15 +212,19 @@ async def delete_role(context: Any, role_ref: str) -> ToolResult:
 
 
 TOOLS = [
-    ("list_roles", "List Roles", "List all roles in the platform."),
-    ("get_role", "Get Role", "Get a single role by UUID or name."),
-    ("create_role", "Create Role", "Create a new role."),
+    ("bifrost_list_roles", "List Roles", "List all roles in the platform."),
+    ("bifrost_get_role", "Get Role", "Get a single role by UUID or name."),
+    ("bifrost_create_role", "Create Role", "Create a new role."),
     (
-        "update_role",
+        "bifrost_update_role",
         "Update Role",
         "Update a role (name, description, permissions, scopes).",
     ),
-    ("delete_role", "Delete Role", "Delete a role (CASCADE removes all assignments)."),
+    (
+        "bifrost_delete_role",
+        "Delete Role",
+        "Delete a role (CASCADE removes all assignments).",
+    ),
 ]
 
 
@@ -223,11 +235,11 @@ def register_tools(mcp: Any, get_context_fn: Any) -> None:
     )
 
     tool_funcs = {
-        "list_roles": list_roles,
-        "get_role": get_role,
-        "create_role": create_role,
-        "update_role": update_role,
-        "delete_role": delete_role,
+        "bifrost_list_roles": bifrost_list_roles,
+        "bifrost_get_role": bifrost_get_role,
+        "bifrost_create_role": bifrost_create_role,
+        "bifrost_update_role": bifrost_update_role,
+        "bifrost_delete_role": bifrost_delete_role,
     }
 
     for tool_id, _name, description in TOOLS:
@@ -238,10 +250,10 @@ def register_tools(mcp: Any, get_context_fn: Any) -> None:
 
 __all__ = [
     "TOOLS",
-    "create_role",
-    "delete_role",
-    "get_role",
-    "list_roles",
+    "bifrost_create_role",
+    "bifrost_delete_role",
+    "bifrost_get_role",
+    "bifrost_list_roles",
     "register_tools",
-    "update_role",
+    "bifrost_update_role",
 ]

@@ -49,6 +49,11 @@ harness.
 | `executions.list` | `bifrost workflows list-executions` | `bifrost_list_workflow_executions` | `executions.read` |
 | `executions.get` | `bifrost workflows get-execution` | `bifrost_get_workflow_execution` | `executions.read` |
 | `knowledge.search` | `bifrost knowledge search` | `bifrost_search_knowledge` | `knowledge.read` |
+| `roles.list` | `bifrost roles list` | `bifrost_list_roles` | `roles.read` |
+| `roles.get` | `bifrost roles get` | `bifrost_get_role` | `roles.read` |
+| `roles.create` | `bifrost roles create` | `bifrost_create_role` | `roles.write` |
+| `roles.update` | `bifrost roles update` | `bifrost_update_role` | `roles.write` |
+| `roles.delete` | `bifrost roles delete` | `bifrost_delete_role` | `roles.write` |
 | `organizations.list` | `bifrost organizations list` | `bifrost_list_organizations` | `organizations.read` |
 | `organizations.get` | `bifrost organizations get` | `bifrost_get_organization` | `organizations.read` |
 | `organizations.create` | `bifrost organizations create` | `bifrost_create_organization` | `organizations.write` |

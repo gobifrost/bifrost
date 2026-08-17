@@ -41,6 +41,9 @@ _ORGANIZATION_BUILDER_EXCLUSION = (
 _INTEGRATION_SDK_EXCLUSION = (
     "Integration administration is separate from the application SDK's runtime mapping lookup."
 )
+_ROLE_SDK_EXCLUSION = (
+    "Role administration is not available to application SDKs."
+)
 
 
 OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
@@ -973,6 +976,116 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         exclusions={
             "manifest": "Knowledge search reads runtime content; it does not reconcile portable state."
         },
+    ),
+    OperationDefinition(
+        operation_id="roles.list",
+        summary="List platform Roles",
+        target_kind=OperationTargetKind.PLATFORM,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/roles",
+            response_model="list[RolePublic]",
+        ),
+        cli=CliOperationBinding(path=("roles", "list")),
+        mcp=McpOperationBinding(name="bifrost_list_roles"),
+        native_builder=True,
+        action_scopes=("roles.read",),
+        authorization_resolver="Platform-admin gate",
+        exclusions={
+            "manifest": "Manifests reconcile Role state; they do not perform collection reads.",
+            "sdk": _ROLE_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="roles.get",
+        summary="Get one platform Role",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/roles/{role_id}",
+            response_model="RolePublic",
+        ),
+        cli=CliOperationBinding(path=("roles", "get")),
+        mcp=McpOperationBinding(name="bifrost_get_role"),
+        native_builder=True,
+        action_scopes=("roles.read",),
+        authorization_resolver="Platform-admin gate",
+        exclusions={
+            "manifest": "Manifests reconcile Role state; they do not perform resource reads.",
+            "sdk": _ROLE_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="roles.create",
+        summary="Create a platform Role",
+        target_kind=OperationTargetKind.PLATFORM,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/roles",
+            request_model="RoleCreate",
+            response_model="RolePublic",
+        ),
+        cli=CliOperationBinding(path=("roles", "create")),
+        mcp=McpOperationBinding(name="bifrost_create_role"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="roles"),
+        action_scopes=("roles.write",),
+        authorization_resolver="Platform-admin gate",
+        audit_event="role.create",
+        side_effects=(
+            "persist the Role definition",
+            "invalidate Role caches",
+            "publish the Role change for manifest synchronization",
+        ),
+        exclusions={"sdk": _ROLE_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="roles.update",
+        summary="Update a platform Role",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="PATCH",
+            path="/api/roles/{role_id}",
+            request_model="RoleUpdate",
+            response_model="RolePublic",
+        ),
+        cli=CliOperationBinding(path=("roles", "update")),
+        mcp=McpOperationBinding(name="bifrost_update_role"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="roles"),
+        action_scopes=("roles.write",),
+        authorization_resolver="Platform-admin gate plus built-in Role guard",
+        audit_event="role.update",
+        side_effects=(
+            "update the Role definition",
+            "invalidate Role and affected user-role caches",
+            "publish the Role change for manifest synchronization",
+        ),
+        exclusions={"sdk": _ROLE_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="roles.delete",
+        summary="Delete a platform Role",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="DELETE",
+            path="/api/roles/{role_id}",
+        ),
+        cli=CliOperationBinding(path=("roles", "delete")),
+        mcp=McpOperationBinding(name="bifrost_delete_role"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="roles", behavior="remove"),
+        action_scopes=("roles.write",),
+        authorization_resolver=(
+            "Platform-admin gate plus built-in and Solution-management guards"
+        ),
+        audit_event="role.delete",
+        side_effects=(
+            "delete Role assignments through database cascades",
+            "invalidate Role and affected user-role caches",
+            "publish the Role removal for manifest synchronization",
+        ),
+        exclusions={"sdk": _ROLE_SDK_EXCLUSION},
     ),
     OperationDefinition(
         operation_id="organizations.list",

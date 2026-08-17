@@ -1520,13 +1520,13 @@ export interface paths {
          * List all roles
          * @description Get all roles (Platform admin only)
          */
-        get: operations["list_roles_api_roles_get"];
+        get: operations["roles.list"];
         put?: never;
         /**
          * Create a role
          * @description Create a new role (Platform admin only)
          */
-        post: operations["create_role_api_roles_post"];
+        post: operations["roles.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1564,21 +1564,21 @@ export interface paths {
          * Get a role
          * @description Get a role by ID (Platform admin only)
          */
-        get: operations["get_role_api_roles__role_id__get"];
+        get: operations["roles.get"];
         put?: never;
         post?: never;
         /**
          * Delete a role
          * @description Delete a role (Platform admin only). CASCADE removes all role assignments.
          */
-        delete: operations["delete_role_api_roles__role_id__delete"];
+        delete: operations["roles.delete"];
         options?: never;
         head?: never;
         /**
          * Update a role
          * @description Update a role (Platform admin only)
          */
-        patch: operations["update_role_api_roles__role_id__patch"];
+        patch: operations["roles.update"];
         trace?: never;
     };
     "/api/roles/{role_id}/users": {
@@ -30752,7 +30752,7 @@ export interface operations {
             };
         };
     };
-    list_roles_api_roles_get: {
+    "roles.list": {
         parameters: {
             query?: never;
             header?: never;
@@ -30772,7 +30772,7 @@ export interface operations {
             };
         };
     };
-    create_role_api_roles_post: {
+    "roles.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -30825,7 +30825,7 @@ export interface operations {
             };
         };
     };
-    get_role_api_roles__role_id__get: {
+    "roles.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -30856,7 +30856,7 @@ export interface operations {
             };
         };
     };
-    delete_role_api_roles__role_id__delete: {
+    "roles.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -30885,7 +30885,7 @@ export interface operations {
             };
         };
     };
-    update_role_api_roles__role_id__patch: {
+    "roles.update": {
         parameters: {
             query?: never;
             header?: never;

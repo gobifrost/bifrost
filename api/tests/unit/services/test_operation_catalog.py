@@ -241,6 +241,39 @@ KNOWLEDGE_OPERATIONS = {
     ),
 }
 
+ROLE_OPERATIONS = {
+    "roles.list": (
+        "GET",
+        "/api/roles",
+        ("roles", "list"),
+        "bifrost_list_roles",
+    ),
+    "roles.get": (
+        "GET",
+        "/api/roles/{role_id}",
+        ("roles", "get"),
+        "bifrost_get_role",
+    ),
+    "roles.create": (
+        "POST",
+        "/api/roles",
+        ("roles", "create"),
+        "bifrost_create_role",
+    ),
+    "roles.update": (
+        "PATCH",
+        "/api/roles/{role_id}",
+        ("roles", "update"),
+        "bifrost_update_role",
+    ),
+    "roles.delete": (
+        "DELETE",
+        "/api/roles/{role_id}",
+        ("roles", "delete"),
+        "bifrost_delete_role",
+    ),
+}
+
 EVENT_OPERATIONS = {
     "events.sources.list": (
         "GET",
@@ -441,6 +474,7 @@ CANONICAL_OPERATIONS = {
     **WORKFLOW_OPERATIONS,
     **EXECUTION_OPERATIONS,
     **KNOWLEDGE_OPERATIONS,
+    **ROLE_OPERATIONS,
     **EVENT_OPERATIONS,
     **ORGANIZATION_OPERATIONS,
     **INTEGRATION_OPERATIONS,
