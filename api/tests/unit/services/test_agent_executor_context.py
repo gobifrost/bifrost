@@ -10,6 +10,10 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.services.agent_executor import AgentExecutor
+from src.services.agent_runtime.history import (
+    fix_dangling_tool_calls,
+    fix_interleaved_messages,
+)
 from src.services.llm import LLMMessage, ToolCallRequest
 
 
@@ -33,7 +37,7 @@ def test_interleaved_user_message_moves_after_tool_result(executor: AgentExecuto
         LLMMessage(role="tool", content="Result", tool_call_id="c1", tool_name="search"),
     ]
 
-    repaired = executor._fix_interleaved_messages(messages)
+    repaired = fix_interleaved_messages(messages)
 
     assert [message.role for message in repaired] == ["assistant", "tool", "user"]
     assert repaired[1].tool_call_id == "c1"
@@ -49,7 +53,7 @@ def test_missing_tool_result_gets_interrupted_placeholder(executor: AgentExecuto
         LLMMessage(role="user", content="What happened?"),
     ]
 
-    repaired = executor._fix_dangling_tool_calls(messages)
+    repaired = fix_dangling_tool_calls(messages)
 
     assert repaired[1].role == "tool"
     assert repaired[1].tool_call_id == "c1"

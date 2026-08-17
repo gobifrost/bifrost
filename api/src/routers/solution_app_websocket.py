@@ -21,7 +21,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
 from shared.policies.evaluate import evaluate
 from src.core.app_actor import (
@@ -33,9 +33,9 @@ from src.core.pubsub import manager
 from src.models.contracts.policies import Expr
 from src.models.orm.executions import Execution
 from src.models.orm.solution_file_location import SolutionFileLocation
-from src.models.orm.tables import Table
 from src.models.orm.workflows import Workflow
 from src.routers.solution_app_runtime import get_solution_app_user
+from src.services.builder.app_scope import resolve_solution_table
 
 logger = logging.getLogger(__name__)
 
@@ -52,23 +52,8 @@ async def _resolve_table(
     name_or_id: str,
 ) -> UUID | None:
     async with get_db_context() as db:
-        try:
-            table_id = UUID(name_or_id)
-            predicate = Table.id == table_id
-        except ValueError:
-            predicate = Table.name == name_or_id
-        return (
-            await db.execute(
-                select(Table.id).where(
-                    predicate,
-                    Table.solution_id == principal.solution_id,
-                    or_(
-                        Table.organization_id == principal.organization_id,
-                        Table.organization_id.is_(None),
-                    ),
-                )
-            )
-        ).scalar_one_or_none()
+        table = await resolve_solution_table(db, principal, name_or_id)
+        return table.id if table is not None else None
 
 
 async def _execution_allowed(
@@ -87,13 +72,8 @@ async def _execution_allowed(
                 .where(
                     Execution.id == parsed_id,
                     Execution.executed_by == principal.actor_user_id,
-                    Execution.organization_id == principal.organization_id,
                     Execution.execution_context["actor_jti"].astext == principal.jti,
                     Workflow.solution_id == principal.solution_id,
-                    or_(
-                        Workflow.organization_id == principal.organization_id,
-                        Workflow.organization_id.is_(None),
-                    ),
                 )
             )
         ).scalar_one_or_none() is not None
