@@ -1,6 +1,8 @@
 # Code Builder capability-parity resume handoff
 
 **Prepared:** 2026-08-17
+**Last updated:** 2026-08-18 (platform-job slice committed as `ce67707cb`,
+local-only; not yet pushed)
 **Status:** Safe checkpoint; continue implementation, but do not open a PR or
 merge without Jack's explicit approval.
 
@@ -25,9 +27,13 @@ git status --short --branch
 git log -5 --oneline --decorate
 ```
 
-The expected first commit after `b4ecf2242` is the Role canonicalization and
-this handoff. Resolve its exact hash from `git log`; do not assume or rewrite
-history merely to match a recorded hash.
+The expected commits after `b4ecf2242` are the Role canonicalization
+(`f248aa32d`) and the durable platform-job slice (`ce67707cb`). Resolve exact
+hashes from `git log`; do not assume or rewrite history merely to match a
+recorded hash.
+
+`ce67707cb` is committed locally but **not pushed** — the remote branch still
+points at `f248aa32d`. Push it before relying on the remote as the checkpoint.
 
 ## Non-negotiable architecture decisions
 
@@ -68,25 +74,60 @@ Phase 2 has canonicalized these public vertical slices:
 - Workflow Execution History
 - Knowledge Search
 - Roles
+- Durable platform-job status (committed locally, not yet pushed)
 
-The latest generated inventory after Roles reports:
+The latest generated inventory reports:
 
 - 660 REST method/path pairs
-- 139 CLI leaves
+- 140 CLI leaves
 - 101 MCP tools
 - 10 currently implemented native Builder primitives
 - 16 manifest entities
 - 19 application-SDK bindings
-- 72 canonical catalog operations
-- 29 uncatalogued MCP tools
+- 73 canonical catalog operations
+- 28 uncatalogued MCP tools
 
 The Role slice adds stable `roles.list/get/create/update/delete` identities,
 OpenAPI metadata, generated Skill bindings, and canonical
 `bifrost_*_role(s)` MCP registrations. It keeps REST ownership of admin
 authorization, built-in/Solution guards, audit, cache invalidation, cascades,
-and manifest behavior. Alembic head is `20260817_role_mcp_names`.
+and manifest behavior.
+
+The platform-job slice corrected a misleading identity rather than adding a
+surface. `bifrost_get_app_publish_status` read the shared
+`GET /api/platform-jobs/{job_id}` route under an app-specific name; it is now
+`platform.jobs.get`, registered only as `bifrost_get_platform_job` in its own
+thin-wrapper module, with a matching `bifrost platform-jobs get` CLI leaf.
+`bifrost apps publish` still polls the same job inline, so no second status
+contract exists. The catalog naming rule now normalizes hyphenated CLI
+resources — no earlier slice exercised that, and `platform-jobs/get` would
+otherwise derive an invalid hyphenated MCP name. Alembic head is
+`20260817_platform_job_names`.
 
 ## Current verification evidence
+
+Platform-job checkpoint (`ce67707cb`) checks completed successfully:
+
+- 108/108 focused operation-catalog, thin-wrapper, and forward-migration unit
+  checks
+- 67/67 generated-inventory freshness, DTO-parity, and contract-version
+  tripwires
+- 2/2 live MCP checks: a real publish job read back through
+  `bifrost_get_platform_job`, and an unknown job surfacing the REST 404 rather
+  than a synthetic success
+- live CLI drive against the debug stack: `bifrost platform-jobs get` returned
+  a real completed publish job (`files_published: 5`) and the REST 404 for an
+  unknown job
+- API Pyright and Ruff: clean
+- operation catalog and Skill truth regenerated
+- live debug database current/head: `20260817_platform_job_names`
+- `git diff --check`: clean before checkpointing
+
+Not yet run for this checkpoint: the full `tests/e2e/mcp/` suite (started twice;
+the first run was killed by session teardown before reporting), client
+`npm run tsc`/lint, and `./test.sh pre-pr`. This slice changed no client source,
+but the OpenAPI schema did gain the new operation identity, so a type regen is
+still worth confirming before any PR.
 
 Role checkpoint checks completed successfully:
 
@@ -158,6 +199,38 @@ particular, `read_skill_asset` belongs to revision-bound Agent Skill hydration,
 and the local file/edit/validation tools belong to the coding harness rather
 than duplicating Workspace REST operations.
 
+## Decisions and pitfalls recorded 2026-08-18
+
+- **Platform-job identity.** Jack chose renaming
+  `bifrost_get_app_publish_status` to `bifrost_get_platform_job` over keeping
+  the app-scoped name or carrying both. Rationale: the tool reads a shared
+  durable-job route, so an app-scoped name would have mislabeled it and left
+  every future queued operation without a canonical status read. No alias was
+  retained, consistent with the no-compatibility-alias rule.
+- **Operation IDs cannot contain underscores in the resource segment.** The
+  contract pattern is `^[a-z][a-z0-9]*(?:\.[a-z][a-z0-9_]*)+$`, so
+  `platform_jobs.get` fails validation at import time and takes the whole API
+  down on startup. Use dotted segments (`platform.jobs.get`) as
+  `apps.dependencies.get` already does.
+- **The naming validator derives the MCP name from the CLI path** and now
+  normalizes hyphens in the resource, not just the verb. Before this slice a
+  hyphenated CLI resource produced an invalid hyphenated MCP name.
+- **`PlatformJobPublic` has a real `error` field** that is `None` on success.
+  An MCP test asserting `"error" not in payload` therefore fails on a healthy
+  read; assert `payload.get("error") is None` instead. The tool's own failure
+  convention also puts `error` in `structured_content`, so the two collide by
+  name — the live tests pin both directions.
+- **`./test.sh` resolves its Compose project from the current directory.**
+  Running it after the shell's cwd has reset to the primary checkout targets a
+  different worktree's stack and reports `Status: DOWN`. Always run it from the
+  worktree path.
+- **`./test.sh e2e <path>` deselects everything**; pass the test path directly
+  (`./test.sh tests/e2e/mcp/... -k ...`) instead.
+- **Editable CLI installs can silently serve a stale copy.** After
+  `pip install -e <worktree>/api`, confirm with
+  `python -c "import bifrost.commands as c; print(c.__file__)"` that the path
+  points into the worktree before concluding a new command is missing.
+
 ## Remaining phases after public parity
 
 1. Native Builder dispatch parity: generate/derive the Builder operation set
@@ -189,6 +262,10 @@ Treat these as ephemeral. Confirm them with `./debug.sh status` and
 pytest on the host.
 
 ## Source-control boundary
+
+**Immediate next action:** `ce67707cb` is committed but unpushed. Push it to
+`origin/codex/code-builder-pydantic-integration-20260816` so the remote is
+again the recoverable checkpoint.
 
 Checkpoint commits and pushes to the integration branch are authorized.
 Opening a PR, enabling auto-merge, or merging is not authorized. Before any
