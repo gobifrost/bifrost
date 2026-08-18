@@ -64,6 +64,39 @@ def _click_leaf_paths(
     return paths
 
 
+_DOCUMENTATION_MCP_TOOL_IDS = frozenset({"get_docs"})
+
+
+def _mcp_disposition(name: str) -> dict[str, str]:
+    """Classify one MCP tool that has no operation-catalog entry.
+
+    Most uncataloged tools are simply not canonicalized yet. Two groups never
+    will be, and reporting them as missing work misstates the surface:
+
+    * Builder workspace primitives act on a session's scratch workspace rather
+      than on a platform entity, so they have no REST operation to be thin
+      wrappers over.
+    * The documentation reader returns static generated content and owns no
+      entity or state.
+    """
+    if name in BUILDER_TOOL_IDS:
+        return {
+            "status": OperationSurfaceStatus.TRANSPORT_ONLY.value,
+            "reason": (
+                "Builder-local workspace primitive, not a platform entity operation."
+            ),
+        }
+    if name in _DOCUMENTATION_MCP_TOOL_IDS:
+        return {
+            "status": OperationSurfaceStatus.TRANSPORT_ONLY.value,
+            "reason": "Reads generated platform documentation; owns no entity or state.",
+        }
+    return {
+        "status": OperationSurfaceStatus.MISSING.value,
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+    }
+
+
 def _openapi_path(route_path: str) -> str:
     """Normalize a Starlette route path to the form OpenAPI publishes.
 
@@ -313,8 +346,7 @@ def build_operation_inventory(app: FastAPI, repo_root: Path) -> dict[str, Any]:
         "mcp": [
             {
                 **row,
-                "status": OperationSurfaceStatus.MISSING.value,
-                "reason": "MCP tool has not entered the canonical operation catalog yet.",
+                **_mcp_disposition(row["name"]),
             }
             for row in surfaces["mcp"]
             if row["name"] not in consumed["mcp"]
