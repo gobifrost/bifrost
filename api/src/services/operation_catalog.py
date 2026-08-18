@@ -47,6 +47,9 @@ _ROLE_SDK_EXCLUSION = (
 _PLATFORM_JOB_SDK_EXCLUSION = (
     "Platform-job status is a platform operation surface, not an application SDK binding."
 )
+_CLAIM_SDK_EXCLUSION = (
+    "Custom Claim administration is not available to application SDKs."
+)
 
 
 OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
@@ -1108,6 +1111,113 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
             "publish the Role removal for manifest synchronization",
         ),
         exclusions={"sdk": _ROLE_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="claims.list",
+        summary="List Custom Claims in an org",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/claims",
+            response_model="ClaimsList",
+        ),
+        cli=CliOperationBinding(path=("claims", "list")),
+        mcp=McpOperationBinding(name="bifrost_list_claims"),
+        native_builder=True,
+        action_scopes=("claims.read",),
+        authorization_resolver="Platform-admin gate",
+        exclusions={
+            "manifest": "Manifests reconcile Custom Claim state; they do not perform collection reads.",
+            "sdk": _CLAIM_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="claims.get",
+        summary="Get one Custom Claim by name",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/claims/{name}",
+            response_model="CustomClaim",
+        ),
+        cli=CliOperationBinding(path=("claims", "get")),
+        mcp=McpOperationBinding(name="bifrost_get_claim"),
+        native_builder=True,
+        action_scopes=("claims.read",),
+        authorization_resolver="Platform-admin gate",
+        exclusions={
+            "manifest": "Manifests reconcile Custom Claim state; they do not perform resource reads.",
+            "sdk": _CLAIM_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="claims.create",
+        summary="Create a Custom Claim in an org",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/claims",
+            request_model="CustomClaimCreate",
+            response_model="CustomClaim",
+        ),
+        cli=CliOperationBinding(path=("claims", "create")),
+        mcp=McpOperationBinding(name="bifrost_create_claim"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="claims"),
+        action_scopes=("claims.write",),
+        authorization_resolver="Platform-admin gate",
+        audit_event="claim.create",
+        side_effects=(
+            "persist the Custom Claim definition",
+            "validate the claim query's source table and referenced claim names",
+            "reject the write if it introduces a claim dependency cycle",
+        ),
+        exclusions={"sdk": _CLAIM_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="claims.update",
+        summary="Update a Custom Claim by name",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="PATCH",
+            path="/api/claims/{name}",
+            request_model="CustomClaimUpdate",
+            response_model="CustomClaim",
+        ),
+        cli=CliOperationBinding(path=("claims", "update")),
+        mcp=McpOperationBinding(name="bifrost_update_claim"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="claims"),
+        action_scopes=("claims.write",),
+        authorization_resolver="Platform-admin gate",
+        audit_event="claim.update",
+        side_effects=(
+            "update the Custom Claim definition",
+            "validate the claim query's source table and referenced claim names",
+            "reject the write if it introduces a claim dependency cycle",
+        ),
+        exclusions={"sdk": _CLAIM_SDK_EXCLUSION},
+    ),
+    OperationDefinition(
+        operation_id="claims.delete",
+        summary="Delete a Custom Claim by name",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="DELETE",
+            path="/api/claims/{name}",
+        ),
+        cli=CliOperationBinding(path=("claims", "delete")),
+        mcp=McpOperationBinding(name="bifrost_delete_claim"),
+        native_builder=True,
+        manifest=ManifestOperationBinding(entity="claims", behavior="remove"),
+        action_scopes=("claims.write",),
+        authorization_resolver="Platform-admin gate",
+        audit_event="claim.delete",
+        side_effects=(
+            "reject the delete if a table policy still references the claim",
+            "delete the Custom Claim definition",
+        ),
+        exclusions={"sdk": _CLAIM_SDK_EXCLUSION},
     ),
     OperationDefinition(
         operation_id="organizations.list",

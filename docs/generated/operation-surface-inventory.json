@@ -3292,6 +3292,343 @@
       "observed": {
         "cli": {
           "path": [
+            "claims",
+            "list"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_list_claims",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "claims.list",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "claims.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate",
+        "cli": {
+          "path": [
+            "claims",
+            "list"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Manifests reconcile Custom Claim state; they do not perform collection reads.",
+          "sdk": "Custom Claim administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_list_claims"
+        },
+        "native_builder": true,
+        "operation_id": "claims.list",
+        "rest": {
+          "method": "GET",
+          "path": "/api/claims",
+          "request_model": null,
+          "response_model": "ClaimsList"
+        },
+        "side_effects": [],
+        "summary": "List Custom Claims in an org",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "claims",
+            "get"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_get_claim",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "claims.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "claims.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate",
+        "cli": {
+          "path": [
+            "claims",
+            "get"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Manifests reconcile Custom Claim state; they do not perform resource reads.",
+          "sdk": "Custom Claim administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_get_claim"
+        },
+        "native_builder": true,
+        "operation_id": "claims.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/claims/{name}",
+          "request_model": null,
+          "response_model": "CustomClaim"
+        },
+        "side_effects": [],
+        "summary": "Get one Custom Claim by name",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "claims",
+            "create"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "claims",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_create_claim",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "claims.create",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "claims.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "claim.create",
+        "authorization_resolver": "Platform-admin gate",
+        "cli": {
+          "path": [
+            "claims",
+            "create"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Custom Claim administration is not available to application SDKs."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "claims"
+        },
+        "mcp": {
+          "name": "bifrost_create_claim"
+        },
+        "native_builder": true,
+        "operation_id": "claims.create",
+        "rest": {
+          "method": "POST",
+          "path": "/api/claims",
+          "request_model": "CustomClaimCreate",
+          "response_model": "CustomClaim"
+        },
+        "side_effects": [
+          "persist the Custom Claim definition",
+          "validate the claim query's source table and referenced claim names",
+          "reject the write if it introduces a claim dependency cycle"
+        ],
+        "summary": "Create a Custom Claim in an org",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "claims",
+            "update"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "claims",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_update_claim",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "claims.update",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "claims.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "claim.update",
+        "authorization_resolver": "Platform-admin gate",
+        "cli": {
+          "path": [
+            "claims",
+            "update"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Custom Claim administration is not available to application SDKs."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "claims"
+        },
+        "mcp": {
+          "name": "bifrost_update_claim"
+        },
+        "native_builder": true,
+        "operation_id": "claims.update",
+        "rest": {
+          "method": "PATCH",
+          "path": "/api/claims/{name}",
+          "request_model": "CustomClaimUpdate",
+          "response_model": "CustomClaim"
+        },
+        "side_effects": [
+          "update the Custom Claim definition",
+          "validate the claim query's source table and referenced claim names",
+          "reject the write if it introduces a claim dependency cycle"
+        ],
+        "summary": "Update a Custom Claim by name",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "claims",
+            "delete"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "claims",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_delete_claim",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "claims.delete",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "claims.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "claim.delete",
+        "authorization_resolver": "Platform-admin gate",
+        "cli": {
+          "path": [
+            "claims",
+            "delete"
+          ]
+        },
+        "exclusions": {
+          "sdk": "Custom Claim administration is not available to application SDKs."
+        },
+        "manifest": {
+          "behavior": "remove",
+          "entity": "claims"
+        },
+        "mcp": {
+          "name": "bifrost_delete_claim"
+        },
+        "native_builder": true,
+        "operation_id": "claims.delete",
+        "rest": {
+          "method": "DELETE",
+          "path": "/api/claims/{name}",
+          "request_model": null,
+          "response_model": null
+        },
+        "side_effects": [
+          "reject the delete if a table policy still references the claim",
+          "delete the Custom Claim definition"
+        ],
+        "summary": "Delete a Custom Claim by name",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
             "organizations",
             "list"
           ],
@@ -4952,51 +5289,6 @@
       {
         "kind": "operation",
         "path": [
-          "claims",
-          "create"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "claims",
-          "delete"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "claims",
-          "get"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "claims",
-          "list"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "claims",
-          "update"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
           "configs",
           "create"
         ],
@@ -5507,11 +5799,6 @@
     ],
     "manifest": [
       {
-        "entity": "claims",
-        "reason": "Manifest entity has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "entity": "configs",
         "reason": "Manifest entity has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -5556,12 +5843,6 @@
       },
       {
         "hidden": false,
-        "name": "create_claim",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "create_config",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -5569,12 +5850,6 @@
       {
         "hidden": false,
         "name": "create_policy_rule",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "delete_claim",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -5604,12 +5879,6 @@
       },
       {
         "hidden": false,
-        "name": "get_claim",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "get_config",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -5623,12 +5892,6 @@
       {
         "hidden": false,
         "name": "get_file_policy",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "list_claims",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -5689,12 +5952,6 @@
       {
         "hidden": true,
         "name": "test_solution_build",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "update_claim",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -6733,41 +6990,6 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/chat/model-tiers",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/claims",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/claims",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "DELETE",
-        "operation_id": "",
-        "path": "/api/claims/{name}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/claims/{name}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "PATCH",
-        "operation_id": "",
-        "path": "/api/claims/{name}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

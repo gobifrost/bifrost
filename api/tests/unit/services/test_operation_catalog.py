@@ -283,6 +283,39 @@ ROLE_OPERATIONS = {
     ),
 }
 
+CLAIM_OPERATIONS = {
+    "claims.list": (
+        "GET",
+        "/api/claims",
+        ("claims", "list"),
+        "bifrost_list_claims",
+    ),
+    "claims.get": (
+        "GET",
+        "/api/claims/{name}",
+        ("claims", "get"),
+        "bifrost_get_claim",
+    ),
+    "claims.create": (
+        "POST",
+        "/api/claims",
+        ("claims", "create"),
+        "bifrost_create_claim",
+    ),
+    "claims.update": (
+        "PATCH",
+        "/api/claims/{name}",
+        ("claims", "update"),
+        "bifrost_update_claim",
+    ),
+    "claims.delete": (
+        "DELETE",
+        "/api/claims/{name}",
+        ("claims", "delete"),
+        "bifrost_delete_claim",
+    ),
+}
+
 EVENT_OPERATIONS = {
     "events.sources.list": (
         "GET",
@@ -484,6 +517,7 @@ CANONICAL_OPERATIONS = {
     **EXECUTION_OPERATIONS,
     **KNOWLEDGE_OPERATIONS,
     **ROLE_OPERATIONS,
+    **CLAIM_OPERATIONS,
     **EVENT_OPERATIONS,
     **ORGANIZATION_OPERATIONS,
     **INTEGRATION_OPERATIONS,

@@ -50,9 +50,9 @@ def _scope_params(scope: str | None) -> dict[str, Any] | None:
     return {"scope": scope} if scope else None
 
 
-async def list_claims(context: Any, scope: str | None = None) -> ToolResult:
+async def bifrost_list_claims(context: Any, scope: str | None = None) -> ToolResult:
     """List custom claims — thin wrapper over ``GET /api/claims``."""
-    logger.info("MCP list_claims (HTTP bridge)")
+    logger.info("MCP bifrost_list_claims (HTTP bridge)")
     status_code, body = await call_rest(
         context, "GET", "/api/claims", params=_scope_params(scope)
     )
@@ -65,7 +65,7 @@ async def list_claims(context: Any, scope: str | None = None) -> ToolResult:
     )
 
 
-async def get_claim(context: Any, name: str, scope: str | None = None) -> ToolResult:
+async def bifrost_get_claim(context: Any, name: str, scope: str | None = None) -> ToolResult:
     """Get a custom claim by name — thin wrapper over ``GET /api/claims/{name}``."""
     if not name:
         return error_result("name is required")
@@ -81,7 +81,7 @@ async def get_claim(context: Any, name: str, scope: str | None = None) -> ToolRe
     )
 
 
-async def create_claim(
+async def bifrost_create_claim(
     context: Any,
     name: str,
     query: dict[str, Any],
@@ -117,7 +117,7 @@ async def create_claim(
     )
 
 
-async def update_claim(
+async def bifrost_update_claim(
     context: Any,
     name: str,
     description: str | None = None,
@@ -150,7 +150,7 @@ async def update_claim(
     )
 
 
-async def delete_claim(
+async def bifrost_delete_claim(
     context: Any, name: str, scope: str | None = None
 ) -> ToolResult:
     """Delete a custom claim by name — thin wrapper over ``DELETE /api/claims/{name}``."""
@@ -166,11 +166,11 @@ async def delete_claim(
 
 
 TOOLS = [
-    ("list_claims", "List Custom Claims", "List custom claims in the current org."),
-    ("get_claim", "Get Custom Claim", "Get a custom claim by name."),
-    ("create_claim", "Create Custom Claim", "Create a custom claim."),
-    ("update_claim", "Update Custom Claim", "Update a custom claim."),
-    ("delete_claim", "Delete Custom Claim", "Delete a custom claim."),
+    ("bifrost_list_claims", "List Custom Claims", "List custom claims in the current org."),
+    ("bifrost_get_claim", "Get Custom Claim", "Get a custom claim by name."),
+    ("bifrost_create_claim", "Create Custom Claim", "Create a custom claim."),
+    ("bifrost_update_claim", "Update Custom Claim", "Update a custom claim."),
+    ("bifrost_delete_claim", "Delete Custom Claim", "Delete a custom claim."),
 ]
 
 
@@ -181,11 +181,11 @@ def register_tools(mcp: Any, get_context_fn: Any) -> None:
     )
 
     tool_funcs = {
-        "list_claims": list_claims,
-        "get_claim": get_claim,
-        "create_claim": create_claim,
-        "update_claim": update_claim,
-        "delete_claim": delete_claim,
+        "bifrost_list_claims": bifrost_list_claims,
+        "bifrost_get_claim": bifrost_get_claim,
+        "bifrost_create_claim": bifrost_create_claim,
+        "bifrost_update_claim": bifrost_update_claim,
+        "bifrost_delete_claim": bifrost_delete_claim,
     }
 
     for tool_id, _name, description in TOOLS:
@@ -196,10 +196,10 @@ def register_tools(mcp: Any, get_context_fn: Any) -> None:
 
 __all__ = [
     "TOOLS",
-    "create_claim",
-    "delete_claim",
-    "get_claim",
-    "list_claims",
+    "bifrost_create_claim",
+    "bifrost_delete_claim",
+    "bifrost_get_claim",
+    "bifrost_list_claims",
     "register_tools",
-    "update_claim",
+    "bifrost_update_claim",
 ]
