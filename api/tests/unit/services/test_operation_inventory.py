@@ -27,6 +27,37 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
             assert row["reason"]
 
 
+def test_builder_local_mcp_tools_are_dispositioned_not_pending() -> None:
+    """Builder workspace primitives and the docs reader never enter the catalog.
+
+    They act on a Builder session's scratch workspace or on generated content
+    rather than on a platform entity, so reporting them as catalog work still
+    to do would overstate the remaining surface.
+    """
+    inventory = build_operation_inventory(app, REPO_ROOT)
+    dispositioned = {
+        row["name"]: row
+        for row in inventory["uncataloged"]["mcp"]
+        if row["status"] == "transport_only"
+    }
+
+    assert set(dispositioned) == {
+        "apply_patch",
+        "delete_file",
+        "get_docs",
+        "list_files",
+        "make_directory",
+        "read_file",
+        "read_skill_asset",
+        "search_text",
+        "test_solution_build",
+        "validate_solution",
+        "write_file",
+    }
+    for row in dispositioned.values():
+        assert "has not entered" not in row["reason"], row
+
+
 def test_catalog_vertical_slices_report_rest_cli_and_mcp_parity() -> None:
     inventory = build_operation_inventory(app, REPO_ROOT)
     operations = {

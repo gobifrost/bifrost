@@ -6071,8 +6071,8 @@
       {
         "hidden": true,
         "name": "apply_patch",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
+        "reason": "Builder-local workspace primitive, not a platform entity operation.",
+        "status": "transport_only"
       },
       {
         "hidden": false,
@@ -6095,8 +6095,8 @@
       {
         "hidden": true,
         "name": "delete_file",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
+        "reason": "Builder-local workspace primitive, not a platform entity operation.",
+        "status": "transport_only"
       },
       {
         "hidden": false,
@@ -6113,8 +6113,8 @@
       {
         "hidden": false,
         "name": "get_docs",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
+        "reason": "Reads generated platform documentation; owns no entity or state.",
+        "status": "transport_only"
       },
       {
         "hidden": false,
@@ -6125,8 +6125,8 @@
       {
         "hidden": true,
         "name": "list_files",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
+        "reason": "Builder-local workspace primitive, not a platform entity operation.",
+        "status": "transport_only"
       },
       {
         "hidden": false,
@@ -6137,32 +6137,32 @@
       {
         "hidden": true,
         "name": "make_directory",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
+        "reason": "Builder-local workspace primitive, not a platform entity operation.",
+        "status": "transport_only"
       },
       {
         "hidden": true,
         "name": "read_file",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
+        "reason": "Builder-local workspace primitive, not a platform entity operation.",
+        "status": "transport_only"
       },
       {
         "hidden": true,
         "name": "read_skill_asset",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
+        "reason": "Builder-local workspace primitive, not a platform entity operation.",
+        "status": "transport_only"
       },
       {
         "hidden": true,
         "name": "search_text",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
+        "reason": "Builder-local workspace primitive, not a platform entity operation.",
+        "status": "transport_only"
       },
       {
         "hidden": true,
         "name": "test_solution_build",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
+        "reason": "Builder-local workspace primitive, not a platform entity operation.",
+        "status": "transport_only"
       },
       {
         "hidden": false,
@@ -6173,14 +6173,14 @@
       {
         "hidden": true,
         "name": "validate_solution",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
+        "reason": "Builder-local workspace primitive, not a platform entity operation.",
+        "status": "transport_only"
       },
       {
         "hidden": true,
         "name": "write_file",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
+        "reason": "Builder-local workspace primitive, not a platform entity operation.",
+        "status": "transport_only"
       }
     ],
     "native_builder": [
