@@ -177,6 +177,30 @@ without aliases, preserve side effects/audit/guards, add a forward persisted
 tool-ID migration when names change, regenerate references/types, run scoped
 unit plus live boundary tests, then commit and push a checkpoint.
 
+### Sizing as measured 2026-08-18
+
+The expensive part is already done: **all four remaining slices are already
+thin HTTP wrappers** (`call_rest` only; the two `grep` hits for ORM imports are
+docstrings asserting the absence). CLI groups already exist for every one, with
+the expected leaves. So the residual work per slice is mostly mechanical:
+rename MCP tools to `bifrost_<verb>_<noun>`, add catalog entries plus
+`operation_route`, write the forward tool-ID migration, regenerate references,
+and run the scoped plus live checks.
+
+Two slices carry a real design question and should not be treated as
+mechanical:
+
+- **Configs** — no per-ID REST GET exists, so CLI and MCP each filter the list
+  payload client-side. Also `ConfigCreate.value` is `dict` while the public
+  `SetConfigRequest.value` is `str`, which the shared-DTO bullet will hit.
+- **Policy rules** — the CLI group is singular (`policy-rule`) while the
+  catalog naming rule expects a plural resource, and the CLI exposes
+  `get`/`update`/`usages` leaves that have no MCP counterpart today (MCP has
+  only list/create/delete). Decide whether MCP gains them or they are recorded
+  as intentional CLI-only exclusions.
+
+Claims and file policies look genuinely mechanical by comparison.
+
 Do not mistakenly catalog these 11 internal tools as public resource
 operations during Phase 2:
 
