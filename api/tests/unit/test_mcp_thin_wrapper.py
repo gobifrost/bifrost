@@ -112,11 +112,11 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "delete_config",
     },
     "claims": {
-        "list_claims",
-        "get_claim",
-        "create_claim",
-        "update_claim",
-        "delete_claim",
+        "bifrost_list_claims",
+        "bifrost_get_claim",
+        "bifrost_create_claim",
+        "bifrost_update_claim",
+        "bifrost_delete_claim",
     },
     "organizations": {
         "bifrost_list_organizations",

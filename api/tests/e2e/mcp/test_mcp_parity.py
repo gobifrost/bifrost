@@ -416,7 +416,7 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
     },
     {
         "model_path": "src.models.contracts.claims:CustomClaimCreate",
-        "tool_path": "src.services.mcp_server.tools.claims:create_claim",
+        "tool_path": "src.services.mcp_server.tools.claims:bifrost_create_claim",
         # `scope` is an org-targeting query param, not a DTO field — mirrors
         # the same convention used by other org-scoped router endpoints.
         "extra_args": {"scope"},
@@ -424,7 +424,7 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
     },
     {
         "model_path": "src.models.contracts.claims:CustomClaimUpdate",
-        "tool_path": "src.services.mcp_server.tools.claims:update_claim",
+        "tool_path": "src.services.mcp_server.tools.claims:bifrost_update_claim",
         "extra_args": {"name", "scope"},
         "field_renames": {},
     },
@@ -1761,6 +1761,112 @@ class TestMcpParityRoles:
             f"/api/roles/{role_id}", headers=platform_admin.headers
         )
         assert get_after.status_code == 404
+
+
+# =============================================================================
+# Custom Claims
+# =============================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestMcpParityClaims:
+    async def test_claims_crud_roundtrip(
+        self, admin_context, e2e_client, platform_admin, org1
+    ) -> None:
+        from src.services.mcp_server.tools.claims import (
+            bifrost_create_claim,
+            bifrost_delete_claim,
+            bifrost_get_claim,
+            bifrost_list_claims,
+            bifrost_update_claim,
+        )
+
+        scope = org1["id"]
+        table_name = f"mcp-parity-claims-table-{uuid4().hex[:8]}"
+        table_resp = e2e_client.post(
+            "/api/tables",
+            headers=platform_admin.headers,
+            json={
+                "name": table_name,
+                "description": "mcp parity claims source table",
+                "organization_id": scope,
+            },
+        )
+        assert table_resp.status_code == 201, table_resp.text
+
+        # list
+        list_result = await bifrost_list_claims(admin_context, scope=scope)
+        listed = list_result.structured_content or {}
+        assert "error" not in listed, listed
+
+        # create
+        name = f"mcp_parity_claim_{uuid4().hex[:8]}"
+        create_result = await bifrost_create_claim(
+            admin_context,
+            name=name,
+            description="created by test_mcp_parity",
+            query={"table": table_name, "select": "id"},
+            scope=scope,
+        )
+        created = create_result.structured_content or {}
+        assert "error" not in created, created
+        assert created.get("name") == name
+
+        try:
+            # get
+            get_result = await bifrost_get_claim(admin_context, name=name, scope=scope)
+            fetched = get_result.structured_content or {}
+            assert "error" not in fetched, fetched
+            assert fetched.get("name") == name
+
+            # update
+            update_result = await bifrost_update_claim(
+                admin_context,
+                name=name,
+                description="updated by test_mcp_parity",
+                scope=scope,
+            )
+            updated = update_result.structured_content or {}
+            assert "error" not in updated, updated
+            assert updated.get("description") == "updated by test_mcp_parity"
+
+            # Confirm via REST.
+            rest_get = e2e_client.get(
+                f"/api/claims/{name}",
+                headers=platform_admin.headers,
+                params={"scope": scope},
+            )
+            assert rest_get.status_code == 200
+            assert rest_get.json()["description"] == "updated by test_mcp_parity"
+        finally:
+            delete_result = await bifrost_delete_claim(
+                admin_context, name=name, scope=scope
+            )
+            deleted = delete_result.structured_content or {}
+            assert deleted.get("deleted") == name
+
+        get_after = e2e_client.get(
+            f"/api/claims/{name}",
+            headers=platform_admin.headers,
+            params={"scope": scope},
+        )
+        assert get_after.status_code == 404
+
+    async def test_get_claim_reports_unknown_claim_as_error(
+        self, admin_context, org1
+    ) -> None:
+        """An unknown claim name surfaces the REST 404 rather than a synthetic success."""
+        from src.services.mcp_server.tools.claims import bifrost_get_claim
+
+        result = await bifrost_get_claim(
+            admin_context,
+            name=f"mcp_parity_missing_{uuid4().hex[:8]}",
+            scope=org1["id"],
+        )
+        payload = result.structured_content or {}
+        assert payload.get("error"), payload
+        assert payload.get("body", {}).get("detail") == "claim not found"
 
 
 # =============================================================================

@@ -55,6 +55,11 @@ harness.
 | `roles.create` | `bifrost roles create` | `bifrost_create_role` | `roles.write` |
 | `roles.update` | `bifrost roles update` | `bifrost_update_role` | `roles.write` |
 | `roles.delete` | `bifrost roles delete` | `bifrost_delete_role` | `roles.write` |
+| `claims.list` | `bifrost claims list` | `bifrost_list_claims` | `claims.read` |
+| `claims.get` | `bifrost claims get` | `bifrost_get_claim` | `claims.read` |
+| `claims.create` | `bifrost claims create` | `bifrost_create_claim` | `claims.write` |
+| `claims.update` | `bifrost claims update` | `bifrost_update_claim` | `claims.write` |
+| `claims.delete` | `bifrost claims delete` | `bifrost_delete_claim` | `claims.write` |
 | `organizations.list` | `bifrost organizations list` | `bifrost_list_organizations` | `organizations.read` |
 | `organizations.get` | `bifrost organizations get` | `bifrost_get_organization` | `organizations.read` |
 | `organizations.create` | `bifrost organizations create` | `bifrost_create_organization` | `organizations.write` |
