@@ -118,16 +118,16 @@ Platform-job checkpoint (`ce67707cb`) checks completed successfully:
 - live CLI drive against the debug stack: `bifrost platform-jobs get` returned
   a real completed publish job (`files_published: 5`) and the REST 404 for an
   unknown job
+- 87/87 full `tests/e2e/mcp/` suite (parity + tool-access matrix), 8m35s
 - API Pyright and Ruff: clean
 - operation catalog and Skill truth regenerated
 - live debug database current/head: `20260817_platform_job_names`
 - `git diff --check`: clean before checkpointing
 
-Not yet run for this checkpoint: the full `tests/e2e/mcp/` suite (started twice;
-the first run was killed by session teardown before reporting), client
-`npm run tsc`/lint, and `./test.sh pre-pr`. This slice changed no client source,
-but the OpenAPI schema did gain the new operation identity, so a type regen is
-still worth confirming before any PR.
+Not yet run for this checkpoint: client `npm run tsc`/lint and
+`./test.sh pre-pr`. This slice changed no client source, but the OpenAPI schema
+did gain the new operation identity, so a type regen is still worth confirming
+before any PR.
 
 Role checkpoint checks completed successfully:
 
