@@ -1870,6 +1870,100 @@ class TestMcpParityClaims:
 
 
 # =============================================================================
+# File Policies
+# =============================================================================
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestMcpParityFilePolicies:
+    async def test_file_policies_crud_roundtrip(
+        self, admin_context, e2e_client, platform_admin, org1
+    ) -> None:
+        from src.services.mcp_server.tools.files import (
+            bifrost_delete_file_policy,
+            bifrost_get_file_policy,
+            bifrost_list_file_policies,
+            bifrost_set_file_policy,
+        )
+
+        scope = org1["id"]
+        path = f"mcp-parity-file-policy-{uuid4().hex[:8]}"
+
+        # list
+        list_result = await bifrost_list_file_policies(
+            admin_context, location="workspace", scope=scope
+        )
+        listed = list_result.structured_content or {}
+        assert "error" not in listed, listed
+
+        # set (create)
+        set_result = await bifrost_set_file_policy(
+            admin_context,
+            path=path,
+            policies=[
+                {
+                    "name": "admin_bypass",
+                    "actions": ["read", "write"],
+                    "when": {"user": "is_platform_admin"},
+                }
+            ],
+            location="workspace",
+            scope=scope,
+        )
+        created = set_result.structured_content or {}
+        assert "error" not in created, created
+        assert created.get("path") == path
+
+        try:
+            # get
+            get_result = await bifrost_get_file_policy(
+                admin_context, path=path, location="workspace", scope=scope
+            )
+            fetched = get_result.structured_content or {}
+            assert "error" not in fetched, fetched
+            assert fetched.get("path") == path
+
+            # Confirm via REST.
+            rest_get = e2e_client.get(
+                f"/api/files/policies/{path}",
+                headers=platform_admin.headers,
+                params={"location": "workspace", "scope": scope},
+            )
+            assert rest_get.status_code == 200
+            assert rest_get.json()["path"] == path
+        finally:
+            delete_result = await bifrost_delete_file_policy(
+                admin_context, path=path, location="workspace", scope=scope
+            )
+            deleted = delete_result.structured_content or {}
+            assert deleted.get("deleted") == path
+
+        get_after = e2e_client.get(
+            f"/api/files/policies/{path}",
+            headers=platform_admin.headers,
+            params={"location": "workspace", "scope": scope},
+        )
+        assert get_after.status_code == 404
+
+    async def test_get_file_policy_reports_unknown_path_as_error(
+        self, admin_context, org1
+    ) -> None:
+        """An unknown policy path surfaces the REST 404 rather than a synthetic success."""
+        from src.services.mcp_server.tools.files import bifrost_get_file_policy
+
+        result = await bifrost_get_file_policy(
+            admin_context,
+            path=f"mcp-parity-missing-{uuid4().hex[:8]}",
+            location="workspace",
+            scope=org1["id"],
+        )
+        payload = result.structured_content or {}
+        assert payload.get("error"), payload
+        assert payload.get("body", {}).get("detail") == "File policy not found"
+
+
+# =============================================================================
 # Configs
 # =============================================================================
 

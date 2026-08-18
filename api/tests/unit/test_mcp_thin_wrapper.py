@@ -1,8 +1,8 @@
 """Guardrail tests for MCP parity tools (Task 6 + Task 11).
 
 Task 11 adds solution-scope forwarding to the file policy MCP tools —
-``list_file_policies``, ``get_file_policy``, ``set_file_policy``,
-``delete_file_policy`` — each accepts an optional ``solution`` param that
+``bifrost_list_file_policies``, ``bifrost_get_file_policy``, ``bifrost_set_file_policy``,
+``bifrost_delete_file_policy`` — each accepts an optional ``solution`` param that
 is forwarded as ``?solution=<uuid>`` to the REST endpoint via ``call_rest``.
 Tests for that behaviour live at the bottom of this file under
 ``test_file_policy_solution_scope_*``.
@@ -145,10 +145,10 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "bifrost_revoke_workflow_role",
     },
     "files": {
-        "list_file_policies",
-        "get_file_policy",
-        "set_file_policy",
-        "delete_file_policy",
+        "bifrost_list_file_policies",
+        "bifrost_get_file_policy",
+        "bifrost_set_file_policy",
+        "bifrost_delete_file_policy",
     },
     "apps": {
         "bifrost_list_apps",
@@ -353,15 +353,15 @@ def _call_rest_capturing_params() -> tuple[AsyncMock, list[dict]]:
 
 @pytest.mark.asyncio
 async def test_file_policy_solution_scope_forwarded_list() -> None:
-    """list_file_policies forwards ?solution= to the REST endpoint."""
-    from src.services.mcp_server.tools.files import list_file_policies
+    """bifrost_list_file_policies forwards ?solution= to the REST endpoint."""
+    from src.services.mcp_server.tools.files import bifrost_list_file_policies
 
     mock_call_rest, captures = _call_rest_capturing_params()
     ctx = _make_mcp_context()
     install_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
     with patch("src.services.mcp_server.tools.files.call_rest", mock_call_rest):
-        await list_file_policies(ctx, location="solutions", solution=install_id)
+        await bifrost_list_file_policies(ctx, location="solutions", solution=install_id)
 
     assert len(captures) == 1
     assert captures[0]["params"].get("solution") == install_id
@@ -369,8 +369,8 @@ async def test_file_policy_solution_scope_forwarded_list() -> None:
 
 @pytest.mark.asyncio
 async def test_file_policy_solution_scope_forwarded_get() -> None:
-    """get_file_policy forwards ?solution= to the REST endpoint."""
-    from src.services.mcp_server.tools.files import get_file_policy
+    """bifrost_get_file_policy forwards ?solution= to the REST endpoint."""
+    from src.services.mcp_server.tools.files import bifrost_get_file_policy
 
     mock_call_rest, captures = _call_rest_capturing_params()
     ctx = _make_mcp_context()
@@ -381,7 +381,7 @@ async def test_file_policy_solution_scope_forwarded_get() -> None:
 
     install_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
     with patch("src.services.mcp_server.tools.files.call_rest", AsyncMock(side_effect=_fake)):
-        await get_file_policy(ctx, path="data/", location="solutions", solution=install_id)
+        await bifrost_get_file_policy(ctx, path="data/", location="solutions", solution=install_id)
 
     assert captures[0]["params"].get("solution") == install_id
 
@@ -389,13 +389,13 @@ async def test_file_policy_solution_scope_forwarded_get() -> None:
 @pytest.mark.asyncio
 async def test_file_policy_solution_scope_omitted_when_none() -> None:
     """When solution is None the ?solution= key is absent from the REST call."""
-    from src.services.mcp_server.tools.files import list_file_policies
+    from src.services.mcp_server.tools.files import bifrost_list_file_policies
 
     mock_call_rest, captures = _call_rest_capturing_params()
     ctx = _make_mcp_context()
 
     with patch("src.services.mcp_server.tools.files.call_rest", mock_call_rest):
-        await list_file_policies(ctx, location="workspace", solution=None)
+        await bifrost_list_file_policies(ctx, location="workspace", solution=None)
 
     assert len(captures) == 1
     assert "solution" not in captures[0]["params"]
@@ -405,13 +405,13 @@ def test_file_policy_tools_accept_solution_param() -> None:
     """All four file policy tools declare an optional ``solution`` keyword argument."""
     import inspect as _inspect
     from src.services.mcp_server.tools.files import (
-        delete_file_policy,
-        get_file_policy,
-        list_file_policies,
-        set_file_policy,
+        bifrost_delete_file_policy,
+        bifrost_get_file_policy,
+        bifrost_list_file_policies,
+        bifrost_set_file_policy,
     )
 
-    for fn in (list_file_policies, get_file_policy, set_file_policy, delete_file_policy):
+    for fn in (bifrost_list_file_policies, bifrost_get_file_policy, bifrost_set_file_policy, bifrost_delete_file_policy):
         sig = _inspect.signature(fn)
         assert "solution" in sig.parameters, (
             f"{fn.__name__} does not accept a 'solution' parameter (Task 11)"

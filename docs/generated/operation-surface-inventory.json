@@ -3629,6 +3629,279 @@
       "observed": {
         "cli": {
           "path": [
+            "files",
+            "policies",
+            "list"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_list_file_policies",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "files.policies.list",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "files.policies.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate (CurrentSuperuser)",
+        "cli": {
+          "path": [
+            "files",
+            "policies",
+            "list"
+          ]
+        },
+        "exclusions": {
+          "manifest": "File policies are workspace/org administration, not a portable manifest entity.",
+          "sdk": "File policy administration is not available to application SDKs; SDK file methods operate on content, not access rules."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_list_file_policies"
+        },
+        "native_builder": true,
+        "operation_id": "files.policies.list",
+        "rest": {
+          "method": "GET",
+          "path": "/api/files/policies",
+          "request_model": null,
+          "response_model": "FilePolicyListResponse"
+        },
+        "side_effects": [],
+        "summary": "List file access policies for a location and scope",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "files",
+            "policies",
+            "get"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_get_file_policy",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "files.policies.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "files.policies.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate (CurrentSuperuser)",
+        "cli": {
+          "path": [
+            "files",
+            "policies",
+            "get"
+          ]
+        },
+        "exclusions": {
+          "manifest": "File policies are workspace/org administration, not a portable manifest entity.",
+          "sdk": "File policy administration is not available to application SDKs; SDK file methods operate on content, not access rules."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_get_file_policy"
+        },
+        "native_builder": true,
+        "operation_id": "files.policies.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/files/policies/{policy_path}",
+          "request_model": null,
+          "response_model": "FilePolicyPublic"
+        },
+        "side_effects": [],
+        "summary": "Get the exact file policy for a location/path prefix",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "files",
+            "policies",
+            "set"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_set_file_policy",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "files.policies.set",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "files.policies.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "file_policy.set",
+        "authorization_resolver": "Platform-admin gate (CurrentSuperuser)",
+        "cli": {
+          "path": [
+            "files",
+            "policies",
+            "set"
+          ]
+        },
+        "exclusions": {
+          "manifest": "File policies are workspace/org administration, not a portable manifest entity.",
+          "sdk": "File policy administration is not available to application SDKs; SDK file methods operate on content, not access rules."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_set_file_policy"
+        },
+        "native_builder": true,
+        "operation_id": "files.policies.set",
+        "rest": {
+          "method": "PUT",
+          "path": "/api/files/policies/{policy_path}",
+          "request_model": "FilePolicySetRequest",
+          "response_model": "FilePolicyPublic"
+        },
+        "side_effects": [
+          "reject the write if the path targets a deploy-owned solution tier",
+          "resolve and validate any $ref policy-rule references against the file action domain",
+          "upsert the file policy row",
+          "publish a file-policy-changed event to invalidate cached access decisions"
+        ],
+        "summary": "Create or replace the file policy for a location/path prefix",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "files",
+            "policies",
+            "delete"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_delete_file_policy",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "files.policies.delete",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "files.policies.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "file_policy.delete",
+        "authorization_resolver": "Platform-admin gate (CurrentSuperuser)",
+        "cli": {
+          "path": [
+            "files",
+            "policies",
+            "delete"
+          ]
+        },
+        "exclusions": {
+          "manifest": "File policies are workspace/org administration, not a portable manifest entity.",
+          "sdk": "File policy administration is not available to application SDKs; SDK file methods operate on content, not access rules."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_delete_file_policy"
+        },
+        "native_builder": true,
+        "operation_id": "files.policies.delete",
+        "rest": {
+          "method": "DELETE",
+          "path": "/api/files/policies/{policy_path}",
+          "request_model": null,
+          "response_model": null
+        },
+        "side_effects": [
+          "reject the delete if the path targets a deploy-owned solution tier",
+          "delete the file policy row",
+          "publish a file-policy-changed event to invalidate cached access decisions"
+        ],
+        "summary": "Delete the file policy for a location/path prefix",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
             "organizations",
             "list"
           ],
@@ -5349,46 +5622,6 @@
         "status": "transport_only"
       },
       {
-        "kind": "operation",
-        "path": [
-          "files",
-          "policies",
-          "delete"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "files",
-          "policies",
-          "get"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "files",
-          "policies",
-          "list"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "files",
-          "policies",
-          "set"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "kind": "lifecycle",
         "path": [
           "git",
@@ -5867,12 +6100,6 @@
       },
       {
         "hidden": false,
-        "name": "delete_file_policy",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "delete_policy_rule",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -5891,19 +6118,7 @@
       },
       {
         "hidden": false,
-        "name": "get_file_policy",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "list_configs",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "list_file_policies",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -5940,12 +6155,6 @@
       {
         "hidden": true,
         "name": "search_text",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "set_file_policy",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -6513,7 +6722,7 @@
       {
         "method": "GET",
         "operation_id": "",
-        "path": "/api/applications/{app_id}/bundle-asset/{filename:path}",
+        "path": "/api/applications/{app_id}/bundle-asset/{filename}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -6527,7 +6736,7 @@
       {
         "method": "GET",
         "operation_id": "",
-        "path": "/api/applications/{app_id}/dist/{path:path}",
+        "path": "/api/applications/{app_id}/dist/{path}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -6590,21 +6799,21 @@
       {
         "method": "DELETE",
         "operation_id": "",
-        "path": "/api/applications/{app_id}/files/{file_path:path}",
+        "path": "/api/applications/{app_id}/files/{file_path}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
       {
         "method": "GET",
         "operation_id": "",
-        "path": "/api/applications/{app_id}/files/{file_path:path}",
+        "path": "/api/applications/{app_id}/files/{file_path}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
       {
         "method": "PUT",
         "operation_id": "",
-        "path": "/api/applications/{app_id}/files/{file_path:path}",
+        "path": "/api/applications/{app_id}/files/{file_path}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -7337,37 +7546,9 @@
         "status": "missing_surface"
       },
       {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/files/policies",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "method": "POST",
         "operation_id": "",
         "path": "/api/files/policies/test",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "DELETE",
-        "operation_id": "",
-        "path": "/api/files/policies/{policy_path:path}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/files/policies/{policy_path:path}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "PUT",
-        "operation_id": "",
-        "path": "/api/files/policies/{policy_path:path}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -7822,7 +8003,7 @@
       {
         "method": "PUT",
         "operation_id": "",
-        "path": "/api/internal/sandbox/jobs/{job_id}/artifacts/{rel_path:path}",
+        "path": "/api/internal/sandbox/jobs/{job_id}/artifacts/{rel_path}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -9089,7 +9270,7 @@
       {
         "method": "GET",
         "operation_id": "",
-        "path": "/api/sdk/modules/{path:path}",
+        "path": "/api/sdk/modules/{path}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
