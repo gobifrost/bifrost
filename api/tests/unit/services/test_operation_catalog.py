@@ -316,6 +316,33 @@ CLAIM_OPERATIONS = {
     ),
 }
 
+FILE_POLICY_OPERATIONS = {
+    "files.policies.list": (
+        "GET",
+        "/api/files/policies",
+        ("files", "policies", "list"),
+        "bifrost_list_file_policies",
+    ),
+    "files.policies.get": (
+        "GET",
+        "/api/files/policies/{policy_path}",
+        ("files", "policies", "get"),
+        "bifrost_get_file_policy",
+    ),
+    "files.policies.set": (
+        "PUT",
+        "/api/files/policies/{policy_path}",
+        ("files", "policies", "set"),
+        "bifrost_set_file_policy",
+    ),
+    "files.policies.delete": (
+        "DELETE",
+        "/api/files/policies/{policy_path}",
+        ("files", "policies", "delete"),
+        "bifrost_delete_file_policy",
+    ),
+}
+
 EVENT_OPERATIONS = {
     "events.sources.list": (
         "GET",
@@ -518,6 +545,7 @@ CANONICAL_OPERATIONS = {
     **KNOWLEDGE_OPERATIONS,
     **ROLE_OPERATIONS,
     **CLAIM_OPERATIONS,
+    **FILE_POLICY_OPERATIONS,
     **EVENT_OPERATIONS,
     **ORGANIZATION_OPERATIONS,
     **INTEGRATION_OPERATIONS,

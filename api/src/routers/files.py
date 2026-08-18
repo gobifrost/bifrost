@@ -652,7 +652,11 @@ async def _test_principal(
 # =============================================================================
 
 
-@router.get("/policies", response_model=FilePolicyListResponse)
+@router.get(
+    "/policies",
+    response_model=FilePolicyListResponse,
+    **operation_route("files.policies.list"),
+)
 async def list_file_policies(
     ctx: Context,
     user: CurrentSuperuser,
@@ -781,7 +785,11 @@ async def list_file_structure(
     return FileStructureResponse(entries=[e.model_dump() for e in entries])
 
 
-@router.get("/policies/{policy_path:path}", response_model=FilePolicyPublic)
+@router.get(
+    "/policies/{policy_path:path}",
+    response_model=FilePolicyPublic,
+    **operation_route("files.policies.get"),
+)
 async def get_file_policy(
     policy_path: str,
     ctx: Context,
@@ -821,7 +829,11 @@ async def get_file_policy(
     return _policy_public(row)
 
 
-@router.put("/policies/{policy_path:path}", response_model=FilePolicyPublic)
+@router.put(
+    "/policies/{policy_path:path}",
+    response_model=FilePolicyPublic,
+    **operation_route("files.policies.set"),
+)
 async def set_file_policy(
     policy_path: str,
     request: FilePolicySetRequest,
@@ -878,7 +890,11 @@ async def set_file_policy(
     return _policy_public(row)
 
 
-@router.delete("/policies/{policy_path:path}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/policies/{policy_path:path}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    **operation_route("files.policies.delete"),
+)
 async def delete_file_policy(
     policy_path: str,
     ctx: Context,

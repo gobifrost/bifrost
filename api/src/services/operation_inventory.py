@@ -64,6 +64,16 @@ def _click_leaf_paths(
     return paths
 
 
+def _openapi_path(route_path: str) -> str:
+    """Normalize a Starlette route path to the form OpenAPI publishes.
+
+    Starlette keeps the converter in the raw path (``{policy_path:path}``)
+    while the generated schema drops it (``{policy_path}``). The operation
+    catalog declares the OpenAPI form, so strip the converter before matching.
+    """
+    return re.sub(r"\{([^}:]+):[^}]+\}", r"{\1}", route_path)
+
+
 def collect_rest_surface(app: FastAPI) -> list[dict[str, str]]:
     """Return every static HTTP method/path pair registered on the API."""
 
@@ -77,7 +87,7 @@ def collect_rest_surface(app: FastAPI) -> list[dict[str, str]]:
             rows.append(
                 {
                     "method": method,
-                    "path": route.path,
+                    "path": _openapi_path(route.path),
                     "operation_id": route.operation_id or "",
                 }
             )

@@ -60,6 +60,10 @@ harness.
 | `claims.create` | `bifrost claims create` | `bifrost_create_claim` | `claims.write` |
 | `claims.update` | `bifrost claims update` | `bifrost_update_claim` | `claims.write` |
 | `claims.delete` | `bifrost claims delete` | `bifrost_delete_claim` | `claims.write` |
+| `files.policies.list` | `bifrost files policies list` | `bifrost_list_file_policies` | `files.policies.read` |
+| `files.policies.get` | `bifrost files policies get` | `bifrost_get_file_policy` | `files.policies.read` |
+| `files.policies.set` | `bifrost files policies set` | `bifrost_set_file_policy` | `files.policies.write` |
+| `files.policies.delete` | `bifrost files policies delete` | `bifrost_delete_file_policy` | `files.policies.write` |
 | `organizations.list` | `bifrost organizations list` | `bifrost_list_organizations` | `organizations.read` |
 | `organizations.get` | `bifrost organizations get` | `bifrost_get_organization` | `organizations.read` |
 | `organizations.create` | `bifrost organizations create` | `bifrost_create_organization` | `organizations.write` |

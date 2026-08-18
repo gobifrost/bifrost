@@ -50,6 +50,13 @@ _PLATFORM_JOB_SDK_EXCLUSION = (
 _CLAIM_SDK_EXCLUSION = (
     "Custom Claim administration is not available to application SDKs."
 )
+_FILE_POLICY_SDK_EXCLUSION = (
+    "File policy administration is not available to application SDKs; "
+    "SDK file methods operate on content, not access rules."
+)
+_FILE_POLICY_MANIFEST_EXCLUSION = (
+    "File policies are workspace/org administration, not a portable manifest entity."
+)
 
 
 OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
@@ -1220,6 +1227,95 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         exclusions={"sdk": _CLAIM_SDK_EXCLUSION},
     ),
     OperationDefinition(
+        operation_id="files.policies.list",
+        summary="List file access policies for a location and scope",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/files/policies",
+            response_model="FilePolicyListResponse",
+        ),
+        cli=CliOperationBinding(path=("files", "policies", "list")),
+        mcp=McpOperationBinding(name="bifrost_list_file_policies"),
+        native_builder=True,
+        action_scopes=("files.policies.read",),
+        authorization_resolver="Platform-admin gate (CurrentSuperuser)",
+        exclusions={
+            "manifest": _FILE_POLICY_MANIFEST_EXCLUSION,
+            "sdk": _FILE_POLICY_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="files.policies.get",
+        summary="Get the exact file policy for a location/path prefix",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/files/policies/{policy_path}",
+            response_model="FilePolicyPublic",
+        ),
+        cli=CliOperationBinding(path=("files", "policies", "get")),
+        mcp=McpOperationBinding(name="bifrost_get_file_policy"),
+        native_builder=True,
+        action_scopes=("files.policies.read",),
+        authorization_resolver="Platform-admin gate (CurrentSuperuser)",
+        exclusions={
+            "manifest": _FILE_POLICY_MANIFEST_EXCLUSION,
+            "sdk": _FILE_POLICY_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="files.policies.set",
+        summary="Create or replace the file policy for a location/path prefix",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="PUT",
+            path="/api/files/policies/{policy_path}",
+            request_model="FilePolicySetRequest",
+            response_model="FilePolicyPublic",
+        ),
+        cli=CliOperationBinding(path=("files", "policies", "set")),
+        mcp=McpOperationBinding(name="bifrost_set_file_policy"),
+        native_builder=True,
+        action_scopes=("files.policies.write",),
+        authorization_resolver="Platform-admin gate (CurrentSuperuser)",
+        audit_event="file_policy.set",
+        side_effects=(
+            "reject the write if the path targets a deploy-owned solution tier",
+            "resolve and validate any $ref policy-rule references against the file action domain",
+            "upsert the file policy row",
+            "publish a file-policy-changed event to invalidate cached access decisions",
+        ),
+        exclusions={
+            "manifest": _FILE_POLICY_MANIFEST_EXCLUSION,
+            "sdk": _FILE_POLICY_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="files.policies.delete",
+        summary="Delete the file policy for a location/path prefix",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="DELETE",
+            path="/api/files/policies/{policy_path}",
+        ),
+        cli=CliOperationBinding(path=("files", "policies", "delete")),
+        mcp=McpOperationBinding(name="bifrost_delete_file_policy"),
+        native_builder=True,
+        action_scopes=("files.policies.write",),
+        authorization_resolver="Platform-admin gate (CurrentSuperuser)",
+        audit_event="file_policy.delete",
+        side_effects=(
+            "reject the delete if the path targets a deploy-owned solution tier",
+            "delete the file policy row",
+            "publish a file-policy-changed event to invalidate cached access decisions",
+        ),
+        exclusions={
+            "manifest": _FILE_POLICY_MANIFEST_EXCLUSION,
+            "sdk": _FILE_POLICY_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
         operation_id="organizations.list",
         summary="List Organizations",
         target_kind=OperationTargetKind.PLATFORM,
@@ -1761,6 +1857,18 @@ def operation_route(operation_id: str) -> dict[str, Any]:
     }
 
 
+def _singularize(segment: str) -> str:
+    """Singularize one CLI path segment.
+
+    Only the two plural forms the CLI actually uses are handled: ``-ies``
+    (policies -> policy) and a plain trailing ``s``. Anything else is already
+    singular as far as this rule is concerned.
+    """
+    if segment.endswith("ies"):
+        return f"{segment[:-3]}y"
+    return segment[:-1] if segment.endswith("s") else segment
+
+
 def validate_operation_catalog(
     operations: Iterable[OperationDefinition] = OPERATION_CATALOG,
 ) -> None:
@@ -1802,17 +1910,24 @@ def validate_operation_catalog(
 
     for operation in materialized:
         if operation.cli and operation.mcp:
-            resource = operation.cli.path[0].replace("-", "_")
-            verb = operation.cli.path[-1]
+            # A CLI path is (resource, *nested_resources, verb).  The resource
+            # nearest the verb is the one the operation acts on, so it carries
+            # the plural/singular rule; every ancestor is always singularized
+            # and prefixes it: ("files", "policies", "list") -> file_policies.
+            *resource_path, verb = operation.cli.path
+            owning_resource = resource_path[-1].replace("-", "_")
+            ancestors = [
+                _singularize(segment.replace("-", "_"))
+                for segment in resource_path[:-1]
+            ]
             verb_parts = verb.replace("-", "_").split("_")
             action, subresource = verb_parts[0], verb_parts[1:]
             noun = (
-                resource[:-1]
-                if resource.endswith("s")
-                and (action not in {"list", "search"} or subresource)
-                else resource
+                _singularize(owning_resource)
+                if action not in {"list", "search"} or subresource
+                else owning_resource
             )
-            suffix = "_".join((noun, *subresource))
+            suffix = "_".join((*ancestors, noun, *subresource))
             expected = f"bifrost_{action}_{suffix}"
             if operation.mcp.name != expected:
                 errors.append(
