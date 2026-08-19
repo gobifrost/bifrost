@@ -92,24 +92,22 @@ Do **not** create a new worktree. This one is the work location.
   uvicorn reload that does not recover. Prefer baselining a suspected
   pre-existing failure on a scratch clone, or restart the app containers after.
 
-## Known failures — pre-existing, NOT introduced here
+## Known failures — NONE
 
-`./test.sh unit` reports these 6 (of 5991 collected; 5985 pass). All were
-verified failing with this session's changes stashed, and none are touched by any
-commit above. Each needs an owner; none is a legitimate "flaky."
+`./test.sh unit` is **fully green: 5988 passed, 3 skipped, 0 failed.**
 
-| Test | Cause | Owner |
+Six failures existed at the start of this session. None was introduced by the
+parity work, but "pre-existing" is not a disposition, so each was diagnosed and
+fixed at its cause in `9f6ed7c86`:
+
+| Test | Cause | Fix |
 |---|---|---|
-| `test_mcp_tools_file_index.py` (3 tests) | `ImportError: cannot import name '_read_from_s3'` — `3b3f9a868` ("make workspace file operations canonical") removed the helper without updating its test | dedicated repair; the tests are stale, not the code |
-| `test_org_scoping_enforcement.py` (2 tests) | Inline org filters in `routers/integrations.py:118`; plus stale allow-list entries for `routers/workflows.py` and `routers/agents.py` whose text no longer matches | the allow-list notes say "phase 6 migrates" |
-| `test_application_create_commit.py` | `TypeError: 'MagicMock' object can't be awaited` — an async mock not updated after a signature change | dedicated repair |
+| `test_mcp_tools_file_index.py` (3) | Tested `_read_from_s3`, a private helper `3b3f9a868` deleted when workspace file ops became canonical | Deleted the obsolete file; ported its three behaviors to `tests/e2e/api/test_files_read_content.py` against `POST /api/files/read`, which now owns them |
+| `test_org_scoping_enforcement.py` (2) | `integrations.py:118` gained an inline filter whose parameter rename broke the exact-string allow-list match; five other entries had gone stale | Added the entry with justification (exact-scope filter, not cascade; IntegrationRepository is deliberately not an OrgScopedRepository); removed the five stale entries |
+| `test_application_create_commit.py` (1) | `create_application` grew `await ctx.db.scalar` validation and a `RepoSyncWriter` side effect; the MagicMock db had no awaitable `scalar` | Added the awaitable stub, patched `emit_audit`/`RepoSyncWriter` at their boundaries; verified the test still catches a reordered commit |
 
-`./test.sh unit` went from 7 failures to these 6 (5985 passed). The one that
-disappeared is `test_cli_surface_smoke.py::test_top_level_help_lists_every_entity_group`,
-fixed in `bbed4a24a` because the policy-rules rename made that list mine to touch.
-A second drift of the same class — the stale `ENTITY_GROUPS` set in
-`tests/unit/cli/test_cli_base.py` — was fixed earlier in `6aeb32631`, so it had
-already cleared before the 7-failure baseline was taken.
+Two CLI-help/`ENTITY_GROUPS` drifts of the same class were fixed earlier in
+`6aeb32631` and `bbed4a24a`.
 
 ## Verification run this session
 
@@ -117,8 +115,7 @@ already cleared before the 7-failure baseline was taken.
 - `tests/e2e/api/test_config.py` → **34/34**
 - `tests/e2e/mcp/test_mcp_parity.py` → **67/67** (full file)
 - `tests/e2e/test_cli_policy_rules.py` + 3 sibling policy-rule e2e → **25/25**
-- Unit: thin-wrapper, catalog, inventory, both migrations, dto_flags,
-  dto_body_assembly, contract_version, `cli/`, surface smoke → **all green**
+- `./test.sh unit` (FULL backend unit suite) → **5988 passed, 3 skipped, 0 failed**
 - Catalog validated at import: 93 operations, every derived MCP name accepted
 - CLI surface confirmed live: group `policy-rules`, six leaves incl.
   `list-usages`, old name absent, every group listed in help
@@ -166,6 +163,41 @@ for the exact `HEAD`.
   field. Also records that `action_scopes` is validated for shape but never for
   membership in `AUTHORIZATION_SCOPE_CATALOG` — a well-formed but nonexistent
   scope passes today (Phase 5 territory).
+
+## Plan status — how far this is from done
+
+Checklist items in
+[`2026-08-17-builder-capability-parity-execution.md`](2026-08-17-builder-capability-parity-execution.md):
+
+| Phase | Done | Open |
+|---|---:|---:|
+| 0 — Freeze/checkpoint foundation | 5 | 0 |
+| 1 — Canonical catalog + inventory | 7 | 0 |
+| 2 — Make REST behavior canonical | 13 | 5 |
+| 3 — Agent Skill portability | 0 | 7 |
+| 4 — Transport-neutral `bifrost-build` Skill | 0 | 5 |
+| 5 — Coding profile + dynamic authorization | 0 | 6 |
+| 6 — Native Builder target parity | 0 | 7 |
+| 7 — Builder UX, MSP ops, governance | 0 | 8 |
+| 8 — Verification, candidate, acceptance | 0 | 11 |
+| **Total** | **25** | **49** |
+
+**Phase 2's 5 open items are cross-cutting**, not slices: drift reconciliation,
+hard structured REST errors, deleting duplicated implementations, and DTO-driven
+CLI/MCP field generation. They were satisfied incrementally inside each slice
+rather than as discrete tasks — every MCP tool is a thin wrapper, the tripwires
+run, `missing_surface` is zero. Walk them explicitly against the code before
+ticking them; that is a reasonable first task for the next session.
+
+**The percentage understates the remaining effort.** Phases 0–2 were cataloging
+work — renaming tools, adding catalog entries, thin-wrapping existing behavior.
+Phases 3–8 are feature construction: a new Skill revision column and export
+format, a versioned coding profile with a five-way authorization intersection,
+Builder Workspace/Solution target modes with an isolated changeset (diff, apply,
+rollback), a hierarchical usage-policy system, and live local-Worker plus
+Cloudflare proofs. Phases 5 and 6 are each plausibly larger than everything
+completed so far. Realistic read: roughly a quarter to a third of the *work*,
+not of the effort.
 
 ## After Phase 2
 
