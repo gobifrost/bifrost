@@ -5,6 +5,8 @@ Tests CRUD operations for different config types (string, int, bool, json, secre
 """
 
 import logging
+from uuid import uuid4
+
 import pytest
 
 
@@ -460,3 +462,136 @@ class TestConfigScopeFiltering:
         assert scoped_configs["global"]["key"] not in config_keys, "Should NOT see global config"
         assert scoped_configs["org1"]["key"] in config_keys, "Should see org1 config"
         assert scoped_configs["org2"]["key"] not in config_keys, "Should NOT see org2 config"
+
+
+@pytest.mark.e2e
+class TestConfigValueTypeRoundTrip:
+    """Store-then-read round trip for every ``ConfigType``.
+
+    The write surface (``POST /api/config``) takes ``value`` as a **string**
+    for all five types — that is the wire contract every caller uses. The
+    read surface (``POST /api/sdk/config/get``) is what coerces the stored
+    string back into a typed value using ``config_type``.
+
+    These tests pin both halves together so the string-in/coerce-out contract
+    cannot drift silently. Without them, ``int`` and ``bool`` coercion had no
+    coverage at all.
+    """
+
+    @staticmethod
+    def _read_typed(e2e_client, headers, key):
+        """Read a config through the SDK path that applies type coercion."""
+        response = e2e_client.post(
+            "/api/sdk/config/get",
+            headers=headers,
+            json={"key": key},
+        )
+        assert response.status_code == 200, \
+            f"SDK config read for '{key}' failed: {response.text}"
+        return response.json()
+
+    def test_string_round_trip(self, e2e_client, platform_admin):
+        """A string config reads back as the same string."""
+        key = f"e2e_rt_string_{uuid4().hex[:8]}"
+        created = _create_config(
+            e2e_client, platform_admin.headers, key, "hello world", "string",
+        )
+        try:
+            entry = self._read_typed(e2e_client, platform_admin.headers, key)
+            assert entry["config_type"] == "string"
+            assert entry["value"] == "hello world"
+        finally:
+            _delete_config(e2e_client, platform_admin.headers, created["id"])
+
+    def test_int_round_trip(self, e2e_client, platform_admin):
+        """An int config is written as a string and reads back as an int."""
+        key = f"e2e_rt_int_{uuid4().hex[:8]}"
+        created = _create_config(
+            e2e_client, platform_admin.headers, key, "5", "int",
+        )
+        try:
+            entry = self._read_typed(e2e_client, platform_admin.headers, key)
+            assert entry["config_type"] == "int"
+            assert entry["value"] == 5, f"expected coercion to int, got {entry['value']!r}"
+            assert not isinstance(entry["value"], str)
+        finally:
+            _delete_config(e2e_client, platform_admin.headers, created["id"])
+
+    def test_bool_round_trip(self, e2e_client, platform_admin):
+        """A bool config is written as a string and reads back as a bool."""
+        key = f"e2e_rt_bool_{uuid4().hex[:8]}"
+        created = _create_config(
+            e2e_client, platform_admin.headers, key, "true", "bool",
+        )
+        try:
+            entry = self._read_typed(e2e_client, platform_admin.headers, key)
+            assert entry["config_type"] == "bool"
+            assert entry["value"] is True, \
+                f"expected coercion to bool, got {entry['value']!r}"
+        finally:
+            _delete_config(e2e_client, platform_admin.headers, created["id"])
+
+    def test_json_round_trip(self, e2e_client, platform_admin):
+        """A json config is written as a JSON string and reads back parsed.
+
+        This is the case that makes ``value: str`` the correct write-side
+        contract: the object travels as a serialized string and is parsed on
+        read, exactly like int and bool are coerced.
+        """
+        key = f"e2e_rt_json_{uuid4().hex[:8]}"
+        created = _create_config(
+            e2e_client, platform_admin.headers,
+            key, '{"enabled": true, "level": 3}', "json",
+        )
+        try:
+            entry = self._read_typed(e2e_client, platform_admin.headers, key)
+            assert entry["config_type"] == "json"
+            assert entry["value"] == {"enabled": True, "level": 3}, \
+                f"expected parsed object, got {entry['value']!r}"
+        finally:
+            _delete_config(e2e_client, platform_admin.headers, created["id"])
+
+    def test_secret_round_trip(self, e2e_client, platform_admin):
+        """A secret config is stored encrypted and reads back decrypted.
+
+        The list surface masks it (covered by TestConfigSecurity); the SDK
+        read surface is the one that decrypts.
+        """
+        key = f"e2e_rt_secret_{uuid4().hex[:8]}"
+        created = _create_config(
+            e2e_client, platform_admin.headers,
+            key, "secret-api-key-12345", "secret",
+        )
+        try:
+            entry = self._read_typed(e2e_client, platform_admin.headers, key)
+            assert entry["config_type"] == "secret"
+            assert entry["value"] == "secret-api-key-12345", \
+                "secret should be decrypted on the SDK read path"
+        finally:
+            _delete_config(e2e_client, platform_admin.headers, created["id"])
+
+    def test_stored_envelope_is_unwrapped_on_list(self, e2e_client, platform_admin):
+        """The JSONB ``{"value": X}`` storage envelope never reaches a caller.
+
+        Config rows persist as a single-key JSONB envelope. Every read path
+        unwraps it, so the API surface exposes the scalar. This pins that the
+        envelope is a storage detail, not part of any contract.
+        """
+        key = f"e2e_rt_envelope_{uuid4().hex[:8]}"
+        created = _create_config(
+            e2e_client, platform_admin.headers, key, "unwrapped", "string",
+        )
+        try:
+            assert created["value"] == "unwrapped", \
+                f"create response leaked the storage envelope: {created['value']!r}"
+
+            response = e2e_client.get("/api/config", headers=platform_admin.headers)
+            assert response.status_code == 200, response.text
+            listed = next(
+                (c for c in response.json() if c["key"] == key), None
+            )
+            assert listed is not None, f"config '{key}' missing from list"
+            assert listed["value"] == "unwrapped", \
+                f"list response leaked the storage envelope: {listed['value']!r}"
+        finally:
+            _delete_config(e2e_client, platform_admin.headers, created["id"])

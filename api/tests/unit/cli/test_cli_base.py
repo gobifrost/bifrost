@@ -222,6 +222,7 @@ class TestSubgroupRegistration:
             "agents",
             "apps",
             "integrations",
+            "knowledge",
             "configs",
             "tables",
             "claims",
@@ -229,6 +230,7 @@ class TestSubgroupRegistration:
             "files",
             "requirements",
             "policy-rule",
+            "platform-jobs",
         }
 
     def test_dispatch_unknown_subgroup_exits_1(self) -> None:

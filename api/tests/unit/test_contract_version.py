@@ -233,7 +233,15 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # update configuration, and subscription target_type is constrained to the
     # two supported values (2026-08-17). These ship in the same unreleased 1.2.3
     # compatibility floor as the canonical App/Event operation surfaces.
-    "de50dc892dad93d49d1bff9a18f790ae67e515cd97e7ad363dade7e6f6b2379a"
+    #
+    # ConfigCreate/ConfigUpdate `value` retyped dict -> str (2026-08-19).
+    # COSMETIC: the DTO described the JSONB storage envelope, not the endpoint.
+    # No route consumes these models — they only generate CLI flags — and
+    # `SetConfigRequest.value` has always been `str`, so every released CLI
+    # already sent a string (it hand-built the body to bypass the dict). The
+    # annotation now matches shipped behavior instead of changing it, so
+    # MIN_CLI_VERSION and the frozen CONTRACT_VERSION are unchanged.
+    "d69cbdd1e0b93348d2982d50f301806579dd196244f0ec65d1bc069a00746191"
 )
 
 
