@@ -1011,3 +1011,81 @@ def test_external_dispatch_preserves_structured_error_details():
     assert error.message == "Invalid project"
     assert error.retryable is True
     assert error.details["underlying_result"] == underlying
+
+
+class TestAgentSkillToolClassification:
+    """The Skill file reader must survive gateway classification.
+
+    It is injected by the execution planner for a bundle-backed Agent rather
+    than selected from ``system_tools``. Before it had an explicit branch the
+    classifier fell through to the workflow lookup, found nothing, logged a
+    warning and dropped the tool — leaving a Skill whose SKILL.md referenced
+    companion files the model could not read.
+    """
+
+    @staticmethod
+    def _service() -> MCPAgentGatewayService:
+        return MCPAgentGatewayService(_context())
+
+    @staticmethod
+    def _skill_tool() -> ToolDefinition:
+        from src.services.mcp_server.tools.skill_assets import (
+            READ_SKILL_ASSET_TOOL_ID,
+        )
+
+        return ToolDefinition(
+            name=READ_SKILL_ASSET_TOOL_ID,
+            description="Read a relative file from the agent's Skill bundle.",
+            parameters={
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+        )
+
+    def test_bundled_agent_keeps_the_skill_reader(self) -> None:
+        agent = _agent()
+        agent.bundle_path = "skills/ops"
+
+        resolved = self._service()._resolve_gateway_tools(
+            agent,
+            [self._skill_tool()],
+            {},
+            MCPConfig(),
+        )
+
+        assert len(resolved) == 1, "the skill reader must not be dropped"
+        assert resolved[0].source == "agent_skill"
+        assert resolved[0].source_id == agent.id
+
+    def test_inline_agent_does_not_expose_the_skill_reader(self) -> None:
+        """An Agent with no bundle has no companion files to read."""
+        agent = _agent()
+        agent.bundle_path = None
+
+        resolved = self._service()._resolve_gateway_tools(
+            agent,
+            [self._skill_tool()],
+            {},
+            MCPConfig(),
+        )
+
+        assert resolved == []
+
+    def test_the_reader_is_bound_to_the_selected_agent(self) -> None:
+        """source_id identifies which Agent's bundle the tool reads.
+
+        The dispatcher resolves the bundle root from the executing Agent, so a
+        caller cannot redirect it at another Agent's storage.
+        """
+        first, second = _agent(), _agent()
+        first.bundle_path = "skills/a"
+        second.bundle_path = "skills/b"
+
+        service = self._service()
+        a = service._resolve_gateway_tools(first, [self._skill_tool()], {}, MCPConfig())
+        b = service._resolve_gateway_tools(second, [self._skill_tool()], {}, MCPConfig())
+
+        assert a[0].source_id == first.id
+        assert b[0].source_id == second.id
+        assert a[0].source_id != b[0].source_id

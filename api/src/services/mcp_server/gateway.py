@@ -59,6 +59,7 @@ GatewayToolSource = Literal[
     "delegation",
     "external_mcp",
     "builder_workspace",
+    "agent_skill",
 ]
 
 
@@ -1090,6 +1091,10 @@ class MCPAgentGatewayService:
     ) -> list[ResolvedGatewayTool]:
         resolved: list[ResolvedGatewayTool] = []
 
+        from src.services.mcp_server.tools.skill_assets import (
+            READ_SKILL_ASSET_TOOL_ID,
+        )
+
         if builder_agent:
             from src.services.builder.mcp_harness import (
                 BUILDER_TOOL_IDS,
@@ -1140,6 +1145,20 @@ class MCPAgentGatewayService:
                     ),
                     parameters=parameters,
                 )
+            elif definition.name == READ_SKILL_ASSET_TOOL_ID:
+                # Progressive Skill loading. The execution planner injects this
+                # for a bundle-backed Agent rather than selecting it from
+                # system_tools, so without an explicit branch the classifier
+                # below would fail to place it and silently drop it — leaving a
+                # Skill whose SKILL.md references companion files the model
+                # cannot read. Bound to the selected Agent (and therefore its
+                # revision): the dispatcher resolves the bundle root from the
+                # executing Agent's context, never from caller input.
+                if not agent.bundle_path:
+                    continue
+                source = "agent_skill"
+                source_id = agent.id
+                source_identity = f"agent_skill:{agent.id}"
             else:
                 mcp_route = parse_mcp_tool_name(definition.name)
                 if mcp_route is not None:
@@ -1380,7 +1399,7 @@ class MCPAgentGatewayService:
         *,
         async_execution: bool = False,
     ) -> Any:
-        if tool.source in {"system", "knowledge"}:
+        if tool.source in {"system", "knowledge", "agent_skill"}:
             return await self._dispatch_system_tool(agent, tool, arguments)
         if tool.source == "workflow":
             return await self._dispatch_workflow(
@@ -1498,6 +1517,15 @@ class MCPAgentGatewayService:
             user_name=self.context.user_name,
             accessible_namespaces=list(agent.knowledge_sources or []),
             agent_id=agent.id,
+            # The Skill file reader resolves its bundle root and storage tier
+            # from the EXECUTING Agent, never from caller input, so a model
+            # cannot read another Agent's bundle by passing a crafted path.
+            # Mirrors the agent-scoped context built in server.py; bundle_in_repo
+            # is the file_sync tier that _bundle_storage keys on.
+            agent_bundle_path=agent.bundle_path,
+            agent_skill_id=agent.id if agent.bundle_path else None,
+            agent_skill_in_repo=agent.created_by == "file_sync",
+            agent_solution_id=agent.solution_id,
         )
         result = await func(context, **arguments)
         structured = getattr(result, "structured_content", None)
