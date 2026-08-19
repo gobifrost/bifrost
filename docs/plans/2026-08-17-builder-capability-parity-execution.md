@@ -545,12 +545,21 @@ The inventory now accounts for 73 canonical operations and 140 CLI leaves, with
       migration 20260819_skill_file_tool sweeps persisted references, and a test
       pins the MCP and Builder constants to the migration's target so they
       cannot drift apart.)
-- [ ] Ensure the dynamic gateway classifies and exposes the file reader for a
-      bundle-backed Agent and binds it to the selected Agent/revision.
-- [ ] Add deterministic `.skill` export through `ArtifactRef` without exposing
-      object-storage paths.
-- [ ] Update the Agent UI file explorer and Skill-use indicator to consume the
-      same descriptor rather than reconstructing bundle state.
+- [x] Ensure the dynamic gateway classifies and exposes the file reader for a
+      bundle-backed Agent and binds it to the selected Agent/revision. (It was
+      being silently DROPPED: the reader is planner-injected, matched no
+      classifier branch, and fell through to the workflow lookup. New
+      `agent_skill` source, gated on bundle_path; dispatch now populates the
+      Skill context fields from the executing Agent, not caller input.)
+- [x] Add deterministic `.skill` export through `ArtifactRef` without exposing
+      object-storage paths. (POST /api/agents/{agent_id}/skill/export returns
+      only id/filename/content-type/size. Determinism was an unpinned property
+      of the archive builder; an e2e test now asserts two exports of unchanged
+      content have identical bytes.)
+- [x] Update the Agent UI file explorer and Skill-use indicator to consume the
+      same descriptor rather than reconstructing bundle state. (Both components
+      derive bundle state from `source` via hasSkillBundle() instead of
+      bundle_path truthiness; the revision is now surfaced in the panel.)
 
 **Gate:** an external harness can discover an Agent, load `SKILL.md`, follow a
 relative reference, and execute an allowed capability; inline, uploaded, and
