@@ -47,7 +47,7 @@ async def test_workspace_tool_runtime_reads_skill_from_solution_bundle(
     result = await execute_builder_workspace_tool(
         workspace=workspace,
         bundle_path="skills/expense-tracker",
-        name="read_skill_asset",
+        name="bifrost_read_agent_skill_file",
         arguments={"path": "reference.md"},
     )
 
@@ -65,7 +65,7 @@ async def test_workspace_tool_runtime_rejects_skill_traversal(tmp_path: Path) ->
     result = await execute_builder_workspace_tool(
         workspace=workspace,
         bundle_path="skills/expense-tracker",
-        name="read_skill_asset",
+        name="bifrost_read_agent_skill_file",
         arguments={"path": "../secret"},
     )
 

@@ -11,7 +11,9 @@ import {
 	downloadAgentSkill,
 	getAgentSkill,
 	getAgentSkillFile,
+	hasSkillBundle,
 	uploadAgentSkill,
+	type AgentSkill,
 } from "./agentSkills";
 
 beforeEach(() => {
@@ -123,5 +125,40 @@ describe("Agent Skills service", () => {
 		await expect(downloadAgentSkill("agent-1")).rejects.toThrow(
 			"Bundle path is unavailable",
 		);
+	});
+});
+
+describe("hasSkillBundle", () => {
+	const skill = (source: AgentSkill["source"], bundlePath: string | null) =>
+		({
+			name: "x",
+			description: "",
+			revision: "a".repeat(64),
+			bundle_path: bundlePath,
+			skill_markdown: "",
+			files: [],
+			companion_files: [],
+			automatic_capabilities: [],
+			source,
+			is_managed: false,
+		}) satisfies AgentSkill;
+
+	it("is false for an inline agent", () => {
+		expect(hasSkillBundle(skill("inline", null))).toBe(false);
+	});
+
+	it("is true for an uploaded bundle", () => {
+		expect(hasSkillBundle(skill("upload", "skills/demo"))).toBe(true);
+	});
+
+	it("is true for a solution-managed bundle", () => {
+		expect(hasSkillBundle(skill("solution", "skills/demo"))).toBe(true);
+	});
+
+	it("derives from source, not from bundle_path", () => {
+		// bundle_path is a display-only authoring hint; a bundled agent whose
+		// path the server omits must still read as bundled.
+		expect(hasSkillBundle(skill("upload", null))).toBe(true);
+		expect(hasSkillBundle(skill("inline", "skills/stale"))).toBe(false);
 	});
 });

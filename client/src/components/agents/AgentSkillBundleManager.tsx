@@ -48,6 +48,7 @@ import {
 	detachAgentSkill,
 	getAgentSkill,
 	getAgentSkillFile,
+	hasSkillBundle,
 	uploadAgentSkill,
 	type AgentSkill,
 } from "@/services/agentSkills";
@@ -228,7 +229,7 @@ export function AgentSkillBundleManager({
 		);
 	}
 
-	const hasBundle = Boolean(skill.bundle_path);
+	const hasBundle = hasSkillBundle(skill);
 	const managed = isSolutionManaged || skill.is_managed;
 	const busy = uploadMutation.isPending || detachMutation.isPending;
 	const isMarkdown = selectedPath.toLowerCase().endsWith(".md");
@@ -256,7 +257,7 @@ export function AgentSkillBundleManager({
 							? "SKILL.md supplies the instructions. Bundle files are available to the agent at runtime."
 							: "Instructions are editable below and export as a portable SKILL.md."}
 					</p>
-					{skill.bundle_path ? (
+					{hasBundle && skill.bundle_path ? (
 						<div className="mt-2 flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
 							<span className="shrink-0 font-medium text-foreground">
 								{skill.source === "solution" ? "Solution path" : "Bundle root"}
@@ -264,7 +265,7 @@ export function AgentSkillBundleManager({
 							<code className="truncate">{skill.bundle_path}</code>
 						</div>
 					) : null}
-					{skill.bundle_path ? (
+					{hasBundle ? (
 						<p className="mt-1 text-[11px] leading-4 text-muted-foreground">
 							{skill.source === "solution"
 								? "Resolved from the Solution root and locked to its deployment lifecycle."

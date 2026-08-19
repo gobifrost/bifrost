@@ -47,7 +47,7 @@ READ_ONLY_BUILDER_TOOLS = frozenset(
         "read_file",
         "search_text",
         "validate_solution",
-        "read_skill_asset",
+        "bifrost_read_agent_skill_file",
     }
 )
 NON_MUTATING_BUILDER_TOOLS = READ_ONLY_BUILDER_TOOLS | BUILDER_BIFROST_TOOL_IDS
@@ -55,7 +55,7 @@ MUTATING_BUILDER_TOOLS = frozenset(BUILDER_WORKSPACE_TOOL_IDS) - READ_ONLY_BUILD
 BUILDER_TOOL_IDS = (
     frozenset(BUILDER_WORKSPACE_TOOL_IDS)
     | BUILDER_BIFROST_TOOL_IDS
-    | {"read_skill_asset"}
+    | {"bifrost_read_agent_skill_file"}
 )
 
 
@@ -220,7 +220,7 @@ class BuilderMCPHarness:
         session = await self._authorize(
             agent,
             builder_session_id,
-            "read_skill_asset",
+            "bifrost_read_agent_skill_file",
         )
         if not agent.bundle_path:
             raise BuilderMCPHarnessError("Builder agent has no Skill bundle")

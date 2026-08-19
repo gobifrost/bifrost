@@ -6713,6 +6713,12 @@
       },
       {
         "hidden": true,
+        "name": "bifrost_read_agent_skill_file",
+        "reason": "Builder-local workspace primitive, not a platform entity operation.",
+        "status": "transport_only"
+      },
+      {
+        "hidden": true,
         "name": "delete_file",
         "reason": "Builder-local workspace primitive, not a platform entity operation.",
         "status": "transport_only"
@@ -6738,12 +6744,6 @@
       {
         "hidden": true,
         "name": "read_file",
-        "reason": "Builder-local workspace primitive, not a platform entity operation.",
-        "status": "transport_only"
-      },
-      {
-        "hidden": true,
-        "name": "read_skill_asset",
         "reason": "Builder-local workspace primitive, not a platform entity operation.",
         "status": "transport_only"
       },
@@ -6779,6 +6779,11 @@
         "status": "transport_only"
       },
       {
+        "name": "bifrost_read_agent_skill_file",
+        "reason": "Execution-scoped workspace primitive, not a platform entity operation.",
+        "status": "transport_only"
+      },
+      {
         "name": "delete_file",
         "reason": "Execution-scoped workspace primitive, not a platform entity operation.",
         "status": "transport_only"
@@ -6795,11 +6800,6 @@
       },
       {
         "name": "read_file",
-        "reason": "Execution-scoped workspace primitive, not a platform entity operation.",
-        "status": "transport_only"
-      },
-      {
-        "name": "read_skill_asset",
         "reason": "Execution-scoped workspace primitive, not a platform entity operation.",
         "status": "transport_only"
       },

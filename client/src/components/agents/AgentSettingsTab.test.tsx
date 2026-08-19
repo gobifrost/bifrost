@@ -77,6 +77,7 @@ vi.mock("@/services/agentSkills", () => ({
 	getAgentSkill: async () => ({
 		name: "Inline agent instructions",
 		description: "",
+		revision: "0".repeat(64),
 		bundle_path: null,
 		skill_markdown: "",
 		files: ["SKILL.md"],
@@ -88,6 +89,9 @@ vi.mock("@/services/agentSkills", () => ({
 	getAgentSkillFile: vi.fn(),
 	uploadAgentSkill: vi.fn(),
 	detachAgentSkill: vi.fn(),
+	// Pure derivation, not I/O — mirror the real implementation rather than
+	// stubbing it, so this mock cannot drift from the source's meaning.
+	hasSkillBundle: (skill: { source: string }) => skill.source !== "inline",
 }));
 
 beforeEach(() => {

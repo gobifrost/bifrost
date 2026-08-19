@@ -26,7 +26,7 @@ BUILDER_WORKSPACE_TOOL_IDS = (
     "make_directory",
     "validate_solution",
 )
-READ_SKILL_ASSET_TOOL_ID = "read_skill_asset"
+READ_SKILL_ASSET_TOOL_ID = "bifrost_read_agent_skill_file"
 SANDBOX_BUILDER_TOOL_IDS = frozenset(BUILDER_WORKSPACE_TOOL_IDS) | {
     READ_SKILL_ASSET_TOOL_ID
 }
@@ -193,7 +193,7 @@ async def execute_builder_workspace_tool(
         if name == READ_SKILL_ASSET_TOOL_ID:
             if not bundle_path:
                 return error_result(
-                    "read_skill_asset is unavailable without an agent bundle"
+                    "bifrost_read_agent_skill_file is unavailable without an agent bundle"
                 )
             requested_path = str(arguments.get("path", ""))
             resolved_path = resolve_workspace_skill_asset(

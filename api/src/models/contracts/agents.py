@@ -225,6 +225,11 @@ class AgentSkillPublic(BaseModel):
     #: a harness can compare a cached Skill against a live Agent without
     #: re-downloading it.
     revision: str
+    #: Workspace/Solution-relative authoring root of the bundle (for example
+    #: ``skills/ticket-triage``), or None for an inline Agent. This is an
+    #: AUTHORING path, shown so a Solution author can find their bundle — it
+    #: must never carry an object-storage URI, bucket, or key. Runtimes read
+    #: files through the Skill file routes, never by joining this path.
     bundle_path: str | None = None
     skill_markdown: str
     files: list[str] = Field(default_factory=list)

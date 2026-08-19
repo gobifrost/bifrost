@@ -76,7 +76,7 @@ BUNDLE_PROMPT_CONTRACT = """
 
 ---
 You are backed by a skill bundle. Follow SKILL.md naturally.
-When it references a relative file, use read_skill_asset."""
+When it references a relative file, use bifrost_read_agent_skill_file."""
 
 
 def agent_delegation_slug(name: str) -> str:

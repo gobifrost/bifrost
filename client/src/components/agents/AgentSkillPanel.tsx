@@ -119,10 +119,10 @@ export function AgentSkillPanel({ agentId }: { agentId: string }) {
 					)}
 				</div>
 
-				{skill.automatic_capabilities.includes("read_skill_asset") ? (
+				{skill.automatic_capabilities.includes("bifrost_read_agent_skill_file") ? (
 					<p className="rounded-md bg-primary/10 px-2.5 py-2 text-[12.5px] text-foreground ring-1 ring-primary/15">
 						Runs can read referenced bundle files through{" "}
-						<code className={TYPE_MONO}>read_skill_asset</code>.
+						<code className={TYPE_MONO}>bifrost_read_agent_skill_file</code>.
 					</p>
 				) : null}
 

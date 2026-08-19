@@ -9,7 +9,7 @@ import pytest
 from src.services.mcp_server.tools.skill_assets import (
     READ_SKILL_ASSET_TOOL_ID,
     SkillAssetPathError,
-    read_skill_asset,
+    bifrost_read_agent_skill_file,
     resolve_skill_asset_key,
 )
 
@@ -58,7 +58,7 @@ def test_asset_reader_is_injected_only_for_agent_scoped_bundle_execution() -> No
 
 @pytest.mark.asyncio
 async def test_reader_fails_closed_without_execution_bundle() -> None:
-    result = await read_skill_asset(SimpleNamespace(), "references/runbook.md")
+    result = await bifrost_read_agent_skill_file(SimpleNamespace(), "references/runbook.md")
     assert result.structured_content is not None
     assert "unavailable" in result.structured_content["error"]
 
@@ -77,7 +77,7 @@ async def test_solution_agent_reads_scoped_storage() -> None:
         "src.services.solutions.storage.SolutionStorage",
         return_value=storage,
     ) as storage_cls:
-        result = await read_skill_asset(context, "references/runbook.md")
+        result = await bifrost_read_agent_skill_file(context, "references/runbook.md")
 
     storage_cls.assert_called_once_with(solution_id)
     storage.read.assert_awaited_once_with("skills/helper/references/runbook.md")
@@ -100,7 +100,7 @@ async def test_uploaded_agent_reads_agent_owned_storage() -> None:
         "src.services.agent_skill_storage.AgentSkillStorage",
         return_value=storage,
     ) as storage_cls:
-        result = await read_skill_asset(context, "SKILL.md")
+        result = await bifrost_read_agent_skill_file(context, "SKILL.md")
 
     storage_cls.assert_called_once_with(agent_id)
     storage.read.assert_awaited_once_with("skills/helper/SKILL.md")
@@ -119,7 +119,7 @@ async def test_git_synced_agent_reads_repo_storage() -> None:
     )
 
     with patch("src.services.repo_storage.RepoStorage", return_value=storage):
-        result = await read_skill_asset(context, "references/guide.md")
+        result = await bifrost_read_agent_skill_file(context, "references/guide.md")
 
     storage.read.assert_awaited_once_with("skills/helper/references/guide.md")
     assert result.structured_content is not None
@@ -140,7 +140,7 @@ async def test_reader_rejects_oversized_asset() -> None:
         "src.services.agent_skill_storage.AgentSkillStorage",
         return_value=storage,
     ):
-        result = await read_skill_asset(context, "assets/large.bin")
+        result = await bifrost_read_agent_skill_file(context, "assets/large.bin")
 
     assert result.structured_content is not None
     assert "read limit" in result.structured_content["error"]
