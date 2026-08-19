@@ -47,7 +47,9 @@ references:
   - file: references/mcp-mode.md
     source_globs:
       - api/src/services/mcp_server/tools/*.py
-    verified_at_sha: 3b29c703c87059b382aad7c90b41c9054d3c719e
+      - api/src/services/operation_catalog.py
+      - api/src/services/builder/mcp_harness.py
+    verified_at_sha: 4d4084c5c90b01a64309a16b1f37a5324f9cb6c2
 
   - file: references/platform-api.md
     source_globs:
