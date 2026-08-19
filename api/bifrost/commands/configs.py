@@ -7,7 +7,9 @@ Implements Task 5h of the CLI mutation surface plan:
   expose ``GET /api/config/{uuid}``; the resolver is used to derive the
   UUID, then the row is located in the list payload).
 * ``bifrost configs create`` → ``POST /api/config`` (flags from
-  :class:`ConfigCreate`; ``config_type`` aliases to ``type`` on the wire)
+  :class:`ConfigCreate`; ``config_type`` aliases to ``type`` on the wire.
+  ``value`` is a string for every config type — non-string types travel
+  serialized and are coerced on read.)
 * ``bifrost configs update <ref>`` → ``PUT /api/config/{uuid}`` (flags from
   :class:`ConfigUpdate`; omitting ``--value`` preserves the stored value via
   server-side omit-unset behaviour)
@@ -35,6 +37,7 @@ from bifrost.client import BifrostClient
 from bifrost.dto_flags import (
     DTO_EXCLUDES,
     DTO_REF_LOOKUPS,
+    assemble_body,
     build_cli_flags,
 )
 from bifrost.org_target import org_option, resolve_org_target
@@ -120,10 +123,10 @@ async def _build_create_body(
 ) -> dict[str, Any]:
     """Build a POST /api/config body for ``create`` / ``set``.
 
-    ``ConfigCreate`` declares ``value: dict`` but the REST endpoint accepts
-    ``SetConfigRequest.value: str``, so ``assemble_body(ConfigCreate, ...)``
-    would mangle the plain-string value. This helper mirrors the wire
-    shape directly.
+    Delegates to :func:`assemble_body`, which applies the ``config_type`` →
+    ``type`` wire alias. ``type`` is defaulted explicitly here because
+    ``assemble_body`` drops unset fields and ``SetConfigRequest.type`` is
+    required.
 
     Org targeting follows the unified ``--org`` standard: HOME (omit) sends no
     ``organization_id`` (the server uses the caller's org), GLOBAL sends an
@@ -133,13 +136,12 @@ async def _build_create_body(
         raise click.UsageError("--key is required")
     if value is None:
         raise click.UsageError("--value is required")
-    body: dict[str, Any] = {
-        "key": key,
-        "value": value,
-        "type": config_type or ConfigType.STRING.value,
-    }
-    if description is not None:
-        body["description"] = description
+    body = await assemble_body(
+        ConfigCreate,
+        {"key": key, "value": value, "config_type": config_type, "description": description},
+        resolver=resolver,
+    )
+    body.setdefault("type", ConfigType.STRING.value)
     target = await resolve_org_target(org, is_global, resolver)
     if target.is_set:
         body["organization_id"] = target.organization_id
@@ -200,14 +202,7 @@ async def update_config(
     the plaintext value is never returned and cannot be round-tripped).
     """
     config_uuid = await resolver.resolve("config", ref)
-    # Same DTO/wire-shape mismatch as create — build manually.
-    body: dict[str, Any] = {}
-    if fields.get("value") is not None:
-        body["value"] = fields["value"]
-    if fields.get("config_type") is not None:
-        body["type"] = fields["config_type"]
-    if fields.get("description") is not None:
-        body["description"] = fields["description"]
+    body = await assemble_body(ConfigUpdate, fields, resolver=resolver)
     response = await client.put(f"/api/config/{config_uuid}", json=body)
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
