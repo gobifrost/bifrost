@@ -221,6 +221,10 @@ class AgentSkillPublic(BaseModel):
 
     name: str
     description: str
+    #: sha256 over the canonical Skill content. Stable across storage tiers, so
+    #: a harness can compare a cached Skill against a live Agent without
+    #: re-downloading it.
+    revision: str
     bundle_path: str | None = None
     skill_markdown: str
     files: list[str] = Field(default_factory=list)

@@ -61,6 +61,8 @@ from src.services.agent_skills import (
     list_agent_skill_files,
     parse_skill_frontmatter,
     read_agent_skill_file,
+    refresh_agent_skill_revision,
+    resolve_agent_skill_revision,
     skill_slug,
 )
 from src.services.agent_skill_import import (
@@ -685,6 +687,10 @@ async def create_agent(
     # Sync agent roles to referenced workflows (tools) - additive
     await sync_agent_roles_to_workflows(db, agent, assigned_by=user.email)
 
+    # A newly created Agent is always an inline projection (bundle_path is
+    # rejected above), so the digest covers the rendered SKILL.md.
+    await refresh_agent_skill_revision(agent)
+
     await emit_audit(
         db,
         "agent.create",
@@ -838,6 +844,7 @@ async def get_agent_skill(
     try:
         markdown = await get_agent_skill_markdown(agent)
         companion_files = await list_agent_skill_files(agent)
+        revision = await resolve_agent_skill_revision(agent)
         if agent.bundle_path:
             skill_name, skill_description = parse_skill_frontmatter(markdown)
         else:
@@ -853,6 +860,7 @@ async def get_agent_skill(
     return AgentSkillPublic(
         name=skill_name,
         description=skill_description,
+        revision=revision,
         bundle_path=agent.bundle_path,
         skill_markdown=markdown,
         files=["SKILL.md", *companion_files],
@@ -958,6 +966,12 @@ async def upload_agent_skill(
     for stale_path in sorted(previous_paths - current_paths):
         await storage.delete(stale_path)
 
+    # Stamp the revision only once storage reflects the new bundle: the stale
+    # sweep above runs after the first commit, so digesting earlier would hash
+    # files that are about to disappear.
+    revision = await refresh_agent_skill_revision(agent)
+    await db.commit()
+
     companion_files = sorted(
         path[len(imported.bundle_path) + 1 :]
         for path in current_paths
@@ -966,6 +980,7 @@ async def upload_agent_skill(
     return AgentSkillPublic(
         name=imported.name,
         description=imported.description,
+        revision=revision,
         bundle_path=imported.bundle_path,
         skill_markdown=imported.skill_markdown,
         files=["SKILL.md", *companion_files],
@@ -1006,6 +1021,8 @@ async def detach_agent_skill(
     agent.system_prompt = instructions
     agent.bundle_path = None
     agent.updated_at = datetime.now(timezone.utc)
+    # Now an inline projection: the digest covers the rendered SKILL.md alone.
+    await refresh_agent_skill_revision(agent)
     await db.commit()
     await AgentSkillStorage(agent.id).clear()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
@@ -1294,6 +1311,12 @@ async def update_agent(
 
     # Sync agent roles to referenced workflows (tools) - additive
     await sync_agent_roles_to_workflows(db, agent, assigned_by=user.email)
+
+    # Name, description, and system_prompt all feed the rendered SKILL.md of an
+    # inline Agent, so restamp. A bundled Agent's content is unreachable from
+    # here (system_prompt edits are rejected above), but recomputing is cheap
+    # and keeps one rule rather than a field-set special case.
+    await refresh_agent_skill_revision(agent)
 
     await emit_audit(
         db,
