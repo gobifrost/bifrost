@@ -137,6 +137,7 @@
 | GET | `/api/config` |
 | POST | `/api/config` |
 | DELETE | `/api/config/{config_id}` |
+| GET | `/api/config/{config_id}` |
 | PUT | `/api/config/{config_id}` |
 | GET | `/api/decorator-properties` |
 | PUT | `/api/decorator-properties` |
@@ -159,6 +160,7 @@
 | GET | `/api/events/sources/{source_id}/subscriptions` |
 | POST | `/api/events/sources/{source_id}/subscriptions` |
 | DELETE | `/api/events/sources/{source_id}/subscriptions/{subscription_id}` |
+| GET | `/api/events/sources/{source_id}/subscriptions/{subscription_id}` |
 | PATCH | `/api/events/sources/{source_id}/subscriptions/{subscription_id}` |
 | GET | `/api/events/topics` |
 | GET | `/api/events/{event_id}` |
@@ -195,6 +197,7 @@
 | POST | `/api/files/exists` |
 | POST | `/api/files/list` |
 | GET | `/api/files/manifest` |
+| POST | `/api/files/patch` |
 | GET | `/api/files/policies` |
 | POST | `/api/files/policies/test` |
 | DELETE | `/api/files/policies/{policy_path}` |
@@ -286,6 +289,7 @@
 | DELETE | `/api/knowledge-sources/{namespace}/documents/{doc_id}` |
 | GET | `/api/knowledge-sources/{namespace}/documents/{doc_id}` |
 | PUT | `/api/knowledge-sources/{namespace}/documents/{doc_id}` |
+| POST | `/api/knowledge/search` |
 | GET | `/api/llms.txt` |
 | POST | `/api/maintenance/artifact-retention/cleanup` |
 | GET | `/api/maintenance/artifact-retention/settings` |
@@ -377,6 +381,7 @@
 | GET | `/api/policy-rules` |
 | POST | `/api/policy-rules` |
 | DELETE | `/api/policy-rules/{domain}/{name}` |
+| GET | `/api/policy-rules/{domain}/{name}` |
 | PUT | `/api/policy-rules/{domain}/{name}` |
 | GET | `/api/policy-rules/{domain}/{name}/usages` |
 | GET | `/api/profile` |
@@ -544,6 +549,7 @@
 | GET | `/api/workflows/usage-stats` |
 | POST | `/api/workflows/validate` |
 | DELETE | `/api/workflows/{workflow_id}` |
+| GET | `/api/workflows/{workflow_id}` |
 | PATCH | `/api/workflows/{workflow_id}` |
 | GET | `/api/workflows/{workflow_id}/compatible-replacements` |
 | POST | `/api/workflows/{workflow_id}/deactivate` |

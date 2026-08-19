@@ -2123,6 +2123,225 @@ class TestMcpParityConfigs:
         assert "error" in payload, payload
 
 
+@pytest.mark.e2e
+@pytest.mark.asyncio
+class TestMcpParityPolicyRules:
+    """The six policy-rule tools, three of which are new in this slice.
+
+    A rule's identity is the ``(domain, name)`` pair, so every tool takes both.
+    """
+
+    @staticmethod
+    async def _create(admin_context, name: str, domain: str = "file"):
+        from src.services.mcp_server.tools.policy_rules import (
+            bifrost_create_policy_rule,
+        )
+
+        result = await bifrost_create_policy_rule(
+            admin_context,
+            name=name,
+            domain=domain,
+            body={"actions": ["read"], "when": None},
+            description="created by test_mcp_parity",
+        )
+        payload = result.structured_content or {}
+        assert "error" not in payload, payload
+        return payload
+
+    @staticmethod
+    async def _delete(admin_context, name: str, domain: str = "file"):
+        from src.services.mcp_server.tools.policy_rules import (
+            bifrost_delete_policy_rule,
+        )
+
+        return await bifrost_delete_policy_rule(
+            admin_context, domain=domain, name=name
+        )
+
+    async def test_get_policy_rule_cross_verifies_against_rest(
+        self, admin_context
+    ) -> None:
+        """``bifrost_get_policy_rule`` returns the REST body unchanged."""
+        from src.services.mcp_server.tools._http_bridge import call_rest
+        from src.services.mcp_server.tools.policy_rules import (
+            bifrost_get_policy_rule,
+        )
+
+        name = f"mcp_pr_get_{uuid4().hex[:8]}"
+        await self._create(admin_context, name)
+        try:
+            payload = (
+                await bifrost_get_policy_rule(
+                    admin_context, domain="file", name=name
+                )
+            ).structured_content or {}
+            assert "error" not in payload, payload
+            assert payload.get("name") == name
+            assert payload.get("domain") == "file"
+
+            status_code, rest_body = await call_rest(
+                admin_context, "GET", f"/api/policy-rules/file/{name}"
+            )
+            assert status_code == 200, rest_body
+            assert payload == rest_body, (
+                "MCP payload diverged from the REST body it wraps"
+            )
+        finally:
+            await self._delete(admin_context, name)
+
+    async def test_update_policy_rule_changes_body_and_description(
+        self, admin_context
+    ) -> None:
+        """``bifrost_update_policy_rule`` round-trips a body replacement."""
+        from src.services.mcp_server.tools.policy_rules import (
+            bifrost_get_policy_rule,
+            bifrost_update_policy_rule,
+        )
+
+        name = f"mcp_pr_update_{uuid4().hex[:8]}"
+        await self._create(admin_context, name)
+        try:
+            updated = (
+                await bifrost_update_policy_rule(
+                    admin_context,
+                    domain="file",
+                    name=name,
+                    description="updated by test",
+                    body={"actions": ["read", "write"], "when": None},
+                )
+            ).structured_content or {}
+            assert "error" not in updated, updated
+            assert updated.get("description") == "updated by test"
+            assert updated["body"]["actions"] == ["read", "write"]
+
+            reread = (
+                await bifrost_get_policy_rule(
+                    admin_context, domain="file", name=name
+                )
+            ).structured_content or {}
+            assert reread["body"]["actions"] == ["read", "write"]
+        finally:
+            await self._delete(admin_context, name)
+
+    async def test_update_policy_rule_renames_via_new_name(
+        self, admin_context
+    ) -> None:
+        """``new_name`` maps to the wire ``name`` field without colliding.
+
+        The path argument and the renamed-to value are both called ``name`` on
+        the REST surface, which is why the tool exposes ``new_name``.
+        """
+        from src.services.mcp_server.tools.policy_rules import (
+            bifrost_get_policy_rule,
+            bifrost_update_policy_rule,
+        )
+
+        original = f"mcp_pr_rename_{uuid4().hex[:8]}"
+        renamed = f"{original}_v2"
+        await self._create(admin_context, original)
+        cleanup_name = original
+        try:
+            result = (
+                await bifrost_update_policy_rule(
+                    admin_context,
+                    domain="file",
+                    name=original,
+                    new_name=renamed,
+                )
+            ).structured_content or {}
+            assert "error" not in result, result
+            assert result.get("name") == renamed, result
+            cleanup_name = renamed
+
+            gone = (
+                await bifrost_get_policy_rule(
+                    admin_context, domain="file", name=original
+                )
+            ).structured_content or {}
+            assert "error" in gone, gone
+        finally:
+            await self._delete(admin_context, cleanup_name)
+
+    async def test_list_policy_rule_usages_reports_zero_for_a_fresh_rule(
+        self, admin_context
+    ) -> None:
+        """A freshly created rule is referenced by nothing."""
+        from src.services.mcp_server.tools.policy_rules import (
+            bifrost_list_policy_rule_usages,
+        )
+
+        name = f"mcp_pr_usages_{uuid4().hex[:8]}"
+        await self._create(admin_context, name)
+        try:
+            payload = (
+                await bifrost_list_policy_rule_usages(
+                    admin_context, domain="file", name=name
+                )
+            ).structured_content or {}
+            assert "error" not in payload, payload
+            assert payload.get("total") == 0, payload
+            assert payload.get("file_policies") == []
+            assert payload.get("tables") == []
+        finally:
+            await self._delete(admin_context, name)
+
+    async def test_policy_rule_tools_are_domain_scoped(self, admin_context) -> None:
+        """Reading a file-domain rule from the table domain is an error."""
+        from src.services.mcp_server.tools.policy_rules import (
+            bifrost_get_policy_rule,
+        )
+
+        name = f"mcp_pr_domain_{uuid4().hex[:8]}"
+        await self._create(admin_context, name, domain="file")
+        try:
+            wrong = (
+                await bifrost_get_policy_rule(
+                    admin_context, domain="table", name=name
+                )
+            ).structured_content or {}
+            assert "error" in wrong, wrong
+        finally:
+            await self._delete(admin_context, name, domain="file")
+
+    async def test_get_policy_rule_unknown_name_errors(self, admin_context) -> None:
+        """An unknown rule is a tool error, not a silent empty success."""
+        from src.services.mcp_server.tools.policy_rules import (
+            bifrost_get_policy_rule,
+        )
+
+        payload = (
+            await bifrost_get_policy_rule(
+                admin_context, domain="file", name=f"nope_{uuid4().hex[:8]}"
+            )
+        ).structured_content or {}
+        assert "error" in payload, payload
+
+    async def test_policy_rule_tools_require_domain_and_name(
+        self, admin_context
+    ) -> None:
+        """Missing identity fields are rejected before any HTTP call."""
+        from src.services.mcp_server.tools.policy_rules import (
+            bifrost_get_policy_rule,
+            bifrost_list_policy_rule_usages,
+            bifrost_update_policy_rule,
+        )
+
+        for tool in (
+            bifrost_get_policy_rule,
+            bifrost_update_policy_rule,
+            bifrost_list_policy_rule_usages,
+        ):
+            missing_domain = (
+                await tool(admin_context, domain="", name="x")
+            ).structured_content or {}
+            assert "error" in missing_domain, (tool.__name__, missing_domain)
+
+            missing_name = (
+                await tool(admin_context, domain="file", name="")
+            ).structured_content or {}
+            assert "error" in missing_name, (tool.__name__, missing_name)
+
+
 # =============================================================================
 # Organizations
 # =============================================================================

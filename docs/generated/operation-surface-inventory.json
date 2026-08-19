@@ -4239,6 +4239,405 @@
       "observed": {
         "cli": {
           "path": [
+            "policy-rules",
+            "list"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_list_policy_rules",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "policy.rules.list",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "policy.rules.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate (CurrentSuperuser)",
+        "cli": {
+          "path": [
+            "policy-rules",
+            "list"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Policy rules are workspace/org access administration, not a portable manifest entity.",
+          "sdk": "Policy rule administration is not available to application SDKs; SDK table and file methods operate under the access decisions these rules produce."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_list_policy_rules"
+        },
+        "native_builder": true,
+        "operation_id": "policy.rules.list",
+        "rest": {
+          "method": "GET",
+          "path": "/api/policy-rules",
+          "request_model": null,
+          "response_model": "list[PolicyRulePublic]"
+        },
+        "side_effects": [],
+        "summary": "List named Policy Rules in a scope",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "policy-rules",
+            "get"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_get_policy_rule",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "policy.rules.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "policy.rules.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate (CurrentSuperuser)",
+        "cli": {
+          "path": [
+            "policy-rules",
+            "get"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Policy rules are workspace/org access administration, not a portable manifest entity.",
+          "sdk": "Policy rule administration is not available to application SDKs; SDK table and file methods operate under the access decisions these rules produce."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_get_policy_rule"
+        },
+        "native_builder": true,
+        "operation_id": "policy.rules.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/policy-rules/{domain}/{name}",
+          "request_model": null,
+          "response_model": "PolicyRulePublic"
+        },
+        "side_effects": [
+          "resolve a solution-managed rule as readable; the solution-managed guard blocks writes only"
+        ],
+        "summary": "Get one Policy Rule by domain and name",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "policy-rules",
+            "create"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_create_policy_rule",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "policy.rules.create",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "policy.rules.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "policy_rule.create",
+        "authorization_resolver": "Platform-admin gate (CurrentSuperuser)",
+        "cli": {
+          "path": [
+            "policy-rules",
+            "create"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Policy rules are workspace/org access administration, not a portable manifest entity.",
+          "sdk": "Policy rule administration is not available to application SDKs; SDK table and file methods operate under the access decisions these rules produce."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_create_policy_rule"
+        },
+        "native_builder": true,
+        "operation_id": "policy.rules.create",
+        "rest": {
+          "method": "POST",
+          "path": "/api/policy-rules",
+          "request_model": "PolicyRuleCreate",
+          "response_model": "PolicyRulePublic"
+        },
+        "side_effects": [
+          "validate the rule body against its domain's action vocabulary",
+          "persist the policy rule under the (name, domain) natural key"
+        ],
+        "summary": "Create a named Policy Rule in a scope",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "policy-rules",
+            "update"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_update_policy_rule",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "policy.rules.update",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "policy.rules.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "policy_rule.update",
+        "authorization_resolver": "Platform-admin gate (CurrentSuperuser)",
+        "cli": {
+          "path": [
+            "policy-rules",
+            "update"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Policy rules are workspace/org access administration, not a portable manifest entity.",
+          "sdk": "Policy rule administration is not available to application SDKs; SDK table and file methods operate under the access decisions these rules produce."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_update_policy_rule"
+        },
+        "native_builder": true,
+        "operation_id": "policy.rules.update",
+        "rest": {
+          "method": "PUT",
+          "path": "/api/policy-rules/{domain}/{name}",
+          "request_model": "PolicyRuleUpdate",
+          "response_model": "PolicyRulePublic"
+        },
+        "side_effects": [
+          "reject the write if the rule is solution-managed",
+          "reject the write if the rule is a read-only built-in",
+          "re-validate a replaced body against the rule's immutable domain",
+          "record the referencing usage count and any rename in the audit entry"
+        ],
+        "summary": "Update a Policy Rule by domain and name",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "policy-rules",
+            "delete"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_delete_policy_rule",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "policy.rules.delete",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "policy.rules.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "policy_rule.delete",
+        "authorization_resolver": "Platform-admin gate (CurrentSuperuser)",
+        "cli": {
+          "path": [
+            "policy-rules",
+            "delete"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Policy rules are workspace/org access administration, not a portable manifest entity.",
+          "sdk": "Policy rule administration is not available to application SDKs; SDK table and file methods operate under the access decisions these rules produce."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_delete_policy_rule"
+        },
+        "native_builder": true,
+        "operation_id": "policy.rules.delete",
+        "rest": {
+          "method": "DELETE",
+          "path": "/api/policy-rules/{domain}/{name}",
+          "request_model": null,
+          "response_model": null
+        },
+        "side_effects": [
+          "reject the delete if the rule is solution-managed",
+          "reject the delete if the rule is a read-only built-in",
+          "reject the delete if any file policy or table still references the rule, returning those usages",
+          "delete the policy rule"
+        ],
+        "summary": "Delete a Policy Rule by domain and name",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "policy-rules",
+            "list-usages"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_list_policy_rule_usages",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "policy.rules.list_usages",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "policy.rules.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate (CurrentSuperuser)",
+        "cli": {
+          "path": [
+            "policy-rules",
+            "list-usages"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Policy rules are workspace/org access administration, not a portable manifest entity.",
+          "sdk": "Policy rule administration is not available to application SDKs; SDK table and file methods operate under the access decisions these rules produce."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_list_policy_rule_usages"
+        },
+        "native_builder": true,
+        "operation_id": "policy.rules.list_usages",
+        "rest": {
+          "method": "GET",
+          "path": "/api/policy-rules/{domain}/{name}/usages",
+          "request_model": null,
+          "response_model": "PolicyRuleUsagesPublic"
+        },
+        "side_effects": [],
+        "summary": "List the file policies and tables referencing a Policy Rule",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
             "organizations",
             "list"
           ],
@@ -5844,9 +6243,9 @@
   "counts": {
     "cli": 140,
     "manifest": 16,
-    "mcp": 101,
+    "mcp": 104,
     "native_builder": 10,
-    "rest": 661,
+    "rest": 662,
     "sdk": 19
   },
   "schema_version": 1,
@@ -5999,60 +6398,6 @@
         ],
         "reason": "Local authentication, source-control, or lifecycle command.",
         "status": "transport_only"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "policy-rule",
-          "create"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "policy-rule",
-          "delete"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "policy-rule",
-          "get"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "policy-rule",
-          "list"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "policy-rule",
-          "update"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "policy-rule",
-          "usages"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
       },
       {
         "kind": "lifecycle",
@@ -6367,22 +6712,10 @@
         "status": "transport_only"
       },
       {
-        "hidden": false,
-        "name": "create_policy_rule",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
         "hidden": true,
         "name": "delete_file",
         "reason": "Builder-local workspace primitive, not a platform entity operation.",
         "status": "transport_only"
-      },
-      {
-        "hidden": false,
-        "name": "delete_policy_rule",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
       },
       {
         "hidden": false,
@@ -6395,12 +6728,6 @@
         "name": "list_files",
         "reason": "Builder-local workspace primitive, not a platform entity operation.",
         "status": "transport_only"
-      },
-      {
-        "hidden": false,
-        "name": "list_policy_rules",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
       },
       {
         "hidden": true,
@@ -8987,41 +9314,6 @@
         "method": "POST",
         "operation_id": "",
         "path": "/api/platform/workers/{worker_id}/recycle-all",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/policy-rules",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/policy-rules",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "DELETE",
-        "operation_id": "",
-        "path": "/api/policy-rules/{domain}/{name}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "PUT",
-        "operation_id": "",
-        "path": "/api/policy-rules/{domain}/{name}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/policy-rules/{domain}/{name}/usages",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

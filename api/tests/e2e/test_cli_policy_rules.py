@@ -1,8 +1,8 @@
-"""E2E tests for the CLI policy-rule group + tables policies get/set.
+"""E2E tests for the CLI policy-rules group + tables policies get/set.
 
 Tests exercise the REST API surface that the CLI wraps:
 
-* policy-rule create / list / get / usages / delete (domain=file)
+* policy-rules create / list / get / list-usages / delete (domain=file)
 * tables policies set round-trips a $ref to a named policy rule
 * tables policies get returns the policies field
 """
@@ -14,7 +14,7 @@ pytestmark = pytest.mark.e2e
 
 
 class TestCliPolicyRuleGroup:
-    """REST-level verification of the endpoints the CLI policy-rule group calls."""
+    """REST-level verification of the endpoints the CLI policy-rules group calls."""
 
     def test_create_list_get_usages_delete_file_rule(self, e2e_client, platform_admin):
         """Full CRUD round-trip: create → list → usages → delete."""
@@ -71,6 +71,114 @@ class TestCliPolicyRuleGroup:
             headers=platform_admin.headers,
         )
         assert gone_resp.status_code == 404, gone_resp.text
+
+    def test_get_policy_rule_by_domain_and_name(self, e2e_client, platform_admin):
+        """``GET /api/policy-rules/{domain}/{name}`` returns the single rule.
+
+        Before this endpoint existed the CLI ``get`` leaf listed every rule and
+        filtered client-side; this is the endpoint it now calls.
+        """
+        create_resp = e2e_client.post(
+            "/api/policy-rules",
+            headers=platform_admin.headers,
+            json={
+                "name": "cli_e2e_get_rule",
+                "domain": "file",
+                "description": "by-key read",
+                "body": {"actions": ["read"], "when": None},
+            },
+        )
+        assert create_resp.status_code == 201, create_resp.text
+        created = create_resp.json()
+
+        try:
+            resp = e2e_client.get(
+                "/api/policy-rules/file/cli_e2e_get_rule",
+                headers=platform_admin.headers,
+            )
+            assert resp.status_code == 200, resp.text
+            data = resp.json()
+            assert data["id"] == created["id"]
+            assert data["name"] == "cli_e2e_get_rule"
+            assert data["domain"] == "file"
+            assert data["description"] == "by-key read"
+            assert data["body"] == {"actions": ["read"], "when": None}
+        finally:
+            e2e_client.delete(
+                "/api/policy-rules/file/cli_e2e_get_rule",
+                headers=platform_admin.headers,
+            )
+
+    def test_get_policy_rule_is_domain_scoped(self, e2e_client, platform_admin):
+        """The same name in the other domain is a different rule.
+
+        A rule's identity is the (domain, name) pair, so reading the file-domain
+        name from the table domain must 404 rather than return the file rule.
+        """
+        create_resp = e2e_client.post(
+            "/api/policy-rules",
+            headers=platform_admin.headers,
+            json={
+                "name": "cli_e2e_domain_scoped",
+                "domain": "file",
+                "body": {"actions": ["read"], "when": None},
+            },
+        )
+        assert create_resp.status_code == 201, create_resp.text
+
+        try:
+            wrong_domain = e2e_client.get(
+                "/api/policy-rules/table/cli_e2e_domain_scoped",
+                headers=platform_admin.headers,
+            )
+            assert wrong_domain.status_code == 404, wrong_domain.text
+
+            right_domain = e2e_client.get(
+                "/api/policy-rules/file/cli_e2e_domain_scoped",
+                headers=platform_admin.headers,
+            )
+            assert right_domain.status_code == 200, right_domain.text
+        finally:
+            e2e_client.delete(
+                "/api/policy-rules/file/cli_e2e_domain_scoped",
+                headers=platform_admin.headers,
+            )
+
+    def test_get_unknown_policy_rule_404s(self, e2e_client, platform_admin):
+        """An unknown name is a 404, not an empty 200."""
+        resp = e2e_client.get(
+            "/api/policy-rules/file/cli_e2e_does_not_exist",
+            headers=platform_admin.headers,
+        )
+        assert resp.status_code == 404, resp.text
+
+    def test_org_user_cannot_get_policy_rule(
+        self, e2e_client, platform_admin, org1_user
+    ):
+        """The by-key read carries the same admin gate as the list."""
+        create_resp = e2e_client.post(
+            "/api/policy-rules",
+            headers=platform_admin.headers,
+            json={
+                "name": "cli_e2e_authz_rule",
+                "domain": "file",
+                "body": {"actions": ["read"], "when": None},
+            },
+        )
+        assert create_resp.status_code == 201, create_resp.text
+
+        try:
+            resp = e2e_client.get(
+                "/api/policy-rules/file/cli_e2e_authz_rule",
+                headers=org1_user.headers,
+            )
+            assert resp.status_code == 403, \
+                f"org user should not read a policy rule: {resp.status_code}"
+        finally:
+            e2e_client.delete(
+                "/api/policy-rules/file/cli_e2e_authz_rule",
+                headers=platform_admin.headers,
+            )
 
     def test_update_policy_rule(self, e2e_client, platform_admin):
         """Update endpoint changes the description."""

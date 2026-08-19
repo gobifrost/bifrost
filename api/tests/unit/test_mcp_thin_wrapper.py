@@ -183,9 +183,12 @@ PARITY_HANDLERS: dict[str, set[str]] = {
     "knowledge": {"bifrost_search_knowledge"},
     "platform_jobs": {"bifrost_get_platform_job"},
     "policy_rules": {
-        "list_policy_rules",
-        "create_policy_rule",
-        "delete_policy_rule",
+        "bifrost_list_policy_rules",
+        "bifrost_get_policy_rule",
+        "bifrost_create_policy_rule",
+        "bifrost_update_policy_rule",
+        "bifrost_delete_policy_rule",
+        "bifrost_list_policy_rule_usages",
     },
     "gateway": {
         "bifrost_get_required_instructions",

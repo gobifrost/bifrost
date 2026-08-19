@@ -39,13 +39,18 @@ Common entity patterns are:
 
 - `list_*` and `get_*` for discovery;
 - `create_*`, `update_*`, and `delete_*` for live entities;
-- `list_content`, `search_content`, `read_content_lines`, and `get_content` for `_repo` files;
-- `patch_content` for focused source edits;
-- `replace_content` for complete replacement;
-- `register_workflow`, `validate_workflow`, and `execute_workflow` for loose workflows;
-- `validate_app`, publish/status tools, and dependency tools for v1 apps.
+- `bifrost_list_files`, `bifrost_search_files`, `bifrost_read_file`,
+  `bifrost_stat_file`, and `bifrost_exists_file` for `_repo` discovery;
+- `bifrost_patch_file` for focused source edits;
+- `bifrost_write_file` and `bifrost_delete_file` for complete file mutations;
+- `bifrost_register_workflow`, `bifrost_validate_workflow`, and
+  `bifrost_execute_workflow` for loose workflows;
+- `bifrost_validate_app`, `bifrost_publish_app`, and the canonical App
+  dependency/status tools for v1 apps.
 
-Always read the current entity/file before mutation. Prefer `patch_content` when it can express the change safely; use full replacement only after preserving unrelated content. Read back and validate after writing.
+Always read the current entity/file before mutation. Prefer `bifrost_patch_file`
+when it can express the change safely; use `bifrost_write_file` only after
+preserving unrelated content. Read back and validate after writing.
 
 ## Source and registration
 
@@ -68,7 +73,11 @@ Use exact tool descriptions for required fields. Do not translate a remembered C
 
 ## Known parity boundary
 
-Some older form, agent, table, app, and event MCP tools predate the thin HTTP-wrapper pattern and may not match every REST side effect or permission check. Roles, configs, integrations, organizations, and current workflow lifecycle tools use the newer REST-wrapper pattern.
+Agent, Form, Table, App, Event, and Workflow lifecycle tools use the canonical
+thin REST-wrapper pattern. Some uncatalogued platform domains still predate
+that boundary and may not match every REST side effect or permission check;
+consult the generated operation catalog and the tool's live schema rather than
+assuming parity.
 
 When behavior is ambiguous or production-sensitive, inspect the tool result carefully and prefer a verified REST-wrapper tool if one is available. Do not add direct ORM/repository behavior to new MCP tools; new platform MCP tools should call the REST endpoint.
 

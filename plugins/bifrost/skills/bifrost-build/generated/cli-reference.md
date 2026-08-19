@@ -170,14 +170,16 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  create    Create a new application, optionally seeding npm dependencies.
-  delete    Delete an application.
-  get       Get a single application by slug, UUID, or name.
-  list      List all applications (wrapped ``{applications, total}``...
-  publish   Rebuild and publish an application, polling durable progress.
-  replace   Repoint an application's source directory.
-  set-deps  Replace an application's npm dependencies.
-  update    Update application metadata (patch-without-draft).
+  create               Create a new application, optionally seeding npm...
+  delete               Delete an application.
+  get                  Get a single application by slug, UUID, or name.
+  get-dependencies     Get an application's npm dependencies.
+  list                 List all applications (wrapped ``{applications,...
+  publish              Rebuild and publish an application, polling...
+  replace              Repoint an application's source directory.
+  update               Update application metadata (patch-without-draft).
+  update-dependencies  Replace an application's npm dependencies.
+  validate             Compile and statically validate an application's...
 ```
 
 ### `apps create`
@@ -187,7 +189,7 @@ Usage: apps create [OPTIONS]
 
   Create a new application, optionally seeding npm dependencies.
 
-  ``--organization`` accepts a UUID or org name. ``--role-ids`` accepts
+  Org targeting follows the unified ``--org`` standard. ``--role-ids`` accepts
   repeated values or a comma-separated list; entries may be role names or
   UUIDs.
 
@@ -198,19 +200,25 @@ Usage: apps create [OPTIONS]
   in place — there is no rollback.
 
 Options:
-  --name TEXT          name  [required]
-  --description TEXT   description
-  --slug TEXT          slug  [required]
-  --access-level TEXT  access_level
-  --app-model TEXT     app_model
-  --role-ids TEXT      role_ids (repeat for multiple; comma-split also
-                       accepted).
-  --organization TEXT  org ref (UUID or name) for organization_id.
-  --deps TEXT          Dependencies as a JSON literal or @path to a
-                       package.json / {name: version} file. Triggers a follow-
-                       up PUT to /dependencies after the app is created.
-  --json               Emit JSON instead of human-readable output.
-  --help               Show this message and exit.
+  --name TEXT                     name  [required]
+  --description TEXT              description
+  --slug TEXT                     slug  [required]
+  --access-level TEXT             access_level
+  --app-model TEXT                app_model
+  --role-ids TEXT                 role_ids (repeat for multiple; comma-split
+                                  also accepted).
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --deps TEXT                     Dependencies as a JSON literal or @path to a
+                                  package.json / {name: version} file.
+                                  Triggers a follow-up PUT to /dependencies
+                                  after the app is created.
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ### `apps delete`
@@ -243,6 +251,18 @@ Usage: apps get [OPTIONS] REF
   OWN apps are preferred: a generic ref like "portal" must not silently
   resolve an unrelated global app when the workspace's app matches by slug or
   name.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `apps get-dependencies`
+
+```
+Usage: apps get-dependencies [OPTIONS] REF
+
+  Get an application's npm dependencies.
 
 Options:
   --json  Emit JSON instead of human-readable output.
@@ -299,24 +319,6 @@ Options:
   --help            Show this message and exit.
 ```
 
-### `apps set-deps`
-
-```
-Usage: apps set-deps [OPTIONS] REF
-
-  Replace an application's npm dependencies.
-
-  ``REF`` is a slug, UUID, or application name. The ``--deps`` value is either
-  a JSON object literal or ``@path/to/package.json``; package.json's
-  ``dependencies`` key is extracted automatically.
-
-Options:
-  --deps TEXT  Dependencies as a JSON literal or @path to a package.json /
-               {name: version} file.  [required]
-  --json       Emit JSON instead of human-readable output.
-  --help       Show this message and exit.
-```
-
 ### `apps update`
 
 ```
@@ -336,19 +338,55 @@ Usage: apps update [OPTIONS] REF
   leaves the metadata change in place — there is no rollback.
 
 Options:
-  --name TEXT          name
-  --slug TEXT          slug
-  --description TEXT   description
-  --scope TEXT         scope
-  --access-level TEXT  access_level
-  --role-ids TEXT      role_ids (repeat for multiple; comma-split also
-                       accepted).
-  --deps TEXT          Dependencies as a JSON literal or @path to a
-                       package.json / {name: version} file. Triggers a follow-
-                       up PUT to /dependencies after the metadata patch.
-                       Mirrors `apps create --deps`.
-  --json               Emit JSON instead of human-readable output.
-  --help               Show this message and exit.
+  --name TEXT                     name
+  --slug TEXT                     slug
+  --description TEXT              description
+  --access-level TEXT             access_level
+  --role-ids TEXT                 role_ids (repeat for multiple; comma-split
+                                  also accepted).
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --deps TEXT                     Dependencies as a JSON literal or @path to a
+                                  package.json / {name: version} file.
+                                  Triggers a follow-up PUT to /dependencies
+                                  after the metadata patch. Mirrors `apps
+                                  create --deps`.
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
+### `apps update-dependencies`
+
+```
+Usage: apps update-dependencies [OPTIONS] REF
+
+  Replace an application's npm dependencies.
+
+  ``REF`` is a slug, UUID, or application name. The ``--deps`` value is either
+  a JSON object literal or ``@path/to/package.json``; package.json's
+  ``dependencies`` key is extracted automatically.
+
+Options:
+  --deps TEXT  Dependencies as a JSON literal or @path to a package.json /
+               {name: version} file.  [required]
+  --json       Emit JSON instead of human-readable output.
+  --help       Show this message and exit.
+```
+
+### `apps validate`
+
+```
+Usage: apps validate [OPTIONS] REF
+
+  Compile and statically validate an application's current source.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
 ```
 
 ## `claims`
@@ -498,8 +536,7 @@ Usage: configs create [OPTIONS]
 
 Options:
   --key TEXT                      key  [required]
-  --value TEXT                    value as JSON literal or @path to a
-                                  YAML/JSON file.  [required]
+  --value TEXT                    value  [required]
   --config-type [string|int|bool|json|secret]
                                   config_type
   --description TEXT              description
@@ -537,9 +574,8 @@ Usage: configs get [OPTIONS] REF
 
   Get a single configuration value by UUID or key.
 
-  The server does not expose a per-record GET endpoint for configs, so this
-  resolves the ref via :class:`RefResolver` and locates the entry in the ``GET
-  /api/config`` list payload.
+  ``REF`` is a UUID or config key; keys resolve via :class:`RefResolver`.
+  Secret values come back masked as ``[SECRET]``.
 
 Options:
   --json  Emit JSON instead of human-readable output.
@@ -607,8 +643,7 @@ Usage: configs update [OPTIONS] REF
   plaintext value is never returned and cannot be round-tripped).
 
 Options:
-  --value TEXT                    value as JSON literal or @path to a
-                                  YAML/JSON file.
+  --value TEXT                    value
   --config-type [string|int|bool|json|secret]
                                   config_type
   --description TEXT              description
@@ -628,14 +663,17 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  create-source        Create a new event source.
-  get-source           Get a single event source by UUID or name.
-  get-subscription     Get a single subscription by source ref +...
-  list-sources         List all event sources (wrapped ``{items, total}``...
-  list-subscriptions   List subscriptions for an event source.
-  subscribe            Subscribe a workflow or agent to an event source.
-  update-source        Update an event source.
-  update-subscription  Update an event subscription.
+  create-source          Create a new event source.
+  create-subscription    Subscribe a workflow or agent to an event source.
+  delete-source          Permanently delete an Event Source by UUID or name.
+  delete-subscription    Permanently delete one Event Subscription.
+  get-source             Get a single event source by UUID or name.
+  get-subscription       Get a single subscription by source ref +...
+  list-sources           List all event sources (wrapped ``{items,...
+  list-subscriptions     List subscriptions for an event source.
+  list-webhook-adapters  List webhook adapters available for Event Source...
+  update-source          Update an event source.
+  update-subscription    Update an event subscription.
 ```
 
 ### `events create-source`
@@ -667,6 +705,9 @@ Options:
   --schedule-enabled / --no-schedule-enabled
                                   Whether the schedule is enabled (collapses
                                   into schedule config).
+  --overlap-policy [skip|queue|replace]
+                                  Behavior when the prior scheduled run is
+                                  still active.
   --adapter TEXT                  Webhook adapter name (collapses into webhook
                                   config).
   --webhook-integration TEXT      Integration ref (UUID or name) for OAuth-
@@ -675,6 +716,15 @@ Options:
   --webhook-config TEXT           Webhook adapter config as JSON literal or
                                   @path/to/file.yaml (collapses into webhook
                                   config).
+  --rate-limit-per-minute INTEGER RANGE
+                                  Maximum webhook events per configured
+                                  window.  [x>=1]
+  --rate-limit-window-seconds INTEGER RANGE
+                                  Webhook ingress rate-limit window in
+                                  seconds.  [x>=1]
+  --rate-limit-enabled / --no-rate-limit-enabled
+                                  Enable or disable ingress rate limiting for
+                                  this source.
   --global                        Target global scope (org=NULL). Alias for
                                   --org global.
   --org, --organization, --scope TEXT
@@ -683,6 +733,53 @@ Options:
                                   --scope are synonyms.)
   --json                          Emit JSON instead of human-readable output.
   --help                          Show this message and exit.
+```
+
+### `events create-subscription`
+
+```
+Usage: events create-subscription [OPTIONS] SOURCE_REF
+
+  Subscribe a workflow or agent to an event source.
+
+  ``SOURCE_REF`` is a UUID or event source name. Supply exactly one of
+  ``--workflow`` or ``--agent`` (portable refs). ``target_type`` is inferred
+  from which flag was used and overrides any ``--target-type`` the DTO
+  generator may surface.
+
+Options:
+  --workflow TEXT           workflow ref (UUID or name) for workflow_id.
+  --agent TEXT              agent ref (UUID or name) for agent_id.
+  --event-type TEXT         event_type
+  --filter-expression TEXT  filter_expression
+  --input-mapping TEXT      input_mapping as JSON literal or @path to a
+                            YAML/JSON file.
+  --json                    Emit JSON instead of human-readable output.
+  --help                    Show this message and exit.
+```
+
+### `events delete-source`
+
+```
+Usage: events delete-source [OPTIONS] REF
+
+  Permanently delete an Event Source by UUID or name.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `events delete-subscription`
+
+```
+Usage: events delete-subscription [OPTIONS] SOURCE_REF SUBSCRIPTION_ID
+
+  Permanently delete one Event Subscription.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
 ```
 
 ### `events get-source`
@@ -704,9 +801,6 @@ Usage: events get-subscription [OPTIONS] SOURCE_REF SUBSCRIPTION_ID
 
   Get a single subscription by source ref + subscription UUID.
 
-  The server has no per-subscription GET endpoint, so this lists the source's
-  subscriptions and filters client-side.
-
 Options:
   --json  Emit JSON instead of human-readable output.
   --help  Show this message and exit.
@@ -720,8 +814,15 @@ Usage: events list-sources [OPTIONS]
   List all event sources (wrapped ``{items, total}`` payload).
 
 Options:
-  --json  Emit JSON instead of human-readable output.
-  --help  Show this message and exit.
+  --source-type [webhook|schedule|topic]
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ### `events list-subscriptions`
@@ -738,28 +839,16 @@ Options:
   --help  Show this message and exit.
 ```
 
-### `events subscribe`
+### `events list-webhook-adapters`
 
 ```
-Usage: events subscribe [OPTIONS] SOURCE_REF
+Usage: events list-webhook-adapters [OPTIONS]
 
-  Subscribe a workflow or agent to an event source.
-
-  ``SOURCE_REF`` is a UUID or event source name. Supply exactly one of
-  ``--workflow`` or ``--agent`` (portable refs). ``target_type`` is inferred
-  from which flag was used and overrides any ``--target-type`` the DTO
-  generator may surface.
+  List webhook adapters available for Event Source configuration.
 
 Options:
-  --target-type TEXT        target_type
-  --workflow TEXT           workflow ref (UUID or name) for workflow_id.
-  --agent TEXT              agent ref (UUID or name) for agent_id.
-  --event-type TEXT         event_type
-  --filter-expression TEXT  filter_expression
-  --input-mapping TEXT      input_mapping as JSON literal or @path to a
-                            YAML/JSON file.
-  --json                    Emit JSON instead of human-readable output.
-  --help                    Show this message and exit.
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
 ```
 
 ### `events update-source`
@@ -787,6 +876,9 @@ Options:
   --schedule-enabled / --no-schedule-enabled
                                   Whether the schedule is enabled (collapses
                                   into schedule config).
+  --overlap-policy [skip|queue|replace]
+                                  Behavior when the prior scheduled run is
+                                  still active.
   --adapter TEXT                  Webhook adapter name (collapses into webhook
                                   config).
   --webhook-integration TEXT      Integration ref (UUID or name) for OAuth-
@@ -795,6 +887,18 @@ Options:
   --webhook-config TEXT           Webhook adapter config as JSON literal or
                                   @path/to/file.yaml (collapses into webhook
                                   config).
+  --rate-limit-per-minute INTEGER RANGE
+                                  Maximum webhook events per configured
+                                  window.  [x>=1]
+  --rate-limit-window-seconds INTEGER RANGE
+                                  Webhook ingress rate-limit window in
+                                  seconds.  [x>=1]
+  --rate-limit-enabled / --no-rate-limit-enabled
+                                  Enable or disable ingress rate limiting for
+                                  this source.
+  --clear-webhook-integration     Clear the webhook integration reference.
+  --clear-rate-limit              Clear the per-window webhook rate limit
+                                  (disables limiting).
   --global                        Target global scope (org=NULL). Alias for
                                   --org global.
   --org, --organization, --scope TEXT
@@ -831,6 +935,9 @@ Options:
                                   delete + recreate.
   --target-type [workflow|agent]  Rejected: changing the target type requires
                                   delete + recreate.
+  --clear-event-type              Clear the optional event-type filter.
+  --clear-filter-expression       Clear the optional filter expression.
+  --clear-input-mapping           Clear the optional input mapping.
   --json                          Emit JSON instead of human-readable output.
   --help                          Show this message and exit.
 ```
@@ -872,6 +979,7 @@ Commands:
   delete    Delete a workspace file, optionally guarded by its current...
   exists    Check if a file exists.
   list      List files in a directory (default: location root).
+  patch     Replace one unique text fragment in the global source workspace.
   policies  Manage file access policies.
   read      Read a workspace file and write its contents to stdout.
   search    Search workspace file contents.
@@ -930,6 +1038,24 @@ Options:
                    Slug resolved via GET /api/solutions.
   --json           Emit JSON instead of human-readable output.
   --help           Show this message and exit.
+```
+
+### `files patch`
+
+```
+Usage: files patch [OPTIONS] PATH
+
+  Replace one unique text fragment in the global source workspace.
+
+Options:
+  --old TEXT               Unique text to replace.  [required]
+  --new TEXT               Replacement text; defaults to empty.
+  --expected-version TEXT  Patch only if the file still has this version from
+                           `files stat`.
+  --force-deactivation     Allow workflows removed by the patch to be
+                           deactivated.
+  --json                   Emit JSON instead of human-readable output.
+  --help                   Show this message and exit.
 ```
 
 ### `files policies`
@@ -1253,37 +1379,12 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  add-mapping     Create a mapping between an integration and an...
   create          Create a new integration.
+  create-mapping  Create a mapping between an integration and an...
   get             Get a single integration by UUID or name (with mappings...
   list            List all integrations (wrapped ``{items, total}``...
   update          Update an integration.
   update-mapping  Update an existing integration mapping.
-```
-
-### `integrations add-mapping`
-
-```
-Usage: integrations add-mapping [OPTIONS] INTEGRATION_REF
-
-  Create a mapping between an integration and an organization.
-
-  ``INTEGRATION_REF`` is a UUID or integration name. ``--organization`` is a
-  UUID or org name (resolved via :class:`RefResolver`).
-
-  ``--oauth-token-id`` is an opt-in flag outside the DTO-generated flag set —
-  the DTO excludes ``oauth_token_id`` to avoid accidentally surfacing the UI-
-  managed OAuth handshake data as a writable CLI field.
-
-Options:
-  --organization TEXT    org ref (UUID or name) for organization_id.
-                         [required]
-  --entity-id TEXT       entity_id  [required]
-  --entity-name TEXT     entity_name
-  --config TEXT          config as JSON literal or @path to a YAML/JSON file.
-  --oauth-token-id TEXT  OAuth token UUID (opt-in; empty means leave unset).
-  --json                 Emit JSON instead of human-readable output.
-  --help                 Show this message and exit.
 ```
 
 ### `integrations create`
@@ -1305,6 +1406,28 @@ Options:
   --default-entity-id TEXT  default_entity_id
   --json                    Emit JSON instead of human-readable output.
   --help                    Show this message and exit.
+```
+
+### `integrations create-mapping`
+
+```
+Usage: integrations create-mapping [OPTIONS] INTEGRATION_REF
+
+  Create a mapping between an integration and an organization.
+
+  ``INTEGRATION_REF`` is a UUID or integration name. ``--organization`` is a
+  UUID or org name (resolved via :class:`RefResolver`).
+
+  OAuth token IDs are intentionally excluded because the UI authorization flow
+  owns credential creation and rotation.
+
+Options:
+  --organization TEXT  org ref (UUID or name) for organization_id.  [required]
+  --entity-id TEXT     entity_id  [required]
+  --entity-name TEXT   entity_name
+  --config TEXT        config as JSON literal or @path to a YAML/JSON file.
+  --json               Emit JSON instead of human-readable output.
+  --help               Show this message and exit.
 ```
 
 ### `integrations get`
@@ -1369,26 +1492,64 @@ Usage: integrations update-mapping [OPTIONS] INTEGRATION_REF
 
   Resolves ``INTEGRATION_REF`` + ``--organization`` to the mapping UUID via
   ``GET /api/integrations/{id}/mappings/by-org/{org_id}``, then PUTs the
-  update body. ``oauth_token_id`` is only sent when ``--oauth-token-id`` is
-  explicitly passed — this preserves the server's existing token on unrelated
-  updates (it's set by the OAuth flow, not by CLI users).
+  update body. OAuth token IDs are intentionally excluded because they are
+  managed by the UI authorization flow.
 
 Options:
-  --organization TEXT    organization ref (UUID or name) — identifies the
-                         mapping to update.  [required]
-  --entity-id TEXT       entity_id
-  --entity-name TEXT     entity_name
-  --config TEXT          config as JSON literal or @path to a YAML/JSON file.
-  --oauth-token-id TEXT  OAuth token UUID (opt-in; omitted means leave
-                         unchanged).
-  --json                 Emit JSON instead of human-readable output.
-  --help                 Show this message and exit.
+  --organization TEXT  organization ref (UUID or name) — identifies the
+                       mapping to update.  [required]
+  --entity-id TEXT     entity_id
+  --entity-name TEXT   entity_name
+  --config TEXT        config as JSON literal or @path to a YAML/JSON file.
+  --json               Emit JSON instead of human-readable output.
+  --help               Show this message and exit.
 ```
 
-## `orgs`
+## `knowledge`
 
 ```
-Usage: orgs [OPTIONS] COMMAND [ARGS]...
+Usage: knowledge [OPTIONS] COMMAND [ARGS]...
+
+  Search the knowledge store.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  search  Hybrid-search knowledge documents visible in an organization...
+```
+
+### `knowledge search`
+
+```
+Usage: knowledge search [OPTIONS] QUERY
+
+  Hybrid-search knowledge documents visible in an organization scope.
+
+Options:
+  --namespace TEXT                Namespace to search. Repeat to search more
+                                  than one.
+  --limit INTEGER RANGE           [default: 5; x>=1]
+  --min-score FLOAT RANGE         [0<=x<=1]
+  --metadata-filter TEXT          JSON object matched against document
+                                  metadata.
+  --fallback / --no-fallback      Include global knowledge when searching an
+                                  organization.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
+## `organizations`
+
+```
+Usage: organizations [OPTIONS] COMMAND [ARGS]...
 
   Manage organizations.
 
@@ -1404,10 +1565,10 @@ Commands:
   update  Update an organization.
 ```
 
-### `orgs create`
+### `organizations create`
 
 ```
-Usage: orgs create [OPTIONS]
+Usage: organizations create [OPTIONS]
 
   Create a new organization.
 
@@ -1419,10 +1580,10 @@ Options:
   --help                        Show this message and exit.
 ```
 
-### `orgs delete`
+### `organizations delete`
 
 ```
-Usage: orgs delete [OPTIONS] REF
+Usage: organizations delete [OPTIONS] REF
 
   Delete (soft-delete) an organization.
 
@@ -1433,10 +1594,10 @@ Options:
   --help  Show this message and exit.
 ```
 
-### `orgs get`
+### `organizations get`
 
 ```
-Usage: orgs get [OPTIONS] REF
+Usage: organizations get [OPTIONS] REF
 
   Get a single organization by UUID or name.
 
@@ -1445,22 +1606,23 @@ Options:
   --help  Show this message and exit.
 ```
 
-### `orgs list`
+### `organizations list`
 
 ```
-Usage: orgs list [OPTIONS]
+Usage: organizations list [OPTIONS]
 
   List all organizations.
 
 Options:
-  --json  Emit JSON instead of human-readable output.
-  --help  Show this message and exit.
+  --include-inactive  Include disabled Organizations.
+  --json              Emit JSON instead of human-readable output.
+  --help              Show this message and exit.
 ```
 
-### `orgs update`
+### `organizations update`
 
 ```
-Usage: orgs update [OPTIONS] REF
+Usage: organizations update [OPTIONS] REF
 
   Update an organization.
 
@@ -1475,10 +1637,39 @@ Options:
   --help                        Show this message and exit.
 ```
 
-## `policy-rule`
+## `platform-jobs`
 
 ```
-Usage: policy-rule [OPTIONS] COMMAND [ARGS]...
+Usage: platform-jobs [OPTIONS] COMMAND [ARGS]...
+
+  Read durable platform job status.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  get  Get progress, result, or error for one platform job.
+```
+
+### `platform-jobs get`
+
+```
+Usage: platform-jobs get [OPTIONS] JOB_ID
+
+  Get progress, result, or error for one platform job.
+
+  ``JOB_ID`` is the UUID returned when the durable operation was queued.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+## `policy-rules`
+
+```
+Usage: policy-rules [OPTIONS] COMMAND [ARGS]...
 
   Manage named, reusable policy rules.
 
@@ -1487,18 +1678,18 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  create  Create a named policy rule.
-  delete  Delete a named policy rule.
-  get     Get a single policy rule by domain and name.
-  list    List named policy rules.
-  update  Update a named policy rule.
-  usages  Show all file-policies and tables that reference a rule.
+  create       Create a named policy rule.
+  delete       Delete a named policy rule.
+  get          Get a single policy rule by domain and name.
+  list         List named policy rules.
+  list-usages  Show all file-policies and tables that reference a rule.
+  update       Update a named policy rule.
 ```
 
-### `policy-rule create`
+### `policy-rules create`
 
 ```
-Usage: policy-rule create [OPTIONS]
+Usage: policy-rules create [OPTIONS]
 
   Create a named policy rule.
 
@@ -1506,7 +1697,7 @@ Usage: policy-rule create [OPTIONS]
 
   Example:
 
-  \b     bifrost policy-rule create --name read_all --domain file \
+  \b     bifrost policy-rules create --name read_all --domain file \
   --body '{"actions": ["read"], "when": null}'
 
   Org targeting follows the unified ``--org`` standard.
@@ -1527,10 +1718,10 @@ Options:
   --help                          Show this message and exit.
 ```
 
-### `policy-rule delete`
+### `policy-rules delete`
 
 ```
-Usage: policy-rule delete [OPTIONS] {file|table} NAME
+Usage: policy-rules delete [OPTIONS] {file|table} NAME
 
   Delete a named policy rule.
 
@@ -1543,15 +1734,14 @@ Options:
   --help        Show this message and exit.
 ```
 
-### `policy-rule get`
+### `policy-rules get`
 
 ```
-Usage: policy-rule get [OPTIONS] {file|table} NAME
+Usage: policy-rules get [OPTIONS] {file|table} NAME
 
   Get a single policy rule by domain and name.
 
-  Uses the usages endpoint (which 404s when not found) to confirm the rule
-  exists, then fetches the full record from the list.
+  ``DOMAIN`` is 'file' or 'table'. ``NAME`` is the rule's name.
 
 Options:
   --scope TEXT  Organization UUID for org-scoped rules.
@@ -1559,10 +1749,10 @@ Options:
   --help        Show this message and exit.
 ```
 
-### `policy-rule list`
+### `policy-rules list`
 
 ```
-Usage: policy-rule list [OPTIONS]
+Usage: policy-rules list [OPTIONS]
 
   List named policy rules.
 
@@ -1573,10 +1763,23 @@ Options:
   --help                 Show this message and exit.
 ```
 
-### `policy-rule update`
+### `policy-rules list-usages`
 
 ```
-Usage: policy-rule update [OPTIONS] {file|table} NAME
+Usage: policy-rules list-usages [OPTIONS] {file|table} NAME
+
+  Show all file-policies and tables that reference a rule.
+
+Options:
+  --scope TEXT  Organization UUID for org-scoped rules.
+  --json        Emit JSON instead of human-readable output.
+  --help        Show this message and exit.
+```
+
+### `policy-rules update`
+
+```
+Usage: policy-rules update [OPTIONS] {file|table} NAME
 
   Update a named policy rule.
 
@@ -1590,19 +1793,6 @@ Options:
   --scope TEXT        Organization UUID for org-scoped rules.
   --json              Emit JSON instead of human-readable output.
   --help              Show this message and exit.
-```
-
-### `policy-rule usages`
-
-```
-Usage: policy-rule usages [OPTIONS] {file|table} NAME
-
-  Show all file-policies and tables that reference a rule.
-
-Options:
-  --scope TEXT  Organization UUID for org-scoped rules.
-  --json        Emit JSON instead of human-readable output.
-  --help        Show this message and exit.
 ```
 
 ## `requirements`
@@ -2213,12 +2403,20 @@ Usage: tables update [OPTIONS] REF
   caller to grep their workspace before committing.
 
 Options:
-  --name TEXT         name
-  --description TEXT  description
-  --schema TEXT       schema as JSON literal or @path to a YAML/JSON file.
-  --policies TEXT     policies as JSON literal or @path to a YAML/JSON file.
-  --json              Emit JSON instead of human-readable output.
-  --help              Show this message and exit.
+  --name TEXT                     name
+  --description TEXT              description
+  --schema TEXT                   schema as JSON literal or @path to a
+                                  YAML/JSON file.
+  --policies TEXT                 policies as JSON literal or @path to a
+                                  YAML/JSON file.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ## `workflows`
@@ -2233,17 +2431,20 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  delete         Delete a workflow by removing its function from the...
-  execute        Execute a registered workflow remotely and stream logs...
-  get            Get a single workflow by UUID, name, or ``path::func`` ref.
-  grant-role     Grant a role access to a workflow.
-  list           List all workflows visible to the caller.
-  list-orphaned  List all orphaned workflows (backing file deleted or...
-  register       Register a decorated function from an existing workspace...
-  remap          Move references from one workflow ID to another active...
-  replace        Repoint an orphaned workflow to a new file location.
-  revoke-role    Revoke a role's access from a workflow.
-  update         Update a workflow's editable properties.
+  delete           Delete a workflow by removing its function from the...
+  execute          Execute a registered workflow remotely and stream logs...
+  get              Get a single Workflow by UUID, name, or ``path::func``...
+  get-execution    Get one workflow execution, including its result and...
+  grant-role       Grant a role access to a workflow.
+  list             List Workflows visible to the caller.
+  list-executions  List workflow execution summaries visible to the caller.
+  list-orphaned    List all orphaned workflows (backing file deleted or...
+  register         Register a decorated function from an existing...
+  remap            Move references from one workflow ID to another active...
+  replace          Repoint an orphaned workflow to a new file location.
+  revoke-role      Revoke a role's access from a workflow.
+  update           Update a workflow's editable properties.
+  validate         Validate a workspace Workflow file or supplied Python...
 ```
 
 ### `workflows delete`
@@ -2298,11 +2499,19 @@ Options:
 ```
 Usage: workflows get [OPTIONS] REF
 
-  Get a single workflow by UUID, name, or ``path::func`` ref.
+  Get a single Workflow by UUID, name, or ``path::func`` ref.
 
-  The server does not expose a per-record GET endpoint for workflows, so this
-  resolves the ref via :class:`RefResolver` and locates the entry in the ``GET
-  /api/workflows`` list payload.
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `workflows get-execution`
+
+```
+Usage: workflows get-execution [OPTIONS] EXECUTION_ID
+
+  Get one workflow execution, including its result and bounded logs.
 
 Options:
   --json  Emit JSON instead of human-readable output.
@@ -2330,11 +2539,43 @@ Options:
 ```
 Usage: workflows list [OPTIONS]
 
-  List all workflows visible to the caller.
+  List Workflows visible to the caller.
 
 Options:
-  --json  Emit JSON instead of human-readable output.
-  --help  Show this message and exit.
+  --query TEXT                    Search Workflow names and descriptions.
+  --category TEXT                 Filter by exact category.
+  --type [workflow|tool|data_provider]
+                                  Filter by executable type.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
+### `workflows list-executions`
+
+```
+Usage: workflows list-executions [OPTIONS]
+
+  List workflow execution summaries visible to the caller.
+
+Options:
+  --scope TEXT                    Global or organization UUID scope.
+  --workflow-name TEXT            Filter by workflow name.
+  --workflow-id TEXT              Filter by workflow UUID.
+  --status TEXT                   Comma-separated statuses.
+  --start-date TEXT               Inclusive ISO start date.
+  --end-date TEXT                 Inclusive ISO end date.
+  --exclude-local / --include-local
+                                  Exclude or include local-runner executions.
+  --limit INTEGER RANGE           [default: 25; 1<=x<=1000]
+  --continuation-token TEXT       Opaque next-page token.
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ### `workflows list-orphaned`
@@ -2460,7 +2701,6 @@ Usage: workflows update [OPTIONS] REF
   :mod:`bifrost.refs` for resolution rules.
 
 Options:
-  --organization-id TEXT          organization_id
   --access-level TEXT             access_level
   --clear-roles / --no-clear-roles
                                   clear_roles (tri-state; omit to leave
@@ -2478,7 +2718,28 @@ Options:
   --public-endpoint / --no-public-endpoint
                                   public_endpoint (tri-state; omit to leave
                                   unchanged).
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
   --json                          Emit JSON instead of human-readable output.
   --help                          Show this message and exit.
+```
+
+### `workflows validate`
+
+```
+Usage: workflows validate [OPTIONS] PATH
+
+  Validate a workspace Workflow file or supplied Python content.
+
+Options:
+  --content TEXT       Validate supplied Python content instead of reading the
+                       workspace file.
+  --content-file FILE  Read validation content from a local file.
+  --json               Emit JSON instead of human-readable output.
+  --help               Show this message and exit.
 ```
 
