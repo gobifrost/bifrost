@@ -24,6 +24,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
 	downloadAgentSkill,
 	getAgentSkill,
+	hasSkillBundle,
 	type AgentSkillDownload,
 } from "@/services/agentSkills";
 import { cn } from "@/lib/utils";
@@ -92,7 +93,7 @@ export function AgentSkillPanel({ agentId }: { agentId: string }) {
 				<div>
 					<div className="font-medium">{skill.name}</div>
 					<p className={cn("mt-0.5", TYPE_SMALL, TONE_MUTED)}>
-						{skill.bundle_path
+						{hasSkillBundle(skill)
 							? "SKILL.md is the instruction source; runtime bindings stay separate."
 							: "Inline instructions export as SKILL.md; runtime bindings stay separate."}
 					</p>
@@ -104,7 +105,7 @@ export function AgentSkillPanel({ agentId }: { agentId: string }) {
 						<span>SKILL.md</span>
 						<span className={cn("ml-auto", TONE_MUTED)}>instructions</span>
 					</div>
-					{skill.bundle_path ? (
+					{hasSkillBundle(skill) && skill.bundle_path ? (
 						<div className="flex min-w-0 items-center gap-2 text-[13px]" title={skill.source === "solution" ? "Path relative to the Solution root" : "Root inside managed Agent Skill storage"}>
 							<FileCode2 className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
 							<span className={TONE_MUTED}>{skill.source === "solution" ? "Solution path" : "Bundle root"}</span>
@@ -117,6 +118,16 @@ export function AgentSkillPanel({ agentId }: { agentId: string }) {
 							Inline-only skill · no companion bundle configured
 						</p>
 					)}
+				</div>
+
+				<div
+					className="flex min-w-0 items-center gap-2 text-[13px]"
+					title="Content digest of this Skill. Changes whenever the instructions or a companion file change."
+				>
+					<span className={TONE_MUTED}>Revision</span>
+					<code className={cn("truncate", TYPE_MONO)}>
+						{skill.revision.slice(0, 12)}
+					</code>
 				</div>
 
 				{skill.automatic_capabilities.includes("bifrost_read_agent_skill_file") ? (
