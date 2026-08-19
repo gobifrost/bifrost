@@ -28,6 +28,35 @@ every sibling entity and with the actual serializer, so the Claims slice
 made Claims inconsistent with Roles without fixing the underlying gap, and
 writing an importer is well outside MCP/CLI parity work.
 
+## Update 2026-08-19: Configs is a third instance, handled the other way
+
+The Configs slice hit the same seam and resolved it **differently**, so the two
+choices now coexist in the catalog and the divergence is deliberate:
+
+- `manifest_generator.py` has `serialize_config()` / `ManifestConfig`, and
+  configs are written into `.bifrost/configs.yaml`.
+- `github_sync.py` has no `_resolve_config` and constructs no `Config` row
+  (grep for `Config(` returns nothing in that file, 2026-08-19). Its only
+  interaction with `manifest.configs` is *filtering* on export and a
+  secret-with-null-value warning.
+
+So Configs is export-only exactly like Claims and Roles. Rather than assert a
+`manifest` binding, `configs.*` declares an **exclusion** naming the missing
+importer and pointing at this document (`_CONFIG_MANIFEST_EXCLUSION` in
+`operation_catalog.py`).
+
+**Why the two slices differ.** Claims chose consistency with its sibling Roles;
+Configs chose accuracy, because the exclusion field exists precisely to record
+"this surface does not apply, and here is why." Neither is wrong under the
+current single-field model — which is the point: the model cannot express
+"exports but does not import," so each slice must pick a side, and the catalog
+is now internally inconsistent about the same underlying fact.
+
+That inconsistency is the strongest argument for **option 2 below**. When it is
+taken, `configs.*` should move from the exclusion back to whatever the split
+binding is, and this note should be deleted along with
+`_CONFIG_MANIFEST_EXCLUSION`.
+
 ## The real question, for a later phase
 
 Decide which is true and make the catalog say it:

@@ -57,6 +57,17 @@ _FILE_POLICY_SDK_EXCLUSION = (
 _FILE_POLICY_MANIFEST_EXCLUSION = (
     "File policies are workspace/org administration, not a portable manifest entity."
 )
+_CONFIG_SDK_EXCLUSION = (
+    "Config administration is separate from the application SDK's runtime value "
+    "lookup (bifrost.config.get resolves a value by key with cascade)."
+)
+_CONFIG_MANIFEST_EXCLUSION = (
+    "Config values are serialized into .bifrost/configs.yaml for export, but git "
+    "sync never reconciles them back: github_sync.py has no _resolve_config and "
+    "writes no Config row. Declaring a manifest binding would assert a "
+    "round-trip that does not exist "
+    "(docs/plans/2026-08-18-manifest-binding-export-only-gap.md)."
+)
 
 
 OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
@@ -1313,6 +1324,120 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         exclusions={
             "manifest": _FILE_POLICY_MANIFEST_EXCLUSION,
             "sdk": _FILE_POLICY_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="configs.list",
+        summary="List Config values for a scope",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/config",
+            response_model="list[ConfigResponse]",
+        ),
+        cli=CliOperationBinding(path=("configs", "list")),
+        mcp=McpOperationBinding(name="bifrost_list_configs"),
+        native_builder=True,
+        action_scopes=("configs.read",),
+        authorization_resolver="Platform-admin gate (CurrentSuperuser)",
+        side_effects=("mask secret-type values as [SECRET]",),
+        exclusions={
+            "manifest": _CONFIG_MANIFEST_EXCLUSION,
+            "sdk": _CONFIG_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="configs.get",
+        summary="Get one Config value by ID",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/config/{config_id}",
+            response_model="ConfigResponse",
+        ),
+        cli=CliOperationBinding(path=("configs", "get")),
+        mcp=McpOperationBinding(name="bifrost_get_config"),
+        native_builder=True,
+        action_scopes=("configs.read",),
+        authorization_resolver="Platform-admin gate (CurrentSuperuser)",
+        side_effects=("mask a secret-type value as [SECRET]",),
+        exclusions={
+            "manifest": _CONFIG_MANIFEST_EXCLUSION,
+            "sdk": _CONFIG_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="configs.create",
+        summary="Set a Config value in a scope",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/config",
+            request_model="SetConfigRequest",
+            response_model="ConfigResponse",
+        ),
+        cli=CliOperationBinding(path=("configs", "create")),
+        mcp=McpOperationBinding(name="bifrost_create_config"),
+        native_builder=True,
+        action_scopes=("configs.write",),
+        authorization_resolver="Platform-admin gate (CurrentSuperuser)",
+        side_effects=(
+            "upsert the config row by (integration_id IS NULL, organization, key)",
+            "encrypt the value before storage when the type is secret",
+            "write the value through to the shared config cache",
+        ),
+        exclusions={
+            "manifest": _CONFIG_MANIFEST_EXCLUSION,
+            "sdk": _CONFIG_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="configs.update",
+        summary="Update a Config value by ID",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="PUT",
+            path="/api/config/{config_id}",
+            request_model="UpdateConfigRequest",
+            response_model="ConfigResponse",
+        ),
+        cli=CliOperationBinding(path=("configs", "update")),
+        mcp=McpOperationBinding(name="bifrost_update_config"),
+        native_builder=True,
+        action_scopes=("configs.write",),
+        authorization_resolver="Platform-admin gate (CurrentSuperuser)",
+        side_effects=(
+            "update the config row, including its organization scope",
+            "preserve the stored encrypted value when a secret's value is omitted",
+            "invalidate the previous cache entry when the key or scope changed",
+            "bump the global config version when the row crosses the global/org boundary",
+            "write the new value through to the shared config cache",
+        ),
+        exclusions={
+            "manifest": _CONFIG_MANIFEST_EXCLUSION,
+            "sdk": _CONFIG_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="configs.delete",
+        summary="Delete a Config value by ID",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="DELETE",
+            path="/api/config/{config_id}",
+        ),
+        cli=CliOperationBinding(path=("configs", "delete")),
+        mcp=McpOperationBinding(name="bifrost_delete_config"),
+        native_builder=True,
+        action_scopes=("configs.write",),
+        authorization_resolver="Platform-admin gate (CurrentSuperuser)",
+        side_effects=(
+            "delete the config row",
+            "invalidate the cache entry for the deleted key",
+        ),
+        exclusions={
+            "manifest": _CONFIG_MANIFEST_EXCLUSION,
+            "sdk": _CONFIG_SDK_EXCLUSION,
         },
     ),
     OperationDefinition(

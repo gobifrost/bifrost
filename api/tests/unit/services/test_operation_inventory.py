@@ -17,7 +17,8 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
         "manifest": 16,
         "mcp": 101,
         "native_builder": 10,
-        "rest": 660,
+        # 661 after configs.get added GET /api/config/{config_id} (2026-08-19).
+        "rest": 661,
         "sdk": 19,
     }
     for surface, rows in inventory["uncataloged"].items():

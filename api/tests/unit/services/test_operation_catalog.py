@@ -283,6 +283,39 @@ ROLE_OPERATIONS = {
     ),
 }
 
+CONFIG_OPERATIONS = {
+    "configs.list": (
+        "GET",
+        "/api/config",
+        ("configs", "list"),
+        "bifrost_list_configs",
+    ),
+    "configs.get": (
+        "GET",
+        "/api/config/{config_id}",
+        ("configs", "get"),
+        "bifrost_get_config",
+    ),
+    "configs.create": (
+        "POST",
+        "/api/config",
+        ("configs", "create"),
+        "bifrost_create_config",
+    ),
+    "configs.update": (
+        "PUT",
+        "/api/config/{config_id}",
+        ("configs", "update"),
+        "bifrost_update_config",
+    ),
+    "configs.delete": (
+        "DELETE",
+        "/api/config/{config_id}",
+        ("configs", "delete"),
+        "bifrost_delete_config",
+    ),
+}
+
 CLAIM_OPERATIONS = {
     "claims.list": (
         "GET",
@@ -545,6 +578,7 @@ CANONICAL_OPERATIONS = {
     **KNOWLEDGE_OPERATIONS,
     **ROLE_OPERATIONS,
     **CLAIM_OPERATIONS,
+    **CONFIG_OPERATIONS,
     **FILE_POLICY_OPERATIONS,
     **EVENT_OPERATIONS,
     **ORGANIZATION_OPERATIONS,
