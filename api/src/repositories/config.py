@@ -126,9 +126,13 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
     async def get_config_by_id(self, config_id: UUID) -> ConfigResponse | None:
         """Get one config by UUID, or ``None`` when it does not exist.
 
-        Scoped like :meth:`list_configs`' default cascade: a caller sees an
-        org-specific row in their own org or a global row. Secret values are
-        masked by :meth:`_to_response`.
+        No org cascade: IDs are globally unique, so an ID lookup resolves
+        directly — the semantics ``OrgScopedRepository.get(id=...)`` documents.
+        This deliberately matches :meth:`update_config_by_id` and
+        :meth:`delete_config`, which also filter on ``id`` alone; a superuser
+        able to update or delete a row by ID must also be able to read it.
+        Config routes are superuser-only, so no per-caller scope check applies
+        here. Secret values are masked by :meth:`_to_response`.
         """
         query = (
             select(self.model, Integration.name.label("integration_name"))
@@ -141,13 +145,6 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
             )
             .where(self.model.id == config_id)
         )
-        if self.org_id is not None:
-            query = query.where(
-                or_(
-                    self.model.organization_id == self.org_id,
-                    self.model.organization_id.is_(None),
-                )
-            )
 
         row = (await self.session.execute(query)).first()
         if row is None:

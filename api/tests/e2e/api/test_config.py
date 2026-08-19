@@ -700,6 +700,33 @@ class TestConfigGetById:
         response = e2e_client.get(f"/api/config/{uuid4()}")
         assert response.status_code == 401
 
+    def test_admin_can_read_any_org_config_by_id(
+        self, e2e_client, platform_admin, org1_user
+    ):
+        """A platform admin can read an org-scoped config by ID.
+
+        IDs are globally unique, so an ID lookup resolves directly with no org
+        cascade — what OrgScopedRepository.get(id=...) documents. This must
+        agree with PUT and DELETE, which also key on ID alone: an admin able to
+        modify or delete a row must be able to read it.
+        """
+        key = f"e2e_byid_crossorg_{uuid4().hex[:8]}"
+        created = _create_config(
+            e2e_client, platform_admin.headers, key, "org-scoped", "string",
+            organization_id=str(org1_user.organization_id),
+        )
+        try:
+            response = e2e_client.get(
+                f"/api/config/{created['id']}", headers=platform_admin.headers,
+            )
+            assert response.status_code == 200, (
+                "admin could not read an org-scoped config the same admin can "
+                f"update and delete: {response.status_code} {response.text}"
+            )
+            assert response.json()["value"] == "org-scoped"
+        finally:
+            _delete_config(e2e_client, platform_admin.headers, created["id"])
+
     def test_org_user_cannot_get_config_by_id(
         self, e2e_client, platform_admin, org1_user
     ):
