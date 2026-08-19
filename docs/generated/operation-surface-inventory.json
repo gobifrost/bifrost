@@ -6245,7 +6245,7 @@
     "manifest": 16,
     "mcp": 104,
     "native_builder": 10,
-    "rest": 662,
+    "rest": 663,
     "sdk": 19
   },
   "schema_version": 1,
@@ -7256,6 +7256,13 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/agents/{agent_id}/skill/download",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/agents/{agent_id}/skill/export",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

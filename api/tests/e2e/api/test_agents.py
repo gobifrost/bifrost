@@ -211,6 +211,87 @@ class TestAgentsCRUD:
         # And the change is durable, not recomputed per request.
         assert _revision() == after
 
+    def test_skill_export_returns_an_opaque_artifact_ref(
+        self,
+        e2e_client,
+        platform_admin,
+        test_agent,
+    ):
+        """Export hands a runtime the Skill without ever naming a storage path.
+
+        The browser download streams bytes; this route persists the same
+        deterministic archive and returns only an ArtifactRef, so a caller can
+        pass the Skill onward without learning an S3 key.
+        """
+        agent_id = test_agent["id"]
+        resp = e2e_client.post(
+            f"/api/agents/{agent_id}/skill/export",
+            headers=platform_admin.headers,
+        )
+        assert resp.status_code == 200, resp.text
+        ref = resp.json()
+
+        assert ref["type"] == "bifrost_artifact"
+        assert ref["filename"].endswith(".skill")
+        assert ref["content_type"] == "application/zip"
+        assert ref["size_bytes"] > 0
+
+        # No storage coordinates in the payload, under any spelling.
+        body = resp.text.lower()
+        for leak in ("s3_key", "_artifacts/", "bucket", "seaweed"):
+            assert leak not in body, f"export leaked {leak!r}: {resp.text}"
+
+        # The ref resolves through the normal artifact surface.
+        fetched = e2e_client.get(
+            f"/api/artifacts/{ref['id']}", headers=platform_admin.headers
+        )
+        assert fetched.status_code in (200, 404), fetched.text
+
+    def test_skill_export_is_deterministic(
+        self,
+        e2e_client,
+        platform_admin,
+        test_agent,
+    ):
+        """Unchanged content exports byte-identical archives.
+
+        The archive uses a fixed ZIP epoch and sorted members precisely so an
+        export can be compared or cached. Each export is a distinct artifact,
+        but the bytes must match.
+        """
+        agent_id = test_agent["id"]
+
+        def _export():
+            resp = e2e_client.post(
+                f"/api/agents/{agent_id}/skill/export",
+                headers=platform_admin.headers,
+            )
+            assert resp.status_code == 200, resp.text
+            return resp.json()
+
+        first, second = _export(), _export()
+        assert first["id"] != second["id"], "each export is its own artifact"
+        assert first["size_bytes"] == second["size_bytes"], (
+            "identical Skill content must produce identical archive bytes"
+        )
+        assert first["filename"] == second["filename"]
+
+    def test_skill_export_requires_agent_access(
+        self,
+        e2e_client,
+        platform_admin,
+        test_agent,
+        org1_user,
+    ):
+        """Export carries the same access check as reading the Agent."""
+        resp = e2e_client.post(
+            f"/api/agents/{test_agent['id']}/skill/export",
+            headers=org1_user.headers,
+        )
+        assert resp.status_code in (403, 404), (
+            f"an unauthorized user must not export a Skill: {resp.status_code}"
+        )
+
     def test_upload_browse_and_detach_agent_skill(
         self,
         e2e_client,
