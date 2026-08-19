@@ -21,6 +21,7 @@ from src.models import (
 from src.core.auth import Context, CurrentSuperuser
 from src.core.org_filter import resolve_org_filter
 from src.repositories.config import ConfigRepository
+from src.services.operation_catalog import operation_route
 
 from src.core.cache import invalidate_config, upsert_config
 
@@ -39,6 +40,7 @@ router = APIRouter(tags=["Configuration"])
     response_model=list[ConfigResponse],
     summary="Get configuration values",
     description="Get configuration values for current scope (includes global configs)",
+    **operation_route("configs.list"),
 )
 async def get_config(
     ctx: Context,
@@ -68,12 +70,41 @@ async def get_config(
     return await repo.list_configs(filter_type)
 
 
+@router.get(
+    "/api/config/{config_id}",
+    response_model=ConfigResponse,
+    summary="Get a configuration value by ID",
+    description="Get a single configuration value by its UUID",
+    **operation_route("configs.get"),
+)
+async def get_config_by_id(
+    config_id: UUID,
+    ctx: Context,
+    user: CurrentSuperuser,
+) -> ConfigResponse:
+    """Get one configuration by UUID.
+
+    Scoped to the caller's org plus global rows. Secret values are masked as
+    ``[SECRET]``, matching the list endpoint.
+    """
+    repo = ConfigRepository(ctx.db, org_id=ctx.org_id, is_superuser=True)
+
+    config = await repo.get_config_by_id(config_id)
+    if config is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Configuration not found",
+        )
+    return config
+
+
 @router.post(
     "/api/config",
     response_model=ConfigResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Set configuration value",
     description="Set a configuration value in the current scope",
+    **operation_route("configs.create"),
 )
 async def set_config(
     request: SetConfigRequest,
@@ -118,6 +149,7 @@ async def set_config(
     response_model=ConfigResponse,
     summary="Update configuration value by ID",
     description="Update an existing configuration value, including its organization scope",
+    **operation_route("configs.update"),
 )
 async def update_config(
     config_id: UUID,
@@ -181,6 +213,7 @@ async def update_config(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete configuration value",
     description="Delete a configuration value by ID",
+    **operation_route("configs.delete"),
 )
 async def delete_config(
     config_id: UUID,

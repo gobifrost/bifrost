@@ -3902,6 +3902,343 @@
       "observed": {
         "cli": {
           "path": [
+            "configs",
+            "list"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_list_configs",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "configs.list",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "configs.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate (CurrentSuperuser)",
+        "cli": {
+          "path": [
+            "configs",
+            "list"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Config values are serialized into .bifrost/configs.yaml for export, but git sync never reconciles them back: github_sync.py has no _resolve_config and writes no Config row. Declaring a manifest binding would assert a round-trip that does not exist (docs/plans/2026-08-18-manifest-binding-export-only-gap.md).",
+          "sdk": "Config administration is separate from the application SDK's runtime value lookup (bifrost.config.get resolves a value by key with cascade)."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_list_configs"
+        },
+        "native_builder": true,
+        "operation_id": "configs.list",
+        "rest": {
+          "method": "GET",
+          "path": "/api/config",
+          "request_model": null,
+          "response_model": "list[ConfigResponse]"
+        },
+        "side_effects": [
+          "mask secret-type values as [SECRET]"
+        ],
+        "summary": "List Config values for a scope",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "configs",
+            "get"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_get_config",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "configs.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "configs.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate (CurrentSuperuser)",
+        "cli": {
+          "path": [
+            "configs",
+            "get"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Config values are serialized into .bifrost/configs.yaml for export, but git sync never reconciles them back: github_sync.py has no _resolve_config and writes no Config row. Declaring a manifest binding would assert a round-trip that does not exist (docs/plans/2026-08-18-manifest-binding-export-only-gap.md).",
+          "sdk": "Config administration is separate from the application SDK's runtime value lookup (bifrost.config.get resolves a value by key with cascade)."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_get_config"
+        },
+        "native_builder": true,
+        "operation_id": "configs.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/config/{config_id}",
+          "request_model": null,
+          "response_model": "ConfigResponse"
+        },
+        "side_effects": [
+          "mask a secret-type value as [SECRET]"
+        ],
+        "summary": "Get one Config value by ID",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "configs",
+            "create"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_create_config",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "configs.create",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "configs.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate (CurrentSuperuser)",
+        "cli": {
+          "path": [
+            "configs",
+            "create"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Config values are serialized into .bifrost/configs.yaml for export, but git sync never reconciles them back: github_sync.py has no _resolve_config and writes no Config row. Declaring a manifest binding would assert a round-trip that does not exist (docs/plans/2026-08-18-manifest-binding-export-only-gap.md).",
+          "sdk": "Config administration is separate from the application SDK's runtime value lookup (bifrost.config.get resolves a value by key with cascade)."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_create_config"
+        },
+        "native_builder": true,
+        "operation_id": "configs.create",
+        "rest": {
+          "method": "POST",
+          "path": "/api/config",
+          "request_model": "SetConfigRequest",
+          "response_model": "ConfigResponse"
+        },
+        "side_effects": [
+          "upsert the config row by (integration_id IS NULL, organization, key)",
+          "encrypt the value before storage when the type is secret",
+          "write the value through to the shared config cache"
+        ],
+        "summary": "Set a Config value in a scope",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "configs",
+            "update"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_update_config",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "configs.update",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "configs.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate (CurrentSuperuser)",
+        "cli": {
+          "path": [
+            "configs",
+            "update"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Config values are serialized into .bifrost/configs.yaml for export, but git sync never reconciles them back: github_sync.py has no _resolve_config and writes no Config row. Declaring a manifest binding would assert a round-trip that does not exist (docs/plans/2026-08-18-manifest-binding-export-only-gap.md).",
+          "sdk": "Config administration is separate from the application SDK's runtime value lookup (bifrost.config.get resolves a value by key with cascade)."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_update_config"
+        },
+        "native_builder": true,
+        "operation_id": "configs.update",
+        "rest": {
+          "method": "PUT",
+          "path": "/api/config/{config_id}",
+          "request_model": "UpdateConfigRequest",
+          "response_model": "ConfigResponse"
+        },
+        "side_effects": [
+          "update the config row, including its organization scope",
+          "preserve the stored encrypted value when a secret's value is omitted",
+          "invalidate the previous cache entry when the key or scope changed",
+          "bump the global config version when the row crosses the global/org boundary",
+          "write the new value through to the shared config cache"
+        ],
+        "summary": "Update a Config value by ID",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "configs",
+            "delete"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_delete_config",
+          "status": "exact_parity"
+        },
+        "native_builder": {
+          "name": null,
+          "status": "missing_surface"
+        },
+        "rest": {
+          "operation_id": "configs.delete",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "configs.write"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Platform-admin gate (CurrentSuperuser)",
+        "cli": {
+          "path": [
+            "configs",
+            "delete"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Config values are serialized into .bifrost/configs.yaml for export, but git sync never reconciles them back: github_sync.py has no _resolve_config and writes no Config row. Declaring a manifest binding would assert a round-trip that does not exist (docs/plans/2026-08-18-manifest-binding-export-only-gap.md).",
+          "sdk": "Config administration is separate from the application SDK's runtime value lookup (bifrost.config.get resolves a value by key with cascade)."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_delete_config"
+        },
+        "native_builder": true,
+        "operation_id": "configs.delete",
+        "rest": {
+          "method": "DELETE",
+          "path": "/api/config/{config_id}",
+          "request_model": null,
+          "response_model": null
+        },
+        "side_effects": [
+          "delete the config row",
+          "invalidate the cache entry for the deleted key"
+        ],
+        "summary": "Delete a Config value by ID",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
             "organizations",
             "list"
           ],
@@ -5509,7 +5846,7 @@
     "manifest": 16,
     "mcp": 101,
     "native_builder": 10,
-    "rest": 660,
+    "rest": 661,
     "sdk": 19
   },
   "schema_version": 1,
@@ -5563,52 +5900,7 @@
         "kind": "operation",
         "path": [
           "configs",
-          "create"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "configs",
-          "delete"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "configs",
-          "get"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "configs",
-          "list"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "configs",
           "set"
-        ],
-        "reason": "CLI operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "kind": "operation",
-        "path": [
-          "configs",
-          "update"
         ],
         "reason": "CLI operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -6076,19 +6368,7 @@
       },
       {
         "hidden": false,
-        "name": "create_config",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "create_policy_rule",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "delete_config",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -6106,21 +6386,9 @@
       },
       {
         "hidden": false,
-        "name": "get_config",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "hidden": false,
         "name": "get_docs",
         "reason": "Reads generated platform documentation; owns no entity or state.",
         "status": "transport_only"
-      },
-      {
-        "hidden": false,
-        "name": "list_configs",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
       },
       {
         "hidden": true,
@@ -6163,12 +6431,6 @@
         "name": "test_solution_build",
         "reason": "Builder-local workspace primitive, not a platform entity operation.",
         "status": "transport_only"
-      },
-      {
-        "hidden": false,
-        "name": "update_config",
-        "reason": "MCP tool has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
       },
       {
         "hidden": true,
@@ -7220,34 +7482,6 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/cli/download/bifrost-cli.tar.gz",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "GET",
-        "operation_id": "",
-        "path": "/api/config",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/config",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "DELETE",
-        "operation_id": "",
-        "path": "/api/config/{config_id}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "PUT",
-        "operation_id": "",
-        "path": "/api/config/{config_id}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

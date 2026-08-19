@@ -595,3 +595,129 @@ class TestConfigValueTypeRoundTrip:
                 f"list response leaked the storage envelope: {listed['value']!r}"
         finally:
             _delete_config(e2e_client, platform_admin.headers, created["id"])
+
+
+@pytest.mark.e2e
+class TestConfigGetById:
+    """``GET /api/config/{config_id}`` — the by-ID read endpoint.
+
+    Before this endpoint existed, both the CLI (``bifrost configs get``) and
+    the MCP ``get_config`` tool fetched the whole ``GET /api/config`` list and
+    filtered client-side. These tests pin the endpoint those surfaces now use.
+    """
+
+    def test_get_by_id_returns_the_config(self, e2e_client, platform_admin):
+        """A known UUID returns that config."""
+        key = f"e2e_byid_{uuid4().hex[:8]}"
+        created = _create_config(
+            e2e_client, platform_admin.headers, key, "by-id-value", "string",
+        )
+        try:
+            response = e2e_client.get(
+                f"/api/config/{created['id']}", headers=platform_admin.headers,
+            )
+            assert response.status_code == 200, response.text
+            data = response.json()
+            assert data["id"] == created["id"]
+            assert data["key"] == key
+            assert data["value"] == "by-id-value"
+            assert data["type"] == "string"
+        finally:
+            _delete_config(e2e_client, platform_admin.headers, created["id"])
+
+    def test_get_by_id_matches_the_list_payload(self, e2e_client, platform_admin):
+        """The by-ID row is identical to the same row from the list.
+
+        This is the contract the CLI and MCP relied on when they filtered the
+        list client-side, so switching them to this endpoint must not change
+        what a caller sees.
+        """
+        key = f"e2e_byid_parity_{uuid4().hex[:8]}"
+        created = _create_config(
+            e2e_client, platform_admin.headers, key, "parity", "string",
+            description="parity check",
+        )
+        try:
+            single = e2e_client.get(
+                f"/api/config/{created['id']}", headers=platform_admin.headers,
+            )
+            assert single.status_code == 200, single.text
+
+            listed = e2e_client.get("/api/config", headers=platform_admin.headers)
+            assert listed.status_code == 200, listed.text
+            from_list = next(
+                (c for c in listed.json() if c["id"] == created["id"]), None
+            )
+            assert from_list is not None, "config missing from list payload"
+            assert single.json() == from_list, (
+                "by-ID payload diverged from the list payload"
+            )
+        finally:
+            _delete_config(e2e_client, platform_admin.headers, created["id"])
+
+    def test_get_by_id_masks_secret_value(self, e2e_client, platform_admin):
+        """A secret config's value is masked, exactly as the list masks it.
+
+        A by-ID reader must not become a way to read a stored secret that the
+        list endpoint refuses to show.
+        """
+        key = f"e2e_byid_secret_{uuid4().hex[:8]}"
+        created = _create_config(
+            e2e_client, platform_admin.headers,
+            key, "super-secret-value", "secret",
+        )
+        try:
+            response = e2e_client.get(
+                f"/api/config/{created['id']}", headers=platform_admin.headers,
+            )
+            assert response.status_code == 200, response.text
+            data = response.json()
+            assert data["value"] == "[SECRET]", \
+                f"secret leaked through the by-ID read: {data['value']!r}"
+            assert "super-secret-value" not in response.text
+        finally:
+            _delete_config(e2e_client, platform_admin.headers, created["id"])
+
+    def test_get_by_id_unknown_uuid_404s(self, e2e_client, platform_admin):
+        """An unknown but well-formed UUID is a 404, not a 500 or empty 200."""
+        response = e2e_client.get(
+            f"/api/config/{uuid4()}", headers=platform_admin.headers,
+        )
+        assert response.status_code == 404, \
+            f"expected 404 for unknown config id, got {response.status_code}"
+
+    def test_get_by_id_malformed_uuid_422s(self, e2e_client, platform_admin):
+        """A non-UUID path segment is rejected by validation."""
+        response = e2e_client.get(
+            "/api/config/not-a-uuid", headers=platform_admin.headers,
+        )
+        assert response.status_code == 422, \
+            f"expected 422 for malformed config id, got {response.status_code}"
+
+    def test_get_by_id_requires_auth(self, e2e_client):
+        """Unauthenticated reads are rejected."""
+        e2e_client.cookies.clear()
+        response = e2e_client.get(f"/api/config/{uuid4()}")
+        assert response.status_code == 401
+
+    def test_org_user_cannot_get_config_by_id(
+        self, e2e_client, platform_admin, org1_user
+    ):
+        """A non-superuser cannot read a config by ID.
+
+        The list endpoint is superuser-gated; the by-ID endpoint must carry the
+        same gate rather than opening a narrower read to regular users.
+        """
+        key = f"e2e_byid_authz_{uuid4().hex[:8]}"
+        created = _create_config(
+            e2e_client, platform_admin.headers, key, "admin-only", "string",
+        )
+        try:
+            response = e2e_client.get(
+                f"/api/config/{created['id']}", headers=org1_user.headers,
+            )
+            assert response.status_code == 403, \
+                f"org user should not read config by ID: {response.status_code}"
+            assert "admin-only" not in response.text
+        finally:
+            _delete_config(e2e_client, platform_admin.headers, created["id"])

@@ -5,8 +5,8 @@ Covers the thin-wrapper surface added in
 350-390):
 
 * Roles: canonical ``bifrost_<verb>_role`` tools.
-* Configs: ``list_configs``, ``create_config``, ``update_config``,
-  ``delete_config``.
+* Configs: ``bifrost_list_configs``, ``bifrost_create_config``,
+  ``bifrost_update_config``, ``bifrost_delete_config``.
 * Integrations: canonical list/get/create/update and mapping ``bifrost_*``
   tools.
 * Organizations: canonical list/get/create/update/delete ``bifrost_*`` tools.
@@ -400,7 +400,7 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
     },
     {
         "model_path": "src.models.contracts.config:ConfigCreate",
-        "tool_path": "src.services.mcp_server.tools.configs:create_config",
+        "tool_path": "src.services.mcp_server.tools.configs:bifrost_create_config",
         # ``organization_id`` is excluded from the DTO flags (CLI targets org via
         # the unified --org/--global standard), but the MCP create_config tool
         # exposes it as a tool-side REF input (a UUID/name string resolved via
@@ -410,7 +410,7 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
     },
     {
         "model_path": "src.models.contracts.config:ConfigUpdate",
-        "tool_path": "src.services.mcp_server.tools.configs:update_config",
+        "tool_path": "src.services.mcp_server.tools.configs:bifrost_update_config",
         "extra_args": {"config_ref"},
         "field_renames": {},
     },
@@ -1972,19 +1972,18 @@ class TestMcpParityFilePolicies:
 @pytest.mark.asyncio
 class TestMcpParityConfigs:
     async def test_get_config_by_uuid(self, admin_context) -> None:
-        """``get_config`` round-trips a created config via UUID ref.
+        """``bifrost_get_config`` round-trips a created config via UUID ref.
 
-        The server has no per-id GET endpoint for configs; the tool resolves
-        the ref then locates the row in the list payload.
+        The tool resolves the ref then reads ``GET /api/config/{uuid}``.
         """
         from src.services.mcp_server.tools.configs import (
-            create_config,
-            delete_config,
-            get_config,
+            bifrost_create_config,
+            bifrost_delete_config,
+            bifrost_get_config,
         )
 
         key = f"mcp_parity_get_{uuid4().hex[:8]}"
-        create_result = await create_config(
+        create_result = await bifrost_create_config(
             admin_context,
             key=key,
             value="hello",
@@ -1995,30 +1994,30 @@ class TestMcpParityConfigs:
         config_id = str(created["id"])
 
         try:
-            result = await get_config(admin_context, config_ref=config_id)
+            result = await bifrost_get_config(admin_context, config_ref=config_id)
             payload = result.structured_content or {}
             assert "error" not in payload, payload
             assert str(payload.get("id")) == config_id
             assert payload.get("key") == key
             assert payload.get("value") == "hello"
         finally:
-            await delete_config(admin_context, config_ref=config_id)
+            await bifrost_delete_config(admin_context, config_ref=config_id)
 
     async def test_configs_crud_roundtrip(self, admin_context) -> None:
         from src.services.mcp_server.tools.configs import (
-            create_config,
-            delete_config,
-            list_configs,
-            update_config,
+            bifrost_create_config,
+            bifrost_delete_config,
+            bifrost_list_configs,
+            bifrost_update_config,
         )
 
         # list
-        list_result = await list_configs(admin_context)
+        list_result = await bifrost_list_configs(admin_context)
         assert list_result.structured_content is not None
 
         # create (global, plain string type via config_type)
         key = f"mcp_parity_{uuid4().hex[:8]}"
-        create_result = await create_config(
+        create_result = await bifrost_create_config(
             admin_context,
             key=key,
             value="initial",
@@ -2030,7 +2029,7 @@ class TestMcpParityConfigs:
         config_id = str(created["id"])
 
         # update value by UUID ref
-        update_result = await update_config(
+        update_result = await bifrost_update_config(
             admin_context,
             config_ref=config_id,
             value="updated",
@@ -2039,9 +2038,89 @@ class TestMcpParityConfigs:
         assert "error" not in update_result.structured_content
 
         # delete by UUID
-        delete_result = await delete_config(admin_context, config_ref=config_id)
+        delete_result = await bifrost_delete_config(admin_context, config_ref=config_id)
         assert delete_result.structured_content is not None
         assert delete_result.structured_content.get("deleted") == config_id
+
+    async def test_get_config_cross_verifies_against_rest(self, admin_context) -> None:
+        """The MCP by-ID read matches ``GET /api/config/{uuid}`` exactly.
+
+        ``bifrost_get_config`` is a thin wrapper, so its payload must be the
+        REST body rather than a reshaped copy.
+        """
+        from src.services.mcp_server.tools._http_bridge import call_rest
+        from src.services.mcp_server.tools.configs import (
+            bifrost_create_config,
+            bifrost_delete_config,
+            bifrost_get_config,
+        )
+
+        key = f"mcp_parity_rest_{uuid4().hex[:8]}"
+        create_result = await bifrost_create_config(
+            admin_context, key=key, value="cross-check", config_type="string",
+        )
+        created = create_result.structured_content or {}
+        assert "error" not in created, created
+        config_id = str(created["id"])
+
+        try:
+            tool_payload = (
+                await bifrost_get_config(admin_context, config_ref=config_id)
+            ).structured_content or {}
+            assert "error" not in tool_payload, tool_payload
+
+            status_code, rest_body = await call_rest(
+                admin_context, "GET", f"/api/config/{config_id}"
+            )
+            assert status_code == 200, rest_body
+            assert tool_payload == rest_body, (
+                "MCP payload diverged from the REST body it wraps"
+            )
+        finally:
+            await bifrost_delete_config(admin_context, config_ref=config_id)
+
+    async def test_get_config_masks_a_secret_value(self, admin_context) -> None:
+        """A secret read through MCP stays masked."""
+        from src.services.mcp_server.tools.configs import (
+            bifrost_create_config,
+            bifrost_delete_config,
+            bifrost_get_config,
+        )
+
+        key = f"mcp_parity_secret_{uuid4().hex[:8]}"
+        create_result = await bifrost_create_config(
+            admin_context, key=key, value="do-not-leak", config_type="secret",
+        )
+        created = create_result.structured_content or {}
+        assert "error" not in created, created
+        config_id = str(created["id"])
+
+        try:
+            payload = (
+                await bifrost_get_config(admin_context, config_ref=config_id)
+            ).structured_content or {}
+            assert "error" not in payload, payload
+            assert payload.get("value") == "[SECRET]", payload
+        finally:
+            await bifrost_delete_config(admin_context, config_ref=config_id)
+
+    async def test_get_config_unknown_ref_errors(self, admin_context) -> None:
+        """An unresolvable ref is a tool error, not a silent empty success."""
+        from src.services.mcp_server.tools.configs import bifrost_get_config
+
+        result = await bifrost_get_config(
+            admin_context, config_ref=f"nope_{uuid4().hex[:8]}"
+        )
+        payload = result.structured_content or {}
+        assert "error" in payload, payload
+
+    async def test_get_config_requires_a_ref(self, admin_context) -> None:
+        """An empty ref is rejected before any HTTP call."""
+        from src.services.mcp_server.tools.configs import bifrost_get_config
+
+        result = await bifrost_get_config(admin_context, config_ref="")
+        payload = result.structured_content or {}
+        assert "error" in payload, payload
 
 
 # =============================================================================

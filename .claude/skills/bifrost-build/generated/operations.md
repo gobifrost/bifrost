@@ -64,6 +64,11 @@ harness.
 | `files.policies.get` | `bifrost files policies get` | `bifrost_get_file_policy` | `files.policies.read` |
 | `files.policies.set` | `bifrost files policies set` | `bifrost_set_file_policy` | `files.policies.write` |
 | `files.policies.delete` | `bifrost files policies delete` | `bifrost_delete_file_policy` | `files.policies.write` |
+| `configs.list` | `bifrost configs list` | `bifrost_list_configs` | `configs.read` |
+| `configs.get` | `bifrost configs get` | `bifrost_get_config` | `configs.read` |
+| `configs.create` | `bifrost configs create` | `bifrost_create_config` | `configs.write` |
+| `configs.update` | `bifrost configs update` | `bifrost_update_config` | `configs.write` |
+| `configs.delete` | `bifrost configs delete` | `bifrost_delete_config` | `configs.write` |
 | `organizations.list` | `bifrost organizations list` | `bifrost_list_organizations` | `organizations.read` |
 | `organizations.get` | `bifrost organizations get` | `bifrost_get_organization` | `organizations.read` |
 | `organizations.create` | `bifrost organizations create` | `bifrost_create_organization` | `organizations.write` |
