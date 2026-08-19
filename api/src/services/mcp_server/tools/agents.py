@@ -111,7 +111,18 @@ async def bifrost_list_agents(
 
 
 async def bifrost_get_agent(context: Any, agent_ref: str) -> ToolResult:
-    """Get one Agent by UUID or accessible name through the REST API."""
+    """Get one Agent by UUID or accessible name, including its Skill.
+
+    The payload carries a ``skill`` block so a harness can hydrate the Agent in
+    one call: canonical instructions, the companion-file inventory, and the
+    content ``revision`` it can cache against. Companion files are read
+    individually with ``bifrost_read_agent_skill_file``; no storage path is
+    exposed.
+
+    A Skill that cannot be projected (an unreadable or malformed bundle) does
+    not fail the whole read: the Agent is still returned, with ``skill`` set to
+    an error marker, so callers can distinguish "no Skill" from "Agent absent".
+    """
 
     if not agent_ref:
         return error_result("agent_ref is required")
@@ -130,6 +141,28 @@ async def bifrost_get_agent(context: Any, agent_ref: str) -> ToolResult:
     if status_code != 200:
         return _rest_error("Get Agent", status_code, body)
     payload = body if isinstance(body, dict) else {"body": body}
+
+    skill_status, skill_body = await call_rest(
+        context,
+        "GET",
+        f"/api/agents/{agent_id}/skill",
+    )
+    if skill_status == 200 and isinstance(skill_body, dict):
+        payload["skill"] = {
+            "name": skill_body.get("name"),
+            "description": skill_body.get("description"),
+            "revision": skill_body.get("revision"),
+            "source": skill_body.get("source"),
+            "is_managed": skill_body.get("is_managed"),
+            "instructions": skill_body.get("skill_markdown"),
+            "files": skill_body.get("files", []),
+            "companion_files": skill_body.get("companion_files", []),
+            "read_file_tool": "bifrost_read_agent_skill_file",
+        }
+    else:
+        payload["skill"] = {
+            "error": f"skill projection unavailable: HTTP {skill_status}",
+        }
     return success_result(f"Agent: {payload.get('name', agent_id)}", payload)
 
 

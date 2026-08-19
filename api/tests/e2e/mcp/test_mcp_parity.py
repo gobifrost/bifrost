@@ -622,6 +622,19 @@ class TestMcpParityAgents:
         assert fetched.get("id") == agent_id
         assert fetched.get("system_prompt") == "You verify Agent transport parity."
 
+        # A harness must be able to hydrate the Agent's Skill from this one
+        # call: instructions, file inventory, and a revision to cache against.
+        skill = fetched.get("skill") or {}
+        assert "error" not in skill, skill
+        assert skill.get("instructions"), "Skill instructions must be present"
+        assert "SKILL.md" in skill.get("files", []), skill
+        assert len(skill.get("revision", "")) == 64, skill
+        assert skill.get("source") == "inline"
+        assert skill.get("read_file_tool") == "bifrost_read_agent_skill_file"
+        # The authoring path is a UI affordance, not a runtime one: a harness
+        # reads companion files through the tool, never by joining a path.
+        assert "bundle_path" not in skill, skill
+
         renamed = f"mcp-parity-agent-renamed-{uuid4().hex[:8]}"
         updated_result = await bifrost_update_agent(
             admin_context,
