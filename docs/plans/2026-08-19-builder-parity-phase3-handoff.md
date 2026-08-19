@@ -94,9 +94,9 @@ Do **not** create a new worktree. This one is the work location.
 
 ## Known failures — pre-existing, NOT introduced here
 
-`./test.sh unit` reports these. All were verified failing with this session's
-changes stashed, and none are touched by any commit above. Each needs an owner;
-none is a legitimate "flaky."
+`./test.sh unit` reports these 6 (of 5991 collected; 5985 pass). All were
+verified failing with this session's changes stashed, and none are touched by any
+commit above. Each needs an owner; none is a legitimate "flaky."
 
 | Test | Cause | Owner |
 |---|---|---|
@@ -104,9 +104,12 @@ none is a legitimate "flaky."
 | `test_org_scoping_enforcement.py` (2 tests) | Inline org filters in `routers/integrations.py:118`; plus stale allow-list entries for `routers/workflows.py` and `routers/agents.py` whose text no longer matches | the allow-list notes say "phase 6 migrates" |
 | `test_application_create_commit.py` | `TypeError: 'MagicMock' object can't be awaited` — an async mock not updated after a signature change | dedicated repair |
 
-Two failures in that original set of seven WERE fixed here, because they were in
-surfaces this work touched: the stale `ENTITY_GROUPS` set (`6aeb32631`) and the
-top-level help listing (`bbed4a24a`).
+`./test.sh unit` went from 7 failures to these 6 (5985 passed). The one that
+disappeared is `test_cli_surface_smoke.py::test_top_level_help_lists_every_entity_group`,
+fixed in `bbed4a24a` because the policy-rules rename made that list mine to touch.
+A second drift of the same class — the stale `ENTITY_GROUPS` set in
+`tests/unit/cli/test_cli_base.py` — was fixed earlier in `6aeb32631`, so it had
+already cleared before the 7-failure baseline was taken.
 
 ## Verification run this session
 
