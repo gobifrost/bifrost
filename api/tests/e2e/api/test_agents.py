@@ -170,6 +170,47 @@ class TestAgentsCRUD:
             == body["skill_markdown"]
         )
 
+    def test_skill_revision_tracks_content_changes(
+        self,
+        e2e_client,
+        platform_admin,
+        test_agent,
+    ):
+        """The revision identifies Skill content, so a consumer can cache on it.
+
+        It must be stable across reads of unchanged content, and must move when
+        the projected SKILL.md changes — which for an inline Agent means an edit
+        to the fields that render it.
+        """
+        agent_id = test_agent["id"]
+
+        def _revision():
+            resp = e2e_client.get(
+                f"/api/agents/{agent_id}/skill", headers=platform_admin.headers
+            )
+            assert resp.status_code == 200, resp.text
+            body = resp.json()
+            assert len(body["revision"]) == 64, body["revision"]
+            return body["revision"]
+
+        first = _revision()
+        assert _revision() == first, "an unchanged Skill must keep its revision"
+
+        updated = e2e_client.put(
+            f"/api/agents/{agent_id}",
+            headers=platform_admin.headers,
+            json={"system_prompt": "Completely different instructions."},
+        )
+        assert updated.status_code == 200, updated.text
+
+        after = _revision()
+        assert after != first, (
+            "editing the instructions must change the Skill revision"
+        )
+
+        # And the change is durable, not recomputed per request.
+        assert _revision() == after
+
     def test_upload_browse_and_detach_agent_skill(
         self,
         e2e_client,

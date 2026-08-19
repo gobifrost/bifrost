@@ -1550,7 +1550,13 @@ class SolutionDeployer:
         agents: list[dict[str, Any]],
         bundle_files: dict[str, bytes],
     ) -> list[dict[str, Any]]:
-        """Materialize each bundled Agent's real ``SKILL.md`` for runtime use."""
+        """Materialize each bundled Agent's real ``SKILL.md`` for runtime use.
+
+        Also stamps ``skill_revision`` from the bundle bytes already in hand,
+        so deploy does not have to re-read what it is about to write.
+        """
+        from src.services.agent_skills import compute_skill_revision_from_files
+
         resolved: list[dict[str, Any]] = []
         for agent in agents:
             bundle_path = agent.get("bundle_path")
@@ -1577,7 +1583,17 @@ class SolutionDeployer:
                 raise SolutionDeployConflict(
                     f"agent {agent.get('id')}: SKILL.md exceeds the 50,000-character limit"
                 )
-            resolved.append({**agent, "system_prompt": markdown})
+            prefix = str(bundle_path).rstrip("/") + "/"
+            skill_files = {
+                path[len(prefix):]: content
+                for path, content in bundle_files.items()
+                if path.startswith(prefix)
+            }
+            resolved.append({
+                **agent,
+                "system_prompt": markdown,
+                "skill_revision": compute_skill_revision_from_files(skill_files),
+            })
         return resolved
 
     async def _upsert_agents(
@@ -1621,6 +1637,11 @@ class SolutionDeployer:
                 "solution_id": sid,
                 "bundle_path": magent.get("bundle_path"),
             }
+            # Stamped by _agents_with_canonical_skills for bundled Agents from
+            # the bundle bytes. Absent for an inline Agent, whose digest the
+            # read path computes from its projected SKILL.md.
+            if magent.get("skill_revision") is not None:
+                agent_values["skill_revision"] = magent["skill_revision"]
             if self._policy.suppress_event_activation:
                 agent_values["is_active"] = False
             if magent.get("access_level") is not None:

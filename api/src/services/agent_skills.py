@@ -8,6 +8,7 @@ bindings.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import tempfile
@@ -160,6 +161,84 @@ async def read_agent_skill_file(agent: Agent, relative_path: str) -> bytes:
     return await _bundle_storage(agent).read(
         f"{agent.bundle_path.rstrip('/')}/{relative_path}"
     )
+
+
+async def compute_agent_skill_revision(agent: Agent) -> str:
+    """Return a content digest identifying this Agent's Skill revision.
+
+    The revision is derived from the canonical Skill content — the projected
+    ``SKILL.md`` plus every companion file, keyed by portable relative path —
+    so it is identical for the same content regardless of which storage backend
+    holds it (inline projection, uploaded bundle, or Solution). That makes it
+    safe for a harness to compare a cached Skill against a live Agent, and it
+    changes whenever any byte a consumer can read changes.
+
+    Storage paths, agent ids, and timestamps are deliberately excluded: two
+    Agents with identical Skill content have the same revision, and moving a
+    bundle between tiers does not invent a new one.
+    """
+    digest = hashlib.sha256()
+    markdown = await get_agent_skill_markdown(agent)
+    _absorb(digest, "SKILL.md", markdown.encode("utf-8"))
+
+    storage, bundle_files = await _bundle_files(agent)
+    if storage is not None:
+        for relative, source_path in bundle_files:
+            _absorb(digest, relative, await storage.read(source_path))  # type: ignore[union-attr]
+    return digest.hexdigest()
+
+
+def compute_skill_revision_from_files(files: dict[str, bytes]) -> str:
+    """Revision for a Skill whose bytes are already in hand.
+
+    Used by Solution deploy, which holds the extracted bundle and would
+    otherwise have to re-read what it just wrote. Keys are portable relative
+    paths (``SKILL.md``, ``references/x.md``), matching what
+    :func:`compute_agent_skill_revision` folds in, so both routes produce the
+    same digest for the same content.
+    """
+    digest = hashlib.sha256()
+    for relative in sorted(files):
+        _absorb(digest, relative, files[relative])
+    return digest.hexdigest()
+
+
+async def refresh_agent_skill_revision(agent: Agent) -> str:
+    """Recompute ``agent.skill_revision`` and return it.
+
+    Call from every path that can change Skill content: inline projection
+    (system_prompt/name/description edits), direct bundle upload, bundle
+    detach, Solution deploy, and Solution sync. The caller owns the commit.
+    """
+    revision = await compute_agent_skill_revision(agent)
+    agent.skill_revision = revision
+    return revision
+
+
+async def resolve_agent_skill_revision(agent: Agent) -> str:
+    """Return the Agent's Skill revision, computing it if not yet stored.
+
+    The column is nullable because the introducing migration could not backfill
+    a digest over object-storage content. Read paths therefore tolerate NULL by
+    computing on demand. This does NOT persist: a read must not require a write
+    transaction, and the next content write stores it anyway.
+    """
+    if agent.skill_revision:
+        return agent.skill_revision
+    return await compute_agent_skill_revision(agent)
+
+
+def _absorb(digest: "hashlib._Hash", relative_path: str, content: bytes) -> None:
+    """Fold one file into the revision digest, length-prefixed.
+
+    Length prefixes keep the stream unambiguous: without them, renaming a file
+    could be offset by an equal-and-opposite content change and collide.
+    """
+    name = relative_path.encode("utf-8")
+    digest.update(len(name).to_bytes(8, "big"))
+    digest.update(name)
+    digest.update(len(content).to_bytes(8, "big"))
+    digest.update(content)
 
 
 def _write_member(archive: zipfile.ZipFile, path: str, content: bytes) -> None:
