@@ -524,16 +524,27 @@ The inventory now accounts for 73 canonical operations and 140 CLI leaves, with
 
 ### Phase 3 — Finish Agent Skill portability
 
-- [ ] Add the revision/digest field and forward-only migration required for a
+- [x] Add the revision/digest field and forward-only migration required for a
       durable Agent Skill revision. Populate it on inline projection, direct
-      upload, Solution deploy, and Solution sync.
-- [ ] Generalize the existing Agent Skill REST projection/file/download routes
-      around the canonical Skill descriptor.
-- [ ] Return that descriptor from `bifrost_get_agent` and dynamic capability
-      discovery.
-- [ ] Replace the private `read_skill_asset` dialect with the canonical
+      upload, Solution deploy, and Solution sync. (sha256 over SKILL.md +
+      companion files, keyed by portable relative path; stable across storage
+      tiers. Migration 20260819_agent_skill_rev, nullable and deliberately not
+      backfilled — the digest covers object-storage content SQL cannot read.)
+- [x] Generalize the existing Agent Skill REST projection/file/download routes
+      around the canonical Skill descriptor. (AgentSkillPublic gained `revision`;
+      `bundle_path` is documented as an authoring-relative path that must never
+      carry a storage URI, and the UI now derives bundle state from `source` via
+      hasSkillBundle() instead of the path's truthiness.)
+- [x] Return that descriptor from `bifrost_get_agent` and dynamic capability
+      discovery. (A `skill` block carries instructions, file inventory, revision,
+      source, and the canonical read-file tool name. bundle_path is excluded —
+      runtimes read through the tool, never by joining a path.)
+- [x] Replace the private `read_skill_asset` dialect with the canonical
       `bifrost_read_agent_skill_file` binding in native Agent, agent-scoped MCP,
-      generic dynamic MCP, and Builder execution.
+      generic dynamic MCP, and Builder execution. (All four runtimes renamed;
+      migration 20260819_skill_file_tool sweeps persisted references, and a test
+      pins the MCP and Builder constants to the migration's target so they
+      cannot drift apart.)
 - [ ] Ensure the dynamic gateway classifies and exposes the file reader for a
       bundle-backed Agent and binds it to the selected Agent/revision.
 - [ ] Add deterministic `.skill` export through `ArtifactRef` without exposing
