@@ -23,12 +23,17 @@ async def test_create_application_commits_before_returning_response() -> None:
         events.append("commit")
 
     ctx.db.commit = AsyncMock(side_effect=commit)
+    # create_application validates the target org exists before mutating
+    # (_validate_application_target -> await ctx.db.scalar). Return the org id
+    # so validation passes and this test stays about the commit boundary.
+    ctx.db.scalar = AsyncMock(return_value=ctx.org_id)
 
     user = MagicMock()
     user.user_id = uuid4()
     user.email = "admin@example.com"
     user.is_platform_admin = True
     user.is_external = False
+    ctx.user = user
 
     async def to_public(*_args, **_kwargs):
         events.append("serialize")
@@ -40,7 +45,12 @@ async def test_create_application_commits_before_returning_response() -> None:
             "src.routers.applications.application_to_public",
             new=AsyncMock(side_effect=to_public),
         ),
+        # Collaborators with their own coverage. Stubbed at their boundary so
+        # this test stays about the commit ordering it is named for.
+        patch("src.routers.applications.emit_audit", new=AsyncMock()),
+        patch("src.routers.applications.RepoSyncWriter") as sync_writer,
     ):
+        sync_writer.return_value.regenerate_manifest = AsyncMock()
         repo_type.return_value.create_application = AsyncMock(
             return_value=application
         )
