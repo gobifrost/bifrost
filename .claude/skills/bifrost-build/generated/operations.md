@@ -69,6 +69,12 @@ harness.
 | `configs.create` | `bifrost configs create` | `bifrost_create_config` | `configs.write` |
 | `configs.update` | `bifrost configs update` | `bifrost_update_config` | `configs.write` |
 | `configs.delete` | `bifrost configs delete` | `bifrost_delete_config` | `configs.write` |
+| `policy.rules.list` | `bifrost policy-rules list` | `bifrost_list_policy_rules` | `policy.rules.read` |
+| `policy.rules.get` | `bifrost policy-rules get` | `bifrost_get_policy_rule` | `policy.rules.read` |
+| `policy.rules.create` | `bifrost policy-rules create` | `bifrost_create_policy_rule` | `policy.rules.write` |
+| `policy.rules.update` | `bifrost policy-rules update` | `bifrost_update_policy_rule` | `policy.rules.write` |
+| `policy.rules.delete` | `bifrost policy-rules delete` | `bifrost_delete_policy_rule` | `policy.rules.write` |
+| `policy.rules.list_usages` | `bifrost policy-rules list-usages` | `bifrost_list_policy_rule_usages` | `policy.rules.read` |
 | `organizations.list` | `bifrost organizations list` | `bifrost_list_organizations` | `organizations.read` |
 | `organizations.get` | `bifrost organizations get` | `bifrost_get_organization` | `organizations.read` |
 | `organizations.create` | `bifrost organizations create` | `bifrost_create_organization` | `organizations.write` |

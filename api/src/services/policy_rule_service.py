@@ -107,6 +107,14 @@ class PolicyRuleService:
             raise PolicyRuleNotFoundError(name)
         return row
 
+    async def get(self, name: str, domain: str, *, org_id: UUID | None) -> PolicyRule:
+        """Read one rule by (name, domain), raising when it does not exist.
+
+        Solution-managed rules are readable: the solution-managed guard blocks
+        writes only, so a caller can inspect a rule it may not modify.
+        """
+        return await self._get(name, domain, org_id)
+
     async def update(
         self,
         name: str,

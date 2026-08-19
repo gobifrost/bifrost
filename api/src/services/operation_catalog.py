@@ -61,6 +61,14 @@ _CONFIG_SDK_EXCLUSION = (
     "Config administration is separate from the application SDK's runtime value "
     "lookup (bifrost.config.get resolves a value by key with cascade)."
 )
+_POLICY_RULE_SDK_EXCLUSION = (
+    "Policy rule administration is not available to application SDKs; SDK table "
+    "and file methods operate under the access decisions these rules produce."
+)
+_POLICY_RULE_MANIFEST_EXCLUSION = (
+    "Policy rules are workspace/org access administration, not a portable "
+    "manifest entity."
+)
 _CONFIG_MANIFEST_EXCLUSION = (
     "Config values are serialized into .bifrost/configs.yaml for export, but git "
     "sync never reconciles them back: github_sync.py has no _resolve_config and "
@@ -1438,6 +1446,145 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         exclusions={
             "manifest": _CONFIG_MANIFEST_EXCLUSION,
             "sdk": _CONFIG_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="policy.rules.list",
+        summary="List named Policy Rules in a scope",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/policy-rules",
+            response_model="list[PolicyRulePublic]",
+        ),
+        cli=CliOperationBinding(path=("policy-rules", "list")),
+        mcp=McpOperationBinding(name="bifrost_list_policy_rules"),
+        native_builder=True,
+        action_scopes=("policy.rules.read",),
+        authorization_resolver="Platform-admin gate (CurrentSuperuser)",
+        exclusions={
+            "manifest": _POLICY_RULE_MANIFEST_EXCLUSION,
+            "sdk": _POLICY_RULE_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="policy.rules.get",
+        summary="Get one Policy Rule by domain and name",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/policy-rules/{domain}/{name}",
+            response_model="PolicyRulePublic",
+        ),
+        cli=CliOperationBinding(path=("policy-rules", "get")),
+        mcp=McpOperationBinding(name="bifrost_get_policy_rule"),
+        native_builder=True,
+        action_scopes=("policy.rules.read",),
+        authorization_resolver="Platform-admin gate (CurrentSuperuser)",
+        side_effects=(
+            "resolve a solution-managed rule as readable; the solution-managed "
+            "guard blocks writes only",
+        ),
+        exclusions={
+            "manifest": _POLICY_RULE_MANIFEST_EXCLUSION,
+            "sdk": _POLICY_RULE_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="policy.rules.create",
+        summary="Create a named Policy Rule in a scope",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/policy-rules",
+            request_model="PolicyRuleCreate",
+            response_model="PolicyRulePublic",
+        ),
+        cli=CliOperationBinding(path=("policy-rules", "create")),
+        mcp=McpOperationBinding(name="bifrost_create_policy_rule"),
+        native_builder=True,
+        action_scopes=("policy.rules.write",),
+        authorization_resolver="Platform-admin gate (CurrentSuperuser)",
+        audit_event="policy_rule.create",
+        side_effects=(
+            "validate the rule body against its domain's action vocabulary",
+            "persist the policy rule under the (name, domain) natural key",
+        ),
+        exclusions={
+            "manifest": _POLICY_RULE_MANIFEST_EXCLUSION,
+            "sdk": _POLICY_RULE_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="policy.rules.update",
+        summary="Update a Policy Rule by domain and name",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="PUT",
+            path="/api/policy-rules/{domain}/{name}",
+            request_model="PolicyRuleUpdate",
+            response_model="PolicyRulePublic",
+        ),
+        cli=CliOperationBinding(path=("policy-rules", "update")),
+        mcp=McpOperationBinding(name="bifrost_update_policy_rule"),
+        native_builder=True,
+        action_scopes=("policy.rules.write",),
+        authorization_resolver="Platform-admin gate (CurrentSuperuser)",
+        audit_event="policy_rule.update",
+        side_effects=(
+            "reject the write if the rule is solution-managed",
+            "reject the write if the rule is a read-only built-in",
+            "re-validate a replaced body against the rule's immutable domain",
+            "record the referencing usage count and any rename in the audit entry",
+        ),
+        exclusions={
+            "manifest": _POLICY_RULE_MANIFEST_EXCLUSION,
+            "sdk": _POLICY_RULE_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="policy.rules.delete",
+        summary="Delete a Policy Rule by domain and name",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="DELETE",
+            path="/api/policy-rules/{domain}/{name}",
+        ),
+        cli=CliOperationBinding(path=("policy-rules", "delete")),
+        mcp=McpOperationBinding(name="bifrost_delete_policy_rule"),
+        native_builder=True,
+        action_scopes=("policy.rules.write",),
+        authorization_resolver="Platform-admin gate (CurrentSuperuser)",
+        audit_event="policy_rule.delete",
+        side_effects=(
+            "reject the delete if the rule is solution-managed",
+            "reject the delete if the rule is a read-only built-in",
+            "reject the delete if any file policy or table still references the rule, "
+            "returning those usages",
+            "delete the policy rule",
+        ),
+        exclusions={
+            "manifest": _POLICY_RULE_MANIFEST_EXCLUSION,
+            "sdk": _POLICY_RULE_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
+        operation_id="policy.rules.list_usages",
+        summary="List the file policies and tables referencing a Policy Rule",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/policy-rules/{domain}/{name}/usages",
+            response_model="PolicyRuleUsagesPublic",
+        ),
+        cli=CliOperationBinding(path=("policy-rules", "list-usages")),
+        mcp=McpOperationBinding(name="bifrost_list_policy_rule_usages"),
+        native_builder=True,
+        action_scopes=("policy.rules.read",),
+        authorization_resolver="Platform-admin gate (CurrentSuperuser)",
+        exclusions={
+            "manifest": _POLICY_RULE_MANIFEST_EXCLUSION,
+            "sdk": _POLICY_RULE_SDK_EXCLUSION,
         },
     ),
     OperationDefinition(

@@ -15,10 +15,12 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
     assert inventory["counts"] == {
         "cli": 140,
         "manifest": 16,
-        "mcp": 101,
+        # 104 after the policy-rule slice added get / update / list-usages.
+        "mcp": 104,
         "native_builder": 10,
-        # 661 after configs.get added GET /api/config/{config_id} (2026-08-19).
-        "rest": 661,
+        # 662 after configs.get added GET /api/config/{config_id} and
+        # policy.rules.get added GET /api/policy-rules/{domain}/{name}.
+        "rest": 662,
         "sdk": 19,
     }
     for surface, rows in inventory["uncataloged"].items():

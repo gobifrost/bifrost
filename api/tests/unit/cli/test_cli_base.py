@@ -229,7 +229,7 @@ class TestSubgroupRegistration:
             "events",
             "files",
             "requirements",
-            "policy-rule",
+            "policy-rules",
             "platform-jobs",
         }
 

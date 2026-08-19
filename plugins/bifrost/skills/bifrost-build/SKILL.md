@@ -155,7 +155,7 @@ These relationships produce the following hard boundaries:
 | Author, register, execute, rename, or expose a Python workflow | `references/workflows.md` and the relevant section of `references/python-sdk.md` |
 | Build or modify a v2 Solution app | `references/apps-v2.md`, `references/app-quality.md`, and `references/web-sdk-v2.md` |
 | Maintain an existing inline v1 app | Read `references/apps-v1.md` and `references/app-quality.md`; search `references/platform-api.md` only for the exact v1 export being used |
-| Create or change forms, agents, configs, integrations, events, orgs, roles, or claims | `references/entities.md` |
+| Create or change forms, agents, configs, integrations, events, organizations, roles, or claims | `references/entities.md` |
 | Define a table, write policies, or use table data | `references/tables.md` |
 | Store, list, upload, download, or permission managed runtime/user files | `references/files.md` |
 | Use resources outside a Solution install | `references/solution-resource-access.md` |

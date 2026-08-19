@@ -1,11 +1,11 @@
 """CLI commands for managing named, reusable policy rules.
 
-* ``bifrost policy-rule create`` → ``POST /api/policy-rules``
-* ``bifrost policy-rule list`` → ``GET /api/policy-rules``
-* ``bifrost policy-rule get <domain> <name>`` → find in list
-* ``bifrost policy-rule update <domain> <name>`` → ``PUT /api/policy-rules/{domain}/{name}``
-* ``bifrost policy-rule delete <domain> <name>`` → ``DELETE /api/policy-rules/{domain}/{name}``
-* ``bifrost policy-rule usages <domain> <name>`` → ``GET /api/policy-rules/{domain}/{name}/usages``
+* ``bifrost policy-rules create`` → ``POST /api/policy-rules``
+* ``bifrost policy-rules list`` → ``GET /api/policy-rules``
+* ``bifrost policy-rules get <domain> <name>`` → ``GET /api/policy-rules/{domain}/{name}``
+* ``bifrost policy-rules update <domain> <name>`` → ``PUT /api/policy-rules/{domain}/{name}``
+* ``bifrost policy-rules delete <domain> <name>`` → ``DELETE /api/policy-rules/{domain}/{name}``
+* ``bifrost policy-rules list-usages <domain> <name>`` → ``GET /api/policy-rules/{domain}/{name}/usages``
 
 All endpoints are admin-gated (CurrentSuperuser / platform-admin-or-provider-org bypass).
 
@@ -33,7 +33,7 @@ from bifrost.contracts import PolicyRuleCreate, PolicyRuleUpdate
 
 from .base import _apply_flags, entity_group, output_result, pass_resolver, run_async
 
-policy_rule_group = entity_group("policy-rule", "Manage named, reusable policy rules.")
+policy_rule_group = entity_group("policy-rules", "Manage named, reusable policy rules.")
 
 
 _CREATE_FLAGS = build_cli_flags(
@@ -105,25 +105,17 @@ async def get_policy_rule(
 ) -> None:
     """Get a single policy rule by domain and name.
 
-    Uses the usages endpoint (which 404s when not found) to confirm the rule
-    exists, then fetches the full record from the list.
+    ``DOMAIN`` is 'file' or 'table'. ``NAME`` is the rule's name.
     """
     params: dict[str, str] = {}
     if scope is not None:
         params["organization_id"] = scope
-    # Fetch via list + filter — there is no single-GET by domain+name.
-    list_params: dict[str, str] = {"domain": domain}
-    if scope is not None:
-        list_params["organization_id"] = scope
-    response = await client.get("/api/policy-rules", params=list_params)
+    response = await client.get(
+        f"/api/policy-rules/{domain}/{name}",
+        params=params,
+    )
     response.raise_for_status()
-    items = response.json()
-    match = next((item for item in items if item.get("name") == name), None)
-    if match is None:
-        raise click.ClickException(
-            f"policy rule '{name}' (domain={domain}) not found"
-        )
-    output_result(match, ctx=ctx)
+    output_result(response.json(), ctx=ctx)
 
 
 @policy_rule_group.command("create")
@@ -148,7 +140,7 @@ async def create_policy_rule(
     Example:
 
     \\b
-        bifrost policy-rule create --name read_all --domain file \\
+        bifrost policy-rules create --name read_all --domain file \\
             --body '{"actions": ["read"], "when": null}'
 
     Org targeting follows the unified ``--org`` standard.
@@ -238,7 +230,7 @@ async def delete_policy_rule(
     output_result({"deleted": name, "domain": domain}, ctx=ctx)
 
 
-@policy_rule_group.command("usages")
+@policy_rule_group.command("list-usages")
 @click.argument("domain", type=click.Choice(["file", "table"]))
 @click.argument("name")
 @click.option(

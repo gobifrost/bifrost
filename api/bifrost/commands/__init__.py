@@ -51,7 +51,7 @@ ENTITY_GROUPS: dict[str, click.Group] = {
     "events": events_group,
     "files": files_group,
     "requirements": requirements_group,
-    "policy-rule": policy_rule_group,
+    "policy-rules": policy_rule_group,
     "platform-jobs": platform_jobs_group,
 }
 

@@ -536,8 +536,7 @@ Usage: configs create [OPTIONS]
 
 Options:
   --key TEXT                      key  [required]
-  --value TEXT                    value as JSON literal or @path to a
-                                  YAML/JSON file.  [required]
+  --value TEXT                    value  [required]
   --config-type [string|int|bool|json|secret]
                                   config_type
   --description TEXT              description
@@ -575,9 +574,8 @@ Usage: configs get [OPTIONS] REF
 
   Get a single configuration value by UUID or key.
 
-  The server does not expose a per-record GET endpoint for configs, so this
-  resolves the ref via :class:`RefResolver` and locates the entry in the ``GET
-  /api/config`` list payload.
+  ``REF`` is a UUID or config key; keys resolve via :class:`RefResolver`.
+  Secret values come back masked as ``[SECRET]``.
 
 Options:
   --json  Emit JSON instead of human-readable output.
@@ -645,8 +643,7 @@ Usage: configs update [OPTIONS] REF
   plaintext value is never returned and cannot be round-tripped).
 
 Options:
-  --value TEXT                    value as JSON literal or @path to a
-                                  YAML/JSON file.
+  --value TEXT                    value
   --config-type [string|int|bool|json|secret]
                                   config_type
   --description TEXT              description
@@ -1640,10 +1637,39 @@ Options:
   --help                        Show this message and exit.
 ```
 
-## `policy-rule`
+## `platform-jobs`
 
 ```
-Usage: policy-rule [OPTIONS] COMMAND [ARGS]...
+Usage: platform-jobs [OPTIONS] COMMAND [ARGS]...
+
+  Read durable platform job status.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  get  Get progress, result, or error for one platform job.
+```
+
+### `platform-jobs get`
+
+```
+Usage: platform-jobs get [OPTIONS] JOB_ID
+
+  Get progress, result, or error for one platform job.
+
+  ``JOB_ID`` is the UUID returned when the durable operation was queued.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+## `policy-rules`
+
+```
+Usage: policy-rules [OPTIONS] COMMAND [ARGS]...
 
   Manage named, reusable policy rules.
 
@@ -1652,18 +1678,18 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  create  Create a named policy rule.
-  delete  Delete a named policy rule.
-  get     Get a single policy rule by domain and name.
-  list    List named policy rules.
-  update  Update a named policy rule.
-  usages  Show all file-policies and tables that reference a rule.
+  create       Create a named policy rule.
+  delete       Delete a named policy rule.
+  get          Get a single policy rule by domain and name.
+  list         List named policy rules.
+  list-usages  Show all file-policies and tables that reference a rule.
+  update       Update a named policy rule.
 ```
 
-### `policy-rule create`
+### `policy-rules create`
 
 ```
-Usage: policy-rule create [OPTIONS]
+Usage: policy-rules create [OPTIONS]
 
   Create a named policy rule.
 
@@ -1671,7 +1697,7 @@ Usage: policy-rule create [OPTIONS]
 
   Example:
 
-  \b     bifrost policy-rule create --name read_all --domain file \
+  \b     bifrost policy-rules create --name read_all --domain file \
   --body '{"actions": ["read"], "when": null}'
 
   Org targeting follows the unified ``--org`` standard.
@@ -1692,10 +1718,10 @@ Options:
   --help                          Show this message and exit.
 ```
 
-### `policy-rule delete`
+### `policy-rules delete`
 
 ```
-Usage: policy-rule delete [OPTIONS] {file|table} NAME
+Usage: policy-rules delete [OPTIONS] {file|table} NAME
 
   Delete a named policy rule.
 
@@ -1708,15 +1734,14 @@ Options:
   --help        Show this message and exit.
 ```
 
-### `policy-rule get`
+### `policy-rules get`
 
 ```
-Usage: policy-rule get [OPTIONS] {file|table} NAME
+Usage: policy-rules get [OPTIONS] {file|table} NAME
 
   Get a single policy rule by domain and name.
 
-  Uses the usages endpoint (which 404s when not found) to confirm the rule
-  exists, then fetches the full record from the list.
+  ``DOMAIN`` is 'file' or 'table'. ``NAME`` is the rule's name.
 
 Options:
   --scope TEXT  Organization UUID for org-scoped rules.
@@ -1724,10 +1749,10 @@ Options:
   --help        Show this message and exit.
 ```
 
-### `policy-rule list`
+### `policy-rules list`
 
 ```
-Usage: policy-rule list [OPTIONS]
+Usage: policy-rules list [OPTIONS]
 
   List named policy rules.
 
@@ -1738,10 +1763,23 @@ Options:
   --help                 Show this message and exit.
 ```
 
-### `policy-rule update`
+### `policy-rules list-usages`
 
 ```
-Usage: policy-rule update [OPTIONS] {file|table} NAME
+Usage: policy-rules list-usages [OPTIONS] {file|table} NAME
+
+  Show all file-policies and tables that reference a rule.
+
+Options:
+  --scope TEXT  Organization UUID for org-scoped rules.
+  --json        Emit JSON instead of human-readable output.
+  --help        Show this message and exit.
+```
+
+### `policy-rules update`
+
+```
+Usage: policy-rules update [OPTIONS] {file|table} NAME
 
   Update a named policy rule.
 
@@ -1755,19 +1793,6 @@ Options:
   --scope TEXT        Organization UUID for org-scoped rules.
   --json              Emit JSON instead of human-readable output.
   --help              Show this message and exit.
-```
-
-### `policy-rule usages`
-
-```
-Usage: policy-rule usages [OPTIONS] {file|table} NAME
-
-  Show all file-policies and tables that reference a rule.
-
-Options:
-  --scope TEXT  Organization UUID for org-scoped rules.
-  --json        Emit JSON instead of human-readable output.
-  --help        Show this message and exit.
 ```
 
 ## `requirements`

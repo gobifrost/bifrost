@@ -283,6 +283,45 @@ ROLE_OPERATIONS = {
     ),
 }
 
+POLICY_RULE_OPERATIONS = {
+    "policy.rules.list": (
+        "GET",
+        "/api/policy-rules",
+        ("policy-rules", "list"),
+        "bifrost_list_policy_rules",
+    ),
+    "policy.rules.get": (
+        "GET",
+        "/api/policy-rules/{domain}/{name}",
+        ("policy-rules", "get"),
+        "bifrost_get_policy_rule",
+    ),
+    "policy.rules.create": (
+        "POST",
+        "/api/policy-rules",
+        ("policy-rules", "create"),
+        "bifrost_create_policy_rule",
+    ),
+    "policy.rules.update": (
+        "PUT",
+        "/api/policy-rules/{domain}/{name}",
+        ("policy-rules", "update"),
+        "bifrost_update_policy_rule",
+    ),
+    "policy.rules.delete": (
+        "DELETE",
+        "/api/policy-rules/{domain}/{name}",
+        ("policy-rules", "delete"),
+        "bifrost_delete_policy_rule",
+    ),
+    "policy.rules.list_usages": (
+        "GET",
+        "/api/policy-rules/{domain}/{name}/usages",
+        ("policy-rules", "list-usages"),
+        "bifrost_list_policy_rule_usages",
+    ),
+}
+
 CONFIG_OPERATIONS = {
     "configs.list": (
         "GET",
@@ -579,6 +618,7 @@ CANONICAL_OPERATIONS = {
     **ROLE_OPERATIONS,
     **CLAIM_OPERATIONS,
     **CONFIG_OPERATIONS,
+    **POLICY_RULE_OPERATIONS,
     **FILE_POLICY_OPERATIONS,
     **EVENT_OPERATIONS,
     **ORGANIZATION_OPERATIONS,
