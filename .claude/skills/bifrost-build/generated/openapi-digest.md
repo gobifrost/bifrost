@@ -66,6 +66,7 @@
 | DELETE | `/api/agents/{agent_id}/skill/bundle` |
 | PUT | `/api/agents/{agent_id}/skill/bundle` |
 | GET | `/api/agents/{agent_id}/skill/download` |
+| POST | `/api/agents/{agent_id}/skill/export` |
 | GET | `/api/agents/{agent_id}/skill/file` |
 | GET | `/api/agents/{agent_id}/stats` |
 | GET | `/api/agents/{agent_id}/tools` |

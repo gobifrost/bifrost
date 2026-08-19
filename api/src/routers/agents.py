@@ -55,6 +55,8 @@ from shared.logo_processing import (
     process_logo,
 )
 from src.repositories.agents import AgentRepository
+from src.models.contracts.artifacts import ArtifactRef
+from src.services.artifacts import ArtifactService, artifact_ref
 from src.services.agent_skills import (
     build_agent_skill_archive,
     get_agent_skill_markdown,
@@ -1076,6 +1078,64 @@ async def download_agent_skill(
         filename=filename,
         background=BackgroundTask(cleanup),
     )
+
+
+@router.post(
+    "/{agent_id}/skill/export",
+    response_model=ArtifactRef,
+    summary="Export an Agent Skill as an opaque artifact reference",
+)
+async def export_agent_skill(
+    agent_id: UUID,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> ArtifactRef:
+    """Export the Skill as a stored artifact and return only its opaque ref.
+
+    The download route streams bytes to a browser; this one is for runtimes. It
+    persists the same deterministic archive and hands back an ``ArtifactRef``
+    (id, filename, content type, size) with no storage path, so a caller can
+    pass the Skill onward without ever learning an S3 key. Re-exporting
+    identical content produces identical bytes — the archive uses a fixed epoch
+    and sorted members — though each export is a distinct artifact.
+    """
+    repo = AgentRepository(
+        session=db,
+        org_id=user.organization_id,
+        user_id=user.user_id,
+        is_superuser=user.is_platform_admin,
+        is_external=user.is_external,
+    )
+    agent = await repo.get_agent_with_access_check(agent_id)
+    if agent is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent {agent_id} not found",
+        )
+
+    portable_name = (
+        parse_skill_frontmatter(await get_agent_skill_markdown(agent))[0]
+        if agent.bundle_path
+        else agent.name
+    )
+    try:
+        async with build_agent_skill_archive(agent) as archive_path:
+            content = archive_path.read_bytes()
+    except (WorkspaceViolation, FileNotFoundError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+
+    artifact = await ArtifactService(db).store(
+        filename=f"{skill_slug(portable_name)}.skill",
+        content_type="application/zip",
+        content=content,
+        created_by_user_id=user.user_id,
+        organization_id=user.organization_id,
+    )
+    await db.commit()
+    return artifact_ref(artifact)
 
 
 @router.put("/{agent_id}", **operation_route("agents.update"))

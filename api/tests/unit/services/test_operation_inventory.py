@@ -18,9 +18,11 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
         # 104 after the policy-rule slice added get / update / list-usages.
         "mcp": 104,
         "native_builder": 10,
-        # 662 after configs.get added GET /api/config/{config_id} and
-        # policy.rules.get added GET /api/policy-rules/{domain}/{name}.
-        "rest": 662,
+        # 663 after configs.get added GET /api/config/{config_id},
+        # policy.rules.get added GET /api/policy-rules/{domain}/{name}, and
+        # the Agent Skill ArtifactRef export added POST
+        # /api/agents/{agent_id}/skill/export.
+        "rest": 663,
         "sdk": 19,
     }
     for surface, rows in inventory["uncataloged"].items():
