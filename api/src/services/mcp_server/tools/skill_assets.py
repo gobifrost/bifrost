@@ -1,4 +1,8 @@
-"""Agent skill-bundle asset reader.
+"""Agent Skill file reader.
+
+The canonical binding for progressive Skill loading: an Agent's SKILL.md may
+reference a relative companion file, and this reads it without exposing the
+underlying object-storage path.
 
 This system tool is never selected from ``Agent.system_tools``.  The execution
 planner injects it only for agents with ``bundle_path`` set, and dispatch passes
@@ -16,7 +20,7 @@ from fastmcp.tools import ToolResult
 
 from src.services.mcp_server.tool_result import error_result, success_result
 
-READ_SKILL_ASSET_TOOL_ID = "read_skill_asset"
+READ_SKILL_ASSET_TOOL_ID = "bifrost_read_agent_skill_file"
 HIDDEN_TOOL_IDS = frozenset({READ_SKILL_ASSET_TOOL_ID})
 _VIRTUAL_STORAGE_ROOT = "/__bifrost_skill_bundles__"
 _MAX_ASSET_BYTES = 1_048_576
@@ -60,12 +64,12 @@ def resolve_skill_asset_key(bundle_path: str, asset_path: str) -> str:
     return PurePosixPath(os.path.relpath(candidate, _VIRTUAL_STORAGE_ROOT)).as_posix()
 
 
-async def read_skill_asset(context: Any, path: str) -> ToolResult:
+async def bifrost_read_agent_skill_file(context: Any, path: str) -> ToolResult:
     """Read one file beneath the executing agent's configured skill bundle."""
 
     bundle_path = getattr(context, "agent_bundle_path", None)
     if not bundle_path:
-        return error_result("read_skill_asset is unavailable without an agent bundle")
+        return error_result("bifrost_read_agent_skill_file is unavailable without an agent bundle")
 
     try:
         storage_path = resolve_skill_asset_key(bundle_path, path)
@@ -104,7 +108,7 @@ async def read_skill_asset(context: Any, path: str) -> ToolResult:
             agent_id = getattr(context, "agent_skill_id", None)
             if not agent_id:
                 return error_result(
-                    "read_skill_asset is unavailable without an agent storage scope"
+                    "bifrost_read_agent_skill_file is unavailable without an agent storage scope"
                 )
             content = await AgentSkillStorage(agent_id).read(storage_path)
     except Exception as exc:
@@ -152,7 +156,7 @@ def register_tools(mcp: Any, get_context_fn: Any) -> None:
 
     register_tool_with_context(
         mcp,
-        read_skill_asset,
+        bifrost_read_agent_skill_file,
         READ_SKILL_ASSET_TOOL_ID,
         TOOLS[0][2],
         get_context_fn,

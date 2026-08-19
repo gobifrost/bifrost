@@ -3,6 +3,13 @@ import { authFetch } from "@/lib/api-client";
 export interface AgentSkill {
 	name: string;
 	description: string;
+	/** sha256 of the Skill content; changes whenever a readable byte changes. */
+	revision: string;
+	/**
+	 * Workspace/Solution-relative authoring root, or null for an inline Agent.
+	 * Display only — never join it to build a storage path. Use `source` to ask
+	 * whether an Agent has a bundle.
+	 */
 	bundle_path: string | null;
 	skill_markdown: string;
 	files: string[];
@@ -10,6 +17,11 @@ export interface AgentSkill {
 	automatic_capabilities: string[];
 	source: "inline" | "upload" | "solution";
 	is_managed: boolean;
+}
+
+/** Whether this Agent's instructions come from a bundle rather than inline. */
+export function hasSkillBundle(skill: AgentSkill): boolean {
+	return skill.source !== "inline";
 }
 
 export interface AgentSkillFile {

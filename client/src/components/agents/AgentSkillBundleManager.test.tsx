@@ -62,7 +62,7 @@ beforeEach(() => {
 			bundle_path: "skills/expense-tracker",
 			files: ["SKILL.md", "references/categories.md"],
 			companion_files: ["references/categories.md"],
-			automatic_capabilities: ["read_skill_asset"],
+			automatic_capabilities: ["bifrost_read_agent_skill_file"],
 			source: "upload",
 		}),
 	);

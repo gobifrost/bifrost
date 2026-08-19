@@ -885,7 +885,7 @@ async def get_agent_skill(
         skill_markdown=markdown,
         files=["SKILL.md", *companion_files],
         companion_files=companion_files,
-        automatic_capabilities=["read_skill_asset"] if agent.bundle_path else [],
+        automatic_capabilities=["bifrost_read_agent_skill_file"] if agent.bundle_path else [],
         source=(
             "solution"
             if agent.solution_id is not None
@@ -1005,7 +1005,7 @@ async def upload_agent_skill(
         skill_markdown=imported.skill_markdown,
         files=["SKILL.md", *companion_files],
         companion_files=companion_files,
-        automatic_capabilities=["read_skill_asset"],
+        automatic_capabilities=["bifrost_read_agent_skill_file"],
         source="upload",
         is_managed=False,
     )

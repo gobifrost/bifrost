@@ -59,7 +59,7 @@ An agent combines a system prompt, tools, delegated agents, knowledge sources, m
 An Agent may be backed by a portable Agent Skill bundle. In that mode,
 `SKILL.md` is the canonical instruction source: deploy/upload projects its
 exact Markdown into the runtime prompt, direct prompt editing is disabled, and
-the runtime injects the hidden `read_skill_asset` tool for referenced files.
+the runtime injects the hidden `bifrost_read_agent_skill_file` tool for referenced files.
 
 - In a Solution, set `bundle_path` in `.bifrost/agents.yaml` to a path relative
   to the Solution root, such as `skills/expense-tracker`. Put `SKILL.md` at

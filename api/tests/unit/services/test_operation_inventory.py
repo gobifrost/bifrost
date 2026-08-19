@@ -51,7 +51,7 @@ def test_builder_local_mcp_tools_are_dispositioned_not_pending() -> None:
         "list_files",
         "make_directory",
         "read_file",
-        "read_skill_asset",
+        "bifrost_read_agent_skill_file",
         "search_text",
         "test_solution_build",
         "validate_solution",

@@ -20,7 +20,7 @@ tools replace the workstation CLI:
 - Do not ask the user to choose Workspace versus Solution ownership, configure
   CLI authentication, or approve an initial plan. The native Builder has
   already made those choices from the project the user opened.
-- Inspect the existing tree first. Use `read_skill_asset` for the routed
+- Inspect the existing tree first. Use `bifrost_read_agent_skill_file` for the routed
   references and use the workspace mutation tools for source changes.
 - For every new app, read `references/apps-v2.md` before writing its manifest
   or source. The `.bifrost/apps.yaml` entry must use the exact
