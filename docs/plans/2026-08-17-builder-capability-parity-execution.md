@@ -260,18 +260,32 @@ environment-skipped mirror tests; API Pyright and Ruff are clean.
       persisted tool-ID migration off the former app-scoped name.
 - [x] Convert legacy direct-ORM MCP implementations to thin HTTP wrappers using
       `_http_bridge.py`; do not create a second service path for MCP.
-- [ ] Reconcile known drift in the remaining domains:
+- [x] Reconcile known drift in the remaining domains:
       authorization, role propagation, cache invalidation, RepoSyncWriter,
       scheduler wiring, audit registration, validation, and partial-success
-      behavior.
-- [ ] Use hard structured REST errors for invalid mutations; do not preserve
-      silent warn-and-continue behavior.
-- [ ] Move reusable business logic out of handlers only where the REST handler
-      itself is not already thin.
-- [ ] Delete the duplicated ORM/scoping/validation implementations as each
-      entity moves. No dead alternate path remains.
-- [ ] Generate or validate CLI and MCP request fields from the same DTOs and
-      run both DTO and contract-version tripwires.
+      behavior. (Done per slice; each catalog entry records the real
+      authorization resolver, audit event, and side effects read from the
+      routes. Configs declares no audit_event because those routes emit none;
+      policy rules do.)
+- [x] Use hard structured REST errors for invalid mutations; do not preserve
+      silent warn-and-continue behavior. (Verified across the sliced routers.
+      The single remaining logger.warning — a global config cache-version bump
+      — is a non-authoritative cache refresh, not a swallowed mutation failure.)
+- [x] Move reusable business logic out of handlers only where the REST handler
+      itself is not already thin. (PolicyRuleService gained a public get();
+      ConfigRepository gained get_config_by_id plus an extracted _to_response
+      shaper so the by-ID read inherits list secret-masking. No handler grew
+      business logic.)
+- [x] Delete the duplicated ORM/scoping/validation implementations as each
+      entity moves. No dead alternate path remains. (No MCP entity tool holds a
+      DB session: get_tool_db had zero callers and tools/db.py was removed.
+      Client-side list-and-filter removed from configs get/delete and
+      policy-rules get, with the orphaned _find_config_by_id helper.)
+- [x] Generate or validate CLI and MCP request fields from the same DTOs and
+      run both DTO and contract-version tripwires. (Config CLI and MCP both use
+      assemble_body now that ConfigCreate/ConfigUpdate.value is str; 178
+      tripwire tests green across dto_flags, contract_version,
+      mcp_thin_wrapper, operation_catalog and operation_inventory.)
 
 Suggested vertical-slice order is Agent first (because Skill hydration and the
 coding profile depend on it), then Forms, Tables, Apps, Events, followed by the

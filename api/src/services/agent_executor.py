@@ -1784,9 +1784,8 @@ class AgentExecutor:
             # Get user from conversation (same pattern as workflow tool execution)
             user = conversation.user if conversation else None
 
-            # Create context from agent/conversation/user
-            # session=None: system tools create their own short-lived sessions
-            # via get_tool_db() fallback, avoiding long-lived connection holds
+            # Create context from agent/conversation/user. System tools are
+            # thin HTTP wrappers over REST and open no session of their own.
             context = MCPContext(
                 user_id=str(user.id) if user else "",
                 org_id=str(agent.organization_id) if agent.organization_id else None,
