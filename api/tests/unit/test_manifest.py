@@ -78,7 +78,7 @@ def test_role_manifest_accepts_legacy_scopes_as_capabilities():
         )
     )
 
-    assert manifest.roles[role_id].capabilities == [
+    assert manifest.roles[0].capabilities == [
         "agents.readwrite",
         "builder.execute",
         "solutions.build.execute",
@@ -105,7 +105,8 @@ def test_role_manifest_accepts_empty_legacy_permissions():
         )
     )
 
-    assert manifest.roles[role_id].capabilities is None
+    assert manifest.roles[0].capabilities is None
+    assert manifest.roles[0].permissions == {}
 
 
 def test_role_manifest_translates_known_legacy_permissions():
@@ -126,8 +127,8 @@ def test_role_manifest_translates_known_legacy_permissions():
         )
     )
 
-    assert manifest.roles[role_id].capabilities == ["agents.readwrite"]
-    assert manifest.roles[role_id].permissions == {"can_promote_agent": True}
+    assert manifest.roles[0].capabilities == ["agents.readwrite"]
+    assert manifest.roles[0].permissions == {"can_promote_agent": True}
 
 
 def test_role_manifest_rejects_conflicting_legacy_scope_alias():
@@ -168,8 +169,8 @@ def test_role_manifest_preserves_arbitrary_legacy_permissions():
         )
     )
 
-    assert manifest.roles[role_id].permissions == {"read": True}
-    assert manifest.roles[role_id].capabilities is None
+    assert manifest.roles[0].permissions == {"read": True}
+    assert manifest.roles[0].capabilities == []
 
 
 def test_serialize_manifest(sample_manifest):

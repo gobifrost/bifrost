@@ -1773,7 +1773,7 @@ async def _resolve_install_org(
 
     target = await resolve_org_target(org_ref, is_global, RefResolver(client))
     if not target.is_set:  # HOME
-        org = client.organization or {}
+        org = getattr(client, "organization", None) or {}
         return org.get("id")
     return target.organization_id  # GLOBAL (None) or ORG (uuid)
 
@@ -1855,7 +1855,7 @@ def resolve_install_id_for_workspace(client, solution_root) -> str | None:
         if solution_root is None or not is_solution_workspace(solution_root):
             return None
         descriptor = load_descriptor(solution_root)
-        org = client.organization or {}
+        org = getattr(client, "organization", None) or {}
         deployer_org_id = org.get("id")
         if deployer_org_id is None:
             return None
@@ -1921,7 +1921,7 @@ async def _resolve_solution_install(
     elif binding is not None:
         selected_org_id = binding.organization_id
     else:
-        selected_org_id = (client.organization or {}).get("id")
+        selected_org_id = (getattr(client, "organization", None) or {}).get("id")
         if selected_org_id is None:
             raise click.ClickException(
                 "Select --org or --global before resolving a Solution install."

@@ -197,7 +197,7 @@ class TestAuthenticatedTierDenial:
             session,
             org_id=entity.organization_id,
             user_id=uuid4(),
-            is_superuser=True,
+            bypass_resource_admission=True,
             is_external=True,
         )
         assert await repo._can_access_entity(entity) is True

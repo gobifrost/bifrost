@@ -71,7 +71,7 @@ class TestPrivateAgentAccessLevel:
         repo.session = AsyncMock()
         repo.org_id = uuid4()
         repo.user_id = user_id
-        repo.is_superuser = False
+        repo.bypass_resource_admission = False
         repo.is_external = False
         repo.model = Agent
         repo.role_table = AgentRole
@@ -94,7 +94,7 @@ class TestPrivateAgentAccessLevel:
         repo.session = AsyncMock()
         repo.org_id = uuid4()
         repo.user_id = other_user_id
-        repo.is_superuser = False
+        repo.bypass_resource_admission = False
         repo.is_external = False
         repo.model = Agent
         repo.role_table = AgentRole
@@ -118,7 +118,7 @@ class TestPrivateAgentAccessLevel:
         repo.session = AsyncMock()
         repo.org_id = uuid4()
         repo.user_id = uuid4()
-        repo.is_superuser = True
+        repo.bypass_resource_admission = True
         repo.is_external = False
         repo.model = Agent
         repo.role_table = AgentRole

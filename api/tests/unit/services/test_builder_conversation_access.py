@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.services.authorization import AuthorizationBoundary, AuthorizationContext
 from src.services.builder.conversation_access import can_access_conversation
 
 
@@ -44,7 +45,7 @@ async def test_ordinary_chat_remains_owner_only() -> None:
 
 
 @pytest.mark.asyncio
-async def test_builder_collaborator_access_controls_read_and_edit() -> None:
+async def test_builder_collaborator_access_controls_read_and_edit(monkeypatch) -> None:
     collaborator_id = uuid4()
     solution_id = uuid4()
     conversation = SimpleNamespace(
@@ -54,6 +55,7 @@ async def test_builder_collaborator_access_controls_read_and_edit() -> None:
     )
     solution = SimpleNamespace(
         id=solution_id,
+        organization_id=None,
         visibility="private",
         owner_user_id=uuid4(),
     )
@@ -66,6 +68,20 @@ async def test_builder_collaborator_access_controls_read_and_edit() -> None:
     ]
     db.get.return_value = solution
     principal = _principal(collaborator_id)
+    authorization = AuthorizationContext(
+        requester=principal,
+        effective_actor=principal,
+        selected_boundary=AuthorizationBoundary.platform(),
+        effective_capabilities=frozenset(
+            {"builder.read", "solutions.read", "repository.read"}
+        ),
+        grant_sources=(),
+    )
+
+    monkeypatch.setattr(
+        "src.services.builder.conversation_access.resolve_authorization_context",
+        AsyncMock(return_value=authorization),
+    )
 
     assert await can_access_conversation(
         db,

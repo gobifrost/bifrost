@@ -430,6 +430,10 @@ async def test_schedule_creates_delivery_for_agent_subscription(db_session):
         id=uuid4(),
         name="sched-agent",
         system_prompt="you are a test agent",
+        # process_schedule_sources commits its transaction, so this fixture can
+        # remain visible to later tests in the same run. Keep it out of normal
+        # agent discovery; this test only exercises subscription delivery.
+        is_active=False,
         created_by="test",
     )
     source, ss, sub = _make_source_and_subscription(target_type="agent")

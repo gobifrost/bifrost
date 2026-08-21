@@ -10884,9 +10884,9 @@
   "counts": {
     "cli": 146,
     "manifest": 16,
-    "mcp": 116,
+    "mcp": 121,
     "native_builder": 110,
-    "rest": 672,
+    "rest": 683,
     "sdk": 19
   },
   "schema_version": 1,
@@ -11320,6 +11320,12 @@
         "status": "transport_only"
       },
       {
+        "hidden": true,
+        "name": "discard_global_operation_change",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
         "hidden": false,
         "name": "get_docs",
         "reason": "Reads generated platform documentation; owns no entity or state.",
@@ -11327,9 +11333,21 @@
       },
       {
         "hidden": true,
+        "name": "global_operation_changeset_inventory",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": true,
         "name": "list_files",
         "reason": "Builder-local workspace primitive, not a platform entity operation.",
         "status": "transport_only"
+      },
+      {
+        "hidden": true,
+        "name": "list_global_operation_changes",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
       },
       {
         "hidden": true,
@@ -11351,9 +11369,21 @@
       },
       {
         "hidden": true,
+        "name": "stage_global_operation_change",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "hidden": true,
         "name": "test_solution_build",
         "reason": "Builder-local workspace primitive, not a platform entity operation.",
         "status": "transport_only"
+      },
+      {
+        "hidden": true,
+        "name": "validate_global_operation_changes",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
       },
       {
         "hidden": true,
@@ -12146,6 +12176,20 @@
         "method": "POST",
         "operation_id": "",
         "path": "/api/builder/solutions/global-workspace/apply",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/builder/solutions/global-workspace/operations",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "DELETE",
+        "operation_id": "",
+        "path": "/api/builder/solutions/global-workspace/operations/{change_id}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -13074,6 +13118,20 @@
         "status": "missing_surface"
       },
       {
+        "method": "PUT",
+        "operation_id": "",
+        "path": "/api/internal/sandbox/jobs/{job_id}/tools/{execution_id}/workspace",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/internal/sandbox/jobs/{job_id}/tools/{execution_id}/workspace-build",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
         "method": "GET",
         "operation_id": "",
         "path": "/api/jobs/{job_id}",
@@ -13314,6 +13372,20 @@
       {
         "method": "POST",
         "operation_id": "",
+        "path": "/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/mcp/gateway/builder-sessions/{builder_session_id}/tools/{tool_ref}/execute",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
         "path": "/api/mcp/gateway/capabilities/search",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -13322,13 +13394,6 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/mcp/gateway/executions/{execution_id}",
-        "reason": "REST operation has not entered the canonical operation catalog yet.",
-        "status": "missing_surface"
-      },
-      {
-        "method": "POST",
-        "operation_id": "",
-        "path": "/api/mcp/gateway/tools/{tool_ref}/execute",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
@@ -13823,6 +13888,13 @@
         "status": "missing_surface"
       },
       {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/roles/scopes",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
         "method": "PUT",
         "operation_id": "",
         "path": "/api/roles/{role_id}",
@@ -14182,6 +14254,34 @@
       {
         "method": "GET",
         "operation_id": "",
+        "path": "/api/settings/ai/usage-limits",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/settings/ai/usage-limits/effective/{scope}/{target_id}",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "DELETE",
+        "operation_id": "",
+        "path": "/api/settings/ai/usage-limits/{scope}/{target_id}",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "PUT",
+        "operation_id": "",
+        "path": "/api/settings/ai/usage-limits/{scope}/{target_id}",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
         "path": "/api/settings/oauth",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -14463,6 +14563,13 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/tools/system",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/users/{user_id}/role-assignments",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
