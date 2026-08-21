@@ -1,11 +1,13 @@
 # Builder authorization execution resume
 
 **Updated:** 2026-08-21
-**Status:** implementation and Local/Cloudflare execution acceptance complete; Jack approved commit, push, and PR delivery on 2026-08-21; merge remains unapproved
+**Status:** implementation and Local/Cloudflare execution acceptance complete; committed and pushed to draft PR #620; merge remains unapproved
 **Canonical design:** `docs/plans/2026-08-19-builder-authorization-boundaries-execution.md`
 **Worktree:** `/home/jack/GitHub/bifrost/.worktrees/code-builder-pydantic-integration-20260816`
 **Branch:** `codex/code-builder-pydantic-integration-20260816`
 **Pre-delivery branch HEAD:** `c5a68619e0f655e4332a2259c33668378bd468e3`
+**Delivery commit:** `2cb10463b` (`feat: complete Builder authorization and Cloudflare execution`)
+**Pull request:** `https://github.com/gobifrost/bifrost/pull/620` (draft)
 **Canonical main base:** `16e317e628d57ff4a4e57d179ff71d370445f6b5` (PR #608)
 
 This document is the operational handoff for continuing the approved Builder
@@ -17,8 +19,8 @@ not supersede the canonical design.
 - Work only in the worktree above. Do not edit the primary checkout.
 - The pre-delivery tree contained 379 modified, two deleted, and 153 untracked
   paths spanning the reconstructed Builder and authorization program.
-- Commit, push, and PR delivery were approved on 2026-08-21. Do not rebase or
-  merge without separate explicit approval.
+- Commit, push, and PR delivery were approved on 2026-08-21 and completed in
+  draft PR #620. Do not rebase, queue, or merge without separate approval.
 - Do not restore withdrawn Builder migration bodies. All schema changes are
   forward-only after the tombstone revision.
 - Keep corrected main authoritative for scheduler, Platform Jobs, diagnostics,
