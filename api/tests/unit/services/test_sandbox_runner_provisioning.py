@@ -256,7 +256,9 @@ async def test_cloudflare_deploy_uses_private_image_and_disables_ssh(
 
     container = captured["containers"][0]  # type: ignore[index]
     assert captured["main"] == "/bin/true"
-    assert container["image"].startswith("registry.cloudflare.com/")
+    assert container["image"] == (
+        f"registry.cloudflare.com/{'a' * 32}/bifrost-build:1.2.3"
+    )
     assert container["ssh"] == {"enabled": False}
 
 

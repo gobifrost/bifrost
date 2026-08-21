@@ -161,7 +161,7 @@ function boundedBodyStream(request, maxBytes) {
         }
         controller.enqueue(chunk);
       },
-    }),
+    })
   ) ?? new ReadableStream({
     start(controller) {
       controller.close();
