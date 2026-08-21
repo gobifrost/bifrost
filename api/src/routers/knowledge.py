@@ -9,13 +9,12 @@ from fastapi import APIRouter, HTTPException, status
 from shared.scope_resolver import (
     UNSET,
     RequestedScope,
-    ScopeNotAllowed,
-    resolve_effective_scope,
 )
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.models.contracts.knowledge import KnowledgeSearchRequest, KnowledgeSearchResult
 from src.repositories.agents import AgentRepository
+from src.services.authorization import AuthorizationBoundaryKind, CurrentAuthorizationContext
 from src.services.knowledge.search import search_knowledge_documents
 from src.services.knowledge.search_budget import clamp_knowledge_result_limit
 from src.services.operation_catalog import operation_route
@@ -40,6 +39,7 @@ def _requested_scope(scope: str | None) -> RequestedScope:
 async def _agent_search_boundary(
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     request: KnowledgeSearchRequest,
 ) -> tuple[UUID | None, list[str], int]:
     """Derive scope and namespaces from an Agent the caller can access."""
@@ -52,12 +52,23 @@ async def _agent_search_boundary(
     agent_id = request.agent_id
     if agent_id is None:  # Narrowed by the caller; keeps this helper standalone.
         raise RuntimeError("Agent-bound search requires agent_id")
+    boundary = authorization.selected_boundary
+    if boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Select one organization before searching through an Agent",
+        )
+    repo_org_id = (
+        boundary.organization_id
+        if boundary.kind is AuthorizationBoundaryKind.ORGANIZATION
+        else None
+    )
 
     repo = AgentRepository(
         session=db,
-        org_id=user.organization_id,
+        org_id=repo_org_id,
         user_id=user.user_id,
-        is_superuser=user.is_platform_admin,
+        bypass_resource_roles=authorization.has_capability("platform.superuser"),
         is_external=user.is_external,
     )
     agent = await repo.get_agent_with_access_check(agent_id)
@@ -96,8 +107,10 @@ async def search_knowledge(
     request: KnowledgeSearchRequest,
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> list[KnowledgeSearchResult]:
     """Search direct scope or an accessible Agent's trusted knowledge boundary."""
+    authorization.require("knowledge.read")
     if user.is_external:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -106,23 +119,35 @@ async def search_knowledge(
 
     if request.agent_id is not None:
         organization_id, namespaces, limit = await _agent_search_boundary(
-            db, user, request
+            db,
+            user,
+            authorization,
+            request,
         )
     else:
-        try:
-            organization_id = resolve_effective_scope(
-                caller_org_id=user.organization_id,
-                is_platform_admin=user.is_platform_admin,
-                is_provider_org=user.is_provider_org,
-                requested_scope=_requested_scope(request.scope),
+        requested = _requested_scope(request.scope)
+        if requested is UNSET:
+            organization_id = (
+                authorization.selected_boundary.organization_id
+                if authorization.selected_boundary.kind
+                is AuthorizationBoundaryKind.ORGANIZATION
+                else None
             )
-        except ScopeNotAllowed as exc:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=str(exc),
-            ) from exc
+        else:
+            organization_id = requested
         namespaces = request.namespace or ["default"]
         limit = request.limit
+
+    try:
+        authorization.require_resource_boundary(organization_id)
+    except HTTPException:
+        # Preserve the direct-search API's existing 403 behavior for
+        # out-of-bound scopes instead of surfacing the generic 409 header
+        # mismatch used by mutation routes.
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Requested knowledge scope is outside the selected authorization boundary",
+        ) from None
 
     if not namespaces:
         return []

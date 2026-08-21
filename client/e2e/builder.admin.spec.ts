@@ -5,8 +5,8 @@ const SOLUTION_ID = "11111111-1111-4111-8111-111111111111";
 const SESSION_ID = "22222222-2222-4222-8222-222222222222";
 const CONVERSATION_ID = "33333333-3333-4333-8333-333333333333";
 const USER_ID = "44444444-4444-4444-8444-444444444444";
-const AGENT_ID = "55555555-5555-4555-8555-555555555555";
 const TURN_ID = "66666666-6666-4666-8666-666666666666";
+const ORGANIZATION_ID = "77777777-7777-4777-8777-777777777777";
 
 const solution = {
 	id: SOLUTION_ID,
@@ -16,7 +16,7 @@ const solution = {
 	owner_user_id: USER_ID,
 	owner_name: "Platform Admin",
 	owner_email: "admin@example.com",
-	organization_id: null,
+	organization_id: ORGANIZATION_ID,
 	organization_name: "MSP Workspace",
 	caller_access: "owner",
 	collaborator_access: null,
@@ -34,6 +34,34 @@ test.describe("Code Builder", () => {
 		await page.route("**/api/builder/solutions**", async (route) => {
 			const request = route.request();
 			const url = new URL(request.url());
+			if (
+				request.method() === "GET" &&
+				url.pathname === "/api/builder/solutions/targets"
+			) {
+				await route.fulfill({
+					json: {
+						organizations: [],
+						can_view_all: true,
+						can_open_global_workspace: false,
+						ai_configured: false,
+						builder_ready: false,
+						builder_blockers: [
+							{
+								code: "ai_not_configured",
+								message: "Connect an AI provider and model.",
+								action: "Choose and test a model in AI settings.",
+							},
+							{
+								code: "runner_not_ready",
+								message: "Connect an isolated Builder runner.",
+								action: "Provision the local or Cloudflare runner.",
+							},
+						],
+						is_platform_admin: true,
+					},
+				});
+				return;
+			}
 			if (
 				request.method() === "GET" &&
 				url.pathname === "/api/builder/solutions"
@@ -61,6 +89,7 @@ test.describe("Code Builder", () => {
 							},
 						],
 						is_platform_admin: true,
+						can_open_global_workspace: false,
 					},
 				});
 				return;
@@ -80,7 +109,7 @@ test.describe("Code Builder", () => {
 		await expect(page).toHaveURL("/settings/builder");
 	});
 
-	test("creates a private app and opens the shared agent workbench", async ({
+	test("creates a private app and opens the shared Builder workbench", async ({
 		page,
 	}, testInfo) => {
 		let submittedPrompt: Record<string, unknown> | null = null;
@@ -89,6 +118,33 @@ test.describe("Code Builder", () => {
 			const request = route.request();
 			const url = new URL(request.url());
 			const path = url.pathname;
+
+			if (
+				path === "/api/builder/solutions/targets" &&
+				request.method() === "GET"
+			) {
+				await route.fulfill({
+					json: {
+						organizations: [
+							{
+								id: ORGANIZATION_ID,
+								name: "MSP Workspace",
+								is_provider: true,
+								can_read: true,
+								can_execute: true,
+								can_build_resources: true,
+							},
+						],
+						can_view_all: true,
+						can_open_global_workspace: true,
+						ai_configured: true,
+						builder_ready: true,
+						builder_blockers: [],
+						is_platform_admin: true,
+					},
+				});
+				return;
+			}
 
 			if (
 				path === "/api/builder/solutions" &&
@@ -106,6 +162,7 @@ test.describe("Code Builder", () => {
 						builder_ready: true,
 						builder_blockers: [],
 						is_platform_admin: true,
+						can_open_global_workspace: true,
 					},
 				});
 				return;
@@ -145,7 +202,6 @@ test.describe("Code Builder", () => {
 					solution_id: SOLUTION_ID,
 					conversation_id: CONVERSATION_ID,
 					user_id: USER_ID,
-					builder_agent_id: AGENT_ID,
 					created_at: NOW,
 					updated_at: NOW,
 				};
@@ -283,10 +339,10 @@ test.describe("Code Builder", () => {
 			.fill("Build a customer intake app with a review queue.");
 		await page.getByRole("button", { name: "Start building" }).click();
 
-		await expect(
-			page.getByText("Starting the Builder Agent"),
-		).toBeVisible();
-		await expect(page).toHaveURL(`/solutions/${SOLUTION_ID}/builder`);
+		await expect(page.getByText("Starting Customer Intake")).toBeVisible();
+		await expect(page).toHaveURL(
+			`/solutions/${SOLUTION_ID}/builder?boundary=organization%3A${ORGANIZATION_ID}`,
+		);
 		await expect(
 			page.getByRole("heading", { name: "Customer Intake" }),
 		).toBeVisible();
@@ -313,6 +369,81 @@ test.describe("Code Builder", () => {
 		});
 	});
 
+	test("opens an organization workspace without Solution-only controls", async ({
+		page,
+	}) => {
+		const organizationWorkspace = {
+			...solution,
+			name: "Customer Operations",
+			target_kind: "organization",
+		};
+		const session = {
+			id: SESSION_ID,
+			solution_id: SOLUTION_ID,
+			conversation_id: CONVERSATION_ID,
+			user_id: USER_ID,
+			created_at: NOW,
+			updated_at: NOW,
+		};
+
+		await page.route("**/api/builder/solutions/**", async (route) => {
+			const path = new URL(route.request().url()).pathname;
+			if (path === `/api/builder/solutions/${SOLUTION_ID}`) {
+				await route.fulfill({ json: organizationWorkspace });
+				return;
+			}
+			if (path === `/api/builder/solutions/${SOLUTION_ID}/sessions`) {
+				await route.fulfill({ json: { sessions: [session], total: 1 } });
+				return;
+			}
+			if (path === `/api/builder/solutions/${SOLUTION_ID}/turns`) {
+				await route.fulfill({ json: { turns: [], total: 0 } });
+				return;
+			}
+			if (path === `/api/builder/solutions/${SOLUTION_ID}/revisions`) {
+				await route.fulfill({
+					status: 500,
+					json: { detail: "Organization workspace must not request revisions" },
+				});
+				return;
+			}
+			await route.fulfill({ status: 404, json: { detail: "Not found" } });
+		});
+		await page.route("**/api/applications**", (route) =>
+			route.fulfill({ json: { applications: [], total: 0 } }),
+		);
+		await page.route("**/api/chat/model-tiers", (route) =>
+			route.fulfill({
+				json: {
+					default_tier: "balanced",
+					tiers: [],
+				},
+			}),
+		);
+		await page.route(
+			`**/api/chat/conversations/${CONVERSATION_ID}/messages`,
+			(route) => route.fulfill({ json: [] }),
+		);
+
+		await page.goto(
+			`/solutions/${SOLUTION_ID}/builder?boundary=organization%3A${ORGANIZATION_ID}`,
+		);
+
+		await expect(
+			page.getByRole("heading", { name: "Customer Operations" }),
+		).toBeVisible();
+		await expect(page.getByText("Organization workspace")).toBeVisible();
+		await expect(
+			page.getByText(/authorized changes apply directly/i),
+		).toBeVisible();
+		await expect(page.getByRole("tab", { name: "Preview" })).toHaveCount(0);
+		await expect(page.getByRole("tab", { name: "Code" })).toHaveCount(0);
+		await expect(
+			page.getByRole("button", { name: /request promotion/i }),
+		).toHaveCount(0);
+		await expect(page.getByRole("button", { name: /Use your AI/i })).toBeVisible();
+	});
+
 	test("keeps the restored Builder workbench usable on mobile", async ({
 		page,
 	}) => {
@@ -321,7 +452,6 @@ test.describe("Code Builder", () => {
 			solution_id: SOLUTION_ID,
 			conversation_id: CONVERSATION_ID,
 			user_id: USER_ID,
-			builder_agent_id: AGENT_ID,
 			created_at: NOW,
 			updated_at: NOW,
 		};

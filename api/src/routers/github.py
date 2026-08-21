@@ -10,7 +10,7 @@ import uuid
 
 from fastapi import APIRouter, HTTPException, Query, status
 
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.core.pubsub import publish_git_operation
@@ -43,6 +43,11 @@ from src.services.github_config import (
     get_github_config,
     save_github_config,
 )
+from src.services.audit import emit_audit
+from src.services.authorization import (
+    AuthorizationBoundaryKind,
+    CurrentAuthorizationContext,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +66,26 @@ def _extract_repo_from_url(repo_url: str) -> str:
     return repo_url
 
 
+def _require_platform_repository(
+    authorization: CurrentAuthorizationContext,
+    capability: str,
+) -> None:
+    """GitHub routes operate on the one Platform repository configuration."""
+
+    authorization.require(capability)
+    if authorization.selected_boundary.kind is not AuthorizationBoundaryKind.PLATFORM:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Select Global before using GitHub repository operations",
+        )
+
+
+def _github_config_org_id() -> None:
+    """The source-control repository is a Platform/global resource."""
+
+    return None
+
+
 # =============================================================================
 # GitHub Configuration Endpoints
 # =============================================================================
@@ -74,12 +99,13 @@ def _extract_repo_from_url(repo_url: str) -> str:
 )
 async def get_config_endpoint(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> GitHubConfigResponse:
     """Get current GitHub configuration."""
     try:
-        config = await get_github_config(db, ctx.org_id)
+        _require_platform_repository(authorization, "repository.read")
+        config = await get_github_config(db, _github_config_org_id())
 
         if not config:
             return GitHubConfigResponse(
@@ -98,6 +124,8 @@ async def get_config_endpoint(
             backup_path=None,
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to get GitHub config: {e}", exc_info=True)
         raise HTTPException(
@@ -114,7 +142,7 @@ async def get_config_endpoint(
 )
 async def get_github_status(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> GitRefreshStatusResponse:
     """
@@ -124,7 +152,8 @@ async def get_github_status(
     For detailed sync preview (files to pull/push), use GET /api/github/sync.
     """
     try:
-        config = await get_github_config(db, ctx.org_id)
+        _require_platform_repository(authorization, "repository.read")
+        config = await get_github_config(db, _github_config_org_id())
 
         if not config or not config.token:
             # Not configured
@@ -176,6 +205,8 @@ async def get_github_status(
             error=None,
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to get GitHub status: {e}", exc_info=True)
         return GitRefreshStatusResponse(
@@ -202,13 +233,14 @@ async def get_github_status(
 )
 async def get_repo_status(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> RepoStatusResponse:
     """Fast repo status check used by CLI push to gate on dirty state."""
     from src.core.repo_dirty import get_repo_dirty_since
 
-    config = await get_github_config(db, ctx.org_id)
+    _require_platform_repository(authorization, "repository.read")
+    config = await get_github_config(db, _github_config_org_id())
     dirty_since = await get_repo_dirty_since()
     return RepoStatusResponse(
         git_configured=config is not None and bool(config.repo_url),
@@ -226,11 +258,12 @@ async def get_repo_status(
 async def validate_github_token(
     request: ValidateTokenRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> GitHubReposResponse:
     """Validate GitHub token, save to database, and list repositories."""
     try:
+        _require_platform_repository(authorization, "repository.readwrite")
         if not request.token:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -258,11 +291,17 @@ async def validate_github_token(
         # Save token to database (repo_url=None indicates not configured yet)
         await save_github_config(
             db=db,
-            org_id=ctx.org_id,
+            org_id=_github_config_org_id(),
             token=request.token,
             repo_url=None,
             branch="main",
-            updated_by=user.email,
+            updated_by=authorization.effective_actor.email,
+        )
+        await emit_audit(
+            db,
+            "github.token.validate",
+            resource_type="github_config",
+            details={"repository_configured": False},
         )
 
         logger.info("GitHub token validated and saved successfully")
@@ -297,7 +336,7 @@ async def validate_github_token(
 async def configure_github(
     request: GitHubConfigRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> GitHubSetupResponse:
     """
@@ -307,6 +346,7 @@ async def configure_github(
     Use the /sync endpoints to pull/push changes.
     """
     try:
+        _require_platform_repository(authorization, "repository.readwrite")
         # Normalize repo_url - accept both full URL and owner/repo format
         repo_url = request.repo_url.strip()
         if not repo_url.startswith("http"):
@@ -315,7 +355,7 @@ async def configure_github(
         logger.info(f"Configuring GitHub for repo: {log_safe(repo_url)}")
 
         # Get existing config to retrieve token
-        existing_config = await get_github_config(db, ctx.org_id)
+        existing_config = await get_github_config(db, _github_config_org_id())
 
         if not existing_config or not existing_config.token:
             raise HTTPException(
@@ -326,11 +366,17 @@ async def configure_github(
         # Save the updated configuration
         await save_github_config(
             db=db,
-            org_id=ctx.org_id,
+            org_id=_github_config_org_id(),
             token=existing_config.token,
             repo_url=repo_url,
             branch=request.branch or "main",
-            updated_by=user.email,
+            updated_by=authorization.effective_actor.email,
+        )
+        await emit_audit(
+            db,
+            "github.configure",
+            resource_type="github_config",
+            details={"repo_url": repo_url, "branch": request.branch or "main"},
         )
 
         logger.info(f"GitHub configuration saved for repo: {log_safe(repo_url)}")
@@ -359,12 +405,13 @@ async def configure_github(
 )
 async def list_github_repos(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> GitHubReposResponse:
     """List user's GitHub repositories using saved token."""
     try:
-        config = await get_github_config(db, ctx.org_id)
+        _require_platform_repository(authorization, "repository.read")
+        config = await get_github_config(db, _github_config_org_id())
 
         if not config or not config.token:
             raise HTTPException(
@@ -412,19 +459,20 @@ async def list_github_repos(
 )
 async def list_github_branches(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
     repo: str = Query(..., description="Repository full name (owner/repo)"),
 ) -> GitHubBranchesResponse:
     """List branches in a repository using saved token."""
     try:
+        _require_platform_repository(authorization, "repository.read")
         if not repo:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Repository name required",
             )
 
-        config = await get_github_config(db, ctx.org_id)
+        config = await get_github_config(db, _github_config_org_id())
 
         if not config or not config.token:
             raise HTTPException(
@@ -471,12 +519,13 @@ async def list_github_branches(
 async def create_github_repository(
     request: CreateRepoRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> CreateRepoResponse:
     """Create new GitHub repository."""
     try:
-        config = await get_github_config(db, ctx.org_id)
+        _require_platform_repository(authorization, "repository.readwrite")
+        config = await get_github_config(db, _github_config_org_id())
 
         if not config or not config.token:
             raise HTTPException(
@@ -490,6 +539,16 @@ async def create_github_repository(
             description=request.description,
             private=request.private,
             organization=request.organization,
+        )
+        await emit_audit(
+            db,
+            "github.repository.create",
+            resource_type="github_repository",
+            details={
+                "name": request.name,
+                "organization": request.organization,
+                "private": request.private,
+            },
         )
 
         return CreateRepoResponse(**result)
@@ -517,17 +576,25 @@ async def create_github_repository(
 )
 async def disconnect_github(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> dict:
     """Disconnect GitHub integration."""
     try:
-        await delete_github_config(db, ctx.org_id)
+        _require_platform_repository(authorization, "repository.readwrite")
+        await delete_github_config(db, _github_config_org_id())
+        await emit_audit(
+            db,
+            "github.disconnect",
+            resource_type="github_config",
+        )
 
         logger.info("GitHub integration disconnected")
 
         return {"success": True, "message": "GitHub integration disconnected"}
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to disconnect GitHub: {e}", exc_info=True)
         raise HTTPException(
@@ -549,7 +616,7 @@ async def disconnect_github(
 )
 async def get_commits(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
     limit: int = Query(20, description="Number of commits to return"),
     offset: int = Query(0, description="Offset for pagination"),
@@ -560,7 +627,8 @@ async def get_commits(
     Uses GitHub API directly to fetch commits from the configured repository.
     """
     try:
-        config = await get_github_config(db, ctx.org_id)
+        _require_platform_repository(authorization, "repository.read")
+        config = await get_github_config(db, _github_config_org_id())
 
         if not config or not config.token:
             raise HTTPException(
@@ -637,22 +705,35 @@ async def get_commits(
 )
 async def git_fetch(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
     request: GitOpRequest | None = None,
 ) -> GitJobResponse:
     """Queue a git fetch operation."""
-    config = await get_github_config(db, ctx.org_id)
+    _require_platform_repository(authorization, "repository.readwrite")
+    actor = authorization.effective_actor
+    config = await get_github_config(db, _github_config_org_id())
     if not config or not config.token or not config.repo_url:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="GitHub not configured",
+        )
 
-    job_id = (request.job_id if request and request.job_id else None) or str(uuid.uuid4())
+    job_id = (request.job_id if request and request.job_id else None) or str(
+        uuid.uuid4()
+    )
     job_id = await publish_git_operation(
         job_id=job_id,
-        org_id=str(ctx.org_id) if ctx.org_id else "",
-        user_id=str(user.user_id),
-        user_email=user.email,
+        org_id="",
+        user_id=str(actor.user_id),
+        user_email=actor.email,
         op_type="git_fetch",
+    )
+    await emit_audit(
+        db,
+        "github.git_fetch.queue",
+        resource_type="github_config",
+        details={"job_id": job_id},
     )
     return GitJobResponse(job_id=job_id)
 
@@ -666,22 +747,33 @@ async def git_fetch(
 async def git_commit(
     request: CommitRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> GitJobResponse:
     """Queue a git commit."""
-    config = await get_github_config(db, ctx.org_id)
+    _require_platform_repository(authorization, "repository.readwrite")
+    actor = authorization.effective_actor
+    config = await get_github_config(db, _github_config_org_id())
     if not config or not config.token or not config.repo_url:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="GitHub not configured",
+        )
 
     job_id = request.job_id or str(uuid.uuid4())
     job_id = await publish_git_operation(
         job_id=job_id,
-        org_id=str(ctx.org_id) if ctx.org_id else "",
-        user_id=str(user.user_id),
-        user_email=user.email,
+        org_id="",
+        user_id=str(actor.user_id),
+        user_email=actor.email,
         op_type="git_commit",
         message=request.message,
+    )
+    await emit_audit(
+        db,
+        "github.git_commit.queue",
+        resource_type="github_config",
+        details={"job_id": job_id},
     )
     return GitJobResponse(job_id=job_id)
 
@@ -694,24 +786,37 @@ async def git_commit(
 )
 async def git_sync(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
     request: SyncRequest | None = None,
 ) -> GitJobResponse:
     """Queue a sync (pull + push + entity import)."""
-    config = await get_github_config(db, ctx.org_id)
+    _require_platform_repository(authorization, "repository.readwrite")
+    actor = authorization.effective_actor
+    config = await get_github_config(db, _github_config_org_id())
     if not config or not config.token or not config.repo_url:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="GitHub not configured",
+        )
 
-    job_id = (request.job_id if request and request.job_id else None) or str(uuid.uuid4())
+    job_id = (request.job_id if request and request.job_id else None) or str(
+        uuid.uuid4()
+    )
     confirm_deletes = request.confirm_deletes if request else False
     job_id = await publish_git_operation(
         job_id=job_id,
-        org_id=str(ctx.org_id) if ctx.org_id else "",
-        user_id=str(user.user_id),
-        user_email=user.email,
+        org_id="",
+        user_id=str(actor.user_id),
+        user_email=actor.email,
         op_type="git_sync",
         confirm_deletes=confirm_deletes,
+    )
+    await emit_audit(
+        db,
+        "github.git_sync.queue",
+        resource_type="github_config",
+        details={"job_id": job_id, "confirm_deletes": confirm_deletes},
     )
     return GitJobResponse(job_id=job_id)
 
@@ -724,22 +829,35 @@ async def git_sync(
 )
 async def git_abort_merge(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
     request: GitOpRequest | None = None,
 ) -> GitJobResponse:
     """Queue a merge abort."""
-    config = await get_github_config(db, ctx.org_id)
+    _require_platform_repository(authorization, "repository.readwrite")
+    actor = authorization.effective_actor
+    config = await get_github_config(db, _github_config_org_id())
     if not config or not config.token or not config.repo_url:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="GitHub not configured",
+        )
 
-    job_id = (request.job_id if request and request.job_id else None) or str(uuid.uuid4())
+    job_id = (request.job_id if request and request.job_id else None) or str(
+        uuid.uuid4()
+    )
     job_id = await publish_git_operation(
         job_id=job_id,
-        org_id=str(ctx.org_id) if ctx.org_id else "",
-        user_id=str(user.user_id),
-        user_email=user.email,
+        org_id="",
+        user_id=str(actor.user_id),
+        user_email=actor.email,
         op_type="git_abort_merge",
+    )
+    await emit_audit(
+        db,
+        "github.git_abort_merge.queue",
+        resource_type="github_config",
+        details={"job_id": job_id},
     )
     return GitJobResponse(job_id=job_id)
 
@@ -752,22 +870,35 @@ async def git_abort_merge(
 )
 async def git_changes(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
     request: GitOpRequest | None = None,
 ) -> GitJobResponse:
     """Queue a working tree status check."""
-    config = await get_github_config(db, ctx.org_id)
+    _require_platform_repository(authorization, "repository.readwrite")
+    actor = authorization.effective_actor
+    config = await get_github_config(db, _github_config_org_id())
     if not config or not config.token or not config.repo_url:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="GitHub not configured",
+        )
 
-    job_id = (request.job_id if request and request.job_id else None) or str(uuid.uuid4())
+    job_id = (request.job_id if request and request.job_id else None) or str(
+        uuid.uuid4()
+    )
     job_id = await publish_git_operation(
         job_id=job_id,
-        org_id=str(ctx.org_id) if ctx.org_id else "",
-        user_id=str(user.user_id),
-        user_email=user.email,
+        org_id="",
+        user_id=str(actor.user_id),
+        user_email=actor.email,
         op_type="git_status",
+    )
+    await emit_audit(
+        db,
+        "github.git_status.queue",
+        resource_type="github_config",
+        details={"job_id": job_id},
     )
     return GitJobResponse(job_id=job_id)
 
@@ -781,22 +912,33 @@ async def git_changes(
 async def git_resolve(
     request: ResolveRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> GitJobResponse:
     """Queue conflict resolution."""
-    config = await get_github_config(db, ctx.org_id)
+    _require_platform_repository(authorization, "repository.readwrite")
+    actor = authorization.effective_actor
+    config = await get_github_config(db, _github_config_org_id())
     if not config or not config.token or not config.repo_url:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="GitHub not configured",
+        )
 
     job_id = request.job_id or str(uuid.uuid4())
     job_id = await publish_git_operation(
         job_id=job_id,
-        org_id=str(ctx.org_id) if ctx.org_id else "",
-        user_id=str(user.user_id),
-        user_email=user.email,
+        org_id="",
+        user_id=str(actor.user_id),
+        user_email=actor.email,
         op_type="git_resolve",
         resolutions=request.resolutions,
+    )
+    await emit_audit(
+        db,
+        "github.git_resolve.queue",
+        resource_type="github_config",
+        details={"job_id": job_id},
     )
     return GitJobResponse(job_id=job_id)
 
@@ -810,22 +952,33 @@ async def git_resolve(
 async def git_diff(
     request: DiffRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> GitJobResponse:
     """Queue a file diff."""
-    config = await get_github_config(db, ctx.org_id)
+    _require_platform_repository(authorization, "repository.readwrite")
+    actor = authorization.effective_actor
+    config = await get_github_config(db, _github_config_org_id())
     if not config or not config.token or not config.repo_url:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="GitHub not configured",
+        )
 
     job_id = request.job_id or str(uuid.uuid4())
     job_id = await publish_git_operation(
         job_id=job_id,
-        org_id=str(ctx.org_id) if ctx.org_id else "",
-        user_id=str(user.user_id),
-        user_email=user.email,
+        org_id="",
+        user_id=str(actor.user_id),
+        user_email=actor.email,
         op_type="git_diff",
         path=request.path,
+    )
+    await emit_audit(
+        db,
+        "github.git_diff.queue",
+        resource_type="github_config",
+        details={"job_id": job_id, "path": request.path},
     )
     return GitJobResponse(job_id=job_id)
 
@@ -839,23 +992,32 @@ async def git_diff(
 async def git_discard(
     request: DiscardRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> GitJobResponse:
     """Queue a discard operation."""
-    config = await get_github_config(db, ctx.org_id)
+    _require_platform_repository(authorization, "repository.readwrite")
+    actor = authorization.effective_actor
+    config = await get_github_config(db, _github_config_org_id())
     if not config or not config.token or not config.repo_url:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="GitHub not configured",
+        )
 
     job_id = request.job_id or str(uuid.uuid4())
     job_id = await publish_git_operation(
         job_id=job_id,
-        org_id=str(ctx.org_id) if ctx.org_id else "",
-        user_id=str(user.user_id),
-        user_email=user.email,
+        org_id="",
+        user_id=str(actor.user_id),
+        user_email=actor.email,
         op_type="git_discard",
         paths=request.paths,
     )
+    await emit_audit(
+        db,
+        "github.git_discard.queue",
+        resource_type="github_config",
+        details={"job_id": job_id, "paths": request.paths},
+    )
     return GitJobResponse(job_id=job_id)
-
-

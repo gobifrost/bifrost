@@ -1,8 +1,8 @@
 """
 ROI Reports Router
 
-Provides ROI reports endpoints for platform administrators.
-All endpoints require superuser access and query aggregated metrics data.
+Provides ROI reports endpoints for platform operators with metrics access.
+All endpoints require platform-scoped metrics.read and query aggregated metrics data.
 
 Endpoint Structure:
 - GET /api/reports/roi/summary - Overall ROI summary for a period
@@ -29,18 +29,23 @@ from src.models import (
     ROITrendEntry,
 )
 from uuid import UUID
-from src.core.auth import CurrentActiveUser, RequirePlatformAdmin
 from src.models.orm import (
     ExecutionMetricsDaily,
     WorkflowROIDaily,
     Organization,
     Workflow,
 )
+from src.services.authorization import CurrentAuthorizationContext
 from src.services.roi_settings_service import ROISettingsService
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/reports/roi", tags=["ROI Reports"])
+
+
+def _require_roi_report(authorization: CurrentAuthorizationContext) -> None:
+    authorization.require("metrics.read")
+    authorization.require_resource_boundary(None)
 
 
 # =============================================================================
@@ -52,18 +57,17 @@ router = APIRouter(prefix="/api/reports/roi", tags=["ROI Reports"])
     "/summary",
     response_model=ROISummaryResponse,
     summary="Get ROI summary",
-    description="Get overall ROI summary for a date range. Platform admin only.",
-    dependencies=[RequirePlatformAdmin],
+    description="Get overall ROI summary for a date range.",
 )
 async def get_roi_summary(
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
     start_date: date = Query(..., description="Start date (inclusive)"),
     end_date: date = Query(..., description="End date (inclusive)"),
     scope: str | None = Query(
         None,
         description="Filter scope: omit for all, 'global' for global only, "
-        "or org UUID for specific org."
+        "or org UUID for specific org.",
     ),
 ) -> ROISummaryResponse:
     """
@@ -85,6 +89,8 @@ async def get_roi_summary(
     Returns:
         ROI summary including total executions, time saved, and value
     """
+    _require_roi_report(authorization)
+
     # Parse scope parameter
     org_uuid: UUID | None = None
     global_only = False
@@ -108,7 +114,9 @@ async def get_roi_summary(
         # Build query
         query = select(
             func.sum(ExecutionMetricsDaily.execution_count).label("total_executions"),
-            func.sum(ExecutionMetricsDaily.success_count).label("successful_executions"),
+            func.sum(ExecutionMetricsDaily.success_count).label(
+                "successful_executions"
+            ),
             func.sum(ExecutionMetricsDaily.total_time_saved).label("total_time_saved"),
             func.sum(ExecutionMetricsDaily.total_value).label("total_value"),
         ).where(
@@ -149,11 +157,10 @@ async def get_roi_summary(
     "/by-workflow",
     response_model=ROIByWorkflowResponse,
     summary="Get ROI by workflow",
-    description="Get workflow breakdown of ROI for a date range. Platform admin only.",
-    dependencies=[RequirePlatformAdmin],
+    description="Get workflow breakdown of ROI for a date range.",
 )
 async def get_roi_by_workflow(
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
     start_date: date = Query(..., description="Start date (inclusive)"),
     end_date: date = Query(..., description="End date (inclusive)"),
@@ -161,7 +168,7 @@ async def get_roi_by_workflow(
     scope: str | None = Query(
         None,
         description="Filter scope: omit for all, 'global' for global only, "
-        "or org UUID for specific org."
+        "or org UUID for specific org.",
     ),
 ) -> ROIByWorkflowResponse:
     """
@@ -179,6 +186,8 @@ async def get_roi_by_workflow(
     Returns:
         Workflow ROI breakdown sorted by total value (descending)
     """
+    _require_roi_report(authorization)
+
     # Parse scope parameter
     org_uuid: UUID | None = None
     global_only = False
@@ -268,15 +277,16 @@ async def get_roi_by_workflow(
     "/by-organization",
     response_model=ROIByOrganizationResponse,
     summary="Get ROI by organization",
-    description="Get organization breakdown of ROI for a date range. Platform admin only.",
-    dependencies=[RequirePlatformAdmin],
+    description="Get organization breakdown of ROI for a date range.",
 )
 async def get_roi_by_organization(
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
     start_date: date = Query(..., description="Start date (inclusive)"),
     end_date: date = Query(..., description="End date (inclusive)"),
-    limit: int = Query(default=20, ge=1, le=100, description="Max organizations to return"),
+    limit: int = Query(
+        default=20, ge=1, le=100, description="Max organizations to return"
+    ),
 ) -> ROIByOrganizationResponse:
     """
     Get organization breakdown of ROI.
@@ -292,6 +302,8 @@ async def get_roi_by_organization(
     Returns:
         Organization ROI breakdown sorted by total value (descending)
     """
+    _require_roi_report(authorization)
+
     try:
         # Get ROI settings for units
         settings_service = ROISettingsService(db)
@@ -302,12 +314,18 @@ async def get_roi_by_organization(
             select(
                 ExecutionMetricsDaily.organization_id,
                 Organization.name.label("organization_name"),
-                func.sum(ExecutionMetricsDaily.execution_count).label("execution_count"),
+                func.sum(ExecutionMetricsDaily.execution_count).label(
+                    "execution_count"
+                ),
                 func.sum(ExecutionMetricsDaily.success_count).label("success_count"),
-                func.sum(ExecutionMetricsDaily.total_time_saved).label("total_time_saved"),
+                func.sum(ExecutionMetricsDaily.total_time_saved).label(
+                    "total_time_saved"
+                ),
                 func.sum(ExecutionMetricsDaily.total_value).label("total_value"),
             )
-            .join(Organization, ExecutionMetricsDaily.organization_id == Organization.id)
+            .join(
+                Organization, ExecutionMetricsDaily.organization_id == Organization.id
+            )
             .where(
                 ExecutionMetricsDaily.date >= start_date,
                 ExecutionMetricsDaily.date <= end_date,
@@ -354,19 +372,20 @@ async def get_roi_by_organization(
     "/trends",
     response_model=ROITrendsResponse,
     summary="Get ROI trends",
-    description="Get ROI trends over time. Platform admin only.",
-    dependencies=[RequirePlatformAdmin],
+    description="Get ROI trends over time.",
 )
 async def get_roi_trends(
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
     start_date: date = Query(..., description="Start date (inclusive)"),
     end_date: date = Query(..., description="End date (inclusive)"),
-    granularity: Literal["day", "week", "month"] = Query(default="day", description="Time granularity"),
+    granularity: Literal["day", "week", "month"] = Query(
+        default="day", description="Time granularity"
+    ),
     scope: str | None = Query(
         None,
         description="Filter scope: omit for all, 'global' for global only, "
-        "or org UUID for specific org."
+        "or org UUID for specific org.",
     ),
 ) -> ROITrendsResponse:
     """
@@ -384,6 +403,8 @@ async def get_roi_trends(
     Returns:
         Time series ROI data with the specified granularity
     """
+    _require_roi_report(authorization)
+
     # Parse scope parameter
     org_uuid: UUID | None = None
     global_only = False
@@ -418,7 +439,9 @@ async def get_roi_trends(
         query = (
             select(
                 date_group.label("period"),
-                func.sum(ExecutionMetricsDaily.execution_count).label("execution_count"),
+                func.sum(ExecutionMetricsDaily.execution_count).label(
+                    "execution_count"
+                ),
                 func.sum(ExecutionMetricsDaily.success_count).label("success_count"),
                 func.sum(ExecutionMetricsDaily.total_time_saved).label("time_saved"),
                 func.sum(ExecutionMetricsDaily.total_value).label("value"),
@@ -443,7 +466,9 @@ async def get_roi_trends(
 
         entries = [
             ROITrendEntry(
-                period=row.period.isoformat() if hasattr(row.period, "isoformat") else str(row.period),
+                period=row.period.isoformat()
+                if hasattr(row.period, "isoformat")
+                else str(row.period),
                 execution_count=row.execution_count or 0,
                 success_count=row.success_count or 0,
                 time_saved=row.time_saved or 0,

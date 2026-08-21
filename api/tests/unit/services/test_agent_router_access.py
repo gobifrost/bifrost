@@ -12,9 +12,15 @@ from src.core.principal import UserPrincipal
 from src.models.enums import AgentAccessLevel
 from src.models.orm.agents import Agent, AgentRole, Conversation
 from src.models.orm.organizations import Organization
-from src.models.orm.users import Role, User, UserRole
+from src.models.orm.role_assignments import RoleAssignment, RoleAssignmentBoundary
+from src.models.orm.users import Role, User
 from src.services.agent_executor import AgentExecutor
+from shared.authorization_scopes import PLATFORM_SUPERUSER_SCOPE
 from src.services.agent_router import AgentRouter
+from src.services.authorization import (
+    AuthorizationBoundary,
+    AuthorizationContext,
+)
 from src.services.llm import LLMResponse
 
 
@@ -37,13 +43,15 @@ class SessionBoundAgentRouter(AgentRouter):
         user_id: UUID,
         org_id: UUID | None,
         is_superuser: bool = False,
+        authorization_context: AuthorizationContext | None = None,
     ):
         super().__init__(
             lambda: None,  # type: ignore[arg-type]
             user_id=user_id,
             org_id=org_id,
-            is_superuser=is_superuser,
+            authorization_context=authorization_context,
         )
+        del is_superuser
         self._session = session
 
     @asynccontextmanager
@@ -104,7 +112,21 @@ async def _make_role(db: AsyncSession, user: User | None = None) -> Role:
     db.add(role)
     await db.flush()
     if user is not None:
-        db.add(UserRole(user_id=user.id, role_id=role.id, assigned_by="test@example.com"))
+        assignment = RoleAssignment(
+            id=uuid4(),
+            user_id=user.id,
+            role_id=role.id,
+        )
+        db.add(assignment)
+        await db.flush()
+        db.add(
+            RoleAssignmentBoundary(
+                id=uuid4(),
+                role_assignment_id=assignment.id,
+                boundary_kind="organization",
+                organization_id=user.organization_id,
+            )
+        )
         await db.flush()
     return role
 
@@ -171,6 +193,21 @@ def _principal(user: User) -> UserPrincipal:
     )
 
 
+def _authorization(
+    user: User,
+    boundary: AuthorizationBoundary,
+    *capabilities: str,
+) -> AuthorizationContext:
+    principal = _principal(user)
+    return AuthorizationContext(
+        requester=principal,
+        effective_actor=principal,
+        selected_boundary=boundary,
+        effective_capabilities=frozenset(capabilities),
+        grant_sources=(),
+    )
+
+
 @pytest.mark.asyncio
 async def test_available_agents_are_limited_to_user_access(db_session: AsyncSession):
     org_a = await _make_org(db_session, "Org A")
@@ -192,6 +229,210 @@ async def test_available_agents_are_limited_to_user_access(db_session: AsyncSess
     names = {agent.name for agent in await router.get_available_agents()}
 
     assert names == {"Global Role Agent", "Org B Auth Agent", "Own Private Agent"}
+
+
+@pytest.mark.asyncio
+async def test_platform_selected_chat_router_lists_global_agents_only_for_platform_admin(
+    db_session: AsyncSession,
+):
+    provider = await _make_org(db_session, "Provider")
+    customer = await _make_org(db_session, "Customer")
+    user = await _make_user(
+        db_session,
+        org_id=provider.id,
+        email_prefix="platform-admin",
+        is_superuser=True,
+    )
+    global_agent = await _make_agent(db_session, "Global Ops", org_id=None)
+    await _make_agent(db_session, "Customer Ops", org_id=customer.id)
+
+    router = SessionBoundAgentRouter(
+        db_session,
+        user_id=user.id,
+        org_id=provider.id,
+        is_superuser=True,
+        authorization_context=_authorization(
+            user,
+            AuthorizationBoundary.platform(),
+            PLATFORM_SUPERUSER_SCOPE,
+        ),
+    )
+
+    assert await router.get_available_agents() == [global_agent]
+
+
+@pytest.mark.asyncio
+async def test_exact_customer_selected_chat_router_lists_customer_and_global_agents(
+    db_session: AsyncSession,
+):
+    provider = await _make_org(db_session, "Provider")
+    customer = await _make_org(db_session, "Customer")
+    other_customer = await _make_org(db_session, "Other Customer")
+    user = await _make_user(db_session, org_id=provider.id, email_prefix="operator")
+    await _make_agent(db_session, "Provider Ops", org_id=provider.id)
+    await _make_agent(db_session, "Other Customer Ops", org_id=other_customer.id)
+    await _make_agent(db_session, "Global Ops", org_id=None)
+    await _make_agent(db_session, "Customer Ops", org_id=customer.id)
+
+    router = SessionBoundAgentRouter(
+        db_session,
+        user_id=user.id,
+        org_id=provider.id,
+        authorization_context=_authorization(
+            user,
+            AuthorizationBoundary.organization(customer.id),
+        ),
+    )
+
+    names = {agent.name for agent in await router.get_available_agents()}
+    assert names == {"Customer Ops", "Global Ops"}
+
+
+@pytest.mark.asyncio
+async def test_exact_customer_selected_platform_superuser_bypasses_roles_only_in_boundary(
+    db_session: AsyncSession,
+):
+    provider = await _make_org(db_session, "Provider")
+    customer = await _make_org(db_session, "Customer")
+    other_customer = await _make_org(db_session, "Other Customer")
+    user = await _make_user(
+        db_session,
+        org_id=provider.id,
+        email_prefix="platform-admin",
+        is_superuser=True,
+    )
+    role = await _make_role(db_session)
+    await _make_agent(
+        db_session,
+        "Customer Role Agent",
+        org_id=customer.id,
+        access_level=AgentAccessLevel.ROLE_BASED,
+        role=role,
+    )
+    await _make_agent(
+        db_session,
+        "Other Customer Role Agent",
+        org_id=other_customer.id,
+        access_level=AgentAccessLevel.ROLE_BASED,
+        role=role,
+    )
+
+    router = SessionBoundAgentRouter(
+        db_session,
+        user_id=user.id,
+        org_id=provider.id,
+        is_superuser=True,
+        authorization_context=_authorization(
+            user,
+            AuthorizationBoundary.organization(customer.id),
+            PLATFORM_SUPERUSER_SCOPE,
+        ),
+    )
+
+    names = {agent.name for agent in await router.get_available_agents()}
+    assert names == {"Customer Role Agent"}
+
+
+@pytest.mark.asyncio
+async def test_exact_customer_platform_superuser_capability_bypasses_roles_when_legacy_bit_false(
+    db_session: AsyncSession,
+):
+    provider = await _make_org(db_session, "Provider")
+    customer = await _make_org(db_session, "Customer")
+    user = await _make_user(
+        db_session,
+        org_id=provider.id,
+        email_prefix="platform-admin-role",
+        is_superuser=False,
+    )
+    role = await _make_role(db_session)
+    await _make_agent(
+        db_session,
+        "Customer Role Agent",
+        org_id=customer.id,
+        access_level=AgentAccessLevel.ROLE_BASED,
+        role=role,
+    )
+
+    router = SessionBoundAgentRouter(
+        db_session,
+        user_id=user.id,
+        org_id=provider.id,
+        authorization_context=_authorization(
+            user,
+            AuthorizationBoundary.organization(customer.id),
+            PLATFORM_SUPERUSER_SCOPE,
+        ),
+    )
+
+    names = {agent.name for agent in await router.get_available_agents()}
+    assert names == {"Customer Role Agent"}
+
+
+@pytest.mark.asyncio
+async def test_stale_legacy_superuser_bit_without_capability_does_not_bypass_agent_roles(
+    db_session: AsyncSession,
+):
+    provider = await _make_org(db_session, "Provider")
+    customer = await _make_org(db_session, "Customer")
+    user = await _make_user(
+        db_session,
+        org_id=provider.id,
+        email_prefix="stale-admin-bit",
+        is_superuser=True,
+    )
+    role = await _make_role(db_session)
+    await _make_agent(
+        db_session,
+        "Customer Role Agent",
+        org_id=customer.id,
+        access_level=AgentAccessLevel.ROLE_BASED,
+        role=role,
+    )
+
+    router = SessionBoundAgentRouter(
+        db_session,
+        user_id=user.id,
+        org_id=provider.id,
+        is_superuser=True,
+        authorization_context=_authorization(
+            user,
+            AuthorizationBoundary.organization(customer.id),
+        ),
+    )
+
+    assert await router.get_available_agents() == []
+
+
+@pytest.mark.asyncio
+async def test_platform_selected_chat_mention_cannot_select_customer_agent(
+    db_session: AsyncSession,
+):
+    provider = await _make_org(db_session, "Provider")
+    customer = await _make_org(db_session, "Customer")
+    user = await _make_user(
+        db_session,
+        org_id=provider.id,
+        email_prefix="platform-admin",
+        is_superuser=True,
+    )
+    await _make_agent(db_session, "Customer Ops", org_id=customer.id)
+    global_agent = await _make_agent(db_session, "Global Ops", org_id=None)
+
+    router = SessionBoundAgentRouter(
+        db_session,
+        user_id=user.id,
+        org_id=provider.id,
+        is_superuser=True,
+        authorization_context=_authorization(
+            user,
+            AuthorizationBoundary.platform(),
+            PLATFORM_SUPERUSER_SCOPE,
+        ),
+    )
+
+    assert await router.parse_mention("@[Customer Ops] help") is None
+    assert await router.parse_mention("@[Global Ops] help") == global_agent
 
 
 @pytest.mark.asyncio

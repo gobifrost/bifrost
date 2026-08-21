@@ -38,10 +38,18 @@ def _rest_error(action: str, status_code: int, body: Any) -> ToolResult:
     )
 
 
-async def _resolve_ref(context: Any, kind: str, value: str) -> str:
+async def _resolve_ref(
+    context: Any,
+    kind: str,
+    value: str,
+    *,
+    authorization_boundary: str | None = None,
+) -> str:
     from bifrost.refs import RefResolver
 
-    async with rest_client(context) as http:
+    async with rest_client(
+        context, authorization_boundary=authorization_boundary
+    ) as http:
         return await RefResolver(http).resolve(kind, value)  # type: ignore[arg-type]
 
 
@@ -51,6 +59,22 @@ async def _resolve_scope(context: Any, scope: str | None) -> dict[str, Any]:
     if scope.lower() == "global":
         return {"organization_id": None}
     return {"organization_id": await _resolve_ref(context, "org", scope)}
+
+
+async def _resolve_boundary(
+    context: Any,
+    scope: str | None,
+) -> tuple[dict[str, Any], str | None]:
+    target = await _resolve_scope(context, scope)
+    if scope is None:
+        return target, None
+    organization_id = target["organization_id"]
+    boundary = (
+        "platform"
+        if organization_id is None
+        else f"organization:{organization_id}"
+    )
+    return target, boundary
 
 
 def _webhook_body(
@@ -110,7 +134,7 @@ async def bifrost_list_event_sources(
     if source_type is not None:
         params["source_type"] = source_type
     try:
-        target = await _resolve_scope(context, scope)
+        target, boundary = await _resolve_boundary(context, scope)
     except Exception as exc:
         return error_result(f"Invalid Event Source scope: {exc}", _ref_error_payload(exc))
     if "organization_id" in target:
@@ -124,6 +148,7 @@ async def bifrost_list_event_sources(
         "GET",
         "/api/events/sources",
         params=params,
+        authorization_boundary=boundary,
     )
     if status_code != 200 or not isinstance(body, dict):
         return _rest_error("List Event Sources", status_code, body)
@@ -134,13 +159,23 @@ async def bifrost_list_event_sources(
     )
 
 
-async def bifrost_get_event_source(context: Any, source_ref: str) -> ToolResult:
+async def bifrost_get_event_source(
+    context: Any,
+    source_ref: str,
+    scope: str | None = None,
+) -> ToolResult:
     """Get one Event Source by UUID or unambiguous name."""
 
     if not source_ref:
         return error_result("source_ref is required")
     try:
-        source_id = await _resolve_ref(context, "event_source", source_ref)
+        _, boundary = await _resolve_boundary(context, scope)
+        source_id = await _resolve_ref(
+            context,
+            "event_source",
+            source_ref,
+            authorization_boundary=boundary,
+        )
     except Exception as exc:
         return error_result(
             f"Could not resolve Event Source {source_ref!r}",
@@ -150,6 +185,7 @@ async def bifrost_get_event_source(context: Any, source_ref: str) -> ToolResult:
         context,
         "GET",
         f"/api/events/sources/{source_id}",
+        authorization_boundary=boundary,
     )
     if status_code != 200:
         return _rest_error("Get Event Source", status_code, body)
@@ -180,15 +216,21 @@ async def bifrost_create_event_source(
     """Create an Event Source; use a separate subscription operation to wire targets."""
 
     try:
+        target, boundary = await _resolve_boundary(context, scope)
         resolved_integration = (
-            await _resolve_ref(context, "integration", integration_id)
+            await _resolve_ref(
+                context,
+                "integration",
+                integration_id,
+                authorization_boundary=boundary,
+            )
             if integration_id
             else None
         )
         body: dict[str, Any] = {
             "name": name,
             "source_type": source_type,
-            **await _resolve_scope(context, scope),
+            **target,
         }
         if event_type is not None:
             body["event_type"] = event_type
@@ -220,6 +262,7 @@ async def bifrost_create_event_source(
         "POST",
         "/api/events/sources",
         json_body=body,
+        authorization_boundary=boundary,
     )
     if status_code != 201:
         return _rest_error("Create Event Source", status_code, response)
@@ -262,15 +305,26 @@ async def bifrost_update_event_source(
             "rate_limit_per_minute and clear_rate_limit are mutually exclusive"
         )
     try:
-        source_id = await _resolve_ref(context, "event_source", source_ref)
+        target, boundary = await _resolve_boundary(context, scope)
+        source_id = await _resolve_ref(
+            context,
+            "event_source",
+            source_ref,
+            authorization_boundary=boundary,
+        )
         body: dict[str, Any] = {
             key: value
             for key, value in {"name": name, "is_active": is_active}.items()
             if value is not None
         }
-        body.update(await _resolve_scope(context, scope))
+        body.update(target)
         resolved_integration = (
-            await _resolve_ref(context, "integration", integration_id)
+            await _resolve_ref(
+                context,
+                "integration",
+                integration_id,
+                authorization_boundary=boundary,
+            )
             if integration_id
             else None
         )
@@ -304,6 +358,7 @@ async def bifrost_update_event_source(
         "PATCH",
         f"/api/events/sources/{source_id}",
         json_body=body,
+        authorization_boundary=boundary,
     )
     if status_code != 200:
         return _rest_error("Update Event Source", status_code, response)
@@ -312,15 +367,23 @@ async def bifrost_update_event_source(
         f"Updated Event Source: {payload.get('name', source_id)}",
         payload,
     )
-
-
-async def bifrost_delete_event_source(context: Any, source_ref: str) -> ToolResult:
+async def bifrost_delete_event_source(
+    context: Any,
+    source_ref: str,
+    scope: str | None = None,
+) -> ToolResult:
     """Permanently delete one Event Source through REST."""
 
     if not source_ref:
         return error_result("source_ref is required")
     try:
-        source_id = await _resolve_ref(context, "event_source", source_ref)
+        _, boundary = await _resolve_boundary(context, scope)
+        source_id = await _resolve_ref(
+            context,
+            "event_source",
+            source_ref,
+            authorization_boundary=boundary,
+        )
     except Exception as exc:
         return error_result(
             f"Could not resolve Event Source {source_ref!r}",
@@ -330,6 +393,7 @@ async def bifrost_delete_event_source(context: Any, source_ref: str) -> ToolResu
         context,
         "DELETE",
         f"/api/events/sources/{source_id}",
+        authorization_boundary=boundary,
     )
     if status_code != 204:
         return _rest_error("Delete Event Source", status_code, body)
@@ -341,13 +405,20 @@ async def bifrost_list_event_subscriptions(
     source_ref: str,
     limit: int = 100,
     offset: int = 0,
+    scope: str | None = None,
 ) -> ToolResult:
     """List subscriptions under one Event Source."""
 
     if not source_ref:
         return error_result("source_ref is required")
     try:
-        source_id = await _resolve_ref(context, "event_source", source_ref)
+        _, boundary = await _resolve_boundary(context, scope)
+        source_id = await _resolve_ref(
+            context,
+            "event_source",
+            source_ref,
+            authorization_boundary=boundary,
+        )
     except Exception as exc:
         return error_result(
             f"Could not resolve Event Source {source_ref!r}",
@@ -358,6 +429,7 @@ async def bifrost_list_event_subscriptions(
         "GET",
         f"/api/events/sources/{source_id}/subscriptions",
         params={"limit": limit, "offset": offset},
+        authorization_boundary=boundary,
     )
     if status_code != 200 or not isinstance(body, dict):
         return _rest_error("List Event Subscriptions", status_code, body)
@@ -372,13 +444,20 @@ async def bifrost_get_event_subscription(
     context: Any,
     source_ref: str,
     subscription_id: str,
+    scope: str | None = None,
 ) -> ToolResult:
     """Get one Event Subscription under its parent source."""
 
     if not source_ref or not subscription_id:
         return error_result("source_ref and subscription_id are required")
     try:
-        source_id = await _resolve_ref(context, "event_source", source_ref)
+        _, boundary = await _resolve_boundary(context, scope)
+        source_id = await _resolve_ref(
+            context,
+            "event_source",
+            source_ref,
+            authorization_boundary=boundary,
+        )
     except Exception as exc:
         return error_result(
             f"Could not resolve Event Source {source_ref!r}",
@@ -388,6 +467,7 @@ async def bifrost_get_event_subscription(
         context,
         "GET",
         f"/api/events/sources/{source_id}/subscriptions/{subscription_id}",
+        authorization_boundary=boundary,
     )
     if status_code != 200:
         return _rest_error("Get Event Subscription", status_code, body)
@@ -403,6 +483,7 @@ async def bifrost_create_event_subscription(
     event_type: str | None = None,
     filter_expression: str | None = None,
     input_mapping: dict[str, Any] | None = None,
+    scope: str | None = None,
 ) -> ToolResult:
     """Subscribe exactly one Workflow or Agent to an Event Source."""
 
@@ -411,14 +492,32 @@ async def bifrost_create_event_subscription(
     if bool(workflow_id) == bool(agent_id):
         return error_result("Exactly one of workflow_id or agent_id is required")
     try:
-        source_id = await _resolve_ref(context, "event_source", source_ref)
+        _, boundary = await _resolve_boundary(context, scope)
+        source_id = await _resolve_ref(
+            context,
+            "event_source",
+            source_ref,
+            authorization_boundary=boundary,
+        )
         resolved_workflow = (
-            await _resolve_ref(context, "workflow", workflow_id)
+            await _resolve_ref(
+                context,
+                "workflow",
+                workflow_id,
+                authorization_boundary=boundary,
+            )
             if workflow_id
             else None
         )
         resolved_agent = (
-            await _resolve_ref(context, "agent", agent_id) if agent_id else None
+            await _resolve_ref(
+                context,
+                "agent",
+                agent_id,
+                authorization_boundary=boundary,
+            )
+            if agent_id
+            else None
         )
     except Exception as exc:
         return error_result(
@@ -439,6 +538,7 @@ async def bifrost_create_event_subscription(
         "POST",
         f"/api/events/sources/{source_id}/subscriptions",
         json_body=body,
+        authorization_boundary=boundary,
     )
     if status_code != 201:
         return _rest_error("Create Event Subscription", status_code, response)
@@ -457,6 +557,7 @@ async def bifrost_update_event_subscription(
     clear_event_type: bool = False,
     clear_filter_expression: bool = False,
     clear_input_mapping: bool = False,
+    scope: str | None = None,
 ) -> ToolResult:
     """Update one Event Subscription's mutable delivery settings."""
 
@@ -481,7 +582,13 @@ async def bifrost_update_event_subscription(
             + ", ".join(conflicts)
         )
     try:
-        source_id = await _resolve_ref(context, "event_source", source_ref)
+        _, boundary = await _resolve_boundary(context, scope)
+        source_id = await _resolve_ref(
+            context,
+            "event_source",
+            source_ref,
+            authorization_boundary=boundary,
+        )
     except Exception as exc:
         return error_result(
             f"Could not resolve Event Source {source_ref!r}",
@@ -507,6 +614,7 @@ async def bifrost_update_event_subscription(
         "PATCH",
         f"/api/events/sources/{source_id}/subscriptions/{subscription_id}",
         json_body=body,
+        authorization_boundary=boundary,
     )
     if status_code != 200:
         return _rest_error("Update Event Subscription", status_code, response)
@@ -518,13 +626,20 @@ async def bifrost_delete_event_subscription(
     context: Any,
     source_ref: str,
     subscription_id: str,
+    scope: str | None = None,
 ) -> ToolResult:
     """Permanently delete one Event Subscription through REST."""
 
     if not source_ref or not subscription_id:
         return error_result("source_ref and subscription_id are required")
     try:
-        source_id = await _resolve_ref(context, "event_source", source_ref)
+        _, boundary = await _resolve_boundary(context, scope)
+        source_id = await _resolve_ref(
+            context,
+            "event_source",
+            source_ref,
+            authorization_boundary=boundary,
+        )
     except Exception as exc:
         return error_result(
             f"Could not resolve Event Source {source_ref!r}",
@@ -534,6 +649,7 @@ async def bifrost_delete_event_subscription(
         context,
         "DELETE",
         f"/api/events/sources/{source_id}/subscriptions/{subscription_id}",
+        authorization_boundary=boundary,
     )
     if status_code != 204:
         return _rest_error("Delete Event Subscription", status_code, body)
@@ -543,10 +659,22 @@ async def bifrost_delete_event_subscription(
     )
 
 
-async def bifrost_list_event_webhook_adapters(context: Any) -> ToolResult:
+async def bifrost_list_event_webhook_adapters(
+    context: Any,
+    scope: str | None = None,
+) -> ToolResult:
     """List webhook adapters available for Event Source configuration."""
 
-    status_code, body = await call_rest(context, "GET", "/api/events/adapters")
+    try:
+        _, boundary = await _resolve_boundary(context, scope)
+    except Exception as exc:
+        return error_result(f"Invalid Event scope: {exc}", _ref_error_payload(exc))
+    status_code, body = await call_rest(
+        context,
+        "GET",
+        "/api/events/adapters",
+        authorization_boundary=boundary,
+    )
     if status_code != 200 or not isinstance(body, dict):
         return _rest_error("List Event webhook adapters", status_code, body)
     adapters = body.get("adapters", [])

@@ -8,7 +8,14 @@ from shared.policies.probe import (
     is_subscribe_authorized,
     make_seed_admin_bypass,
 )
+from src.core.principal import UserPrincipal
 from src.models.contracts.policies import Policy, TablePolicies
+from src.services.authorization import (
+    AuthorizationBoundary,
+    AuthorizationContext,
+    AuthorizationGrantSource,
+    policy_principal_for_authorization,
+)
 from tests.unit.policies.test_evaluate import FakeUser
 
 
@@ -176,6 +183,74 @@ def test_subscribe_all_user_dep_resolving_false_denies():
     assert is_subscribe_authorized(
         tp, user=FakeUser(is_platform_admin=False, role_names=["customer"])
     ) is False
+
+
+def test_table_policy_has_role_uses_boundary_local_policy_principal() -> None:
+    org_id = uuid4()
+    selected_role_id = uuid4()
+    user = UserPrincipal(
+        user_id=uuid4(),
+        email="user@example.com",
+        organization_id=org_id,
+        role_names=["Other Org Role"],
+    )
+    authorization = AuthorizationContext(
+        requester=user,
+        effective_actor=user,
+        selected_boundary=AuthorizationBoundary.organization(org_id),
+        effective_capabilities=frozenset({"tabledocuments.read"}),
+        grant_sources=(
+            AuthorizationGrantSource(
+                assignment_id=uuid4(),
+                role_id=selected_role_id,
+                role_name="Selected Org Role",
+                capabilities=frozenset({"tabledocuments.read"}),
+                covering_boundary_kind="organization",
+                covering_boundary_id=org_id,
+            ),
+        ),
+    )
+    policies = TablePolicies(policies=[
+        Policy.model_validate({
+            "name": "selected_role",
+            "actions": ["read"],
+            "when": {"call": "has_role", "args": ["Selected Org Role"]},
+        })
+    ])
+
+    policy_user = policy_principal_for_authorization(user, authorization)
+
+    assert evaluate_action("read", policies, row={}, user=policy_user) is True
+    assert evaluate_action("read", policies, row={}, user=user) is False
+
+
+def test_table_policy_has_role_rejects_role_from_other_boundary() -> None:
+    org_id = uuid4()
+    user = UserPrincipal(
+        user_id=uuid4(),
+        email="user@example.com",
+        organization_id=org_id,
+        role_names=["Other Org Role"],
+    )
+    authorization = AuthorizationContext(
+        requester=user,
+        effective_actor=user,
+        selected_boundary=AuthorizationBoundary.organization(org_id),
+        effective_capabilities=frozenset({"tabledocuments.read"}),
+        grant_sources=(),
+    )
+    policies = TablePolicies(policies=[
+        Policy.model_validate({
+            "name": "other_role",
+            "actions": ["read"],
+            "when": {"call": "has_role", "args": ["Other Org Role"]},
+        })
+    ])
+
+    policy_user = policy_principal_for_authorization(user, authorization)
+
+    assert policy_user.role_names == []
+    assert evaluate_action("read", policies, row={}, user=policy_user) is False
 
 
 def test_make_seed_admin_bypass_validates():

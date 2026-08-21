@@ -129,6 +129,21 @@ def _policy_params(location: str, scope: str | None) -> dict[str, str]:
     return params
 
 
+def _authorization_headers(location: str) -> dict[str, str] | None:
+    if location == "workspace":
+        return {"X-Bifrost-Boundary": "platform"}
+    return None
+
+
+def _policy_authorization_headers(scope: str | None) -> dict[str, str]:
+    boundary = (
+        "platform"
+        if scope is None or scope == "global"
+        else f"organization:{scope}"
+    )
+    return {"X-Bifrost-Boundary": boundary}
+
+
 def _load_policy_document(path: str) -> list[dict] | dict:
     loaded = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
     if isinstance(loaded, dict) and "policies" in loaded:
@@ -209,6 +224,7 @@ async def stat_cmd(
     response = await client.post(
         f"/api/files/stat{query}",
         json={"path": path, "location": location, "mode": "cloud"},
+        headers=_authorization_headers(location),
     )
     response.raise_for_status()
     result = response.json()
@@ -304,6 +320,7 @@ async def write_cmd(
             "expected_version": expected_version,
             "create_only": create_only,
         },
+        headers=_authorization_headers(location),
     )
     response.raise_for_status()
 
@@ -347,6 +364,7 @@ async def patch_cmd(
             "expected_version": expected_version,
             "force_deactivation": force_deactivation,
         },
+        headers={"X-Bifrost-Boundary": "platform"},
     )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
@@ -419,6 +437,7 @@ async def delete_cmd(
             "mode": "cloud",
             "expected_version": expected_version,
         },
+        headers=_authorization_headers(location),
     )
     response.raise_for_status()
 
@@ -504,6 +523,7 @@ async def list_policies_cmd(
     response = await client.get(
         "/api/files/policies",
         params=_policy_params(location, scope),
+        headers=_policy_authorization_headers(scope),
     )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
@@ -529,6 +549,7 @@ async def get_policy_cmd(
     response = await client.get(
         f"/api/files/policies/{_policy_path(path)}",
         params=_policy_params(location, scope),
+        headers=_policy_authorization_headers(scope),
     )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
@@ -563,6 +584,7 @@ async def set_policy_cmd(
         f"/api/files/policies/{_policy_path(path)}",
         params=_policy_params(location, scope),
         json={"policies": _load_policy_document(policy_file)},
+        headers=_policy_authorization_headers(scope),
     )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
@@ -588,6 +610,7 @@ async def delete_policy_cmd(
     response = await client.delete(
         f"/api/files/policies/{_policy_path(path)}",
         params=_policy_params(location, scope),
+        headers=_policy_authorization_headers(scope),
     )
     response.raise_for_status()
     output_result({"deleted": path, "location": location, "scope": scope}, ctx=ctx)

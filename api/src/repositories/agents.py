@@ -8,11 +8,13 @@ from collections.abc import Iterable
 from uuid import UUID
 
 from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, selectinload
 
 from src.core.org_filter import OrgFilterType
 from src.models.orm.agents import Agent, AgentRole
 from src.models.orm.external_mcp import AgentMCPConnection, MCPConnection
+from src.models.orm.organizations import Organization
 from src.repositories.org_scoped import OrgScopedRepository
 
 
@@ -31,6 +33,31 @@ class AgentRepository(OrgScopedRepository[Agent]):
     model = Agent
     role_table = AgentRole
     role_entity_id_column = "agent_id"
+
+    def __init__(
+        self,
+        session: AsyncSession,
+        org_id: UUID | str | None,
+        user_id: UUID | str | None = None,
+        *,
+        bypass_resource_roles: bool = False,
+        is_external: bool = False,
+    ):
+        """Initialize Agent access with explicit repository admission semantics.
+
+        ``bypass_resource_roles`` means the caller has already been authorized
+        to bypass Agent access-level/role rows for this repository scope. It is
+        not a statement that the caller is a human superuser.
+        """
+
+        self.bypass_resource_roles = bypass_resource_roles
+        super().__init__(
+            session,
+            org_id,
+            user_id=user_id,
+            bypass_resource_admission=bypass_resource_roles,
+            is_external=is_external,
+        )
 
     async def list_agents(
         self,
@@ -75,8 +102,9 @@ class AgentRepository(OrgScopedRepository[Agent]):
         result = await self.session.execute(query)
         entities = list(result.scalars().unique().all())
 
-        # Filter by role access for non-superusers
-        if not self.is_superuser:
+        # Filter by access-level and role rows unless the caller supplied an
+        # already-authorized repository admission bypass.
+        if not self.bypass_resource_roles:
             accessible = []
             for entity in entities:
                 if await self._can_access_entity(entity):
@@ -91,9 +119,10 @@ class AgentRepository(OrgScopedRepository[Agent]):
         active_only: bool = False,
     ) -> list[Agent]:
         """
-        List all agents in scope without role-based filtering.
+        List all agents in scope without access-level/role-row filtering.
 
-        Used by platform admins who bypass role checks.
+        Used only after the caller has explicitly authorized a cross-scope
+        collection view and supplied ``bypass_resource_roles`` semantics.
         Supports all filter types:
         - ALL: No org filter, show everything
         - GLOBAL_ONLY: Only agents with org_id IS NULL
@@ -144,6 +173,49 @@ class AgentRepository(OrgScopedRepository[Agent]):
         result = await self.session.execute(query)
         return list(result.scalars().unique().all())
 
+    async def list_managed_organizations(
+        self,
+        *,
+        active_only: bool = True,
+    ) -> list[Agent]:
+        """List Agents across customer organizations for an authorized MSP view."""
+
+        query = (
+            select(self.model)
+            .join(Organization, Organization.id == self.model.organization_id)
+            .options(
+                defer(self.model.logo_data),
+                defer(self.model.logo_thumbnail_data),
+                selectinload(self.model.tools),
+                selectinload(self.model.delegated_agents)
+                .defer(Agent.logo_data)
+                .defer(Agent.logo_thumbnail_data),
+                selectinload(self.model.roles),
+            )
+            .where(Organization.is_provider.is_(False))
+            .order_by(self.model.name)
+        )
+        query = self._apply_solution_visibility(query)
+        if active_only:
+            query = query.where(self.model.is_active.is_(True))
+        result = await self.session.execute(query)
+        agents = list(result.scalars().unique().all())
+        if self.bypass_resource_roles:
+            return agents
+
+        accessible: list[Agent] = []
+        for agent in agents:
+            scoped = AgentRepository(
+                self.session,
+                org_id=agent.organization_id,
+                user_id=self.user_id,
+                bypass_resource_roles=False,
+                is_external=self.is_external,
+            )
+            if await scoped._can_access_entity(agent):
+                accessible.append(agent)
+        return accessible
+
     async def get_agent(self, agent_id: UUID) -> Agent | None:
         """
         Get agent by ID with relationships loaded.
@@ -173,12 +245,13 @@ class AgentRepository(OrgScopedRepository[Agent]):
 
     async def get_agent_with_access_check(self, agent_id: UUID) -> Agent | None:
         """
-        Get agent by ID with access check, honoring the platform-admin bypass.
+        Get agent by ID with access check, honoring explicit bypass admission.
 
         Matches the ``OrgScopedRepository.get(id=...)`` contract:
-        - Superusers get the entity regardless of its organization scope.
-        - Regular users must find the entity in their own org or global scope,
-          AND pass the role-based access check.
+        - Bypassed callers get the entity by globally unique ID after upstream
+          capability/resource authorization.
+        - Ordinary callers must find the entity in their selected org or global
+          scope, AND pass access-level/role-row checks.
 
         Args:
             agent_id: Agent UUID
@@ -199,8 +272,9 @@ class AgentRepository(OrgScopedRepository[Agent]):
         )
         query = self._apply_solution_visibility(query)
 
-        # Superuser: no scoping. IDs are globally unique; trust the ID lookup.
-        if self.is_superuser:
+        # Explicit bypass: no repository scoping. IDs are globally unique; the
+        # caller has already authorized capability and resource admission.
+        if self.bypass_resource_roles:
             result = await self.session.execute(query)
             return result.scalar_one_or_none()
 

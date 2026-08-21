@@ -13,10 +13,9 @@ from datetime import date
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import func, select
 
-from src.core.auth import Context, CurrentActiveUser, RequirePlatformAdmin
 from src.core.db_deps import DbSession
 from src.models import (
     UsageReportResponse,
@@ -38,22 +37,59 @@ from src.models.orm import (
 )
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.agents import Agent
+from src.services.authorization import (
+    AuthorizationBoundaryKind,
+    CurrentAuthorizationContext,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/reports", tags=["Usage Reports"])
 
 
+def _require_usage_report(
+    authorization: CurrentAuthorizationContext,
+) -> None:
+    authorization.require("metrics.read")
+
+
+def _usage_report_filter_org_id(
+    authorization: CurrentAuthorizationContext,
+    requested_org_id: str | None,
+) -> str | None:
+    """Return the only organization filter admitted by the selected boundary."""
+
+    boundary = authorization.selected_boundary
+    if boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Select Global or one exact organization to view usage",
+        )
+    if boundary.kind is AuthorizationBoundaryKind.ORGANIZATION:
+        selected = str(boundary.organization_id)
+        if requested_org_id is not None and requested_org_id != selected:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "The selected authorization boundary does not match this "
+                    f"usage report; select organization:{requested_org_id}"
+                ),
+            )
+        return selected
+    return requested_org_id
+
+
 @router.get(
     "/usage",
     response_model=UsageReportResponse,
     summary="Get usage report",
-    description="Get AI usage report for a date range. Platform admin only.",
-    dependencies=[RequirePlatformAdmin],
+    description=(
+        "Get AI usage report for a date range in the selected Platform or "
+        "Organization boundary."
+    ),
 )
 async def get_usage_report(
-    ctx: Context,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
     start_date: date = Query(..., description="Start date (inclusive)"),
     end_date: date = Query(..., description="End date (inclusive)"),
@@ -72,14 +108,13 @@ async def get_usage_report(
     - by_conversation: Usage breakdown by conversation (when source includes chat)
     - by_organization: Usage breakdown by organization
     """
+    _require_usage_report(authorization)
+    filter_org_id = _usage_report_filter_org_id(authorization, org_id)
     # Build base filter conditions
     base_conditions = [
         func.date(AIUsage.timestamp) >= start_date,
         func.date(AIUsage.timestamp) <= end_date,
     ]
-
-    # Organization filter - from query param or context header
-    filter_org_id = org_id or (str(ctx.org_id) if ctx.org_id else None)
     if filter_org_id:
         base_conditions.append(AIUsage.organization_id == filter_org_id)
 
@@ -115,8 +150,12 @@ async def get_usage_report(
             exec_conditions.append(Execution.organization_id == filter_org_id)
 
         exec_metrics_query = select(
-            func.coalesce(func.sum(Execution.cpu_total_seconds), 0.0).label("total_cpu"),
-            func.coalesce(func.max(Execution.peak_memory_bytes), 0).label("peak_memory"),
+            func.coalesce(func.sum(Execution.cpu_total_seconds), 0.0).label(
+                "total_cpu"
+            ),
+            func.coalesce(func.max(Execution.peak_memory_bytes), 0).label(
+                "peak_memory"
+            ),
         ).where(*exec_conditions)
 
         exec_result = await db.execute(exec_metrics_query)
@@ -165,10 +204,16 @@ async def get_usage_report(
                 Execution.workflow_name,
                 func.count(func.distinct(Execution.id)).label("execution_count"),
                 func.coalesce(func.sum(AIUsage.input_tokens), 0).label("input_tokens"),
-                func.coalesce(func.sum(AIUsage.output_tokens), 0).label("output_tokens"),
+                func.coalesce(func.sum(AIUsage.output_tokens), 0).label(
+                    "output_tokens"
+                ),
                 func.coalesce(func.sum(AIUsage.cost), Decimal("0")).label("ai_cost"),
-                func.coalesce(func.sum(Execution.cpu_total_seconds), 0.0).label("cpu_seconds"),
-                func.coalesce(func.max(Execution.peak_memory_bytes), 0).label("memory_bytes"),
+                func.coalesce(func.sum(Execution.cpu_total_seconds), 0.0).label(
+                    "cpu_seconds"
+                ),
+                func.coalesce(func.max(Execution.peak_memory_bytes), 0).label(
+                    "memory_bytes"
+                ),
             )
             .join(Execution, AIUsage.execution_id == Execution.id)
             .where(
@@ -179,11 +224,15 @@ async def get_usage_report(
         )
 
         if filter_org_id:
-            workflow_query = workflow_query.where(AIUsage.organization_id == filter_org_id)
+            workflow_query = workflow_query.where(
+                AIUsage.organization_id == filter_org_id
+            )
 
-        workflow_query = workflow_query.group_by(Execution.workflow_name).order_by(
-            func.sum(AIUsage.cost).desc()
-        ).limit(50)
+        workflow_query = (
+            workflow_query.group_by(Execution.workflow_name)
+            .order_by(func.sum(AIUsage.cost).desc())
+            .limit(50)
+        )
 
         workflow_result = await db.execute(workflow_query)
         by_workflow = [
@@ -208,7 +257,9 @@ async def get_usage_report(
                 Conversation.title.label("conversation_title"),
                 func.count(func.distinct(AIUsage.message_id)).label("message_count"),
                 func.coalesce(func.sum(AIUsage.input_tokens), 0).label("input_tokens"),
-                func.coalesce(func.sum(AIUsage.output_tokens), 0).label("output_tokens"),
+                func.coalesce(func.sum(AIUsage.output_tokens), 0).label(
+                    "output_tokens"
+                ),
                 func.coalesce(func.sum(AIUsage.cost), Decimal("0")).label("ai_cost"),
             )
             .join(Conversation, AIUsage.conversation_id == Conversation.id)
@@ -222,9 +273,11 @@ async def get_usage_report(
         if filter_org_id:
             conv_query = conv_query.where(AIUsage.organization_id == filter_org_id)
 
-        conv_query = conv_query.group_by(Conversation.id, Conversation.title).order_by(
-            func.sum(AIUsage.cost).desc()
-        ).limit(50)
+        conv_query = (
+            conv_query.group_by(Conversation.id, Conversation.title)
+            .order_by(func.sum(AIUsage.cost).desc())
+            .limit(50)
+        )
 
         conv_result = await db.execute(conv_query)
         by_conversation = [
@@ -247,7 +300,9 @@ async def get_usage_report(
                 Agent.name.label("agent_name"),
                 func.count(func.distinct(AgentRun.id)).label("run_count"),
                 func.coalesce(func.sum(AIUsage.input_tokens), 0).label("input_tokens"),
-                func.coalesce(func.sum(AIUsage.output_tokens), 0).label("output_tokens"),
+                func.coalesce(func.sum(AIUsage.output_tokens), 0).label(
+                    "output_tokens"
+                ),
                 func.coalesce(func.sum(AIUsage.cost), Decimal("0")).label("ai_cost"),
             )
             .join(AgentRun, AIUsage.agent_run_id == AgentRun.id)
@@ -262,9 +317,11 @@ async def get_usage_report(
         if filter_org_id:
             agent_query = agent_query.where(AIUsage.organization_id == filter_org_id)
 
-        agent_query = agent_query.group_by(Agent.name).order_by(
-            func.sum(AIUsage.cost).desc()
-        ).limit(50)
+        agent_query = (
+            agent_query.group_by(Agent.name)
+            .order_by(func.sum(AIUsage.cost).desc())
+            .limit(50)
+        )
 
         agent_result = await db.execute(agent_query)
         by_agent = [
@@ -283,12 +340,12 @@ async def get_usage_report(
         select(
             Organization.id.label("org_id"),
             Organization.name.label("org_name"),
-            func.count(
-                func.distinct(AIUsage.execution_id)
-            ).filter(AIUsage.execution_id.isnot(None)).label("execution_count"),
-            func.count(
-                func.distinct(AIUsage.conversation_id)
-            ).filter(AIUsage.conversation_id.isnot(None)).label("conversation_count"),
+            func.count(func.distinct(AIUsage.execution_id))
+            .filter(AIUsage.execution_id.isnot(None))
+            .label("execution_count"),
+            func.count(func.distinct(AIUsage.conversation_id))
+            .filter(AIUsage.conversation_id.isnot(None))
+            .label("conversation_count"),
             func.coalesce(func.sum(AIUsage.input_tokens), 0).label("input_tokens"),
             func.coalesce(func.sum(AIUsage.output_tokens), 0).label("output_tokens"),
             func.coalesce(func.sum(AIUsage.cost), Decimal("0")).label("ai_cost"),
@@ -308,10 +365,14 @@ async def get_usage_report(
         org_query = org_query.where(AIUsage.conversation_id.isnot(None))
     elif source == "agents":
         org_query = org_query.where(AIUsage.agent_run_id.isnot(None))
+    if filter_org_id:
+        org_query = org_query.where(AIUsage.organization_id == filter_org_id)
 
-    org_query = org_query.group_by(Organization.id, Organization.name).order_by(
-        func.sum(AIUsage.cost).desc()
-    ).limit(50)
+    org_query = (
+        org_query.group_by(Organization.id, Organization.name)
+        .order_by(func.sum(AIUsage.cost).desc())
+        .limit(50)
+    )
 
     org_result = await db.execute(org_query)
     by_organization = [
@@ -365,7 +426,9 @@ async def get_usage_report(
         storage_result = await db.execute(storage_query)
         knowledge_storage = [
             KnowledgeStorageUsage(
-                organization_id=str(row.organization_id) if row.organization_id else None,
+                organization_id=str(row.organization_id)
+                if row.organization_id
+                else None,
                 organization_name=row.org_name,
                 namespace=row.namespace,
                 document_count=row.document_count,

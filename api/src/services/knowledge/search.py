@@ -31,7 +31,7 @@ async def search_knowledge_documents(
     repository = KnowledgeRepository(
         session,
         org_id=organization_id,
-        is_superuser=True,
+        bypass_resource_admission=True,
     )
     return await repository.search(
         query_embedding=query_embedding,

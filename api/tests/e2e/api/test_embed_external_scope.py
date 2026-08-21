@@ -88,9 +88,13 @@ def embed_session(e2e_client, platform_admin):
 def global_secret_config(e2e_client, platform_admin):
     """A GLOBAL secret config — the decrypted-leak canary."""
     key = f"embed_ext_global_secret_{SUFFIX}"
+    global_headers = {
+        **platform_admin.headers,
+        "X-Bifrost-Boundary": "platform",
+    }
     r = e2e_client.post(
         "/api/config",
-        headers=platform_admin.headers,
+        headers=global_headers,
         json={
             "key": key,
             "value": "EMBED-GLOBAL-SECRET",
@@ -103,7 +107,7 @@ def global_secret_config(e2e_client, platform_admin):
     e2e_client.request(
         "DELETE",
         "/api/sdk/config/delete",
-        headers=platform_admin.headers,
+        headers=global_headers,
         json={"key": key, "scope": "global"},
     )
 

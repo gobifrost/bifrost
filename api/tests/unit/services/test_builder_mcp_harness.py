@@ -1,5 +1,6 @@
 """Builder MCP bridge tests."""
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -13,12 +14,6 @@ def _harness() -> tuple[BuilderMCPHarness, AsyncMock]:
     harness = BuilderMCPHarness(
         db,
         user_id=uuid4(),
-        org_id=uuid4(),
-        is_platform_admin=False,
-        is_external=False,
-        user_email="builder@example.com",
-        user_name="Builder",
-        can_build=True,
     )
     return harness, db
 
@@ -35,14 +30,14 @@ def _turn(*, deploy_job_id=None):
 @pytest.mark.asyncio
 async def test_intermediate_mcp_mutation_commits_revision_without_building():
     harness, db = _harness()
-    agent = MagicMock()
     session = MagicMock(id=uuid4(), solution_id=uuid4())
+    authorized = SimpleNamespace(session=session)
     turn = _turn()
     turn_service = MagicMock()
     turn_service.run_turn = AsyncMock(return_value=turn)
 
     with (
-        patch.object(harness, "_authorize", new=AsyncMock(return_value=session)),
+        patch.object(harness, "_authorize", new=AsyncMock(return_value=authorized)),
         patch(
             "src.services.builder.mcp_harness.BuilderTurnService",
             return_value=turn_service,
@@ -53,7 +48,6 @@ async def test_intermediate_mcp_mutation_commits_revision_without_building():
         ) as enqueue,
     ):
         result = await harness.execute(
-            agent=agent,
             tool_name="write_file",
             builder_session_id=session.id,
             arguments={"path": "README.md", "content": "Hi"},
@@ -69,15 +63,15 @@ async def test_intermediate_mcp_mutation_commits_revision_without_building():
 @pytest.mark.asyncio
 async def test_final_mcp_mutation_enqueues_one_build():
     harness, _db = _harness()
-    agent = MagicMock()
     session = MagicMock(id=uuid4(), solution_id=uuid4())
+    authorized = SimpleNamespace(session=session)
     deploy_job_id = uuid4()
     turn = _turn(deploy_job_id=deploy_job_id)
     turn_service = MagicMock()
     turn_service.run_turn = AsyncMock(return_value=turn)
 
     with (
-        patch.object(harness, "_authorize", new=AsyncMock(return_value=session)),
+        patch.object(harness, "_authorize", new=AsyncMock(return_value=authorized)),
         patch(
             "src.services.builder.mcp_harness.BuilderTurnService",
             return_value=turn_service,
@@ -88,7 +82,6 @@ async def test_final_mcp_mutation_enqueues_one_build():
         ) as enqueue,
     ):
         result = await harness.execute(
-            agent=agent,
             tool_name="write_file",
             builder_session_id=session.id,
             arguments={
@@ -107,16 +100,15 @@ async def test_final_mcp_mutation_enqueues_one_build():
 @pytest.mark.asyncio
 async def test_build_check_is_non_mutating_and_cannot_finalize():
     harness, _db = _harness()
-    agent = MagicMock()
     session = MagicMock(id=uuid4(), solution_id=uuid4())
+    authorized = SimpleNamespace(session=session)
     read_only = AsyncMock(return_value={"valid": True})
 
     with (
-        patch.object(harness, "_authorize", new=AsyncMock(return_value=session)),
+        patch.object(harness, "_authorize", new=AsyncMock(return_value=authorized)),
         patch.object(harness, "_read_only", new=read_only),
     ):
         result = await harness.execute(
-            agent=agent,
             tool_name="test_solution_build",
             builder_session_id=session.id,
             arguments={},
@@ -127,7 +119,6 @@ async def test_build_check_is_non_mutating_and_cannot_finalize():
             match="finalize is supported only by mutating Builder tools",
         ):
             await harness.execute(
-                agent=agent,
                 tool_name="test_solution_build",
                 builder_session_id=session.id,
                 arguments={"finalize": True},

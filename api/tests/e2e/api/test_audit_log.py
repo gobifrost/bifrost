@@ -11,12 +11,18 @@ Covers:
 import pytest
 
 
+def _platform_headers(user):
+    return {**user.headers, "X-Bifrost-Boundary": "platform"}
+
+
 @pytest.mark.e2e
 class TestAuditLogAccess:
     """Only platform admins can read the audit log."""
 
     def test_platform_admin_can_list(self, e2e_client, platform_admin):
-        response = e2e_client.get("/api/audit", headers=platform_admin.headers)
+        response = e2e_client.get(
+            "/api/audit", headers=_platform_headers(platform_admin)
+        )
         assert response.status_code == 200
         assert "entries" in response.json()
 
@@ -32,7 +38,7 @@ class TestAuditLogEmission:
     def test_user_create_emits_event(self, e2e_client, platform_admin, org1):
         create_resp = e2e_client.post(
             "/api/users",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
             json={
                 "email": "audit-test-create@gobifrost.dev",
                 "name": "Audit Create",
@@ -45,12 +51,13 @@ class TestAuditLogEmission:
 
         list_resp = e2e_client.get(
             "/api/audit?action=user.",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
         )
         assert list_resp.status_code == 200
         entries = list_resp.json()["entries"]
         matching = [
-            e for e in entries
+            e
+            for e in entries
             if e["action"] == "user.create" and e.get("resource_id") == new_user_id
         ]
         assert matching, "Expected a user.create audit event for the new user"
@@ -60,7 +67,7 @@ class TestAuditLogEmission:
     def test_organization_create_emits_event(self, e2e_client, platform_admin):
         create_resp = e2e_client.post(
             "/api/organizations",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
             json={
                 "name": "Audit Test Org",
                 "domain": "audit-test-org.example",
@@ -72,12 +79,13 @@ class TestAuditLogEmission:
 
         list_resp = e2e_client.get(
             "/api/audit?action=organization.",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
         )
         assert list_resp.status_code == 200
         entries = list_resp.json()["entries"]
         matching = [
-            e for e in entries
+            e
+            for e in entries
             if e["action"] == "organization.create"
             and e.get("resource_id") == new_org_id
         ]
@@ -101,7 +109,7 @@ class TestAuditLogEmission:
     def test_outcome_filter(self, e2e_client, platform_admin):
         resp = e2e_client.get(
             "/api/audit?outcome=success",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
         )
         assert resp.status_code == 200
         for entry in resp.json()["entries"]:
@@ -113,7 +121,9 @@ class TestAuditLogPagination:
     """Pagination uses a continuation token."""
 
     def test_limit_caps_results(self, e2e_client, platform_admin):
-        resp = e2e_client.get("/api/audit?limit=1", headers=platform_admin.headers)
+        resp = e2e_client.get(
+            "/api/audit?limit=1", headers=_platform_headers(platform_admin)
+        )
         assert resp.status_code == 200
         body = resp.json()
         assert len(body["entries"]) <= 1

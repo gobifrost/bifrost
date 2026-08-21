@@ -49,6 +49,11 @@ import { useUserSelection } from "@/hooks/useUserSelection";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrgScope } from "@/contexts/OrgScopeContext";
+import {
+	authorizationHeaders,
+	organizationBoundary,
+	useAdministrativeBoundary,
+} from "@/hooks/useAdministrativeBoundary";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { CreateUserDialog } from "@/components/users/CreateUserDialog";
 import { EditUserDialog } from "@/components/users/EditUserDialog";
@@ -120,15 +125,19 @@ export function Users() {
 		useState<RegistrationLinkDialogState>(null);
 
 	const { scope } = useOrgScope();
-	const { user: currentUser, isPlatformAdmin } = useAuth();
+	const { user: currentUser, isPlatformAdmin, hasCapability } = useAuth();
+	const administrativeBoundary =
+		useAdministrativeBoundary("organizations.read");
+	const canManageOrganizations = hasCapability("organizations.read");
 
 	const {
 		data: users,
 		isLoading,
 		refetch,
 	} = useUsersFiltered(
-		isPlatformAdmin ? filterOrgId : undefined,
+		canManageOrganizations ? filterOrgId : undefined,
 		showDisabled,
+		filterOrgId || isPlatformAdmin ? undefined : administrativeBoundary,
 	);
 	const deleteMutation = useDeleteUser();
 	const updateMutation = useUpdateUser();
@@ -149,7 +158,8 @@ export function Users() {
 		) ?? false;
 
 	const { data: organizations } = useOrganizations({
-		enabled: isPlatformAdmin,
+		enabled: canManageOrganizations,
+		boundary: administrativeBoundary,
 	});
 
 	const getOrgInfo = (
@@ -293,6 +303,9 @@ export function Users() {
 
 		try {
 			await updateMutation.mutateAsync({
+				headers: authorizationHeaders(
+					organizationBoundary(selectedUser.organization_id),
+				),
 				params: { path: { user_id: selectedUser.id } },
 				body: { is_active: false },
 			});
@@ -315,6 +328,9 @@ export function Users() {
 	const handleEnableUser = async (user: User) => {
 		try {
 			await updateMutation.mutateAsync({
+				headers: authorizationHeaders(
+					organizationBoundary(user.organization_id),
+				),
 				params: { path: { user_id: user.id } },
 				body: { is_active: true },
 			});
@@ -337,6 +353,9 @@ export function Users() {
 
 		try {
 			await deleteMutation.mutateAsync({
+				headers: authorizationHeaders(
+					organizationBoundary(selectedUser.organization_id),
+				),
 				params: { path: { user_id: selectedUser.id } },
 			});
 			toast.success("User permanently deleted", {
@@ -413,7 +432,7 @@ export function Users() {
 					placeholder="Search users by email or name..."
 					className="flex-1"
 				/>
-				{isPlatformAdmin && (
+				{canManageOrganizations && (
 					<div className="w-64">
 						<OrganizationSelect
 							value={filterOrgId}

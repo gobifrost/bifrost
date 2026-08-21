@@ -93,7 +93,7 @@ async def index_platform_docs() -> dict[str, Any]:
         except ValueError as e:
             return {"status": "skipped", "reason": str(e)}
 
-        repo = KnowledgeRepository(db, org_id=None, is_superuser=True)
+        repo = KnowledgeRepository(db, org_id=None, bypass_resource_admission=True)
         existing_docs = await repo.get_all_by_namespace(namespace=NAMESPACE)
 
     logger.info(
@@ -133,7 +133,7 @@ async def index_platform_docs() -> dict[str, Any]:
     # Phase 3: Batch upsert embeddings and cleanup orphans (short-lived session)
     deleted_count = 0
     async with get_db_context() as db:
-        repo = KnowledgeRepository(db, org_id=None, is_superuser=True)
+        repo = KnowledgeRepository(db, org_id=None, bypass_resource_admission=True)
 
         for doc in docs_to_upsert:
             await repo.store_chunked(

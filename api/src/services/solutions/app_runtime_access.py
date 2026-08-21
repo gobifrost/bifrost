@@ -21,10 +21,14 @@ from src.models.orm.organizations import Organization
 from src.models.orm.solutions import Solution
 from src.models.orm.users import User
 from src.repositories.applications import ApplicationRepository
+from src.services.authorization import (
+    AuthorizationBoundary,
+    AuthorizationContext,
+    resolve_authorization_context,
+)
 from src.services.builder.private_solutions import load_accessible_private_solution
 from src.services.solutions.access import VISIBILITY_PRIVATE, SolutionAction
-from src.services.solutions.builder_authz import can_support_builds
-from src.services.user_provisioning import get_user_scopes
+from src.services.user_provisioning import get_user_capabilities
 
 
 @dataclass(frozen=True)
@@ -76,7 +80,7 @@ async def load_runtime_viewer(
 
     solution, application, user = row
     role_ids, role_names = await get_user_roles(user.id, db)
-    scopes = await get_user_scopes(db, user.id)
+    scopes = await get_user_capabilities(db, user.id)
     organization = (
         await db.get(Organization, user.organization_id)
         if user.organization_id is not None
@@ -98,15 +102,27 @@ async def load_runtime_viewer(
         role_names=role_names,
     )
 
+    authorization = await _runtime_authorization_context(
+        db,
+        principal=principal,
+        organization_id=solution.organization_id,
+    )
+
     if solution.visibility == VISIBILITY_PRIVATE:
+        if not (
+            authorization.has_capability("builder.read")
+            and authorization.has_capability("solutions.read")
+        ):
+            return None
         accessible = await load_accessible_private_solution(
             db,
             solution_id=solution.id,
             action=SolutionAction.VIEW,
             actor_user_id=user.id,
-            is_platform_admin=principal.is_platform_admin,
+            is_platform_admin=authorization.has_capability("platform.superuser"),
             is_external=principal.is_external,
-            can_support=can_support_builds(principal),
+            can_support=authorization.has_delegated_capability("builder.read"),
+            effective_role_ids=frozenset(authorization.role_ids),
         )
         if accessible is None:
             return None
@@ -115,7 +131,7 @@ async def load_runtime_viewer(
             db,
             organization_id,
             user_id=user.id,
-            is_superuser=user.is_superuser,
+            bypass_resource_roles=authorization.has_capability("platform.superuser"),
             is_external=user.is_external,
         )
         try:
@@ -128,4 +144,29 @@ async def load_runtime_viewer(
         principal=principal,
         solution=solution,
         application=application,
+    )
+
+
+async def _runtime_authorization_context(
+    db: AsyncSession,
+    *,
+    principal: UserPrincipal,
+    organization_id: UUID | None,
+) -> AuthorizationContext:
+    """Resolve live canonical auth for a sealed app-host session.
+
+    App-host sessions are token/cookie transports, but their stored user
+    identity must still be re-authorized on every request so role changes
+    revoke runtime access immediately. Repository admission is derived from
+    capabilities in this context, never from the legacy public superuser bit.
+    """
+
+    return await resolve_authorization_context(
+        db,
+        requester=principal,
+        selected_boundary=(
+            AuthorizationBoundary.organization(organization_id)
+            if organization_id is not None
+            else AuthorizationBoundary.platform()
+        ),
     )

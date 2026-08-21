@@ -21,6 +21,11 @@ vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockAuth(),
 }));
 
+const mockBoundary = vi.fn();
+vi.mock("@/contexts/AuthorizationBoundaryContext", () => ({
+	useAuthorizationBoundary: () => mockBoundary(),
+}));
+
 const mockWorkflows = vi.fn();
 vi.mock("@/hooks/useWorkflows", () => ({
 	useWorkflowsMetadata: () => mockWorkflows(),
@@ -58,6 +63,9 @@ beforeEach(() => {
 	mockAuth.mockReturnValue({
 		isPlatformAdmin: false,
 		user: { organizationId: "org-1" },
+	});
+	mockBoundary.mockReturnValue({
+		selectedTarget: { kind: "organization", organization_id: "org-1" },
 	});
 	mockWorkflows.mockReturnValue({
 		data: {
@@ -113,23 +121,12 @@ describe("FormInfoDialog — access level", () => {
 });
 
 describe("FormInfoDialog — org picker visibility", () => {
-	it("does not render the Organization select for non-platform admins", () => {
+	it("does not render a local Organization select", () => {
 		renderDialog();
 
 		expect(
 			screen.queryByLabelText(/organization/i),
 		).not.toBeInTheDocument();
-	});
-
-	it("renders the Organization select for platform admins", () => {
-		mockAuth.mockReturnValue({
-			isPlatformAdmin: true,
-			user: { organizationId: null },
-		});
-
-		renderDialog();
-
-		expect(screen.getByLabelText(/organization/i)).toBeInTheDocument();
 	});
 });
 

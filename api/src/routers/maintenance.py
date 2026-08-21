@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context
 from src.core.database import get_db
 from src.jobs.platform.system_maintenance import (
     ARTIFACT_RETENTION_CLEANUP_DEFINITION,
@@ -44,6 +44,8 @@ from src.models.orm import (
 from src.models.orm.file_index import FileIndex
 from src.services.app_dependencies import parse_dependencies
 from src.services.artifact_retention import ArtifactRetentionSettingsService
+from src.services.audit import emit_audit
+from src.services.authorization import CurrentAuthorizationContext
 from src.services.notification_service import get_notification_service
 from src.services.platform_jobs import (
     ensure_platform_job_notification,
@@ -56,15 +58,24 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/maintenance", tags=["Maintenance"])
 
 
+def _require_platform_maintenance(
+    authorization: CurrentAuthorizationContext,
+    capability: str,
+) -> None:
+    authorization.require(capability)
+    authorization.require_resource_boundary(None)
+
+
 @router.get(
     "/artifact-retention/settings",
     response_model=ArtifactRetentionSettings,
     summary="Get artifact retention settings",
 )
 async def get_artifact_retention_settings(
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: AsyncSession = Depends(get_db),
 ) -> ArtifactRetentionSettings:
+    _require_platform_maintenance(authorization, "platformjobs.read")
     return await ArtifactRetentionSettingsService(db).get_settings()
 
 
@@ -75,13 +86,23 @@ async def get_artifact_retention_settings(
 )
 async def update_artifact_retention_settings(
     request: ArtifactRetentionSettingsUpdate,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: AsyncSession = Depends(get_db),
 ) -> ArtifactRetentionSettings:
+    _require_platform_maintenance(authorization, "platformjobs.execute")
     service = ArtifactRetentionSettingsService(db)
     settings = await service.update_settings(
         ArtifactRetentionSettings.model_validate(request.model_dump()),
-        updated_by=user.email,
+        updated_by=authorization.effective_actor.email,
+    )
+    await emit_audit(
+        db,
+        "artifact_retention.settings.update",
+        resource_type="artifact_retention_settings",
+        details={
+            "enabled": settings.enabled,
+            "retention_days": settings.retention_days,
+        },
     )
     await db.commit()
     return settings
@@ -95,9 +116,11 @@ async def update_artifact_retention_settings(
 )
 async def cleanup_artifact_retention(
     response: Response,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: AsyncSession = Depends(get_db),
 ) -> PlatformJobAccepted:
+    _require_platform_maintenance(authorization, "platformjobs.execute")
+    actor = authorization.effective_actor
     job, reused = await enqueue_platform_job(
         db,
         ARTIFACT_RETENTION_CLEANUP_DEFINITION,
@@ -106,9 +129,9 @@ async def cleanup_artifact_retention(
         resource_lock_key=ARTIFACT_RETENTION_CLEANUP_DEFINITION.job_type,
         priority=500,
         organization_id=None,
-        requested_by_user_id=user.user_id,
-        requested_by_email=user.email,
-        requested_by_name=user.name or user.email or "Unknown",
+        requested_by_user_id=actor.user_id,
+        requested_by_email=actor.email,
+        requested_by_name=actor.name or actor.email or "Unknown",
         resource_type="system",
         resource_id=ARTIFACT_RETENTION_CLEANUP_DEFINITION.job_type,
         title="Clean up expired artifacts",
@@ -123,6 +146,13 @@ async def cleanup_artifact_retention(
                 extra={"platform_job_id": str(job.id)},
                 exc_info=True,
             )
+    await emit_audit(
+        db,
+        "artifact_retention.cleanup.enqueue",
+        resource_type="platform_job",
+        resource_id=job.id,
+        details={"reused": reused},
+    )
     await db.commit()
     await db.refresh(job)
     await publish_platform_job_update(job)
@@ -143,7 +173,7 @@ async def cleanup_artifact_retention(
 )
 async def get_maintenance_status(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: AsyncSession = Depends(get_db),
 ) -> MaintenanceStatus:
     """
@@ -153,9 +183,12 @@ async def get_maintenance_status(
         - total_files: Total number of Python files in file_index
         - last_reindex: Timestamp of last reindex (not tracked currently)
     """
+    _require_platform_maintenance(authorization, "repository.read")
     try:
         result = await db.execute(
-            select(func.count()).select_from(FileIndex).where(
+            select(func.count())
+            .select_from(FileIndex)
+            .where(
                 FileIndex.path.endswith(".py"),
                 ~FileIndex.path.endswith("/"),
             )
@@ -183,7 +216,7 @@ async def get_maintenance_status(
 )
 async def index_documentation(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: AsyncSession = Depends(get_db),
 ) -> DocsIndexResponse:
     """
@@ -204,6 +237,7 @@ async def index_documentation(
 
     from src.services.docs_indexer import index_platform_docs
 
+    _require_platform_maintenance(authorization, "knowledge.readwrite")
     start_time = time.time()
 
     try:
@@ -232,7 +266,7 @@ async def index_documentation(
                 parts.append(f"{deleted} orphaned removed")
             message = ", ".join(parts)
 
-            return DocsIndexResponse(
+            response = DocsIndexResponse(
                 status="complete",
                 files_indexed=indexed,
                 files_unchanged=skipped,
@@ -240,6 +274,18 @@ async def index_documentation(
                 duration_ms=duration_ms,
                 message=message,
             )
+            await emit_audit(
+                db,
+                "maintenance.docs.index",
+                resource_type="knowledge",
+                details={
+                    "files_indexed": indexed,
+                    "files_unchanged": skipped,
+                    "files_deleted": deleted,
+                },
+            )
+            await db.commit()
+            return response
 
         return DocsIndexResponse(
             status="failed",
@@ -263,7 +309,7 @@ async def index_documentation(
 )
 async def reimport_from_repo(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> ReimportJobResponse:
     """
     Queue a reimport of all entities from the S3 repo.
@@ -275,8 +321,13 @@ async def reimport_from_repo(
         WORKSPACE_REIMPORT_DEFINITION,
         WorkspaceReimportPayload,
     )
-    from src.services.platform_jobs import enqueue_platform_job, publish_platform_job_update
+    from src.services.platform_jobs import (
+        enqueue_platform_job,
+        publish_platform_job_update,
+    )
 
+    _require_platform_maintenance(authorization, "repository.readwrite")
+    actor = authorization.effective_actor
     job, _ = await enqueue_platform_job(
         ctx.db,
         WORKSPACE_REIMPORT_DEFINITION,
@@ -285,13 +336,20 @@ async def reimport_from_repo(
         resource_lock_key="workspace",
         priority=500,
         organization_id=None,
-        requested_by_user_id=user.user_id,
-        requested_by_email=user.email,
-        requested_by_name=user.name or user.email or "Unknown",
+        requested_by_user_id=actor.user_id,
+        requested_by_email=actor.email,
+        requested_by_name=actor.name or actor.email or "Unknown",
         resource_type="workspace",
         resource_id="_repo",
         title="Reimport workspace",
         action_url="/diagnostics",
+    )
+    await emit_audit(
+        ctx.db,
+        "maintenance.repository.reimport.enqueue",
+        resource_type="platform_job",
+        resource_id=job.id,
+        details={"resource_id": "_repo"},
     )
     await ctx.db.commit()
     await publish_platform_job_update(job)
@@ -305,7 +363,7 @@ async def reimport_from_repo(
     description="Deactivate workflows, forms, and agents whose files no longer exist in the workspace",
 )
 async def cleanup_orphaned(
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: AsyncSession = Depends(get_db),
 ) -> CleanupOrphanedResponse:
     """
@@ -317,6 +375,7 @@ async def cleanup_orphaned(
 
     This is a synchronous DB-only operation (no S3/checkout needed).
     """
+    _require_platform_maintenance(authorization, "repository.readwrite")
     try:
         # Get all existing file paths from FileIndex
         fi_result = await db.execute(select(FileIndex.path))
@@ -332,20 +391,38 @@ async def cleanup_orphaned(
             if wf.path and wf.path not in existing_paths:
                 wf.is_active = False
                 wf.is_orphaned = True
-                cleaned.append(OrphanedEntity(
-                    entity_type="workflow",
-                    entity_id=str(wf.id),
-                    entity_name=wf.display_name or wf.name,
-                    path=wf.path,
-                ))
-
-        await db.commit()
+                cleaned.append(
+                    OrphanedEntity(
+                        entity_type="workflow",
+                        entity_id=str(wf.id),
+                        entity_name=wf.display_name or wf.name,
+                        path=wf.path,
+                    )
+                )
 
         if cleaned:
             logger.info(
                 f"Cleaned up {len(cleaned)} orphaned entities: "
                 f"{', '.join(f'{e.entity_type}:{e.entity_name}' for e in cleaned)}"
             )
+            await emit_audit(
+                db,
+                "maintenance.repository.cleanup_orphaned",
+                resource_type="repository",
+                details={
+                    "count": len(cleaned),
+                    "entities": [
+                        {
+                            "entity_type": entity.entity_type,
+                            "entity_id": entity.entity_id,
+                            "entity_name": entity.entity_name,
+                            "path": entity.path,
+                        }
+                        for entity in cleaned
+                    ],
+                },
+            )
+        await db.commit()
 
         return CleanupOrphanedResponse(
             success=True,
@@ -391,7 +468,7 @@ class AppDependencyScanResponse(BaseModel):
 )
 async def scan_app_dependencies(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: AsyncSession = Depends(get_db),
 ) -> AppDependencyScanResponse:
     """
@@ -405,6 +482,7 @@ async def scan_app_dependencies(
 
     Creates a platform admin notification if issues are found.
     """
+    _require_platform_maintenance(authorization, "repository.read")
     try:
         # Step 1: Get all apps
         apps_result = await db.execute(select(Application))
@@ -412,8 +490,9 @@ async def scan_app_dependencies(
 
         # Build workflow lookup (all active workflows, all ref formats)
         wf_result = await db.execute(
-            select(Workflow.id, Workflow.name, Workflow.path, Workflow.function_name)
-            .where(Workflow.is_active.is_(True))
+            select(
+                Workflow.id, Workflow.name, Workflow.path, Workflow.function_name
+            ).where(Workflow.is_active.is_(True))
         )
         wf_lookup: set[str] = set()  # all valid ref formats
         for wf_id, wf_name, wf_path, wf_fn_name in wf_result.all():
@@ -450,7 +529,7 @@ async def scan_app_dependencies(
                 if not refs:
                     continue
 
-                relative_path = fi_path[len(prefix):]
+                relative_path = fi_path[len(prefix) :]
 
                 for ref in refs:
                     total_deps_found += 1
@@ -545,7 +624,7 @@ async def scan_app_dependencies(
     description="Run validation checks including unregistered function detection (Platform admin only)",
 )
 async def run_preflight(
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: AsyncSession = Depends(get_db),
 ) -> PreflightResponse:
     """Run preflight validation on the current workspace state."""
@@ -553,6 +632,7 @@ async def run_preflight(
 
     from src.services.file_storage import FileStorageService
 
+    _require_platform_maintenance(authorization, "repository.read")
     issues: list[PreflightIssueResponse] = []
     warnings: list[PreflightIssueResponse] = []
 
@@ -594,7 +674,11 @@ async def run_preflight(
         # for the full DB round trip per decorator.
         try:
             content_result = await service.read_file(py_file.path)
-            content = content_result[0] if isinstance(content_result, tuple) else content_result
+            content = (
+                content_result[0]
+                if isinstance(content_result, tuple)
+                else content_result
+            )
             content_str = content.decode("utf-8", errors="replace")
             tree = ast.parse(content_str, filename=py_file.path)
         except Exception:
@@ -608,9 +692,7 @@ async def run_preflight(
                 dec_name = None
                 if isinstance(dec, ast.Name):
                     dec_name = dec.id
-                elif isinstance(dec, ast.Call) and isinstance(
-                    dec.func, ast.Name
-                ):
+                elif isinstance(dec, ast.Call) and isinstance(dec.func, ast.Name):
                     dec_name = dec.func.id
                 if dec_name in decorator_names:
                     candidates.append(node.name)

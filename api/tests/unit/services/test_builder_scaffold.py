@@ -2,10 +2,15 @@
 
 import json
 from pathlib import Path
+from uuid import uuid4, uuid5
 
 import yaml
 
-from src.services.builder.scaffold import validate_workspace
+from src.services.builder.scaffold import (
+    build_initial_workspace,
+    strip_legacy_builder_assets,
+    validate_workspace,
+)
 
 
 def _workspace(tmp_path: Path, app_fields: dict[str, object]) -> Path:
@@ -85,3 +90,49 @@ def test_builder_rejects_dependencies_that_deploy_would_refuse(
         "autoprefixer@^10.4.19 (not in the curated catalog), "
         "react@^18.3.1 (use 18.2.0)"
     ]
+
+
+def test_builder_initial_workspace_is_skill_bundle_free(tmp_path: Path) -> None:
+    build_initial_workspace(
+        tmp_path,
+        slug="hello",
+        name="Hello",
+    )
+
+    assert (tmp_path / "bifrost.solution.yaml").is_file()
+    assert (tmp_path / "README.md").is_file()
+    assert (tmp_path / "workflows" / ".gitkeep").is_file()
+    assert not (tmp_path / "skills" / "bifrost-build").exists()
+    assert not (tmp_path / ".bifrost" / "agents.yaml").exists()
+
+
+def test_legacy_builder_assets_are_removed_without_touching_other_agents(
+    tmp_path: Path,
+) -> None:
+    solution_id = uuid4()
+    legacy_id = str(
+        uuid5(solution_id, "bifrost-private-solution-builder-agent")
+    )
+    other_id = str(uuid4())
+    skill = tmp_path / "skills" / "bifrost-build"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("legacy", encoding="utf-8")
+    manifest = tmp_path / ".bifrost" / "agents.yaml"
+    manifest.parent.mkdir()
+    manifest.write_text(
+        yaml.safe_dump(
+            {
+                "agents": {
+                    legacy_id: {"id": legacy_id, "name": "Builder"},
+                    other_id: {"id": other_id, "name": "Keep Me"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    strip_legacy_builder_assets(tmp_path, solution_id=solution_id)
+
+    assert not (tmp_path / "skills").exists()
+    remaining = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    assert list(remaining["agents"]) == [other_id]

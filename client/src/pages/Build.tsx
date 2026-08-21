@@ -12,6 +12,7 @@ import {
 	Database,
 	Filter,
 	FolderKanban,
+	LayoutDashboard,
 	Loader2,
 	Lock,
 	Search,
@@ -52,9 +53,23 @@ interface NewBuild {
 	sessionId: string;
 }
 
-type BuildStage = "workspace" | "agent" | "opening";
+type BuildStage = "workspace" | "profile" | "opening";
 type CatalogView = "mine" | "all";
+type BuildTargetKind = "solution" | "organization";
 const SUPPORT_PAGE_SIZE = 50;
+
+function builderWorkspacePath(solution: BuilderSolution): string {
+	const boundary =
+		solution.target_kind === "global_repo"
+			? "platform"
+			: solution.organization_id
+				? `organization:${solution.organization_id}`
+				: null;
+	const suffix = boundary
+		? `?boundary=${encodeURIComponent(boundary)}`
+		: "";
+	return `/solutions/${solution.id}/builder${suffix}`;
+}
 
 export function Build() {
 	const navigate = useNavigate();
@@ -63,11 +78,14 @@ export function Build() {
 	const {
 		builderReady,
 		blockers,
+		canAccessBuilder,
 		canBuild,
 		canViewAll,
+		canOpenGlobalWorkspace,
 		hasPermission,
 		isLoading,
 		isPlatformAdmin,
+		organizationTargets = [],
 		solutions,
 	} = useBuilderAccess();
 	const [name, setName] = useState("");
@@ -81,11 +99,33 @@ export function Build() {
 	const [ownerUserId, setOwnerUserId] = useState("");
 	const [supportPage, setSupportPage] = useState(0);
 	const [globalError, setGlobalError] = useState<string | null>(null);
+	const [targetKind, setTargetKind] = useState<BuildTargetKind>("solution");
+	const [targetOrganizationId, setTargetOrganizationId] = useState("");
+	const executableOrganizations = useMemo(
+		() => organizationTargets.filter((target) => target.can_execute),
+		[organizationTargets],
+	);
+	const directWorkspaceOrganizations = useMemo(
+		() => executableOrganizations.filter((target) => target.can_build_resources),
+		[executableOrganizations],
+	);
+
+	const availableTargetOrganizations =
+		targetKind === "organization"
+			? directWorkspaceOrganizations
+			: executableOrganizations;
+	const selectedTargetOrganizationId = availableTargetOrganizations.some(
+		(target) => target.id === targetOrganizationId,
+	)
+		? targetOrganizationId
+		: (availableTargetOrganizations.find(
+				(target) => target.id === user?.organizationId,
+			)?.id ?? availableTargetOrganizations[0]?.id ?? "");
 
 	const globalWorkspaceQuery = useQuery({
 		queryKey: ["builder", "global-workspace"],
 		queryFn: ({ signal }) => getGlobalWorkspace({ signal }),
-		enabled: isPlatformAdmin && builderReady,
+		enabled: canOpenGlobalWorkspace && builderReady,
 	});
 	const openGlobalWorkspaceMutation = useMutation({
 		mutationFn: async () => {
@@ -99,7 +139,9 @@ export function Build() {
 				queryKey: ["builder", "global-workspace"],
 			});
 			if (workspace.solution_id) {
-				navigate(`/solutions/${workspace.solution_id}/builder`);
+				navigate(
+					`/solutions/${workspace.solution_id}/builder?boundary=platform`,
+				);
 			}
 		},
 		onError: (caught: Error) => setGlobalError(caught.message),
@@ -151,18 +193,25 @@ export function Build() {
 
 	const createMutation = useMutation({
 		mutationFn: async (): Promise<NewBuild> => {
+			if (!selectedTargetOrganizationId) {
+				throw new Error("Select an organization for this build");
+			}
+			const requestOptions = {
+				boundary: `organization:${selectedTargetOrganizationId}` as const,
+			};
 			setBuildStage("workspace");
 			const solution = await createBuilderSolution({
 				name: name.trim(),
 				slug: slugify(name),
-			});
+				target_kind: targetKind,
+			}, requestOptions);
 			try {
-				setBuildStage("agent");
-				const session = await createBuilderSession(solution.id);
+				setBuildStage("profile");
+				const session = await createBuilderSession(solution.id, requestOptions);
 				setBuildStage("opening");
 				return { solution, sessionId: session.id };
 			} catch (caught) {
-				await deleteBuilderSolution(solution.id);
+				await deleteBuilderSolution(solution.id, requestOptions);
 				throw caught;
 			}
 		},
@@ -177,7 +226,7 @@ export function Build() {
 	useEffect(() => {
 		if (!pendingLaunch || buildStage !== "opening") return;
 		const animationFrame = window.requestAnimationFrame(() => {
-			navigate(`/solutions/${pendingLaunch.solution.id}/builder`, {
+			navigate(builderWorkspacePath(pendingLaunch.solution), {
 				state: {
 					initialPrompt: prompt.trim(),
 					initialSessionId: pendingLaunch.sessionId,
@@ -192,6 +241,7 @@ export function Build() {
 		builderReady &&
 		Boolean(slugify(name)) &&
 		Boolean(prompt.trim()) &&
+		Boolean(selectedTargetOrganizationId) &&
 		!createMutation.isPending;
 
 	if (isLoading) {
@@ -204,7 +254,7 @@ export function Build() {
 		);
 	}
 
-	if (!canBuild) {
+	if (!canAccessBuilder) {
 		return (
 			<div className="flex h-full items-center justify-center p-8 text-center">
 				<div className="max-w-md space-y-2">
@@ -212,7 +262,7 @@ export function Build() {
 					<p className="text-sm leading-6 text-muted-foreground">
 						{hasPermission
 							? "Builder has not been enabled for this environment yet."
-							: "Your account does not have permission to build apps in this environment."}
+							: "Your account does not have permission to view or build apps in this environment."}
 					</p>
 				</div>
 			</div>
@@ -259,14 +309,14 @@ export function Build() {
 				<div>
 					<div className="flex items-center gap-2">
 						<h1 className="text-3xl font-semibold tracking-tight">Build</h1>
-						<Badge variant="secondary" className="gap-1.5 text-emerald-700 dark:text-emerald-300"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />Ready</Badge>
+						<Badge variant="secondary" className="gap-1.5 text-emerald-700 dark:text-emerald-300"><span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />{canBuild ? "Ready" : "Support view"}</Badge>
 					</div>
-					<p className="mt-1 text-sm text-muted-foreground">Create complete Bifrost apps and continue every conversation from where you left it.</p>
+					<p className="mt-1 text-sm text-muted-foreground">Create portable apps or work directly in an authorized organization, then continue every conversation from where you left it.</p>
 				</div>
 				{isPlatformAdmin ? <Button variant="ghost" size="sm" onClick={() => navigate("/settings/builder")}><Settings2 className="h-4 w-4" />Builder setup</Button> : null}
 			</header>
 
-			{isPlatformAdmin ? (
+			{canOpenGlobalWorkspace ? (
 				<section className="relative overflow-hidden rounded-3xl border border-primary/20 bg-gradient-to-br from-primary/[0.07] via-card to-card p-5 sm:p-6">
 					<div className="absolute -right-16 -top-20 h-48 w-48 rounded-full bg-primary/10 blur-3xl" aria-hidden="true" />
 					<div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
@@ -307,22 +357,63 @@ export function Build() {
 							{globalWorkspaceQuery.data?.exists ? "Open Global Workspace" : "Create Global Workspace"}
 						</Button>
 					</div>
+			</section>
+			) : null}
+
+			{!canBuild && canViewAll ? (
+				<section className="flex flex-col gap-3 rounded-3xl border bg-card p-5 sm:flex-row sm:items-center sm:justify-between sm:p-6">
+					<div className="flex gap-3">
+						<span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-primary/10 text-primary"><ShieldCheck className="h-5 w-5" /></span>
+						<div><h2 className="font-semibold">Customer build support</h2><p className="mt-1 text-sm leading-6 text-muted-foreground">You can review customer work, open shared builds, and help diagnose problems. Starting or changing a build requires a separate Builder assignment.</p></div>
+					</div>
 				</section>
 			) : null}
 
-			<section className="grid overflow-hidden rounded-3xl border bg-card lg:grid-cols-[minmax(0,1.55fr)_minmax(260px,.45fr)]">
+			{canBuild ? <section className="grid overflow-hidden rounded-3xl border bg-card lg:grid-cols-[minmax(0,1.55fr)_minmax(260px,.45fr)]">
 				<div className="p-4 sm:p-6">
 					<div className="mb-4 flex items-start justify-between gap-4">
-						<div><p className="text-xs font-semibold uppercase tracking-wider text-primary">New app</p><h2 className="mt-1 text-2xl font-semibold tracking-tight">What should Bifrost build?</h2></div>
+						<div><p className="text-xs font-semibold uppercase tracking-wider text-primary">New build</p><h2 className="mt-1 text-2xl font-semibold tracking-tight">What should Bifrost build?</h2></div>
 						<Sparkles className="h-5 w-5 text-primary" />
 					</div>
+					{!buildStage ? (
+						<div className="mb-3 grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Build target">
+							<BuildTargetOption
+								selected={targetKind === "solution"}
+								icon={LayoutDashboard}
+								title="Private app"
+								detail="Build a portable Solution with source, preview, and promotion review."
+								onSelect={() => setTargetKind("solution")}
+							/>
+							{directWorkspaceOrganizations.length > 0 ? (
+								<BuildTargetOption
+									selected={targetKind === "organization"}
+									icon={Building2}
+									title="Organization workspace"
+									detail="Create or change authorized Agents, workflows, forms, tables, and apps directly."
+									onSelect={() => setTargetKind("organization")}
+								/>
+							) : null}
+						</div>
+					) : null}
 					<div className="min-h-56 rounded-2xl border bg-background p-3 shadow-sm">
-						{buildStage ? <BuildLaunchProgress stage={buildStage} appName={name.trim()} /> : (
+						{buildStage ? <BuildLaunchProgress stage={buildStage} buildName={name.trim()} targetKind={targetKind} /> : (
 							<>
-								<Input value={name} aria-label="App name" placeholder="Name your app" className="h-11 border-0 bg-transparent px-2 text-base font-medium shadow-none focus-visible:ring-0" onChange={(event) => { setName(event.target.value); setError(null); }} />
-								<Textarea value={prompt} aria-label="Describe your app" placeholder="Describe who will use it, what they need to accomplish, and the data or systems it should connect to…" className="min-h-32 resize-none border-0 bg-transparent px-2 text-base leading-6 shadow-none focus-visible:ring-0" onChange={(event) => { setPrompt(event.target.value); setError(null); }} />
+								<div className="flex flex-col gap-2 border-b px-2 pb-3 sm:flex-row sm:items-center sm:justify-between">
+									<p className="text-xs font-medium text-muted-foreground">Build in</p>
+									<Combobox
+										aria-label="Build organization"
+										options={availableTargetOrganizations.map((target) => ({ value: target.id, label: target.name, description: target.is_provider ? "Provider organization" : undefined }))}
+										value={selectedTargetOrganizationId}
+										onValueChange={setTargetOrganizationId}
+										placeholder="Select organization"
+										searchPlaceholder="Find an organization…"
+										className="h-9 w-full justify-between sm:w-64"
+									/>
+								</div>
+								<Input value={name} aria-label={targetKind === "solution" ? "App name" : "Workspace name"} placeholder={targetKind === "solution" ? "Name your app" : "Name this workspace"} className="mt-2 h-11 border-0 bg-transparent px-2 text-base font-medium shadow-none focus-visible:ring-0" onChange={(event) => { setName(event.target.value); setError(null); }} />
+								<Textarea value={prompt} aria-label={targetKind === "solution" ? "Describe your app" : "Describe your organization changes"} placeholder={targetKind === "solution" ? "Describe who will use it, what they need to accomplish, and the data or systems it should connect to…" : "Describe the Agents, workflows, forms, tables, or apps to create or change…"} className="min-h-32 resize-none border-0 bg-transparent px-2 text-base leading-6 shadow-none focus-visible:ring-0" onChange={(event) => { setPrompt(event.target.value); setError(null); }} />
 								<div className="flex flex-wrap items-center justify-between gap-3 border-t px-2 pt-3">
-									<p className="flex items-center gap-1.5 text-xs text-muted-foreground"><Lock className="h-3.5 w-3.5" />Private workspace — invite collaborators when ready</p>
+									<p className="flex items-center gap-1.5 text-xs text-muted-foreground">{targetKind === "solution" ? <><Lock className="h-3.5 w-3.5" />Private workspace — invite collaborators when ready</> : <><Building2 className="h-3.5 w-3.5" />Authorized changes are applied directly to this organization</>}</p>
 									<Button disabled={!canSubmit} onClick={() => createMutation.mutate()}><Sparkles className="h-4 w-4" />Start building</Button>
 								</div>
 							</>
@@ -337,9 +428,9 @@ export function Build() {
 						<PromptHint number="2" title="The audience" detail="Who uses it, and what access do they need?" />
 						<PromptHint number="3" title="The systems" detail="Mention tables, files, agents, or integrations." />
 					</div>
-					<div className="mt-6 border-t pt-4"><p className="text-xs leading-5 text-muted-foreground">The Builder Agent uses the <strong className="font-medium text-foreground">bifrost-build</strong> Skill and the same solution-aware MCP tools available to external coding harnesses.</p></div>
+					<div className="mt-6 border-t pt-4"><p className="text-xs leading-5 text-muted-foreground">Bifrost uses its maintained build instructions and the same Solution-aware operations available through the CLI and MCP.</p></div>
 				</aside>
-			</section>
+			</section> : null}
 
 			<section aria-labelledby="build-library-heading" className="overflow-hidden rounded-3xl border bg-card">
 				<div className="flex flex-wrap items-center justify-between gap-3 border-b p-4 sm:px-5">
@@ -371,7 +462,7 @@ export function Build() {
 					<div className="px-6 py-12 text-center"><Sparkles className="mx-auto h-8 w-8 text-muted-foreground" /><p className="mt-3 font-medium">{search || organizationId || ownerUserId ? "No matching builds" : "No apps in progress"}</p><p className="mt-1 text-sm text-muted-foreground">{catalogView === "mine" ? "Describe an app above to create your first private workspace." : "Try another customer, owner, or search term."}</p></div>
 				) : (
 					<div className="divide-y">
-						{visibleSolutions.map((solution) => <BuildRow key={solution.id} solution={solution} currentUserId={user?.id} onOpen={() => navigate(`/solutions/${solution.id}/builder`)} />)}
+						{visibleSolutions.map((solution) => <BuildRow key={solution.id} solution={solution} currentUserId={user?.id} onOpen={() => navigate(builderWorkspacePath(solution))} />)}
 					</div>
 				)}
 				{catalogView === "all" && allSolutionsQuery.data && allSolutionsQuery.data.total > 0 ? (
@@ -413,31 +504,52 @@ function PromptHint({ number, title, detail }: { number: string; title: string; 
 	return <div className="flex gap-3"><span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full border bg-background text-xs font-semibold">{number}</span><div><p className="font-medium leading-5">{title}</p><p className="text-xs leading-5 text-muted-foreground">{detail}</p></div></div>;
 }
 
+function BuildTargetOption({ selected, icon: Icon, title, detail, onSelect }: { selected: boolean; icon: typeof Building2; title: string; detail: string; onSelect: () => void }) {
+	return (
+		<button
+			type="button"
+			role="radio"
+			aria-checked={selected}
+			className={cn(
+				"flex min-h-20 items-start gap-3 rounded-2xl border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+				selected ? "border-primary/40 bg-primary/5" : "hover:bg-muted/30",
+			)}
+			onClick={onSelect}
+		>
+			<span className={cn("mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl", selected ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground")}><Icon className="h-4 w-4" /></span>
+			<span><span className="block text-sm font-medium">{title}</span><span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{detail}</span></span>
+		</button>
+	);
+}
+
 function BuildRow({ solution, currentUserId, onOpen }: { solution: BuilderSolution; currentUserId?: string; onOpen: () => void }) {
 	const owned = solution.owner_user_id === currentUserId || solution.caller_access === "owner";
 	return (
 		<div className="group grid gap-3 px-4 py-4 transition-colors hover:bg-muted/20 sm:grid-cols-[minmax(0,1fr)_minmax(180px,.55fr)_auto] sm:items-center sm:px-5">
-			<div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="truncate font-medium">{solution.name}</p><Badge variant="outline" className="h-5 gap-1 text-[10px]">{owned ? <Lock className="h-2.5 w-2.5" /> : <Users className="h-2.5 w-2.5" />}{owned ? "Owned" : solution.caller_access === "support" ? "Support access" : solution.collaborator_access === "view" ? "Shared · view" : "Shared · edit"}</Badge>{solution.promotion_status === "requested" ? <Badge variant="secondary" className="h-5 text-[10px]">In review</Badge> : null}</div><p className="mt-1 truncate text-xs text-muted-foreground">{solution.slug}</p></div>
+			<div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><p className="truncate font-medium">{solution.name}</p>{solution.target_kind === "organization" ? <Badge variant="secondary" className="h-5 gap-1 text-[10px]"><Building2 className="h-2.5 w-2.5" />Organization workspace</Badge> : null}<Badge variant="outline" className="h-5 gap-1 text-[10px]">{owned ? <Lock className="h-2.5 w-2.5" /> : <Users className="h-2.5 w-2.5" />}{owned ? "Owned" : solution.caller_access === "support" ? "Support access" : solution.collaborator_access === "view" ? "Shared · view" : "Shared · edit"}</Badge>{solution.target_kind === "solution" && solution.promotion_status === "requested" ? <Badge variant="secondary" className="h-5 text-[10px]">In review</Badge> : null}</div><p className="mt-1 truncate text-xs text-muted-foreground">{solution.slug}</p></div>
 			<div className="min-w-0 text-xs text-muted-foreground"><p className="truncate">{solution.organization_name ?? "No organization"}</p><p className="mt-1 truncate">{owned ? "You" : solution.owner_name || solution.owner_email || "Unknown owner"} · Updated {new Date(solution.updated_at).toLocaleDateString()}</p></div>
 			<Button variant="ghost" size="sm" onClick={onOpen}>Open <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" /></Button>
 		</div>
 	);
 }
 
-const BUILD_STEPS: Array<{ id: BuildStage; label: string; detail: string }> = [
-	{ id: "workspace", label: "Creating your private workspace", detail: "Setting up source and revision history" },
-	{ id: "agent", label: "Starting the Builder Agent", detail: "Loading its Skill and solution-aware tools" },
-	{ id: "opening", label: "Opening the workbench", detail: "Restoring your prompt and live preview" },
-];
-
-function BuildLaunchProgress({ stage, appName }: { stage: BuildStage; appName: string }) {
-	const activeIndex = BUILD_STEPS.findIndex((step) => step.id === stage);
+function BuildLaunchProgress({ stage, buildName, targetKind }: { stage: BuildStage; buildName: string; targetKind: BuildTargetKind }) {
+	const steps: Array<{ id: BuildStage; label: string; detail: string }> = targetKind === "organization" ? [
+		{ id: "workspace", label: "Creating your workspace", detail: "Binding the selected organization securely" },
+		{ id: "profile", label: "Preparing your tools", detail: "Loading only the operations your Role allows" },
+		{ id: "opening", label: "Opening the workbench", detail: "Restoring your prompt and conversation" },
+	] : [
+		{ id: "workspace", label: "Creating your private workspace", detail: "Setting up source and revision history" },
+		{ id: "profile", label: "Preparing your build", detail: "Loading the maintained build instructions and Solution-aware tools" },
+		{ id: "opening", label: "Opening the workbench", detail: "Restoring your prompt and live preview" },
+	];
+	const activeIndex = steps.findIndex((step) => step.id === stage);
 	return (
-		<div className="flex min-h-52 items-center px-3 py-4 sm:px-6" aria-live="polite" role="status" aria-label={`Starting ${appName}`}>
+		<div className="flex min-h-52 items-center px-3 py-4 sm:px-6" aria-live="polite" role="status" aria-label={`Starting ${buildName}`}>
 			<div className="w-full space-y-5">
 				<div className="h-1.5 overflow-hidden rounded-full bg-muted/60"><div className={cn("h-full rounded-full bg-primary transition-all duration-500 motion-safe:animate-pulse", activeIndex === 0 ? "w-1/3" : activeIndex === 1 ? "w-2/3" : "w-full")} /></div>
-				<div><p className="text-sm font-medium">Starting {appName || "your app"}</p><p className="mt-1 text-xs text-muted-foreground">The workbench opens as soon as its private session is ready.</p></div>
-				<div className="grid gap-3 sm:grid-cols-3">{BUILD_STEPS.map((step, index) => { const complete = index < activeIndex; const active = index === activeIndex; return <div key={step.id} className={cn("rounded-2xl border p-3 transition-colors", active && "border-primary/40 bg-primary/5", complete && "bg-muted/30")}><div className="flex items-center gap-2">{complete ? <Check className="h-4 w-4 text-primary" /> : active ? <Loader2 className="h-4 w-4 animate-spin text-primary motion-reduce:animate-none" /> : <Clock3 className="h-4 w-4 text-muted-foreground" />}<p className="text-xs font-medium">{step.label}</p></div><p className="mt-1 pl-6 text-[11px] leading-4 text-muted-foreground">{step.detail}</p></div>; })}</div>
+				<div><p className="text-sm font-medium">Starting {buildName || "your build"}</p><p className="mt-1 text-xs text-muted-foreground">The workbench opens as soon as its session is ready.</p></div>
+				<div className="grid gap-3 sm:grid-cols-3">{steps.map((step, index) => { const complete = index < activeIndex; const active = index === activeIndex; return <div key={step.id} className={cn("rounded-2xl border p-3 transition-colors", active && "border-primary/40 bg-primary/5", complete && "bg-muted/30")}><div className="flex items-center gap-2">{complete ? <Check className="h-4 w-4 text-primary" /> : active ? <Loader2 className="h-4 w-4 animate-spin text-primary motion-reduce:animate-none" /> : <Clock3 className="h-4 w-4 text-muted-foreground" />}<p className="text-xs font-medium">{step.label}</p></div><p className="mt-1 pl-6 text-[11px] leading-4 text-muted-foreground">{step.detail}</p></div>; })}</div>
 			</div>
 		</div>
 	);

@@ -26,7 +26,11 @@ from sqlalchemy import Select, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.exceptions import AccessDeniedError
-from src.models import Base, UserRole
+from src.models import Base
+from src.services.authorization import (
+    AuthorizationBoundary,
+    resolve_effective_role_ids,
+)
 from src.services.solutions.access import (
     is_private_solution_owner,
     visible_solution_child_criterion,
@@ -103,9 +107,10 @@ class OrgScopedRepository(Generic[ModelT]):
             # No role_table - cascade scoping only
 
     Access control:
-        - Superusers (`is_superuser=True`): trust the scope, no role check.
-          This is the SDK execution path — the engine has already done
-          authorization via `api/shared/scope_resolver.py`.
+        - Explicit bypass (`bypass_resource_admission=True`): trust the scope,
+          access level, and role admission. This is used only after a caller has
+          already authorized the request, such as engine/runtime or
+          platform-superuser paths.
         - Regular users: cascade scoping + role check (if entity has roles).
           This is the direct-user REST path.
     """
@@ -119,7 +124,7 @@ class OrgScopedRepository(Generic[ModelT]):
         session: AsyncSession,
         org_id: UUID | str | None,
         user_id: UUID | str | None = None,
-        is_superuser: bool = False,
+        bypass_resource_admission: bool = False,
         is_external: bool = False,
     ):
         """
@@ -132,7 +137,8 @@ class OrgScopedRepository(Generic[ModelT]):
                 so an unconverted string here silently fails the in-scope check.
             user_id: User UUID for role checks (None for system/superuser).
                 Same string-coercion contract as org_id.
-            is_superuser: If True, bypasses role checks (trusts scope)
+            bypass_resource_admission: If True, bypasses resource admission
+                checks after the caller has already authorized the request.
             is_external: True for external (portal/guest) principals. Affects
                 ONLY the access-level check, never the org cascade: an
                 external gets no ``access_level="authenticated"`` entitlement
@@ -140,13 +146,13 @@ class OrgScopedRepository(Generic[ModelT]):
                 required). Cascade scoping is identical for everyone —
                 org→global, keyed on the effective org. The flag comes from
                 the principal (``UserPrincipal.is_external``), which is
-                already neutralized for bypass callers (platform admin /
-                provider org) at token mint — see ``shared/external_access.py``.
+                External restriction is neutralized only by explicit resource
+                admission bypass.
         """
         self.session = session
         self.org_id = UUID(org_id) if isinstance(org_id, str) else org_id
         self.user_id = UUID(user_id) if isinstance(user_id, str) else user_id
-        self.is_superuser = is_superuser
+        self.bypass_resource_admission = bypass_resource_admission
         self.is_external = is_external
 
     @property
@@ -154,11 +160,10 @@ class OrgScopedRepository(Generic[ModelT]):
         """True when the external access-level rule applies.
 
         Feeds ONLY the access-level check (`authenticated` does not grant
-        to externals); it never alters the org cascade. ``is_superuser=True``
-        neutralizes it: the engine sentinel and platform admins are never
-        externally restricted.
+        to externals); it never alters the org cascade. Explicit resource
+        admission bypass neutralizes it for already-authorized callers.
         """
-        return self.is_external and not self.is_superuser
+        return self.is_external and not self.bypass_resource_admission
 
     # =========================================================================
     # Public API
@@ -218,8 +223,8 @@ class OrgScopedRepository(Generic[ModelT]):
             if not entity:
                 return None
 
-            # Superusers can access any entity by ID
-            if self.is_superuser:
+            # Explicit admission bypass can access any entity by ID.
+            if self.bypass_resource_admission:
                 return entity
 
             # Regular users: verify entity is in their scope (their org or global)
@@ -248,7 +253,9 @@ class OrgScopedRepository(Generic[ModelT]):
             result = await self.session.execute(org_query)
             entity = result.scalar_one_or_none()
             if entity:
-                if self.is_superuser or await self._can_access_entity(entity):
+                if self.bypass_resource_admission or await self._can_access_entity(
+                    entity
+                ):
                     return entity
                 return None
 
@@ -257,7 +264,9 @@ class OrgScopedRepository(Generic[ModelT]):
         result = await self.session.execute(global_query)
         entity = result.scalar_one_or_none()
 
-        if entity and (self.is_superuser or await self._can_access_entity(entity)):
+        if entity and (
+            self.bypass_resource_admission or await self._can_access_entity(entity)
+        ):
             return entity
 
         return None
@@ -333,7 +342,7 @@ class OrgScopedRepository(Generic[ModelT]):
         # Filter by role access (for regular users with role-based entities)
         # NOTE: This does per-entity role checking which may cause N+1 queries
         # for large result sets. Consider batch optimization if performance is an issue.
-        if not self.is_superuser and self._has_role_table():
+        if not self.bypass_resource_admission and self._has_role_table():
             accessible = []
             for entity in entities:
                 if await self._can_access_entity(entity):
@@ -418,8 +427,9 @@ class OrgScopedRepository(Generic[ModelT]):
         if await self._is_private_solution_owner(entity):
             return True
 
-        # Superusers bypass role checks (private parents were already filtered)
-        if self.is_superuser:
+        # Explicit admission bypass skips access-level/role checks. Private
+        # parents were already filtered unless the caller is the private owner.
+        if self.bypass_resource_admission:
             return True
 
         # No role table configured - cascade scoping only
@@ -492,12 +502,19 @@ class OrgScopedRepository(Generic[ModelT]):
         if not self._has_role_table():
             return True
 
-        # Get user's role IDs
-        user_roles_query = select(UserRole.role_id).where(
-            UserRole.user_id == self.user_id
+        # Resource grants only recognize Roles effective in this repository's
+        # active organization/Platform boundary. Holding the same Role in an
+        # unrelated customer must never unlock this entity.
+        boundary = (
+            AuthorizationBoundary.organization(self.org_id)
+            if self.org_id is not None
+            else AuthorizationBoundary.platform()
         )
-        result = await self.session.execute(user_roles_query)
-        user_role_ids = list(result.scalars().all())
+        user_role_ids = await resolve_effective_role_ids(
+            self.session,
+            user_id=self.user_id,
+            selected_boundary=boundary,
+        )
 
         if not user_role_ids:
             return False

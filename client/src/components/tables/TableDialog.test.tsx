@@ -6,7 +6,7 @@
  * - create-mode submit: payload includes parsed schema JSON and scope query
  * - edit-mode: name is disabled + pre-filled, submit sends update with table_id
  * - invalid schema JSON blocks submit and surfaces an error
- * - OrganizationSelect only renders for platform admins
+ * - local organization retargeting is not rendered
  * - PolicyEditor → mutate round-trip: a policy authored in the embedded
  *   PolicyEditor reaches the create/update mutation body verbatim, including
  *   the `when` JSON expression. This is the security-critical integration
@@ -132,6 +132,11 @@ vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockAuth(),
 }));
 
+const mockBoundary = vi.fn();
+vi.mock("@/contexts/AuthorizationBoundaryContext", () => ({
+	useAuthorizationBoundary: () => mockBoundary(),
+}));
+
 vi.mock("@/hooks/useRoles", () => ({
 	useRoles: () => ({ data: [] }),
 }));
@@ -166,6 +171,14 @@ beforeEach(() => {
 	mockAuth.mockReturnValue({
 		isPlatformAdmin: false,
 		user: { organizationId: "org-1" },
+	});
+	mockBoundary.mockReturnValue({
+		selectedTarget: {
+			kind: "organization",
+			organization_id: "org-1",
+		},
+		hasSelectedCapability: (capability: string) =>
+			capability === "tables.readwrite",
 	});
 });
 
@@ -418,21 +431,10 @@ describe("TableDialog — PolicyEditor save round-trip (security)", () => {
 });
 
 describe("TableDialog — organization picker visibility", () => {
-	it("does not render OrganizationSelect for non-platform admins", () => {
+	it("does not render a local OrganizationSelect", () => {
 		renderWithProviders(<TableDialog open={true} onClose={vi.fn()} />);
 		expect(
 			screen.queryByLabelText(/organization-select/i),
 		).not.toBeInTheDocument();
-	});
-
-	it("renders OrganizationSelect for platform admins", () => {
-		mockAuth.mockReturnValue({
-			isPlatformAdmin: true,
-			user: { organizationId: null },
-		});
-		renderWithProviders(<TableDialog open={true} onClose={vi.fn()} />);
-		expect(
-			screen.getByLabelText(/organization-select/i),
-		).toBeInTheDocument();
 	});
 });

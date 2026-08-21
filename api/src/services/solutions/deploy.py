@@ -1054,7 +1054,7 @@ class SolutionDeployer:
                 ref_repo = PolicyRuleRepository(
                     self.db,
                     org_id=solution.organization_id,
-                    is_superuser=True,
+                    bypass_resource_admission=True,
                 )
                 try:
                     await resolve_policy_refs(
@@ -1261,6 +1261,12 @@ class SolutionDeployer:
                 "published_snapshot": {"deployed_by": "solution", "app_model": app_model},
                 "published_at": now,
             }
+            # Private Builder source is owner/model-authored and must always
+            # render through the opaque app host. Shared installs keep their
+            # existing runtime choice (or the trusted column default on first
+            # deploy); promotion explicitly applies the administrator's choice.
+            if self._policy.private:
+                values["runtime_mode"] = "isolated"
             # App LOGO declared in the manifest (`logo:` path), carried by the
             # collector as base64 (the only way a solution-managed app gets a
             # logo — the upload endpoint is blocked for it). Validate + sanitize
@@ -1768,7 +1774,7 @@ class SolutionDeployer:
                 )
             seen.add(key)
 
-        ref_repo = PolicyRuleRepository(self.db, org_id=org_id, is_superuser=True)
+        ref_repo = PolicyRuleRepository(self.db, org_id=org_id, bypass_resource_admission=True)
         present: set[tuple[str, str]] = set()
 
         for entry in file_policies:

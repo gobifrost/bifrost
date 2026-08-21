@@ -23,6 +23,7 @@ import { useLocation, useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	AlertTriangle,
+	Building2,
 	Code2,
 	CheckCircle2,
 	Database,
@@ -78,11 +79,13 @@ import {
 	createBuilderSession,
 	currentRevision,
 	deployedRevision,
+	discardGlobalOperationChange,
 	downloadRevision,
 	getBuilderSolution,
 	getGlobalWorkspace,
 	isPreviewStale,
 	latestTurn,
+	listGlobalOperationChanges,
 	listBuilderSessions,
 	listRevisions,
 	listTurns,
@@ -92,6 +95,7 @@ import {
 	runBuilderTurn,
 	undoToRevision,
 	validateGlobalWorkspace,
+	type BuilderBoundary,
 	type BuilderTurnStatus,
 } from "@/services/builder";
 import { useApplications } from "@/hooks/useApplications";
@@ -225,6 +229,15 @@ function triggerDownload(blob: Blob, filename: string) {
 	URL.revokeObjectURL(url);
 }
 
+function boundaryFromSearch(search: string): BuilderBoundary | undefined {
+	const value = new URLSearchParams(search).get("boundary");
+	if (value === "platform" || value === "managed_organizations") return value;
+	if (value?.startsWith("organization:")) {
+		return value as `organization:${string}`;
+	}
+	return undefined;
+}
+
 export function SolutionBuilder() {
 	const { solutionId } = useParams<{ solutionId: string }>();
 	const location = useLocation();
@@ -232,6 +245,14 @@ export function SolutionBuilder() {
 	const { user } = useAuth();
 	const initialPromptHandled = useRef(false);
 	const id = solutionId ?? "";
+	const boundary = useMemo(
+		() => boundaryFromSearch(location.search),
+		[location.search],
+	);
+	const boundaryOptions = useMemo(
+		() => (boundary ? { boundary } : undefined),
+		[boundary],
+	);
 	const locationState = location.state as {
 		initialPrompt?: unknown;
 		initialSessionId?: unknown;
@@ -275,42 +296,65 @@ export function SolutionBuilder() {
 	>(null);
 
 	const solutionQuery = useQuery({
-		queryKey: ["builder", "solution", id],
-		queryFn: ({ signal }) => getBuilderSolution(id, { signal }),
+		queryKey: ["builder", "solution", id, boundary ?? null],
+		queryFn: ({ signal }) => getBuilderSolution(id, { signal, boundary }),
 		enabled: Boolean(id),
 		retry: false,
 	});
 
 	const sessionsQuery = useQuery({
-		queryKey: ["builder", "sessions", id],
-		queryFn: ({ signal }) => listBuilderSessions(id, { signal }),
+		queryKey: ["builder", "sessions", id, boundary ?? null],
+		queryFn: ({ signal }) => listBuilderSessions(id, { signal, boundary }),
 		enabled: Boolean(id),
 	});
 
 	const revisionsQuery = useQuery({
-		queryKey: ["builder", "revisions", id],
-		queryFn: ({ signal }) => listRevisions(id, { signal }),
-		enabled: Boolean(id),
+		queryKey: ["builder", "revisions", id, boundary ?? null],
+		queryFn: ({ signal }) => listRevisions(id, { signal, boundary }),
+		enabled: Boolean(
+			id &&
+				solutionQuery.data &&
+				solutionQuery.data.target_kind !== "organization",
+		),
 	});
 
 	const turnsQuery = useQuery({
-		queryKey: ["builder", "turns", id],
-		queryFn: ({ signal }) => listTurns(id, { signal }),
+		queryKey: ["builder", "turns", id, boundary ?? null],
+		queryFn: ({ signal }) => listTurns(id, { signal, boundary }),
 		enabled: Boolean(id),
 	});
-	const applicationsQuery = useApplications();
+	const applicationScope =
+		boundary === "platform"
+			? "global"
+			: boundary?.startsWith("organization:")
+				? boundary.slice("organization:".length)
+				: undefined;
+	const applicationsQuery = useApplications(applicationScope);
 	const isGlobalWorkspace =
 		solutionQuery.data?.target_kind === "global_repo";
+	const isOrganizationWorkspace =
+		solutionQuery.data?.target_kind === "organization";
 	const globalWorkspaceQuery = useQuery({
 		queryKey: ["builder", "global-workspace"],
 		queryFn: ({ signal }) => getGlobalWorkspace({ signal }),
 		enabled: isGlobalWorkspace,
 		retry: false,
 	});
+	const globalOperationsQuery = useQuery({
+		queryKey: ["builder", "global-workspace", "operations"],
+		queryFn: ({ signal }) => listGlobalOperationChanges({ signal }),
+		enabled: isGlobalWorkspace,
+		retry: false,
+	});
 	const displayedWorkbenchTab =
-		isGlobalWorkspace && workbenchTab === "preview" ? "changes" : workbenchTab;
-	const displayedMobilePane =
-		isGlobalWorkspace && mobilePane === "preview" ? "changes" : mobilePane;
+		(isGlobalWorkspace || isOrganizationWorkspace) && workbenchTab === "preview"
+			? "changes"
+			: workbenchTab;
+	const displayedMobilePane = isOrganizationWorkspace
+		? "agent"
+		: isGlobalWorkspace && mobilePane === "preview"
+			? "changes"
+			: mobilePane;
 
 	const revisions = useMemo(
 		() => revisionsQuery.data ?? [],
@@ -351,13 +395,15 @@ export function SolutionBuilder() {
 		solution &&
 			(solution.caller_access === "owner" || solution.caller_access === "support"),
 	);
-	const workbenchStateError = revisionsQuery.isError
+	const workbenchStateError = !isOrganizationWorkspace && revisionsQuery.isError
 		? revisionsQuery.error
 		: turnsQuery.isError
 			? turnsQuery.error
 			: null;
 	const workbenchStateUnavailable = Boolean(
-		sessionsQuery.isError || revisionsQuery.isError || turnsQuery.isError,
+		sessionsQuery.isError ||
+			(!isOrganizationWorkspace && revisionsQuery.isError) ||
+			turnsQuery.isError,
 	);
 	const builderApp = applicationsQuery.data?.applications.find(
 		(app) => app.solution_id === id,
@@ -376,7 +422,9 @@ export function SolutionBuilder() {
 			? selectedSessionTurn
 			: null;
 
-	const canLaunchApp = Boolean(!isGlobalWorkspace && builderApp && deployed);
+	const canLaunchApp = Boolean(
+		!isGlobalWorkspace && !isOrganizationWorkspace && builderApp && deployed,
+	);
 	const resizeAgentPanel = useCallback(
 		(event: ReactPointerEvent<HTMLDivElement>) => {
 			const bounds = workbenchRef.current?.getBoundingClientRect();
@@ -417,6 +465,7 @@ export function SolutionBuilder() {
 		queryFn: ({ signal }) =>
 			createBuilderAppLaunch(id, builderApp!.id, previewRoute, {
 				signal,
+				boundary,
 			}),
 		enabled: canLaunchApp,
 		retry: false,
@@ -460,11 +509,17 @@ export function SolutionBuilder() {
 			queryClient.setQueryData(["platform-job", activeJobId], job);
 			if (!terminalJob(job.status)) return;
 			invalidateAll();
+			queryClient.invalidateQueries({
+				queryKey: ["builder", "global-workspace", "operations"],
+			});
 		});
 	}, [activeJobId, invalidateAll, queryClient, user?.id]);
 
 	const newSessionMutation = useMutation({
-		mutationFn: () => createBuilderSession(id),
+		mutationFn: () =>
+			boundaryOptions
+				? createBuilderSession(id, boundaryOptions)
+				: createBuilderSession(id),
 		onSuccess: (session) => {
 			queryClient.invalidateQueries({
 				queryKey: ["builder", "sessions", id],
@@ -481,23 +536,32 @@ export function SolutionBuilder() {
 					"Start a builder session before restoring a revision",
 				);
 			}
-			return undoToRevision(id, {
+			const request = {
 				toRevisionId: revisionId,
 				sessionId: selectedSession.id,
-			});
+			};
+			return boundaryOptions
+				? undoToRevision(id, request, boundaryOptions)
+				: undoToRevision(id, request);
 		},
 		onSuccess: invalidateAll,
 		onError: (error: Error) => setActionError(error.message),
 	});
 
 	const downloadMutation = useMutation({
-		mutationFn: (revisionId: string) => downloadRevision(id, revisionId),
+		mutationFn: (revisionId: string) =>
+			boundaryOptions
+				? downloadRevision(id, revisionId, boundaryOptions)
+				: downloadRevision(id, revisionId),
 		onSuccess: ({ blob, filename }) => triggerDownload(blob, filename),
 		onError: (error: Error) => setActionError(error.message),
 	});
 
 	const promotionMutation = useMutation({
-		mutationFn: () => requestPromotion(id),
+		mutationFn: () =>
+			boundaryOptions
+				? requestPromotion(id, boundaryOptions)
+				: requestPromotion(id),
 		onSuccess: () =>
 			queryClient.invalidateQueries({
 				queryKey: ["builder", "solution", id],
@@ -521,13 +585,30 @@ export function SolutionBuilder() {
 		onError: (error: Error) => setActionError(error.message),
 	});
 
+	const discardGlobalOperationMutation = useMutation({
+		mutationFn: (changeId: string) => discardGlobalOperationChange(changeId),
+		onMutate: () => setActionError(null),
+		onSuccess: () => {
+			globalValidationMutation.reset();
+			invalidateAll();
+			queryClient.invalidateQueries({
+				queryKey: ["builder", "global-workspace", "operations"],
+			});
+		},
+		onError: (error: Error) => setActionError(error.message),
+	});
+
 	const globalApplyMutation = useMutation({
 		mutationFn: () => applyGlobalWorkspace(),
 		onMutate: () => setActionError(null),
-		onSuccess: () => {
+		onSuccess: (result) => {
+			setSubmittedJobId(result.job_id);
 			setGlobalConfirmation(null);
 			globalValidationMutation.reset();
 			invalidateAll();
+			queryClient.invalidateQueries({
+				queryKey: ["builder", "global-workspace", "operations"],
+			});
 		},
 		onError: (error: Error) => {
 			setGlobalConfirmation(null);
@@ -538,10 +619,14 @@ export function SolutionBuilder() {
 	const globalRollbackMutation = useMutation({
 		mutationFn: () => rollbackGlobalWorkspace(),
 		onMutate: () => setActionError(null),
-		onSuccess: () => {
+		onSuccess: (result) => {
+			setSubmittedJobId(result.job_id);
 			setGlobalConfirmation(null);
 			globalValidationMutation.reset();
 			invalidateAll();
+			queryClient.invalidateQueries({
+				queryKey: ["builder", "global-workspace", "operations"],
+			});
 		},
 		onError: (error: Error) => {
 			setGlobalConfirmation(null);
@@ -569,7 +654,9 @@ export function SolutionBuilder() {
 			attachmentIds?: string[];
 			resumeFromTurnId?: string;
 		}) =>
-			runBuilderTurn(id, params),
+			boundaryOptions
+				? runBuilderTurn(id, params, boundaryOptions)
+				: runBuilderTurn(id, params),
 		onMutate: () => setActionError(null),
 		onSuccess: (result) => {
 			setSubmittedJobId(result.job_id);
@@ -710,8 +797,23 @@ export function SolutionBuilder() {
 	const usage = buildUsage(platformJob);
 	const durableError =
 		platformJob?.status === "failed" ? platformJob.error?.message : null;
+	const globalOperationChanges = globalOperationsQuery.data?.changes ?? [];
+	const globalOperationRollbackChanges =
+		globalOperationsQuery.data?.rollbackable_changes ?? [];
+	const globalWorkspaceWithOperations = globalWorkspaceQuery.data as
+		| (typeof globalWorkspaceQuery.data & { pending_operation_count?: number })
+		| undefined;
+	const hasGlobalRollback =
+		Boolean(globalWorkspaceQuery.data?.can_rollback) ||
+		globalOperationRollbackChanges.length > 0;
+	const pendingGlobalOperationCount =
+		globalWorkspaceWithOperations?.pending_operation_count ??
+		globalOperationChanges.length;
+	const hasGlobalOperationProposal = pendingGlobalOperationCount > 0;
 	const hasGlobalProposal = Boolean(
-		isGlobalWorkspace && source && deployed && source.id !== deployed.id,
+		isGlobalWorkspace &&
+			((source && deployed && source.id !== deployed.id) ||
+				hasGlobalOperationProposal),
 	);
 	const globalValidationIsCurrent = Boolean(
 		globalValidationMutation.data?.revision_id === source?.id,
@@ -722,10 +824,12 @@ export function SolutionBuilder() {
 	const globalActionPending =
 		globalValidationMutation.isPending ||
 		globalRefreshMutation.isPending ||
+		discardGlobalOperationMutation.isPending ||
 		globalApplyMutation.isPending ||
 		globalRollbackMutation.isPending;
 	const promotionReady = Boolean(
 		!isGlobalWorkspace &&
+		!isOrganizationWorkspace &&
 		canManage &&
 		!workbenchStateUnavailable &&
 		source &&
@@ -794,23 +898,24 @@ export function SolutionBuilder() {
 	return (
 		<TooltipProvider>
 			<div className="flex h-full min-h-0 flex-col bg-background">
-			{solution && !isGlobalWorkspace ? (
-				<BuilderShareDialog
+				{solution && !isGlobalWorkspace ? (
+					<BuilderShareDialog
 						solutionId={solution.id}
 						solutionName={solution.name}
+						boundary={boundary}
 						open={shareOpen}
 						onOpenChange={setShareOpen}
-				/>
-			) : null}
-			<AlertDialog
+					/>
+				) : null}
+				<AlertDialog
 				open={globalConfirmation === "apply"}
 				onOpenChange={(open) => !open && setGlobalConfirmation(null)}
 			>
 				<AlertDialogContent>
 					<AlertDialogHeader>
-						<AlertDialogTitle>Apply this proposal to live _repo?</AlertDialogTitle>
+						<AlertDialogTitle>Apply this release to the live platform?</AlertDialogTitle>
 						<AlertDialogDescription>
-							Only the validated revision you reviewed will be written. If live source changed since the proposal began, Bifrost stops and asks you to refresh instead.
+							Bifrost will apply the exact source diff and operation changes you reviewed. Source changes run before resource changes; if anything changed after review, the release stops.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -820,7 +925,7 @@ export function SolutionBuilder() {
 							onClick={() => globalApplyMutation.mutate()}
 						>
 							{globalApplyMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-							Apply to live _repo
+							Apply release
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
@@ -831,9 +936,9 @@ export function SolutionBuilder() {
 			>
 				<AlertDialogContent>
 					<AlertDialogHeader>
-						<AlertDialogTitle>Roll back the latest live apply?</AlertDialogTitle>
+						<AlertDialogTitle>Roll back the latest Global release?</AlertDialogTitle>
 						<AlertDialogDescription>
-							Bifrost will restore the previous reviewed revision only if live _repo still matches the last apply. Newer edits are never overwritten.
+							Bifrost will reverse the latest reviewed release batch. Resource operations roll back before source is restored, and newer edits are never overwritten.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -844,7 +949,7 @@ export function SolutionBuilder() {
 							onClick={() => globalRollbackMutation.mutate()}
 						>
 							{globalRollbackMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-							Roll back live _repo
+							Roll back release
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
@@ -860,6 +965,11 @@ export function SolutionBuilder() {
 								<Database className="h-3 w-3" />
 								Live _repo
 							</Badge>
+						) : isOrganizationWorkspace ? (
+							<Badge variant="outline" className="shrink-0 gap-1 border-primary/30 text-primary">
+								<Building2 className="h-3 w-3" />
+								Organization workspace
+							</Badge>
 						) : solution?.visibility === "private" ? (
 								<Badge
 									variant="outline"
@@ -873,6 +983,8 @@ export function SolutionBuilder() {
 					<p className="truncate text-xs text-muted-foreground">
 						{isGlobalWorkspace
 							? "Instance-wide source · changes require explicit apply"
+							: isOrganizationWorkspace
+								? `${solution?.organization_name ?? "Organization"} · authorized changes apply directly`
 							: `${solution?.organization_name ?? "Build"} / ${solution?.slug}${
 									solution?.caller_access !== "owner" && solution?.owner_name
 										? ` · Owned by ${solution.owner_name}`
@@ -911,7 +1023,7 @@ export function SolutionBuilder() {
 								<span className="hidden xl:inline">Share</span>
 							</Button>
 						) : null}
-						<Button
+						{!isOrganizationWorkspace ? <Button
 							variant="ghost"
 							size="sm"
 							className="h-9 sm:h-7"
@@ -933,8 +1045,8 @@ export function SolutionBuilder() {
 						>
 							<Undo2 className="h-4 w-4" />
 							<span className="hidden xl:inline">Undo</span>
-						</Button>
-						<Button
+						</Button> : null}
+						{!isOrganizationWorkspace ? <Button
 							variant="ghost"
 							size="sm"
 							className="h-9 sm:h-7"
@@ -950,8 +1062,8 @@ export function SolutionBuilder() {
 								<Download className="h-4 w-4" />
 							)}
 							<span className="hidden xl:inline">Download</span>
-						</Button>
-					{!isGlobalWorkspace ? <Tooltip>
+						</Button> : null}
+					{!isGlobalWorkspace && !isOrganizationWorkspace ? <Tooltip>
 							<TooltipTrigger asChild>
 								<span>
 									<Button
@@ -985,7 +1097,7 @@ export function SolutionBuilder() {
 								</TooltipContent>
 							) : null}
 					</Tooltip> : null}
-					{!isGlobalWorkspace ? <Tooltip>
+					{!isGlobalWorkspace && !isOrganizationWorkspace ? <Tooltip>
 							<TooltipTrigger asChild>
 								<span>
 									<Button
@@ -1093,6 +1205,119 @@ export function SolutionBuilder() {
 									))}
 								</ul>
 							) : null}
+							{globalOperationChanges.length > 0 ? (
+								<div className="mt-3 space-y-2 rounded-lg border bg-background/70 p-3">
+									<div className="flex items-center justify-between gap-2">
+										<p className="text-xs font-medium">
+											{globalOperationChanges.length} staged operation change{globalOperationChanges.length === 1 ? "" : "s"}
+										</p>
+										<Badge variant="outline">Human review required</Badge>
+									</div>
+									<div className="space-y-2">
+										{globalOperationChanges.map((change) => (
+											<div key={change.id} className="rounded-md border bg-muted/30 p-2 text-xs">
+												<div className="flex flex-wrap items-center justify-between gap-2">
+													<div>
+														<p className="font-medium">{change.operation_id}</p>
+														<p className="text-muted-foreground">
+															{change.resource_type}{change.resource_id ? ` · ${change.resource_id}` : " · new global resource"}
+														</p>
+													</div>
+													<Button
+														variant="ghost"
+														size="sm"
+														className="h-7"
+														disabled={globalActionPending}
+														onClick={() => discardGlobalOperationMutation.mutate(change.id)}
+													>
+														Discard
+													</Button>
+												</div>
+												{change.validation_errors.length > 0 ? (
+													<ul className="mt-2 space-y-1 text-destructive">
+														{change.validation_errors.map((error) => (
+															<li key={error}>{error}</li>
+														))}
+													</ul>
+												) : null}
+												<div className="mt-2 grid gap-2 md:grid-cols-2">
+													<div>
+														<p className="mb-1 text-[11px] font-medium text-muted-foreground">
+															Before
+														</p>
+														{change.before_state ? (
+															<pre className="max-h-32 overflow-auto rounded bg-background p-2 text-[11px]">
+																{JSON.stringify(change.before_state, null, 2)}
+															</pre>
+														) : (
+															<p className="rounded bg-background p-2 text-[11px] text-muted-foreground">
+																New global resource
+															</p>
+														)}
+													</div>
+													<div>
+														<p className="mb-1 text-[11px] font-medium text-muted-foreground">
+															Proposed
+														</p>
+														<pre className="max-h-32 overflow-auto rounded bg-background p-2 text-[11px]">
+															{JSON.stringify(change.after_state, null, 2)}
+														</pre>
+													</div>
+												</div>
+											</div>
+										))}
+									</div>
+								</div>
+							) : null}
+							{globalOperationRollbackChanges.length > 0 ? (
+								<div className="mt-3 space-y-2 rounded-lg border bg-background/70 p-3">
+									<div className="flex items-center justify-between gap-2">
+										<p className="text-xs font-medium">
+											Latest Global release
+										</p>
+										<Badge variant="outline">Rollback review required</Badge>
+									</div>
+									<div className="space-y-2">
+										{globalOperationRollbackChanges.map((change) => (
+											<div key={change.id} className="rounded-md border bg-muted/30 p-2 text-xs">
+												<p className="font-medium">{change.operation_id}</p>
+												<p className="text-muted-foreground">
+													{change.resource_type}{change.resource_id ? ` · ${change.resource_id}` : " · global resource"}
+												</p>
+												<div className="mt-2 grid gap-2 md:grid-cols-2">
+													<div>
+														<p className="mb-1 text-[11px] font-medium text-muted-foreground">
+															Before
+														</p>
+														{change.before_state ? (
+															<pre className="max-h-32 overflow-auto rounded bg-background p-2 text-[11px]">
+																{JSON.stringify(change.before_state, null, 2)}
+															</pre>
+														) : (
+															<p className="rounded bg-background p-2 text-[11px] text-muted-foreground">
+																Resource did not exist
+															</p>
+														)}
+													</div>
+													<div>
+														<p className="mb-1 text-[11px] font-medium text-muted-foreground">
+															Applied
+														</p>
+														<pre className="max-h-32 overflow-auto rounded bg-background p-2 text-[11px]">
+															{JSON.stringify(change.after_state, null, 2)}
+														</pre>
+													</div>
+												</div>
+												{change.before_state ? null : (
+													<p className="mt-2 text-[11px] text-destructive">
+														This will delete the created {change.resource_type}.
+													</p>
+												)}
+											</div>
+										))}
+									</div>
+								</div>
+							) : null}
 						</div>
 						<div className="flex flex-wrap items-center gap-2">
 							<Button
@@ -1115,17 +1340,21 @@ export function SolutionBuilder() {
 							</Button>
 							<Button
 								size="sm"
-								disabled={!globalProposalIsValid || buildActive || globalActionPending}
+								disabled={
+									!globalProposalIsValid ||
+									buildActive ||
+									globalActionPending
+								}
 								onClick={() => setGlobalConfirmation("apply")}
 							>
 							{globalApplyMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Database className="h-4 w-4" />}
-								Apply to live
+								Apply release
 							</Button>
 							<Button
 								variant="ghost"
 								size="sm"
 								className="text-destructive hover:text-destructive"
-								disabled={!globalWorkspaceQuery.data?.can_rollback || hasGlobalProposal || buildActive || globalActionPending}
+								disabled={!hasGlobalRollback || hasGlobalProposal || buildActive || globalActionPending}
 								onClick={() => setGlobalConfirmation("rollback")}
 							>
 							{globalRollbackMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
@@ -1156,9 +1385,11 @@ export function SolutionBuilder() {
 									: turnLabel(displayedTurnStatus)}
 						</Badge>
 						<span className="flex shrink-0 items-center gap-1.5 text-muted-foreground">
-							{isGlobalWorkspace ? <Database className="h-3.5 w-3.5 text-primary" /> : <Sparkles className="h-3.5 w-3.5 text-primary" />}
+							{isGlobalWorkspace ? <Database className="h-3.5 w-3.5 text-primary" /> : isOrganizationWorkspace ? <Building2 className="h-3.5 w-3.5 text-primary" /> : <Sparkles className="h-3.5 w-3.5 text-primary" />}
 							{isGlobalWorkspace ? (
 								<strong className="font-medium text-foreground">Global Workspace agent</strong>
+							) : isOrganizationWorkspace ? (
+								<strong className="font-medium text-foreground">Organization Builder</strong>
 							) : (
 								<>
 									Skill{" "}
@@ -1210,7 +1441,7 @@ export function SolutionBuilder() {
 									{platformJob.external_provider} runner
 								</span>
 							) : null}
-							<span className="hidden shrink-0 items-center gap-1 text-muted-foreground xl:flex">
+							{!isOrganizationWorkspace ? <span className="hidden shrink-0 items-center gap-1 text-muted-foreground xl:flex">
 							{isGlobalWorkspace ? "Proposal" : "Source"}{" "}
 								<code className="text-foreground">
 									{source?.id.slice(0, 8) ?? "none"}
@@ -1220,8 +1451,8 @@ export function SolutionBuilder() {
 								<code className="text-foreground">
 									{deployed?.id.slice(0, 8) ?? "not deployed"}
 								</code>
-							</span>
-							{stale ? (
+							</span> : null}
+							{!isOrganizationWorkspace && stale ? (
 								<span
 									className="shrink-0 text-amber-600 dark:text-amber-400"
 									data-testid="source-ahead-note"
@@ -1232,7 +1463,7 @@ export function SolutionBuilder() {
 							<span
 							className={cn(
 								"ml-auto hidden shrink-0 items-center gap-1.5 2xl:flex",
-								isGlobalWorkspace ? (globalProposalIsValid ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground") : promotionReady
+								isOrganizationWorkspace ? "text-emerald-600 dark:text-emerald-400" : isGlobalWorkspace ? (globalProposalIsValid ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground") : promotionReady
 										? "text-emerald-600 dark:text-emerald-400"
 										: "text-muted-foreground",
 								)}
@@ -1240,12 +1471,14 @@ export function SolutionBuilder() {
 								<span
 									className={cn(
 										"h-1.5 w-1.5 rounded-full",
-									isGlobalWorkspace ? (globalProposalIsValid ? "bg-emerald-500" : "bg-muted-foreground/50") : promotionReady
+									isOrganizationWorkspace ? "bg-emerald-500" : isGlobalWorkspace ? (globalProposalIsValid ? "bg-emerald-500" : "bg-muted-foreground/50") : promotionReady
 											? "bg-emerald-500"
 											: "bg-muted-foreground/50",
 									)}
 								/>
-							{isGlobalWorkspace
+							{isOrganizationWorkspace
+								? "Changes use your current organization permissions"
+								: isGlobalWorkspace
 								? globalProposalIsValid
 									? "Validated for explicit apply"
 									: hasGlobalProposal
@@ -1337,7 +1570,7 @@ export function SolutionBuilder() {
 					</p>
 				) : null}
 
-			<div className={cn("grid border-b p-1 lg:hidden", isGlobalWorkspace ? "grid-cols-3" : "grid-cols-4")}>
+			{!isOrganizationWorkspace ? <div className={cn("grid border-b p-1 lg:hidden", isGlobalWorkspace ? "grid-cols-3" : "grid-cols-4")}>
 				{(
 						[
 							["agent", Sparkles, "Agent"],
@@ -1365,7 +1598,7 @@ export function SolutionBuilder() {
 							{label}
 						</Button>
 					))}
-				</div>
+				</div> : null}
 
 				<div
 					ref={workbenchRef}
@@ -1378,14 +1611,15 @@ export function SolutionBuilder() {
 				>
 					<section
 						className={cn(
-							"min-h-0 flex-1 flex-col border-b lg:w-[var(--agent-panel-width)] lg:flex-none lg:border-b-0 lg:border-r",
+							"min-h-0 flex-1 flex-col border-b lg:flex-none lg:border-b-0",
+							isOrganizationWorkspace ? "lg:w-full" : "lg:w-[var(--agent-panel-width)] lg:border-r",
 					displayedMobilePane === "agent" ? "flex" : "hidden lg:flex",
 						)}
 					>
 						<div className="flex min-h-11 items-center justify-between gap-2 border-b px-3 py-2">
 							<div className="min-w-0">
 								<div className="flex items-center gap-2 text-sm font-medium">
-							{isGlobalWorkspace ? "Workspace Agent" : "Agent"}
+							{isGlobalWorkspace ? "Workspace Agent" : isOrganizationWorkspace ? "Organization Builder" : "Agent"}
 									<Badge
 										variant="outline"
 										className="gap-1 border-primary/20 text-[10px] text-primary"
@@ -1397,12 +1631,17 @@ export function SolutionBuilder() {
 								<p className="truncate text-[11px] text-muted-foreground">
 							{isGlobalWorkspace
 								? "Proposes bounded _repo edits; never applies them"
+								: isOrganizationWorkspace
+									? "Uses only the tools allowed in this organization"
 								: "bifrost-build guides each generated change"}
 								</p>
 							</div>
 								<div className="flex items-center gap-1">
 									{!isGlobalWorkspace ? (
-										<BuilderExternalHarnessDialog session={selectedSession} />
+									<BuilderExternalHarnessDialog
+										session={selectedSession}
+										targetKind={solution?.target_kind}
+									/>
 									) : null}
 									<Button
 										variant="ghost"
@@ -1459,15 +1698,17 @@ export function SolutionBuilder() {
 									conversationId={
 										selectedSession.conversation_id
 									}
-							agentName={isGlobalWorkspace ? "Global Workspace Agent" : "App Builder"}
+									agentName={isGlobalWorkspace ? "Global Workspace Agent" : isOrganizationWorkspace ? "Organization Builder" : "App Builder"}
 									onSend={handleBuilderMessage}
 									isSending={buildActive}
 									inputDisabled={!canEdit || buildActive || workbenchStateUnavailable}
 									inputPlaceholder={
 										buildActive
-								? "The Builder Agent is working…"
-								: isGlobalWorkspace
-									? "Describe a change to propose for the global workspace…"
+								? "Bifrost is working…"
+									: isGlobalWorkspace
+										? "Describe a change to propose for the global workspace…"
+										: isOrganizationWorkspace
+											? "Describe the resources to create or change in this organization…"
 									: "Describe what to build or change…"
 									}
 								/>
@@ -1479,6 +1720,8 @@ export function SolutionBuilder() {
 									<p className="text-sm text-muted-foreground">
 							{isGlobalWorkspace
 								? "Start a session to describe the instance-wide change you want to propose."
+								: isOrganizationWorkspace
+									? "Start a session to create or change resources in this organization."
 								: "Start a session to describe what you want to build."}
 									</p>
 									<Button
@@ -1499,14 +1742,14 @@ export function SolutionBuilder() {
 					</section>
 
 					<div
-						role="separator"
+					role="separator"
 						aria-label="Resize Agent panel"
 						aria-orientation="vertical"
 						aria-valuemin={32}
 						aria-valuemax={58}
 						aria-valuenow={Math.round(agentPanelWidth)}
 						tabIndex={0}
-						className="group hidden w-1.5 shrink-0 cursor-col-resize items-center justify-center bg-border/60 outline-none hover:bg-primary/25 focus-visible:bg-primary/30 lg:flex"
+					className={cn("group hidden w-1.5 shrink-0 cursor-col-resize items-center justify-center bg-border/60 outline-none hover:bg-primary/25 focus-visible:bg-primary/30", !isOrganizationWorkspace && "lg:flex")}
 						onPointerDown={resizeAgentPanel}
 						onKeyDown={(event) => {
 							if (event.key === "ArrowLeft") {
@@ -1524,7 +1767,7 @@ export function SolutionBuilder() {
 						<span className="h-8 w-0.5 rounded-full bg-muted-foreground/30 group-hover:bg-primary/60" />
 					</div>
 
-					<section
+					{!isOrganizationWorkspace ? <section
 						className={cn(
 							"min-h-0 min-w-0 flex-1 flex-col",
 					displayedMobilePane === "agent" ? "hidden lg:flex" : "flex",
@@ -1633,7 +1876,7 @@ export function SolutionBuilder() {
 								/>
 							</TabsContent>
 						</Tabs>
-					</section>
+					</section> : null}
 				</div>
 			</div>
 		</TooltipProvider>

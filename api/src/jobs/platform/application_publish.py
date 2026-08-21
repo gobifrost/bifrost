@@ -61,7 +61,7 @@ async def run_application_publish(
                 db,
                 application.organization_id,
                 user_id=context.requested_by_user_id,
-                is_superuser=True,
+                bypass_resource_roles=True,
             )
             last_phase: str | None = None
             last_reported = -1

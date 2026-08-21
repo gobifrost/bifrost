@@ -21,17 +21,20 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.core.auth import Context, CurrentActiveUser, CurrentSuperuser
+from src.core.auth import Context, CurrentActiveUser
 from src.config import get_settings
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
-from src.core.org_filter import resolve_org_filter
 from src.core.rate_limit import RateLimiter, get_client_ip
 from src.models.enums import FormAccessLevel
 from src.repositories.forms import FormRepository
 from src.repositories.workflows import WorkflowRepository
 from src.models import Execution as ExecutionORM
-from src.models import Form as FormORM, FormField as FormFieldORM, FormRole as FormRoleORM
+from src.models import (
+    Form as FormORM,
+    FormField as FormFieldORM,
+    FormRole as FormRoleORM,
+)
 from src.models import FormPublication as FormPublicationORM
 from src.services.solutions.guard import assert_not_solution_managed
 from src.models import Role as RoleORM
@@ -40,6 +43,13 @@ from src.models.orm.solutions import Solution
 from src.models import FormCreate, FormUpdate, FormPublic
 from src.models.contracts.forms import FormField, FormSchema
 from src.services.audit import emit_audit
+from src.services.authorization import (
+    AuthorizationBoundaryKind,
+    AuthorizationContext,
+    CurrentAuthorizationContext,
+    parse_authorization_boundary,
+    resolve_authorization_context,
+)
 from src.services.operation_catalog import operation_route
 from src.services.repo_sync_writer import RepoSyncWriter
 from src.models import FileUploadRequest, FileUploadResponse, UploadedFileMetadata
@@ -84,6 +94,7 @@ from shared.form_runtime import (
 # Import cache invalidation
 try:
     from src.core.cache import invalidate_form
+
     CACHE_INVALIDATION_AVAILABLE = True
 except ImportError:
     CACHE_INVALIDATION_AVAILABLE = False
@@ -104,6 +115,74 @@ _FORM_EMBED_LIMITERS = {
     "submission": RateLimiter(max_requests=10, window_seconds=60),
     "captcha": RateLimiter(max_requests=30, window_seconds=60),
 }
+
+
+def _form_repository(
+    db: DbSession,
+    authorization: AuthorizationContext,
+) -> FormRepository:
+    boundary = authorization.selected_boundary
+    if boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Select one organization before working with Forms",
+        )
+    organization_id = (
+        boundary.organization_id
+        if boundary.kind is AuthorizationBoundaryKind.ORGANIZATION
+        else None
+    )
+    user = authorization.requester
+    return FormRepository(
+        session=db,
+        org_id=organization_id,
+        user_id=user.user_id,
+        bypass_resource_roles=authorization.has_capability("platform.superuser"),
+        is_external=user.is_external,
+    )
+
+
+def _require_form_mutation(
+    authorization: AuthorizationContext,
+    form: FormORM,
+) -> None:
+    authorization.require("forms.readwrite")
+    authorization.require_resource_boundary(form.organization_id)
+
+
+def _require_form_read(
+    authorization: AuthorizationContext,
+    form: FormORM,
+) -> None:
+    authorization.require("forms.read")
+    authorization.require_resource_boundary(form.organization_id)
+
+
+async def _form_runtime_authorization(
+    db: AsyncSession,
+    http_request: Request | None,
+    ctx,
+) -> AuthorizationContext | None:
+    """Resolve canonical human authorization for form runtime endpoints.
+
+    Embed/public form sessions are HMAC-bound to the exact form and keep their
+    existing token path. Authenticated human sessions use the selected boundary
+    instead of the legacy ``is_superuser`` bit for repository admission.
+    """
+
+    if ctx.user.embed:
+        return None
+    return await resolve_authorization_context(
+        db,
+        requester=ctx.user,
+        selected_boundary=parse_authorization_boundary(
+            http_request.headers.get("X-Bifrost-Boundary") if http_request else None,
+            home_organization_id=ctx.user.organization_id,
+        ),
+        request_id=(
+            getattr(http_request.state, "request_id", None) if http_request else None
+        ),
+    )
 
 
 async def _limit_embed_action(http_request: Request, ctx, action: str) -> None:
@@ -208,7 +287,9 @@ async def _validate_form_references(
             )
             workflow = result.scalar_one_or_none()
             if workflow is None:
-                errors.append(f"workflow_id '{workflow_id}' does not reference an active workflow")
+                errors.append(
+                    f"workflow_id '{workflow_id}' does not reference an active workflow"
+                )
             elif workflow.type not in ("workflow", "tool"):
                 errors.append(
                     f"workflow_id '{workflow_id}' references a {workflow.type}, not a workflow or tool"
@@ -217,7 +298,9 @@ async def _validate_form_references(
     # Validate launch_workflow_id
     if launch_workflow_id:
         if not _is_valid_uuid(launch_workflow_id):
-            errors.append(f"launch_workflow_id '{launch_workflow_id}' is not a valid UUID")
+            errors.append(
+                f"launch_workflow_id '{launch_workflow_id}' is not a valid UUID"
+            )
         else:
             result = await db.execute(
                 select(WorkflowORM).where(
@@ -279,55 +362,21 @@ async def _validate_form_references(
     **operation_route("forms.list"),
 )
 async def list_forms(
-    ctx: Context,
     db: DbSession,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(
         None,
-        description="Filter scope: omit for all (superusers), 'global' for global only, "
-        "or org UUID for specific org + global."
+        description="Target organization UUID or 'global'; omit for your home organization.",
     ),
 ) -> list[FormPublic]:
-    """List all forms visible to the user.
-
-    - Platform admins see all forms (or filter by scope if provided)
-    - Org users see: their org's forms + global forms (org_id IS NULL)
-    - Access is further filtered by access_level (authenticated, role_based)
-
-    Uses the FormRepository which handles:
-    - Cascade scoping (org + global for org users)
-    - Role-based access control (for non-superusers)
-    """
-    # Resolve organization filter based on user permissions
-    try:
-        filter_type, filter_org = resolve_org_filter(ctx.user, scope)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e),
-        )
-
-    # Create repository with appropriate scope and user context
-    # For superusers: is_superuser=True bypasses role checks
-    # For org users: user_id enables role-based access filtering
-    repo = FormRepository(
-        session=db,
-        org_id=filter_org,
-        user_id=ctx.user.user_id if not ctx.user.is_superuser else None,
-        is_superuser=ctx.user.is_superuser,
-        is_external=ctx.user.is_external,
+    """List Forms visible in the explicitly selected authorization context."""
+    del scope  # consumed centrally by CurrentAuthorizationContext
+    authorization.require_operation("forms.list")
+    repo = _form_repository(db, authorization)
+    forms = await repo.list_forms(
+        active_only=not authorization.has_capability("platform.superuser")
     )
-
-    # Platform admins bypass access level filtering - they see all forms within org scope
-    if ctx.user.is_superuser:
-        # Use list_all_in_scope which skips role checks (appropriate for superusers)
-        # Pass filter_type to control org scoping behavior
-        forms = await repo.list_all_in_scope(filter_type=filter_type, active_only=False)
-        result = [FormPublic.model_validate(f) for f in forms]
-    else:
-        # For org users: repository handles cascade scoping + role-based access
-        # list_forms() applies both cascade scope and role checks automatically
-        forms = await repo.list_forms(active_only=True)
-        result = [FormPublic.model_validate(f) for f in forms]
+    result = [FormPublic.model_validate(form) for form in forms]
 
     # Compute dependency counts for each form
     for form_public in result:
@@ -338,9 +387,17 @@ async def list_forms(
             count += 1
         if form_public.form_schema:
             schema = form_public.form_schema
-            fields = schema.fields if isinstance(schema, FormSchema) else (schema or {}).get("fields", [])
+            fields = (
+                schema.fields
+                if isinstance(schema, FormSchema)
+                else (schema or {}).get("fields", [])
+            )
             for field in fields:
-                dp_id = field.data_provider_id if isinstance(field, FormField) else (field or {}).get("data_provider_id")
+                dp_id = (
+                    field.data_provider_id
+                    if isinstance(field, FormField)
+                    else (field or {}).get("data_provider_id")
+                )
                 if dp_id:
                     count += 1
         form_public.dependency_count = count
@@ -365,9 +422,7 @@ async def _replace_form_roles(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="role_ids contains duplicate references",
             )
-        existing = await db.execute(
-            select(RoleORM).where(RoleORM.id.in_(role_ids))
-        )
+        existing = await db.execute(select(RoleORM).where(RoleORM.id.in_(role_ids)))
         roles = list(existing.scalars().all())
         found = {role.id for role in roles}
         missing = [str(rid) for rid in role_ids if rid not in found]
@@ -376,7 +431,9 @@ async def _replace_form_roles(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Role(s) not found: {', '.join(missing)}",
             )
-        unassignable = [str(role.id) for role in roles if not role.assignable_to_resources]
+        unassignable = [
+            str(role.id) for role in roles if not role.assignable_to_resources
+        ]
         if unassignable:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -386,9 +443,7 @@ async def _replace_form_roles(
                 ),
             )
 
-    await db.execute(
-        delete(FormRoleORM).where(FormRoleORM.form_id == form_id)
-    )
+    await db.execute(delete(FormRoleORM).where(FormRoleORM.form_id == form_id))
     now = datetime.now(timezone.utc)
     for role_id in role_ids:
         db.add(
@@ -418,7 +473,9 @@ async def _load_form_for_publication(db: AsyncSession, form_id: UUID) -> FormORM
     )
     form = result.scalar_one_or_none()
     if form is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Form not found"
+        )
     return form
 
 
@@ -440,7 +497,9 @@ async def _publication_response(
         form_id=form.id,
         status=publication_status,
         public_key=publication.public_key if publication is not None else None,
-        allowed_origins=(publication.allowed_origins if publication is not None else []),
+        allowed_origins=(
+            publication.allowed_origins if publication is not None else []
+        ),
         spam_protection_enabled=(
             publication.spam_protection_enabled if publication is not None else True
         ),
@@ -463,14 +522,13 @@ async def _publication_response(
     response_model=FormPublic,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new form",
-    description="Create a new form (Platform admin only)",
+    description="Create a new form in the selected authorized boundary",
     **operation_route("forms.create"),
 )
 async def create_form(
     request: FormCreate,
-    ctx: Context,
-    user: CurrentSuperuser,
     db: DbSession,
+    authorization: CurrentAuthorizationContext,
 ) -> FormPublic:
     """
     Create a new form.
@@ -478,9 +536,12 @@ async def create_form(
     Forms are stored in the database only. They are serialized
     to JSON on-the-fly for git sync operations.
     """
+    authorization.require_operation("forms.create")
+    user = authorization.requester
+
     # Prepare form_schema for validation
     form_schema_data: dict = request.form_schema  # type: ignore[assignment]
-    if hasattr(form_schema_data, 'model_dump'):
+    if hasattr(form_schema_data, "model_dump"):
         form_schema_data = form_schema_data.model_dump()  # type: ignore[union-attr]
 
     # Validate all references before creating the form
@@ -493,13 +554,14 @@ async def create_form(
 
     now = datetime.now(timezone.utc)
 
-    # Org targeting follows the unified --org standard: an OMITTED
-    # organization_id (HOME) defaults to the caller's org, so a bare create
-    # never silently writes a global row. Explicit null still means global.
+    default_organization_id = _form_repository(db, authorization).org_id
     if "organization_id" in request.model_fields_set:
         target_org_id = request.organization_id
     else:
-        target_org_id = ctx.org_id
+        target_org_id = default_organization_id
+    authorization.require_resource_boundary(target_org_id)
+    if request.role_ids:
+        authorization.require("roles.readwrite")
 
     # Create form record
     form = FormORM(
@@ -513,7 +575,7 @@ async def create_form(
         access_level=request.access_level,
         organization_id=target_org_id,
         is_active=True,
-        created_by=ctx.user.email,
+        created_by=user.email,
         created_at=now,
         updated_at=now,
     )
@@ -530,7 +592,7 @@ async def create_form(
 
     # Apply role assignments before reloading so the response reflects them
     if request.role_ids:
-        await _replace_form_roles(db, form.id, request.role_ids, ctx.user.email)
+        await _replace_form_roles(db, form.id, request.role_ids, user.email)
 
     # Reload form with fields eager-loaded
     result = await db.execute(
@@ -541,7 +603,7 @@ async def create_form(
     form = result.scalar_one()
 
     # Sync form roles to referenced workflows (additive)
-    await sync_form_roles_to_workflows(db, form, form.fields, assigned_by=ctx.user.email)
+    await sync_form_roles_to_workflows(db, form, form.fields, assigned_by=user.email)
 
     logger.info(f"Created form {form.id}: {log_safe(form.name)}")
 
@@ -580,10 +642,11 @@ async def create_form(
 )
 async def review_form_publication(
     form_id: UUID,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> FormPublicationReview:
     form = await _load_form_for_publication(db, form_id)
+    _require_form_read(authorization, form)
     return FormPublicationReview.model_validate(
         await build_publication_review(db, form)
     )
@@ -596,10 +659,11 @@ async def review_form_publication(
 )
 async def get_form_publication(
     form_id: UUID,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> FormPublicationPublic:
     form = await _load_form_for_publication(db, form_id)
+    _require_form_read(authorization, form)
     return await _publication_response(db, form)
 
 
@@ -612,10 +676,11 @@ async def publish_form(
     form_id: UUID,
     request: FormPublicationUpdate,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> FormPublicationPublic:
     form = await _load_form_for_publication(db, form_id)
+    _require_form_mutation(authorization, form)
     review = FormPublicationReview.model_validate(
         await build_publication_review(db, form)
     )
@@ -672,6 +737,19 @@ async def publish_form(
     await db.flush()
     if publication_is_new:
         await db.refresh(form, attribute_names=["publication"])
+    await emit_audit(
+        db,
+        "form.publish",
+        resource_type="form",
+        resource_id=form.id,
+        details={
+            "organization_id": (
+                str(form.organization_id) if form.organization_id else None
+            ),
+            "allowed_origin_count": len(allowed_origins),
+            "spam_protection_enabled": request.spam_protection_enabled,
+        },
+    )
     logger.info(
         "Public form publication enabled",
         extra={
@@ -689,14 +767,26 @@ async def publish_form(
 )
 async def unpublish_form(
     form_id: UUID,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> None:
     form = await _load_form_for_publication(db, form_id)
+    _require_form_mutation(authorization, form)
     if form.publication is not None:
         form.publication.is_active = False
         form.publication.updated_at = datetime.now(timezone.utc)
         await db.flush()
+        await emit_audit(
+            db,
+            "form.unpublish",
+            resource_type="form",
+            resource_id=form.id,
+            details={
+                "organization_id": (
+                    str(form.organization_id) if form.organization_id else None
+                )
+            },
+        )
         logger.info(
             "Public form publication disabled",
             extra={"form_id": str(form.id)},
@@ -710,10 +800,11 @@ async def unpublish_form(
 )
 async def rotate_form_publication_key(
     form_id: UUID,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> FormPublicationPublic:
     form = await _load_form_for_publication(db, form_id)
+    _require_form_mutation(authorization, form)
     if form.publication is None or not form.publication.is_active:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -723,6 +814,17 @@ async def rotate_form_publication_key(
     form.publication.public_key = secrets.token_urlsafe(32)
     form.publication.updated_at = datetime.now(timezone.utc)
     await db.flush()
+    await emit_audit(
+        db,
+        "form.publication_key.rotate",
+        resource_type="form",
+        resource_id=form.id,
+        details={
+            "organization_id": (
+                str(form.organization_id) if form.organization_id else None
+            )
+        },
+    )
     logger.info(
         "Public form publication key rotated",
         extra={"form_id": str(form.id)},
@@ -742,18 +844,24 @@ async def get_form_runtime(
     user: CurrentActiveUser,
     db: DbSession,
 ) -> FormRuntimeDefinition:
-    repo = FormRepository(
-        session=db,
-        org_id=None,
-        user_id=ctx.user.user_id if not ctx.user.is_superuser else None,
-        is_superuser=ctx.user.is_superuser,
-        is_external=ctx.user.is_external,
-    )
-    form = await repo.get_form(form_id)
+    authorization = await _form_runtime_authorization(db, http_request, ctx)
+    if authorization is None:
+        result = await db.execute(
+            select(FormORM)
+            .options(selectinload(FormORM.fields))
+            .where(FormORM.id == form_id)
+        )
+        form = result.scalar_one_or_none()
+    else:
+        form = await _form_repository(db, authorization).get_form(form_id)
     if form is None or not form.is_active:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Form not found"
+        )
 
-    publication = await _authorize_form_runtime(db, ctx, form)
+    publication = await _authorize_form_runtime(
+        db, ctx, form, authorization=authorization
+    )
     await _limit_embed_action(http_request, ctx, "runtime")
 
     runtime = FormRuntimeDefinition.model_validate(form)
@@ -785,11 +893,21 @@ async def create_form_captcha(
     )
     form = result.scalar_one_or_none()
     if form is None or not form.is_active:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Form not found"
+        )
 
-    publication = await _authorize_form_runtime(db, ctx, form)
-    if publication is None or not publication.spam_protection_enabled or not ctx.user.jti:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form unavailable")
+    publication = await _authorize_form_runtime(
+        db, ctx, form, http_request=http_request
+    )
+    if (
+        publication is None
+        or not publication.spam_protection_enabled
+        or not ctx.user.jti
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Form unavailable"
+        )
     await _limit_embed_action(http_request, ctx, "captcha")
 
     try:
@@ -818,84 +936,60 @@ async def get_form(
     form_id: UUID,
     ctx: Context,
     db: DbSession,
+    authorization: CurrentAuthorizationContext,
 ) -> FormPublic:
-    """Get a specific form by ID."""
-    # Use FormRepository for consistent query logic
-    # Note: We don't filter by org here - access control is done after fetch
-    repo = FormRepository(
+    """Get one Form through either the human or embed-runtime contract."""
+    form = await FormRepository(
         session=db,
-        org_id=None,  # No org filtering for initial fetch
-        user_id=ctx.user.user_id if not ctx.user.is_superuser else None,
-        is_superuser=ctx.user.is_superuser,
-        is_external=ctx.user.is_external,
-    )
-    form = await repo.get_form(form_id)
-
-    if not form:
-        logger.warning(f"Form {log_safe(form_id)} not found in database")
+        org_id=None,
+        user_id=None,
+        bypass_resource_roles=True,
+    ).get_form(form_id)
+    if form is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Form not found",
         )
 
-    async def _to_public(orm_form: FormORM) -> FormPublic:
-        orm_form.role_ids = await _load_form_role_ids(db, orm_form.id)  # type: ignore[attr-defined]
-        return FormPublic.model_validate(orm_form)
-
-    # Platform admins see all forms.
-    if ctx.user.is_superuser:
-        return await _to_public(form)
-
-    # Embed users are HMAC-pre-authorized — but ONLY for the form their token
-    # is bound to (EXT-1 NEW-I). An unbound embed token must not read a
-    # cross-tenant form's schema/workflow ids/launch params.
     if ctx.user.embed:
         if _embed_can_access_form(ctx, form):
-            return await _to_public(form)
+            form.role_ids = await _load_form_role_ids(db, form.id)  # type: ignore[attr-defined]
+            return FormPublic.model_validate(form)
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Form not found",
         )
 
-    # Non-admins can only see active forms
-    if not form.is_active:
+    authorization.require_operation("forms.get")
+    accessible = await _form_repository(db, authorization).get_form_with_access_check(
+        form_id
+    )
+    if not form.is_active and not authorization.has_capability("platform.superuser"):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Form not found",
         )
-
-    # Single org+role+access_level gate — the same OrgScopedRepository gate
-    # the listing and execute paths use (handles cascade scope, role_based
-    # role checks, and external-user isolation in one place).
-    if not await _check_form_access(
-        db,
-        form,
-        ctx.user.user_id,
-        ctx.org_id,
-        ctx.user.is_superuser,
-        is_external=ctx.user.is_external,
-    ):
+    if accessible is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied to form",
         )
-
-    return await _to_public(form)
+    form.role_ids = await _load_form_role_ids(db, form.id)  # type: ignore[attr-defined]
+    return FormPublic.model_validate(form)
 
 
 @router.patch(
     "/{form_id}",
     response_model=FormPublic,
     summary="Update a form",
-    description="Update an existing form (Platform admin only)",
+    description="Update an existing form in the selected authorized boundary",
     **operation_route("forms.update"),
 )
 async def update_form(
     form_id: UUID,
     request: FormUpdate,
-    ctx: Context,
-    user: CurrentSuperuser,
     db: DbSession,
+    authorization: CurrentAuthorizationContext,
 ) -> FormPublic:
     """
     Update a form.
@@ -903,6 +997,8 @@ async def update_form(
     Forms are stored in the database only. They are serialized
     to JSON on-the-fly for git sync operations.
     """
+    authorization.require_operation("forms.update")
+    user = authorization.requester
     result = await db.execute(
         select(FormORM)
         .options(selectinload(FormORM.fields))
@@ -918,12 +1014,17 @@ async def update_form(
 
     # Solution-managed forms are read-only here; deploy is the writer.
     assert_not_solution_managed(form)
+    _require_form_mutation(authorization, form)
+    if request.role_ids is not None or request.clear_roles:
+        authorization.require("roles.readwrite")
+    if "organization_id" in request.model_fields_set:
+        authorization.require_resource_boundary(request.organization_id)
 
     # Validate references being updated
     form_schema_for_validation = None
     if request.form_schema is not None:
         form_schema_for_validation = request.form_schema
-        if hasattr(form_schema_for_validation, 'model_dump'):
+        if hasattr(form_schema_for_validation, "model_dump"):
             form_schema_for_validation = form_schema_for_validation.model_dump()
 
     await _validate_form_references(
@@ -949,15 +1050,13 @@ async def update_form(
         form.allowed_query_params = request.allowed_query_params
     if request.form_schema is not None:
         # Delete all existing fields using bulk delete
-        await db.execute(
-            delete(FormFieldORM).where(FormFieldORM.form_id == form_id)
-        )
+        await db.execute(delete(FormFieldORM).where(FormFieldORM.form_id == form_id))
         # Expire the relationship to reflect the deletion
         db.expire(form, ["fields"])
 
         # Convert new form_schema to FormField records
         form_schema_data: dict = request.form_schema  # type: ignore[assignment]
-        if hasattr(form_schema_data, 'model_dump'):
+        if hasattr(form_schema_data, "model_dump"):
             form_schema_data = form_schema_data.model_dump()  # type: ignore[union-attr]
 
         field_records = _form_schema_to_fields(form_schema_data, form_id)
@@ -977,15 +1076,13 @@ async def update_form(
     # wipes assignments when ``role_ids`` was not supplied. If both are provided,
     # ``role_ids`` wins because it carries the more specific intent.
     if request.role_ids is not None:
-        await _replace_form_roles(db, form_id, request.role_ids, ctx.user.email)
+        await _replace_form_roles(db, form_id, request.role_ids, user.email)
         logger.info(
             f"Replaced role assignments for form '{log_safe(form.name)}' "
             f"({len(request.role_ids)} role(s))"
         )
     elif request.clear_roles:
-        await db.execute(
-            delete(FormRoleORM).where(FormRoleORM.form_id == form_id)
-        )
+        await db.execute(delete(FormRoleORM).where(FormRoleORM.form_id == form_id))
         # Also set to role_based access level (effectively no access)
         form.access_level = FormAccessLevel.ROLE_BASED
         logger.info(f"Cleared all role assignments for form '{log_safe(form.name)}'")
@@ -1003,7 +1100,7 @@ async def update_form(
     form = result.scalar_one()
 
     # Sync form roles to referenced workflows (additive)
-    await sync_form_roles_to_workflows(db, form, form.fields, assigned_by=ctx.user.email)
+    await sync_form_roles_to_workflows(db, form, form.fields, assigned_by=user.email)
 
     logger.info(f"Updated form {log_safe(form_id)}")
 
@@ -1033,33 +1130,34 @@ async def update_form(
     "/{form_id}",
     response_model=FormPublic,
     summary="Update a form",
-    description="Update an existing form (Platform admin only)",
+    description="Update an existing form in the selected authorized boundary",
     include_in_schema=False,  # Hide from OpenAPI, use PATCH instead
 )
 async def update_form_put(
     form_id: UUID,
     request: FormUpdate,
-    ctx: Context,
-    user: CurrentSuperuser,
     db: DbSession,
+    authorization: CurrentAuthorizationContext,
 ) -> FormPublic:
     """Update a form (PUT - for backwards compatibility)."""
-    return await update_form(form_id, request, ctx, user, db)
+    return await update_form(form_id, request, db, authorization)
 
 
 @router.delete(
     "/{form_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a form",
-    description="Delete a form. Use ?purge=true to permanently remove it from the database (Platform admin only)",
+    description="Delete a form. Use ?purge=true to permanently remove it from the database.",
     **operation_route("forms.delete"),
 )
 async def delete_form(
     form_id: UUID,
-    ctx: Context,
-    user: CurrentSuperuser,
     db: DbSession,
-    purge: bool = Query(False, description="Permanently remove the form from the database instead of soft-deleting"),
+    authorization: CurrentAuthorizationContext,
+    purge: bool = Query(
+        False,
+        description="Permanently remove the form from the database instead of soft-deleting",
+    ),
 ) -> None:
     """
     Delete a form.
@@ -1067,10 +1165,8 @@ async def delete_form(
     By default, sets is_active=False (soft delete).
     With purge=true, permanently removes the form and its related records from the database.
     """
-    result = await db.execute(
-        select(FormORM)
-        .where(FormORM.id == form_id)
-    )
+    authorization.require_operation("forms.delete")
+    result = await db.execute(select(FormORM).where(FormORM.id == form_id))
     form = result.scalar_one_or_none()
 
     if not form:
@@ -1081,6 +1177,7 @@ async def delete_form(
 
     # Solution-managed forms are read-only here; deploy is the writer.
     assert_not_solution_managed(form)
+    _require_form_mutation(authorization, form)
     form_name = form.name
     form_org_id = form.organization_id
 
@@ -1097,13 +1194,9 @@ async def delete_form(
             .values(form_id=None)
         )
         # Delete form roles (no DB-level ondelete, must delete explicitly)
-        await db.execute(
-            delete(FormRoleORM).where(FormRoleORM.form_id == form_id)
-        )
+        await db.execute(delete(FormRoleORM).where(FormRoleORM.form_id == form_id))
         # Delete the form (form_fields and embed_secrets cascade via DB-level ondelete=CASCADE)
-        await db.execute(
-            delete(FormORM).where(FormORM.id == form_id)
-        )
+        await db.execute(delete(FormORM).where(FormORM.id == form_id))
         logger.info(f"Purged form {log_safe(form_id)}")
 
     if not purge:
@@ -1137,7 +1230,7 @@ async def _check_form_access(
     form: FormORM,
     user_id: UUID,
     user_org_id: UUID | None,
-    is_superuser: bool,
+    authorization: AuthorizationContext,
     is_external: bool = False,
 ) -> bool:
     """
@@ -1150,13 +1243,11 @@ async def _check_form_access(
     access" — for an existing form (the caller already loaded it via raw
     select), None definitively means "access denied".
     """
-    from src.repositories.forms import FormRepository
-
     repo = FormRepository(
         db,
         org_id=user_org_id,
         user_id=user_id,
-        is_superuser=is_superuser,
+        bypass_resource_roles=authorization.has_capability("platform.superuser"),
         is_external=is_external,
     )
     accessible = await repo.get(id=form.id)
@@ -1193,7 +1284,12 @@ def _embed_can_access_form(ctx, form: FormORM) -> bool:
 
 
 async def _authorize_form_runtime(
-    db: AsyncSession, ctx, form: FormORM
+    db: AsyncSession,
+    ctx,
+    form: FormORM,
+    *,
+    authorization: AuthorizationContext | None = None,
+    http_request: Request | None = None,
 ) -> FormPublicationORM | None:
     """Authorize one form runtime action and enforce public approval freshness."""
 
@@ -1234,12 +1330,33 @@ async def _authorize_form_runtime(
             return publication
         return None
 
+    authorization = authorization or await _form_runtime_authorization(
+        db, http_request, ctx
+    )
+    if authorization is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied to form",
+        )
+    if authorization.selected_boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Select one organization before working with Forms",
+        )
+    form_org_id = (
+        authorization.selected_boundary.organization_id
+        if authorization.selected_boundary.kind is AuthorizationBoundaryKind.ORGANIZATION
+        else None
+    )
+    authorization.require("forms.read")
+    authorization.require_resource_boundary(form.organization_id)
+
     if not await _check_form_access(
         db,
         form,
         ctx.user.user_id,
-        ctx.org_id,
-        ctx.user.is_superuser,
+        form_org_id,
+        authorization,
         is_external=ctx.user.is_external,
     ):
         raise HTTPException(
@@ -1276,7 +1393,11 @@ async def submit_form(
     the existing result journey.
     """
     from src.sdk.context import ExecutionContext as SharedContext, Organization
-    from src.services.execution.service import run_workflow, WorkflowNotFoundError, WorkflowLoadError
+    from src.services.execution.service import (
+        run_workflow,
+        WorkflowNotFoundError,
+        WorkflowLoadError,
+    )
 
     # Default request if None (backward compatibility with empty body)
     if request is None:
@@ -1296,7 +1417,7 @@ async def submit_form(
             detail="Form not found",
         )
 
-    publication = await _authorize_form_runtime(db, ctx, form)
+    publication = await _authorize_form_runtime(db, ctx, form, http_request=http_request)
     await _limit_embed_action(http_request, ctx, "submission")
 
     # Form must have a workflow_id
@@ -1388,21 +1509,26 @@ async def submit_form(
     # Resolve on the FORM's behalf: the form's access_level gate (checked above)
     # is authoritative — forms intentionally let users run workflows they don't
     # directly have a role on, so we must NOT apply the workflow's RBAC filter
-    # here (that's what the old bare-id select did). is_superuser=True bypasses
-    # the role filter; org_id scopes cascade resolution.
+    # here (that's what the old bare-id select did). The repository receives an
+    # explicit resource-role bypass; org_id scopes cascade resolution.
     #
     # Resolution and execution are anchored to the FORM's world, not the
     # caller's: a cross-org bypass caller (platform admin / provider) executing
     # an org-scoped form must resolve the install's own workflow and run in the
     # form's org. Caller identity was already used for AUTHORIZATION above.
-    anchor_org_id = form.organization_id if form.organization_id is not None else ctx.org_id
+    anchor_org_id = (
+        form.organization_id if form.organization_id is not None else ctx.org_id
+    )
 
     from src.services.solution_scope import solution_allows_global
 
-    _wf_repo = WorkflowRepository(db, org_id=anchor_org_id, is_superuser=True)
-    allow_shared_workflow = (
-        form.solution_id is None
-        or await solution_allows_global(db, form.solution_id)
+    _wf_repo = WorkflowRepository(
+        db,
+        org_id=anchor_org_id,
+        bypass_resource_roles=True,
+    )
+    allow_shared_workflow = form.solution_id is None or await solution_allows_global(
+        db, form.solution_id
     )
     _resolved_wf = await _wf_repo.resolve(
         form.workflow_id,
@@ -1426,7 +1552,9 @@ async def submit_form(
     # when it matures — we never call run_workflow here.
     scheduled_at: datetime | None = request.scheduled_at
     if request.delay_seconds is not None:
-        scheduled_at = datetime.now(timezone.utc) + timedelta(seconds=request.delay_seconds)
+        scheduled_at = datetime.now(timezone.utc) + timedelta(
+            seconds=request.delay_seconds
+        )
 
     if scheduled_at is not None:
         from src.routers.workflows import _insert_scheduled_execution
@@ -1610,7 +1738,9 @@ async def submit_form(
     except Exception as e:
         if ctx.user.embed and not external_workflow_accepted:
             await release_external_submission(ctx.user)
-        logger.error(f"Error executing form {log_safe(form_id)}: {log_safe(e)}", exc_info=True)
+        logger.error(
+            f"Error executing form {log_safe(form_id)}: {log_safe(e)}", exc_info=True
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to execute form",
@@ -1653,7 +1783,11 @@ async def execute_startup_workflow(
         FormStartupResponse with the launch workflow's result
     """
     from src.sdk.context import ExecutionContext as SharedContext, Organization
-    from src.services.execution.service import run_workflow, WorkflowNotFoundError, WorkflowLoadError
+    from src.services.execution.service import (
+        run_workflow,
+        WorkflowNotFoundError,
+        WorkflowLoadError,
+    )
 
     # Get the form
     result = await db.execute(
@@ -1669,7 +1803,7 @@ async def execute_startup_workflow(
             detail="Form not found",
         )
 
-    await _authorize_form_runtime(db, ctx, form)
+    await _authorize_form_runtime(db, ctx, form, http_request=http_request)
     await _limit_embed_action(http_request, ctx, "startup")
 
     allowed_startup_inputs = set(form.allowed_query_params or [])
@@ -1697,15 +1831,17 @@ async def execute_startup_workflow(
     # solution-managed forms; scope to form.solution_id so the install reaches
     # its own launch workflow (own-first, then bare _repo/).
     #
-    # Resolve on the FORM's behalf (is_superuser=True): the form access gate
-    # above is authoritative, so we must not apply the workflow's RBAC filter
-    # here — a form user with no role on the launch workflow must still reach it.
+    # Resolve on the FORM's behalf: the form access gate above is authoritative,
+    # so we must not apply the workflow's RBAC filter here — a form user with no
+    # role on the launch workflow must still reach it.
     # Anchored to the FORM's org like the execute path: a cross-org bypass
     # caller must resolve the install's own launch workflow, not their org's.
     launch_anchor_org_id = (
         form.organization_id if form.organization_id is not None else ctx.org_id
     )
-    _launch_repo = WorkflowRepository(db, org_id=launch_anchor_org_id, is_superuser=True)
+    _launch_repo = WorkflowRepository(
+        db, org_id=launch_anchor_org_id, bypass_resource_roles=True
+    )
     _resolved_launch = await _launch_repo.resolve(
         form.launch_workflow_id, solution_scope=form.solution_id
     )
@@ -1749,7 +1885,9 @@ async def execute_startup_workflow(
             sync=True,
         )
 
-        logger.info(f"Launch workflow executed for form {log_safe(form_id)} by user {ctx.user.email}")
+        logger.info(
+            f"Launch workflow executed for form {log_safe(form_id)} by user {ctx.user.email}"
+        )
 
         handle, expires_at = await store_startup_result(
             form_id=str(form.id),
@@ -1766,13 +1904,17 @@ async def execute_startup_workflow(
         )
 
     except WorkflowNotFoundError as e:
-        logger.error(f"Launch workflow not found for form {log_safe(form_id)}: {log_safe(e)}")
+        logger.error(
+            f"Launch workflow not found for form {log_safe(form_id)}: {log_safe(e)}"
+        )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Launch workflow not found: {form.launch_workflow_id}",
         )
     except WorkflowLoadError as e:
-        logger.error(f"Launch workflow load error for form {log_safe(form_id)}: {log_safe(e)}")
+        logger.error(
+            f"Launch workflow load error for form {log_safe(form_id)}: {log_safe(e)}"
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to load launch workflow: {str(e)}",
@@ -1780,7 +1922,10 @@ async def execute_startup_workflow(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error executing launch workflow for form {log_safe(form_id)}: {log_safe(e)}", exc_info=True)
+        logger.error(
+            f"Error executing launch workflow for form {log_safe(form_id)}: {log_safe(e)}",
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to execute launch workflow",
@@ -1814,7 +1959,8 @@ async def get_form_field_options(
     form = result.scalar_one_or_none()
     if form is None or not form.is_active:
         raise HTTPException(status_code=404, detail="Form unavailable")
-    await _authorize_form_runtime(db, ctx, form)
+    authorization = await _form_runtime_authorization(db, http_request, ctx)
+    await _authorize_form_runtime(db, ctx, form, authorization=authorization)
     await _limit_embed_action(http_request, ctx, "provider")
 
     field = next((item for item in form.fields if item.name == field_name), None)
@@ -1835,7 +1981,8 @@ async def get_form_field_options(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=(
                 str(exc)
-                if ctx.user.is_superuser and not ctx.user.embed
+                if authorization
+                and authorization.has_capability("platform.superuser")
                 else "Unable to load field options"
             ),
         ) from exc
@@ -1874,9 +2021,9 @@ def _sanitize_filename(filename: str) -> str:
     Preserves the file extension.
     """
     # Remove path separators and null bytes
-    sanitized = re.sub(r'[/\\:\x00]', '', filename)
+    sanitized = re.sub(r"[/\\:\x00]", "", filename)
     # Remove leading/trailing whitespace and dots (to prevent hidden files)
-    sanitized = sanitized.strip('. ')
+    sanitized = sanitized.strip(". ")
     # If nothing left, use a default name
     if not sanitized:
         sanitized = "unnamed_file"
@@ -1969,7 +2116,7 @@ async def generate_upload_url(
             detail="Form not found",
         )
 
-    await _authorize_form_runtime(db, ctx, form)
+    await _authorize_form_runtime(db, ctx, form, http_request=http_request)
     await _limit_embed_action(http_request, ctx, "upload")
 
     if ctx.user.embed and not request.field_name:
@@ -1980,10 +2127,7 @@ async def generate_upload_url(
 
     # Server-side validation of file constraints if field_name provided
     if request.field_name:
-        field = next(
-            (f for f in form.fields if f.name == request.field_name),
-            None
-        )
+        field = next((f for f in form.fields if f.name == request.field_name), None)
         if field is None or field.type != "file":
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1992,7 +2136,9 @@ async def generate_upload_url(
         if field:
             # Validate file type
             if field.allowed_types:
-                if not _check_mime_type_allowed(request.content_type, field.allowed_types):
+                if not _check_mime_type_allowed(
+                    request.content_type, field.allowed_types
+                ):
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"File type '{request.content_type}' not allowed. Allowed: {', '.join(field.allowed_types)}",
@@ -2012,6 +2158,7 @@ async def generate_upload_url(
     # caller's effective org (matches what the workflow's SDK will resolve to
     # when it reads the file with `location="uploads"` and no explicit scope).
     from shared.file_paths import resolve_s3_key
+
     file_uuid = str(uuid4())
     sanitized_name = _sanitize_filename(request.file_name)
     owner_segment = f"{ctx.user.jti}/" if ctx.user.embed else ""
@@ -2030,7 +2177,10 @@ async def generate_upload_url(
             expires_in=600,  # 10 minutes
         )
     except Exception as e:
-        logger.error(f"Failed to generate presigned URL for form {log_safe(form_id)}: {log_safe(e)}", exc_info=True)
+        logger.error(
+            f"Failed to generate presigned URL for form {log_safe(form_id)}: {log_safe(e)}",
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to generate upload URL",

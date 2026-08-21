@@ -14,7 +14,7 @@ import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { DateRangePicker } from "@/components/ui/date-range-picker";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
 	useUsageReport,
 	type UsageReportResponse,
@@ -24,11 +24,11 @@ import {
 	type OrganizationUsage,
 	type UsageTrend,
 } from "@/services/usage";
-import { useAuth } from "@/contexts/AuthContext";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { UsageSummaryCards } from "@/components/reports/UsageSummaryCards";
 import { UsageCharts } from "@/components/reports/UsageCharts";
+import { UsageLimitsPanel } from "@/components/reports/UsageLimitsPanel";
 import {
 	WorkflowTable,
 	ConversationTable,
@@ -36,6 +36,7 @@ import {
 	OrganizationTable,
 	KnowledgeStorageTable,
 } from "@/components/reports/UsageTables";
+import { useAuthorizationBoundary } from "@/contexts/AuthorizationBoundaryContext";
 
 // ============================================================================
 // Demo Data Generation
@@ -373,19 +374,34 @@ function generateDemoData(params: DemoDataParams): UsageReportResponse {
 // ============================================================================
 
 export function UsageReports() {
-	const { isPlatformAdmin } = useAuth();
+	const { selectedBoundary, selectedTarget, hasSelectedCapability } =
+		useAuthorizationBoundary();
+	const selectedOrgId = selectedBoundary?.startsWith("organization:")
+		? selectedBoundary.slice("organization:".length)
+		: null;
+	const isManagedBoundary = selectedTarget?.kind === "managed_organizations";
+	const canEditMetrics = hasSelectedCapability("metrics.readwrite");
+	const canReadOrganizations = hasSelectedCapability("organizations.read");
+	const [activeTab, setActiveTab] = useState("overview");
 
 	// Organization filter state (platform admins only)
 	// undefined = all, null = global only, UUID string = specific org
 	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
 		undefined,
 	);
+	const effectiveFilterOrgId =
+		selectedBoundary === "platform" ? filterOrgId : selectedOrgId;
 
 	// Derive isGlobalScope from filterOrgId for display logic
-	const isGlobalScope = filterOrgId === undefined || filterOrgId === null;
+	const isGlobalScope =
+		selectedBoundary === "platform" &&
+		(effectiveFilterOrgId === undefined || effectiveFilterOrgId === null);
 
 	// Fetch real organizations for demo data generation
-	const { data: orgsData } = useOrganizations({ enabled: isPlatformAdmin });
+	const { data: orgsData } = useOrganizations({
+		enabled: selectedBoundary === "platform" && canReadOrganizations,
+		boundary: selectedBoundary,
+	});
 
 	// Demo mode state
 	const [showDemoData, setShowDemoData] = useState(false);
@@ -418,18 +434,20 @@ export function UsageReports() {
 		return generateDemoData({
 			startDate,
 			endDate,
-			orgId: filterOrgId ?? null,
+			orgId: effectiveFilterOrgId ?? null,
 			source,
 			realOrgs,
 		});
-	}, [startDate, endDate, filterOrgId, source, realOrgs]);
+	}, [startDate, endDate, effectiveFilterOrgId, source, realOrgs]);
 
 	// Fetch real data
 	const {
 		data: realData,
 		isLoading,
 		error,
-	} = useUsageReport(startDate, endDate, source, filterOrgId);
+	} = useUsageReport(startDate, endDate, source, effectiveFilterOrgId, {
+		enabled: activeTab === "overview" && !isManagedBoundary,
+	});
 
 	// Use demo or real data
 	const data = showDemoData ? demoData : realData;
@@ -450,7 +468,7 @@ export function UsageReports() {
 				<div>
 					<div className="flex items-center gap-3">
 						<h1 className="scroll-m-20 text-4xl font-extrabold tracking-tight lg:text-5xl">
-							Usage Reports
+							Usage
 						</h1>
 						{showDemoData && (
 							<Badge
@@ -463,12 +481,13 @@ export function UsageReports() {
 						)}
 					</div>
 					<p className="leading-7 mt-2 text-muted-foreground">
-						AI usage and resource consumption analytics
+						Usage analytics and portable limits for the active working
+						context.
 					</p>
 				</div>
 
-				{/* Demo Data Toggle - Only visible to platform admins */}
-				{isPlatformAdmin && (
+				{/* Demo Data Toggle - only for contexts that can manage metrics */}
+				{canEditMetrics && (
 					<div className="flex items-center space-x-2 pt-2">
 						<Switch
 							id="demo-mode"
@@ -496,116 +515,137 @@ export function UsageReports() {
 				</Alert>
 			)}
 
-			{/* Filters: Date Range, Source Tabs, and Organization */}
-			<Card>
-				<CardHeader>
-					<CardTitle>Report Period</CardTitle>
-					<CardDescription>
-						Select a date range and source for the usage report
-					</CardDescription>
-				</CardHeader>
-				<CardContent className="space-y-4">
-					<DateRangePicker
-						dateRange={dateRange}
-						onDateRangeChange={setDateRange}
-					/>
+			<Tabs value={activeTab} onValueChange={setActiveTab}>
+				<TabsList>
+					<TabsTrigger value="overview">Overview</TabsTrigger>
+					<TabsTrigger value="limits">Limits</TabsTrigger>
+				</TabsList>
 
-					<div className="flex items-center gap-4">
-						<Label className="text-sm font-medium">Source:</Label>
-						<Tabs
-							value={source}
-							onValueChange={(v) => setSource(v as UsageSource)}
-						>
-							<TabsList>
-								<TabsTrigger value="all">All</TabsTrigger>
-								<TabsTrigger value="executions">
-									Executions
-								</TabsTrigger>
-								<TabsTrigger value="chat">Chat</TabsTrigger>
-								<TabsTrigger value="agents">Agents</TabsTrigger>
-							</TabsList>
-						</Tabs>
-						{isPlatformAdmin && (
-							<div className="w-64 ml-auto">
-								<OrganizationSelect
-									value={filterOrgId}
-									onChange={setFilterOrgId}
-									showAll={true}
-									showGlobal={true}
-									placeholder="All organizations"
+				<TabsContent value="overview" className="mt-6 space-y-6">
+					{isManagedBoundary ? (
+						<Alert>
+							<AlertCircle className="h-4 w-4" />
+							<AlertDescription>
+								Managed organizations is a browse view. Choose Global or one
+								exact organization from Working in to view usage reports.
+							</AlertDescription>
+						</Alert>
+					) : (
+						<>
+							{/* Filters: Date Range, Source Tabs, and Organization */}
+							<Card>
+								<CardHeader>
+									<CardTitle>Report period</CardTitle>
+									<CardDescription>
+										Select a date range and source for the usage report.
+										{selectedOrgId
+											? " This report is locked to the selected organization."
+											: ""}
+									</CardDescription>
+								</CardHeader>
+								<CardContent className="space-y-4">
+									<DateRangePicker
+										dateRange={dateRange}
+										onDateRangeChange={setDateRange}
+									/>
+
+									<div className="flex flex-col gap-4 lg:flex-row lg:items-center">
+										<Label className="text-sm font-medium">Source:</Label>
+										<Tabs
+											value={source}
+											onValueChange={(v) => setSource(v as UsageSource)}
+										>
+											<TabsList>
+												<TabsTrigger value="all">All</TabsTrigger>
+												<TabsTrigger value="executions">
+													Executions
+												</TabsTrigger>
+												<TabsTrigger value="chat">Chat</TabsTrigger>
+												<TabsTrigger value="agents">Agents</TabsTrigger>
+											</TabsList>
+										</Tabs>
+										{selectedBoundary === "platform" &&
+											canReadOrganizations && (
+											<div className="w-full lg:ml-auto lg:w-64">
+												<OrganizationSelect
+													value={filterOrgId}
+													onChange={setFilterOrgId}
+													showAll={true}
+													showGlobal={true}
+													placeholder="All organizations"
+												/>
+											</div>
+										)}
+									</div>
+								</CardContent>
+							</Card>
+
+							{/* Error Alert */}
+							{hasError && (
+								<Alert variant="destructive">
+									<AlertCircle className="h-4 w-4" />
+									<AlertDescription>
+										Failed to load usage data. Please try again later.
+									</AlertDescription>
+								</Alert>
+							)}
+
+							<UsageSummaryCards data={data} isLoading={isLoadingData} />
+							<UsageCharts trends={data?.trends} isLoading={isLoadingData} />
+
+							{(source === "all" || source === "executions") && (
+								<WorkflowTable
+									workflows={data?.by_workflow}
+									isLoading={isLoadingData}
+									startDate={startDate}
+									endDate={endDate}
+									isDemo={showDemoData}
 								/>
-							</div>
-						)}
-					</div>
-				</CardContent>
-			</Card>
+							)}
 
-			{/* Error Alert */}
-			{hasError && (
-				<Alert variant="destructive">
-					<AlertCircle className="h-4 w-4" />
-					<AlertDescription>
-						Failed to load usage data. Please try again later.
-					</AlertDescription>
-				</Alert>
-			)}
+							{showConversationTable && (
+								<ConversationTable
+									conversations={data?.by_conversation}
+									isLoading={isLoadingData}
+									startDate={startDate}
+									endDate={endDate}
+									isDemo={showDemoData}
+								/>
+							)}
 
-			{/* Summary Cards */}
-			<UsageSummaryCards data={data} isLoading={isLoadingData} />
+							{(source === "all" || source === "agents") &&
+								data?.by_agent &&
+								data.by_agent.length > 0 && (
+									<AgentTable
+										agents={data.by_agent}
+										isLoading={isLoadingData}
+									/>
+								)}
 
-			{/* Trends Chart */}
-			<UsageCharts trends={data?.trends} isLoading={isLoadingData} />
+							{isGlobalScope && (
+								<OrganizationTable
+									organizations={data?.by_organization}
+									isLoading={isLoadingData}
+									startDate={startDate}
+									endDate={endDate}
+									isDemo={showDemoData}
+								/>
+							)}
 
-			{/* By-Workflow Table */}
-			{(source === "all" || source === "executions") && (
-				<WorkflowTable
-					workflows={data?.by_workflow}
-					isLoading={isLoadingData}
-					startDate={startDate}
-					endDate={endDate}
-					isDemo={showDemoData}
-				/>
-			)}
+							<KnowledgeStorageTable
+								data={data}
+								isLoading={isLoadingData}
+								startDate={startDate}
+								isDemo={showDemoData}
+							/>
+						</>
+					)}
+				</TabsContent>
 
-			{/* By-Conversation Table */}
-			{showConversationTable && (
-				<ConversationTable
-					conversations={data?.by_conversation}
-					isLoading={isLoadingData}
-					startDate={startDate}
-					endDate={endDate}
-					isDemo={showDemoData}
-				/>
-			)}
-
-			{/* By-Agent Table */}
-			{(source === "all" || source === "agents") &&
-				data?.by_agent &&
-				data.by_agent.length > 0 && (
-					<AgentTable
-						agents={data.by_agent}
-						isLoading={isLoadingData}
-					/>
-				)}
-
-			{/* By-Organization Table - Only shown in global scope */}
-			{isGlobalScope && (
-				<OrganizationTable
-					organizations={data?.by_organization}
-					isLoading={isLoadingData}
-					startDate={startDate}
-					endDate={endDate}
-					isDemo={showDemoData}
-				/>
-			)}
-
-			{/* Knowledge Storage Table */}
-			<KnowledgeStorageTable
-				data={data}
-				isLoading={isLoadingData}
-				startDate={startDate}
-				isDemo={showDemoData}
-			/>
+				<TabsContent value="limits" className="mt-6">
+					<UsageLimitsPanel />
+				</TabsContent>
+			</Tabs>
 		</div>
 	);
 }

@@ -24,6 +24,8 @@ export function useUsers() {
 export function useUsersFiltered(
 	scope?: string | null,
 	includeInactive?: boolean,
+	boundary?: string,
+	enabled = true,
 ) {
 	// Build query params - convert null to "global" for the API
 	const queryParams: { scope?: string; include_inactive?: boolean } = {};
@@ -36,21 +38,30 @@ export function useUsersFiltered(
 		queryParams.include_inactive = true;
 	}
 
-	return $api.useQuery("get", "/api/users", {
-		params: {
-			query: queryParams,
+	return $api.useQuery(
+		"get",
+		"/api/users",
+		{
+			headers: boundary ? { "X-Bifrost-Boundary": boundary } : undefined,
+			params: {
+				query: queryParams,
+			},
 		},
-	});
+		{ enabled },
+	);
 }
 
 /**
  * Fetch a specific user by ID
  */
-export function useUser(userId: string | undefined) {
+export function useUser(userId: string | undefined, boundary?: string) {
 	return $api.useQuery(
 		"get",
 		"/api/users/{user_id}",
-		{ params: { path: { user_id: userId! } } },
+		{
+			headers: boundary ? { "X-Bifrost-Boundary": boundary } : undefined,
+			params: { path: { user_id: userId! } },
+		},
 		{ enabled: !!userId },
 	);
 }
@@ -58,11 +69,14 @@ export function useUser(userId: string | undefined) {
 /**
  * Fetch roles for a specific user
  */
-export function useUserRoles(userId: string | undefined) {
+export function useUserRoles(userId: string | undefined, boundary?: string) {
 	return $api.useQuery(
 		"get",
-		"/api/users/{user_id}/roles",
-		{ params: { path: { user_id: userId! } } },
+		"/api/users/{user_id}/role-assignments",
+		{
+			headers: boundary ? { "X-Bifrost-Boundary": boundary } : undefined,
+			params: { path: { user_id: userId! } },
+		},
 		{ enabled: !!userId },
 	);
 }
@@ -70,11 +84,14 @@ export function useUserRoles(userId: string | undefined) {
 /**
  * Fetch forms accessible to a specific user
  */
-export function useUserForms(userId: string | undefined) {
+export function useUserForms(userId: string | undefined, boundary?: string) {
 	return $api.useQuery(
 		"get",
 		"/api/users/{user_id}/forms",
-		{ params: { path: { user_id: userId! } } },
+		{
+			headers: boundary ? { "X-Bifrost-Boundary": boundary } : undefined,
+			params: { path: { user_id: userId! } },
+		},
 		{ enabled: !!userId },
 	);
 }

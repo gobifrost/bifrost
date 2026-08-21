@@ -25,11 +25,16 @@ _CLOUDFLARE_PROJECT = Path(__file__).with_name("cloudflare_runner")
 _WRANGLER = _CLOUDFLARE_PROJECT / "node_modules" / "wrangler" / "bin" / "wrangler.js"
 _WRANGLER_NODE = Path("/usr/local/bin/node22")
 _CRANE = Path("/usr/local/bin/crane")
-_WORKER_BUNDLE = _CLOUDFLARE_PROJECT / "dist" / "worker.js"
+_WORKER_SOURCE = _CLOUDFLARE_PROJECT / "worker.mjs"
 _CLOUDFLARE_REGISTRY = "registry.cloudflare.com"
-_PROBE_TIMEOUT_SECONDS = 4 * 60
+_PROBE_TIMEOUT_SECONDS = 15 * 60
+_ROLLOUT_PROBE_BACKOFF_SECONDS = (30.0, 60.0, 90.0)
 _OUTPUT_LIMIT = 32_000
 logger = logging.getLogger(__name__)
+
+
+class _CloudflareRolloutNotReady(Exception):
+    """Cloudflare accepted the deployment but has not made it runnable yet."""
 
 
 def configured_runner_image() -> str:
@@ -116,17 +121,11 @@ async def _provision_cloudflare(
     await _set_runtime_status(provisioned=True, connected=False)
 
     await context.report("Starting a runner self-test", percent=75)
-    probe_id = await _start_cloudflare_probe(
-        account_id,
-        api_token,
-        workflow_name,
-    )
-    await _wait_for_cloudflare_probe(
+    probe_id = await _run_cloudflare_probe_with_readiness_retry(
         context,
         account_id=account_id,
         api_token=api_token,
         workflow_name=workflow_name,
-        probe_id=probe_id,
     )
     await _set_runtime_status(provisioned=True, connected=True)
     return {"external_run_id": probe_id, "runner_image": runner_image}
@@ -201,7 +200,7 @@ async def _deploy_cloudflare_worker(
     if (
         not _WRANGLER_NODE.is_file()
         or not _WRANGLER.is_file()
-        or not _WORKER_BUNDLE.is_file()
+        or not _WORKER_SOURCE.is_file()
     ):
         raise PlatformJobFailure(
             "cloudflare_runner_assets_missing",
@@ -209,7 +208,10 @@ async def _deploy_cloudflare_worker(
         )
     config = {
         "name": script_name,
-        "main": str(_WORKER_BUNDLE),
+        # Let Wrangler bundle the mounted source at deploy time. Debug stacks
+        # mount /app/src over the image, so a prebuilt dist/worker.js can be
+        # older than worker.mjs even though production images build both.
+        "main": str(_WORKER_SOURCE),
         "compatibility_date": "2026-08-01",
         "compatibility_flags": ["nodejs_compat"],
         "workers_dev": False,
@@ -370,9 +372,16 @@ async def _mirror_runner_image_to_cloudflare(
         )
         copy_output, _ = await copy.communicate()
         if copy.returncode != 0:
+            safe_output = copy_output.decode("utf-8", errors="replace")[-_OUTPUT_LIMIT:]
+            if _is_exact_destination_no_clobber(output=safe_output, destination=destination):
+                logger.info(
+                    "Cloudflare registry already contains immutable Builder image tag %s",
+                    destination,
+                )
+                return destination
             logger.warning(
                 "Cloudflare registry image copy failed: %s",
-                copy_output.decode("utf-8", errors="replace")[-2000:],
+                safe_output[-2000:],
             )
             raise PlatformJobFailure(
                 "cloudflare_registry_copy_failed",
@@ -380,6 +389,13 @@ async def _mirror_runner_image_to_cloudflare(
                 "Cloudflare account registry.",
             )
     return destination
+
+
+def _is_exact_destination_no_clobber(*, output: str, destination: str) -> bool:
+    return (
+        f"refusing to clobber existing tag {destination}@sha256:" in output
+        and "Error:" in output
+    )
 
 
 async def _start_cloudflare_probe(
@@ -418,6 +434,62 @@ async def _start_cloudflare_probe(
     return external_id
 
 
+async def _run_cloudflare_probe_with_readiness_retry(
+    context: PlatformJobContext,
+    *,
+    account_id: str,
+    api_token: str,
+    workflow_name: str,
+) -> str:
+    deadline = asyncio.get_running_loop().time() + _PROBE_TIMEOUT_SECONDS
+    backoffs = iter(_ROLLOUT_PROBE_BACKOFF_SECONDS)
+    probe_id = await _start_cloudflare_probe(account_id, api_token, workflow_name)
+    while True:
+        try:
+            await _wait_for_cloudflare_probe(
+                context,
+                account_id=account_id,
+                api_token=api_token,
+                workflow_name=workflow_name,
+                probe_id=probe_id,
+                deadline=deadline,
+            )
+            return probe_id
+        except _CloudflareRolloutNotReady:
+            try:
+                backoff = next(backoffs)
+            except StopIteration as exc:
+                raise PlatformJobFailure(
+                    "cloudflare_probe_rollout_not_ready",
+                    "Cloudflare deployed the runner, but the Worker did not "
+                    "become available to its Sandbox workflow before the "
+                    "readiness deadline. Wait a few minutes and try again.",
+                ) from exc
+
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
+            sleep_for = min(backoff, max(0.0, remaining))
+            await context.report(
+                "Cloudflare is finishing the Worker and container rollout; "
+                "retrying the runner self-test",
+                percent=85,
+            )
+            await asyncio.sleep(sleep_for)
+            if asyncio.get_running_loop().time() >= deadline:
+                break
+            await context.report("Starting a fresh runner self-test", percent=85)
+            probe_id = await _start_cloudflare_probe(
+                account_id,
+                api_token,
+                workflow_name,
+            )
+    raise PlatformJobFailure(
+        "cloudflare_probe_timeout",
+        "The Cloudflare runner self-test did not finish within fifteen minutes.",
+    )
+
+
 async def _wait_for_cloudflare_probe(
     context: PlatformJobContext,
     *,
@@ -425,8 +497,10 @@ async def _wait_for_cloudflare_probe(
     api_token: str,
     workflow_name: str,
     probe_id: str,
+    deadline: float | None = None,
 ) -> None:
-    deadline = asyncio.get_running_loop().time() + _PROBE_TIMEOUT_SECONDS
+    if deadline is None:
+        deadline = asyncio.get_running_loop().time() + _PROBE_TIMEOUT_SECONDS
     url = (
         f"{_CLOUDFLARE_API_BASE}/accounts/{account_id}/workflows/"
         f"{workflow_name}/instances/{probe_id}"
@@ -455,6 +529,15 @@ async def _wait_for_cloudflare_probe(
         ):
             return
         if state in {"errored", "terminated"}:
+            details = await _fetch_cloudflare_probe_details(
+                account_id=account_id,
+                api_token=api_token,
+                workflow_name=workflow_name,
+                probe_id=probe_id,
+            )
+            detail_result = details.get("result") if isinstance(details, dict) else None
+            if _is_cloudflare_rollout_not_ready(detail_result):
+                raise _CloudflareRolloutNotReady
             raise PlatformJobFailure(
                 "cloudflare_probe_failed",
                 "The Cloudflare runner self-test failed to start the Bifrost image.",
@@ -463,7 +546,64 @@ async def _wait_for_cloudflare_probe(
         await asyncio.sleep(3)
     raise PlatformJobFailure(
         "cloudflare_probe_timeout",
-        "The Cloudflare runner self-test did not finish within four minutes.",
+        "The Cloudflare runner self-test did not finish within fifteen minutes.",
+    )
+
+
+async def _fetch_cloudflare_probe_details(
+    *,
+    account_id: str,
+    api_token: str,
+    workflow_name: str,
+    probe_id: str,
+) -> dict[str, Any]:
+    url = (
+        f"{_CLOUDFLARE_API_BASE}/accounts/{account_id}/workflows/"
+        f"{workflow_name}/instances/{probe_id}"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=20) as client:
+            response = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {api_token}"},
+            )
+            response.raise_for_status()
+            body = response.json()
+    except (httpx.HTTPError, ValueError) as exc:
+        raise PlatformJobFailure(
+            "cloudflare_probe_failed",
+            "Cloudflare could not report the runner self-test status.",
+        ) from exc
+    if not isinstance(body, dict):
+        raise PlatformJobFailure(
+            "cloudflare_probe_failed",
+            "Cloudflare returned an invalid runner self-test status response.",
+        )
+    return body
+
+
+def _is_cloudflare_rollout_not_ready(result: object) -> bool:
+    if not isinstance(result, dict):
+        return False
+    error = result.get("error")
+    if not isinstance(error, dict):
+        return False
+    name = error.get("name")
+    message = error.get("message")
+    if (
+        result.get("step_count") == 0
+        and name == "Error"
+        and message == "Worker not found."
+    ):
+        return True
+    container_starting_message = (
+        "SandboxError: Container is starting. Please retry in a moment."
+    )
+    return (
+        name == "NonRetryableError" and message == container_starting_message
+    ) or (
+        name == "Error"
+        and message == f"NonRetryableError: {container_starting_message}"
     )
 
 

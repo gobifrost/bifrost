@@ -38,9 +38,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SearchBox } from "@/components/search/SearchBox";
 import { SolutionManagedBadge } from "@/components/solutions/SolutionManagedBadge";
-import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { useSearch } from "@/hooks/useSearch";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorizationBoundary } from "@/contexts/AuthorizationBoundaryContext";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { useTables, useDeleteTable } from "@/services/tables";
 import { TableDialog } from "@/components/tables/TableDialog";
@@ -52,7 +51,7 @@ import type { TablePublic } from "@/services/tables";
 
 export function Tables() {
 	const navigate = useNavigate();
-	const { isPlatformAdmin } = useAuth();
+	const { selectedTarget, hasSelectedCapability } = useAuthorizationBoundary();
 	const [selectedTable, setSelectedTable] = useState<
 		TablePublic | undefined
 	>();
@@ -62,27 +61,16 @@ export function Tables() {
 		TablePublic | undefined
 	>();
 	const [searchTerm, setSearchTerm] = useState("");
-	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
-		undefined,
-	);
 	const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 	const [isImportOpen, setIsImportOpen] = useState(false);
 	const [isExporting, setIsExporting] = useState(false);
 
-	// Convert filterOrgId to scope for API: undefined = all, null = global only, string = org UUID
-	const apiScope =
-		filterOrgId === undefined
-			? undefined
-			: filterOrgId === null
-				? "global"
-				: filterOrgId;
-
-	const { data, isLoading, refetch } = useTables(apiScope);
+	const { data, isLoading, refetch } = useTables();
 	const deleteTable = useDeleteTable();
 
 	// Fetch organizations for the org name lookup (platform admins only)
 	const { data: organizations } = useOrganizations({
-		enabled: isPlatformAdmin,
+		enabled: selectedTarget?.kind === "platform",
 	});
 
 	// Helper to get organization name from ID
@@ -93,6 +81,10 @@ export function Tables() {
 	};
 
 	const tables = data?.tables ?? [];
+	const canManageTables =
+		selectedTarget?.kind !== "managed_organizations" &&
+		hasSelectedCapability("tables.readwrite");
+	const showOrganizationScope = selectedTarget?.kind === "platform";
 
 	// Apply search filter
 	const filteredTables = useSearch(tables, searchTerm, [
@@ -214,6 +206,7 @@ export function Tables() {
 						onClick={handleAdd}
 						title="Create Table"
 						aria-label="Create table"
+						disabled={!canManageTables}
 					>
 						<Plus className="h-4 w-4" />
 					</Button>
@@ -235,18 +228,7 @@ export function Tables() {
 							placeholder="Search tables by name or description..."
 							className="flex-1"
 						/>
-						{isPlatformAdmin && (
-							<div className="w-64">
-								<OrganizationSelect
-									value={filterOrgId}
-									onChange={setFilterOrgId}
-									showAll={true}
-									showGlobal={true}
-									placeholder="All organizations"
-								/>
-							</div>
-						)}
-						{isPlatformAdmin && (
+						{canManageTables && (
 							<div className="flex items-center gap-2 ml-auto">
 								{selectedIds.size > 0 && (
 									<span className="text-sm text-muted-foreground">
@@ -288,7 +270,7 @@ export function Tables() {
 							<DataTable className="max-h-full">
 								<DataTableHeader>
 									<DataTableRow>
-										{isPlatformAdmin && (
+										{canManageTables && (
 											<DataTableHead className="w-10">
 												<Checkbox
 													checked={
@@ -325,7 +307,7 @@ export function Tables() {
 												handleViewDocuments(table)
 											}
 										>
-											{isPlatformAdmin && (
+											{canManageTables && (
 												<DataTableCell>
 													<Checkbox
 														checked={selectedIds.has(
@@ -349,7 +331,7 @@ export function Tables() {
 														className="gap-1"
 													>
 														<Building2 className="h-3 w-3" />
-														{isPlatformAdmin
+														{showOrganizationScope
 															? getOrgName(
 																	table.organization_id,
 																)
@@ -408,6 +390,7 @@ export function Tables() {
 															handleEdit(table)
 														}
 														disabled={
+															!canManageTables ||
 															table.is_solution_managed
 														}
 														title={
@@ -426,6 +409,7 @@ export function Tables() {
 															handleDelete(table)
 														}
 														disabled={
+															!canManageTables ||
 															table.is_solution_managed
 														}
 														title={
@@ -459,7 +443,7 @@ export function Tables() {
 										? "Try adjusting your search term or clear the filter"
 										: "Get started by creating your first data table"}
 								</p>
-								{!searchTerm && (
+								{!searchTerm && canManageTables && (
 									<Button
 										variant="outline"
 										onClick={handleAdd}

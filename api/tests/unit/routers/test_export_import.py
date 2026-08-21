@@ -1,10 +1,12 @@
 """Tests for export/import models and serialization."""
 
 import json
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
+from fastapi import HTTPException
 
+from src.core.principal import UserPrincipal
 from src.models.contracts.export_import import (
     BulkExportRequest,
     ConfigExportFile,
@@ -19,7 +21,33 @@ from src.models.contracts.export_import import (
     TableExportFile,
     TableExportItem,
 )
-from src.routers.export_import import _parse_target_org
+from src.routers.export_import import (
+    _assert_item_matches_import_target,
+    _parse_target_org,
+    _require_import_capability,
+)
+from src.services.authorization import AuthorizationBoundary, AuthorizationContext
+
+
+def _authorization(
+    *,
+    capabilities: set[str],
+    boundary: AuthorizationBoundary | None = None,
+) -> AuthorizationContext:
+    organization_id = uuid4()
+    principal = UserPrincipal(
+        user_id=uuid4(),
+        email="builder@example.com",
+        organization_id=organization_id,
+    )
+    return AuthorizationContext(
+        requester=principal,
+        effective_actor=principal,
+        selected_boundary=boundary
+        or AuthorizationBoundary.organization(organization_id),
+        effective_capabilities=frozenset(capabilities),
+        grant_sources=(),
+    )
 
 
 class TestKnowledgeExport:
@@ -27,13 +55,15 @@ class TestKnowledgeExport:
         """KnowledgeExportFile serializes correctly."""
         export = KnowledgeExportFile(
             item_count=1,
-            items=[{
-                "namespace": "docs",
-                "key": "intro",
-                "content": "Hello world",
-                "metadata": {"source": "manual"},
-                "organization_id": None,
-            }],
+            items=[
+                {
+                    "namespace": "docs",
+                    "key": "intro",
+                    "content": "Hello world",
+                    "metadata": {"source": "manual"},
+                    "organization_id": None,
+                }
+            ],
         )
         data = json.loads(export.model_dump_json())
         assert data["bifrost_export_version"] == "1.0"
@@ -48,8 +78,18 @@ class TestKnowledgeExport:
         export = KnowledgeExportFile(
             item_count=2,
             items=[
-                {"namespace": "docs", "key": "a", "content": "content a", "metadata": {}},
-                {"namespace": "docs", "key": "b", "content": "content b", "metadata": {"tag": "test"}},
+                {
+                    "namespace": "docs",
+                    "key": "a",
+                    "content": "content a",
+                    "metadata": {},
+                },
+                {
+                    "namespace": "docs",
+                    "key": "b",
+                    "content": "content b",
+                    "metadata": {"tag": "test"},
+                },
             ],
         )
         json_str = export.model_dump_json()
@@ -65,8 +105,16 @@ class TestConfigExport:
             contains_encrypted_values=True,
             item_count=2,
             items=[
-                {"key": "api_url", "value": "https://api.example.com", "config_type": "string"},
-                {"key": "api_key", "value": "encrypted-value-abc", "config_type": "secret"},
+                {
+                    "key": "api_url",
+                    "value": "https://api.example.com",
+                    "config_type": "string",
+                },
+                {
+                    "key": "api_key",
+                    "value": "encrypted-value-abc",
+                    "config_type": "secret",
+                },
             ],
         )
         data = json.loads(export.model_dump_json())
@@ -77,12 +125,14 @@ class TestConfigExport:
         """Config items reference integration by name, not ID."""
         export = ConfigExportFile(
             item_count=1,
-            items=[{
-                "key": "tenant_id",
-                "value": "abc-123",
-                "config_type": "string",
-                "integration_name": "Microsoft Partner",
-            }],
+            items=[
+                {
+                    "key": "tenant_id",
+                    "value": "abc-123",
+                    "config_type": "string",
+                    "integration_name": "Microsoft Partner",
+                }
+            ],
         )
         data = json.loads(export.model_dump_json())
         assert data["items"][0]["integration_name"] == "Microsoft Partner"
@@ -93,15 +143,17 @@ class TestTableExport:
         """Table export includes documents."""
         export = TableExportFile(
             item_count=1,
-            items=[{
-                "name": "customers",
-                "description": "Customer records",
-                "schema": {"columns": [{"name": "email", "type": "string"}]},
-                "documents": [
-                    {"id": "doc-1", "data": {"email": "a@b.com", "name": "Alice"}},
-                    {"id": "doc-2", "data": {"email": "c@d.com", "name": "Bob"}},
-                ],
-            }],
+            items=[
+                {
+                    "name": "customers",
+                    "description": "Customer records",
+                    "schema": {"columns": [{"name": "email", "type": "string"}]},
+                    "documents": [
+                        {"id": "doc-1", "data": {"email": "a@b.com", "name": "Alice"}},
+                        {"id": "doc-2", "data": {"email": "c@d.com", "name": "Bob"}},
+                    ],
+                }
+            ],
         )
         data = json.loads(export.model_dump_json())
         assert len(data["items"][0]["documents"]) == 2
@@ -113,27 +165,43 @@ class TestIntegrationExport:
         export = IntegrationExportFile(
             contains_encrypted_values=True,
             item_count=1,
-            items=[{
-                "name": "Microsoft Partner",
-                "entity_id": "tenant_id",
-                "entity_id_name": "Tenant ID",
-                "config_schema": [
-                    {"key": "api_url", "type": "string", "required": True, "position": 0},
-                    {"key": "api_key", "type": "secret", "required": True, "position": 1},
-                ],
-                "mappings": [
-                    {"entity_id": "abc-123", "entity_name": "Contoso", "config": {"api_url": "https://api.contoso.com"}},
-                ],
-                "oauth_provider": {
-                    "provider_name": "microsoft",
-                    "client_id": "client-123",
-                    "encrypted_client_secret": "encrypted-base64-value",
-                    "authorization_url": "https://login.microsoft.com/authorize",
-                    "token_url": "https://login.microsoft.com/token",
-                    "scopes": ["openid", "profile"],
-                },
-                "default_config": {"api_url": "https://default-api.example.com"},
-            }],
+            items=[
+                {
+                    "name": "Microsoft Partner",
+                    "entity_id": "tenant_id",
+                    "entity_id_name": "Tenant ID",
+                    "config_schema": [
+                        {
+                            "key": "api_url",
+                            "type": "string",
+                            "required": True,
+                            "position": 0,
+                        },
+                        {
+                            "key": "api_key",
+                            "type": "secret",
+                            "required": True,
+                            "position": 1,
+                        },
+                    ],
+                    "mappings": [
+                        {
+                            "entity_id": "abc-123",
+                            "entity_name": "Contoso",
+                            "config": {"api_url": "https://api.contoso.com"},
+                        },
+                    ],
+                    "oauth_provider": {
+                        "provider_name": "microsoft",
+                        "client_id": "client-123",
+                        "encrypted_client_secret": "encrypted-base64-value",
+                        "authorization_url": "https://login.microsoft.com/authorize",
+                        "token_url": "https://login.microsoft.com/token",
+                        "scopes": ["openid", "profile"],
+                    },
+                    "default_config": {"api_url": "https://default-api.example.com"},
+                }
+            ],
         )
         data = json.loads(export.model_dump_json())
         assert data["items"][0]["name"] == "Microsoft Partner"
@@ -163,7 +231,9 @@ class TestImportModels:
             skipped=1,
             details=[
                 ImportResultItem(name="docs/intro", status="created"),
-                ImportResultItem(name="docs/faq", status="error", error="Invalid content"),
+                ImportResultItem(
+                    name="docs/faq", status="error", error="Invalid content"
+                ),
             ],
         )
         assert result.created == 5
@@ -175,18 +245,22 @@ class TestOrganizationNameBackwardsCompat:
 
     def test_knowledge_without_org_name(self):
         """Old knowledge export without organization_name field parses with None."""
-        old_json = json.dumps({
-            "bifrost_export_version": "1.0",
-            "entity_type": "knowledge",
-            "item_count": 1,
-            "items": [{
-                "namespace": "docs",
-                "key": "intro",
-                "content": "Hello",
-                "metadata": {},
-                "organization_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-            }],
-        })
+        old_json = json.dumps(
+            {
+                "bifrost_export_version": "1.0",
+                "entity_type": "knowledge",
+                "item_count": 1,
+                "items": [
+                    {
+                        "namespace": "docs",
+                        "key": "intro",
+                        "content": "Hello",
+                        "metadata": {},
+                        "organization_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                    }
+                ],
+            }
+        )
         parsed = KnowledgeExportFile.model_validate_json(old_json)
         assert len(parsed.items) == 1
         assert parsed.items[0].organization_name is None
@@ -194,39 +268,55 @@ class TestOrganizationNameBackwardsCompat:
 
     def test_table_without_org_name(self):
         """Old table export without organization_name parses with None."""
-        old_json = json.dumps({
-            "bifrost_export_version": "1.0",
-            "entity_type": "tables",
-            "item_count": 1,
-            "items": [{"name": "t1", "organization_id": "abc-123", "documents": []}],
-        })
+        old_json = json.dumps(
+            {
+                "bifrost_export_version": "1.0",
+                "entity_type": "tables",
+                "item_count": 1,
+                "items": [
+                    {"name": "t1", "organization_id": "abc-123", "documents": []}
+                ],
+            }
+        )
         parsed = TableExportFile.model_validate_json(old_json)
         assert parsed.items[0].organization_name is None
 
     def test_config_without_org_name(self):
         """Old config export without organization_name parses with None."""
-        old_json = json.dumps({
-            "bifrost_export_version": "1.0",
-            "entity_type": "configs",
-            "item_count": 1,
-            "items": [{"key": "k", "value": "v", "config_type": "string"}],
-        })
+        old_json = json.dumps(
+            {
+                "bifrost_export_version": "1.0",
+                "entity_type": "configs",
+                "item_count": 1,
+                "items": [{"key": "k", "value": "v", "config_type": "string"}],
+            }
+        )
         parsed = ConfigExportFile.model_validate_json(old_json)
         assert parsed.items[0].organization_name is None
 
     def test_integration_mapping_without_org_name(self):
         """Old integration mapping without organization_name parses with None."""
-        old_json = json.dumps({
-            "bifrost_export_version": "1.0",
-            "entity_type": "integrations",
-            "item_count": 1,
-            "items": [{
-                "name": "Test",
-                "config_schema": [],
-                "mappings": [{"entity_id": "e1", "organization_id": "org-1", "config": {}}],
-                "default_config": {},
-            }],
-        })
+        old_json = json.dumps(
+            {
+                "bifrost_export_version": "1.0",
+                "entity_type": "integrations",
+                "item_count": 1,
+                "items": [
+                    {
+                        "name": "Test",
+                        "config_schema": [],
+                        "mappings": [
+                            {
+                                "entity_id": "e1",
+                                "organization_id": "org-1",
+                                "config": {},
+                            }
+                        ],
+                        "default_config": {},
+                    }
+                ],
+            }
+        )
         parsed = IntegrationExportFile.model_validate_json(old_json)
         assert parsed.items[0].mappings[0].organization_name is None
 
@@ -254,7 +344,9 @@ class TestOrganizationNameSerialization:
     def test_config_with_org_name(self):
         """Config export item includes organization_name in JSON."""
         item = ConfigExportItem(
-            key="k", value="v", config_type="string",
+            key="k",
+            value="v",
+            config_type="string",
             organization_name="Contoso",
         )
         data = json.loads(item.model_dump_json())
@@ -285,12 +377,14 @@ class TestOrganizationNameSerialization:
         """Knowledge export with org_name survives serialization roundtrip."""
         export = KnowledgeExportFile(
             item_count=1,
-            items=[{
-                "namespace": "docs",
-                "content": "Hello",
-                "organization_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
-                "organization_name": "Contoso",
-            }],
+            items=[
+                {
+                    "namespace": "docs",
+                    "content": "Hello",
+                    "organization_id": "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee",
+                    "organization_name": "Contoso",
+                }
+            ],
         )
         json_str = export.model_dump_json()
         parsed = KnowledgeExportFile.model_validate_json(json_str)
@@ -323,3 +417,99 @@ class TestParseTargetOrg:
         """Invalid UUID string raises ValueError."""
         with pytest.raises(ValueError):
             _parse_target_org("not-a-uuid")
+
+
+class TestExportImportAuthorization:
+    def test_import_requires_declared_capability(self):
+        authorization = _authorization(
+            capabilities=set(),
+            boundary=AuthorizationBoundary.platform(),
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            _require_import_capability(
+                authorization,
+                "tables.readwrite",
+                target_organization_id=None,
+            )
+
+        assert exc.value.status_code == 403
+        assert exc.value.detail == "Missing required capability: tables.readwrite"
+
+    def test_import_uses_selected_platform_boundary_by_default(self):
+        authorization = _authorization(
+            capabilities={"configs.readwrite"},
+            boundary=AuthorizationBoundary.platform(),
+        )
+
+        target_org_id, force_global = _require_import_capability(
+            authorization,
+            "configs.readwrite",
+            target_organization_id=None,
+        )
+
+        assert target_org_id is None
+        assert force_global is True
+
+    def test_import_uses_selected_organization_boundary_by_default(self):
+        organization_id = uuid4()
+        authorization = _authorization(
+            capabilities={"tables.readwrite"},
+            boundary=AuthorizationBoundary.organization(organization_id),
+        )
+
+        target_org_id, force_global = _require_import_capability(
+            authorization,
+            "tables.readwrite",
+            target_organization_id=None,
+        )
+
+        assert target_org_id == organization_id
+        assert force_global is False
+
+    def test_import_rejects_target_outside_selected_boundary(self):
+        authorization = _authorization(
+            capabilities={"tables.readwrite"},
+            boundary=AuthorizationBoundary.organization(uuid4()),
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            _require_import_capability(
+                authorization,
+                "tables.readwrite",
+                target_organization_id=str(uuid4()),
+            )
+
+        assert exc.value.status_code == 409
+
+    def test_managed_collection_cannot_import(self):
+        authorization = _authorization(
+            capabilities={"tables.readwrite"},
+            boundary=AuthorizationBoundary.managed_organizations(),
+        )
+
+        with pytest.raises(HTTPException) as exc:
+            _require_import_capability(
+                authorization,
+                "tables.readwrite",
+                target_organization_id=None,
+            )
+
+        assert exc.value.status_code == 409
+        assert (
+            exc.value.detail
+            == "Select one organization or Global before importing data"
+        )
+
+    def test_file_organization_cannot_override_selected_target(self):
+        selected_org_id = uuid4()
+
+        with pytest.raises(ValueError) as exc:
+            _assert_item_matches_import_target(
+                item_org_id=str(uuid4()),
+                item_org_name=None,
+                target_org_id=selected_org_id,
+                item_label="table",
+            )
+
+        assert "selected import target" in str(exc.value)

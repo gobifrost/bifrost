@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Bot, Check, Copy, PlugZap } from "lucide-react";
+import { Check, Copy, PlugZap, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -54,13 +54,18 @@ function CopyValue({ label, value }: { label: string; value: string }) {
 
 export function BuilderExternalHarnessDialog({
 	session,
+	targetKind = "solution",
 }: {
 	session: BuilderSession | undefined;
+	targetKind?: "solution" | "organization" | "global_repo";
 }) {
 	const mcpUrl = `${window.location.origin}/mcp`;
 	const starterPrompt = session
-		? `Continue Bifrost Builder session ${session.id} with Builder Agent ${session.builder_agent_id}. Use the Builder workspace tools, keep finalize=false for intermediate edits, and set finalize=true only on the final successful mutation.`
+		? targetKind === "organization"
+			? `Continue Bifrost Builder session ${session.id}. Discover its session-bound organization tools and use only those tools; Bifrost has already fixed the target organization and will enforce my current permissions on every call.`
+			: `Continue Bifrost Builder session ${session.id} for Solution ${session.solution_id}. Discover the session-bound Builder workspace tools, keep finalize=false for intermediate edits, and set finalize=true only on the final successful mutation.`
 		: "";
+	const isOrganizationWorkspace = targetKind === "organization";
 
 	return (
 		<Dialog>
@@ -82,13 +87,13 @@ export function BuilderExternalHarnessDialog({
 			<DialogContent className="max-w-xl">
 				<DialogHeader>
 					<div className="mb-2 flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
-						<Bot className="h-5 w-5" />
+						<Wrench className="h-5 w-5" />
 					</div>
 					<DialogTitle>Continue with your own AI harness</DialogTitle>
 					<DialogDescription>
-						Connect Codex, Claude Code, or another MCP client to the same
-						private workspace. Bifrost still enforces access, records every
-						revision, validates the Solution, and runs the final build.
+						{isOrganizationWorkspace
+							? "Connect Codex, Claude Code, or another MCP client to the same organization workspace. Bifrost exposes only your authorized tools and rechecks every change."
+							: "Connect Codex, Claude Code, or another MCP client to the same private workspace. Bifrost still enforces access, records every revision, validates the Solution, and runs the final build."}
 					</DialogDescription>
 				</DialogHeader>
 
@@ -96,7 +101,7 @@ export function BuilderExternalHarnessDialog({
 					<div className="space-y-5">
 						<div className="space-y-3">
 							<CopyValue label="MCP server" value={mcpUrl} />
-							<CopyValue label="Builder Agent ID" value={session.builder_agent_id} />
+							<CopyValue label="Build ID" value={session.solution_id} />
 							<CopyValue label="Builder session ID" value={session.id} />
 						</div>
 
@@ -104,17 +109,21 @@ export function BuilderExternalHarnessDialog({
 							<p className="text-sm font-medium">What your assistant should do</p>
 							<ol className="mt-2 list-decimal space-y-1.5 pl-4 text-sm text-muted-foreground">
 								<li>Connect to the MCP server and sign in as you.</li>
-								<li>Open the Builder Agent above through capability search.</li>
-								<li>Pass the session ID to every workspace tool call.</li>
-								<li>Finalize only the last edit to enqueue one app build.</li>
+								<li>Discover the Builder workspace tools available to your account.</li>
+								<li>Pass the Builder session ID to every tool call.</li>
+								{isOrganizationWorkspace ? (
+									<li>Use only the discovered organization tools; each accepted change is live.</li>
+								) : (
+									<li>Finalize only the last edit to enqueue one app build.</li>
+								)}
 							</ol>
 						</div>
 
 						<CopyValue label="Starter prompt" value={starterPrompt} />
 						<p className="text-xs leading-5 text-muted-foreground">
-							Source and revision history stay shared with this screen. The
-							external assistant&apos;s own chat transcript remains in that
-							assistant.
+							{isOrganizationWorkspace
+								? "The selected organization and your permissions stay bound to this session. The external assistant's own transcript remains in that assistant."
+								: "Source and revision history stay shared with this screen. The external assistant's own chat transcript remains in that assistant."}
 						</p>
 					</div>
 				) : null}

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.models.orm.agents import Agent
+from src.services.agent_execution_profile import AgentExecutionProfile
 from src.models.orm.external_mcp import (
     AgentMCPConnection,
     MCPConnection,
@@ -84,7 +85,10 @@ def agent_delegation_slug(name: str) -> str:
     return f"delegate_to_{name.lower().replace(' ', '_')}"
 
 
-def find_delegated_agent(agent: Agent, tool_name: str) -> Agent | None:
+def find_delegated_agent(
+    agent: AgentExecutionProfile,
+    tool_name: str,
+) -> Agent | None:
     """Match a delegate_to_* tool name to the target agent."""
     for d in (agent.delegated_agents or []):
         if agent_delegation_slug(d.name) == tool_name and d.is_active:
@@ -92,12 +96,15 @@ def find_delegated_agent(agent: Agent, tool_name: str) -> Agent | None:
     return None
 
 
-def _bundle_path(agent: Agent) -> str | None:
+def _bundle_path(agent: AgentExecutionProfile) -> str | None:
     value = getattr(agent, "bundle_path", None)
     return value if isinstance(value, str) and value else None
 
 
-def is_agent_system_tool(agent: Agent, tool_name: str) -> bool:
+def is_agent_system_tool(
+    agent: AgentExecutionProfile,
+    tool_name: str,
+) -> bool:
     """Whether a tool may dispatch through the system-tool executor."""
 
     from src.services.mcp_server.tools.skill_assets import READ_SKILL_ASSET_TOOL_ID
@@ -110,7 +117,7 @@ def is_agent_system_tool(agent: Agent, tool_name: str) -> bool:
 
 
 def build_agent_system_prompt(
-    agent: Agent,
+    agent: AgentExecutionProfile,
     *,
     execution_context: dict | None = None,
 ) -> str:
@@ -130,7 +137,7 @@ def build_agent_system_prompt(
 
 
 async def resolve_agent_tools(
-    agent: Agent,
+    agent: AgentExecutionProfile,
     session: AsyncSession,
     *,
     caller_user_id: UUID | None = None,

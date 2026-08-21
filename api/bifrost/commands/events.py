@@ -82,6 +82,27 @@ from .base import _apply_flags, entity_group, output_result, pass_resolver, run_
 events_group = entity_group("events", "Manage event sources and subscriptions.")
 
 
+def _target_headers(target: Any) -> dict[str, str] | None:
+    """Translate the CLI's three-state target into the authorization boundary."""
+
+    if not target.is_set:
+        return None
+    boundary = (
+        "platform"
+        if target.organization_id is None
+        else f"organization:{target.organization_id}"
+    )
+    return {"X-Bifrost-Boundary": boundary}
+
+
+def _target_resolver(
+    client: BifrostClient,
+    resolver: RefResolver,
+    headers: dict[str, str] | None,
+) -> RefResolver:
+    return RefResolver(client, headers=headers) if headers else resolver
+
+
 _SOURCE_CREATE_FLAGS = build_cli_flags(
     EventSourceCreate,
     exclude=DTO_EXCLUDES.get("EventSourceCreate", set()),
@@ -356,60 +377,81 @@ async def list_sources(
     if source_type is not None:
         params["source_type"] = source_type
     target = await resolve_org_target(org, is_global, resolver)
+    headers = _target_headers(target)
     if target.is_set:
         if target.organization_id is None:
             params["scope"] = "global"
         else:
             params["organization_id"] = target.organization_id
-    response = await client.get("/api/events/sources", params=params or None)
+    response = await client.get(
+        "/api/events/sources", params=params or None, headers=headers
+    )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
 
 
 @events_group.command("list-webhook-adapters")
+@org_option
 @click.pass_context
 @pass_resolver
 @run_async
 async def list_webhook_adapters(
     ctx: click.Context,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,  # noqa: ARG001 - decorator contract
 ) -> None:
     """List webhook adapters available for Event Source configuration."""
 
-    response = await client.get("/api/events/adapters")
+    target = await resolve_org_target(org, is_global, resolver)
+    response = await client.get(
+        "/api/events/adapters", headers=_target_headers(target)
+    )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
 
 
 @events_group.command("get-source")
 @click.argument("ref")
+@org_option
 @click.pass_context
 @pass_resolver
 @run_async
 async def get_source(
     ctx: click.Context,
     ref: str,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
 ) -> None:
     """Get a single event source by UUID or name."""
-    source_uuid = await resolver.resolve("event_source", ref)
-    response = await client.get(f"/api/events/sources/{source_uuid}")
+    target = await resolve_org_target(org, is_global, resolver)
+    headers = _target_headers(target)
+    source_uuid = await _target_resolver(client, resolver, headers).resolve(
+        "event_source", ref
+    )
+    response = await client.get(
+        f"/api/events/sources/{source_uuid}", headers=headers
+    )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
 
 
 @events_group.command("list-subscriptions")
 @click.argument("source_ref")
+@org_option
 @click.pass_context
 @pass_resolver
 @run_async
 async def list_subscriptions(
     ctx: click.Context,
     source_ref: str,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
@@ -418,9 +460,13 @@ async def list_subscriptions(
 
     ``SOURCE_REF`` is a UUID or event source name.
     """
-    source_uuid = await resolver.resolve("event_source", source_ref)
+    target = await resolve_org_target(org, is_global, resolver)
+    headers = _target_headers(target)
+    source_uuid = await _target_resolver(client, resolver, headers).resolve(
+        "event_source", source_ref
+    )
     response = await client.get(
-        f"/api/events/sources/{source_uuid}/subscriptions"
+        f"/api/events/sources/{source_uuid}/subscriptions", headers=headers
     )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
@@ -429,6 +475,7 @@ async def list_subscriptions(
 @events_group.command("get-subscription")
 @click.argument("source_ref")
 @click.argument("subscription_id")
+@org_option
 @click.pass_context
 @pass_resolver
 @run_async
@@ -436,14 +483,21 @@ async def get_subscription(
     ctx: click.Context,
     source_ref: str,
     subscription_id: str,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
 ) -> None:
     """Get a single subscription by source ref + subscription UUID."""
-    source_uuid = await resolver.resolve("event_source", source_ref)
+    target = await resolve_org_target(org, is_global, resolver)
+    headers = _target_headers(target)
+    source_uuid = await _target_resolver(client, resolver, headers).resolve(
+        "event_source", source_ref
+    )
     response = await client.get(
-        f"/api/events/sources/{source_uuid}/subscriptions/{subscription_id}"
+        f"/api/events/sources/{source_uuid}/subscriptions/{subscription_id}",
+        headers=headers,
     )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
@@ -488,8 +542,12 @@ async def create_source(
         rate_limit_enabled,
     ) = _pop_webhook_fields(fields)
 
-    body = await assemble_body(EventSourceCreate, fields, resolver=resolver)
     target = await resolve_org_target(org, is_global, resolver)
+    headers = _target_headers(target)
+    scoped_resolver = _target_resolver(client, resolver, headers)
+    body = await assemble_body(
+        EventSourceCreate, fields, resolver=scoped_resolver
+    )
     if target.is_set:
         body["organization_id"] = target.organization_id
 
@@ -511,12 +569,14 @@ async def create_source(
         rate_limit_enabled=rate_limit_enabled,
         clear_integration=False,
         clear_rate_limit=False,
-        resolver=resolver,
+        resolver=scoped_resolver,
     )
     if webhook is not None:
         body["webhook"] = webhook
 
-    response = await client.post("/api/events/sources", json=body)
+    response = await client.post(
+        "/api/events/sources", json=body, headers=headers
+    )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
 
@@ -559,7 +619,10 @@ async def update_source(
     Passing ``--org``/``--global`` re-scopes the source (HOME leaves the scope
     unchanged, since omitting org sends no ``organization_id``).
     """
-    source_uuid = await resolver.resolve("event_source", ref)
+    target = await resolve_org_target(org, is_global, resolver)
+    headers = _target_headers(target)
+    scoped_resolver = _target_resolver(client, resolver, headers)
+    source_uuid = await scoped_resolver.resolve("event_source", ref)
 
     clear_webhook_integration = bool(fields.pop("clear_webhook_integration", False))
     clear_rate_limit = bool(fields.pop("clear_rate_limit", False))
@@ -574,8 +637,9 @@ async def update_source(
         rate_limit_enabled,
     ) = _pop_webhook_fields(fields)
 
-    body = await assemble_body(EventSourceUpdate, fields, resolver=resolver)
-    target = await resolve_org_target(org, is_global, resolver)
+    body = await assemble_body(
+        EventSourceUpdate, fields, resolver=scoped_resolver
+    )
     if target.is_set:
         body["organization_id"] = target.organization_id
 
@@ -597,12 +661,14 @@ async def update_source(
         rate_limit_enabled=rate_limit_enabled,
         clear_integration=clear_webhook_integration,
         clear_rate_limit=clear_rate_limit,
-        resolver=resolver,
+        resolver=scoped_resolver,
     )
     if webhook is not None:
         body["webhook"] = webhook
 
-    response = await client.patch(f"/api/events/sources/{source_uuid}", json=body)
+    response = await client.patch(
+        f"/api/events/sources/{source_uuid}", json=body, headers=headers
+    )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
 
@@ -615,12 +681,15 @@ async def update_source(
 @events_group.command("create-subscription")
 @click.argument("source_ref")
 @_apply_flags(_SUBSCRIPTION_CREATE_FLAGS)
+@org_option
 @click.pass_context
 @pass_resolver
 @run_async
 async def create_subscription(
     ctx: click.Context,
     source_ref: str,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
@@ -650,11 +719,18 @@ async def create_subscription(
     else:
         fields["target_type"] = "workflow"
 
-    source_uuid = await resolver.resolve("event_source", source_ref)
-    body = await assemble_body(EventSubscriptionCreate, fields, resolver=resolver)
+    target = await resolve_org_target(org, is_global, resolver)
+    headers = _target_headers(target)
+    scoped_resolver = _target_resolver(client, resolver, headers)
+    source_uuid = await scoped_resolver.resolve("event_source", source_ref)
+    body = await assemble_body(
+        EventSubscriptionCreate, fields, resolver=scoped_resolver
+    )
 
     response = await client.post(
-        f"/api/events/sources/{source_uuid}/subscriptions", json=body
+        f"/api/events/sources/{source_uuid}/subscriptions",
+        json=body,
+        headers=headers,
     )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
@@ -662,20 +738,29 @@ async def create_subscription(
 
 @events_group.command("delete-source")
 @click.argument("ref")
+@org_option
 @click.pass_context
 @pass_resolver
 @run_async
 async def delete_source(
     ctx: click.Context,
     ref: str,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
 ) -> None:
     """Permanently delete an Event Source by UUID or name."""
 
-    source_uuid = await resolver.resolve("event_source", ref)
-    response = await client.delete(f"/api/events/sources/{source_uuid}")
+    target = await resolve_org_target(org, is_global, resolver)
+    headers = _target_headers(target)
+    source_uuid = await _target_resolver(client, resolver, headers).resolve(
+        "event_source", ref
+    )
+    response = await client.delete(
+        f"/api/events/sources/{source_uuid}", headers=headers
+    )
     response.raise_for_status()
     output_result({"success": True, "id": source_uuid}, ctx=ctx)
 
@@ -723,6 +808,7 @@ async def delete_source(
     is_flag=True,
     help="Clear the optional input mapping.",
 )
+@org_option
 @click.pass_context
 @pass_resolver
 @run_async
@@ -736,6 +822,8 @@ async def update_subscription(
     clear_event_type: bool,
     clear_filter_expression: bool,
     clear_input_mapping: bool,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
@@ -760,8 +848,13 @@ async def update_subscription(
             "Delete the subscription and create a new one instead."
         )
 
-    source_uuid = await resolver.resolve("event_source", source_ref)
-    body = await assemble_body(EventSubscriptionUpdate, fields, resolver=resolver)
+    target = await resolve_org_target(org, is_global, resolver)
+    headers = _target_headers(target)
+    scoped_resolver = _target_resolver(client, resolver, headers)
+    source_uuid = await scoped_resolver.resolve("event_source", source_ref)
+    body = await assemble_body(
+        EventSubscriptionUpdate, fields, resolver=scoped_resolver
+    )
     clears = {
         "event_type": clear_event_type,
         "filter_expression": clear_filter_expression,
@@ -780,6 +873,7 @@ async def update_subscription(
     response = await client.patch(
         f"/api/events/sources/{source_uuid}/subscriptions/{subscription_id}",
         json=body,
+        headers=headers,
     )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
@@ -788,6 +882,7 @@ async def update_subscription(
 @events_group.command("delete-subscription")
 @click.argument("source_ref")
 @click.argument("subscription_id")
+@org_option
 @click.pass_context
 @pass_resolver
 @run_async
@@ -795,15 +890,22 @@ async def delete_subscription(
     ctx: click.Context,
     source_ref: str,
     subscription_id: str,
+    org: str | None,
+    is_global: bool,
     *,
     client: BifrostClient,
     resolver: RefResolver,
 ) -> None:
     """Permanently delete one Event Subscription."""
 
-    source_uuid = await resolver.resolve("event_source", source_ref)
+    target = await resolve_org_target(org, is_global, resolver)
+    headers = _target_headers(target)
+    source_uuid = await _target_resolver(client, resolver, headers).resolve(
+        "event_source", source_ref
+    )
     response = await client.delete(
-        f"/api/events/sources/{source_uuid}/subscriptions/{subscription_id}"
+        f"/api/events/sources/{source_uuid}/subscriptions/{subscription_id}",
+        headers=headers,
     )
     response.raise_for_status()
     output_result({"success": True, "id": subscription_id}, ctx=ctx)

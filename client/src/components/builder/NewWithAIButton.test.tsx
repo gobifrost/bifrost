@@ -18,6 +18,7 @@ vi.mock("react-router-dom", async () => {
 });
 
 const mockListBuilderSolutions = vi.fn();
+const mockListBuilderTargets = vi.fn();
 vi.mock("@/services/builder", async () => {
 	const actual =
 		await vi.importActual<typeof import("@/services/builder")>(
@@ -25,6 +26,7 @@ vi.mock("@/services/builder", async () => {
 		);
 	return {
 		...actual,
+		listBuilderTargets: (...args: unknown[]) => mockListBuilderTargets(...args),
 		listBuilderSolutions: (...args: unknown[]) =>
 			mockListBuilderSolutions(...args),
 	};
@@ -32,11 +34,28 @@ vi.mock("@/services/builder", async () => {
 
 beforeEach(() => {
 	mockNavigate.mockReset();
+	mockListBuilderTargets.mockReset();
 	mockListBuilderSolutions.mockReset();
 });
 
 describe("capability gating", () => {
 	it("renders the button when the caller can build", async () => {
+		mockListBuilderTargets.mockResolvedValue({
+			ai_configured: true,
+			builder_ready: true,
+			builder_blockers: [],
+			can_view_all: false,
+			can_open_global_workspace: true,
+			is_platform_admin: false,
+			organizations: [
+				{
+					id: "org-1",
+					name: "Org 1",
+					can_execute: true,
+					can_view: true,
+				},
+			],
+		});
 		mockListBuilderSolutions.mockResolvedValue({
 			solutions: [],
 			total: 0,
@@ -56,13 +75,14 @@ describe("capability gating", () => {
 	});
 
 	it("hides the button on a 403 and shows no error", async () => {
-		mockListBuilderSolutions.mockRejectedValue(
+		mockListBuilderTargets.mockRejectedValue(
 			new BuilderApiError(403, "forbidden"),
 		);
 
 		renderWithProviders(<NewWithAIButton label="New with AI" />);
 
-		await waitFor(() => expect(mockListBuilderSolutions).toHaveBeenCalled());
+		await waitFor(() => expect(mockListBuilderTargets).toHaveBeenCalled());
+		expect(mockListBuilderSolutions).not.toHaveBeenCalled();
 		await waitFor(() =>
 			expect(screen.queryByTestId("builder-entry-point")).not.toBeInTheDocument(),
 		);
@@ -70,6 +90,7 @@ describe("capability gating", () => {
 	});
 
 	it("hides the button while the capability is still loading", () => {
+		mockListBuilderTargets.mockReturnValue(new Promise(() => {}));
 		mockListBuilderSolutions.mockReturnValue(new Promise(() => {}));
 
 		renderWithProviders(<NewWithAIButton label="New with AI" />);
@@ -78,6 +99,22 @@ describe("capability gating", () => {
 	});
 
 	it("hides Build from ordinary users until AI is configured", async () => {
+		mockListBuilderTargets.mockResolvedValue({
+			ai_configured: false,
+			builder_ready: false,
+			builder_blockers: [],
+			can_view_all: false,
+			can_open_global_workspace: true,
+			is_platform_admin: false,
+			organizations: [
+				{
+					id: "org-1",
+					name: "Org 1",
+					can_execute: true,
+					can_view: true,
+				},
+			],
+		});
 		mockListBuilderSolutions.mockResolvedValue({
 			solutions: [],
 			total: 0,
@@ -96,6 +133,22 @@ describe("capability gating", () => {
 	});
 
 	it("keeps Build visible to an admin who needs to configure AI", async () => {
+		mockListBuilderTargets.mockResolvedValue({
+			ai_configured: false,
+			builder_ready: false,
+			builder_blockers: [],
+			can_view_all: true,
+			can_open_global_workspace: true,
+			is_platform_admin: true,
+			organizations: [
+				{
+					id: "org-1",
+					name: "Org 1",
+					can_execute: true,
+					can_view: true,
+				},
+			],
+		});
 		mockListBuilderSolutions.mockResolvedValue({
 			solutions: [],
 			total: 0,
@@ -115,6 +168,22 @@ describe("capability gating", () => {
 
 describe("navigation", () => {
 	it("opens the shared app-first build home", async () => {
+		mockListBuilderTargets.mockResolvedValue({
+			ai_configured: true,
+			builder_ready: true,
+			builder_blockers: [],
+			can_view_all: false,
+			can_open_global_workspace: true,
+			is_platform_admin: false,
+			organizations: [
+				{
+					id: "org-1",
+					name: "Org 1",
+					can_execute: true,
+					can_view: true,
+				},
+			],
+		});
 		mockListBuilderSolutions.mockResolvedValue({
 			solutions: [],
 			total: 0,

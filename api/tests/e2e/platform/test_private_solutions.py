@@ -36,19 +36,30 @@ def _create(e2e_client, headers, slug: str, name: str | None = None):
 
 @pytest.fixture(scope="module")
 def builder_role(e2e_client, platform_admin):
+    platform_headers = {
+        **platform_admin.headers,
+        "X-Bifrost-Boundary": "platform",
+    }
     resp = e2e_client.post(
         "/api/roles",
-        headers=platform_admin.headers,
+        headers=platform_headers,
         json={
             "name": f"E2E Builder {uuid.uuid4().hex[:8]}",
             "description": "private builder e2e",
-            "scopes": ["solutions.build"],
+            "capabilities": [
+                "builder.read",
+                "builder.execute",
+                "solutions.read",
+                "solutions.readwrite",
+                "solutions.build.execute",
+                "solutions.deploy.execute",
+            ],
         },
     )
     assert resp.status_code == 201, resp.text
     role = resp.json()
     yield role
-    e2e_client.delete(f"/api/roles/{role['id']}", headers=platform_admin.headers)
+    e2e_client.delete(f"/api/roles/{role['id']}", headers=platform_headers)
 
 
 @pytest.fixture(scope="module")
@@ -56,7 +67,15 @@ def builder_alice(e2e_client, platform_admin, builder_role, alice_user):
     resp = e2e_client.post(
         f"/api/roles/{builder_role['id']}/users",
         headers=platform_admin.headers,
-        json={"user_ids": [str(alice_user.user_id)]},
+        json={
+            "user_ids": [str(alice_user.user_id)],
+            "boundaries": [
+                {
+                    "boundary_kind": "organization",
+                    "organization_id": str(alice_user.organization_id),
+                }
+            ],
+        },
     )
     assert resp.status_code == 204, resp.text
     _login_user(e2e_client, alice_user)
@@ -93,7 +112,15 @@ def builder_bob(e2e_client, platform_admin, builder_role, bob_user):
     resp = e2e_client.post(
         f"/api/roles/{builder_role['id']}/users",
         headers=platform_admin.headers,
-        json={"user_ids": [str(bob_user.user_id)]},
+        json={
+            "user_ids": [str(bob_user.user_id)],
+            "boundaries": [
+                {
+                    "boundary_kind": "organization",
+                    "organization_id": str(bob_user.organization_id),
+                }
+            ],
+        },
     )
     assert resp.status_code == 204, resp.text
     _login_user(e2e_client, bob_user)
@@ -132,6 +159,41 @@ class TestBuilderCapabilityGate:
         finally:
             e2e_client.delete(f"{BUILDER_URL}/{body['id']}", headers=builder_alice.headers)
 
+    def test_platform_operator_can_support_but_cannot_start_builds(
+        self,
+        e2e_client,
+        provider_org_user,
+        alice_solution,
+    ):
+        create_response = _create(
+            e2e_client,
+            provider_org_user.headers,
+            _slug("operator-denied"),
+        )
+        assert create_response.status_code == 403, create_response.text
+
+        support_response = e2e_client.get(
+            BUILDER_URL,
+            headers={
+                **provider_org_user.headers,
+                "X-Bifrost-Boundary": "managed_organizations",
+            },
+            params={
+                "view": "all",
+                "organization_id": alice_solution["organization_id"],
+                "search": alice_solution["slug"],
+            },
+        )
+        assert support_response.status_code == 200, support_response.text
+        body = support_response.json()
+        assert body["can_view_all"] is True
+        row = next(
+            solution
+            for solution in body["solutions"]
+            if solution["id"] == alice_solution["id"]
+        )
+        assert row["caller_access"] == "support"
+
 
 class TestPrivateInvisibilityAndSupport:
     def test_owner_sees_own_solution(self, e2e_client, builder_alice, alice_solution):
@@ -168,7 +230,7 @@ class TestPrivateInvisibilityAndSupport:
         )
         assert deleted.status_code == 404, deleted.text
 
-    def test_platform_admin_default_list_stays_focused_but_support_detail_is_available(
+    def test_platform_admin_default_list_stays_focused_and_detail_requires_org_context(
         self, e2e_client, platform_admin, alice_solution
     ):
         listing = e2e_client.get(BUILDER_URL, headers=platform_admin.headers)
@@ -177,7 +239,13 @@ class TestPrivateInvisibilityAndSupport:
         assert alice_solution["id"] not in {s["id"] for s in listing.json()["solutions"]}
 
         detail = e2e_client.get(
-            f"{BUILDER_URL}/{alice_solution['id']}", headers=platform_admin.headers
+            f"{BUILDER_URL}/{alice_solution['id']}",
+            headers={
+                **platform_admin.headers,
+                "X-Bifrost-Boundary": (
+                    f"organization:{alice_solution['organization_id']}"
+                ),
+            },
         )
         assert detail.status_code == 200, detail.text
         assert detail.json()["caller_access"] == "support"
@@ -187,7 +255,10 @@ class TestPrivateInvisibilityAndSupport:
     ):
         listing = e2e_client.get(
             BUILDER_URL,
-            headers=platform_admin.headers,
+            headers={
+                **platform_admin.headers,
+                "X-Bifrost-Boundary": "managed_organizations",
+            },
             params={
                 "view": "all",
                 "organization_id": str(builder_alice.organization_id),

@@ -2,7 +2,7 @@
 AI Pricing Router
 
 Provides CRUD endpoints for AI model pricing configuration.
-Platform admin only.
+Platform-scoped metrics access only.
 
 Endpoint Structure:
 - GET /api/settings/ai/pricing - List all model pricing
@@ -18,7 +18,6 @@ from decimal import Decimal
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
-from src.core.auth import CurrentActiveUser, RequirePlatformAdmin
 from src.core.cache import get_shared_redis
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
@@ -31,10 +30,20 @@ from src.models import (
 )
 from src.models.orm import AIModelPricing, AIUsage
 from src.services.ai_usage_service import backfill_model_costs
+from src.services.audit import emit_audit
+from src.services.authorization import CurrentAuthorizationContext
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/settings/ai", tags=["AI Settings"])
+
+
+def _require_ai_pricing(
+    authorization: CurrentAuthorizationContext,
+    capability: str = "metrics.read",
+) -> None:
+    authorization.require(capability)
+    authorization.require_resource_boundary(None)
 
 
 @router.get(
@@ -42,10 +51,9 @@ router = APIRouter(prefix="/api/settings/ai", tags=["AI Settings"])
     response_model=AIModelPricingListResponse,
     summary="List model pricing",
     description="List all model pricing plus models used without pricing configured.",
-    dependencies=[RequirePlatformAdmin],
 )
 async def list_pricing(
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> AIModelPricingListResponse:
     """
@@ -54,6 +62,8 @@ async def list_pricing(
     Returns list with pricing info and a flag for models that have been used
     but don't have pricing configured.
     """
+    _require_ai_pricing(authorization)
+
     # Get all pricing entries
     pricing_query = select(AIModelPricing).order_by(
         AIModelPricing.provider, AIModelPricing.model
@@ -63,9 +73,7 @@ async def list_pricing(
 
     # Get distinct models that have been used (from ai_usage table)
     # The ai_usage.model column should already contain display names (not model IDs)
-    used_models_query = select(
-        AIUsage.provider, AIUsage.model
-    ).distinct()
+    used_models_query = select(AIUsage.provider, AIUsage.model).distinct()
     used_result = await db.execute(used_models_query)
     used_models: set[tuple[str, str]] = {
         (row.provider, row.model) for row in used_result.all()
@@ -114,14 +122,15 @@ async def list_pricing(
     status_code=status.HTTP_201_CREATED,
     summary="Create model pricing",
     description="Create a new model pricing entry.",
-    dependencies=[RequirePlatformAdmin],
 )
 async def create_pricing(
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
     data: AIModelPricingCreate,
 ) -> AIModelPricingPublic:
     """Create new pricing entry."""
+    _require_ai_pricing(authorization, "metrics.readwrite")
+
     # Check if pricing already exists for this provider/model
     existing_query = select(AIModelPricing).where(
         AIModelPricing.provider == data.provider,
@@ -147,8 +156,21 @@ async def create_pricing(
     db.add(pricing)
     await db.flush()
     await db.refresh(pricing)
+    await emit_audit(
+        db,
+        "ai_pricing.create",
+        resource_type="ai_model_pricing",
+        details={
+            "pricing_id": pricing.id,
+            "provider": data.provider,
+            "model": data.model,
+        },
+    )
 
-    logger.info(f"Created pricing for {log_safe(data.provider)}/{log_safe(data.model)} by {user.email}")
+    actor_email = authorization.effective_actor.email
+    logger.info(
+        f"Created pricing for {log_safe(data.provider)}/{log_safe(data.model)} by {actor_email}"
+    )
 
     # Backfill costs for historical usage records with NULL cost
     # This updates past executions/chats that used this model before pricing was configured
@@ -179,7 +201,9 @@ async def create_pricing(
             )
     except Exception as e:
         # Log but don't fail the pricing creation if backfill fails
-        logger.warning(f"Failed to backfill costs for {log_safe(data.provider)}/{log_safe(data.model)}: {log_safe(e)}")
+        logger.warning(
+            f"Failed to backfill costs for {log_safe(data.provider)}/{log_safe(data.model)}: {log_safe(e)}"
+        )
 
     return AIModelPricingPublic.model_validate(pricing)
 
@@ -189,15 +213,16 @@ async def create_pricing(
     response_model=AIModelPricingPublic,
     summary="Update model pricing",
     description="Update an existing model pricing entry.",
-    dependencies=[RequirePlatformAdmin],
 )
 async def update_pricing(
     pricing_id: int,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
     data: AIModelPricingUpdate,
 ) -> AIModelPricingPublic:
     """Update existing pricing entry."""
+    _require_ai_pricing(authorization, "metrics.readwrite")
+
     # Find pricing entry
     pricing_query = select(AIModelPricing).where(AIModelPricing.id == pricing_id)
     pricing_result = await db.execute(pricing_query)
@@ -225,8 +250,21 @@ async def update_pricing(
 
     await db.flush()
     await db.refresh(pricing)
+    await emit_audit(
+        db,
+        "ai_pricing.update",
+        resource_type="ai_model_pricing",
+        details={
+            "pricing_id": pricing.id,
+            "provider": pricing.provider,
+            "model": pricing.model,
+        },
+    )
 
-    logger.info(f"Updated pricing {log_safe(pricing_id)} for {log_safe(pricing.provider)}/{log_safe(pricing.model)} by {user.email}")
+    actor_email = authorization.effective_actor.email
+    logger.info(
+        f"Updated pricing {log_safe(pricing_id)} for {log_safe(pricing.provider)}/{log_safe(pricing.model)} by {actor_email}"
+    )
 
     return AIModelPricingPublic.model_validate(pricing)
 
@@ -236,14 +274,15 @@ async def update_pricing(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete model pricing",
     description="Delete an existing model pricing entry.",
-    dependencies=[RequirePlatformAdmin],
 )
 async def delete_pricing(
     pricing_id: int,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> None:
     """Delete pricing entry."""
+    _require_ai_pricing(authorization, "metrics.readwrite")
+
     # Find pricing entry
     pricing_query = select(AIModelPricing).where(AIModelPricing.id == pricing_id)
     pricing_result = await db.execute(pricing_query)
@@ -260,5 +299,18 @@ async def delete_pricing(
 
     await db.delete(pricing)
     await db.flush()
+    await emit_audit(
+        db,
+        "ai_pricing.delete",
+        resource_type="ai_model_pricing",
+        details={
+            "pricing_id": pricing_id,
+            "provider": provider,
+            "model": model,
+        },
+    )
 
-    logger.info(f"Deleted pricing {log_safe(pricing_id)} for {log_safe(provider)}/{log_safe(model)} by {user.email}")
+    actor_email = authorization.effective_actor.email
+    logger.info(
+        f"Deleted pricing {log_safe(pricing_id)} for {log_safe(provider)}/{log_safe(model)} by {actor_email}"
+    )

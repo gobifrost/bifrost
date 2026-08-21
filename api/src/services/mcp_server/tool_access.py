@@ -294,7 +294,7 @@ class MCPToolAccessService:
             self.session,
             org_id=org_id,
             user_id=user_id,
-            is_superuser=is_superuser,
+            bypass_resource_roles=is_superuser,
             is_external=is_external,
         )
 

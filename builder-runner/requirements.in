@@ -5,3 +5,10 @@ pydantic==2.13.3
 pydantic-ai-harness==0.9.0
 pydantic-ai-slim[anthropic,google,openai]==2.15.0
 PyYAML==6.0.3
+# The shared AgentTurnCoordinator imports src.models.contracts.*, and Python
+# loads src.models.__init__ first. Until DB-free contracts are split out of
+# that package, the managed runner probe needs SQLAlchemy for import-time ORM
+# declarations and email-validator for EmailStr contract schema generation even
+# though the runner does not open a database connection.
+email-validator==2.3.0
+sqlalchemy[asyncio]==2.0.49

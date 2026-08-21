@@ -23,6 +23,15 @@ vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockUseAuth(),
 }));
 
+vi.mock("@/contexts/AuthorizationBoundaryContext", () => ({
+	useAuthorizationBoundary: () => ({
+		selectedTarget: { kind: "platform" },
+		hasSelectedCapability: (capability: string) =>
+			capability === "workflows.readwrite" ||
+			capability === "workflows.execute",
+	}),
+}));
+
 vi.mock("@/hooks/useOrganizations", () => ({
 	useOrganizations: () => ({ data: [] }),
 }));

@@ -59,7 +59,7 @@ class TestOAuthTokenRepositoryCrossTenantIsolation:
 
         session.execute.return_value = _result_returning(org_a_token)
 
-        repo = OAuthTokenRepository(session, org_id=ORG_A, is_superuser=True)
+        repo = OAuthTokenRepository(session, org_id=ORG_A, bypass_resource_admission=True)
         result = await repo.get_org_level_for_provider(provider_id)
 
         assert result is org_a_token
@@ -82,7 +82,7 @@ class TestOAuthTokenRepositoryCrossTenantIsolation:
         # match org B's row.
         session.execute.return_value = _result_returning(None)
 
-        repo = OAuthTokenRepository(session, org_id=ORG_A, is_superuser=True)
+        repo = OAuthTokenRepository(session, org_id=ORG_A, bypass_resource_admission=True)
         result = await repo.get_org_level_for_provider(provider_id)
 
         assert result is None
@@ -116,7 +116,7 @@ class TestOAuthTokenRepositoryCrossTenantIsolation:
             _result_returning(global_token),
         ]
 
-        repo = OAuthTokenRepository(session, org_id=ORG_A, is_superuser=True)
+        repo = OAuthTokenRepository(session, org_id=ORG_A, bypass_resource_admission=True)
         result = await repo.get_org_level_for_provider(provider_id)
 
         assert result is global_token
@@ -135,7 +135,7 @@ class TestOAuthTokenRepositoryCrossTenantIsolation:
             _result_returning(global_token),
         ]
 
-        repo = OAuthTokenRepository(session, org_id=ORG_A, is_superuser=True)
+        repo = OAuthTokenRepository(session, org_id=ORG_A, bypass_resource_admission=True)
         result = await repo.get_org_level_for_provider(provider_id)
 
         assert result is org_a_token
@@ -151,7 +151,7 @@ class TestOAuthTokenRepositoryCrossTenantIsolation:
 
         session.execute.return_value = _result_returning(global_token)
 
-        repo = OAuthTokenRepository(session, org_id=None, is_superuser=True)
+        repo = OAuthTokenRepository(session, org_id=None, bypass_resource_admission=True)
         result = await repo.get_org_level_for_provider(provider_id)
 
         assert result is global_token

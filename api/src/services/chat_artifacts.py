@@ -27,6 +27,7 @@ from src.models.contracts.artifacts import (
 )
 from src.models.orm import Artifact, Conversation, Message, MessageAttachment, User
 from src.services.artifacts import ArtifactService, artifact_ref
+from src.services.authorization import AuthorizationContext
 from src.services.chat_attachments import ChatAttachmentService
 from src.services.llm import ToolDefinition
 from src.services.media_generation import generate_image, record_media_usage
@@ -139,9 +140,15 @@ async def execute_artifact_tool(
     arguments: dict[str, Any],
     conversation_id: UUID,
     message_id: UUID,
+    authorization_context: AuthorizationContext | None = None,
 ) -> tuple[MessageAttachment | None, ArtifactRef | dict[str, Any]]:
     """Validate, generate, and durably attach one artifact to a tool-call message."""
     generated: GeneratedArtifact
+    is_platform_superuser = (
+        authorization_context.has_capability("platform.superuser")
+        if authorization_context is not None
+        else False
+    )
     if tool_name == LIST_ARTIFACTS_TOOL:
         conversation = await db.get(Conversation, conversation_id)
         if conversation is None:
@@ -153,7 +160,7 @@ async def execute_artifact_tool(
             conversation_id,
             user_id=user.id,
             organization_id=user.organization_id,
-            is_platform_admin=user.is_superuser,
+            is_platform_admin=is_platform_superuser,
         )
         return None, {
             "workspace_id": str(conversation_id),
@@ -180,7 +187,7 @@ async def execute_artifact_tool(
                     image.path,
                     user_id=user.id,
                     organization_id=user.organization_id,
-                    is_platform_admin=user.is_superuser,
+                    is_platform_admin=is_platform_superuser,
                 )
                 if not artifact.content_type.startswith("image/"):
                     raise ValueError(f"{image.path} is not an image artifact.")

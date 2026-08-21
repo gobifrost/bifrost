@@ -4,7 +4,15 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 
-export function NoAccess() {
+interface NoAccessProps {
+	title?: string;
+	description?: string;
+}
+
+export function NoAccess({
+	title = "Access Denied",
+	description = "Your account does not have access to this area. Contact your administrator if you believe this is an error.",
+}: NoAccessProps = {}) {
 	const { logout } = useAuth();
 	const navigate = useNavigate();
 
@@ -14,12 +22,10 @@ export function NoAccess() {
 				<CardContent className="flex flex-col items-center justify-center py-12 text-center">
 					<ShieldAlert className="h-16 w-16 text-destructive" />
 					<h1 className="mt-6 text-2xl font-bold tracking-tight">
-						Access Denied
+						{title}
 					</h1>
 					<p className="mt-4 text-muted-foreground">
-						Your account does not have access to this system. Please
-						contact your administrator if you believe this is an
-						error.
+						{description}
 					</p>
 					<div className="mt-6 flex w-full flex-col gap-2">
 						<Button

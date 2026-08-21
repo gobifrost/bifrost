@@ -12,8 +12,14 @@ type AssignUsersToRoleRequest =
 type AssignFormsToRoleRequest =
 	components["schemas"]["AssignFormsToRoleRequest"];
 
-export function useRoles() {
-	return $api.useQuery("get", "/api/roles", {});
+export const PLATFORM_BOUNDARY_HEADERS = {
+	"X-Bifrost-Boundary": "platform",
+} as const;
+
+export function useRoles(boundary?: string) {
+	return $api.useQuery("get", "/api/roles", {
+		headers: boundary ? { "X-Bifrost-Boundary": boundary } : undefined,
+	});
 }
 
 export function useResourceRoles() {
@@ -24,8 +30,8 @@ export function useResourceRoles() {
 	};
 }
 
-export function useAuthorizationScopes() {
-	return $api.useQuery("get", "/api/roles/scopes", {});
+export function useAuthorizationCapabilities() {
+	return $api.useQuery("get", "/api/roles/capabilities");
 }
 
 export function useCreateRole() {
@@ -243,7 +249,9 @@ export function useAssignAgentsToRole() {
 	const qc = useQueryClient();
 	return $api.useMutation("post", "/api/roles/{role_id}/agents", {
 		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ["get", "/api/roles/{role_id}/agents"] });
+			qc.invalidateQueries({
+				queryKey: ["get", "/api/roles/{role_id}/agents"],
+			});
 			invalidateRoleList(qc);
 		},
 	});
@@ -253,7 +261,9 @@ export function useBulkUnassignAgents() {
 	const qc = useQueryClient();
 	return $api.useMutation("delete", "/api/roles/{role_id}/agents", {
 		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ["get", "/api/roles/{role_id}/agents"] });
+			qc.invalidateQueries({
+				queryKey: ["get", "/api/roles/{role_id}/agents"],
+			});
 			invalidateRoleList(qc);
 		},
 	});
@@ -263,7 +273,9 @@ export function useBulkUnassignUsers() {
 	const qc = useQueryClient();
 	return $api.useMutation("delete", "/api/roles/{role_id}/users", {
 		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ["get", "/api/roles/{role_id}/users"] });
+			qc.invalidateQueries({
+				queryKey: ["get", "/api/roles/{role_id}/users"],
+			});
 			invalidateRoleList(qc);
 		},
 	});
@@ -273,7 +285,9 @@ export function useBulkUnassignForms() {
 	const qc = useQueryClient();
 	return $api.useMutation("delete", "/api/roles/{role_id}/forms", {
 		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ["get", "/api/roles/{role_id}/forms"] });
+			qc.invalidateQueries({
+				queryKey: ["get", "/api/roles/{role_id}/forms"],
+			});
 			invalidateRoleList(qc);
 		},
 	});
@@ -292,7 +306,9 @@ export function useAssignAppsToRole() {
 	const qc = useQueryClient();
 	return $api.useMutation("post", "/api/roles/{role_id}/apps", {
 		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ["get", "/api/roles/{role_id}/apps"] });
+			qc.invalidateQueries({
+				queryKey: ["get", "/api/roles/{role_id}/apps"],
+			});
 			invalidateRoleList(qc);
 		},
 	});
@@ -302,7 +318,9 @@ export function useBulkUnassignApps() {
 	const qc = useQueryClient();
 	return $api.useMutation("delete", "/api/roles/{role_id}/apps", {
 		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ["get", "/api/roles/{role_id}/apps"] });
+			qc.invalidateQueries({
+				queryKey: ["get", "/api/roles/{role_id}/apps"],
+			});
 			invalidateRoleList(qc);
 		},
 	});
@@ -321,7 +339,9 @@ export function useAssignWorkflowsToRole() {
 	const qc = useQueryClient();
 	return $api.useMutation("post", "/api/roles/{role_id}/workflows", {
 		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ["get", "/api/roles/{role_id}/workflows"] });
+			qc.invalidateQueries({
+				queryKey: ["get", "/api/roles/{role_id}/workflows"],
+			});
 			invalidateRoleList(qc);
 		},
 	});
@@ -331,7 +351,9 @@ export function useBulkUnassignWorkflows() {
 	const qc = useQueryClient();
 	return $api.useMutation("delete", "/api/roles/{role_id}/workflows", {
 		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ["get", "/api/roles/{role_id}/workflows"] });
+			qc.invalidateQueries({
+				queryKey: ["get", "/api/roles/{role_id}/workflows"],
+			});
 			invalidateRoleList(qc);
 		},
 	});
@@ -350,7 +372,9 @@ export function useAssignKnowledgeToRole() {
 	const qc = useQueryClient();
 	return $api.useMutation("post", "/api/roles/{role_id}/knowledge", {
 		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ["get", "/api/roles/{role_id}/knowledge"] });
+			qc.invalidateQueries({
+				queryKey: ["get", "/api/roles/{role_id}/knowledge"],
+			});
 			invalidateRoleList(qc);
 		},
 	});
@@ -360,7 +384,9 @@ export function useBulkUnassignKnowledge() {
 	const qc = useQueryClient();
 	return $api.useMutation("delete", "/api/roles/{role_id}/knowledge", {
 		onSuccess: () => {
-			qc.invalidateQueries({ queryKey: ["get", "/api/roles/{role_id}/knowledge"] });
+			qc.invalidateQueries({
+				queryKey: ["get", "/api/roles/{role_id}/knowledge"],
+			});
 			invalidateRoleList(qc);
 		},
 	});

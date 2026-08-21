@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import case, func, or_, select
 
-from src.core.auth import Context, CurrentUser
+from src.core.auth import Context
 from src.models.contracts.platform_jobs import (
     PlatformJobCancelResponse,
     PlatformJobListResponse,
@@ -15,6 +15,12 @@ from src.models.contracts.platform_jobs import (
     PlatformJobStatus,
 )
 from src.models.orm.platform_jobs import PlatformJob
+from src.models.orm.organizations import Organization
+from src.services.audit import emit_audit
+from src.services.authorization import (
+    AuthorizationBoundaryKind,
+    CurrentAuthorizationContext,
+)
 from src.services.operation_catalog import operation_route
 from src.services.platform_jobs import (
     ACTIVE_PLATFORM_JOB_STATUSES,
@@ -25,20 +31,46 @@ from src.services.platform_jobs import (
 router = APIRouter(prefix="/api/platform-jobs", tags=["Platform Jobs"])
 
 
-def _can_read(job: PlatformJob, user: CurrentUser) -> bool:
+async def _boundary_admits_job(
+    ctx: Context,
+    authorization: CurrentAuthorizationContext,
+    job: PlatformJob,
+) -> bool:
+    boundary = authorization.selected_boundary
+    if boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+        return job.organization_id is None
+    if boundary.kind is AuthorizationBoundaryKind.ORGANIZATION:
+        return job.organization_id == boundary.organization_id
+    if job.organization_id is None:
+        return False
     return (
-        user.is_platform_admin
-        or job.requested_by_user_id == str(user.user_id)
+        await ctx.db.scalar(
+            select(Organization.is_provider).where(
+                Organization.id == job.organization_id
+            )
+        )
+        is False
     )
 
 
 async def _get_visible_job(
     ctx: Context,
-    user: CurrentUser,
+    authorization: CurrentAuthorizationContext,
     job_id: UUID,
+    *,
+    capability: str = "platformjobs.read",
 ) -> PlatformJob:
     job = await ctx.db.get(PlatformJob, job_id)
-    if job is None or not _can_read(job, user):
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Platform job not found",
+        )
+    owns_job = job.requested_by_user_id == str(authorization.effective_actor.user_id)
+    admitted_by_role = authorization.has_capability(
+        capability
+    ) and await _boundary_admits_job(ctx, authorization, job)
+    if not owns_job and not admitted_by_role:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Platform job not found",
@@ -53,18 +85,32 @@ async def _get_visible_job(
 )
 async def list_platform_jobs(
     ctx: Context,
-    user: CurrentUser,
+    authorization: CurrentAuthorizationContext,
     active_only: bool = Query(default=True),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
     job_status: PlatformJobStatus | None = Query(default=None, alias="status"),
     search: str | None = Query(default=None, min_length=1, max_length=200),
 ) -> PlatformJobListResponse:
-    filters = []
-    if not user.is_platform_admin:
-        filters.append(
-            PlatformJob.requested_by_user_id == str(user.user_id)
-        )
+    owner_filter = PlatformJob.requested_by_user_id == str(
+        authorization.effective_actor.user_id
+    )
+    admitted_filter = None
+    if authorization.has_capability("platformjobs.read"):
+        boundary = authorization.selected_boundary
+        if boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+            admitted_filter = PlatformJob.organization_id.is_(None)
+        elif boundary.kind is AuthorizationBoundaryKind.ORGANIZATION:
+            admitted_filter = PlatformJob.organization_id == boundary.organization_id
+        else:
+            managed_org_ids = select(Organization.id).where(
+                Organization.is_provider.is_(False)
+            )
+            admitted_filter = PlatformJob.organization_id.in_(managed_org_ids)
+
+    filters = [
+        owner_filter if admitted_filter is None else or_(owner_filter, admitted_filter)
+    ]
     if job_status is not None:
         filters.append(PlatformJob.status == job_status.value)
     elif active_only:
@@ -114,9 +160,9 @@ async def list_platform_jobs(
 async def get_platform_job_status(
     job_id: UUID,
     ctx: Context,
-    user: CurrentUser,
+    authorization: CurrentAuthorizationContext,
 ) -> PlatformJobPublic:
-    return platform_job_to_public(await _get_visible_job(ctx, user, job_id))
+    return platform_job_to_public(await _get_visible_job(ctx, authorization, job_id))
 
 
 @router.post(
@@ -127,10 +173,24 @@ async def get_platform_job_status(
 async def cancel_platform_job(
     job_id: UUID,
     ctx: Context,
-    user: CurrentUser,
+    authorization: CurrentAuthorizationContext,
 ) -> PlatformJobCancelResponse:
-    job = await _get_visible_job(ctx, user, job_id)
+    job = await _get_visible_job(
+        ctx,
+        authorization,
+        job_id,
+        capability="platformjobs.execute",
+    )
     job, accepted = await request_platform_job_cancel(ctx.db, job)
+    if accepted:
+        await emit_audit(
+            ctx.db,
+            "platform_job.cancel",
+            resource_type="platform_job",
+            resource_id=job.id,
+            details={"job_type": job.job_type},
+        )
+        await ctx.db.commit()
     return PlatformJobCancelResponse(
         job=platform_job_to_public(job),
         accepted=accepted,

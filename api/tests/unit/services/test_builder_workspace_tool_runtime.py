@@ -4,6 +4,7 @@ import pytest
 
 from src.services.builder.fs_tools import WorkspaceLimits, WorkspaceRoot
 from src.services.builder.workspace_tool_runtime import (
+    CLOUDFLARE_WORKSPACE_COMMAND_TOOL_ID,
     execute_builder_workspace_tool,
 )
 
@@ -89,4 +90,22 @@ async def test_workspace_tool_runtime_returns_model_visible_unknown_tool_error(
 
     assert result.structured_content == {
         "error": "Builder workspace tool 'shell' is unavailable"
+    }
+
+
+@pytest.mark.asyncio
+async def test_workspace_command_tool_fails_closed_without_isolated_sandbox(
+    tmp_path: Path,
+) -> None:
+    workspace = WorkspaceRoot(tmp_path, WorkspaceLimits())
+
+    result = await execute_builder_workspace_tool(
+        workspace=workspace,
+        bundle_path=None,
+        name=CLOUDFLARE_WORKSPACE_COMMAND_TOOL_ID,
+        arguments={"argv": ["python", "--version"]},
+    )
+
+    assert result.structured_content == {
+        "error": "workspace command execution requires an isolated sandbox"
     }

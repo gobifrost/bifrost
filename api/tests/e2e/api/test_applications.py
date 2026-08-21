@@ -503,12 +503,10 @@ class TestApplicationRoleAndTargetValidation:
                 headers=platform_admin.headers,
             )
 
-    def test_regular_user_targets_home_org_only(
+    def test_organization_member_cannot_create_loose_application(
         self,
         e2e_client,
-        platform_admin,
         org1_user,
-        org2,
     ):
         slug = f"home-org-app-{uuid.uuid4().hex[:8]}"
         created = e2e_client.post(
@@ -520,36 +518,10 @@ class TestApplicationRoleAndTargetValidation:
                 "app_model": "inline_v1",
             },
         )
-        assert created.status_code == 201, created.text
-        app = created.json()
-        try:
-            assert app["organization_id"] == str(org1_user.organization_id)
-
-            global_attempt = e2e_client.post(
-                "/api/applications",
-                headers=org1_user.headers,
-                json={
-                    "name": "Forbidden global Application",
-                    "slug": f"forbidden-global-app-{uuid.uuid4().hex[:8]}",
-                    "app_model": "inline_v1",
-                    "organization_id": None,
-                },
-            )
-            assert global_attempt.status_code == 403, global_attempt.text
-
-            foreign_attempt = e2e_client.post(
-                "/api/applications",
-                headers=org1_user.headers,
-                json={
-                    "name": "Forbidden foreign Application",
-                    "slug": f"forbidden-foreign-app-{uuid.uuid4().hex[:8]}",
-                    "app_model": "inline_v1",
-                    "organization_id": org2["id"],
-                },
-            )
-            assert foreign_attempt.status_code == 403, foreign_attempt.text
-        finally:
-            _delete_app(e2e_client, platform_admin.headers, app["id"])
+        assert created.status_code == 403, created.text
+        assert created.json()["detail"] == (
+            "Missing required capability: apps.readwrite"
+        )
 
 
 @pytest.mark.e2e
@@ -706,7 +678,7 @@ class TestApplicationCrossOrgAdmin:
                 headers=org1_user.headers,
                 json={"description": "Should not work"},
             )
-            assert response.status_code == 404, (
+            assert response.status_code == 403, (
                 f"Non-admin in org1 should not be able to PATCH org2 app: "
                 f"status={response.status_code} body={response.text}"
             )

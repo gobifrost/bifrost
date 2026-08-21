@@ -1,4 +1,5 @@
 import { authFetch } from "@/lib/api-client";
+import { authorizationHeaders } from "@/hooks/useAdministrativeBoundary";
 import type { components } from "@/lib/v1";
 
 export type PromotionReview = components["schemas"]["PromotionReviewDTO"];
@@ -24,13 +25,16 @@ async function requestJson<T>(
 }
 
 export async function listPromotionReviews(
-	options: { signal?: AbortSignal } = {},
+	options: { signal?: AbortSignal; boundary?: string } = {},
 ): Promise<PromotionReview[]> {
 	const result = await requestJson<{
 		promotions: PromotionReview[];
 		total: number;
 	}>("/api/solution-promotions", "Failed to load promotion requests", {
 		signal: options.signal,
+		...(options.boundary
+			? { headers: authorizationHeaders(options.boundary) }
+			: {}),
 	});
 	return result.promotions;
 }
@@ -38,7 +42,7 @@ export async function listPromotionReviews(
 export async function promoteSolution(
 	solutionId: string,
 	request: PromotionTargetRequest,
-	options: { signal?: AbortSignal } = {},
+	options: { signal?: AbortSignal; sourceBoundary?: string } = {},
 ): Promise<PromotionResult> {
 	return requestJson<PromotionResult>(
 		`/api/solution-promotions/${solutionId}/promote`,
@@ -47,6 +51,9 @@ export async function promoteSolution(
 			method: "POST",
 			body: JSON.stringify(request),
 			signal: options.signal,
+			...(options.sourceBoundary
+				? { headers: authorizationHeaders(options.sourceBoundary) }
+				: {}),
 		},
 	);
 }

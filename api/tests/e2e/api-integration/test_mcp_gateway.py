@@ -165,7 +165,6 @@ class TestMCPAgentGateway:
         request.cls.delegated_agent_id = delegated_agent_id
         request.cls.delegated_agent_name = delegated_agent_name
         request.cls.builder_solution_id = builder_solution_id
-        request.cls.builder_agent_id = builder_session["builder_agent_id"]
         request.cls.builder_session_id = builder_session["id"]
 
         yield
@@ -241,22 +240,23 @@ class TestMCPAgentGateway:
         )
         assert result["instructions"] == []
 
-    def test_builder_agent_uses_the_same_gateway_and_session_workspace(self):
+    def test_builder_profile_uses_the_same_gateway_and_session_workspace(self):
         loaded = _call_gateway(
             self.token,
             "bifrost_search_capabilities",
-            {"agent_id": self.builder_agent_id},
+            {"builder_session_id": self.builder_session_id},
         )
         selected = loaded["agents"][0]
         assert selected["builder"] is True
         assert selected["builder_session_required"] is True
+        assert selected["builder_session_id"] == self.builder_session_id
         assert "Bifrost" in selected["instructions"]
 
         found = _call_gateway(
             self.token,
             "bifrost_search_capabilities",
             {
-                "agent_id": self.builder_agent_id,
+                "builder_session_id": self.builder_session_id,
                 "query": "write builder file",
             },
         )
@@ -269,21 +269,20 @@ class TestMCPAgentGateway:
             self.token,
             "bifrost_search_capabilities",
             {
-                "agent_id": self.builder_agent_id,
+                "builder_session_id": self.builder_session_id,
                 "tool_ref": write_tool["tool_ref"],
             },
         )["agents"][0]["matching_tools"][0]
-        assert "builder_session_id" in hydrated["input_schema"]["required"]
+        assert "builder_session_id" not in hydrated["input_schema"]["properties"]
         assert hydrated["input_schema"]["properties"]["finalize"]["default"] is False
 
         executed = _call_gateway(
             self.token,
             "bifrost_execute_tool",
             {
-                "agent_id": self.builder_agent_id,
+                "builder_session_id": self.builder_session_id,
                 "tool_ref": write_tool["tool_ref"],
                 "arguments": {
-                    "builder_session_id": self.builder_session_id,
                     "path": "README.md",
                     "content": "# Updated through the shared MCP gateway\n",
                 },

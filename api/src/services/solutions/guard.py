@@ -67,8 +67,9 @@ _OPERATIONAL_SOLUTION_ROW_NAMES = {
     # and workspace bookkeeping. They are platform control-plane state rather
     # than portable entities materialized by Solution deployment.
     "SolutionBuilderProject",
-    "SolutionBuilderCollaborator",
+    "SolutionUserGrant",
     "SolutionGlobalWorkspaceApply",
+    "SolutionGlobalOperationChange",
     "SolutionSourceRevision",
     "SolutionBuilderSession",
 }

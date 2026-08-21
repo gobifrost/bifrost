@@ -5,7 +5,82 @@ from __future__ import annotations
 from typing import Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
+
+
+SandboxUsageScope = Literal["platform", "organization", "user", "solution"]
+SandboxUsagePeriod = Literal["daily", "monthly"]
+
+
+class SandboxRuntimeUsageCeilings(BaseModel):
+    """Provider-neutral usage ceilings understood by isolated runners."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model_requests: int | None = Field(default=None, ge=0)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    cache_read_tokens: int | None = Field(default=None, ge=0)
+    cache_write_tokens: int | None = Field(default=None, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
+    runner_duration_ms: int | None = Field(default=None, ge=0)
+    sandbox_compute_ms: int | None = Field(default=None, ge=0)
+
+
+class SandboxRuntimeUsageSnapshot(BaseModel):
+    """Aggregate usage already consumed for one scope/period."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model_requests: int = Field(default=0, ge=0)
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    cache_read_tokens: int = Field(default=0, ge=0)
+    cache_write_tokens: int = Field(default=0, ge=0)
+    runner_duration_ms: int = Field(default=0, ge=0)
+    sandbox_compute_ms: int = Field(default=0, ge=0)
+
+
+class SandboxRuntimeUsagePolicySnapshot(BaseModel):
+    """One usage policy projected into the DB-free runner envelope."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scope: SandboxUsageScope
+    per_run: SandboxRuntimeUsageCeilings = Field(
+        default_factory=SandboxRuntimeUsageCeilings
+    )
+    aggregate: SandboxRuntimeUsageCeilings = Field(
+        default_factory=SandboxRuntimeUsageCeilings
+    )
+    aggregate_period: SandboxUsagePeriod = "monthly"
+
+
+class SandboxRuntimeUsageAggregateSnapshot(BaseModel):
+    """Usage already recorded for one scope and aggregate period."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scope: SandboxUsageScope
+    period: SandboxUsagePeriod
+    usage: SandboxRuntimeUsageSnapshot = Field(
+        default_factory=SandboxRuntimeUsageSnapshot
+    )
+
+
+class SandboxRuntimeUsageGovernanceSnapshot(BaseModel):
+    """Strict runtime-governance envelope for isolated Builder turns."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    policies: list[SandboxRuntimeUsagePolicySnapshot] = Field(
+        default_factory=list,
+        max_length=16,
+    )
+    aggregate_usage: list[SandboxRuntimeUsageAggregateSnapshot] = Field(
+        default_factory=list,
+        max_length=64,
+    )
 
 
 class SandboxBuilderAttachment(BaseModel):
@@ -66,8 +141,9 @@ class SandboxBuilderTurnContext(BaseModel):
     system_prompt: str
     bundle_path: str | None = None
     llm_config: SandboxBuilderModelConfig
-    max_iterations: int = Field(ge=1, le=200)
-    max_token_budget: int = Field(ge=1)
+    max_iterations: int = Field(ge=0, le=200)
+    max_token_budget: int = Field(ge=0)
+    runtime_governance: SandboxRuntimeUsageGovernanceSnapshot | None = None
     tools: list[SandboxBuilderToolDefinition]
     messages: list[SandboxBuilderMessage]
 
@@ -102,13 +178,38 @@ class SandboxBuilderToolResponse(BaseModel):
     duration_ms: int | None = None
 
 
+class SandboxBuilderWorkspaceBuildRequest(BaseModel):
+    """Identify one staged workspace snapshot for a production build check."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    message_id: UUID
+    output_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class SandboxBuilderWorkspaceBuildResult(BaseModel):
+    """Model-visible result of compiling an isolated Builder workspace."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    content: str
+    structured_content: dict[str, Any] | None = None
+
+
 __all__ = [
     "SandboxBuilderAttachment",
     "SandboxBuilderMessage",
     "SandboxBuilderModelConfig",
+    "SandboxRuntimeUsageAggregateSnapshot",
+    "SandboxRuntimeUsageCeilings",
+    "SandboxRuntimeUsageGovernanceSnapshot",
+    "SandboxRuntimeUsagePolicySnapshot",
+    "SandboxRuntimeUsageSnapshot",
     "SandboxBuilderToolDefinition",
     "SandboxBuilderToolFinish",
     "SandboxBuilderToolResponse",
     "SandboxBuilderToolStart",
     "SandboxBuilderTurnContext",
+    "SandboxBuilderWorkspaceBuildRequest",
+    "SandboxBuilderWorkspaceBuildResult",
 ]

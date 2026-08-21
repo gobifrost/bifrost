@@ -161,7 +161,32 @@ def collect_mcp_surface() -> list[dict[str, Any]]:
 
 
 def collect_builder_surface() -> list[dict[str, str]]:
-    return [{"name": name} for name in sorted(BUILDER_TOOL_IDS)]
+    """Return every tool the maintained Builder profile can expose.
+
+    Builder has two intentionally different tool families:
+
+    * fixed scratch-workspace primitives used while authoring a Solution or a
+      global-repository proposal; and
+    * catalog-backed Bifrost operations selected at runtime for an
+      organization target from the caller's effective capabilities.
+
+    The latter are ordinary registered system tools.  Counting only the fixed
+    primitives made the parity inventory report the very operations Builder
+    dynamically exposes as missing.
+    """
+
+    registered = {str(tool["id"]) for tool in get_system_tools()}
+    catalog_tools = {
+        operation.mcp.name
+        for operation in OPERATION_CATALOG
+        if operation.native_builder
+        and operation.mcp is not None
+        and operation.mcp.name in registered
+    }
+    return [
+        {"name": name}
+        for name in sorted(frozenset(BUILDER_TOOL_IDS) | catalog_tools)
+    ]
 
 
 def collect_manifest_surface() -> list[dict[str, str]]:
@@ -264,6 +289,8 @@ def build_operation_inventory(app: FastAPI, repo_root: Path) -> dict[str, Any]:
                         "status": (
                             OperationSurfaceStatus.EXACT
                             if cli_path in cli_paths
+                            else OperationSurfaceStatus.INTENTIONALLY_UNSUPPORTED
+                            if operation.exclusions.get("cli")
                             else OperationSurfaceStatus.MISSING
                         ).value,
                         "path": list(cli_path) if cli_path else None,
@@ -271,9 +298,11 @@ def build_operation_inventory(app: FastAPI, repo_root: Path) -> dict[str, Any]:
                     "mcp": {
                         "status": (
                             OperationSurfaceStatus.EXACT
-                            if observed_mcp == mcp_name
+                            if mcp_name and observed_mcp == mcp_name
                             else OperationSurfaceStatus.DIVERGENT
                             if observed_mcp
+                            else OperationSurfaceStatus.INTENTIONALLY_UNSUPPORTED
+                            if operation.exclusions.get("mcp")
                             else OperationSurfaceStatus.MISSING
                         ).value,
                         "name": observed_mcp,

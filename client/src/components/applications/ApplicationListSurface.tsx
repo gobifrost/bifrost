@@ -37,7 +37,8 @@ export interface ApplicationListSurfaceProps {
 	apps: ApplicationListItem[];
 	viewMode: "grid" | "table";
 	isLoading?: boolean;
-	isPlatformAdmin: boolean;
+	showOrganizationScope?: boolean;
+	isPlatformAdmin?: boolean;
 	canManageApps: boolean;
 	getOrgName: (orgId: string | null | undefined) => string;
 	onLaunch: (app: ApplicationListItem) => void;
@@ -61,7 +62,8 @@ export function ApplicationListSurface({
 	apps,
 	viewMode,
 	isLoading = false,
-	isPlatformAdmin,
+	showOrganizationScope: showOrganizationScopeProp,
+	isPlatformAdmin = false,
 	canManageApps,
 	getOrgName,
 	onLaunch,
@@ -73,6 +75,7 @@ export function ApplicationListSurface({
 	emptySearchActive = false,
 }: ApplicationListSurfaceProps) {
 	const terminology = useTerminology();
+	const showOrganizationScope = showOrganizationScopeProp ?? isPlatformAdmin;
 
 	if (isLoading) {
 		return <PageLoader message="Loading applications…" size="sm" />;
@@ -115,7 +118,7 @@ export function ApplicationListSurface({
 				<DataTable className="max-h-full">
 					<DataTableHeader>
 						<DataTableRow>
-							{isPlatformAdmin && (
+							{showOrganizationScope && (
 								<DataTableHead className="w-0 whitespace-nowrap">
 									Organization
 								</DataTableHead>
@@ -151,7 +154,7 @@ export function ApplicationListSurface({
 										)
 									}
 								>
-									{isPlatformAdmin && (
+									{showOrganizationScope && (
 										<DataTableCell className="w-0 whitespace-nowrap">
 											{app.organization_id ? (
 												<Badge
@@ -331,7 +334,7 @@ export function ApplicationListSurface({
 					: onPreview
 						? () => onPreview(app)
 						: undefined;
-				const orgLabel = isPlatformAdmin
+				const orgLabel = showOrganizationScope
 					? app.organization_id
 						? getOrgName(app.organization_id)
 						: "Global"

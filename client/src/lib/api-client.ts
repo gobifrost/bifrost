@@ -19,6 +19,7 @@ import {
 	getActiveToken,
 	isEmbedSession,
 } from "./auth-token";
+import { getSelectedAuthorizationBoundary } from "./authorization-boundary";
 
 // Pull an embed token off the URL fragment (if any) before any API call
 // runs. The token is stored in sessionStorage rather than localStorage so
@@ -37,13 +38,7 @@ const TRANSIENT_5XX = new Set([502, 503, 504]);
 // Retry only methods that are safe to replay. POST/PATCH may have already
 // taken effect server-side even when the response was a 5xx; auto-retrying
 // would create duplicate resources.
-const IDEMPOTENT_METHODS = new Set([
-	"GET",
-	"PUT",
-	"DELETE",
-	"HEAD",
-	"OPTIONS",
-]);
+const IDEMPOTENT_METHODS = new Set(["GET", "PUT", "DELETE", "HEAD", "OPTIONS"]);
 
 // Backoff schedule (ms) between retry attempts. Up to 3 retries on top of
 // the initial attempt, totaling ~3s of additional latency in the worst case.
@@ -310,6 +305,10 @@ baseClient.use({
 		if (userId) {
 			request.headers.set("X-User-Id", userId);
 		}
+		if (!request.headers.has("X-Bifrost-Boundary")) {
+			const boundary = getSelectedAuthorizationBoundary(userId);
+			if (boundary) request.headers.set("X-Bifrost-Boundary", boundary);
+		}
 
 		// Add CSRF token for mutating requests (cookie-based auth protection)
 		if (requiresCsrf(request.method)) {
@@ -552,6 +551,10 @@ export async function authFetch(
 	const userId = sessionStorage.getItem("userId");
 	if (userId) {
 		headers.set("X-User-Id", userId);
+	}
+	if (!headers.has("X-Bifrost-Boundary")) {
+		const boundary = getSelectedAuthorizationBoundary(userId);
+		if (boundary) headers.set("X-Bifrost-Boundary", boundary);
 	}
 
 	// Add CSRF token for mutating requests

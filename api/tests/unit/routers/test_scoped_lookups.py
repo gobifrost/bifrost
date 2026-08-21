@@ -296,7 +296,7 @@ class TestWorkflowRepositoryScopedLookup:
 
         # Regular user - tests cascade scoping
         repo = WorkflowRepository(
-            mock_session, org_id=org_id, user_id=user_id, is_superuser=False
+            mock_session, org_id=org_id, user_id=user_id, bypass_resource_roles=False
         )
         result = await repo.get_by_name("shared_workflow")
 
@@ -327,7 +327,7 @@ class TestWorkflowRepositoryScopedLookup:
 
         # Regular user - tests cascade scoping (org first, then global)
         repo = WorkflowRepository(
-            mock_session, org_id=org_id, user_id=user_id, is_superuser=False
+            mock_session, org_id=org_id, user_id=user_id, bypass_resource_roles=False
         )
         result = await repo.get_by_name("shared_workflow")
 
@@ -353,7 +353,7 @@ class TestWorkflowRepositoryScopedLookup:
 
         # Regular user - tests cascade scoping
         repo = WorkflowRepository(
-            mock_session, org_id=org_id, user_id=user_id, is_superuser=False
+            mock_session, org_id=org_id, user_id=user_id, bypass_resource_roles=False
         )
         result = await repo.get_by_name("shared_workflow")
 
@@ -375,7 +375,7 @@ class TestWorkflowRepositoryScopedLookup:
 
         # Regular user with no org - only global scope
         repo = WorkflowRepository(
-            mock_session, org_id=None, user_id=user_id, is_superuser=False
+            mock_session, org_id=None, user_id=user_id, bypass_resource_roles=False
         )
         result = await repo.get_by_name("shared_workflow")
 
@@ -425,7 +425,7 @@ class TestDataProviderRepositoryScopedLookup:
 
         # Regular user - tests cascade scoping
         repo = DataProviderRepository(
-            mock_session, org_id=org_id, user_id=user_id, is_superuser=False
+            mock_session, org_id=org_id, user_id=user_id, bypass_resource_admission=False
         )
         result = await repo.get_by_name("shared_provider")
 
@@ -456,7 +456,7 @@ class TestDataProviderRepositoryScopedLookup:
 
         # Regular user - tests cascade scoping (org first, then global)
         repo = DataProviderRepository(
-            mock_session, org_id=org_id, user_id=user_id, is_superuser=False
+            mock_session, org_id=org_id, user_id=user_id, bypass_resource_admission=False
         )
         result = await repo.get_by_name("shared_provider")
 
@@ -482,7 +482,7 @@ class TestDataProviderRepositoryScopedLookup:
 
         # Regular user - tests cascade scoping
         repo = DataProviderRepository(
-            mock_session, org_id=org_id, user_id=user_id, is_superuser=False
+            mock_session, org_id=org_id, user_id=user_id, bypass_resource_admission=False
         )
         result = await repo.get_by_name("shared_provider")
 
@@ -504,7 +504,7 @@ class TestDataProviderRepositoryScopedLookup:
 
         # Regular user with no org - only global scope
         repo = DataProviderRepository(
-            mock_session, org_id=None, user_id=user_id, is_superuser=False
+            mock_session, org_id=None, user_id=user_id, bypass_resource_admission=False
         )
         result = await repo.get_by_name("shared_provider")
 
@@ -561,7 +561,7 @@ class TestOrgScopedRepositorySuperuserBypass:
         mock_session.execute.return_value = mock_result
 
         # Superuser with org_id=None (platform admin without org context)
-        repo = WorkflowRepository(mock_session, org_id=None, is_superuser=True)
+        repo = WorkflowRepository(mock_session, org_id=None, bypass_resource_roles=True)
         result = await repo.get(id=org1_workflow.id)
 
         assert result is not None
@@ -583,7 +583,7 @@ class TestOrgScopedRepositorySuperuserBypass:
         mock_session.execute.return_value = mock_result
 
         # Superuser with org_id=org1
-        repo = WorkflowRepository(mock_session, org_id=org1_id, is_superuser=True)
+        repo = WorkflowRepository(mock_session, org_id=org1_id, bypass_resource_roles=True)
         result = await repo.get(id=org1_workflow.id)
 
         assert result is not None
@@ -605,7 +605,7 @@ class TestOrgScopedRepositorySuperuserBypass:
         mock_session.execute.return_value = mock_result
 
         # Superuser with org_id=org1, but accessing org2's workflow
-        repo = WorkflowRepository(mock_session, org_id=org1_id, is_superuser=True)
+        repo = WorkflowRepository(mock_session, org_id=org1_id, bypass_resource_roles=True)
         result = await repo.get(id=org2_workflow.id)
 
         assert result is not None
@@ -627,7 +627,7 @@ class TestOrgScopedRepositorySuperuserBypass:
         mock_session.execute.return_value = mock_result
 
         # Superuser with org_id=org1
-        repo = WorkflowRepository(mock_session, org_id=org1_id, is_superuser=True)
+        repo = WorkflowRepository(mock_session, org_id=org1_id, bypass_resource_roles=True)
         result = await repo.get(id=global_workflow.id)
 
         assert result is not None
@@ -658,7 +658,7 @@ class TestOrgScopedRepositorySuperuserBypass:
         mock_session.execute.return_value = mock_result_org
 
         # Superuser with org_id=org2 looking up by NAME (not ID)
-        repo = WorkflowRepository(mock_session, org_id=org2_id, is_superuser=True)
+        repo = WorkflowRepository(mock_session, org_id=org2_id, bypass_resource_roles=True)
         result = await repo.get(name="shared_workflow")
 
         assert result is not None
@@ -692,7 +692,7 @@ class TestOrgScopedRepositorySuperuserBypass:
         mock_session.execute.side_effect = [mock_result_org, mock_result_global]
 
         # Superuser with org_id looking up by NAME
-        repo = WorkflowRepository(mock_session, org_id=org1_id, is_superuser=True)
+        repo = WorkflowRepository(mock_session, org_id=org1_id, bypass_resource_roles=True)
         result = await repo.get(name="global_only_workflow")
 
         assert result is not None
@@ -751,7 +751,7 @@ class TestOrgScopedRepositoryRegularUserAccess:
 
         # Regular user in org1
         repo = WorkflowRepository(
-            mock_session, org_id=org1_id, user_id=user_id, is_superuser=False
+            mock_session, org_id=org1_id, user_id=user_id, bypass_resource_roles=False
         )
         result = await repo.get(id=org1_workflow.id)
 
@@ -776,7 +776,7 @@ class TestOrgScopedRepositoryRegularUserAccess:
 
         # Regular user in org1
         repo = WorkflowRepository(
-            mock_session, org_id=org1_id, user_id=user_id, is_superuser=False
+            mock_session, org_id=org1_id, user_id=user_id, bypass_resource_roles=False
         )
         result = await repo.get(id=global_workflow.id)
 
@@ -802,7 +802,7 @@ class TestOrgScopedRepositoryRegularUserAccess:
 
         # Regular user in org1 trying to access org2's workflow by ID
         repo = WorkflowRepository(
-            mock_session, org_id=org1_id, user_id=user_id, is_superuser=False
+            mock_session, org_id=org1_id, user_id=user_id, bypass_resource_roles=False
         )
         result = await repo.get(id=org2_workflow.id)
 
@@ -813,7 +813,7 @@ class TestOrgScopedRepositoryRegularUserAccess:
         assert mock_session.execute.call_count == 1
 
     async def test_regular_user_with_role_accesses_role_based_workflow(
-        self, mock_session, org1_id, user_id
+        self, mock_session, org1_id, user_id, monkeypatch
     ):
         """Regular user with matching role can access role-based workflow."""
         from src.repositories.workflows import WorkflowRepository
@@ -827,23 +827,22 @@ class TestOrgScopedRepositoryRegularUserAccess:
         mock_result_workflow = MagicMock()
         mock_result_workflow.scalar_one_or_none.return_value = org1_workflow
 
-        # Second query (user roles) returns the user's roles
-        mock_result_user_roles = MagicMock()
-        mock_result_user_roles.scalars.return_value.all.return_value = [role_id]
-
-        # Third query (workflow roles) returns the workflow's roles
+        # Second query (workflow roles) returns the workflow's roles
         mock_result_workflow_roles = MagicMock()
         mock_result_workflow_roles.scalars.return_value.all.return_value = [role_id]
+        monkeypatch.setattr(
+            "src.repositories.org_scoped.resolve_effective_role_ids",
+            AsyncMock(return_value=frozenset({role_id})),
+        )
 
         mock_session.execute.side_effect = [
             mock_result_workflow,
-            mock_result_user_roles,
             mock_result_workflow_roles,
         ]
 
         # Regular user with role
         repo = WorkflowRepository(
-            mock_session, org_id=org1_id, user_id=user_id, is_superuser=False
+            mock_session, org_id=org1_id, user_id=user_id, bypass_resource_roles=False
         )
         result = await repo.get(id=org1_workflow.id)
 
@@ -851,7 +850,7 @@ class TestOrgScopedRepositoryRegularUserAccess:
         assert result.id == org1_workflow.id
 
     async def test_regular_user_without_role_cannot_access_role_based_workflow(
-        self, mock_session, org1_id, user_id
+        self, mock_session, org1_id, user_id, monkeypatch
     ):
         """Regular user without matching role cannot access role-based workflow."""
         from src.repositories.workflows import WorkflowRepository
@@ -866,25 +865,24 @@ class TestOrgScopedRepositoryRegularUserAccess:
         mock_result_workflow = MagicMock()
         mock_result_workflow.scalar_one_or_none.return_value = org1_workflow
 
-        # Second query (user roles) returns the user's roles (different from workflow)
-        mock_result_user_roles = MagicMock()
-        mock_result_user_roles.scalars.return_value.all.return_value = [user_role_id]
-
-        # Third query (workflow roles) returns the workflow's roles
+        # Second query (workflow roles) returns the workflow's roles
         mock_result_workflow_roles = MagicMock()
         mock_result_workflow_roles.scalars.return_value.all.return_value = [
             workflow_role_id
         ]
+        monkeypatch.setattr(
+            "src.repositories.org_scoped.resolve_effective_role_ids",
+            AsyncMock(return_value=frozenset({user_role_id})),
+        )
 
         mock_session.execute.side_effect = [
             mock_result_workflow,
-            mock_result_user_roles,
             mock_result_workflow_roles,
         ]
 
         # Regular user without matching role
         repo = WorkflowRepository(
-            mock_session, org_id=org1_id, user_id=user_id, is_superuser=False
+            mock_session, org_id=org1_id, user_id=user_id, bypass_resource_roles=False
         )
         result = await repo.get(id=org1_workflow.id)
 
@@ -892,7 +890,7 @@ class TestOrgScopedRepositoryRegularUserAccess:
         assert result is None
 
     async def test_regular_user_without_any_roles_cannot_access_role_based_workflow(
-        self, mock_session, org1_id, user_id
+        self, mock_session, org1_id, user_id, monkeypatch
     ):
         """Regular user with no roles cannot access role-based workflow."""
         from src.repositories.workflows import WorkflowRepository
@@ -904,18 +902,26 @@ class TestOrgScopedRepositoryRegularUserAccess:
         mock_result_workflow = MagicMock()
         mock_result_workflow.scalar_one_or_none.return_value = org1_workflow
 
-        # Second query (user roles) returns empty list (user has no roles)
-        mock_result_user_roles = MagicMock()
-        mock_result_user_roles.scalars.return_value.all.return_value = []
+        # Second query (workflow roles) returns the workflow's roles, while the
+        # authorization helper returns no effective user roles.
+        workflow_role_id = uuid4()
+        mock_result_workflow_roles = MagicMock()
+        mock_result_workflow_roles.scalars.return_value.all.return_value = [
+            workflow_role_id
+        ]
+        monkeypatch.setattr(
+            "src.repositories.org_scoped.resolve_effective_role_ids",
+            AsyncMock(return_value=frozenset()),
+        )
 
         mock_session.execute.side_effect = [
             mock_result_workflow,
-            mock_result_user_roles,
+            mock_result_workflow_roles,
         ]
 
         # Regular user without any roles
         repo = WorkflowRepository(
-            mock_session, org_id=org1_id, user_id=user_id, is_superuser=False
+            mock_session, org_id=org1_id, user_id=user_id, bypass_resource_roles=False
         )
         result = await repo.get(id=org1_workflow.id)
 
@@ -1004,7 +1010,7 @@ class TestApplicationCrossOrgSlugLookup:
         mock_session.execute.return_value = mock_result
 
         repo = ApplicationRepository(
-            mock_session, org_id=org_a_id, user_id=user_id, is_superuser=False
+            mock_session, org_id=org_a_id, user_id=user_id, bypass_resource_roles=False
         )
         result = await repo.get(slug="org-a-app")
 
@@ -1031,7 +1037,7 @@ class TestApplicationCrossOrgSlugLookup:
         mock_session.execute.side_effect = [mock_result_org, mock_result_global]
 
         repo = ApplicationRepository(
-            mock_session, org_id=org_a_id, user_id=user_id, is_superuser=False
+            mock_session, org_id=org_a_id, user_id=user_id, bypass_resource_roles=False
         )
         result = await repo.get(slug="global-app")
 
@@ -1058,7 +1064,7 @@ class TestApplicationCrossOrgSlugLookup:
         mock_session.execute.side_effect = [mock_result_org, mock_result_global]
 
         repo = ApplicationRepository(
-            mock_session, org_id=org_a_id, user_id=user_id, is_superuser=False
+            mock_session, org_id=org_a_id, user_id=user_id, bypass_resource_roles=False
         )
         result = await repo.get(slug="org-b-app")
 
@@ -1078,7 +1084,7 @@ class TestApplicationCrossOrgSlugLookup:
         mock_session.execute.return_value = mock_result
 
         repo = ApplicationRepository(
-            mock_session, org_id=org_a_id, is_superuser=True
+            mock_session, org_id=org_a_id, bypass_resource_roles=True
         )
         result = await repo.get(slug="org-a-app")
 
@@ -1105,7 +1111,7 @@ class TestApplicationCrossOrgSlugLookup:
         mock_session.execute.side_effect = [mock_result_org, mock_result_global]
 
         repo = ApplicationRepository(
-            mock_session, org_id=org_a_id, is_superuser=True
+            mock_session, org_id=org_a_id, bypass_resource_roles=True
         )
         result = await repo.get(slug="global-app")
 
@@ -1139,7 +1145,7 @@ class TestApplicationCrossOrgSlugLookup:
         ]
 
         repo = ApplicationRepository(
-            mock_session, org_id=org_a_id, is_superuser=True
+            mock_session, org_id=org_a_id, bypass_resource_roles=True
         )
         result = await repo.get(slug="org-b-app")
 
@@ -1163,7 +1169,7 @@ class TestApplicationCrossOrgSlugLookup:
 
         # Repo is scoped to org A, but get_by_slug_global has no org filter
         repo = ApplicationRepository(
-            mock_session, org_id=org_a_id, user_id=uuid4(), is_superuser=False
+            mock_session, org_id=org_a_id, user_id=uuid4(), bypass_resource_roles=False
         )
         result = await repo.get_by_slug_global("org-b-app")
 
@@ -1182,7 +1188,7 @@ class TestApplicationCrossOrgSlugLookup:
         mock_session.execute.return_value = mock_result
 
         repo = ApplicationRepository(
-            mock_session, org_id=org_a_id, user_id=uuid4(), is_superuser=False
+            mock_session, org_id=org_a_id, user_id=uuid4(), bypass_resource_roles=False
         )
         result = await repo.get_by_slug_global("nonexistent")
 

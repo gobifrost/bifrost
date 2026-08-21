@@ -35,4 +35,14 @@ describe("MemorySettings", () => {
 		await waitFor(() => expect(updateSettings).toHaveBeenCalledWith(true));
 		expect(toggle).toHaveAttribute("aria-checked", "true");
 	});
+
+	it("renders memory read-only without update access", async () => {
+		render(<MemorySettings canWrite={false} />);
+
+		const toggle = await screen.findByRole("switch", {
+			name: "Enable Memory",
+		});
+		await waitFor(() => expect(toggle).toBeDisabled());
+		expect(updateSettings).not.toHaveBeenCalled();
+	});
 });

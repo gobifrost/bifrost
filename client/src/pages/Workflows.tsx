@@ -11,14 +11,13 @@ import { Button } from "@/components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useWorkflowsFiltered, useWorkflowsMetadata } from "@/hooks/useWorkflows";
 import { useWorkflowKeys } from "@/hooks/useWorkflowKeys";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorizationBoundary } from "@/contexts/AuthorizationBoundaryContext";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { OrphanedWorkflowDialog } from "@/components/workflows/OrphanedWorkflowDialog";
 import { WorkflowEditDialog } from "@/components/workflows/WorkflowEditDialog";
 import { WorkflowSidebar } from "@/components/workflows/WorkflowSidebar";
 import { SearchBox } from "@/components/search/SearchBox";
 import { useSearch } from "@/hooks/useSearch";
-import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { useEditorStore } from "@/stores/editorStore";
 import { fileService } from "@/services/fileService";
 import { toast } from "sonner";
@@ -34,14 +33,11 @@ type Organization = components["schemas"]["OrganizationPublic"];
 
 export function Workflows() {
 	const navigate = useNavigate();
-	const { isPlatformAdmin } = useAuth();
+	const { selectedTarget, hasSelectedCapability } = useAuthorizationBoundary();
 	const { data: apiKeys } = useWorkflowKeys({ includeRevoked: false });
 	const isDesktop = useIsDesktop();
 
 	// Filter state
-	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
-		undefined,
-	);
 	const [searchTerm, setSearchTerm] = useState("");
 	const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
 	const [typeFilter, setTypeFilter] = useState<string>("all");
@@ -85,7 +81,7 @@ export function Workflows() {
 
 	// Fetch organizations for org name lookup (platform admins only)
 	const { data: organizations } = useOrganizations({
-		enabled: isPlatformAdmin,
+		enabled: selectedTarget?.kind === "platform",
 	});
 
 	// Helper to get organization name from ID
@@ -97,12 +93,16 @@ export function Workflows() {
 
 	// Fetch workflows with entity filters and org scope
 	const { data, isLoading, refetch } = useWorkflowsFiltered({
-		scope: isPlatformAdmin ? filterOrgId : undefined,
 		type: typeFilter === "all" ? undefined : typeFilter,
 		filterByForm: selectedFormId ?? undefined,
 		filterByApp: selectedAppId ?? undefined,
 		filterByAgent: selectedAgentId ?? undefined,
 	});
+	const canManageWorkflows =
+		selectedTarget?.kind !== "managed_organizations" &&
+		hasSelectedCapability("workflows.readwrite");
+	const canExecuteWorkflows = hasSelectedCapability("workflows.execute");
+	const showOrganizationScope = selectedTarget?.kind === "platform";
 
 	// Cast to Workflow type which includes is_orphaned (may not be in generated types yet)
 	const workflows = useMemo(() => (data || []) as Workflow[], [data]);
@@ -274,17 +274,6 @@ export function Workflows() {
 					placeholder="Search by name, description, or category..."
 					className="flex-1"
 				/>
-				{isPlatformAdmin && (
-					<div className="w-full sm:w-64">
-						<OrganizationSelect
-							value={filterOrgId}
-							onChange={setFilterOrgId}
-							showAll={true}
-							showGlobal={true}
-							placeholder="All organizations"
-						/>
-					</div>
-				)}
 				<ToggleGroup
 					type="single"
 					value={typeFilter}
@@ -326,7 +315,7 @@ export function Workflows() {
 						onEndpointFilterChange={setEndpointFilter}
 						orphanedFilter={orphanedFilter}
 						onOrphanedFilterChange={setOrphanedFilter}
-						scope={isPlatformAdmin ? filterOrgId ?? undefined : undefined}
+						scope={undefined}
 						onClose={() => setSidebarOpen(false)}
 						className="w-64 shrink-0"
 					/>
@@ -348,8 +337,9 @@ export function Workflows() {
 						workflows={filteredWorkflows as WorkflowListItem[]}
 						viewMode={viewMode}
 						isLoading={isLoading}
-						isPlatformAdmin={isPlatformAdmin}
-						canManageWorkflows={isPlatformAdmin}
+						showOrganizationScope={showOrganizationScope}
+						canManageWorkflows={canManageWorkflows}
+						canExecuteWorkflows={canExecuteWorkflows}
 						getOrgName={getOrgName}
 						hasGlobalKey={hasGlobalKey}
 						workflowsWithKeys={workflowsWithKeys}
@@ -357,14 +347,29 @@ export function Workflows() {
 						onViewHistory={(workflow) =>
 							navigate(`/history?workflow=${workflow.id ?? ""}`)
 						}
-						onOpenCode={handleOpenInEditor}
-						onEditScope={(workflow) => handleEditWorkflow(workflow)}
-						onEditEndpoint={(workflow) =>
-							handleEditWorkflow(workflow, "endpoint")
+						onOpenCode={
+							canManageWorkflows ? handleOpenInEditor : undefined
 						}
-						onResolveOrphaned={handleOpenOrphanedDialog}
+						onEditScope={
+							canManageWorkflows
+								? (workflow) => handleEditWorkflow(workflow)
+								: undefined
+						}
+						onEditEndpoint={
+							canManageWorkflows
+								? (workflow) =>
+										handleEditWorkflow(workflow, "endpoint")
+								: undefined
+						}
+						onResolveOrphaned={
+							canManageWorkflows
+								? handleOpenOrphanedDialog
+								: undefined
+						}
 						onExecute={(workflow) => handleExecute(workflow.name ?? "")}
-						onOpenEmpty={() => openEditor()}
+						onOpenEmpty={
+							canManageWorkflows ? () => openEditor() : undefined
+						}
 						emptySearchActive={Boolean(searchTerm)}
 					/>
 				</div>

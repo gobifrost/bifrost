@@ -75,12 +75,15 @@ def _app_entry(app_id: str, slug: str) -> dict:
 
 @pytest.mark.e2e
 class TestSolutionAppDeploy:
-    async def _install(self, db, org_id=None) -> Solution:
+    async def _install(
+        self, db, org_id=None, *, visibility: str = "shared"
+    ) -> Solution:
         sol = Solution(
             id=uuid.uuid4(),
             slug=f"app-{uuid.uuid4().hex[:8]}",
             name="APP",
             organization_id=org_id,
+            visibility=visibility,
         )
         db.add(sol)
         await db.flush()
@@ -104,10 +107,30 @@ class TestSolutionAppDeploy:
         assert app.solution_id == sol.id
         assert app.organization_id == sol.organization_id
         assert app.app_model == "standalone_v2"
+        assert app.runtime_mode == "trusted"
         assert result.apps_upserted == 1
         # dist was uploaded for this app (under the per-install remapped id)
         assert str(expected_id) in _stub_app_build
         assert result.build_job_ids == []
+
+    async def test_private_builder_app_is_forced_to_isolated_runtime(
+        self, db_session, _stub_app_build
+    ):
+        db = db_session
+        sol = await self._install(db, visibility="private")
+        app_id = str(uuid.uuid4())
+
+        await SolutionDeployer(db).deploy(
+            SolutionBundle(solution=sol, apps=[_app_entry(app_id, "private-preview")])
+        )
+        await db.flush()
+
+        app = await db.get(
+            Application,
+            solution_entity_id(sol.id, uuid.UUID(app_id)),
+        )
+        assert app is not None
+        assert app.runtime_mode == "isolated"
 
     async def test_isolated_app_build_uses_builder_jobs_with_revision_and_requester(
         self, db_session, monkeypatch

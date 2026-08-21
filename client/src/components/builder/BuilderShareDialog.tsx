@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Eye, Loader2, Pencil, Trash2, UserPlus, Users } from "lucide-react";
+import { Eye, Loader2, Pencil, ShieldCheck, Trash2, UserPlus, Users } from "lucide-react";
 import { toast } from "sonner";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -19,14 +19,21 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
 	listBuilderCollaborators,
+	listBuilderGrantableRoles,
+	listBuilderRoleGrants,
 	removeBuilderCollaborator,
+	removeBuilderRoleGrant,
 	saveBuilderCollaborator,
+	saveBuilderRoleGrant,
+	type BuilderBoundary,
 	type BuilderCollaborator,
+	type BuilderRoleGrant,
 } from "@/services/builder";
 
 interface BuilderShareDialogProps {
 	solutionId: string;
 	solutionName: string;
+	boundary?: BuilderBoundary;
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
 }
@@ -39,22 +46,44 @@ const ACCESS_OPTIONS = [
 export function BuilderShareDialog({
 	solutionId,
 	solutionName,
+	boundary,
 	open,
 	onOpenChange,
 }: BuilderShareDialogProps) {
 	const queryClient = useQueryClient();
-	const queryKey = ["builder", "collaborators", solutionId] as const;
+	const queryKey = ["builder", "collaborators", solutionId, boundary ?? null] as const;
+	const boundaryOptions = boundary ? { boundary } : undefined;
 	const [email, setEmail] = useState("");
 	const [access, setAccess] = useState<"view" | "edit">("edit");
+	const [roleId, setRoleId] = useState("");
+	const [roleAccess, setRoleAccess] = useState<"view" | "edit">("view");
 
 	const collaboratorsQuery = useQuery({
 		queryKey,
-		queryFn: ({ signal }) => listBuilderCollaborators(solutionId, { signal }),
+		queryFn: ({ signal }) =>
+			listBuilderCollaborators(solutionId, boundary ? { signal, boundary } : { signal }),
+		enabled: open,
+	});
+	const rolesQuery = useQuery({
+		queryKey: ["builder", "grantable-roles", boundary ?? null],
+		queryFn: ({ signal }) =>
+			listBuilderGrantableRoles(boundary ? { signal, boundary } : { signal }),
+		enabled: open,
+	});
+	const roleGrantsQuery = useQuery({
+		queryKey: ["builder", "role-grants", solutionId, boundary ?? null],
+		queryFn: ({ signal }) =>
+			listBuilderRoleGrants(
+				solutionId,
+				boundary ? { signal, boundary } : { signal },
+			),
 		enabled: open,
 	});
 	const saveMutation = useMutation({
 		mutationFn: (request: { email: string; access: "view" | "edit" }) =>
-			saveBuilderCollaborator(solutionId, request),
+			boundaryOptions
+				? saveBuilderCollaborator(solutionId, request, boundaryOptions)
+				: saveBuilderCollaborator(solutionId, request),
 		onSuccess: async (collaborator) => {
 			setEmail("");
 			await queryClient.invalidateQueries({ queryKey });
@@ -64,10 +93,39 @@ export function BuilderShareDialog({
 	});
 	const removeMutation = useMutation({
 		mutationFn: (collaborator: BuilderCollaborator) =>
-			removeBuilderCollaborator(solutionId, collaborator.user_id),
+			boundaryOptions
+				? removeBuilderCollaborator(solutionId, collaborator.user_id, boundaryOptions)
+				: removeBuilderCollaborator(solutionId, collaborator.user_id),
 		onSuccess: async () => {
 			await queryClient.invalidateQueries({ queryKey });
 			toast.success("Collaborator removed");
+		},
+		onError: (error: Error) => toast.error(error.message),
+	});
+	const saveRoleMutation = useMutation({
+		mutationFn: (request: { role_id: string; access: "view" | "edit" }) =>
+			boundaryOptions
+				? saveBuilderRoleGrant(solutionId, request, boundaryOptions)
+				: saveBuilderRoleGrant(solutionId, request),
+		onSuccess: async () => {
+			setRoleId("");
+			await queryClient.invalidateQueries({
+				queryKey: ["builder", "role-grants", solutionId, boundary ?? null],
+			});
+			toast.success("Role access updated");
+		},
+		onError: (error: Error) => toast.error(error.message),
+	});
+	const removeRoleMutation = useMutation({
+		mutationFn: (grant: BuilderRoleGrant) =>
+			boundaryOptions
+				? removeBuilderRoleGrant(solutionId, grant.role_id, boundaryOptions)
+				: removeBuilderRoleGrant(solutionId, grant.role_id),
+		onSuccess: async () => {
+			await queryClient.invalidateQueries({
+				queryKey: ["builder", "role-grants", solutionId, boundary ?? null],
+			});
+			toast.success("Role access removed");
 		},
 		onError: (error: Error) => toast.error(error.message),
 	});
@@ -76,6 +134,16 @@ export function BuilderShareDialog({
 		if (next !== "view" && next !== "edit") return;
 		saveMutation.mutate({ email: collaborator.email, access: next });
 	}
+
+	const rolesById = new Map(
+		(rolesQuery.data ?? []).map((role) => [role.id, role]),
+	);
+	const grantedRoleIds = new Set(
+		(roleGrantsQuery.data ?? []).map((grant) => grant.role_id),
+	);
+	const roleOptions = (rolesQuery.data ?? [])
+		.filter((role) => !grantedRoleIds.has(role.id))
+		.map((role) => ({ value: role.id, label: role.name }));
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
@@ -108,6 +176,23 @@ export function BuilderShareDialog({
 								))}
 							</div>
 						) : <div className="rounded-2xl border border-dashed p-6 text-center"><Users className="mx-auto h-6 w-6 text-muted-foreground" /><p className="mt-2 text-sm font-medium">Only you have access</p><p className="mt-1 text-xs text-muted-foreground">Invite an editor to collaborate or a viewer to review.</p></div>}
+					</div>
+
+					<div className="border-t pt-5">
+						<div className="mb-3 flex items-center justify-between"><div><p className="text-sm font-medium">Roles with access</p><p className="mt-0.5 text-xs text-muted-foreground">Everyone assigned this Role in the selected customer context receives access.</p></div><Badge variant="outline">{roleGrantsQuery.data?.length ?? 0}</Badge></div>
+						<div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_150px_auto] sm:items-end">
+							<div className="space-y-2"><Label htmlFor="builder-role-access">Role</Label><Combobox id="builder-role-access" aria-label="Role with access" options={roleOptions} value={roleId} onValueChange={(value) => setRoleId(value ?? "")} placeholder={rolesQuery.isLoading ? "Loading Roles…" : "Select a Role"} /></div>
+							<div className="space-y-2"><Label htmlFor="builder-role-access-level">Access</Label><Combobox id="builder-role-access-level" aria-label="Role access level" options={ACCESS_OPTIONS} value={roleAccess} onValueChange={(value) => value && setRoleAccess(value as "view" | "edit")} /></div>
+							<Button variant="outline" disabled={!roleId || saveRoleMutation.isPending} onClick={() => saveRoleMutation.mutate({ role_id: roleId, access: roleAccess })}>{saveRoleMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ShieldCheck className="h-4 w-4" />}Add Role</Button>
+						</div>
+						{roleGrantsQuery.isLoading ? <Skeleton className="mt-3 h-14 w-full" /> : roleGrantsQuery.isError || rolesQuery.isError ? <div className="mt-3 rounded-2xl border border-destructive/30 bg-destructive/5 p-4 text-sm text-destructive">Could not load Role access.</div> : roleGrantsQuery.data?.length ? (
+							<div className="mt-3 max-h-48 divide-y overflow-auto rounded-2xl border">
+								{roleGrantsQuery.data.map((grant) => {
+									const role = rolesById.get(grant.role_id);
+									return <div key={grant.id} className="flex items-center gap-3 p-3"><span className="flex h-8 w-8 items-center justify-center rounded-xl bg-muted"><ShieldCheck className="h-4 w-4" /></span><div className="min-w-0 flex-1"><p className="truncate text-sm font-medium">{role?.name ?? "Unavailable Role"}</p><p className="text-xs text-muted-foreground">{grant.access === "edit" ? "Can edit" : "Can view"}</p></div><Button variant="ghost" size="icon" aria-label={`Remove ${role?.name ?? "Role"}`} disabled={removeRoleMutation.isPending} onClick={() => removeRoleMutation.mutate(grant)}><Trash2 className="h-4 w-4" /></Button></div>;
+								})}
+							</div>
+						) : <div className="mt-3 rounded-2xl border border-dashed p-4 text-center text-xs text-muted-foreground">No Roles have access yet.</div>}
 					</div>
 
 					<div className="flex gap-3 rounded-2xl bg-muted/35 p-3 text-xs leading-5 text-muted-foreground"><span className="mt-0.5">{access === "edit" ? <Pencil className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}</span><p>Private builds never appear in another user’s normal library unless you explicitly share them. Platform support can still find them from the separate customer-support catalog.</p></div>

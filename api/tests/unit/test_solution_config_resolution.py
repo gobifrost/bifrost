@@ -38,7 +38,7 @@ async def test_install_value_resolves_in_install_scope(db_session) -> None:
     await db.flush()
 
     # Install value: a normal org-scoped Config row, no solution_id.
-    repo = ConfigRepository(db, org_id=org_id, is_superuser=True)
+    repo = ConfigRepository(db, org_id=org_id, bypass_resource_admission=True)
     await repo.set_config(
         SetConfigRequest(key="REGION", value="us-west", type=ConfigType.STRING, organization_id=org_id),
         updated_by="op@test",
@@ -46,6 +46,6 @@ async def test_install_value_resolves_in_install_scope(db_session) -> None:
     await db.flush()
 
     # SDK reader in the install's org sees the value via the existing cascade.
-    reader = ConfigRepository(db, org_id=org_id, is_superuser=True)
+    reader = ConfigRepository(db, org_id=org_id, bypass_resource_admission=True)
     merged = await reader.merged_for_sdk()
     assert merged["REGION"]["value"] == "us-west"

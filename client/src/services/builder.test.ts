@@ -17,6 +17,7 @@ import {
 	createBuilderAppLaunch,
 	deleteBuilderSolution,
 	deployedRevision,
+	discardGlobalOperationChange,
 	downloadRevision,
 	getRevisionDiff,
 	getRevisionFile,
@@ -25,13 +26,19 @@ import {
 	isPreviewStale,
 	latestTurn,
 	listBuilderSessions,
+	listBuilderGrantableRoles,
+	listBuilderRoleGrants,
 	listBuilderSolutions,
+	listBuilderTargets,
+	listGlobalOperationChanges,
 	listRevisions,
 	listRevisionFiles,
 	listTurns,
 	requestPromotion,
+	removeBuilderRoleGrant,
 	rollbackGlobalWorkspace,
 	runBuilderTurn,
+	saveBuilderRoleGrant,
 	validateGlobalWorkspace,
 	undoToRevision,
 } from "./builder";
@@ -103,16 +110,18 @@ describe("global workspace", () => {
 			)
 			.mockResolvedValueOnce(
 				jsonResponse({
-					revision_id: "rev-2",
-					changed_paths: ["workflows/example.py"],
-					rolled_back: false,
+					job_id: "job-apply",
+					notification_id: "notif-apply",
+					status: "waiting",
+					reused: false,
 				}),
 			)
 			.mockResolvedValueOnce(
 				jsonResponse({
-					revision_id: "rev-3",
-					changed_paths: ["workflows/example.py"],
-					rolled_back: true,
+					job_id: "job-rollback",
+					notification_id: "notif-rollback",
+					status: "waiting",
+					reused: false,
 				}),
 			);
 
@@ -124,31 +133,104 @@ describe("global workspace", () => {
 			valid: true,
 		});
 		await expect(applyGlobalWorkspace()).resolves.toMatchObject({
-			rolled_back: false,
+			job_id: "job-apply",
 		});
 		await expect(rollbackGlobalWorkspace()).resolves.toMatchObject({
-			rolled_back: true,
+			job_id: "job-rollback",
 		});
 
-		expect(mockAuthFetch.mock.calls).toEqual([
-			["/api/builder/solutions/global-workspace", { signal: undefined }],
-			[
-				"/api/builder/solutions/global-workspace/validate",
-				{ method: "POST", signal: undefined },
-			],
-			[
-				"/api/builder/solutions/global-workspace/apply",
-				{ method: "POST", signal: undefined },
-			],
-			[
-				"/api/builder/solutions/global-workspace/rollback",
-				{ method: "POST", signal: undefined },
-			],
+		expect(mockAuthFetch.mock.calls.map(([url]) => url)).toEqual([
+			"/api/builder/solutions/global-workspace",
+			"/api/builder/solutions/global-workspace/validate",
+			"/api/builder/solutions/global-workspace/apply",
+			"/api/builder/solutions/global-workspace/rollback",
 		]);
+		for (const [, init] of mockAuthFetch.mock.calls) {
+			expect((init.headers as Headers).get("X-Bifrost-Boundary")).toBe(
+				"platform",
+			);
+		}
+	});
+
+	it("lists and discards Global operation changes with platform boundary", async () => {
+		mockAuthFetch
+			.mockResolvedValueOnce(
+				jsonResponse({
+					changes: [
+						{
+							id: "change-1",
+							operation_id: "agents.create",
+							resource_type: "agent",
+							resource_id: null,
+							state: "staged",
+							validation_errors: [],
+							before_state: null,
+							after_state: { name: "Global Agent" },
+						},
+					],
+				}),
+			)
+			.mockResolvedValueOnce(
+				jsonResponse({
+					id: "change-1",
+					operation_id: "agents.create",
+					resource_type: "agent",
+					resource_id: null,
+					state: "discarded",
+					validation_errors: [],
+					before_state: null,
+					after_state: { name: "Global Agent" },
+				}),
+			);
+
+		await expect(listGlobalOperationChanges()).resolves.toMatchObject({
+			changes: [{ id: "change-1" }],
+		});
+		await expect(
+			discardGlobalOperationChange("change-1"),
+		).resolves.toMatchObject({ state: "discarded" });
+
+		expect(mockAuthFetch.mock.calls.map(([url]) => url)).toEqual([
+			"/api/builder/solutions/global-workspace/operations",
+			"/api/builder/solutions/global-workspace/operations/change-1",
+		]);
+		expect(mockAuthFetch.mock.calls.map(([, init]) => init.method ?? "GET")).toEqual([
+			"GET",
+			"DELETE",
+		]);
+		for (const [, init] of mockAuthFetch.mock.calls) {
+			expect((init.headers as Headers).get("X-Bifrost-Boundary")).toBe(
+				"platform",
+			);
+		}
 	});
 });
 
 describe("builder solutions", () => {
+	it("discovers selectable Builder boundaries before choosing a target", async () => {
+		mockAuthFetch.mockResolvedValue(
+			jsonResponse({
+				organizations: [
+					{
+						id: "org-1",
+						name: "Customer",
+						can_read: true,
+						can_execute: true,
+						can_build_resources: true,
+					},
+				],
+			}),
+		);
+
+		const result = await listBuilderTargets();
+
+		expect(mockAuthFetch).toHaveBeenCalledWith(
+			"/api/builder/solutions/targets",
+			{ signal: undefined },
+		);
+		expect(result.organizations?.[0].id).toBe("org-1");
+	});
+
 	it("lists private solutions", async () => {
 		mockAuthFetch.mockResolvedValue(
 			jsonResponse({
@@ -185,18 +267,30 @@ describe("builder solutions", () => {
 
 		expect(mockAuthFetch).toHaveBeenCalledWith(
 			"/api/builder/solutions?view=all&organization_id=org-2&owner_user_id=user-3&search=inventory&limit=50&offset=100",
-			{ signal: undefined },
+			expect.objectContaining({ signal: undefined }),
+		);
+		const init = mockAuthFetch.mock.calls[0][1];
+		expect((init.headers as Headers).get("X-Bifrost-Boundary")).toBe(
+			"managed_organizations",
 		);
 	});
 
 	it("creates a solution with a slug and name body", async () => {
 		mockAuthFetch.mockResolvedValue(jsonResponse({ id: "sol-2" }));
 
-		const out = await createBuilderSolution({ slug: "notes", name: "Notes" });
+		const out = await createBuilderSolution({
+			slug: "notes",
+			name: "Notes",
+			target_kind: "solution",
+		});
 
 		expect(mockAuthFetch).toHaveBeenCalledWith("/api/builder/solutions", {
 			method: "POST",
-			body: JSON.stringify({ slug: "notes", name: "Notes" }),
+			body: JSON.stringify({
+				slug: "notes",
+				name: "Notes",
+				target_kind: "solution",
+			}),
 			signal: undefined,
 		});
 		expect(out.id).toBe("sol-2");
@@ -214,6 +308,21 @@ describe("builder solutions", () => {
 			{ signal: undefined },
 		);
 		expect(out.visibility).toBe("private");
+	});
+
+	it("sends an explicit organization boundary for support work", async () => {
+		mockAuthFetch.mockResolvedValue(
+			jsonResponse({ id: "sol-1", visibility: "private" }),
+		);
+
+		await getBuilderSolution("sol-1", {
+			boundary: "organization:11111111-1111-1111-1111-111111111111",
+		});
+
+		const init = mockAuthFetch.mock.calls[0][1];
+		expect((init.headers as Headers).get("X-Bifrost-Boundary")).toBe(
+			"organization:11111111-1111-1111-1111-111111111111",
+		);
 	});
 
 	it("deletes a solution and returns nothing", async () => {
@@ -270,6 +379,56 @@ describe("builder sessions", () => {
 			{ method: "POST", body: JSON.stringify({}), signal: undefined },
 		);
 		expect(out.id).toBe("sess-2");
+	});
+});
+
+describe("builder Role access", () => {
+	it("loads only Roles that may be assigned to resources", async () => {
+		mockAuthFetch.mockResolvedValue(
+			jsonResponse([
+				{ id: "role-1", name: "Reviewer", assignable_to_resources: true },
+				{ id: "role-2", name: "Platform Builder", assignable_to_resources: false },
+			]),
+		);
+
+		const roles = await listBuilderGrantableRoles({
+			boundary: "organization:11111111-1111-1111-1111-111111111111",
+		});
+
+		expect(roles.map((role) => role.id)).toEqual(["role-1"]);
+		const init = mockAuthFetch.mock.calls[0][1];
+		expect((init.headers as Headers).get("X-Bifrost-Boundary")).toBe(
+			"organization:11111111-1111-1111-1111-111111111111",
+		);
+	});
+
+	it("lists, saves, and removes Solution Role grants", async () => {
+		mockAuthFetch
+			.mockResolvedValueOnce(jsonResponse([{ id: "grant-1", role_id: "role-1" }]))
+			.mockResolvedValueOnce(jsonResponse({ id: "grant-1", role_id: "role-1", access: "view" }))
+			.mockResolvedValueOnce({ ok: true, status: 204 });
+
+		await expect(listBuilderRoleGrants("sol-1")).resolves.toHaveLength(1);
+		await expect(
+			saveBuilderRoleGrant("sol-1", { role_id: "role-1", access: "view" }),
+		).resolves.toMatchObject({ access: "view" });
+		await expect(
+			removeBuilderRoleGrant("sol-1", "role-1"),
+		).resolves.toBeUndefined();
+
+		expect(mockAuthFetch.mock.calls.map(([url]) => url)).toEqual([
+			"/api/builder/solutions/sol-1/role-grants",
+			"/api/builder/solutions/sol-1/role-grants",
+			"/api/builder/solutions/sol-1/role-grants/role-1",
+		]);
+		expect(mockAuthFetch.mock.calls[1][1]).toMatchObject({
+			method: "PUT",
+			body: JSON.stringify({
+				solution_id: "sol-1",
+				role_id: "role-1",
+				access: "view",
+			}),
+		});
 	});
 });
 

@@ -2,7 +2,7 @@
 Per-user role cache (write-through).
 
 Backs `has_role` lookups in the table-policy evaluator. Replaces the
-per-request `select(Role.id, Role.name) JOIN UserRole WHERE user_id=...`
+per-request `select(Role.id, Role.name) JOIN RoleAssignment WHERE user_id=...`
 queries previously fired from `get_execution_context` (HTTP) and
 `_populate_user_roles` (WebSocket).
 
@@ -11,14 +11,14 @@ Cache shape
 Key: ``bifrost:role_cache:user:{user_id}``
 Value: JSON ``{"role_ids": [...], "role_names": [...], "v": 1}``
 TTL:   1 hour (defense-in-depth; correctness comes from write-through
-       invalidation at every Role / UserRole mutation site).
+       invalidation at every Role / RoleAssignment mutation site).
 
 Invalidation
 ------------
 - ``invalidate_user(user_id)``: drop one user's entry. Called after any
-  UserRole add/remove for that user.
+  RoleAssignment add/remove for that user.
 - ``invalidate_role(role_id)``: scan every cached user, drop entries that
-  contain this role_id. Called after Role rename/delete (or when a UserRole
+  contain this role_id. Called after Role rename/delete (or when a RoleAssignment
   mutation should propagate broadly). Acceptable at <10k cached users.
 
 Empty role lists are a valid cached value, never treated as a miss.
@@ -83,19 +83,24 @@ async def get_user_roles(
                 role_names = list(payload["role_names"])
                 return role_ids, role_names
             # Wrong shape / stale schema: treat as miss, fall through to DB.
-            logger.debug(f"Role cache entry for {user_id} has unexpected shape; refetching")
+            logger.debug(
+                f"Role cache entry for {user_id} has unexpected shape; refetching"
+            )
         except (ValueError, TypeError) as e:
-            logger.warning(f"Role cache entry for {user_id} unparseable; refetching: {e}")
+            logger.warning(
+                f"Role cache entry for {user_id} unparseable; refetching: {e}"
+            )
 
     # Miss -> DB
     from sqlalchemy import select
 
-    from src.models.orm.users import Role, UserRole
+    from src.models.orm.role_assignments import RoleAssignment
+    from src.models.orm.users import Role
 
     result = await db.execute(
         select(Role.id, Role.name)
-        .join(UserRole, UserRole.role_id == Role.id)
-        .where(UserRole.user_id == user_id)
+        .join(RoleAssignment, RoleAssignment.role_id == Role.id)
+        .where(RoleAssignment.user_id == user_id)
     )
     rows = result.all()
     role_ids = [r.id for r in rows]
@@ -119,7 +124,7 @@ async def get_user_roles(
 async def invalidate_user(user_id: UUID) -> None:
     """Drop the cache entry for one user.
 
-    Call after any UserRole add/remove that involves ``user_id``.
+    Call after any RoleAssignment add/remove that involves ``user_id``.
     Redis failures are logged; the next read will see stale data until TTL.
     """
     try:
@@ -133,7 +138,7 @@ async def invalidate_user(user_id: UUID) -> None:
 async def invalidate_role(role_id: UUID) -> None:
     """Drop cache entries for every user who has this role.
 
-    Call after Role rename, Role delete, or any UserRole mutation that
+    Call after Role rename, Role delete, or any RoleAssignment mutation that
     should propagate to every user holding the role. Scans
     ``bifrost:role_cache:user:*`` and inspects each entry's ``role_ids``
     list. Acceptable at <10k cached users; if the cache grows substantially

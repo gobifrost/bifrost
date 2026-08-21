@@ -1,5 +1,5 @@
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorizationBoundary } from "@/contexts/AuthorizationBoundaryContext";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { AlertCircle } from "lucide-react";
@@ -9,17 +9,19 @@ import { BuilderTab } from "./components/BuilderTab";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 export function DiagnosticsPage() {
-	const { isPlatformAdmin } = useAuth();
+	const { hasSelectedCapability, selectedTarget } = useAuthorizationBoundary();
 	const navigate = useNavigate();
 
-	if (!isPlatformAdmin) {
+	if (
+		!hasSelectedCapability("platformjobs.read") ||
+		selectedTarget?.kind !== "platform"
+	) {
 		return (
 			<div className="container mx-auto py-8">
 				<Alert variant="destructive">
 					<AlertCircle className="h-4 w-4" />
 					<AlertDescription>
-						You do not have permission to view diagnostics. Platform
-						administrator access is required.
+						Select Global from Working in to view platform diagnostics.
 					</AlertDescription>
 				</Alert>
 				<Button onClick={() => navigate("/")} className="mt-4">

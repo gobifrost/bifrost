@@ -21,6 +21,7 @@ const mockCreateMutate = vi.fn();
 const mockAssignMutate = vi.fn();
 const mockSendInviteMutate = vi.fn();
 const mockOrganizations = vi.fn();
+const mockOrganizationGroups = vi.fn();
 const mockRoles = vi.fn();
 const mockEventSources = vi.fn();
 
@@ -41,6 +42,16 @@ vi.mock("@/hooks/useRoles", () => ({
 
 vi.mock("@/hooks/useOrganizations", () => ({
 	useOrganizations: () => mockOrganizations(),
+	useOrganizationGroups: () => mockOrganizationGroups(),
+}));
+
+vi.mock("@/hooks/useAdministrativeBoundary", () => ({
+	useAdministrativeBoundary: () => "platform",
+	organizationBoundary: (organizationId: string | null | undefined) =>
+		organizationId ? `organization:${organizationId}` : "platform",
+	authorizationHeaders: (boundary: string) => ({
+		"X-Bifrost-Boundary": boundary,
+	}),
 }));
 
 vi.mock("@/services/events", () => ({
@@ -112,7 +123,8 @@ beforeEach(() => {
 		],
 		isLoading: false,
 	});
-	mockRoles.mockReturnValue({ data: [] });
+	mockOrganizationGroups.mockReturnValue({ data: [], isLoading: false });
+	mockRoles.mockReturnValue({ data: [], isLoading: false });
 	mockEventSources.mockReturnValue({
 		data: {
 			items: [
@@ -199,6 +211,7 @@ describe("CreateUserDialog — happy path", () => {
 
 		await waitFor(() => expect(mockCreateMutate).toHaveBeenCalled());
 		expect(mockCreateMutate.mock.calls[0]![0]).toEqual({
+			headers: { "X-Bifrost-Boundary": "organization:org-1" },
 			body: {
 				email: "alice@example.com",
 				name: "Alice",

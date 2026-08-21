@@ -139,6 +139,7 @@ class BuilderTurnService:
         name: str,
         conversation_id: UUID | None,
         user_id: UUID | None,
+        target_kind: str = "solution",
     ) -> SolutionSourceRevision:
         """Scaffold revision 0 and open the builder project pointing at it.
 
@@ -178,6 +179,7 @@ class BuilderTurnService:
             SolutionBuilderProject(
                 solution_id=solution_id,
                 current_revision_id=revision_id,
+                target_kind=target_kind,
             )
         )
         await self.db.flush()

@@ -221,7 +221,7 @@ async def _load_source_policies(source: Table, db: AsyncSession) -> TablePolicie
         )
         return TablePolicies()
 
-    repo = PolicyRuleRepository(db, org_id=source.organization_id, is_superuser=True)
+    repo = PolicyRuleRepository(db, org_id=source.organization_id, bypass_resource_admission=True)
     try:
         await resolve_policy_refs(policies, repo=repo, action_domain="table")
     except (PolicyRuleNotFound, PolicyRuleDomainMismatch):

@@ -371,7 +371,7 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
     {
         "model_path": "src.models.contracts.events:EventSubscriptionCreate",
         "tool_path": "src.services.mcp_server.tools.events:bifrost_create_event_subscription",
-        "extra_args": {"source_ref"},
+        "extra_args": {"source_ref", "scope"},
         "field_renames": {},
     },
     {
@@ -383,6 +383,7 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
             "clear_event_type",
             "clear_filter_expression",
             "clear_input_mapping",
+            "scope",
         },
         "field_renames": {},
     },
@@ -1608,12 +1609,8 @@ class TestMcpParityEvents:
                 cron_expression="30 9 * * *",
             )
             updated_source_body = updated_source.structured_content or {}
-            assert updated_source_body.get("organization_id") == str(
-                org_context.org_id
-            )
-            assert updated_source_body["schedule"]["cron_expression"] == (
-                "30 9 * * *"
-            )
+            assert updated_source_body.get("organization_id") == str(org_context.org_id)
+            assert updated_source_body["schedule"]["cron_expression"] == ("30 9 * * *")
 
             rest_source = e2e_client.get(
                 f"/api/events/sources/{source_id}",
@@ -1622,8 +1619,13 @@ class TestMcpParityEvents:
             assert rest_source.status_code == 200, rest_source.text
             assert rest_source.json()["name"] == f"{source_name}-updated"
 
-            denied = await bifrost_list_event_sources(org_context)
-            assert "error" in (denied.structured_content or {})
+            organization_visible = await bifrost_list_event_sources(org_context)
+            assert source_id in {
+                str(item["id"])
+                for item in (organization_visible.structured_content or {}).get(
+                    "items", []
+                )
+            }
 
             deleted_subscription = await bifrost_delete_event_subscription(
                 admin_context,
@@ -1658,7 +1660,8 @@ class TestMcpParityEvents:
             actions = {
                 entry["action"]
                 for entry in audit.json()["entries"]
-                if entry["resource_id"] in {
+                if entry["resource_id"]
+                in {
                     audit_source_id,
                     audit_subscription_id,
                 }
@@ -1707,7 +1710,7 @@ class TestMcpParityRoles:
         create_resp = e2e_client.post(
             "/api/roles",
             headers=platform_admin.headers,
-            json={"name": name, "permissions": {"workflows.read": True}},
+            json={"name": name, "capabilities": ["workflows.read"]},
         )
         assert create_resp.status_code == 201, create_resp.text
         role_id = create_resp.json()["id"]
@@ -1738,12 +1741,11 @@ class TestMcpParityRoles:
 
         # create
         name = f"mcp-parity-role-{uuid4().hex[:8]}"
-        perms = {"workflows.read": True}
         create_result = await bifrost_create_role(
             admin_context,
             name=name,
             description="created by test_mcp_parity",
-            permissions=perms,
+            capabilities=["workflows.read"],
         )
         created = create_result.structured_content or {}
         assert "error" not in created, created
@@ -1755,7 +1757,7 @@ class TestMcpParityRoles:
             admin_context,
             role_ref=name,
             name=renamed,
-            permissions={"workflows.read": True, "workflows.write": True},
+            capabilities=["workflows.readwrite"],
         )
         updated = update_result.structured_content or {}
         assert updated.get("name") == renamed
@@ -2070,7 +2072,10 @@ class TestMcpParityConfigs:
 
         key = f"mcp_parity_rest_{uuid4().hex[:8]}"
         create_result = await bifrost_create_config(
-            admin_context, key=key, value="cross-check", config_type="string",
+            admin_context,
+            key=key,
+            value="cross-check",
+            config_type="string",
         )
         created = create_result.structured_content or {}
         assert "error" not in created, created
@@ -2102,7 +2107,10 @@ class TestMcpParityConfigs:
 
         key = f"mcp_parity_secret_{uuid4().hex[:8]}"
         create_result = await bifrost_create_config(
-            admin_context, key=key, value="do-not-leak", config_type="secret",
+            admin_context,
+            key=key,
+            value="do-not-leak",
+            config_type="secret",
         )
         created = create_result.structured_content or {}
         assert "error" not in created, created
@@ -2145,7 +2153,12 @@ class TestMcpParityPolicyRules:
     """
 
     @staticmethod
-    async def _create(admin_context, name: str, domain: str = "file"):
+    async def _create(
+        admin_context,
+        name: str,
+        domain: str = "file",
+        organization_id: str | None = None,
+    ):
         from src.services.mcp_server.tools.policy_rules import (
             bifrost_create_policy_rule,
         )
@@ -2156,19 +2169,28 @@ class TestMcpParityPolicyRules:
             domain=domain,
             body={"actions": ["read"], "when": None},
             description="created by test_mcp_parity",
+            organization_id=organization_id,
         )
         payload = result.structured_content or {}
         assert "error" not in payload, payload
         return payload
 
     @staticmethod
-    async def _delete(admin_context, name: str, domain: str = "file"):
+    async def _delete(
+        admin_context,
+        name: str,
+        domain: str = "file",
+        organization_id: str | None = None,
+    ):
         from src.services.mcp_server.tools.policy_rules import (
             bifrost_delete_policy_rule,
         )
 
         return await bifrost_delete_policy_rule(
-            admin_context, domain=domain, name=name
+            admin_context,
+            domain=domain,
+            name=name,
+            organization_id=organization_id,
         )
 
     async def test_get_policy_rule_cross_verifies_against_rest(
@@ -2184,9 +2206,7 @@ class TestMcpParityPolicyRules:
         await self._create(admin_context, name)
         try:
             payload = (
-                await bifrost_get_policy_rule(
-                    admin_context, domain="file", name=name
-                )
+                await bifrost_get_policy_rule(admin_context, domain="file", name=name)
             ).structured_content or {}
             assert "error" not in payload, payload
             assert payload.get("name") == name
@@ -2228,17 +2248,13 @@ class TestMcpParityPolicyRules:
             assert updated["body"]["actions"] == ["read", "write"]
 
             reread = (
-                await bifrost_get_policy_rule(
-                    admin_context, domain="file", name=name
-                )
+                await bifrost_get_policy_rule(admin_context, domain="file", name=name)
             ).structured_content or {}
             assert reread["body"]["actions"] == ["read", "write"]
         finally:
             await self._delete(admin_context, name)
 
-    async def test_update_policy_rule_renames_via_new_name(
-        self, admin_context
-    ) -> None:
+    async def test_update_policy_rule_renames_via_new_name(self, admin_context) -> None:
         """``new_name`` maps to the wire ``name`` field without colliding.
 
         The path argument and the renamed-to value are both called ``name`` on
@@ -2298,6 +2314,68 @@ class TestMcpParityPolicyRules:
         finally:
             await self._delete(admin_context, name)
 
+    async def test_list_policy_rules_honors_org_scope_query(
+        self,
+        admin_context,
+        org1_user,
+    ) -> None:
+        """Listing without scope omits org-only rules; with scope it returns them."""
+        from src.services.mcp_server.tools._http_bridge import call_rest
+        from src.services.mcp_server.tools.policy_rules import (
+            bifrost_list_policy_rules,
+        )
+
+        name = f"mcp_pr_scope_{uuid4().hex[:8]}"
+        organization_id = str(org1_user.organization_id)
+        await self._create(
+            admin_context,
+            name,
+            domain="file",
+            organization_id=organization_id,
+        )
+        try:
+            global_payload = (
+                await bifrost_list_policy_rules(admin_context, domain="file")
+            ).structured_content or {}
+            assert "error" not in global_payload, global_payload
+            assert all(
+                rule["name"] != name for rule in global_payload.get("policy_rules", [])
+            )
+
+            scoped_payload = (
+                await bifrost_list_policy_rules(
+                    admin_context,
+                    domain="file",
+                    organization_id=organization_id,
+                )
+            ).structured_content or {}
+            assert "error" not in scoped_payload, scoped_payload
+
+            status_code, rest_body = await call_rest(
+                admin_context,
+                "GET",
+                "/api/policy-rules",
+                params={
+                    "domain": "file",
+                    "organization_id": organization_id,
+                },
+            )
+            assert status_code == 200, rest_body
+            assert scoped_payload["policy_rules"] == rest_body, (
+                "MCP payload diverged from the scoped REST body it wraps"
+            )
+            assert any(
+                rule["name"] == name and rule["organization_id"] == organization_id
+                for rule in scoped_payload["policy_rules"]
+            )
+        finally:
+            await self._delete(
+                admin_context,
+                name,
+                domain="file",
+                organization_id=organization_id,
+            )
+
     async def test_policy_rule_tools_are_domain_scoped(self, admin_context) -> None:
         """Reading a file-domain rule from the table domain is an error."""
         from src.services.mcp_server.tools.policy_rules import (
@@ -2308,9 +2386,7 @@ class TestMcpParityPolicyRules:
         await self._create(admin_context, name, domain="file")
         try:
             wrong = (
-                await bifrost_get_policy_rule(
-                    admin_context, domain="table", name=name
-                )
+                await bifrost_get_policy_rule(admin_context, domain="table", name=name)
             ).structured_content or {}
             assert "error" in wrong, wrong
         finally:
@@ -2425,10 +2501,7 @@ class TestMcpParityOrganizations:
             include_inactive=True,
         )
         all_organizations = all_result.structured_content or {}
-        inactive = {
-            str(org["id"]): org
-            for org in all_organizations["organizations"]
-        }
+        inactive = {str(org["id"]): org for org in all_organizations["organizations"]}
         assert inactive[org_id]["is_active"] is False
 
         audit = e2e_client.get(
@@ -2554,9 +2627,9 @@ class TestMcpParityIntegrations:
 
         from src.services.repo_storage import RepoStorage
 
-        manifest = (
-            await RepoStorage().read(".bifrost/integrations.yaml")
-        ).decode("utf-8")
+        manifest = (await RepoStorage().read(".bifrost/integrations.yaml")).decode(
+            "utf-8"
+        )
         assert integration_id in manifest
         assert str(org1["id"]) in manifest
 
@@ -2667,9 +2740,9 @@ class TestMcpParityWorkflow:
             assert "error" not in registered, registered
             workflow_id = str(registered["id"])
 
-            manifest = (
-                await RepoStorage().read(".bifrost/workflows.yaml")
-            ).decode("utf-8")
+            manifest = (await RepoStorage().read(".bifrost/workflows.yaml")).decode(
+                "utf-8"
+            )
             assert workflow_id in manifest
 
             listed_result = await bifrost_list_workflows(
@@ -2678,9 +2751,7 @@ class TestMcpParityWorkflow:
                 type="workflow",
             )
             listed = listed_result.structured_content or {}
-            assert [item["id"] for item in listed.get("workflows", [])] == [
-                workflow_id
-            ]
+            assert [item["id"] for item in listed.get("workflows", [])] == [workflow_id]
 
             fetched_result = await bifrost_get_workflow(
                 org_context,
@@ -2804,7 +2875,7 @@ class TestMcpParityWorkflow:
         role_resp = e2e_client.post(
             "/api/roles",
             headers=platform_admin.headers,
-            json={"name": role_name, "description": "test", "permissions": {}},
+            json={"name": role_name, "description": "test", "capabilities": []},
         )
         assert role_resp.status_code == 201
         role_id = role_resp.json()["id"]
@@ -2923,9 +2994,7 @@ class TestMcpParityPlatformJobs:
             bifrost_get_platform_job,
         )
 
-        result = await bifrost_get_platform_job(
-            admin_context, job_id=str(uuid4())
-        )
+        result = await bifrost_get_platform_job(admin_context, job_id=str(uuid4()))
         payload = result.structured_content or {}
         assert payload.get("error"), payload
         assert payload.get("status_code") == 404

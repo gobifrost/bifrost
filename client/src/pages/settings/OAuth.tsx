@@ -74,6 +74,7 @@ interface ProviderCardProps {
 	onSave: (data: Record<string, string>) => Promise<void>;
 	onDelete: () => Promise<void>;
 	onTest: () => Promise<{ success: boolean; message: string }>;
+	canWrite?: boolean;
 	children: React.ReactNode;
 }
 
@@ -89,6 +90,7 @@ function ProviderCard({
 	onSave,
 	onDelete,
 	onTest,
+	canWrite = true,
 	children,
 }: ProviderCardProps) {
 	const [isEditing, setIsEditing] = useState(!configured);
@@ -132,6 +134,7 @@ function ProviderCard({
 	};
 
 	const handleSave = async () => {
+		if (!canWrite) return;
 		setSaving(true);
 		try {
 			await onSave(formData);
@@ -150,6 +153,7 @@ function ProviderCard({
 	};
 
 	const handleDelete = async () => {
+		if (!canWrite) return;
 		setSaving(true);
 		setShowDeleteConfirm(false);
 		try {
@@ -191,6 +195,7 @@ function ProviderCard({
 								variant="ghost"
 								size="sm"
 								onClick={() => setShowDeleteConfirm(true)}
+								disabled={!canWrite}
 								className="text-destructive hover:text-destructive"
 							>
 								<Trash2 className="h-4 w-4 mr-1" />
@@ -268,6 +273,7 @@ function ProviderCard({
 									variant="outline"
 									size="sm"
 									onClick={() => setIsEditing(true)}
+									disabled={!canWrite}
 								>
 									Edit
 								</Button>
@@ -308,7 +314,9 @@ function ProviderCard({
 					{/* Edit Form */}
 					{isEditing && (
 						<div className="space-y-4">
-							{children}
+							<fieldset disabled={!canWrite} className="space-y-4">
+								{children}
+							</fieldset>
 							<div className="flex gap-2 pt-2">
 								{configured && (
 									<Button
@@ -322,7 +330,7 @@ function ProviderCard({
 										Cancel
 									</Button>
 								)}
-								<Button onClick={handleSave} disabled={saving}>
+								<Button onClick={handleSave} disabled={saving || !canWrite}>
 									{saving ? (
 										<>
 											<Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -363,7 +371,7 @@ function ProviderCard({
 						<Button
 							variant="destructive"
 							onClick={handleDelete}
-							disabled={saving}
+							disabled={saving || !canWrite}
 						>
 							{saving ? (
 								<>
@@ -381,7 +389,11 @@ function ProviderCard({
 	);
 }
 
-export function OAuth() {
+interface OAuthProps {
+	canWrite?: boolean;
+}
+
+export function OAuth({ canWrite = true }: OAuthProps) {
 	// Form state for each provider
 	const [microsoftForm, setMicrosoftForm] = useState({
 		client_id: "",
@@ -437,6 +449,7 @@ export function OAuth() {
 		: (configData?.login_preference.default_sso_provider ?? null);
 
 	const saveLoginPreference = async () => {
+		if (!canWrite) return;
 		try {
 			await updateLoginPreference.mutateAsync({
 				body: {
@@ -480,7 +493,7 @@ export function OAuth() {
 						<Switch
 							id="preferred-sso-redirect"
 							checked={autoRedirectToSso}
-							disabled={configuredProviders.length === 0}
+							disabled={configuredProviders.length === 0 || !canWrite}
 							onCheckedChange={(checked) => {
 								setLoginPreferenceDraft({
 									auto_redirect_to_sso: checked,
@@ -506,7 +519,7 @@ export function OAuth() {
 									default_sso_provider: value,
 								})
 							}
-							disabled={configuredProviders.length === 0}
+							disabled={configuredProviders.length === 0 || !canWrite}
 						>
 							<SelectTrigger id="preferred-sso-provider">
 								<SelectValue placeholder="Select a configured provider" />
@@ -538,6 +551,7 @@ export function OAuth() {
 						onClick={saveLoginPreference}
 						disabled={
 							updateLoginPreference.isPending ||
+							!canWrite ||
 							(autoRedirectToSso && !defaultSsoProvider)
 						}
 					>
@@ -585,6 +599,7 @@ export function OAuth() {
 						message: result.message,
 					};
 				}}
+				canWrite={canWrite}
 			>
 				<div className="space-y-4">
 					<div className="space-y-2">
@@ -723,6 +738,7 @@ export function OAuth() {
 						message: result.message,
 					};
 				}}
+				canWrite={canWrite}
 			>
 				<div className="space-y-4">
 					<div className="space-y-2">
@@ -848,6 +864,7 @@ export function OAuth() {
 						message: result.message,
 					};
 				}}
+				canWrite={canWrite}
 			>
 				<div className="space-y-4">
 					<div className="space-y-2">

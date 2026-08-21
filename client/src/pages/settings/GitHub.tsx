@@ -45,7 +45,11 @@ import {
 	type GitHubConfigResponse,
 } from "@/hooks/useGitHub";
 
-export function GitHub() {
+interface GitHubProps {
+	canWrite?: boolean;
+}
+
+export function GitHub({ canWrite = true }: GitHubProps) {
 	const [config, setConfig] = useState<GitHubConfigResponse | null>(null);
 	const [saving, setSaving] = useState(false);
 	const [testingToken, setTestingToken] = useState(false);
@@ -111,6 +115,7 @@ export function GitHub() {
 
 	// Validate token and load repositories
 	const handleTokenValidation = async () => {
+		if (!canWrite) return;
 		if (!token.trim()) {
 			toast.error("Please enter a GitHub Personal Access Token");
 			return;
@@ -193,6 +198,7 @@ export function GitHub() {
 
 	// Create new repository
 	const handleCreateRepository = async () => {
+		if (!canWrite) return;
 		if (!newRepoName.trim()) {
 			toast.error("Please enter a repository name");
 			return;
@@ -241,6 +247,7 @@ export function GitHub() {
 
 	// Configure GitHub integration
 	const handleConfigure = async () => {
+		if (!canWrite) return;
 		// Token must be saved to configure
 		if (!config?.token_saved && !savedToken) {
 			toast.error("Please validate your token first");
@@ -258,6 +265,7 @@ export function GitHub() {
 
 	// Save configuration (always replaces workspace with remote)
 	const handleSaveConfig = async () => {
+		if (!canWrite) return;
 		setSaving(true);
 
 		try {
@@ -284,6 +292,7 @@ export function GitHub() {
 
 	// Disconnect GitHub integration
 	const handleDisconnect = async () => {
+		if (!canWrite) return;
 		setSaving(true);
 		setShowDisconnectConfirm(false);
 
@@ -357,7 +366,7 @@ export function GitHub() {
 										onClick={() =>
 											setShowDisconnectConfirm(true)
 										}
-										disabled={saving}
+											disabled={saving || !canWrite}
 									>
 										{saving ? (
 											<Loader2 className="h-4 w-4 animate-spin" />
@@ -400,18 +409,19 @@ export function GitHub() {
 												: "ghp_xxxxxxxxxxxxxxxxxxxx"
 										}
 										value={token}
-										onChange={(e) => {
-											setToken(e.target.value);
+											onChange={(e) => {
+												setToken(e.target.value);
 											// Only invalidate if we actually had a validated token from manual validation
 											// Don't clear if token was just saved (not manually validated)
 											if (tokenValid === true) {
 												setTokenValid(null);
-											}
-										}}
-									/>
+												}
+											}}
+											disabled={!canWrite}
+										/>
 									<Button
 										onClick={handleTokenValidation}
-										disabled={testingToken || !token.trim()}
+											disabled={testingToken || !token.trim() || !canWrite}
 										variant={
 											tokenValid === true
 												? "default"
@@ -466,18 +476,20 @@ export function GitHub() {
 										<Button
 											variant="ghost"
 											size="sm"
-											onClick={() =>
-												setShowCreateRepo(true)
-											}
-										>
+												onClick={() =>
+													setShowCreateRepo(true)
+												}
+												disabled={!canWrite}
+											>
 											<Plus className="h-4 w-4 mr-1" />
 											Create New
 										</Button>
 									</div>
 									<Select
-										value={selectedRepo}
-										onValueChange={handleRepoSelection}
-									>
+											value={selectedRepo}
+											onValueChange={handleRepoSelection}
+											disabled={!canWrite}
+										>
 										<SelectTrigger id="repository">
 											<SelectValue placeholder="Select a repository" />
 										</SelectTrigger>
@@ -511,9 +523,9 @@ export function GitHub() {
 									<Select
 										value={selectedBranch}
 										onValueChange={setSelectedBranch}
-										disabled={
-											!selectedRepo || loadingBranches
-										}
+											disabled={
+												!selectedRepo || loadingBranches || !canWrite
+											}
 									>
 										<SelectTrigger id="branch">
 											{loadingBranches ? (
@@ -560,8 +572,9 @@ export function GitHub() {
 								<Button
 									onClick={handleConfigure}
 									disabled={
-										saving ||
-										!selectedRepo ||
+											saving ||
+											!canWrite ||
+											!selectedRepo ||
 										(!config?.token_saved &&
 											!token.trim()) ||
 										(!config?.token_saved &&
@@ -631,9 +644,10 @@ export function GitHub() {
 							<Input
 								id="new-repo-name"
 								placeholder="my-repository"
-								value={newRepoName}
-								onChange={(e) => setNewRepoName(e.target.value)}
-							/>
+									value={newRepoName}
+									onChange={(e) => setNewRepoName(e.target.value)}
+									disabled={!canWrite}
+								/>
 						</div>
 
 						<div className="space-y-2">
@@ -643,11 +657,12 @@ export function GitHub() {
 							<Input
 								id="new-repo-desc"
 								placeholder="A brief description"
-								value={newRepoDescription}
+									value={newRepoDescription}
 								onChange={(e) =>
 									setNewRepoDescription(e.target.value)
-								}
-							/>
+									}
+									disabled={!canWrite}
+								/>
 						</div>
 
 						<div className="flex items-center space-x-2">
@@ -655,11 +670,12 @@ export function GitHub() {
 								type="checkbox"
 								id="new-repo-private"
 								checked={newRepoPrivate}
-								onChange={(e) =>
-									setNewRepoPrivate(e.target.checked)
-								}
-								className="h-4 w-4"
-							/>
+									onChange={(e) =>
+										setNewRepoPrivate(e.target.checked)
+									}
+									disabled={!canWrite}
+									className="h-4 w-4"
+								/>
 							<Label
 								htmlFor="new-repo-private"
 								className="text-sm font-normal"
@@ -678,7 +694,7 @@ export function GitHub() {
 						</Button>
 						<Button
 							onClick={handleCreateRepository}
-							disabled={!newRepoName.trim() || creatingRepo}
+								disabled={!newRepoName.trim() || creatingRepo || !canWrite}
 						>
 							{creatingRepo ? (
 								<>
@@ -711,14 +727,14 @@ export function GitHub() {
 						<Button
 							variant="outline"
 							onClick={() => setShowDisconnectConfirm(false)}
-							disabled={saving}
+								disabled={saving || !canWrite}
 						>
 							Cancel
 						</Button>
 						<Button
 							variant="destructive"
 							onClick={handleDisconnect}
-							disabled={saving}
+								disabled={saving || !canWrite}
 						>
 							{saving ? (
 								<>

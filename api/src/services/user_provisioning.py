@@ -18,6 +18,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.constants import (
+    ORGANIZATION_MEMBER_ROLE_ID,
     PLATFORM_ADMIN_ROLE_ID,
     PLATFORM_OPERATOR_ROLE_ID,
     PROVIDER_ORG_ID,
@@ -91,6 +92,32 @@ async def ensure_user_provisioned(
 
     if user:
         logger.info(f"Found existing user: {log_safe(email)}")
+        changed = await sync_platform_admin_role(
+            db,
+            user_id=user.id,
+            enabled=user.is_superuser and not user.is_system,
+        )
+        changed = (
+            await sync_organization_member_role(
+                db,
+                user_id=user.id,
+                organization_id=user.organization_id,
+                is_system=user.is_system,
+            )
+            or changed
+        )
+        changed = (
+            await ensure_platform_operator_role(
+                db,
+                user_id=user.id,
+                organization_id=user.organization_id,
+                is_superuser=user.is_superuser,
+                is_system=user.is_system,
+            )
+            or changed
+        )
+        if changed:
+            await db.commit()
         return ProvisioningResult(
             user=user,
             is_platform_admin=user.is_superuser,
@@ -106,7 +133,9 @@ async def ensure_user_provisioned(
 
     if is_first_user:
         # First user in system - create as superuser
-        logger.info(f"First user login detected! Auto-promoting {log_safe(email)} to superuser")
+        logger.info(
+            f"First user login detected! Auto-promoting {log_safe(email)} to superuser"
+        )
 
         user = await user_repo.create_user(
             email=email,
@@ -118,14 +147,12 @@ async def ensure_user_provisioned(
             db,
             user_id=user.id,
             enabled=True,
-            assigned_by="system@internal.gobifrost.com",
         )
-        await sync_platform_operator_role(
+        await sync_organization_member_role(
             db,
             user_id=user.id,
             organization_id=user.organization_id,
-            is_platform_admin=True,
-            assigned_by="system@internal.gobifrost.com",
+            is_system=user.is_system,
         )
         await db.commit()
         await db.refresh(user)
@@ -156,7 +183,9 @@ async def ensure_user_provisioned(
             f"Contact your administrator to be added manually."
         )
 
-    logger.info(f"Found matching organization: {log_safe(matched_org.name)} with domain {log_safe(matched_org.domain)}")
+    logger.info(
+        f"Found matching organization: {log_safe(matched_org.name)} with domain {log_safe(matched_org.domain)}"
+    )
 
     # Create new ORG user
     user = await user_repo.create_user(
@@ -165,12 +194,18 @@ async def ensure_user_provisioned(
         is_superuser=False,
         organization_id=matched_org.id,
     )
-    await sync_platform_operator_role(
+    await sync_organization_member_role(
         db,
         user_id=user.id,
-        organization_id=matched_org.id,
-        is_platform_admin=False,
-        assigned_by="system@internal.gobifrost.com",
+        organization_id=user.organization_id,
+        is_system=user.is_system,
+    )
+    await ensure_platform_operator_role(
+        db,
+        user_id=user.id,
+        organization_id=user.organization_id,
+        is_superuser=user.is_superuser,
+        is_system=user.is_system,
     )
     await db.commit()
     await db.refresh(user)
@@ -190,19 +225,18 @@ async def sync_platform_admin_role(
     *,
     user_id: UUID,
     enabled: bool,
-    assigned_by: str,
 ) -> bool:
     """Keep the legacy administrator bit and built-in role in sync."""
 
     from sqlalchemy import delete, select
 
-    from src.models import UserRole
+    from src.models.orm.role_assignments import RoleAssignment, RoleAssignmentBoundary
 
     assignment = (
         await db.execute(
-            select(UserRole).where(
-                UserRole.user_id == user_id,
-                UserRole.role_id == PLATFORM_ADMIN_ROLE_ID,
+            select(RoleAssignment).where(
+                RoleAssignment.user_id == user_id,
+                RoleAssignment.role_id == PLATFORM_ADMIN_ROLE_ID,
             )
         )
     ).scalar_one_or_none()
@@ -210,66 +244,133 @@ async def sync_platform_admin_role(
         if assignment is not None:
             return False
         db.add(
-            UserRole(
+            RoleAssignment(
                 user_id=user_id,
                 role_id=PLATFORM_ADMIN_ROLE_ID,
-                assigned_by=assigned_by,
+                boundaries=[RoleAssignmentBoundary(boundary_kind="platform")],
             )
         )
         return True
     if assignment is None:
         return False
     await db.execute(
-        delete(UserRole).where(
-            UserRole.user_id == user_id,
-            UserRole.role_id == PLATFORM_ADMIN_ROLE_ID,
+        delete(RoleAssignment).where(
+            RoleAssignment.user_id == user_id,
+            RoleAssignment.role_id == PLATFORM_ADMIN_ROLE_ID,
         )
     )
     return True
 
 
-async def sync_platform_operator_role(
+async def ensure_platform_operator_role(
     db: AsyncSession,
     *,
     user_id: UUID,
     organization_id: UUID | None,
-    is_platform_admin: bool,
-    assigned_by: str,
+    is_superuser: bool,
+    is_system: bool,
 ) -> bool:
-    """Maintain the interim provider-staff Platform Operator assignment."""
+    """Give non-admin provider staff the sticky support Role once.
 
-    from sqlalchemy import delete, select
+    This preserves the access provider-organization membership historically
+    supplied while authorization moves to explicit Roles. The assignment is
+    intentionally not removed by a later organization move; after migration,
+    Role administration—not a legacy membership side effect—is authoritative.
+    """
 
-    from src.models import UserRole
+    from sqlalchemy import select
 
-    should_assign = organization_id == PROVIDER_ORG_ID and not is_platform_admin
+    from src.models.orm.organizations import Organization
+    from src.models.orm.role_assignments import RoleAssignment, RoleAssignmentBoundary
+
+    if is_superuser or is_system or organization_id is None:
+        return False
     assignment = (
         await db.execute(
-            select(UserRole).where(
-                UserRole.user_id == user_id,
-                UserRole.role_id == PLATFORM_OPERATOR_ROLE_ID,
+            select(RoleAssignment).where(
+                RoleAssignment.user_id == user_id,
+                RoleAssignment.role_id == PLATFORM_OPERATOR_ROLE_ID,
             )
         )
     ).scalar_one_or_none()
-    if not should_assign:
+    if assignment is not None:
+        return False
+    is_provider = await db.scalar(
+        select(Organization.is_provider).where(Organization.id == organization_id)
+    )
+    if is_provider is not True:
+        return False
+    db.add(
+        RoleAssignment(
+            user_id=user_id,
+            role_id=PLATFORM_OPERATOR_ROLE_ID,
+            boundaries=[RoleAssignmentBoundary(boundary_kind="managed_organizations")],
+        )
+    )
+    return True
+
+
+async def sync_organization_member_role(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    organization_id: UUID | None,
+    is_system: bool,
+) -> bool:
+    """Ensure every human organization member has the baseline Role there."""
+
+    from sqlalchemy import delete, select
+    from sqlalchemy.orm import selectinload
+
+    from src.models.orm.role_assignments import RoleAssignment, RoleAssignmentBoundary
+
+    assignment = (
+        await db.execute(
+            select(RoleAssignment)
+            .options(selectinload(RoleAssignment.boundaries))
+            .where(
+                RoleAssignment.user_id == user_id,
+                RoleAssignment.role_id == ORGANIZATION_MEMBER_ROLE_ID,
+            )
+        )
+    ).scalar_one_or_none()
+    if is_system or organization_id is None:
         if assignment is None:
             return False
         await db.execute(
-            delete(UserRole).where(
-                UserRole.user_id == user_id,
-                UserRole.role_id == PLATFORM_OPERATOR_ROLE_ID,
+            delete(RoleAssignment).where(RoleAssignment.id == assignment.id)
+        )
+        return True
+
+    if assignment is None:
+        db.add(
+            RoleAssignment(
+                user_id=user_id,
+                role_id=ORGANIZATION_MEMBER_ROLE_ID,
+                boundaries=[
+                    RoleAssignmentBoundary(
+                        boundary_kind="organization",
+                        organization_id=organization_id,
+                    )
+                ],
             )
         )
         return True
-    if assignment is not None:
+
+    current = [
+        boundary
+        for boundary in assignment.boundaries
+        if boundary.boundary_kind == "organization"
+        and boundary.organization_id == organization_id
+    ]
+    if len(current) == 1 and len(assignment.boundaries) == 1:
         return False
-    db.add(
-        UserRole(
-            user_id=user_id,
-            role_id=PLATFORM_OPERATOR_ROLE_ID,
-            assigned_by=assigned_by,
+    assignment.boundaries = [
+        RoleAssignmentBoundary(
+            boundary_kind="organization",
+            organization_id=organization_id,
         )
-    )
+    ]
     return True
 
 
@@ -283,7 +384,7 @@ async def validate_platform_admin_removal(
 
     from sqlalchemy import select
 
-    from src.models import UserRole
+    from src.models.orm.role_assignments import RoleAssignment
 
     requested = set(user_ids)
     if not requested:
@@ -291,15 +392,17 @@ async def validate_platform_admin_removal(
     active_admin_ids = set(
         (
             await db.execute(
-                select(UserRole.user_id)
-                .join(User, User.id == UserRole.user_id)
+                select(RoleAssignment.user_id)
+                .join(User, User.id == RoleAssignment.user_id)
                 .where(
-                    UserRole.role_id == PLATFORM_ADMIN_ROLE_ID,
+                    RoleAssignment.role_id == PLATFORM_ADMIN_ROLE_ID,
                     User.is_active.is_(True),
                     User.is_system.is_(False),
                 )
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
     removals = active_admin_ids & requested
     if not removals:
@@ -325,32 +428,37 @@ async def get_user_roles(
         List of role names
     """
     from sqlalchemy import select
-    from src.models import Role, UserRole
+    from src.models.orm.role_assignments import RoleAssignment
+    from src.models.orm.users import Role
 
     result = await db.execute(
         select(Role.name)
-        .join(UserRole, UserRole.role_id == Role.id)
-        .where(UserRole.user_id == user_id)
+        .join(RoleAssignment, RoleAssignment.role_id == Role.id)
+        .where(RoleAssignment.user_id == user_id)
     )
     return list(result.scalars().all())
 
 
-async def get_user_scopes(db: AsyncSession, user_id: UUID) -> list[str]:
-    """Return the validated union of scopes granted by assigned roles."""
+async def get_user_capabilities(db: AsyncSession, user_id: UUID) -> list[str]:
+    """Return the temporary unbounded capability union for legacy token claims.
+
+    New human authorization must use the boundary-aware central evaluator.
+    """
 
     from sqlalchemy import select
 
     from shared.authorization_scopes import validate_role_scopes
-    from src.models import Role, UserRole
+    from src.models.orm.role_assignments import RoleAssignment
+    from src.models.orm.users import Role
 
     result = await db.execute(
-        select(Role.scopes)
-        .join(UserRole, UserRole.role_id == Role.id)
-        .where(UserRole.user_id == user_id)
+        select(Role.capabilities)
+        .join(RoleAssignment, RoleAssignment.role_id == Role.id)
+        .where(RoleAssignment.user_id == user_id)
     )
     scopes = {
         scope
-        for role_scopes in result.scalars().all()
-        for scope in (role_scopes or [])
+        for role_capabilities in result.scalars().all()
+        for scope in (role_capabilities or [])
     }
     return validate_role_scopes(scopes, custom_role=False)

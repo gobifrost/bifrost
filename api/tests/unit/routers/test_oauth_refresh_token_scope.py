@@ -26,6 +26,7 @@ from src.core.auth import ExecutionContext
 from src.core.principal import UserPrincipal
 from src.models.orm.oauth import OAuthProvider, OAuthToken
 from src.models.orm.organizations import Organization
+from src.services.authorization import AuthorizationBoundary, AuthorizationContext
 
 
 async def _make_org(db_session, name: str) -> Organization:
@@ -49,7 +50,25 @@ def _principal(org_id):
     )
 
 
-async def _make_global_cc_provider(db_session, *, connection_name: str) -> OAuthProvider:
+def _authorization(boundary: AuthorizationBoundary) -> AuthorizationContext:
+    principal = UserPrincipal(
+        user_id=uuid4(),
+        email="admin@gobifrost.com",
+        name="Admin User",
+        organization_id=uuid4(),
+    )
+    return AuthorizationContext(
+        requester=principal,
+        effective_actor=principal,
+        selected_boundary=boundary,
+        effective_capabilities=frozenset({"integrations.readwrite"}),
+        grant_sources=(),
+    )
+
+
+async def _make_global_cc_provider(
+    db_session, *, connection_name: str
+) -> OAuthProvider:
     """A global (organization_id IS NULL) client_credentials provider."""
     provider = OAuthProvider(
         provider_name=connection_name,
@@ -75,7 +94,9 @@ async def test_refresh_of_global_connection_stores_token_as_global(db_session):
     from src.routers.oauth_connections import refresh_token
 
     connection_name = f"halo_{uuid4().hex[:8]}"
-    provider = await _make_global_cc_provider(db_session, connection_name=connection_name)
+    provider = await _make_global_cc_provider(
+        db_session, connection_name=connection_name
+    )
 
     # Caller is a platform admin whose home org is a concrete (non-global) org —
     # this is the Covi-admin scenario that caused the re-stamp.
@@ -95,16 +116,24 @@ async def test_refresh_of_global_connection_stores_token_as_global(db_session):
         "src.routers.oauth_connections.refresh_oauth_token_http",
         new=AsyncMock(return_value=outcome),
     ):
-        resp = await refresh_token(connection_name, ctx, ctx.user)
+        resp = await refresh_token(
+            connection_name,
+            ctx,
+            _authorization(AuthorizationBoundary.platform()),
+        )
 
     assert resp.success is True
     await db_session.flush()
 
     rows = (
-        await db_session.execute(
-            select(OAuthToken).where(OAuthToken.provider_id == provider.id)
+        (
+            await db_session.execute(
+                select(OAuthToken).where(OAuthToken.provider_id == provider.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     assert len(rows) == 1, "refresh should produce exactly one org-level token row"
     token = rows[0]
@@ -122,7 +151,9 @@ async def test_refresh_updates_existing_global_token_in_place(db_session):
     from src.routers.oauth_connections import refresh_token
 
     connection_name = f"halo_{uuid4().hex[:8]}"
-    provider = await _make_global_cc_provider(db_session, connection_name=connection_name)
+    provider = await _make_global_cc_provider(
+        db_session, connection_name=connection_name
+    )
 
     existing = OAuthToken(
         organization_id=None,
@@ -151,16 +182,26 @@ async def test_refresh_updates_existing_global_token_in_place(db_session):
         "src.routers.oauth_connections.refresh_oauth_token_http",
         new=AsyncMock(return_value=outcome),
     ):
-        await refresh_token(connection_name, ctx, ctx.user)
+        await refresh_token(
+            connection_name,
+            ctx,
+            _authorization(AuthorizationBoundary.platform()),
+        )
 
     await db_session.flush()
     rows = (
-        await db_session.execute(
-            select(OAuthToken).where(OAuthToken.provider_id == provider.id)
+        (
+            await db_session.execute(
+                select(OAuthToken).where(OAuthToken.provider_id == provider.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
-    assert len(rows) == 1, "must update the existing global token, not create a second row"
+    assert len(rows) == 1, (
+        "must update the existing global token, not create a second row"
+    )
     assert rows[0].organization_id is None
 
 
@@ -203,14 +244,22 @@ async def test_refresh_of_org_specific_connection_stays_org_scoped(db_session):
         "src.routers.oauth_connections.refresh_oauth_token_http",
         new=AsyncMock(return_value=outcome),
     ):
-        await refresh_token(connection_name, ctx, ctx.user)
+        await refresh_token(
+            connection_name,
+            ctx,
+            _authorization(AuthorizationBoundary.organization(org.id)),
+        )
 
     await db_session.flush()
     rows = (
-        await db_session.execute(
-            select(OAuthToken).where(OAuthToken.provider_id == provider.id)
+        (
+            await db_session.execute(
+                select(OAuthToken).where(OAuthToken.provider_id == provider.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     assert len(rows) == 1
     assert rows[0].organization_id == org.id, (

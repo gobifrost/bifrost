@@ -42,6 +42,8 @@ from src.models.enums import MessageRole
 from src.models.orm import Artifact, Agent, Conversation, Message, MessageAttachment
 from src.services.agent_executor import AgentExecutor
 from src.services.ai_model_service import AIModelService
+from src.services.authorization import CurrentAuthorizationContext
+from src.services.agent_router import chat_agent_repository_scope
 from src.services.chat_attachments import (
     MAX_FILES_PER_MESSAGE,
     ChatAttachmentError,
@@ -94,6 +96,7 @@ async def create_conversation(
     request: ConversationCreate,
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> ConversationPublic:
     """Create a new conversation, optionally with an agent."""
     agent = None
@@ -115,7 +118,7 @@ async def create_conversation(
             )
 
         # Check access based on agent's access level
-        has_access = await _check_agent_access(db, user, agent)
+        has_access = await _check_agent_access(db, user, agent, authorization)
         if not has_access:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -697,6 +700,7 @@ async def send_message(
     request: ChatRequest,
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> ChatResponse:
     """
     Send a message to a conversation (non-streaming).
@@ -730,11 +734,25 @@ async def send_message(
             detail="Builder conversations must be changed through a Builder turn.",
         )
 
-    if conversation.agent and not await _check_agent_access(db, user, conversation.agent):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have access to this agent",
+    if conversation.agent:
+        org_id, is_superuser = chat_agent_repository_scope(
+            user=user,
+            authorization_context=authorization,
         )
+        from src.repositories.agents import AgentRepository
+
+        repo = AgentRepository(
+            db,
+            org_id=org_id,
+            user_id=user.user_id,
+            bypass_resource_roles=is_superuser,
+            is_external=user.is_external,
+        )
+        if await repo.get_agent_with_access_check(conversation.agent.id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have access to this agent",
+            )
 
     # Agent is now optional - agentless chat uses default system prompt
 
@@ -757,6 +775,7 @@ async def send_message(
         user_message=request.message,
         stream=False,
         user=user,
+        authorization_context=authorization,
         attachment_ids=request.attachment_ids,
         model_profile_id=request.model_profile_id,
     ):
@@ -796,7 +815,12 @@ async def send_message(
 # =============================================================================
 
 
-async def _check_agent_access(db: DbSession, user, agent: Agent) -> bool:
+async def _check_agent_access(
+    db: DbSession,
+    user,
+    agent: Agent,
+    authorization: CurrentAuthorizationContext,
+) -> bool:
     """Check if user has access to an agent.
 
     Delegates to ``AgentRepository.get(id=...)`` — the same gate the UI
@@ -810,11 +834,15 @@ async def _check_agent_access(db: DbSession, user, agent: Agent) -> bool:
     """
     from src.repositories.agents import AgentRepository
 
+    org_id, bypass_resource_roles = chat_agent_repository_scope(
+        user=user,
+        authorization_context=authorization,
+    )
     repo = AgentRepository(
         db,
-        org_id=user.organization_id,
+        org_id=org_id,
         user_id=user.user_id,
-        is_superuser=user.is_platform_admin,
+        bypass_resource_roles=bypass_resource_roles,
         is_external=user.is_external,
     )
     accessible = await repo.get(id=agent.id)

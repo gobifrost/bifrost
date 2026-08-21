@@ -585,7 +585,7 @@ class TestAgentScopeFiltering:
 
         # Create global agent (no organization_id)
         response = e2e_client.post(
-            "/api/agents",
+            "/api/agents?scope=global",
             json={
                 "name": "Global Agent",
                 "description": "A global agent for testing",
@@ -601,7 +601,7 @@ class TestAgentScopeFiltering:
 
         # Create org1 agent
         response = e2e_client.post(
-            "/api/agents",
+            f"/api/agents?scope={org1['id']}",
             json={
                 "name": "Org1 Agent",
                 "description": "An org1 agent for testing",
@@ -617,7 +617,7 @@ class TestAgentScopeFiltering:
 
         # Create org2 agent
         response = e2e_client.post(
-            "/api/agents",
+            f"/api/agents?scope={org2['id']}",
             json={
                 "name": "Org2 Agent",
                 "description": "An org2 agent for testing",
@@ -634,20 +634,21 @@ class TestAgentScopeFiltering:
         yield agents
 
         # Cleanup
+        scopes = {"global": "global", "org1": org1["id"], "org2": org2["id"]}
         for key, agent in agents.items():
             try:
                 e2e_client.delete(
-                    f"/api/agents/{agent['id']}",
+                    f"/api/agents/{agent['id']}?scope={scopes[key]}",
                     headers=platform_admin.headers,
                 )
             except Exception as e:
                 # Best-effort fixture cleanup; teardown shouldn't fail the test
                 logger.debug(f"fixture cleanup error: {e}")
 
-    def test_platform_admin_no_scope_sees_all(
+    def test_platform_admin_no_scope_defaults_to_home_context(
         self, e2e_client, platform_admin, scoped_agents
     ):
-        """Platform admin with no scope sees ALL agents."""
+        """No scope defaults to the provider home context plus Global."""
         response = e2e_client.get(
             "/api/agents",
             headers=platform_admin.headers,
@@ -656,8 +657,8 @@ class TestAgentScopeFiltering:
         agent_ids = [a["id"] for a in response.json()]
 
         assert scoped_agents["global"]["id"] in agent_ids, "Should see global agent"
-        assert scoped_agents["org1"]["id"] in agent_ids, "Should see org1 agent"
-        assert scoped_agents["org2"]["id"] in agent_ids, "Should see org2 agent"
+        assert scoped_agents["org1"]["id"] not in agent_ids
+        assert scoped_agents["org2"]["id"] not in agent_ids
 
     def test_platform_admin_scope_global_sees_only_global(
         self, e2e_client, platform_admin, scoped_agents
@@ -678,7 +679,7 @@ class TestAgentScopeFiltering:
     def test_platform_admin_scope_org_sees_only_that_org(
         self, e2e_client, platform_admin, org1, scoped_agents
     ):
-        """Platform admin with scope={org1} sees ONLY org1 agents (NOT global)."""
+        """Organization context includes authorized inherited Global Agents."""
         response = e2e_client.get(
             "/api/agents",
             params={"scope": org1["id"]},
@@ -687,8 +688,7 @@ class TestAgentScopeFiltering:
         assert response.status_code == 200
         agent_ids = [a["id"] for a in response.json()]
 
-        # KEY ASSERTION: Global should NOT be included when filtering by org
-        assert scoped_agents["global"]["id"] not in agent_ids, "Should NOT see global agent"
+        assert scoped_agents["global"]["id"] in agent_ids, "Should see global agent"
         assert scoped_agents["org1"]["id"] in agent_ids, "Should see org1 agent"
         assert scoped_agents["org2"]["id"] not in agent_ids, "Should NOT see org2 agent"
 
@@ -720,6 +720,7 @@ class TestAgentScopeFiltering:
         org2_agent_id = scoped_agents["org2"]["id"]
         response = e2e_client.get(
             f"/api/agents/{org2_agent_id}",
+            params={"scope": scoped_agents["org2"]["organization_id"]},
             headers=platform_admin.headers,
         )
         assert response.status_code == 200, (

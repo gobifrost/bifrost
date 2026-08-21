@@ -25,7 +25,16 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, LargeBinary, String, Text, text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    LargeBinary,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
@@ -33,6 +42,7 @@ from src.models.orm.base import Base
 if TYPE_CHECKING:
     from src.models.orm.solution_connection_schema import SolutionConnectionSchema
     from src.models.orm.solution_file_location import SolutionFileLocation
+    from src.models.orm.solution_role_grants import SolutionRoleGrant
 
 
 # Identity entity — a Solution install. Managed entities reference it by
@@ -142,17 +152,23 @@ class Solution(Base):
     git_connected: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
     )
-    git_repo_url: Mapped[str | None] = mapped_column(String(1024), nullable=True, default=None)
+    git_repo_url: Mapped[str | None] = mapped_column(
+        String(1024), nullable=True, default=None
+    )
 
     # Subfolder within the connected repo holding this solution's
     # bifrost.solution.yaml (omni-repo: one repo, a folder per solution).
     # None/"" => repo root (backward compatible).
-    repo_subpath: Mapped[str | None] = mapped_column(String(1024), nullable=True, default=None)
+    repo_subpath: Mapped[str | None] = mapped_column(
+        String(1024), nullable=True, default=None
+    )
 
     # Git ref (branch or tag) the connected install tracks. None => the repo's
     # default branch. Lets a consumer pin to a tag while detection still reads
     # the descriptor version: at that ref's HEAD.
-    git_ref: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
+    git_ref: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, default=None
+    )
 
     # Newest descriptor version available at the connected repo's ref HEAD, when
     # it is PEP-440-greater than the installed `version`. None => up to date /
@@ -167,7 +183,9 @@ class Solution(Base):
     logo_data: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
     logo_content_type: Mapped[str | None] = mapped_column(String(100), default=None)
     logo_thumbnail_data: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
-    logo_thumbnail_content_type: Mapped[str | None] = mapped_column(String(50), default=None)
+    logo_thumbnail_content_type: Mapped[str | None] = mapped_column(
+        String(50), default=None
+    )
     logo_thumbnail_version: Mapped[str | None] = mapped_column(String(64), default=None)
 
     # Long-form README markdown (Task 6). Rendered on the solution's README tab.
@@ -189,6 +207,12 @@ class Solution(Base):
         cascade="all, delete-orphan",
         order_by="SolutionFileLocation.position",
         lazy="selectin",
+    )
+    role_grants: Mapped[list["SolutionRoleGrant"]] = relationship(
+        back_populates="solution",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="SolutionRoleGrant.created_at",
     )
 
     created_at: Mapped[datetime] = mapped_column(

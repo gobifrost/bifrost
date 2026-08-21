@@ -31,12 +31,17 @@ class BuilderTurnArtifactStorage:
         self.dispatch_attempt = dispatch_attempt
         self.settings = settings or get_settings()
         self.storage = S3StorageClient(self.settings)
-        self.key = (
-            f"{_ROOT}/{self.turn_id}/{self.dispatch_attempt}/output.zip"
-        )
+        self.prefix = f"{_ROOT}/{self.turn_id}/{self.dispatch_attempt}/"
+        self.key = f"{self.prefix}output.zip"
 
-    async def write_output(
+    def tool_workspace_key(self, execution_id: UUID | str) -> str:
+        """Return an execution-fenced key for an intermediate tool snapshot."""
+
+        return f"{self.prefix}tools/{UUID(str(execution_id))}/workspace.zip"
+
+    async def _write(
         self,
+        key: str,
         chunks: AsyncIterator[bytes],
         *,
         max_bytes: int,
@@ -54,9 +59,39 @@ class BuilderTurnArtifactStorage:
                 yield chunk
 
         return await self.storage.put_object_from_chunks(
-            self.key,
+            key,
             bounded(),
             content_type="application/zip",
+        )
+
+    async def write_output(
+        self,
+        chunks: AsyncIterator[bytes],
+        *,
+        max_bytes: int,
+    ) -> tuple[str, int]:
+        return await self._write(self.key, chunks, max_bytes=max_bytes)
+
+    async def write_tool_workspace(
+        self,
+        execution_id: UUID | str,
+        chunks: AsyncIterator[bytes],
+        *,
+        max_bytes: int,
+    ) -> tuple[str, int]:
+        return await self._write(
+            self.tool_workspace_key(execution_id),
+            chunks,
+            max_bytes=max_bytes,
+        )
+
+    def iter_tool_workspace(
+        self,
+        execution_id: UUID | str,
+    ) -> AsyncIterator[bytes]:
+        return self.storage.iter_object_chunks(
+            self.tool_workspace_key(execution_id),
+            chunk_size=_CHUNK_SIZE,
         )
 
     async def write_from_path(
@@ -140,8 +175,25 @@ class BuilderTurnArtifactStorage:
             )
 
     async def delete(self) -> None:
+        """Delete final output and every execution-scoped tool snapshot."""
+
         async with self.storage.get_client() as client:
-            await client.delete_object(Bucket=self.settings.s3_bucket, Key=self.key)
+            while True:
+                response = await client.list_objects_v2(
+                    Bucket=self.settings.s3_bucket,
+                    Prefix=self.prefix,
+                )
+                objects = [
+                    {"Key": key}
+                    for entry in response.get("Contents", [])
+                    if (key := entry.get("Key"))
+                ]
+                if not objects:
+                    return
+                await client.delete_objects(
+                    Bucket=self.settings.s3_bucket,
+                    Delete={"Objects": objects, "Quiet": True},
+                )
 
 
 __all__ = [

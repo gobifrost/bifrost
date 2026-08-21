@@ -26,8 +26,11 @@ BUILDER_WORKSPACE_TOOL_IDS = (
     "make_directory",
     "validate_solution",
 )
+CLOUDFLARE_WORKSPACE_COMMAND_TOOL_ID = "execute_command"
+TEST_SOLUTION_BUILD_TOOL_ID = "test_solution_build"
 READ_SKILL_ASSET_TOOL_ID = "bifrost_read_agent_skill_file"
 SANDBOX_BUILDER_TOOL_IDS = frozenset(BUILDER_WORKSPACE_TOOL_IDS) | {
+    CLOUDFLARE_WORKSPACE_COMMAND_TOOL_ID,
     READ_SKILL_ASSET_TOOL_ID
 }
 MAX_SKILL_ASSET_BYTES = 1_048_576
@@ -39,6 +42,7 @@ class BuilderWorkspaceToolResult:
 
     content: str
     structured_content: dict[str, Any] | None = None
+    display_content: str | None = None
 
     def runner_payload(self) -> dict[str, Any]:
         return {
@@ -54,7 +58,11 @@ def success_result(
     content = display_text
     if data:
         content = f"{display_text}\n\n{json.dumps(data, indent=2, default=str)}"
-    return BuilderWorkspaceToolResult(content=content, structured_content=data)
+    return BuilderWorkspaceToolResult(
+        content=content,
+        structured_content=data,
+        display_content=display_text,
+    )
 
 
 def error_result(
@@ -65,6 +73,7 @@ def error_result(
     return BuilderWorkspaceToolResult(
         content=f"Error: {message}\n\n{json.dumps(data, indent=2, default=str)}",
         structured_content=data,
+        display_content=f"Error: {message}",
     )
 
 
@@ -224,6 +233,10 @@ async def execute_builder_workspace_tool(
                     "content": text,
                 },
             )
+        if name == CLOUDFLARE_WORKSPACE_COMMAND_TOOL_ID:
+            return error_result(
+                "workspace command execution requires an isolated sandbox"
+            )
         return error_result(f"Builder workspace tool {name!r} is unavailable")
     except WorkspaceViolation as exc:
         return error_result(str(exc))
@@ -232,6 +245,7 @@ async def execute_builder_workspace_tool(
 __all__ = [
     "BUILDER_WORKSPACE_TOOL_IDS",
     "BuilderWorkspaceToolResult",
+    "CLOUDFLARE_WORKSPACE_COMMAND_TOOL_ID",
     "MAX_SKILL_ASSET_BYTES",
     "READ_SKILL_ASSET_TOOL_ID",
     "SANDBOX_BUILDER_TOOL_IDS",

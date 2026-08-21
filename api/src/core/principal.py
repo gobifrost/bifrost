@@ -31,6 +31,7 @@ class UserPrincipal:
     - is_superuser=true, org_id=None: System account (global scope)
     - is_superuser=false, org_id=None: INVALID (rejected at token parsing)
     """
+
     user_id: UUID
     email: str
     organization_id: UUID | None  # User's org (None for system accounts)
@@ -89,12 +90,15 @@ class UserPrincipal:
     def has_scope(self, scope: str) -> bool:
         """Whether this principal satisfies an authorization scope."""
 
-        from shared.authorization_scopes import PLATFORM_SUPERUSER_SCOPE
+        from shared.authorization_scopes import (
+            PLATFORM_SUPERUSER_SCOPE,
+            implied_scopes,
+        )
 
         return (
             self.is_superuser
             or PLATFORM_SUPERUSER_SCOPE in self.scopes
-            or scope in self.scopes
+            or scope in implied_scopes(self.scopes)
         )
 
     def has_platform_admin_grant(self) -> bool:

@@ -251,7 +251,7 @@ function PreviewBuildState({ detail }: { detail?: string }) {
 				<p className="text-sm font-medium">Building your app</p>
 				<p className="mt-1 max-w-md text-sm leading-6 text-muted-foreground">
 					{detail ??
-						"The Builder Agent is working in an isolated runner. Your conversation and source are saved as it works."}
+						"Bifrost is working in an isolated runner. Your conversation and source are saved as it works."}
 				</p>
 				<p className="mt-2 text-xs text-muted-foreground">
 					You can leave this page and return without interrupting the build.

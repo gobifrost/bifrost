@@ -68,7 +68,15 @@ function terminal(status: PlatformJobUpdate["status"]): boolean {
 	);
 }
 
-export function BuilderSettings() {
+interface BuilderSettingsProps {
+	canExecute?: boolean;
+	canWrite?: boolean;
+}
+
+export function BuilderSettings({
+	canExecute = true,
+	canWrite = canExecute,
+}: BuilderSettingsProps) {
 	const setupQuery = useQuery({
 		queryKey: setupKey,
 		queryFn: ({ signal }) => getBuilderRunnerSetup(signal),
@@ -101,11 +109,18 @@ export function BuilderSettings() {
 				setupQuery.data.active_provisioning_job_id,
 			])}
 			setup={setupQuery.data}
+			canWrite={canWrite}
 		/>
 	);
 }
 
-function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
+function BuilderSettingsContent({
+	setup,
+	canWrite,
+}: {
+	setup: BuilderRunnerSetup;
+	canWrite: boolean;
+}) {
 	const queryClient = useQueryClient();
 	const { user } = useAuth();
 	const [draft, setDraft] = useState<SetupDraft>(() => draftFromSetup(setup));
@@ -151,6 +166,7 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 
 	const saveMutation = useMutation({
 		mutationFn: (enabled: boolean) => {
+			if (!canWrite) throw new Error("Builder settings are read-only");
 			const payload: BuilderRunnerConfigSave = {
 				provider: draft.provider,
 				enabled,
@@ -186,7 +202,10 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 	});
 
 	const provisionMutation = useMutation({
-		mutationFn: provisionBuilderRunner,
+		mutationFn: () => {
+			if (!canWrite) throw new Error("Builder runner setup is read-only");
+			return provisionBuilderRunner();
+		},
 		onSuccess: (job) => {
 			setJobId(job.job_id);
 			setLiveJob(null);
@@ -208,6 +227,7 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 		jobId && (!provisioningJob || !terminal(provisioningJob.status)),
 	);
 	const canProvision = Boolean(
+		canWrite &&
 		config &&
 		!draftDirty &&
 		readiness?.credentials_configured &&
@@ -216,6 +236,7 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 		!provisioning,
 	);
 	const canEnable = Boolean(
+		canWrite &&
 		!draftDirty && readiness?.provisioned && readiness.connected,
 	);
 	const setupPercent = useMemo(() => {
@@ -335,6 +356,7 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 								provider: "cloudflare",
 							}))
 						}
+						disabled={!canWrite}
 					/>
 					<ProviderChoice
 						active={draft.provider === "local"}
@@ -347,6 +369,7 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 								provider: "local",
 							}))
 						}
+						disabled={!canWrite}
 					/>
 				</div>
 
@@ -362,6 +385,7 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 									accountId,
 								}))
 							}
+							disabled={!canWrite}
 							placeholder="Cloudflare account ID"
 						/>
 						<Field
@@ -374,6 +398,7 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 									apiToken,
 								}))
 							}
+							disabled={!canWrite}
 							placeholder={
 								config?.cloudflare?.api_token_set
 									? "Saved — enter only to replace"
@@ -437,7 +462,7 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 						</p>
 					)}
 					<Button
-						disabled={saveMutation.isPending || !draftDirty}
+						disabled={saveMutation.isPending || !draftDirty || !canWrite}
 						onClick={() => saveMutation.mutate(draft.enabled)}
 					>
 						{saveMutation.isPending ? (
@@ -535,6 +560,7 @@ function BuilderSettingsContent({ setup }: { setup: BuilderRunnerSetup }) {
 						checked={draft.enabled}
 						disabled={!canEnable || saveMutation.isPending}
 						onCheckedChange={(enabled) => {
+							if (!canWrite) return;
 							setDraft((current) => ({ ...current, enabled }));
 							saveMutation.mutate(enabled);
 						}}
@@ -661,12 +687,14 @@ function ProviderChoice({
 	title,
 	detail,
 	onClick,
+	disabled = false,
 }: {
 	active: boolean;
 	icon: typeof Cloud;
 	title: string;
 	detail: string;
 	onClick: () => void;
+	disabled?: boolean;
 }) {
 	return (
 		<button
@@ -677,9 +705,10 @@ function ProviderChoice({
 				active
 					? "border-primary bg-primary/5 ring-1 ring-primary/20"
 					: "hover:bg-muted/40",
-			)}
-			onClick={onClick}
-		>
+				)}
+				onClick={onClick}
+				disabled={disabled}
+			>
 			<span
 				className={cn(
 					"flex h-9 w-9 shrink-0 items-center justify-center rounded-xl",
@@ -712,6 +741,7 @@ function Field({
 	onChange,
 	placeholder,
 	type = "text",
+	disabled = false,
 }: {
 	id: string;
 	label: string;
@@ -719,6 +749,7 @@ function Field({
 	onChange: (value: string) => void;
 	placeholder: string;
 	type?: "text" | "password";
+	disabled?: boolean;
 }) {
 	return (
 		<div className="space-y-2">
@@ -727,9 +758,10 @@ function Field({
 				id={id}
 				type={type}
 				value={value}
-				placeholder={placeholder}
-				onChange={(event) => onChange(event.target.value)}
-			/>
+					placeholder={placeholder}
+					onChange={(event) => onChange(event.target.value)}
+					disabled={disabled}
+				/>
 		</div>
 	);
 }

@@ -77,8 +77,20 @@ async def bifrost_read_agent_skill_file(context: Any, path: str) -> ToolResult:
         return error_result(str(exc))
 
     try:
-        builder_workspace = getattr(context, "builder_workspace", None)
-        if builder_workspace is not None:
+        local_skill_root = getattr(context, "agent_skill_root", None)
+        if local_skill_root is not None:
+            from pathlib import Path
+
+            root = Path(local_skill_root).resolve()
+            candidate = (root / path).resolve()
+            if candidate == root or root not in candidate.parents:
+                return error_result("path escapes the bundle root")
+            if not candidate.is_file():
+                return error_result(
+                    "skill asset could not be read: FileNotFoundError"
+                )
+            content = candidate.read_bytes()
+        elif (builder_workspace := getattr(context, "builder_workspace", None)) is not None:
             from src.services.builder.fs_tools import (
                 WorkspaceRoot,
                 WorkspaceViolation,

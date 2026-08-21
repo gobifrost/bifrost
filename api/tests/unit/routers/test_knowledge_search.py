@@ -14,6 +14,7 @@ from src.core.principal import UserPrincipal
 from src.models.contracts.knowledge import KnowledgeSearchRequest
 from src.repositories.knowledge import KnowledgeDocument
 from src.routers.knowledge import search_knowledge
+from src.services.authorization import AuthorizationBoundary, AuthorizationContext
 
 
 def _user(*, is_superuser: bool = False, is_external: bool = False) -> UserPrincipal:
@@ -23,6 +24,25 @@ def _user(*, is_superuser: bool = False, is_external: bool = False) -> UserPrinc
         organization_id=None if is_superuser else uuid4(),
         is_superuser=is_superuser,
         is_external=is_external,
+    )
+
+
+def _authorization(
+    user: UserPrincipal,
+    *,
+    capabilities: set[str] | None = None,
+    organization_id=None,
+) -> AuthorizationContext:
+    return AuthorizationContext(
+        requester=user,
+        effective_actor=user,
+        selected_boundary=(
+            AuthorizationBoundary.organization(organization_id)
+            if organization_id is not None
+            else AuthorizationBoundary.platform()
+        ),
+        effective_capabilities=frozenset(capabilities or {"knowledge.read"}),
+        grant_sources=(),
     )
 
 
@@ -68,6 +88,7 @@ async def test_agent_bound_search_uses_global_agent_scope_for_regular_user() -> 
             ),
             AsyncMock(),
             user,
+            _authorization(user, organization_id=None),
         )
 
     get_agent.assert_awaited_once_with(agent_id)
@@ -80,6 +101,7 @@ async def test_agent_bound_search_uses_global_agent_scope_for_regular_user() -> 
 
 @pytest.mark.asyncio
 async def test_agent_bound_search_rejects_namespace_outside_agent_grants() -> None:
+    user = _user()
     agent_id = uuid4()
     agent = SimpleNamespace(
         id=agent_id,
@@ -105,7 +127,8 @@ async def test_agent_bound_search_rejects_namespace_outside_agent_grants() -> No
                 agent_id=agent_id,
             ),
             AsyncMock(),
-            _user(),
+            user,
+            _authorization(user, organization_id=agent.organization_id),
         )
 
     assert exc.value.status_code == 403
@@ -114,6 +137,7 @@ async def test_agent_bound_search_rejects_namespace_outside_agent_grants() -> No
 
 @pytest.mark.asyncio
 async def test_agent_bound_search_hides_inaccessible_agent() -> None:
+    user = _user()
     agent_id = uuid4()
     with patch(
         "src.routers.knowledge.AgentRepository.get_agent_with_access_check",
@@ -123,19 +147,106 @@ async def test_agent_bound_search_hides_inaccessible_agent() -> None:
             await search_knowledge(
                 KnowledgeSearchRequest(query="query", agent_id=agent_id),
                 AsyncMock(),
-                _user(),
+                user,
+                _authorization(user, organization_id=user.organization_id),
             )
 
     assert exc.value.status_code == 404
 
 
 @pytest.mark.asyncio
+async def test_agent_bound_search_binds_repo_to_selected_customer_org(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    user = _user()
+    selected_org_id = uuid4()
+    agent_id = uuid4()
+    agent = SimpleNamespace(
+        id=agent_id,
+        is_active=True,
+        organization_id=selected_org_id,
+        knowledge_sources=["docs"],
+    )
+    constructed = []
+
+    class _Repo:
+        def __init__(
+            self,
+            *,
+            session,
+            org_id,
+            user_id,
+            bypass_resource_roles,
+            is_external,
+        ):
+            constructed.append(
+                {
+                    "org_id": org_id,
+                    "user_id": user_id,
+                    "bypass_resource_roles": bypass_resource_roles,
+                    "is_external": is_external,
+                }
+            )
+
+        async def get_agent_with_access_check(self, requested_agent_id):
+            assert requested_agent_id == agent_id
+            return agent
+
+    search = AsyncMock(return_value=[_document()])
+    monkeypatch.setattr("src.routers.knowledge.AgentRepository", _Repo)
+    monkeypatch.setattr("src.routers.knowledge.search_knowledge_documents", search)
+
+    await search_knowledge(
+        KnowledgeSearchRequest(query="restart service", agent_id=agent_id),
+        AsyncMock(),
+        user,
+        _authorization(user, organization_id=selected_org_id),
+    )
+
+    assert constructed[0]["org_id"] == selected_org_id
+    assert constructed[0]["bypass_resource_roles"] is False
+    assert search.await_args.kwargs["organization_id"] == selected_org_id
+
+
+@pytest.mark.asyncio
+async def test_agent_bound_search_rejects_unselected_customer_agent() -> None:
+    user = _user()
+    selected_org_id = uuid4()
+    other_org_id = uuid4()
+    agent_id = uuid4()
+    agent = SimpleNamespace(
+        id=agent_id,
+        is_active=True,
+        organization_id=other_org_id,
+        knowledge_sources=["docs"],
+    )
+
+    with (
+        patch(
+            "src.routers.knowledge.AgentRepository.get_agent_with_access_check",
+            new=AsyncMock(return_value=agent),
+        ),
+        pytest.raises(HTTPException) as exc,
+    ):
+        await search_knowledge(
+            KnowledgeSearchRequest(query="query", agent_id=agent_id),
+            AsyncMock(),
+            user,
+            _authorization(user, organization_id=selected_org_id),
+        )
+
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_direct_search_rejects_regular_user_global_scope() -> None:
+    user = _user()
     with pytest.raises(HTTPException) as exc:
         await search_knowledge(
             KnowledgeSearchRequest(query="query", scope="global"),
             AsyncMock(),
-            _user(),
+            user,
+            _authorization(user, organization_id=user.organization_id),
         )
 
     assert exc.value.status_code == 403
@@ -143,11 +254,13 @@ async def test_direct_search_rejects_regular_user_global_scope() -> None:
 
 @pytest.mark.asyncio
 async def test_external_user_cannot_use_direct_or_agent_bound_search() -> None:
+    user = _user(is_external=True)
     with pytest.raises(HTTPException) as exc:
         await search_knowledge(
             KnowledgeSearchRequest(query="query", agent_id=uuid4()),
             AsyncMock(),
-            _user(is_external=True),
+            user,
+            _authorization(user, organization_id=user.organization_id),
         )
 
     assert exc.value.status_code == 403

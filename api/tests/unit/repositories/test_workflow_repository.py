@@ -30,7 +30,7 @@ class TestWorkflowRepository:
         Uses org_id=None and is_superuser=True for system-level access
         (like old BaseRepository behavior).
         """
-        return WorkflowRepository(mock_session, org_id=None, is_superuser=True)
+        return WorkflowRepository(mock_session, org_id=None, bypass_resource_roles=True)
 
     @pytest.fixture
     def mock_workflow(self):

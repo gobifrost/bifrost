@@ -2,8 +2,9 @@
 a solution form reaches its OWN workflow (path::fn ref), a _repo form the _repo one.
 
 Also pins the RBAC contract: the handler resolves the workflow on the FORM's
-behalf (is_superuser=True), so a form user with no role on a ``role_based``
-workflow must still reach it — the form's own access gate is authoritative.
+behalf with explicit resource-role bypass, so a form user with no role on a
+``role_based`` workflow must still reach it — the form's own access gate is
+authoritative.
 """
 import contextlib
 from uuid import UUID, uuid4
@@ -45,7 +46,7 @@ class TestFormExecuteSolutionScope:
         db.add(form)
         await db.flush()
 
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         resolved = await repo.resolve(form.workflow_id, solution_scope=form.solution_id)
         assert resolved is not None
         assert resolved.id == own_wf.id, "solution form must resolve its install's workflow"
@@ -62,7 +63,7 @@ class TestFormExecuteSolutionScope:
         db.add(form)
         await db.flush()
 
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         resolved = await repo.resolve(form.workflow_id, solution_scope=form.solution_id)
         assert resolved is not None and resolved.id == repo_wf.id
 
@@ -79,17 +80,17 @@ class TestFormExecuteSolutionScope:
         db.add(form)
         await db.flush()
 
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         resolved = await repo.resolve(form.workflow_id, solution_scope=form.solution_id)
         assert resolved is not None and resolved.id == wf.id
 
     async def test_handler_repo_bypasses_workflow_rbac_filter(self, db_session):
-        """The handler resolves on the FORM's behalf (is_superuser=True), so a
-        form user with no role on a ``role_based`` workflow STILL reaches it.
+        """The handler resolves on the FORM's behalf with resource-role bypass.
 
-        Pins the RBAC regression: a user-scoped repo (is_superuser=False) would
-        404 the same workflow because no WorkflowRole grants the user access —
-        which is exactly why the handler must NOT use the user's privileges.
+        A form user with no role on a ``role_based`` workflow still reaches it.
+        Pins the RBAC regression: a user-scoped repo without bypass would 404
+        the same workflow because no WorkflowRole grants the user access —
+        which is exactly why the handler must not use the user's workflow roles.
         """
         db = db_session
         org = (await _org(db)).id
@@ -106,18 +107,18 @@ class TestFormExecuteSolutionScope:
         await db.flush()
 
         # What the handler does now: resolve on the form's behalf.
-        handler_repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        handler_repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         resolved = await handler_repo.resolve(form.workflow_id, solution_scope=form.solution_id)
         assert resolved is not None and resolved.id == wf.id, (
             "form must reach its role_based workflow regardless of the user's roles"
         )
 
         # What the buggy version did: resolve with the user's privileges -> 404.
-        user_repo = WorkflowRepository(db, org_id=org, user_id=user_id, is_superuser=False)
+        user_repo = WorkflowRepository(db, org_id=org, user_id=user_id, bypass_resource_roles=False)
         denied = await user_repo.resolve(form.workflow_id, solution_scope=form.solution_id)
         assert denied is None, (
             "user-scoped resolve applies the workflow RBAC filter — proving why the "
-            "handler must resolve as the form (is_superuser=True), not the user"
+            "handler must resolve as the form's authorized runtime channel, not the user"
         )
 
 
@@ -189,7 +190,15 @@ class TestFormExecuteEndpointRbac:
         assert e2e_client.post(
             f"/api/roles/{role_id}/users",
             headers=platform_admin.headers,
-            json={"user_ids": [str(org1_user.user_id)]},
+            json={
+                "user_ids": [str(org1_user.user_id)],
+                "boundaries": [
+                    {
+                        "boundary_kind": "organization",
+                        "organization_id": org1["id"],
+                    }
+                ],
+            },
         ).status_code in (200, 201, 204)
 
         try:

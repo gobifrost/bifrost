@@ -19,14 +19,17 @@ vi.mock("@/components/ui/tiptap-editor", () => ({
 		content,
 		onChange,
 		ariaLabel,
+		readOnly,
 	}: {
 		content: string;
 		onChange: (value: string) => void;
 		ariaLabel: string;
+		readOnly?: boolean;
 	}) => (
 		<textarea
 			aria-label={ariaLabel}
 			value={content}
+			readOnly={readOnly}
 			onChange={(event) => onChange(event.target.value)}
 		/>
 	),
@@ -83,5 +86,18 @@ describe("RequiredInstructionsSettings", () => {
 				"org-1",
 			),
 		);
+	});
+
+	it("renders global required instructions read-only without update access", async () => {
+		render(<RequiredInstructionsSettings canWrite={false} />);
+
+		const editor = await screen.findByRole("textbox", {
+			name: "Global Instructions editor",
+		});
+		expect(editor).toHaveAttribute("readonly");
+		expect(
+			screen.getByRole("button", { name: "Save Instructions" }),
+		).toBeDisabled();
+		expect(updateSettings).not.toHaveBeenCalled();
 	});
 });

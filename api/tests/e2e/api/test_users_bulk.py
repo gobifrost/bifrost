@@ -127,7 +127,15 @@ class TestBulkReplaceRoles:
         assign_resp = e2e_client.post(
             f"/api/roles/{old_role}/users",
             headers=platform_admin.headers,
-            json={"user_ids": [user_id]},
+            json={
+                "user_ids": [user_id],
+                "boundaries": [
+                    {
+                        "boundary_kind": "organization",
+                        "organization_id": org1["id"],
+                    }
+                ],
+            },
         )
         assert assign_resp.status_code == 204, assign_resp.text
 
@@ -144,7 +152,18 @@ class TestBulkReplaceRoles:
             json={
                 "user_ids": [user_id],
                 "operation": "replace_roles",
-                "role_ids": [new_role_a, new_role_b],
+                "role_assignments": [
+                    {
+                        "role_id": role_id,
+                        "boundaries": [
+                            {
+                                "boundary_kind": "organization",
+                                "organization_id": org1["id"],
+                            }
+                        ],
+                    }
+                    for role_id in (new_role_a, new_role_b)
+                ],
             },
         )
         assert resp.status_code == 200, resp.text
@@ -172,7 +191,15 @@ class TestBulkReplaceRoles:
         assign_resp = e2e_client.post(
             f"/api/roles/{role_id}/users",
             headers=platform_admin.headers,
-            json={"user_ids": [user_id]},
+            json={
+                "user_ids": [user_id],
+                "boundaries": [
+                    {
+                        "boundary_kind": "organization",
+                        "organization_id": org1["id"],
+                    }
+                ],
+            },
         )
         assert assign_resp.status_code == 204
 
@@ -182,7 +209,7 @@ class TestBulkReplaceRoles:
             json={
                 "user_ids": [user_id],
                 "operation": "replace_roles",
-                "role_ids": [],
+                "role_assignments": [],
             },
         )
         assert resp.status_code == 200
@@ -203,7 +230,12 @@ class TestBulkReplaceRoles:
             json={
                 "user_ids": [str(platform_admin.user_id)],
                 "operation": "replace_roles",
-                "role_ids": [role_id],
+                "role_assignments": [
+                    {
+                        "role_id": role_id,
+                        "boundaries": [{"boundary_kind": "platform"}],
+                    }
+                ],
             },
         )
         assert resp.status_code == 200, resp.text

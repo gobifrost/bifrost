@@ -42,8 +42,7 @@ import { Label } from "@/components/ui/label";
 import { ChevronsUpDown, X } from "lucide-react";
 import { useWorkflowsMetadata } from "@/hooks/useWorkflows";
 import { useRoles } from "@/hooks/useRoles";
-import { useAuth } from "@/contexts/AuthContext";
-import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
+import { useAuthorizationBoundary } from "@/contexts/AuthorizationBoundaryContext";
 import type { components } from "@/lib/v1";
 
 type WorkflowParameter = components["schemas"]["WorkflowParameter"];
@@ -81,7 +80,7 @@ export function FormInfoDialog({
 	initialRoleIds,
 }: FormInfoDialogProps) {
 	const [rolesPopoverOpen, setRolesPopoverOpen] = useState(false);
-	const { isPlatformAdmin, user } = useAuth();
+	const { selectedTarget } = useAuthorizationBoundary();
 
 	const { data: metadata, isLoading: metadataLoading } =
 		useWorkflowsMetadata() as {
@@ -91,9 +90,10 @@ export function FormInfoDialog({
 
 	const { data: roles, isLoading: rolesLoading } = useRoles();
 
-	const defaultOrgId = isPlatformAdmin
-		? null
-		: (user?.organizationId ?? null);
+	const defaultOrgId =
+		selectedTarget?.kind === "platform"
+			? null
+			: (selectedTarget?.organization_id ?? null);
 
 	const form = useForm<FormInfoValues>({
 		resolver: zodResolver(formInfoSchema),
@@ -437,31 +437,6 @@ export function FormInfoDialog({
 						onSubmit={form.handleSubmit(handleSave)}
 						className="space-y-4"
 					>
-						{/* Organization Scope - Only show for platform admins */}
-						{isPlatformAdmin && (
-							<FormField
-								control={form.control}
-								name="organization_id"
-								render={({ field }) => (
-									<FormItem>
-										<FormLabel>Organization</FormLabel>
-										<FormControl>
-											<OrganizationSelect
-												value={field.value}
-												onChange={field.onChange}
-												showGlobal={true}
-											/>
-										</FormControl>
-										<FormDescription>
-											Global forms are available to all
-											organizations
-										</FormDescription>
-										<FormMessage />
-									</FormItem>
-								)}
-							/>
-						)}
-
 						<FormField
 							control={form.control}
 							name="name"

@@ -24,7 +24,9 @@ from src.services.mcp_server.tools._http_bridge import call_rest
 logger = logging.getLogger(__name__)
 
 
-def _rule_url(domain: str, name: str, organization_id: str | None, suffix: str = "") -> str:
+def _rule_url(
+    domain: str, name: str, organization_id: str | None, suffix: str = ""
+) -> str:
     """Build a ``(domain, name)`` rule URL, optionally scoped to an org."""
     url = f"/api/policy-rules/{domain}/{name}{suffix}"
     if organization_id is not None:
@@ -32,24 +34,34 @@ def _rule_url(domain: str, name: str, organization_id: str | None, suffix: str =
     return url
 
 
-async def bifrost_list_policy_rules(context: Any, domain: str | None = None) -> ToolResult:
+async def bifrost_list_policy_rules(
+    context: Any,
+    domain: str | None = None,
+    organization_id: str | None = None,
+) -> ToolResult:
     """List policy rules visible to the caller — ``GET /api/policy-rules``.
 
     ``domain`` optionally filters by ``'file'`` or ``'table'``.
+    ``organization_id`` narrows the org scope just like the REST and CLI
+    query parameter.
     """
     logger.info("MCP bifrost_list_policy_rules (HTTP bridge)")
     params: dict[str, str] = {}
     if domain:
         params["domain"] = domain
+    if organization_id is not None:
+        params["organization_id"] = organization_id
 
-    url = "/api/policy-rules"
-    if params:
-        qs = "&".join(f"{k}={v}" for k, v in params.items())
-        url = f"{url}?{qs}"
-
-    status_code, body = await call_rest(context, "GET", url)
+    status_code, body = await call_rest(
+        context,
+        "GET",
+        "/api/policy-rules",
+        params=params or None,
+    )
     if status_code != 200:
-        return error_result(f"list_policy_rules failed: HTTP {status_code}", {"body": body})
+        return error_result(
+            f"list_policy_rules failed: HTTP {status_code}", {"body": body}
+        )
     items = body if isinstance(body, list) else []
     return success_result(
         f"Found {len(items)} policy rule(s)",
@@ -88,9 +100,13 @@ async def bifrost_create_policy_rule(
     if organization_id is not None:
         payload["organization_id"] = organization_id
 
-    status_code, resp = await call_rest(context, "POST", "/api/policy-rules", json_body=payload)
+    status_code, resp = await call_rest(
+        context, "POST", "/api/policy-rules", json_body=payload
+    )
     if status_code not in (200, 201):
-        return error_result(f"create_policy_rule failed: HTTP {status_code}", {"body": resp})
+        return error_result(
+            f"create_policy_rule failed: HTTP {status_code}", {"body": resp}
+        )
     return success_result(
         f"Created policy rule: {name}",
         resp if isinstance(resp, dict) else {"body": resp},
@@ -117,7 +133,9 @@ async def bifrost_delete_policy_rule(
         context, "DELETE", _rule_url(domain, name, organization_id)
     )
     if status_code not in (200, 204):
-        return error_result(f"delete_policy_rule failed: HTTP {status_code}", {"body": resp})
+        return error_result(
+            f"delete_policy_rule failed: HTTP {status_code}", {"body": resp}
+        )
     return success_result(
         f"Deleted policy rule: {domain}/{name}",
         {"deleted": f"{domain}/{name}"},
@@ -144,7 +162,9 @@ async def bifrost_get_policy_rule(
         context, "GET", _rule_url(domain, name, organization_id)
     )
     if status_code != 200:
-        return error_result(f"get_policy_rule failed: HTTP {status_code}", {"body": body})
+        return error_result(
+            f"get_policy_rule failed: HTTP {status_code}", {"body": body}
+        )
     if not isinstance(body, dict):
         return error_result(
             "get_policy_rule returned an unexpected payload", {"body": body}
@@ -189,7 +209,9 @@ async def bifrost_update_policy_rule(
         json_body=payload,
     )
     if status_code != 200:
-        return error_result(f"update_policy_rule failed: HTTP {status_code}", {"body": resp})
+        return error_result(
+            f"update_policy_rule failed: HTTP {status_code}", {"body": resp}
+        )
     return success_result(
         f"Updated policy rule: {domain}/{name}",
         resp if isinstance(resp, dict) else {"body": resp},
@@ -230,12 +252,36 @@ async def bifrost_list_policy_rule_usages(
 
 
 TOOLS = [
-    ("bifrost_list_policy_rules", "List Policy Rules", "List named policy rules visible to the caller."),
-    ("bifrost_get_policy_rule", "Get Policy Rule", "Get one named policy rule by domain and name."),
-    ("bifrost_create_policy_rule", "Create Policy Rule", "Create a named, reusable policy rule."),
-    ("bifrost_update_policy_rule", "Update Policy Rule", "Update a named policy rule by domain and name."),
-    ("bifrost_delete_policy_rule", "Delete Policy Rule", "Delete a named policy rule by domain and name."),
-    ("bifrost_list_policy_rule_usages", "List Policy Rule Usages", "List the file policies and tables that reference a policy rule."),
+    (
+        "bifrost_list_policy_rules",
+        "List Policy Rules",
+        "List named policy rules visible to the caller.",
+    ),
+    (
+        "bifrost_get_policy_rule",
+        "Get Policy Rule",
+        "Get one named policy rule by domain and name.",
+    ),
+    (
+        "bifrost_create_policy_rule",
+        "Create Policy Rule",
+        "Create a named, reusable policy rule.",
+    ),
+    (
+        "bifrost_update_policy_rule",
+        "Update Policy Rule",
+        "Update a named policy rule by domain and name.",
+    ),
+    (
+        "bifrost_delete_policy_rule",
+        "Delete Policy Rule",
+        "Delete a named policy rule by domain and name.",
+    ),
+    (
+        "bifrost_list_policy_rule_usages",
+        "List Policy Rule Usages",
+        "List the file policies and tables that reference a policy rule.",
+    ),
 ]
 
 

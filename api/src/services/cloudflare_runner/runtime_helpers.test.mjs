@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import {
   boundedTimeoutSeconds,
+  buildRunnerAllowedHosts,
   isRetryableWorkflowFailure,
   runnerPollCount,
   runnerProcessTerminal,
@@ -13,7 +17,19 @@ import {
   sandboxControlStepConfig,
   sandboxIdForPayload,
   sandboxStepConfig,
+  initialRunnerAllowedHosts,
+  isContainerStartingError,
+  runnerSandboxIdForPayload,
+  workspaceAllowedHosts,
+  workspaceBrokerUrlForPayload,
+  workspaceSandboxIdForPayload,
+  workspaceSandboxIdForRunnerSandboxId,
 } from "./runtime_helpers.mjs";
+
+const WORKER_SOURCE = readFileSync(
+  join(dirname(fileURLToPath(import.meta.url)), "worker.mjs"),
+  "utf8",
+);
 
 test("only Cloudflare code-update resets are retryable Workflow failures", () => {
   assert.equal(
@@ -23,6 +39,19 @@ test("only Cloudflare code-update resets are retryable Workflow failures", () =>
     true,
   );
   assert.equal(isRetryableWorkflowFailure(new Error("runner exited 1")), false);
+});
+
+test("only the exact Cloudflare container-starting error triggers a fresh probe", () => {
+  const starting = new Error("Container is starting. Please retry in a moment.");
+  starting.name = "SandboxError";
+  assert.equal(isContainerStartingError(starting), true);
+  assert.equal(
+    isContainerStartingError(new Error("Container is starting. Please retry in a moment.")),
+    false,
+  );
+  const otherSandboxError = new Error("Container exited during startup");
+  otherSandboxError.name = "SandboxError";
+  assert.equal(isContainerStartingError(otherSandboxError), false);
 });
 
 test("boundedTimeoutSeconds applies the runner limits", () => {
@@ -63,7 +92,45 @@ test("sandboxIdForPayload keeps UUID probe IDs within Cloudflare's limit", () =>
       job_id: "82eeeccc-2cf3-4720-891a-fa6bf836a14d",
       dispatch_attempt: 2,
     }),
-    "bifrost-82eeeccc-2cf3-4720-891a-fa6bf836a14d-2",
+    "bifrost-82eeeccc-2cf3-4720-891a-fa6bf836a14d-2-runner",
+  );
+});
+
+test("builder turns derive paired runner and workspace sandbox identities", () => {
+  const payload = {
+    job_id: "82eeeccc-2cf3-4720-891a-fa6bf836a14d",
+    dispatch_attempt: 2,
+    callback_base_url: "https://debug.example.test/api/",
+    runner_allowed_hosts: ["API.OpenAI.com", "api.openai.com"],
+  };
+
+  assert.equal(
+    runnerSandboxIdForPayload(payload),
+    "bifrost-82eeeccc-2cf3-4720-891a-fa6bf836a14d-2-runner",
+  );
+  assert.equal(
+    workspaceSandboxIdForPayload(payload),
+    "bifrost-82eeeccc-2cf3-4720-891a-fa6bf836a14d-2-workspace",
+  );
+  assert.equal(
+    workspaceSandboxIdForRunnerSandboxId(runnerSandboxIdForPayload(payload)),
+    workspaceSandboxIdForPayload(payload),
+  );
+  assert.equal(workspaceBrokerUrlForPayload(payload), "http://workspace.bifrost.internal");
+  assert.deepEqual(initialRunnerAllowedHosts(payload), [
+    "workspace.bifrost.internal",
+    "debug.example.test",
+    "api.openai.com",
+  ]);
+  assert.deepEqual(workspaceAllowedHosts(payload), []);
+});
+
+test("app builds use a locked-down callback plus package-registry egress profile", () => {
+  assert.deepEqual(
+    buildRunnerAllowedHosts({
+      callback_base_url: "https://debug.example.test/api/internal",
+    }),
+    ["debug.example.test", "registry.npmjs.org"],
   );
 });
 
@@ -87,6 +154,49 @@ test("runner terminal exit codes do not masquerade as launch failures", () => {
   assert.equal(runnerReportedTerminalResult({ exitCode: 2 }), true);
   assert.equal(runnerReportedTerminalResult({ exitCode: 3 }), false);
   assert.equal(runnerReportedTerminalResult({}), false);
+});
+
+test("Worker declares the two-sandbox broker security shape", () => {
+  assert.match(
+    WORKER_SOURCE,
+    /export class ContainerProxy extends CloudflareContainerProxy/,
+  );
+  assert.match(WORKER_SOURCE, /hostname === WORKSPACE_BROKER_HOST/);
+  assert.match(WORKER_SOURCE, /export class Sandbox extends CloudflareSandbox/);
+  assert.equal(
+    (WORKER_SOURCE.match(/transport: "rpc"/g) ?? []).length,
+    4,
+  );
+  assert.doesNotMatch(WORKER_SOURCE, /interceptHttps = true/);
+  assert.match(WORKER_SOURCE, /await runner\.start\(\{ enableInternet: true \}\)/);
+  assert.match(WORKER_SOURCE, /await workspace\.start\(\{ enableInternet: false \}\)/);
+  assert.match(WORKER_SOURCE, /const PROBE_TIMEOUT_SECONDS = 10 \* 60/);
+  assert.match(WORKER_SOURCE, /Sandbox\.outboundHandlers = \{/);
+  assert.match(
+    WORKER_SOURCE,
+    /await runner\.setOutboundByHost\([\s\S]*"bifrostWorkspaceBroker"/,
+  );
+  assert.match(
+    WORKER_SOURCE,
+    /runnerSandboxId: runnerId, workspaceSandboxId: workspaceId/,
+  );
+  assert.match(WORKER_SOURCE, /prepareTurnSandboxes/);
+  assert.match(WORKER_SOURCE, /await workspace\.start\(\{ enableInternet: false \}\)/);
+  assert.match(WORKER_SOURCE, /await workspace\.setAllowedHosts\(workspaceAllowedHosts\(payload\)\)/);
+  assert.match(WORKER_SOURCE, /destroyTurnSandboxes/);
+  assert.match(WORKER_SOURCE, /crypto\.randomUUID\(\)/);
+  assert.match(WORKER_SOURCE, /tool-request-\$\{requestId\}\.json/);
+  assert.match(WORKER_SOURCE, /tool-response-\$\{requestId\}\.json/);
+  assert.match(WORKER_SOURCE, /function boundedBodyStream/);
+  assert.match(WORKER_SOURCE, /boundedBodyStream\(request, 256 \* 1024 \* 1024\)/);
+  assert.match(WORKER_SOURCE, /streamFile\(stream\)\[Symbol\.asyncIterator\]\(\)/);
+  assert.match(
+    WORKER_SOURCE,
+    /new Response\(decodedSandboxFileStream\(stream\)/,
+  );
+  assert.doesNotMatch(WORKER_SOURCE, /const archive = await collectBody\(request, 256/);
+  assert.match(WORKER_SOURCE, /await sandbox\.start\(\{ enableInternet: true \}\)/);
+  assert.match(WORKER_SOURCE, /await sandbox\.setAllowedHosts\(buildRunnerAllowedHosts\(payload\)\)/);
 });
 
 test("reportLaunchFailure sends a bounded terminal callback", async (context) => {

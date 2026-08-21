@@ -1,5 +1,14 @@
 # Builder capability parity — status and Phase 5 proposal (for review)
 
+> **Authorization proposal superseded.** The scope vocabulary, reach model,
+> default roles, route cutover, and coding-profile design in this document are
+> historical review input. The canonical proposed design is now
+> [Builder authorization boundaries and end-to-end execution plan](2026-08-19-builder-authorization-boundaries-execution.md).
+> In particular, do not commit the exact uncommitted scope catalog described
+> below. Retain the operation-catalog membership validator concept and the
+> policy-rule MCP organization-selector repair, then rewrite authorization work
+> against the canonical plan.
+
 **Prepared:** 2026-08-19
 **Branch:** `codex/code-builder-pydantic-integration-20260816`
 **Purpose:** record what shipped, and put the Phase 5 design in front of a
@@ -150,9 +159,13 @@ differently.
 
 | File | Change |
 |---|---|
-| `api/shared/authorization_scopes.py` | +28 scope definitions (13 entity domains × read/write, plus `knowledge.read` and `apps.publish`). Total 9 → 37. |
-| `api/src/services/operation_catalog.py` | Validator now rejects a declared scope with no definition, at import. |
-| `api/tests/unit/test_authorization_scopes.py` | Two tests: every declared operation scope is grantable; entity scopes are assignable to custom roles. |
+| `api/shared/authorization_scopes.py` | +28 scope definitions (13 entity domains × read/write, plus `knowledge.read` and `apps.publish`). `organizations.write` and `roles.write` are marked privileged. Total 9 → 37. |
+| `api/src/services/operation_catalog.py` | Retained the import-time membership validator that rejects a declared scope with no definition. |
+| `api/src/services/mcp_server/tools/policy_rules.py` | `bifrost_list_policy_rules` now accepts `organization_id` and forwards it to `GET /api/policy-rules`. |
+| `api/tests/unit/test_authorization_scopes.py` | Three tests: every declared operation scope is grantable; entity scopes are assignable to custom roles; admin write scopes are privileged. |
+| `api/tests/unit/test_mcp_thin_wrapper.py` | Added org-scope forwarding coverage for `bifrost_list_policy_rules`. |
+| `api/tests/e2e/mcp/test_mcp_parity.py` | Added live org-scoped listing parity for policy rules. |
+| `client/src/components/roles/RoleDialog.test.tsx` | Added badge coverage for privileged scopes. |
 
 Result: **zero** declared-but-ungrantable scopes.
 
@@ -167,13 +180,23 @@ not a mechanical one:
 `policy.rules.read/write`, `roles.read/write`, `tables.read/write`,
 `workflows.read/write`, `knowledge.read`
 
-Open questions for the reviewer:
+Repair status:
 
-- Are read/write the right granularity, or do some domains need finer
-  (e.g. `agents.execute` distinct from `agents.write`)?
-- Are the categories right for how the role UI groups them?
-- `organizations.write` and `roles.write` are effectively administrative. Should
-  they be `is_privileged=True` rather than ordinary?
+- `organizations.write` and `roles.write` are now `is_privileged=True`, and the
+  RoleDialog test covers the existing privileged badge on those entries.
+- `bifrost_list_policy_rules` now accepts `organization_id`; the unit thin
+  wrapper test and live MCP parity test both prove the selector is forwarded and
+  that org-only rules stay invisible without it.
+- The import-time scope membership validator remains in place and passed the
+  catalog tests, so the scope catalog and operation catalog stay aligned.
+- The generated Skill appendices and operation inventory were checked through
+  their Docker-backed freshness tests; all five checks passed and no generated
+  artifact files required changes.
+- Focused repair verification passed: 7 authorization-scope unit tests, 5
+  operation-catalog tests, 107 MCP thin-wrapper tests, 68 live MCP parity
+  tests, 5 RoleDialog component tests, client TypeScript and lint, and
+  `git diff --check`. Lint retained only the pre-existing `FormRenderer.tsx`
+  React Compiler warning and reported zero errors.
 
 ---
 

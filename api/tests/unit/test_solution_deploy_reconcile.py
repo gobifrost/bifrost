@@ -398,7 +398,7 @@ class TestSolutionDeployReconcile:
         ))
         await db.flush()
 
-        repo = WorkflowRepository(db, org_id=None, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=None, bypass_resource_roles=True)
         # Path-ref resolution returns exactly the _repo/ row (no MultipleResultsFound).
         resolved = await repo._resolve_by_path_ref(f"{shared_path}::run")
         assert resolved is not None

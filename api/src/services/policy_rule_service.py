@@ -94,7 +94,7 @@ class PolicyRuleService:
         return row
 
     async def _get(self, name: str, domain: str, org_id: UUID | None) -> PolicyRule:
-        repo = PolicyRuleRepository(self.db, org_id=org_id, is_superuser=True)
+        repo = PolicyRuleRepository(self.db, org_id=org_id, bypass_resource_admission=True)
         row = await repo.get(name=name, domain=domain)
         if row is None:
             # A solution-managed rule is excluded from the default name-cascade

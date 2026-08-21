@@ -178,7 +178,7 @@ async def test_launch_is_single_use_and_serves_sandboxed_entry(
     csp = entry.headers["content-security-policy"]
     assert "sandbox allow-forms allow-scripts" in csp
     assert "object-src 'none'" in csp
-    assert f'{app_base}/assets/main-abc.js' in entry.text
+    assert f"{app_base}/assets/main-abc.js" in entry.text
     assert "data-bifrost-session-token" in entry.text
 
     asset = e2e_client.get(f"{app_base}/assets/main-abc.js")
@@ -202,8 +202,8 @@ async def test_runtime_token_is_attenuated_and_sealed_from_normal_api(
     assert claims["actor_type"] == "solution_app"
     assert claims["solution_id"] == str(fixture.solution_id)
     assert claims["app_id"] == str(fixture.app_id)
-    assert "tables.documents.read" in claims["scopes"]
-    assert "files.content.write" in claims["scopes"]
+    assert "tabledocuments.read" in claims["scopes"]
+    assert "managedfiles.readwrite" in claims["scopes"]
     assert claims.get("is_superuser") is None
 
     rejected = e2e_client.get(
@@ -228,9 +228,7 @@ async def test_runtime_actor_can_use_only_its_solution_resources(
     e2e_client.cookies.clear()
     _redeem(e2e_client, _launch(e2e_client, platform_admin, fixture))
     app_base = f"{RUNTIME_URL}/{fixture.solution_id}/apps/{fixture.app_id}"
-    token = e2e_client.post(f"{app_base}/_bifrost/session-token").json()[
-        "access_token"
-    ]
+    token = e2e_client.post(f"{app_base}/_bifrost/session-token").json()["access_token"]
     actor_headers = {
         "Authorization": f"Bearer {token}",
         "Origin": "null",

@@ -25,8 +25,9 @@ class DataProviderRepository(OrgScopedRepository[Workflow]):
 
     For new code, prefer using WorkflowRepository.get_data_providers() directly.
 
-    Data providers are SDK-only resources (no direct user access), so they don't
-    have role-based access control. Callers should use is_superuser=True.
+    Data providers are SDK-only resources (no direct user access), so they do
+    not have role-based access control. Runtime callers that have already
+    authorized the request should use ``bypass_resource_admission=True``.
     """
 
     model = Workflow

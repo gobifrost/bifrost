@@ -10,10 +10,23 @@ vi.mock("@/lib/api-client", () => ({
 	},
 }));
 
-import { useOrganizations } from "./useOrganizations";
+import { useOrganizationGroups, useOrganizations } from "./useOrganizations";
 
 beforeEach(() => {
 	mockUseQuery.mockReset();
+});
+
+describe("useOrganizationGroups", () => {
+	it("requests the provider's reusable organization groups", () => {
+		useOrganizationGroups();
+
+		expect(mockUseQuery).toHaveBeenCalledWith(
+			"get",
+			"/api/organization-groups",
+			{},
+			{ enabled: true },
+		);
+	});
 });
 
 describe("useOrganizations", () => {

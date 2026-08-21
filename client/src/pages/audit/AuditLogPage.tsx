@@ -1,6 +1,6 @@
 import { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorizationBoundary } from "@/contexts/AuthorizationBoundaryContext";
 import { useAuditLog } from "@/hooks/useAuditLog";
 import type { AuditLogEntry, GetAuditLogParams } from "@/hooks/useAuditLog";
 import { getErrorMessage } from "@/lib/api-error";
@@ -48,7 +48,9 @@ const OUTCOMES = [
 ];
 
 export function AuditLogPage() {
-	const { isPlatformAdmin } = useAuth();
+	const { hasSelectedCapability, selectedTarget } = useAuthorizationBoundary();
+	const canReadAudit =
+		hasSelectedCapability("audit.read") && selectedTarget?.kind === "platform";
 	const navigate = useNavigate();
 
 	const [actionGroup, setActionGroup] = useState("All");
@@ -100,14 +102,13 @@ export function AuditLogPage() {
 		if (currentPage > 0) setCurrentPage(currentPage - 1);
 	};
 
-	if (!isPlatformAdmin) {
+	if (!canReadAudit) {
 		return (
 			<div className="container mx-auto py-8">
 				<Alert variant="destructive">
 					<AlertCircle className="h-4 w-4" />
 					<AlertDescription>
-						You do not have permission to view the audit log. Platform
-						administrator access is required.
+						Select Global from Working in to view the platform audit log.
 					</AlertDescription>
 				</Alert>
 				<Button onClick={() => navigate("/")} className="mt-4">

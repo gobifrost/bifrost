@@ -63,7 +63,7 @@ def _patches(captured: dict, user):
             new=AsyncMock(return_value=user.is_external),
         ),
         patch(
-            "src.services.mcp_server.auth.get_user_scopes",
+            "src.services.mcp_server.auth.get_user_capabilities",
             new=AsyncMock(return_value=["solutions.build"]),
         ),
     ]

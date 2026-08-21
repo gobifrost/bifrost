@@ -64,6 +64,35 @@ async def test_reader_fails_closed_without_execution_bundle() -> None:
 
 
 @pytest.mark.asyncio
+async def test_maintained_profile_reads_platform_owned_skill_asset(tmp_path) -> None:
+    references = tmp_path / "references"
+    references.mkdir()
+    (references / "runbook.md").write_text("maintained instructions")
+    context = SimpleNamespace(
+        agent_bundle_path="skills/bifrost-build",
+        agent_skill_root=tmp_path,
+    )
+
+    result = await bifrost_read_agent_skill_file(context, "references/runbook.md")
+
+    assert result.structured_content is not None
+    assert result.structured_content["content"] == "maintained instructions"
+
+
+@pytest.mark.asyncio
+async def test_maintained_profile_rejects_platform_skill_escape(tmp_path) -> None:
+    context = SimpleNamespace(
+        agent_bundle_path="skills/bifrost-build",
+        agent_skill_root=tmp_path,
+    )
+
+    result = await bifrost_read_agent_skill_file(context, "../secret.txt")
+
+    assert result.structured_content is not None
+    assert "beneath the bundle root" in result.structured_content["error"]
+
+
+@pytest.mark.asyncio
 async def test_solution_agent_reads_scoped_storage() -> None:
     storage = AsyncMock()
     storage.read.return_value = b"scoped instructions"
