@@ -2059,6 +2059,9 @@ Options:
   --name TEXT          name  [required]
   --description TEXT   description
   --capabilities TEXT  capabilities (repeat for multiple).
+  --scopes TEXT        scopes (repeat for multiple).
+  --permissions TEXT   permissions as JSON literal or @path to a YAML/JSON
+                       file.
   --json               Emit JSON instead of human-readable output.
   --help               Show this message and exit.
 ```
@@ -2115,6 +2118,9 @@ Options:
   --name TEXT          name
   --description TEXT   description
   --capabilities TEXT  capabilities (repeat for multiple).
+  --scopes TEXT        scopes (repeat for multiple).
+  --permissions TEXT   permissions as JSON literal or @path to a YAML/JSON
+                       file.
   --json               Emit JSON instead of human-readable output.
   --help               Show this message and exit.
 ```
