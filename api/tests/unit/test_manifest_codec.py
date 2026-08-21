@@ -185,7 +185,12 @@ async def test_role_git_sync_parity(db_session):
     await db_session.commit()
 
     try:
-        expected = {"id": str(role.id), "name": "rt_role_parity", "scopes": []}
+        expected = {
+            "id": str(role.id),
+            "name": "rt_role_parity",
+            "capabilities": [],
+            "permissions": {},
+        }
         produced = ManifestRole.from_row(role).view(Destination.GIT_SYNC)
         assert_parity(produced, expected, label="role git_sync")
     finally:

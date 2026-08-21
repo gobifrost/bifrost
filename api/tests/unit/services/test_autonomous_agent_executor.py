@@ -54,6 +54,25 @@ def mock_runtime_config():
         yield
 
 
+@pytest.fixture(autouse=True)
+def mock_default_usage_governance(request):
+    """Most executor unit tests are not quota-policy tests."""
+
+    if "mock_build_governance" in request.fixturenames:
+        yield
+        return
+    with patch(
+        "src.services.execution.autonomous_agent_executor.build_runtime_usage_governance",
+        new_callable=AsyncMock,
+        return_value=RuntimeUsageGovernance(
+            subject=UsageLimitSubject(),
+            policies=(),
+            aggregate_usage_by_scope_period={},
+        ),
+    ):
+        yield
+
+
 @pytest.fixture
 def mock_session():
     """Create a mock session factory (async_sessionmaker) for the executor.
@@ -67,6 +86,7 @@ def mock_session():
     session.flush = AsyncMock()
     session.commit = AsyncMock()
     session.get = AsyncMock(return_value=None)
+    session.scalar = AsyncMock(return_value=None)
 
     mock_ctx = AsyncMock()
     mock_ctx.__aenter__ = AsyncMock(return_value=session)

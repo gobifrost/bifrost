@@ -59,7 +59,7 @@ def capture_file_sdk_urls(monkeypatch):
             return None
 
     class FakeClient:
-        async def post(self, url, json=None):
+        async def post(self, url, json=None, **_kwargs):
             captured_urls.append(url)
             return FakeResponse()
 

@@ -5,23 +5,34 @@ from contextlib import asynccontextmanager
 
 import pytest
 
+from shared.authorization_scopes import PLATFORM_SUPERUSER_SCOPE
 from src.core.auth import ExecutionContext
 from src.core.principal import UserPrincipal
 from src.models.orm.solutions import Solution
 from src.routers.solutions import delete_solution
+from src.services.authorization import (
+    AuthorizationBoundary,
+    AuthorizationContext,
+)
 from src.services.solutions.source_artifact import SolutionSourceArtifactStorage
 
 pytestmark = pytest.mark.e2e
 
 
-def _admin(db) -> tuple[ExecutionContext, UserPrincipal]:
+def _admin(db) -> tuple[ExecutionContext, AuthorizationContext]:
     user = UserPrincipal(
         user_id=uuid.uuid4(),
         email="admin@example.com",
         organization_id=None,
         is_superuser=True,
     )
-    return ExecutionContext(user=user, org_id=None, db=db), user
+    return ExecutionContext(user=user, org_id=None, db=db), AuthorizationContext(
+        requester=user,
+        effective_actor=user,
+        selected_boundary=AuthorizationBoundary.platform(),
+        effective_capabilities=frozenset({PLATFORM_SUPERUSER_SCOPE}),
+        grant_sources=(),
+    )
 
 
 async def test_delete_solution_removes_source_artifact(db_session, monkeypatch) -> None:

@@ -48,12 +48,12 @@ def test_builder_control_plane_rows_are_not_deploy_managed() -> None:
     """Builder state remains writable while portable Solution entities stay locked."""
     from src.models.orm.solution_build_jobs import SolutionBuildJob
     from src.models.orm.solution_builder import (
-        SolutionBuilderCollaborator,
         SolutionBuilderProject,
         SolutionBuilderSession,
         SolutionGlobalOperationChange,
         SolutionGlobalWorkspaceApply,
         SolutionSourceRevision,
+        SolutionUserGrant,
     )
     from src.services.solutions.guard import _instance_is_managed
 
@@ -61,7 +61,7 @@ def test_builder_control_plane_rows_are_not_deploy_managed() -> None:
     operational_rows = [
         SolutionBuildJob(solution_id=solution_id),
         SolutionBuilderProject(solution_id=solution_id),
-        SolutionBuilderCollaborator(solution_id=solution_id),
+        SolutionUserGrant(solution_id=solution_id, user_id=uuid.uuid4()),
         SolutionGlobalWorkspaceApply(solution_id=solution_id),
         SolutionGlobalOperationChange(
             solution_id=solution_id,

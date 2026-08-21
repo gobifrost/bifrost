@@ -15,14 +15,14 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
     assert inventory["counts"] == {
         "cli": 146,
         "manifest": 16,
-        # 116 after adding the complete Knowledge document surface.
-        "mcp": 116,
+        # 121 after adding the complete Knowledge document surface.
+        "mcp": 121,
         # Ten Builder-local workspace primitives plus every registered
         # catalog operation the maintained profile can expose dynamically.
         "native_builder": 110,
-        # 672 after adding authorization-context discovery alongside the
+        # 683 after adding authorization-context discovery alongside the
         # organization-group and Builder target-discovery surfaces.
-        "rest": 672,
+        "rest": 683,
         "sdk": 19,
     }
     for surface, rows in inventory["uncataloged"].items():

@@ -31,14 +31,27 @@ def _make_ctx():
     return ctx
 
 
+def _make_authorization():
+    auth = MagicMock()
+    auth.require.return_value = None
+    auth.require_resource_boundary.return_value = None
+    return auth
+
+
 def _run(body):
     """Drive the async handler synchronously.
 
-    We pass ``user=None`` because the handler doesn't use it for anything;
-    the dependency only exists to gate access at the FastAPI layer.
+    We pass a no-op authorization stub because the handler only uses it to
+    enforce the tables.readwrite gate before validating the body.
     A stub ``ctx`` is provided; its ``.db`` is never reached for ref-free bodies.
     """
-    return asyncio.run(validate_policies(ctx=_make_ctx(), user=None, body=body))  # type: ignore[arg-type]
+    return asyncio.run(
+        validate_policies(
+            ctx=_make_ctx(),
+            authorization=_make_authorization(),
+            body=body,
+        )
+    )
 
 
 # ---------------------------------------------------------------------------

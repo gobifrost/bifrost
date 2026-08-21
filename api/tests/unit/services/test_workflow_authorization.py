@@ -58,7 +58,8 @@ def test_workflow_repository_is_bound_to_selected_organization() -> None:
 
     assert repo.org_id == organization_id
     assert repo.user_id == authorization.requester.user_id
-    assert repo.is_superuser is False
+    assert repo.bypass_resource_roles is False
+    assert repo.bypass_resource_admission is False
 
 
 def test_platform_boundary_targets_global_workflows() -> None:

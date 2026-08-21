@@ -1196,15 +1196,12 @@ class TestApplicationCrossOrgSlugLookup:
 
 
 # =============================================================================
-# get_application_or_404 Superuser Cross-Org Slug Lookup
+# get_application_or_404 Embed-Bound Slug Lookup
 # =============================================================================
 
 
-class TestGetApplicationOr404SuperuserSlug:
-    """
-    Tests that get_application_or_404 uses get_by_slug_global for super admins,
-    allowing cross-org slug resolution without ?scope= param.
-    """
+class TestGetApplicationOr404EmbedSlug:
+    """The pre-auth render lookup is bound to one app in the embed token."""
 
     @pytest.fixture
     def org_a_id(self):
@@ -1220,80 +1217,56 @@ class TestGetApplicationOr404SuperuserSlug:
 
     @pytest.fixture
     def mock_ctx(self, org_a_id):
-        """Create a mock Context with a platform admin user in org A."""
+        """Create a mock Context with an embed principal in org A."""
         ctx = MagicMock()
         ctx.db = AsyncMock()
         ctx.org_id = org_a_id
         ctx.user.user_id = uuid4()
-        ctx.user.is_platform_admin = True
+        ctx.user.embed = True
         return ctx
 
-    async def test_superuser_resolves_cross_org_slug(self, mock_ctx, org_b_app):
-        """Super admin can resolve an app slug belonging to another org."""
-        from unittest.mock import patch
-
+    async def test_embed_token_resolves_its_bound_app(self, mock_ctx, org_b_app):
+        """The token's app id selects its app from matching slug rows."""
         from src.routers.applications import get_application_or_404
 
-        with patch(
-            "src.routers.applications.ApplicationRepository"
-        ) as MockRepo:
-            repo_instance = MockRepo.return_value
-            repo_instance.get_by_slug_global = AsyncMock(
-                return_value=org_b_app
-            )
+        other_app = make_application("org-b-app", uuid4())
+        query_result = MagicMock()
+        query_result.scalars.return_value.all.return_value = [other_app, org_b_app]
+        mock_ctx.db.execute.return_value = query_result
+        mock_ctx.user.app_id = str(org_b_app.id)
 
-            result = await get_application_or_404(
-                ctx=mock_ctx, slug="org-b-app"
-            )
+        result = await get_application_or_404(ctx=mock_ctx, slug="org-b-app")
 
         assert result is org_b_app
-        repo_instance.get_by_slug_global.assert_called_once_with("org-b-app")
-        # can_access should NOT be called for superuser path
-        repo_instance.can_access.assert_not_called()
+        mock_ctx.db.execute.assert_awaited_once()
 
-    async def test_superuser_gets_404_for_nonexistent_slug(self, mock_ctx):
-        """Super admin gets 404 when slug doesn't exist anywhere."""
-        from unittest.mock import patch
-
+    async def test_non_embed_principal_gets_404(self, mock_ctx):
+        """Ordinary authenticated callers cannot use the pre-auth lookup."""
         from fastapi import HTTPException
 
         from src.routers.applications import get_application_or_404
 
-        with patch(
-            "src.routers.applications.ApplicationRepository"
-        ) as MockRepo:
-            repo_instance = MockRepo.return_value
-            repo_instance.get_by_slug_global = AsyncMock(return_value=None)
+        mock_ctx.user.embed = False
 
-            with pytest.raises(HTTPException) as exc_info:
-                await get_application_or_404(
-                    ctx=mock_ctx, slug="nonexistent"
-                )
+        with pytest.raises(HTTPException) as exc_info:
+            await get_application_or_404(ctx=mock_ctx, slug="org-b-app")
 
         assert exc_info.value.status_code == 404
+        mock_ctx.db.execute.assert_not_awaited()
 
-    async def test_regular_user_uses_can_access(self, mock_ctx, org_b_app):
-        """Non-superuser uses can_access (not get_by_slug_global)."""
-        from unittest.mock import patch
-
+    async def test_embed_token_cannot_resolve_a_different_app(
+        self, mock_ctx, org_b_app
+    ):
+        """A valid slug is still hidden when the token names another app id."""
+        from fastapi import HTTPException
         from src.routers.applications import get_application_or_404
 
-        mock_ctx.user.is_platform_admin = False
+        query_result = MagicMock()
+        query_result.scalars.return_value.all.return_value = [org_b_app]
+        mock_ctx.db.execute.return_value = query_result
+        mock_ctx.user.app_id = str(uuid4())
 
-        with patch(
-            "src.routers.applications.ApplicationRepository"
-        ) as MockRepo:
-            repo_instance = MockRepo.return_value
-            repo_instance.can_access = AsyncMock(return_value=org_b_app)
+        with pytest.raises(HTTPException) as exc_info:
+            await get_application_or_404(ctx=mock_ctx, slug="org-b-app")
 
-            result = await get_application_or_404(
-                ctx=mock_ctx, slug="org-b-app"
-            )
-
-        assert result is org_b_app
-        # include_solution_managed=True so a deployed (solution-managed) app is
-        # openable by slug for regular users (criterion 16).
-        repo_instance.can_access.assert_called_once_with(
-            slug="org-b-app", include_solution_managed=True
-        )
-        repo_instance.get_by_slug_global.assert_not_called()
+        assert exc_info.value.status_code == 404
