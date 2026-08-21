@@ -8,6 +8,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen, waitFor } from "@/test-utils";
 
+vi.mock("@/hooks/useAdministrativeBoundary", () => ({
+	useAdministrativeBoundary: () => "platform",
+}));
+
 const mockAuth = vi.fn();
 vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockAuth(),
