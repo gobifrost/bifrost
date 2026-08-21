@@ -118,6 +118,8 @@
 | GET | `/api/builder/solutions/global-workspace` |
 | POST | `/api/builder/solutions/global-workspace` |
 | POST | `/api/builder/solutions/global-workspace/apply` |
+| GET | `/api/builder/solutions/global-workspace/operations` |
+| DELETE | `/api/builder/solutions/global-workspace/operations/{change_id}` |
 | POST | `/api/builder/solutions/global-workspace/refresh` |
 | POST | `/api/builder/solutions/global-workspace/rollback` |
 | POST | `/api/builder/solutions/global-workspace/validate` |
@@ -348,9 +350,10 @@
 | DELETE | `/api/mcp/config` |
 | GET | `/api/mcp/config` |
 | PUT | `/api/mcp/config` |
+| POST | `/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute` |
+| POST | `/api/mcp/gateway/builder-sessions/{builder_session_id}/tools/{tool_ref}/execute` |
 | POST | `/api/mcp/gateway/capabilities/search` |
 | GET | `/api/mcp/gateway/executions/{execution_id}` |
-| POST | `/api/mcp/gateway/tools/{tool_ref}/execute` |
 | GET | `/api/mcp/run` |
 | GET | `/api/mcp/run/plugin` |
 | GET | `/api/mcp/status` |
@@ -434,6 +437,7 @@
 | GET | `/api/roles` |
 | POST | `/api/roles` |
 | GET | `/api/roles/capabilities` |
+| GET | `/api/roles/scopes` |
 | DELETE | `/api/roles/{role_id}` |
 | GET | `/api/roles/{role_id}` |
 | PATCH | `/api/roles/{role_id}` |
@@ -508,6 +512,10 @@
 | POST | `/api/settings/ai/pricing` |
 | DELETE | `/api/settings/ai/pricing/{pricing_id}` |
 | PUT | `/api/settings/ai/pricing/{pricing_id}` |
+| GET | `/api/settings/ai/usage-limits` |
+| GET | `/api/settings/ai/usage-limits/effective/{scope}/{target_id}` |
+| DELETE | `/api/settings/ai/usage-limits/{scope}/{target_id}` |
+| PUT | `/api/settings/ai/usage-limits/{scope}/{target_id}` |
 | GET | `/api/settings/oauth` |
 | PUT | `/api/settings/oauth/google` |
 | PUT | `/api/settings/oauth/login-preference` |
@@ -575,6 +583,7 @@
 | POST | `/api/users/{user_id}/invite/regenerate` |
 | POST | `/api/users/{user_id}/invite/resend` |
 | POST | `/api/users/{user_id}/invite/send` |
+| GET | `/api/users/{user_id}/role-assignments` |
 | GET | `/api/users/{user_id}/roles` |
 | GET | `/api/version` |
 | GET | `/api/workflow-keys` |

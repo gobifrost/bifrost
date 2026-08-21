@@ -118,9 +118,12 @@
 | GET | `/api/builder/solutions/global-workspace` |
 | POST | `/api/builder/solutions/global-workspace` |
 | POST | `/api/builder/solutions/global-workspace/apply` |
+| GET | `/api/builder/solutions/global-workspace/operations` |
+| DELETE | `/api/builder/solutions/global-workspace/operations/{change_id}` |
 | POST | `/api/builder/solutions/global-workspace/refresh` |
 | POST | `/api/builder/solutions/global-workspace/rollback` |
 | POST | `/api/builder/solutions/global-workspace/validate` |
+| GET | `/api/builder/solutions/targets` |
 | DELETE | `/api/builder/solutions/{solution_id}` |
 | GET | `/api/builder/solutions/{solution_id}` |
 | POST | `/api/builder/solutions/{solution_id}/apps/{app_id}/launch` |
@@ -135,6 +138,9 @@
 | GET | `/api/builder/solutions/{solution_id}/revisions/{revision_id}/download` |
 | GET | `/api/builder/solutions/{solution_id}/revisions/{revision_id}/file` |
 | GET | `/api/builder/solutions/{solution_id}/revisions/{revision_id}/files` |
+| GET | `/api/builder/solutions/{solution_id}/role-grants` |
+| PUT | `/api/builder/solutions/{solution_id}/role-grants` |
+| DELETE | `/api/builder/solutions/{solution_id}/role-grants/{role_id}` |
 | GET | `/api/builder/solutions/{solution_id}/sessions` |
 | POST | `/api/builder/solutions/{solution_id}/sessions` |
 | GET | `/api/builder/solutions/{solution_id}/turns` |
@@ -345,6 +351,7 @@
 | GET | `/api/mcp/config` |
 | PUT | `/api/mcp/config` |
 | POST | `/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute` |
+| POST | `/api/mcp/gateway/builder-sessions/{builder_session_id}/tools/{tool_ref}/execute` |
 | POST | `/api/mcp/gateway/capabilities/search` |
 | GET | `/api/mcp/gateway/executions/{execution_id}` |
 | GET | `/api/mcp/run` |
@@ -383,6 +390,10 @@
 | GET | `/api/oauth/credentials/{connection_name}` |
 | POST | `/api/oauth/refresh_all` |
 | GET | `/api/oauth/refresh_job_status` |
+| GET | `/api/organization-groups` |
+| POST | `/api/organization-groups` |
+| DELETE | `/api/organization-groups/{group_id}` |
+| PATCH | `/api/organization-groups/{group_id}` |
 | GET | `/api/organizations` |
 | POST | `/api/organizations` |
 | DELETE | `/api/organizations/{org_id}` |
@@ -425,6 +436,7 @@
 | GET | `/api/required-instructions` |
 | GET | `/api/roles` |
 | POST | `/api/roles` |
+| GET | `/api/roles/capabilities` |
 | GET | `/api/roles/scopes` |
 | DELETE | `/api/roles/{role_id}` |
 | GET | `/api/roles/{role_id}` |
@@ -500,6 +512,10 @@
 | POST | `/api/settings/ai/pricing` |
 | DELETE | `/api/settings/ai/pricing/{pricing_id}` |
 | PUT | `/api/settings/ai/pricing/{pricing_id}` |
+| GET | `/api/settings/ai/usage-limits` |
+| GET | `/api/settings/ai/usage-limits/effective/{scope}/{target_id}` |
+| DELETE | `/api/settings/ai/usage-limits/{scope}/{target_id}` |
+| PUT | `/api/settings/ai/usage-limits/{scope}/{target_id}` |
 | GET | `/api/settings/oauth` |
 | PUT | `/api/settings/oauth/google` |
 | PUT | `/api/settings/oauth/login-preference` |
@@ -567,6 +583,7 @@
 | POST | `/api/users/{user_id}/invite/regenerate` |
 | POST | `/api/users/{user_id}/invite/resend` |
 | POST | `/api/users/{user_id}/invite/send` |
+| GET | `/api/users/{user_id}/role-assignments` |
 | GET | `/api/users/{user_id}/roles` |
 | GET | `/api/version` |
 | GET | `/api/workflow-keys` |
@@ -591,6 +608,7 @@
 | POST | `/api/workflows/{workflow_id}/roles` |
 | DELETE | `/api/workflows/{workflow_id}/roles/{role_id}` |
 | POST | `/auth/admin/revoke-user` |
+| GET | `/auth/authorization-targets` |
 | POST | `/auth/device/authorize` |
 | POST | `/auth/device/code` |
 | POST | `/auth/device/token` |

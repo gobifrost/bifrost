@@ -748,14 +748,20 @@ Usage: events create-subscription [OPTIONS] SOURCE_REF
   generator may surface.
 
 Options:
-  --workflow TEXT           workflow ref (UUID or name) for workflow_id.
-  --agent TEXT              agent ref (UUID or name) for agent_id.
-  --event-type TEXT         event_type
-  --filter-expression TEXT  filter_expression
-  --input-mapping TEXT      input_mapping as JSON literal or @path to a
-                            YAML/JSON file.
-  --json                    Emit JSON instead of human-readable output.
-  --help                    Show this message and exit.
+  --workflow TEXT                 workflow ref (UUID or name) for workflow_id.
+  --agent TEXT                    agent ref (UUID or name) for agent_id.
+  --event-type TEXT               event_type
+  --filter-expression TEXT        filter_expression
+  --input-mapping TEXT            input_mapping as JSON literal or @path to a
+                                  YAML/JSON file.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ### `events delete-source`
@@ -766,8 +772,14 @@ Usage: events delete-source [OPTIONS] REF
   Permanently delete an Event Source by UUID or name.
 
 Options:
-  --json  Emit JSON instead of human-readable output.
-  --help  Show this message and exit.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ### `events delete-subscription`
@@ -778,8 +790,14 @@ Usage: events delete-subscription [OPTIONS] SOURCE_REF SUBSCRIPTION_ID
   Permanently delete one Event Subscription.
 
 Options:
-  --json  Emit JSON instead of human-readable output.
-  --help  Show this message and exit.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ### `events get-source`
@@ -790,8 +808,14 @@ Usage: events get-source [OPTIONS] REF
   Get a single event source by UUID or name.
 
 Options:
-  --json  Emit JSON instead of human-readable output.
-  --help  Show this message and exit.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ### `events get-subscription`
@@ -802,8 +826,14 @@ Usage: events get-subscription [OPTIONS] SOURCE_REF SUBSCRIPTION_ID
   Get a single subscription by source ref + subscription UUID.
 
 Options:
-  --json  Emit JSON instead of human-readable output.
-  --help  Show this message and exit.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ### `events list-sources`
@@ -835,8 +865,14 @@ Usage: events list-subscriptions [OPTIONS] SOURCE_REF
   ``SOURCE_REF`` is a UUID or event source name.
 
 Options:
-  --json  Emit JSON instead of human-readable output.
-  --help  Show this message and exit.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ### `events list-webhook-adapters`
@@ -847,8 +883,14 @@ Usage: events list-webhook-adapters [OPTIONS]
   List webhook adapters available for Event Source configuration.
 
 Options:
-  --json  Emit JSON instead of human-readable output.
-  --help  Show this message and exit.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ### `events update-source`
@@ -938,6 +980,12 @@ Options:
   --clear-event-type              Clear the optional event-type filter.
   --clear-filter-expression       Clear the optional filter expression.
   --clear-input-mapping           Clear the optional input mapping.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
   --json                          Emit JSON instead of human-readable output.
   --help                          Show this message and exit.
 ```
@@ -1510,14 +1558,117 @@ Options:
 ```
 Usage: knowledge [OPTIONS] COMMAND [ARGS]...
 
-  Search the knowledge store.
+  Search and manage the knowledge store.
 
 Options:
   --json  Emit JSON instead of human-readable output.
   --help  Show this message and exit.
 
 Commands:
-  search  Hybrid-search knowledge documents visible in an organization...
+  create-document  Create a knowledge document in the selected scope.
+  delete-document  Delete a knowledge document in the selected exact scope.
+  get-document     Get a knowledge document by namespace and UUID.
+  list-documents   List knowledge documents visible in the selected scope.
+  list-namespaces  List knowledge namespaces visible in the selected scope.
+  search           Hybrid-search knowledge documents visible in an...
+  update-document  Update a knowledge document in the selected exact scope.
+```
+
+### `knowledge create-document`
+
+```
+Usage: knowledge create-document [OPTIONS] NAMESPACE
+
+  Create a knowledge document in the selected scope.
+
+Options:
+  --content TEXT                  Markdown/plain text content.  [required]
+  --key TEXT                      Optional stable document key.
+  --metadata TEXT                 JSON object for document metadata.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
+### `knowledge delete-document`
+
+```
+Usage: knowledge delete-document [OPTIONS] NAMESPACE DOCUMENT_ID
+
+  Delete a knowledge document in the selected exact scope.
+
+Options:
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
+### `knowledge get-document`
+
+```
+Usage: knowledge get-document [OPTIONS] NAMESPACE DOCUMENT_ID
+
+  Get a knowledge document by namespace and UUID.
+
+Options:
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
+### `knowledge list-documents`
+
+```
+Usage: knowledge list-documents [OPTIONS]
+
+  List knowledge documents visible in the selected scope.
+
+Options:
+  --namespace TEXT                Only list one namespace.
+  --search TEXT                   Filter by key/content substring.
+  --limit INTEGER RANGE           [default: 100; 1<=x<=500]
+  --offset INTEGER RANGE          [default: 0; x>=0]
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
+### `knowledge list-namespaces`
+
+```
+Usage: knowledge list-namespaces [OPTIONS]
+
+  List knowledge namespaces visible in the selected scope.
+
+Options:
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ### `knowledge search`
@@ -1536,6 +1687,29 @@ Options:
                                   metadata.
   --fallback / --no-fallback      Include global knowledge when searching an
                                   organization.
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
+### `knowledge update-document`
+
+```
+Usage: knowledge update-document [OPTIONS] NAMESPACE DOCUMENT_ID
+
+  Update a knowledge document in the selected exact scope.
+
+Options:
+  --content TEXT                  Replacement Markdown/plain text content.
+                                  [required]
+  --metadata TEXT                 JSON object for document metadata.
+  --replace                       Replace conflicting target document on scope
+                                  move.
   --global                        Target global scope (org=NULL). Alias for
                                   --org global.
   --org, --organization, --scope TEXT
@@ -1882,13 +2056,14 @@ Usage: roles create [OPTIONS]
   Create a new role.
 
 Options:
-  --name TEXT         name  [required]
-  --description TEXT  description
-  --permissions TEXT  permissions as JSON literal or @path to a YAML/JSON
-                      file.
-  --scopes TEXT       scopes (repeat for multiple).
-  --json              Emit JSON instead of human-readable output.
-  --help              Show this message and exit.
+  --name TEXT          name  [required]
+  --description TEXT   description
+  --capabilities TEXT  capabilities (repeat for multiple).
+  --scopes TEXT        scopes (repeat for multiple).
+  --permissions TEXT   permissions as JSON literal or @path to a YAML/JSON
+                       file.
+  --json               Emit JSON instead of human-readable output.
+  --help               Show this message and exit.
 ```
 
 ### `roles delete`
@@ -1940,13 +2115,14 @@ Usage: roles update [OPTIONS] REF
   ambiguous names fail loudly with the candidate list.
 
 Options:
-  --name TEXT         name
-  --description TEXT  description
-  --permissions TEXT  permissions as JSON literal or @path to a YAML/JSON
-                      file.
-  --scopes TEXT       scopes (repeat for multiple).
-  --json              Emit JSON instead of human-readable output.
-  --help              Show this message and exit.
+  --name TEXT          name
+  --description TEXT   description
+  --capabilities TEXT  capabilities (repeat for multiple).
+  --scopes TEXT        scopes (repeat for multiple).
+  --permissions TEXT   permissions as JSON literal or @path to a YAML/JSON
+                       file.
+  --json               Emit JSON instead of human-readable output.
+  --help               Show this message and exit.
 ```
 
 ## `solution`
@@ -1983,9 +2159,16 @@ Usage: solution bind [OPTIONS] [PATH]
   Bind this local Solution workspace to an existing install.
 
 Options:
-  --solution TEXT  Install id or unique slug.  [required]
-  --url TEXT       Bifrost instance URL (default: current profile).
-  --help           Show this message and exit.
+  --solution TEXT                 Install id or unique slug.  [required]
+  --url TEXT                      Bifrost instance URL (default: current
+                                  profile).
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --help                          Show this message and exit.
 ```
 
 ### `solution capture`
@@ -2012,6 +2195,12 @@ Options:
                                   references; capture nothing.
   --yes                           Skip the confirmation prompt (capture is
                                   terminal).
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
   --help                          Show this message and exit.
 ```
 
@@ -2072,16 +2261,23 @@ Usage: solution export [OPTIONS] SOLUTION_REF
   Download a Solution's workspace zip (shareable or full backup).
 
 Options:
-  --mode [shareable|full]  shareable (code+schema, no password) or full
-                           (+secrets+data, password required).  [default:
-                           shareable]
-  --password TEXT          Required for --mode full; encrypts the secrets
-                           blob.
-  --include-data           Include table row data and solution files in the
-                           encrypted tier. Requires --mode full.
-  --out TEXT               Output zip path (default: <slug>-<version>.zip in
-                           the current directory).
-  --help                   Show this message and exit.
+  --mode [shareable|full]         shareable (code+schema, no password) or full
+                                  (+secrets+data, password required).
+                                  [default: shareable]
+  --password TEXT                 Required for --mode full; encrypts the
+                                  secrets blob.
+  --include-data                  Include table row data and solution files in
+                                  the encrypted tier. Requires --mode full.
+  --out TEXT                      Output zip path (default:
+                                  <slug>-<version>.zip in the current
+                                  directory).
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --help                          Show this message and exit.
 ```
 
 ### `solution init`
