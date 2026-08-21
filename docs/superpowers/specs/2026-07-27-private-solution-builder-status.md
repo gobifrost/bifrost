@@ -1,6 +1,17 @@
 # Private Solution Builder — Reconstructed Status
 
-**Updated:** 2026-08-17
+> **Historical recovery ledger.** This document remains the recovery and
+> behavior ledger for the reconstructed Builder. Its scope grammar, support
+> reach, default-role, and per-Solution coding-Agent statements are historical.
+> The implemented canonical replacement is
+> [Builder authorization boundaries and end-to-end execution plan](../../plans/2026-08-19-builder-authorization-boundaries-execution.md),
+> where Global is the Platform assignment boundary rather than a scope suffix,
+> and Builder uses one maintained coding profile with target-scoped tools. See
+> the [current execution resume](../../plans/2026-08-20-builder-authorization-execution-resume.md)
+> for current-run evidence and remaining gates; the large historical evidence
+> list below is not a substitute for that handoff.
+
+**Updated:** 2026-08-20
 **Integration branch:** `codex/code-builder-pydantic-integration-20260816`
 **Base:** main at `16e317e628d57ff4a4e57d179ff71d370445f6b5`
 **Source of truth for recovered work:** immutable backup `1696d8693`
@@ -22,10 +33,12 @@ same two runner envelopes and the same `ghcr.io/gobifrost/bifrost-build` image.
 The branch is not approved for merge yet. Verification and delivery QA are
 recorded below and must be complete before approval is requested.
 
-The recovered foundation is complete, but full CLI/MCP/native Builder parity
-and revision-bound Agent Skill reference-file hydration remain active work.
-Their execution order and acceptance gates are defined in
-[`docs/plans/2026-08-17-builder-capability-parity-execution.md`](../../plans/2026-08-17-builder-capability-parity-execution.md).
+The recovered foundation, maintained coding profile, revision-bound Agent
+Skill hydration, canonical operation catalog, CLI/MCP/native Builder parity
+framework, Organization/Global targets, and boundary-aware MSP support UI are
+implemented in the working tree. Final delivery remains uncommitted and
+unapproved; current limitations and verification gates are maintained in the
+August 20 resume document.
 
 ## User experience
 
@@ -99,8 +112,8 @@ operations across native Builder, MCP, and CLI.
 
 | Durable operation | PlatformJob responsibility | Compute location |
 | --- | --- | --- |
-| `solution.builder.turn` | authorization context, lease, retries, cancellation, progress, terminal result | existing Worker by default; optional Cloudflare sandbox |
-| `solution.build` | immutable input hash, dispatch, progress, fencing, verified output manifest | existing Worker by default; optional Cloudflare sandbox |
+| `solution.builder.turn` | authorization context, lease, retries, cancellation, progress, terminal result | existing Worker by default; optional Cloudflare paired runner/workspace sandboxes |
+| `solution.build` | immutable input hash, dispatch, progress, fencing, verified output manifest | existing Worker by default; optional locked-down Cloudflare build sandbox with no model key and callback + npm-registry egress only |
 | `solution.deploy` | durable deploy transaction, source/revision attribution, result projection | Scheduler job child process |
 | `sandbox.runner.provision` | durable provider setup, diagnostics, retry/error state | Scheduler job child process plus Cloudflare API when selected |
 
@@ -193,11 +206,11 @@ onscreen during a long model response.
 
 ## Recovery inventory against `1696d8693`
 
-The path-by-path inventory is recorded in
+The original full recovery inventory is recorded in
 [`docs/plans/2026-08-17-code-builder-recovery-inventory.md`](../../plans/2026-08-17-code-builder-recovery-inventory.md).
-All 377 backup-changed paths were examined: 339 exist in the reconstructed
-worktree, and all 38 absent paths have an explicit replacement or retirement
-disposition.
+The final Builder-owned pre-push omission accounting against immutable backup
+`1696d8693` is recorded in
+[`docs/plans/2026-08-20-builder-backup-inventory.md`](../../plans/2026-08-20-builder-backup-inventory.md): 87 identified Builder paths, 66 retained at the same path, and 21 explicit replacements, test consolidations, or superseded design paths.
 
 ### Reused or generalized
 
@@ -375,25 +388,22 @@ state was discarded during resume.
   not part of this version. The shared ledger records provider tokens, cache
   tokens, media usage, reported cost, user, organization, and Solution; Builder
   currently enforces only its per-turn request/token ceilings.
-- Agent, Form, Table, App, Event, Workflow, Organization, Integration,
-  Workspace Files, Execution History, Knowledge Search, and Roles now use
-  REST-canonical MCP adapters.
-  Remaining uncatalogued domains, native Builder dispatch parity,
-  revision-bound Agent Skill hydration, generated transport bindings, and the
-  maintained coding profile remain sequenced work in the capability-parity
-  execution plan.
-- The recovered foundation is committed and pushed through `014d212ea`; the
-  canonical App and Event checkpoints are pushed through `3c717d110`; the
-  Workflow checkpoint is pushed through `c6251e790`; the Organization
-  checkpoint is pushed through `367ca7d2c`; and the Integration checkpoint is
-  pushed through `85ee5b2a0`; and the Workspace Files checkpoint is pushed
-  through `3b3f9a868`. The Execution History checkpoint is pushed through
-  `000645e85`; the Knowledge Search checkpoint is pushed through `b4ecf2242`;
-  the Role checkpoint and durable resume handoff are complete on the same
-  integration branch. It remains
-  an integration branch: no pull request or merge action has been taken, and
-  merge still requires Jack's explicit approval after the remaining phases and
-  delivery QA are complete.
+- Workflow execution tokens and the execution SDK still materialize legacy
+  superuser/provider claims. Their replacement with delegated, short-lived
+  workflow capabilities is deliberately a later RBAC phase; this version does
+  not change execution authority.
+- Platform Admin remains a compatibility boolean in JWT/runtime contracts while
+  converted human routes authorize through Roles and boundaries. It is not a
+  new authorization fallback. Engine, embed, app-runtime, and policy paths must
+  remain explicitly classified before that materialized field can be removed.
+- The generated catalog currently accounts for 171 operations, 146 CLI leaves,
+  116 MCP tools, 110 native Builder operations, 672 REST pairs, 16 manifest
+  fields, and 19 app-SDK bindings. Transport-only and intentionally unsupported
+  entries remain dispositioned in the generated inventory.
+- The complete working tree is uncommitted. No rebase, commit, push, pull
+  request, or merge has been performed for this authorization/target/UI phase.
+  Merge still requires Jack's explicit approval after the current resume gates
+  and customer acceptance are complete.
 
-No merge is authorized until the remaining execution phases and final delivery
-QA are green and Jack explicitly approves the branch.
+No merge is authorized until the final delivery QA in the current resume is
+green and Jack explicitly approves the branch.

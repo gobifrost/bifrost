@@ -48,7 +48,11 @@ import type { components } from "@/lib/v1";
 
 type MCPToolInfo = components["schemas"]["MCPToolInfo"];
 
-export function MCP() {
+interface MCPProps {
+	canWrite?: boolean;
+}
+
+export function MCP({ canWrite = true }: MCPProps) {
 	// Form state
 	const [enabled, setEnabled] = useState(true);
 	const [allowedToolIds, setAllowedToolIds] = useState<string[] | null>(null);
@@ -106,10 +110,12 @@ export function MCP() {
 
 	// Track changes
 	const handleChange = () => {
+		if (!canWrite) return;
 		setHasChanges(true);
 	};
 
 	const handleSave = async () => {
+		if (!canWrite) return;
 		setSaving(true);
 		try {
 			await saveMutation.mutateAsync({
@@ -130,6 +136,7 @@ export function MCP() {
 	};
 
 	const handleReset = async () => {
+		if (!canWrite) return;
 		setSaving(true);
 		try {
 			await deleteMutation.mutateAsync({});
@@ -144,6 +151,7 @@ export function MCP() {
 	};
 
 	const toggleAllowedTool = (toolId: string) => {
+		if (!canWrite) return;
 		const current = allowedToolIds || [];
 		if (current.includes(toolId)) {
 			const newList = current.filter((id) => id !== toolId);
@@ -155,6 +163,7 @@ export function MCP() {
 	};
 
 	const toggleBlockedTool = (toolId: string) => {
+		if (!canWrite) return;
 		if (blockedToolIds.includes(toolId)) {
 			setBlockedToolIds(blockedToolIds.filter((id) => id !== toolId));
 		} else {
@@ -164,12 +173,14 @@ export function MCP() {
 	};
 
 	const removeAllowedTool = (toolId: string) => {
+		if (!canWrite) return;
 		const newList = (allowedToolIds || []).filter((id) => id !== toolId);
 		setAllowedToolIds(newList.length > 0 ? newList : null);
 		handleChange();
 	};
 
 	const removeBlockedTool = (toolId: string) => {
+		if (!canWrite) return;
 		setBlockedToolIds(blockedToolIds.filter((id) => id !== toolId));
 		handleChange();
 	};
@@ -257,7 +268,9 @@ export function MCP() {
 						<Switch
 							id="mcp-enabled"
 							checked={enabled}
+							disabled={!canWrite}
 							onCheckedChange={(checked) => {
+								if (!canWrite) return;
 								setEnabled(checked);
 								handleChange();
 							}}
@@ -300,6 +313,7 @@ export function MCP() {
 												onClick={() =>
 													removeAllowedTool(toolId)
 												}
+												disabled={!canWrite}
 												className="ml-1 hover:bg-muted rounded-full"
 											>
 												<X className="h-3 w-3" />
@@ -319,7 +333,7 @@ export function MCP() {
 									role="combobox"
 									aria-expanded={allowedToolsOpen}
 									className="w-full justify-between"
-									disabled={toolsLoading}
+									disabled={toolsLoading || !canWrite}
 								>
 									{toolsLoading ? (
 										<Loader2 className="h-4 w-4 animate-spin" />
@@ -390,6 +404,7 @@ export function MCP() {
 												onClick={() =>
 													removeBlockedTool(toolId)
 												}
+												disabled={!canWrite}
 												className="ml-1 hover:bg-destructive/80 rounded-full"
 											>
 												<X className="h-3 w-3" />
@@ -409,7 +424,7 @@ export function MCP() {
 									role="combobox"
 									aria-expanded={blockedToolsOpen}
 									className="w-full justify-between"
-									disabled={toolsLoading}
+									disabled={toolsLoading || !canWrite}
 								>
 									{toolsLoading ? (
 										<Loader2 className="h-4 w-4 animate-spin" />
@@ -460,7 +475,7 @@ export function MCP() {
 
 			{/* Action Buttons */}
 			<div className="flex items-center gap-4">
-				<Button onClick={handleSave} disabled={saving || !hasChanges}>
+				<Button onClick={handleSave} disabled={saving || !hasChanges || !canWrite}>
 					{saving ? (
 						<>
 							<Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -473,7 +488,7 @@ export function MCP() {
 				<Button
 					variant="outline"
 					onClick={handleReset}
-					disabled={saving || !config?.is_configured}
+					disabled={saving || !config?.is_configured || !canWrite}
 				>
 					<RotateCcw className="mr-2 h-4 w-4" />
 					Reset to Defaults

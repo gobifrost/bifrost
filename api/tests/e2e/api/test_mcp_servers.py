@@ -16,6 +16,10 @@ from uuid import uuid4
 import pytest
 
 
+def _platform_headers(user):
+    return {**user.headers, "X-Bifrost-Boundary": "platform"}
+
+
 @pytest.mark.e2e
 class TestMCPServersCRUD:
     """Server-template CRUD."""
@@ -26,7 +30,7 @@ class TestMCPServersCRUD:
         name = f"e2e_mcp_server_{uuid4().hex[:8]}"
         response = e2e_client.post(
             "/api/mcp-servers",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
             json={
                 "name": name,
                 "server_url": "https://example.com/mcp",
@@ -38,14 +42,14 @@ class TestMCPServersCRUD:
         yield server
         e2e_client.delete(
             f"/api/mcp-servers/{server['id']}?hard=true",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
         )
 
     def test_create_server(self, e2e_client, platform_admin):
         name = f"e2e_create_{uuid4().hex[:8]}"
         response = e2e_client.post(
             "/api/mcp-servers",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
             json={
                 "name": name,
                 "server_url": "https://example.com/mcp",
@@ -62,7 +66,7 @@ class TestMCPServersCRUD:
         # cleanup
         e2e_client.delete(
             f"/api/mcp-servers/{body['id']}?hard=true",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
         )
 
     def test_create_server_requires_admin(self, e2e_client, org1_user):
@@ -79,7 +83,7 @@ class TestMCPServersCRUD:
     def test_list_servers_admin_sees_all(self, e2e_client, platform_admin, server):
         response = e2e_client.get(
             "/api/mcp-servers",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
         )
         assert response.status_code == 200, response.text
         names = [s["name"] for s in response.json()]
@@ -100,7 +104,7 @@ class TestMCPServersCRUD:
     def test_get_server(self, e2e_client, platform_admin, server):
         response = e2e_client.get(
             f"/api/mcp-servers/{server['id']}",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
         )
         assert response.status_code == 200, response.text
         body = response.json()
@@ -110,14 +114,14 @@ class TestMCPServersCRUD:
     def test_get_server_404(self, e2e_client, platform_admin):
         response = e2e_client.get(
             f"/api/mcp-servers/{uuid4()}",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
         )
         assert response.status_code == 404
 
     def test_update_server(self, e2e_client, platform_admin, server):
         response = e2e_client.patch(
             f"/api/mcp-servers/{server['id']}",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
             json={"server_url": "https://updated.example.com/mcp", "is_active": False},
         )
         assert response.status_code == 200, response.text
@@ -138,7 +142,7 @@ class TestMCPServersCRUD:
         name = f"e2e_softdel_{uuid4().hex[:8]}"
         create = e2e_client.post(
             "/api/mcp-servers",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
             json={"name": name, "server_url": "https://example.com/mcp"},
         )
         assert create.status_code == 201
@@ -146,14 +150,14 @@ class TestMCPServersCRUD:
 
         delete = e2e_client.delete(
             f"/api/mcp-servers/{server_id}",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
         )
         assert delete.status_code == 204
 
         # Still exists with is_active=False
         get = e2e_client.get(
             f"/api/mcp-servers/{server_id}",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
         )
         assert get.status_code == 200
         assert get.json()["is_active"] is False
@@ -161,7 +165,7 @@ class TestMCPServersCRUD:
         # active_only=true filters it out of list
         listing = e2e_client.get(
             "/api/mcp-servers?active_only=true",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
         )
         ids = [s["id"] for s in listing.json()]
         assert server_id not in ids
@@ -169,7 +173,7 @@ class TestMCPServersCRUD:
         # active_only=false includes it
         listing_all = e2e_client.get(
             "/api/mcp-servers?active_only=false",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
         )
         ids_all = [s["id"] for s in listing_all.json()]
         assert server_id in ids_all
@@ -177,14 +181,14 @@ class TestMCPServersCRUD:
         # Cleanup
         e2e_client.delete(
             f"/api/mcp-servers/{server_id}?hard=true",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
         )
 
     def test_hard_delete_removes_row(self, e2e_client, platform_admin):
         name = f"e2e_harddel_{uuid4().hex[:8]}"
         create = e2e_client.post(
             "/api/mcp-servers",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
             json={"name": name, "server_url": "https://example.com/mcp"},
         )
         assert create.status_code == 201
@@ -192,13 +196,13 @@ class TestMCPServersCRUD:
 
         delete = e2e_client.delete(
             f"/api/mcp-servers/{server_id}?hard=true",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
         )
         assert delete.status_code == 204
 
         get = e2e_client.get(
             f"/api/mcp-servers/{server_id}",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
         )
         assert get.status_code == 404
 
@@ -219,7 +223,7 @@ class TestMCPServerDiscover:
         # handling as a remote endpoint that cannot be reached.
         response = e2e_client.post(
             "/api/mcp-servers/discover",
-            headers=platform_admin.headers,
+            headers=_platform_headers(platform_admin),
             json={"server_url": "http://127.0.0.1:1/mcp"},
         )
         assert response.status_code == 200, response.text

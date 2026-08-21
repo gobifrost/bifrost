@@ -180,7 +180,15 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "bifrost_list_workflow_executions",
         "bifrost_get_workflow_execution",
     },
-    "knowledge": {"bifrost_search_knowledge"},
+    "knowledge": {
+        "bifrost_search_knowledge",
+        "bifrost_list_knowledge_namespaces",
+        "bifrost_list_knowledge_documents",
+        "bifrost_get_knowledge_document",
+        "bifrost_create_knowledge_document",
+        "bifrost_update_knowledge_document",
+        "bifrost_delete_knowledge_document",
+    },
     "platform_jobs": {"bifrost_get_platform_job"},
     "policy_rules": {
         "bifrost_list_policy_rules",
@@ -272,9 +280,7 @@ def _walk_imports(node: ast.AST) -> Iterable[str]:
         for handler in handlers
     ],
 )
-def test_parity_handler_has_no_orm_imports(
-    module_name: str, handler_name: str
-) -> None:
+def test_parity_handler_has_no_orm_imports(module_name: str, handler_name: str) -> None:
     """Each Task 6 handler body must not import ORM / repositories / AsyncSession."""
     module = MODULES[module_name]
     module_path = pathlib.Path(inspect.getfile(module))
@@ -314,17 +320,15 @@ def test_parity_handlers_use_http_bridge() -> None:
             node = _handler_source(module_path, handler)
             bodies = [ast.unparse(stmt) for stmt in ast.walk(node)]
             joined = "\n".join(bodies)
-            assert (
-                "call_rest" in joined or "rest_client" in joined
-            ), (
+            assert "call_rest" in joined or "rest_client" in joined, (
                 f"{module_name}.{handler} does not use call_rest / rest_client; "
                 "Task 6 parity tools must go through the in-process REST bridge."
             )
 
         # Sanity: the module imports the bridge at module scope.
-        assert (
-            "from src.services.mcp_server.tools._http_bridge" in source
-        ), f"{module_name} does not import the HTTP bridge helpers"
+        assert "from src.services.mcp_server.tools._http_bridge" in source, (
+            f"{module_name} does not import the HTTP bridge helpers"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -349,7 +353,9 @@ def _call_rest_capturing_params() -> tuple[AsyncMock, list[dict]]:
     calls: list[dict] = []
 
     async def _fake_call_rest(context, method, path, *, json_body=None, params=None):
-        calls.append({"method": method, "path": path, "params": params, "json_body": json_body})
+        calls.append(
+            {"method": method, "path": path, "params": params, "json_body": json_body}
+        )
         return (200, {"policies": [], "count": 0})
 
     return AsyncMock(side_effect=_fake_call_rest), calls
@@ -384,8 +390,12 @@ async def test_file_policy_solution_scope_forwarded_get() -> None:
         return (200, {"id": "x", "path": "", "location": "solutions", "policies": []})
 
     install_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-    with patch("src.services.mcp_server.tools.files.call_rest", AsyncMock(side_effect=_fake)):
-        await bifrost_get_file_policy(ctx, path="data/", location="solutions", solution=install_id)
+    with patch(
+        "src.services.mcp_server.tools.files.call_rest", AsyncMock(side_effect=_fake)
+    ):
+        await bifrost_get_file_policy(
+            ctx, path="data/", location="solutions", solution=install_id
+        )
 
     assert captures[0]["params"].get("solution") == install_id
 
@@ -405,6 +415,46 @@ async def test_file_policy_solution_scope_omitted_when_none() -> None:
     assert "solution" not in captures[0]["params"]
 
 
+@pytest.mark.asyncio
+async def test_policy_rules_list_forwards_org_scope_and_domain() -> None:
+    """bifrost_list_policy_rules forwards both query selectors to REST."""
+    from src.services.mcp_server.tools.policy_rules import bifrost_list_policy_rules
+
+    mock_call_rest, captures = _call_rest_capturing_params()
+    ctx = _make_mcp_context()
+    organization_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+    with patch("src.services.mcp_server.tools.policy_rules.call_rest", mock_call_rest):
+        await bifrost_list_policy_rules(
+            ctx,
+            domain="file",
+            organization_id=organization_id,
+        )
+
+    assert len(captures) == 1
+    assert captures[0]["path"] == "/api/policy-rules"
+    assert captures[0]["params"] == {
+        "domain": "file",
+        "organization_id": organization_id,
+    }
+
+
+@pytest.mark.asyncio
+async def test_policy_rules_list_omits_org_scope_when_none() -> None:
+    """bifrost_list_policy_rules keeps the base collection URL when unscoped."""
+    from src.services.mcp_server.tools.policy_rules import bifrost_list_policy_rules
+
+    mock_call_rest, captures = _call_rest_capturing_params()
+    ctx = _make_mcp_context()
+
+    with patch("src.services.mcp_server.tools.policy_rules.call_rest", mock_call_rest):
+        await bifrost_list_policy_rules(ctx, domain="table")
+
+    assert len(captures) == 1
+    assert captures[0]["path"] == "/api/policy-rules"
+    assert captures[0]["params"] == {"domain": "table"}
+
+
 def test_file_policy_tools_accept_solution_param() -> None:
     """All four file policy tools declare an optional ``solution`` keyword argument."""
     import inspect as _inspect
@@ -415,7 +465,12 @@ def test_file_policy_tools_accept_solution_param() -> None:
         bifrost_set_file_policy,
     )
 
-    for fn in (bifrost_list_file_policies, bifrost_get_file_policy, bifrost_set_file_policy, bifrost_delete_file_policy):
+    for fn in (
+        bifrost_list_file_policies,
+        bifrost_get_file_policy,
+        bifrost_set_file_policy,
+        bifrost_delete_file_policy,
+    ):
         sig = _inspect.signature(fn)
         assert "solution" in sig.parameters, (
             f"{fn.__name__} does not accept a 'solution' parameter (Task 11)"

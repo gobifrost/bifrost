@@ -64,7 +64,7 @@ import { Combobox } from "@/components/ui/combobox";
 import { term, useTerminology } from "@/lib/terminology";
 import { useRoles } from "@/hooks/useRoles";
 import { useAuth } from "@/contexts/AuthContext";
-import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
+import { useAuthorizationBoundary } from "@/contexts/AuthorizationBoundaryContext";
 import {
 	useApplication,
 	useCreateApplication,
@@ -143,7 +143,8 @@ export function AppInfoDialog({
 }: AppInfoDialogProps) {
 	const isEditing = !!appSlug;
 	const terminology = useTerminology();
-	const { isPlatformAdmin, user } = useAuth();
+	const { user } = useAuth();
+	const { selectedTarget, hasSelectedCapability } = useAuthorizationBoundary();
 
 	const { data: existingApp, isLoading: isLoadingApp } = useApplication(
 		isEditing ? appSlug : undefined,
@@ -161,10 +162,13 @@ export function AppInfoDialog({
 	const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
 	const [replacePathOpen, setReplacePathOpen] = useState(false);
 
-	// Default organization_id for org users is their org, for platform admins it's null (global)
-	const defaultOrgId = isPlatformAdmin
-		? null
-		: (user?.organizationId ?? null);
+	const defaultOrgId =
+		selectedTarget?.kind === "platform"
+			? null
+			: (selectedTarget?.organization_id ?? user?.organizationId ?? null);
+	const canManageApps =
+		selectedTarget?.kind !== "managed_organizations" &&
+		hasSelectedCapability("apps.readwrite");
 
 	const form = useForm<FormValues>({
 		resolver: zodResolver(formSchema),
@@ -239,7 +243,7 @@ export function AppInfoDialog({
 					params: {
 						path: { app_id: existingApp.id },
 					},
-					body: buildApplicationUpdateBody(values, isPlatformAdmin),
+					body: buildApplicationUpdateBody(values, false),
 				});
 				handleClose();
 
@@ -332,32 +336,6 @@ export function AppInfoDialog({
 							onSubmit={form.handleSubmit(onSubmit)}
 							className="space-y-4"
 						>
-							{/* Organization Scope - Only show for platform admins */}
-							{isPlatformAdmin && (
-								<FormField
-									control={form.control}
-									name="organization_id"
-									render={({ field }) => (
-										<FormItem>
-											<FormLabel>Organization</FormLabel>
-											<FormControl>
-												<OrganizationSelect
-													value={field.value}
-													onChange={field.onChange}
-													showGlobal={true}
-												/>
-											</FormControl>
-											<FormDescription>
-												{isEditing
-													? "Warning: Changing the organization will move the app to a different scope"
-													: "Global apps are available to all organizations"}
-											</FormDescription>
-											<FormMessage />
-										</FormItem>
-									)}
-								/>
-							)}
-
 							{/* Name */}
 							<FormField
 								control={form.control}
@@ -584,6 +562,7 @@ export function AppInfoDialog({
 												variant="outline"
 												size="sm"
 												onClick={() => setReplacePathOpen(true)}
+												disabled={!canManageApps}
 											>
 												<ArrowRightLeft className="h-3 w-3 mr-1" />
 												Replace…
@@ -605,7 +584,10 @@ export function AppInfoDialog({
 										variant="ghost"
 										className="text-destructive hover:text-destructive hover:bg-destructive/10"
 										onClick={() => setConfirmDeleteOpen(true)}
-										disabled={deleteApplication.isPending}
+										disabled={
+											deleteApplication.isPending ||
+											!canManageApps
+										}
 									>
 										<Trash2 className="mr-2 h-4 w-4" />
 										Delete
@@ -621,7 +603,10 @@ export function AppInfoDialog({
 									>
 										Cancel
 									</Button>
-									<Button type="submit" disabled={isPending}>
+									<Button
+										type="submit"
+										disabled={isPending || !canManageApps}
+									>
 										{isPending && (
 											<Loader2 className="mr-2 h-4 w-4 animate-spin" />
 										)}

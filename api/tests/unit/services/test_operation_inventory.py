@@ -13,16 +13,16 @@ REPO_ROOT = API_ROOT.parent
 def test_every_observed_surface_is_classified_with_a_reason() -> None:
     inventory = build_operation_inventory(app, REPO_ROOT)
     assert inventory["counts"] == {
-        "cli": 140,
+        "cli": 146,
         "manifest": 16,
-        # 104 after the policy-rule slice added get / update / list-usages.
-        "mcp": 104,
-        "native_builder": 10,
-        # 663 after configs.get added GET /api/config/{config_id},
-        # policy.rules.get added GET /api/policy-rules/{domain}/{name}, and
-        # the Agent Skill ArtifactRef export added POST
-        # /api/agents/{agent_id}/skill/export.
-        "rest": 663,
+        # 116 after adding the complete Knowledge document surface.
+        "mcp": 116,
+        # Ten Builder-local workspace primitives plus every registered
+        # catalog operation the maintained profile can expose dynamically.
+        "native_builder": 110,
+        # 672 after adding authorization-context discovery alongside the
+        # organization-group and Builder target-discovery surfaces.
+        "rest": 672,
         "sdk": 19,
     }
     for surface, rows in inventory["uncataloged"].items():
@@ -66,21 +66,26 @@ def test_builder_local_mcp_tools_are_dispositioned_not_pending() -> None:
 def test_catalog_vertical_slices_report_rest_cli_and_mcp_parity() -> None:
     inventory = build_operation_inventory(app, REPO_ROOT)
     operations = {
-        row["operation"]["operation_id"]: row
-        for row in inventory["catalog_operations"]
+        row["operation"]["operation_id"]: row for row in inventory["catalog_operations"]
     }
     for operation_id, row in operations.items():
         observed = row["observed"]
         assert observed["rest"]["status"] == "exact_parity"
-        assert observed["cli"]["status"] == "exact_parity"
-        assert observed["mcp"] == {
-            "status": "exact_parity",
-            "name": row["operation"]["mcp"]["name"],
-        }
+        if row["operation"]["exclusions"].get("cli"):
+            assert observed["cli"]["status"] == "intentionally_unsupported"
+        else:
+            assert observed["cli"]["status"] == "exact_parity"
+        if row["operation"]["exclusions"].get("mcp"):
+            assert observed["mcp"]["status"] == "intentionally_unsupported"
+        else:
+            assert observed["mcp"] == {
+                "status": "exact_parity",
+                "name": row["operation"]["mcp"]["name"],
+            }
         expected_builder_status = (
             "intentionally_unsupported"
             if row["operation"]["exclusions"].get("native_builder")
-            else "missing_surface"
+            else "exact_parity"
         )
         assert observed["native_builder"]["status"] == expected_builder_status
 
@@ -89,10 +94,16 @@ def test_generated_operation_files_are_fresh() -> None:
     import importlib.util
 
     generator_path = API_ROOT / "scripts" / "operation_catalog" / "generate.py"
-    spec = importlib.util.spec_from_file_location("operation_catalog_generate", generator_path)
+    spec = importlib.util.spec_from_file_location(
+        "operation_catalog_generate", generator_path
+    )
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
-    assert module.INVENTORY_PATH.read_text(encoding="utf-8") == module.render_inventory()
-    assert module.OPERATIONS_PATH.read_text(encoding="utf-8") == module.render_operations()
+    assert (
+        module.INVENTORY_PATH.read_text(encoding="utf-8") == module.render_inventory()
+    )
+    assert (
+        module.OPERATIONS_PATH.read_text(encoding="utf-8") == module.render_operations()
+    )

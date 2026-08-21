@@ -45,9 +45,14 @@ import {
 } from "@/components/ui/tooltip";
 import { SearchBox } from "@/components/search/SearchBox";
 import { useSearch } from "@/hooks/useSearch";
-import { useRoles, useDeleteRole } from "@/hooks/useRoles";
+import {
+	PLATFORM_BOUNDARY_HEADERS,
+	useDeleteRole,
+	useRoles,
+} from "@/hooks/useRoles";
 import { RoleDialog } from "@/components/roles/RoleDialog";
 import { Badge } from "@/components/ui/badge";
+import { useAuthorizationBoundary } from "@/contexts/AuthorizationBoundaryContext";
 
 import type { components } from "@/lib/v1";
 type Role = components["schemas"]["RolePublic"];
@@ -95,6 +100,11 @@ export function Roles() {
 	const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
 
 	const navigate = useNavigate();
+	const { selectedTarget, hasSelectedCapability } =
+		useAuthorizationBoundary();
+	const canManageRoleDefinitions =
+		selectedTarget?.kind === "platform" &&
+		hasSelectedCapability("roles.readwrite");
 	const { data: roles, isLoading, refetch } = useRoles();
 	const deleteRole = useDeleteRole();
 
@@ -111,8 +121,12 @@ export function Roles() {
 				case "name":
 					return dir * (a.name || "").localeCompare(b.name || "");
 				case "created": {
-					const aDate = a.created_at ? new Date(a.created_at).getTime() : 0;
-					const bDate = b.created_at ? new Date(b.created_at).getTime() : 0;
+					const aDate = a.created_at
+						? new Date(a.created_at).getTime()
+						: 0;
+					const bDate = b.created_at
+						? new Date(b.created_at).getTime()
+						: 0;
 					return dir * (aDate - bDate);
 				}
 				default:
@@ -147,7 +161,10 @@ export function Roles() {
 
 	const handleConfirmDelete = () => {
 		if (!roleToDelete) return;
-		deleteRole.mutate({ params: { path: { role_id: roleToDelete.id } } });
+		deleteRole.mutate({
+			headers: PLATFORM_BOUNDARY_HEADERS,
+			params: { path: { role_id: roleToDelete.id } },
+		});
 		setIsDeleteOpen(false);
 		setRoleToDelete(undefined);
 	};
@@ -157,11 +174,13 @@ export function Roles() {
 			{/* Header */}
 			<div className="flex items-center justify-between">
 				<div>
-					<h1 className="text-4xl font-extrabold tracking-tight">Roles</h1>
+					<h1 className="text-4xl font-extrabold tracking-tight">
+						Roles
+					</h1>
 					<p className="mt-2 text-muted-foreground">
-						Roles grant access to users, forms, agents, apps, workflows, and
-						knowledge namespaces. Click a count chip to manage that consumer
-						type.
+						Roles grant access to users, forms, agents, apps,
+						workflows, and knowledge namespaces. Click a count chip
+						to manage that consumer type.
 					</p>
 				</div>
 				<div className="flex gap-2">
@@ -173,14 +192,16 @@ export function Roles() {
 					>
 						<RefreshCw className="h-4 w-4" />
 					</Button>
-					<Button
-						variant="outline"
-						size="icon"
-						onClick={handleAdd}
-						title="Create Role"
-					>
-						<Plus className="h-4 w-4" />
-					</Button>
+					{canManageRoleDefinitions ? (
+						<Button
+							variant="outline"
+							size="icon"
+							onClick={handleAdd}
+							title="Create Role"
+						>
+							<Plus className="h-4 w-4" />
+						</Button>
+					) : null}
 				</div>
 			</div>
 
@@ -216,15 +237,17 @@ export function Roles() {
 									? "Try adjusting your search term or clear the filter"
 									: "Get started by creating your first role"}
 							</p>
-							<Button
-								variant="outline"
-								size="icon"
-								onClick={handleAdd}
-								title="Create Role"
-								className="mt-4"
-							>
-								<Plus className="h-4 w-4" />
-							</Button>
+							{canManageRoleDefinitions ? (
+								<Button
+									variant="outline"
+									size="icon"
+									onClick={handleAdd}
+									title="Create Role"
+									className="mt-4"
+								>
+									<Plus className="h-4 w-4" />
+								</Button>
+							) : null}
 						</CardContent>
 					</Card>
 				) : (
@@ -270,6 +293,9 @@ export function Roles() {
 									onEdit={() => handleEdit(role)}
 									onDelete={() => handleDelete(role)}
 									onNavigate={(to) => navigate(to)}
+									canManageDefinitions={
+										canManageRoleDefinitions
+									}
 								/>
 							))}
 						</DataTableBody>
@@ -291,8 +317,8 @@ export function Roles() {
 					<AlertDialogHeader>
 						<AlertDialogTitle>Delete Role</AlertDialogTitle>
 						<AlertDialogDescription>
-							Are you sure you want to delete the role "{roleToDelete?.name}"?
-							This action cannot be undone.
+							Are you sure you want to delete the role "
+							{roleToDelete?.name}"? This action cannot be undone.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -301,7 +327,9 @@ export function Roles() {
 							onClick={handleConfirmDelete}
 							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 						>
-							{deleteRole.isPending ? "Deleting..." : "Delete Role"}
+							{deleteRole.isPending
+								? "Deleting..."
+								: "Delete Role"}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>
@@ -315,11 +343,13 @@ function RoleRow({
 	onEdit,
 	onDelete,
 	onNavigate,
+	canManageDefinitions,
 }: {
 	role: Role;
 	onEdit: () => void;
 	onDelete: () => void;
 	onNavigate: (to: string) => void;
+	canManageDefinitions: boolean;
 }) {
 	const counts = role.consumer_counts;
 
@@ -338,7 +368,10 @@ function RoleRow({
 					{role.name}
 				</Link>
 				{role.is_builtin ? (
-					<Badge variant="secondary" className="ml-2 align-middle font-normal">
+					<Badge
+						variant="secondary"
+						className="ml-2 align-middle font-normal"
+					>
 						Built-in
 					</Badge>
 				) : null}
@@ -352,7 +385,8 @@ function RoleRow({
 			>
 				<div className="flex flex-wrap gap-1">
 					{CHIP_DEFS.filter(
-						({ key }) => role.assignable_to_resources || key === "users",
+						({ key }) =>
+							role.assignable_to_resources || key === "users",
 					).map(({ key, label, icon: Icon }) => {
 						const count = counts ? counts[key] : 0;
 						return (
@@ -364,7 +398,9 @@ function RoleRow({
 										aria-label={`${count} ${label.toLowerCase()} — open ${label.toLowerCase()} tab`}
 									>
 										<Icon className="h-3 w-3" />
-										<span className="font-medium">{count}</span>
+										<span className="font-medium">
+											{count}
+										</span>
 									</Link>
 								</TooltipTrigger>
 								<TooltipContent>{label}</TooltipContent>
@@ -383,30 +419,38 @@ function RoleRow({
 				onClick={(e) => e.stopPropagation()}
 			>
 				<div className="flex justify-end gap-1">
-					<Button
-						variant="ghost"
-						size="icon"
-						className="h-8 w-8"
-						onClick={onEdit}
-						aria-label={`${role.is_builtin ? "View" : "Edit"} ${role.name}`}
-						title={role.is_builtin ? "View built-in role" : "Edit role"}
-					>
-						{role.is_builtin ? (
-							<Eye className="h-4 w-4" />
-						) : (
-							<Pencil className="h-4 w-4" />
-						)}
-					</Button>
-					{!role.is_builtin ? <Button
-						variant="ghost"
-						size="icon"
-						className="h-8 w-8"
-						onClick={onDelete}
-						aria-label={`Delete ${role.name}`}
-						title="Delete role"
-					>
-						<Trash2 className="h-4 w-4" />
-					</Button> : null}
+					{role.is_builtin || canManageDefinitions ? (
+						<Button
+							variant="ghost"
+							size="icon"
+							className="h-8 w-8"
+							onClick={onEdit}
+							aria-label={`${role.is_builtin ? "View" : "Edit"} ${role.name}`}
+							title={
+								role.is_builtin
+									? "View built-in role"
+									: "Edit role"
+							}
+						>
+							{role.is_builtin ? (
+								<Eye className="h-4 w-4" />
+							) : (
+								<Pencil className="h-4 w-4" />
+							)}
+						</Button>
+					) : null}
+					{!role.is_builtin && canManageDefinitions ? (
+						<Button
+							variant="ghost"
+							size="icon"
+							className="h-8 w-8"
+							onClick={onDelete}
+							aria-label={`Delete ${role.name}`}
+							title="Delete role"
+						>
+							<Trash2 className="h-4 w-4" />
+						</Button>
+					) : null}
 				</div>
 			</DataTableCell>
 		</DataTableRow>

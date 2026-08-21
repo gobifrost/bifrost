@@ -14,6 +14,7 @@ from pathlib import Path
 
 API_DIR = Path(__file__).resolve().parents[2]
 PYPROJECT = API_DIR / "pyproject.toml"
+CLI_PYPROJECT = API_DIR / "bifrost" / "pyproject.toml"
 
 _SKIP_PARTS = {"__pycache__", "node_modules"}
 
@@ -30,6 +31,17 @@ def test_pyproject_uses_find_directive_not_explicit_list():
     assert "bifrost*" in packages_cfg.get("find", {}).get("include", []), (
         "[tool.setuptools.packages.find] must include 'bifrost*'"
     )
+
+
+def test_pyproject_declares_version_parser_runtime_dependency():
+    """A clean CLI install must be able to import its version gate."""
+    config = tomllib.loads(CLI_PYPROJECT.read_text())
+    dependencies = config.get("project", {}).get("dependencies", [])
+
+    assert any(
+        dependency == "packaging" or dependency.startswith("packaging>=")
+        for dependency in dependencies
+    ), "bifrost.cli imports packaging, so the CLI package must declare it"
 
 
 def test_every_module_dir_is_a_discoverable_package():

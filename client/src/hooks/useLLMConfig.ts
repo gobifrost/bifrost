@@ -2,11 +2,11 @@
  * Hooks for checking LLM configuration status
  *
  * Used to determine if AI chat is available and configured.
- * Only works for platform admins (the config endpoint requires admin access).
+ * Only works from the selected Platform boundary when configs can be read.
  */
 
 import { $api } from "@/lib/api-client";
-import { useUserPermissions } from "@/hooks/useUserPermissions";
+import { useAuthorizationBoundary } from "@/contexts/AuthorizationBoundaryContext";
 
 /**
  * Hook to check if LLM provider is configured
@@ -17,32 +17,39 @@ import { useUserPermissions } from "@/hooks/useUserPermissions";
  * - config: the full config response (for admins only)
  */
 export function useLLMConfig() {
-	const { isPlatformAdmin, isLoading: permissionsLoading } =
-		useUserPermissions();
+	const {
+		hasSelectedCapability,
+		isLoading: permissionsLoading,
+		selectedTarget,
+	} = useAuthorizationBoundary();
+	const canReadConfig =
+		selectedTarget?.kind === "platform" &&
+		(hasSelectedCapability("configs.read") ||
+			hasSelectedCapability("configs.readwrite"));
 
 	const {
 		data: config,
 		isLoading: configLoading,
 		error,
 	} = $api.useQuery("get", "/api/admin/llm/config", undefined, {
-		// Only fetch if user is a platform admin
-		enabled: isPlatformAdmin && !permissionsLoading,
+		enabled: canReadConfig && !permissionsLoading,
 		// Cache for 5 minutes
 		staleTime: 5 * 60 * 1000,
 		// Don't retry on 404 (not configured)
 		retry: false,
 	});
 
-	// For non-admins, we can't check config - assume it might work
+	// Without platform config read, callers cannot check the admin endpoint.
 	// They'll get an error when trying to chat if not configured
-	const isConfigured = isPlatformAdmin
+	const isConfigured = canReadConfig
 		? (config?.is_configured ?? false)
-		: null; // null means "unknown" for non-admins
+		: null; // null means "unknown"
 
 	return {
 		isConfigured,
-		isPlatformAdmin,
-		isLoading: permissionsLoading || (isPlatformAdmin && configLoading),
+		isPlatformAdmin: canReadConfig,
+		canReadConfig,
+		isLoading: permissionsLoading || (canReadConfig && configLoading),
 		config,
 		error,
 	};
@@ -52,15 +59,22 @@ export function useLLMConfig() {
  * Hook to fetch available models from the configured LLM provider
  */
 export function useLLMModels() {
-	const { isPlatformAdmin, isLoading: permissionsLoading } =
-		useUserPermissions();
+	const {
+		hasSelectedCapability,
+		isLoading: permissionsLoading,
+		selectedTarget,
+	} = useAuthorizationBoundary();
+	const canReadConfig =
+		selectedTarget?.kind === "platform" &&
+		(hasSelectedCapability("configs.read") ||
+			hasSelectedCapability("configs.readwrite"));
 
 	const {
 		data,
 		isLoading: modelsLoading,
 		error,
 	} = $api.useQuery("get", "/api/admin/llm/models", undefined, {
-		enabled: isPlatformAdmin && !permissionsLoading,
+		enabled: canReadConfig && !permissionsLoading,
 		staleTime: 10 * 60 * 1000, // Cache for 10 minutes
 		retry: false,
 	});
@@ -68,7 +82,7 @@ export function useLLMModels() {
 	return {
 		models: data?.models ?? [],
 		provider: data?.provider,
-		isLoading: permissionsLoading || modelsLoading,
+		isLoading: permissionsLoading || (canReadConfig && modelsLoading),
 		error,
 	};
 }

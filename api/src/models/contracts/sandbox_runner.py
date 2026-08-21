@@ -17,6 +17,8 @@ from shared.sandbox_runner_protocol import (
     SandboxBuilderToolResponse as SandboxBuilderToolResponse,
     SandboxBuilderToolStart as SandboxBuilderToolStart,
     SandboxBuilderTurnContext as SandboxBuilderTurnContext,
+    SandboxBuilderWorkspaceBuildRequest as SandboxBuilderWorkspaceBuildRequest,
+    SandboxBuilderWorkspaceBuildResult as SandboxBuilderWorkspaceBuildResult,
 )
 
 SandboxRunnerProvider = Literal["cloudflare", "local"]
@@ -235,6 +237,7 @@ class SandboxBuilderTurnCompletion(BaseModel):
     cache_write_tokens: int = Field(default=0, ge=0)
     provider_cost: Decimal | None = Field(default=None, ge=0)
     duration_ms: int | None = Field(default=None, ge=0)
+    sandbox_compute_ms: int | None = Field(default=None, ge=0)
     assistant_message_id: UUID | None = None
     harness_diagnostics: SandboxHarnessDiagnostics | None = None
     checkpoint_output_sha256: str | None = Field(

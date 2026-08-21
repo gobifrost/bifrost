@@ -16,11 +16,13 @@ import {
 interface RequiredInstructionsSettingsProps {
 	organizationId?: string;
 	embedded?: boolean;
+	canWrite?: boolean;
 }
 
 export function RequiredInstructionsSettings({
 	organizationId,
 	embedded = false,
+	canWrite = true,
 }: RequiredInstructionsSettingsProps) {
 	const organizationScoped = Boolean(organizationId);
 	const title = organizationScoped
@@ -49,6 +51,7 @@ export function RequiredInstructionsSettings({
 	}, [organizationId, title]);
 
 	const handleSave = async () => {
+		if (!canWrite) return;
 		setSaving(true);
 		try {
 			const settings = await updateRequiredInstructionsSettings(
@@ -92,6 +95,7 @@ export function RequiredInstructionsSettings({
 				<TiptapEditor
 					content={instructions}
 					onChange={setInstructions}
+					readOnly={!canWrite}
 					placeholder="Add instructions in Markdown..."
 					ariaLabel={`${title} editor`}
 					editorClassName="min-h-[220px]"
@@ -100,7 +104,7 @@ export function RequiredInstructionsSettings({
 			<div className="flex justify-end">
 				<Button
 					onClick={handleSave}
-					disabled={loading || saving || instructions === savedInstructions}
+					disabled={loading || saving || !canWrite || instructions === savedInstructions}
 				>
 					{saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
 					Save Instructions

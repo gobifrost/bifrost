@@ -22,10 +22,8 @@ from starlette.background import BackgroundTask
 from sqlalchemy import delete, select
 from sqlalchemy.orm import selectinload
 
-from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
-from src.core.org_filter import resolve_org_filter
 from src.models.contracts.agent_stats import AgentStatsResponse, FleetStatsResponse
 from src.models.contracts.agents import (
     AgentAccessLevel,
@@ -55,6 +53,7 @@ from shared.logo_processing import (
     process_logo,
 )
 from src.repositories.agents import AgentRepository
+from src.repositories.workflows import WorkflowRepository
 from src.models.contracts.artifacts import ArtifactRef
 from src.services.artifacts import ArtifactService, artifact_ref
 from src.services.agent_skills import (
@@ -74,12 +73,21 @@ from src.services.agent_skill_import import (
 )
 from src.services.agent_skill_storage import AgentSkillStorage
 from src.services.audit import emit_audit
+from src.services.authorization import (
+    AuthorizationBoundaryKind,
+    AuthorizationContext,
+    CurrentAuthorizationContext,
+)
 from src.services.builder.fs_tools import WorkspaceViolation
 from src.services.operation_catalog import operation_route
 from src.services.repo_sync_writer import RepoSyncWriter
 from src.services.solutions.guard import assert_not_solution_managed
 from src.routers.tools import get_system_tool_ids
-from src.services.agent_stats import get_agent_stats, get_agent_stats_batch, get_fleet_stats
+from src.services.agent_stats import (
+    get_agent_stats,
+    get_agent_stats_batch,
+    get_fleet_stats,
+)
 from src.services.workflow_role_service import sync_agent_roles_to_workflows
 
 logger = logging.getLogger(__name__)
@@ -91,18 +99,65 @@ SKILL_UPLOAD_CHUNK_SIZE = 1024 * 1024
 
 async def _accessible_agent(
     db: DbSession,
-    user,
+    authorization: AuthorizationContext,
     agent_id: UUID,
 ) -> Agent | None:
     """Resolve an agent through repository-level visibility checks."""
+    user = authorization.requester
+    organization_id = _repository_organization_id(authorization)
     repo = AgentRepository(
         session=db,
-        org_id=user.organization_id,
+        org_id=organization_id,
         user_id=user.user_id,
-        is_superuser=user.is_platform_admin,
+        bypass_resource_roles=authorization.has_capability("platform.superuser"),
         is_external=user.is_external,
     )
-    return await repo.get_agent(agent_id)
+    return await repo.get_agent_with_access_check(agent_id)
+
+
+def _repository_organization_id(
+    authorization: AuthorizationContext,
+) -> UUID | None:
+    boundary = authorization.selected_boundary
+    if boundary.kind is AuthorizationBoundaryKind.ORGANIZATION:
+        return boundary.organization_id
+    if boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+        return None
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail="Select one organization or Global before opening an Agent",
+    )
+
+
+def _agent_repository(
+    db: DbSession,
+    authorization: AuthorizationContext,
+) -> AgentRepository:
+    user = authorization.requester
+    return AgentRepository(
+        session=db,
+        org_id=_repository_organization_id(authorization),
+        user_id=user.user_id,
+        bypass_resource_roles=authorization.has_capability("platform.superuser"),
+        is_external=user.is_external,
+    )
+
+
+def _require_agent_mutation(
+    authorization: AuthorizationContext,
+    agent: Agent,
+) -> None:
+    authorization.require("agents.readwrite")
+    authorization.require_resource_boundary(agent.organization_id)
+    if (
+        agent.access_level == AgentAccessLevel.PRIVATE
+        and agent.owner_user_id != authorization.requester.user_id
+        and not authorization.has_capability("platform.superuser")
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This private Agent belongs to another user",
+        )
 
 
 async def _validate_agent_references(
@@ -158,9 +213,13 @@ async def _validate_agent_references(
                 )
                 workflow = result.scalar_one_or_none()
                 if workflow is None:
-                    errors.append(f"tool_id '{tool_id}' does not reference an existing workflow")
+                    errors.append(
+                        f"tool_id '{tool_id}' does not reference an existing workflow"
+                    )
                 elif not workflow.is_active:
-                    errors.append(f"tool_id '{tool_id}' references an inactive workflow")
+                    errors.append(
+                        f"tool_id '{tool_id}' references an inactive workflow"
+                    )
                 elif workflow.type != "tool":
                     errors.append(
                         f"tool_id '{tool_id}' references a {workflow.type}, not a tool"
@@ -184,9 +243,13 @@ async def _validate_agent_references(
                 )
                 delegate = result.scalar_one_or_none()
                 if delegate is None:
-                    errors.append(f"delegated_agent_id '{delegate_id}' does not reference an existing agent")
+                    errors.append(
+                        f"delegated_agent_id '{delegate_id}' does not reference an existing agent"
+                    )
                 elif not delegate.is_active:
-                    errors.append(f"delegated_agent_id '{delegate_id}' references an inactive agent")
+                    errors.append(
+                        f"delegated_agent_id '{delegate_id}' references an inactive agent"
+                    )
             except ValueError:
                 errors.append(f"delegated_agent_id '{delegate_id}' is not a valid UUID")
 
@@ -238,27 +301,21 @@ async def _validate_agent_references(
 
 async def _validate_user_tool_access(
     db: DbSession,
-    user_id: UUID,
+    authorization: AuthorizationContext,
     tool_ids: list[str],
-    is_external: bool = False,
 ) -> None:
-    """Validate user can access all specified tools via their roles.
-
-    External users get no authenticated-tier entitlement (EXT-1 rule 2):
-    a workflow with access_level='authenticated' still requires a role
-    intersection for them.
-    """
+    """Validate every selected workflow through the active resource context."""
     if not tool_ids:
         return
 
-    from src.models.orm.users import UserRole
-    from src.models.orm.workflow_roles import WorkflowRole
-
-    # Get user's role IDs
-    result = await db.execute(
-        select(UserRole.role_id).where(UserRole.user_id == user_id)
+    user = authorization.requester
+    repo = WorkflowRepository(
+        db,
+        org_id=_repository_organization_id(authorization),
+        user_id=user.user_id,
+        bypass_resource_roles=authorization.has_capability("platform.superuser"),
+        is_external=user.is_external,
     )
-    user_role_ids = set(result.scalars().all())
 
     for tool_id in tool_ids:
         try:
@@ -266,47 +323,11 @@ async def _validate_user_tool_access(
         except ValueError:
             raise HTTPException(422, f"Invalid tool ID: {tool_id}")
 
-        result = await db.execute(
-            select(Workflow).where(Workflow.id == workflow_uuid)
-        )
-        workflow = result.scalar_one_or_none()
+        workflow = await repo.get(id=workflow_uuid)
         if not workflow:
-            raise HTTPException(422, f"Tool '{tool_id}' not found")
+            raise HTTPException(403, f"Tool '{tool_id}' is not accessible")
         if not workflow.is_active:
             raise HTTPException(422, f"Tool '{workflow.name}' is inactive")
-
-        if workflow.access_level == "everyone":
-            continue
-
-        if workflow.access_level == "authenticated" and not is_external:
-            continue
-
-        result = await db.execute(
-            select(WorkflowRole.role_id).where(WorkflowRole.workflow_id == workflow_uuid)
-        )
-        workflow_role_ids = set(result.scalars().all())
-
-        if not workflow_role_ids or not workflow_role_ids.intersection(user_role_ids):
-            raise HTTPException(403, f"You do not have role access to tool '{workflow.name}'")
-
-
-async def _user_has_permission(
-    db: DbSession,
-    user_id: UUID,
-    permission: str,
-) -> bool:
-    """Check if a user has a permission via any of their roles."""
-    from src.models.orm.users import UserRole
-
-    result = await db.execute(
-        select(Role.permissions)
-        .join(UserRole, UserRole.role_id == Role.id)
-        .where(UserRole.user_id == user_id)
-    )
-    for permissions in result.scalars().all():
-        if permissions and permissions.get(permission):
-            return True
-    return False
 
 
 def _logo_data_url(data: bytes | None, content_type: str | None) -> str | None:
@@ -326,19 +347,13 @@ def _agent_logo_url(agent: Agent) -> str | None:
     return None
 
 
-def _assert_can_manage_skill(agent: Agent, user) -> None:
+def _assert_can_manage_skill(
+    agent: Agent,
+    authorization: AuthorizationContext,
+) -> None:
     """Authorize direct Skill uploads without exposing a shared storage root."""
     assert_not_solution_managed(agent)
-    if user.is_platform_admin:
-        return
-    if (
-        agent.owner_user_id != user.user_id
-        or agent.access_level != AgentAccessLevel.PRIVATE
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You can only manage Skills for your own private agents",
-        )
+    _require_agent_mutation(authorization, agent)
 
 
 async def _spool_skill_upload(file: UploadFile) -> Path:
@@ -374,7 +389,7 @@ def _agent_to_public(agent: Agent) -> AgentPublic:
     valid_system_tool_ids = set(get_system_tool_ids())
 
     owner_email = None
-    if agent.owner_user_id and hasattr(agent, 'owner') and agent.owner:
+    if agent.owner_user_id and hasattr(agent, "owner") and agent.owner:
         owner_email = agent.owner.email
 
     return AgentPublic(
@@ -396,7 +411,9 @@ def _agent_to_public(agent: Agent) -> AgentPublic:
         delegated_agent_ids=[str(a.id) for a in agent.delegated_agents],
         role_ids=[str(r.id) for r in agent.roles],
         knowledge_sources=agent.knowledge_sources or [],
-        system_tools=[t for t in (agent.system_tools or []) if t in valid_system_tool_ids],
+        system_tools=[
+            t for t in (agent.system_tools or []) if t in valid_system_tool_ids
+        ],
         mcp_connection_ids=sorted(str(c.id) for c in (agent.mcp_connections or [])),
         llm_model=agent.llm_model,
         llm_max_tokens=agent.llm_max_tokens,
@@ -425,11 +442,10 @@ def _agent_to_public(agent: Agent) -> AgentPublic:
 @router.get("", **operation_route("agents.list"))
 async def list_agents(
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(
         default=None,
-        description="Filter scope: omit for all (superusers), 'global' for global only, "
-        "or org UUID for specific org."
+        description="Target organization UUID or 'global'; omit for your home organization.",
     ),
     category: str | None = None,
     active_only: bool = True,
@@ -438,45 +454,24 @@ async def list_agents(
         description="Include per-agent run stats in the list response.",
     ),
 ) -> list[AgentSummary]:
-    """
-    List agents the user has access to.
-
-    Organization filtering:
-    - Superusers with scope omitted: show all agents
-    - Superusers with scope='global': show only global agents
-    - Superusers with scope={uuid}: show that org's agents only
-    - Org users: always show their org's agents + global agents (scope ignored)
-
-    Access level filtering (applied after org filter):
-    - Platform admins see all agents
-    - Users see AUTHENTICATED agents + ROLE_BASED agents assigned to their roles
-    """
-    # Apply organization filter using repository
-    try:
-        filter_type, filter_org_id = resolve_org_filter(user, scope)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e),
+    """List Agents visible in the explicitly selected authorization context."""
+    del scope  # consumed centrally by CurrentAuthorizationContext
+    authorization.require_operation("agents.list")
+    if (
+        authorization.selected_boundary.kind
+        is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS
+    ):
+        user = authorization.requester
+        repo = AgentRepository(
+            session=db,
+            org_id=None,
+            user_id=user.user_id,
+            bypass_resource_roles=authorization.has_capability("platform.superuser"),
+            is_external=user.is_external,
         )
-
-    # Check if user is platform admin
-    is_admin = user.is_platform_admin
-
-    # Create repository with appropriate access context
-    repo = AgentRepository(
-        session=db,
-        org_id=filter_org_id,
-        user_id=user.user_id,
-        is_superuser=is_admin,
-        is_external=user.is_external,
-    )
-
-    if is_admin:
-        # Admins use list_all_in_scope with filter_type for flexibility
-        agents = await repo.list_all_in_scope(filter_type, active_only=active_only)
+        agents = await repo.list_managed_organizations(active_only=active_only)
     else:
-        # Regular users use list_agents with built-in cascade + role-based access
+        repo = _agent_repository(db, authorization)
         agents = await repo.list_agents(active_only=active_only)
 
     # Batch-compute dependency counts (tool count per agent)
@@ -485,6 +480,7 @@ async def list_agents(
     mcp_counts: dict[UUID, int] = {}
     if agent_ids:
         from sqlalchemy import func
+
         count_result = await db.execute(
             select(AgentTool.agent_id, func.count())
             .where(AgentTool.agent_id.in_(agent_ids))
@@ -531,63 +527,32 @@ async def list_agents(
 async def create_agent(
     agent_data: AgentCreate,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> AgentPublic:
-    """
-    Create a new agent.
-
-    Platform admins can create any agent type.
-    Regular users can only create private agents with tools they have access to.
-    """
-    is_admin = user.is_platform_admin
+    """Create an Agent in the selected organization or Global workspace."""
+    authorization.require_operation("agents.create")
+    user = authorization.requester
+    agent_data = agent_data.model_copy(deep=True)
     if "bundle_path" in agent_data.model_fields_set:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="Create the agent first, then upload its .skill or .zip bundle",
         )
 
-    # Org targeting follows the unified --org standard: an OMITTED
-    # organization_id (HOME) defaults to the caller's org, so a bare create
-    # never silently writes a global row. Explicit null still means global.
-    # (Non-admins are forced to their own org below regardless.)
-    if is_admin and "organization_id" not in agent_data.model_fields_set:
-        agent_data.organization_id = user.organization_id
-
-    if not is_admin:
-        # Non-admin: enforce private-only creation
-        if agent_data.access_level != AgentAccessLevel.PRIVATE:
-            raise HTTPException(403, "Non-admin users can only create private agents")
-        privileged_fields = [
-            field_name
-            for field_name, value in (
-                ("system_tools", agent_data.system_tools),
-                ("knowledge_sources", agent_data.knowledge_sources),
-                ("delegated_agent_ids", agent_data.delegated_agent_ids),
-                ("role_ids", agent_data.role_ids),
-                ("mcp_connection_ids", agent_data.mcp_connection_ids),
-            )
-            if value
-        ]
-        if privileged_fields:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=(
-                    "Only platform administrators can set Agent fields: "
-                    + ", ".join(privileged_fields)
-                ),
-            )
-        agent_data.organization_id = user.organization_id
-        await _validate_user_tool_access(
-            db, user.user_id, agent_data.tool_ids, is_external=user.is_external
-        )
-        agent_data.system_tools = []
-        agent_data.knowledge_sources = []
-        agent_data.delegated_agent_ids = []
-        agent_data.role_ids = []
-        agent_data.bundle_path = None
-        # Non-admins cannot grant MCP connections — those are an
-        # org-admin tool. Private agents simply don't surface MCP tools.
-        agent_data.mcp_connection_ids = []
+    target_organization_id = (
+        agent_data.organization_id
+        if "organization_id" in agent_data.model_fields_set
+        else _repository_organization_id(authorization)
+    )
+    authorization.require_resource_boundary(target_organization_id)
+    agent_data.organization_id = target_organization_id
+    if agent_data.role_ids:
+        authorization.require("roles.readwrite")
+    await _validate_user_tool_access(
+        db,
+        authorization,
+        agent_data.tool_ids,
+    )
 
     # Validate references before creating the agent
     await _validate_agent_references(
@@ -714,16 +679,13 @@ async def create_agent(
 @router.get("/accessible-tools")
 async def get_accessible_tools(
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> list[AccessibleTool]:
     """Get tools the current user can assign to their agents (via role intersection)."""
-    from src.models.orm.users import UserRole
     from src.models.orm.workflow_roles import WorkflowRole
 
-    result = await db.execute(
-        select(UserRole.role_id).where(UserRole.user_id == user.user_id)
-    )
-    role_ids = list(result.scalars().all())
+    authorization.require("workflows.read")
+    role_ids = list(authorization.role_ids)
 
     if not role_ids:
         return []
@@ -739,7 +701,9 @@ async def get_accessible_tools(
     tools = result.scalars().all()
 
     return [
-        AccessibleTool(id=str(t.id), name=t.name, description=t.tool_description or t.description)
+        AccessibleTool(
+            id=str(t.id), name=t.name, description=t.tool_description or t.description
+        )
         for t in tools
     ]
 
@@ -747,16 +711,13 @@ async def get_accessible_tools(
 @router.get("/accessible-knowledge")
 async def get_accessible_knowledge(
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> list[AccessibleKnowledgeSource]:
     """Get knowledge sources the current user can assign to their agents."""
-    from src.models.orm.users import UserRole
     from src.models.orm.knowledge_sources import KnowledgeNamespaceRole
 
-    result = await db.execute(
-        select(UserRole.role_id).where(UserRole.user_id == user.user_id)
-    )
-    role_ids = list(result.scalars().all())
+    authorization.require("knowledge.read")
+    role_ids = list(authorization.role_ids)
 
     if not role_ids:
         return []
@@ -777,16 +738,17 @@ async def get_accessible_knowledge(
 @router.get("/stats/fleet", response_model=FleetStatsResponse)
 async def get_fleet_stats_endpoint(
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     window_days: int = Query(7, ge=1, le=90),
 ) -> FleetStatsResponse:
-    """Fleet-wide agent run stats over the last ``window_days``.
-
-    Superusers see cross-org totals; org users are scoped to their org.
-    Route is registered before ``/{agent_id}`` so the literal ``stats``
-    prefix is not parsed as a UUID.
-    """
-    org_id = None if user.is_superuser else user.organization_id
+    """Agent run stats for one selected organization."""
+    authorization.require("agents.read")
+    if authorization.selected_boundary.kind is not AuthorizationBoundaryKind.ORGANIZATION:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Select one organization to view Agent fleet statistics",
+        )
+    org_id = authorization.selected_boundary.organization_id
     return await get_fleet_stats(db, org_id=org_id, window_days=window_days)
 
 
@@ -794,19 +756,11 @@ async def get_fleet_stats_endpoint(
 async def get_agent(
     agent_id: UUID,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> AgentPublic:
     """Get agent by ID."""
-    # Check if user is platform admin
-    is_admin = user.is_platform_admin
-
-    repo = AgentRepository(
-        session=db,
-        org_id=user.organization_id,
-        user_id=user.user_id,
-        is_superuser=is_admin,
-        is_external=user.is_external,
-    )
+    authorization.require_operation("agents.get")
+    repo = _agent_repository(db, authorization)
 
     agent = await repo.get_agent_with_access_check(agent_id)
 
@@ -827,15 +781,10 @@ async def get_agent(
 async def get_agent_skill(
     agent_id: UUID,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> AgentSkillPublic:
-    repo = AgentRepository(
-        session=db,
-        org_id=user.organization_id,
-        user_id=user.user_id,
-        is_superuser=user.is_platform_admin,
-        is_external=user.is_external,
-    )
+    authorization.require("agents.read")
+    repo = _agent_repository(db, authorization)
     agent = await repo.get_agent_with_access_check(agent_id)
     if agent is None:
         raise HTTPException(
@@ -867,7 +816,9 @@ async def get_agent_skill(
         skill_markdown=markdown,
         files=["SKILL.md", *companion_files],
         companion_files=companion_files,
-        automatic_capabilities=["bifrost_read_agent_skill_file"] if agent.bundle_path else [],
+        automatic_capabilities=["bifrost_read_agent_skill_file"]
+        if agent.bundle_path
+        else [],
         source=(
             "solution"
             if agent.solution_id is not None
@@ -887,16 +838,11 @@ async def get_agent_skill(
 async def get_agent_skill_file(
     agent_id: UUID,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     path: str = Query(..., min_length=1, max_length=1024),
 ) -> AgentSkillFilePublic:
-    repo = AgentRepository(
-        session=db,
-        org_id=user.organization_id,
-        user_id=user.user_id,
-        is_superuser=user.is_platform_admin,
-        is_external=user.is_external,
-    )
+    authorization.require("agents.read")
+    repo = _agent_repository(db, authorization)
     agent = await repo.get_agent_with_access_check(agent_id)
     if agent is None:
         raise HTTPException(
@@ -932,16 +878,17 @@ async def get_agent_skill_file(
 async def upload_agent_skill(
     agent_id: UUID,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     file: UploadFile = File(..., description=".skill or .zip Agent Skill archive"),
 ) -> AgentSkillPublic:
-    agent = await _accessible_agent(db, user, agent_id)
+    agent = await _accessible_agent(db, authorization, agent_id)
     if agent is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Agent {agent_id} not found",
         )
-    _assert_can_manage_skill(agent, user)
+    _assert_can_manage_skill(agent, authorization)
+    user = authorization.requester
     archive_path = await _spool_skill_upload(file)
     try:
         imported = import_agent_skill_archive(archive_path)
@@ -1001,15 +948,15 @@ async def upload_agent_skill(
 async def detach_agent_skill(
     agent_id: UUID,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> Response:
-    agent = await _accessible_agent(db, user, agent_id)
+    agent = await _accessible_agent(db, authorization, agent_id)
     if agent is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Agent {agent_id} not found",
         )
-    _assert_can_manage_skill(agent, user)
+    _assert_can_manage_skill(agent, authorization)
     if not agent.bundle_path:
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -1037,16 +984,11 @@ async def detach_agent_skill(
 async def download_agent_skill(
     agent_id: UUID,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> FileResponse:
     """Stream ``SKILL.md`` plus companion bundle assets for an accessible Agent."""
-    repo = AgentRepository(
-        session=db,
-        org_id=user.organization_id,
-        user_id=user.user_id,
-        is_superuser=user.is_platform_admin,
-        is_external=user.is_external,
-    )
+    authorization.require("agents.read")
+    repo = _agent_repository(db, authorization)
     agent = await repo.get_agent_with_access_check(agent_id)
     if agent is None:
         raise HTTPException(
@@ -1088,7 +1030,7 @@ async def download_agent_skill(
 async def export_agent_skill(
     agent_id: UUID,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> ArtifactRef:
     """Export the Skill as a stored artifact and return only its opaque ref.
 
@@ -1099,13 +1041,9 @@ async def export_agent_skill(
     identical content produces identical bytes — the archive uses a fixed epoch
     and sorted members — though each export is a distinct artifact.
     """
-    repo = AgentRepository(
-        session=db,
-        org_id=user.organization_id,
-        user_id=user.user_id,
-        is_superuser=user.is_platform_admin,
-        is_external=user.is_external,
-    )
+    authorization.require("agents.read")
+    user = authorization.requester
+    repo = _agent_repository(db, authorization)
     agent = await repo.get_agent_with_access_check(agent_id)
     if agent is None:
         raise HTTPException(
@@ -1132,7 +1070,7 @@ async def export_agent_skill(
         content_type="application/zip",
         content=content,
         created_by_user_id=user.user_id,
-        organization_id=user.organization_id,
+        organization_id=_repository_organization_id(authorization),
     )
     await db.commit()
     return artifact_ref(artifact)
@@ -1143,10 +1081,12 @@ async def update_agent(
     agent_id: UUID,
     agent_data: AgentUpdate,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> AgentPublic:
-    """Update an agent. Admins can update any agent. Users can update their own private agents."""
-    agent = await _accessible_agent(db, user, agent_id)
+    """Update an Agent the caller can edit in the selected boundary."""
+    authorization.require_operation("agents.update")
+    user = authorization.requester
+    agent = await _accessible_agent(db, authorization, agent_id)
 
     if not agent:
         raise HTTPException(
@@ -1156,6 +1096,7 @@ async def update_agent(
 
     # Solution-managed agents are read-only here; deploy is the writer.
     assert_not_solution_managed(agent)
+    _require_agent_mutation(authorization, agent)
     if "bundle_path" in agent_data.model_fields_set:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1166,65 +1107,24 @@ async def update_agent(
             status_code=status.HTTP_409_CONFLICT,
             detail="Bundled Agent instructions come from SKILL.md; replace or remove the bundle",
         )
+    if (
+        agent.access_level == AgentAccessLevel.PRIVATE
+        and agent_data.access_level is not None
+        and agent_data.access_level != AgentAccessLevel.PRIVATE
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Use the promote action to share a private Agent",
+        )
 
-    is_admin = user.is_platform_admin
-
-    if not is_admin:
-        # Budget fields gate: only platform admins can set per-agent budgets.
-        # Block before the ownership check so the response is the same whether
-        # the user owns the agent or not (no information leak about ownership).
-        budget_fields_set = [
-            f
-            for f in ("max_iterations", "max_token_budget", "llm_max_tokens")
-            if f in agent_data.model_fields_set
-        ]
-        if budget_fields_set:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=(
-                    "Budget fields ("
-                    + ", ".join(budget_fields_set)
-                    + ") can only be set by platform administrators"
-                ),
-            )
-
-        if agent.owner_user_id != user.user_id or agent.access_level != AgentAccessLevel.PRIVATE:
-            raise HTTPException(403, "You can only edit your own private agents")
-        if agent_data.access_level is not None and agent_data.access_level != AgentAccessLevel.PRIVATE:
-            raise HTTPException(403, "Use the promote endpoint to change access level")
-        if agent_data.tool_ids is not None:
-            await _validate_user_tool_access(
-                db, user.user_id, agent_data.tool_ids, is_external=user.is_external
-            )
-        privileged_fields = [
-            field_name
-            for field_name, value in (
-                ("system_tools", agent_data.system_tools),
-                ("knowledge_sources", agent_data.knowledge_sources),
-                ("delegated_agent_ids", agent_data.delegated_agent_ids),
-                ("role_ids", agent_data.role_ids),
-            )
-            if value
-        ]
-        if agent_data.clear_roles:
-            privileged_fields.append("clear_roles")
-        if privileged_fields:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=(
-                    "Only platform administrators can set Agent fields: "
-                    + ", ".join(privileged_fields)
-                ),
-            )
-        agent_data.system_tools = None
-        agent_data.knowledge_sources = None
-        agent_data.delegated_agent_ids = None
-        agent_data.role_ids = None
-        if agent_data.mcp_connection_ids is not None:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only platform administrators can manage Agent MCP connections",
-            )
+    if agent_data.tool_ids is not None:
+        await _validate_user_tool_access(
+            db,
+            authorization,
+            agent_data.tool_ids,
+        )
+    if agent_data.role_ids is not None or agent_data.clear_roles:
+        authorization.require("roles.readwrite")
 
     if agent_data.clear_roles and agent_data.role_ids is not None:
         raise HTTPException(
@@ -1237,6 +1137,7 @@ async def update_agent(
         if "organization_id" in agent_data.model_fields_set
         else agent.organization_id
     )
+    authorization.require_resource_boundary(target_organization_id)
     if (
         "organization_id" in agent_data.model_fields_set
         and target_organization_id != agent.organization_id
@@ -1285,7 +1186,9 @@ async def update_agent(
     if agent_data.llm_model is not None:
         agent.llm_model = agent_data.llm_model if agent_data.llm_model else None
     if agent_data.llm_max_tokens is not None:
-        agent.llm_max_tokens = agent_data.llm_max_tokens if agent_data.llm_max_tokens else None
+        agent.llm_max_tokens = (
+            agent_data.llm_max_tokens if agent_data.llm_max_tokens else None
+        )
     if "max_iterations" in agent_data.model_fields_set:
         agent.max_iterations = agent_data.max_iterations
     if "max_token_budget" in agent_data.model_fields_set:
@@ -1295,9 +1198,7 @@ async def update_agent(
 
     # Update tool relationships if provided
     if agent_data.tool_ids is not None:
-        await db.execute(
-            delete(AgentTool).where(AgentTool.agent_id == agent_id)
-        )
+        await db.execute(delete(AgentTool).where(AgentTool.agent_id == agent_id))
         for tool_id in agent_data.tool_ids:
             db.add(AgentTool(agent_id=agent_id, workflow_id=UUID(tool_id)))
 
@@ -1316,18 +1217,14 @@ async def update_agent(
 
     # Clear all role assignments if requested
     if agent_data.clear_roles:
-        await db.execute(
-            delete(AgentRole).where(AgentRole.agent_id == agent_id)
-        )
+        await db.execute(delete(AgentRole).where(AgentRole.agent_id == agent_id))
         # Also set to role_based access level (effectively no access)
         agent.access_level = AgentAccessLevel.ROLE_BASED
         logger.info(f"Cleared all role assignments for agent '{log_safe(agent.name)}'")
 
     # Update role relationships if provided (and not clearing)
     elif agent_data.role_ids is not None:
-        await db.execute(
-            delete(AgentRole).where(AgentRole.agent_id == agent_id)
-        )
+        await db.execute(delete(AgentRole).where(AgentRole.agent_id == agent_id))
         for role_id in agent_data.role_ids:
             db.add(
                 AgentRole(
@@ -1342,9 +1239,9 @@ async def update_agent(
     if agent_data.mcp_connection_ids is not None:
         repo = AgentRepository(
             session=db,
-            org_id=user.organization_id,
+            org_id=_repository_organization_id(authorization),
             user_id=user.user_id,
-            is_superuser=is_admin,
+            bypass_resource_roles=authorization.has_capability("platform.superuser"),
             is_external=user.is_external,
         )
         await repo.set_mcp_connection_grants(
@@ -1401,17 +1298,11 @@ async def update_agent(
 async def delete_agent(
     agent_id: UUID,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> None:
-    """Permanently delete an agent. Admins can delete any agent. Users can delete their own private agents.
-
-    System agents can be deleted - they will be recreated on next startup
-    if they are still defined in the system agent definitions.
-    """
-    result = await db.execute(
-        select(Agent).where(Agent.id == agent_id)
-    )
-    agent = result.scalar_one_or_none()
+    """Permanently delete an Agent the caller can edit."""
+    authorization.require_operation("agents.delete")
+    agent = await _accessible_agent(db, authorization, agent_id)
 
     if not agent:
         raise HTTPException(
@@ -1421,12 +1312,7 @@ async def delete_agent(
 
     # Solution-managed agents are read-only here; deploy is the writer.
     assert_not_solution_managed(agent)
-
-    is_admin = user.is_platform_admin
-
-    if not is_admin:
-        if agent.owner_user_id != user.user_id:
-            raise HTTPException(403, "You can only delete your own private agents")
+    _require_agent_mutation(authorization, agent)
 
     agent_name = agent.name
     # Use a SQL DELETE so database-level cascades remove run history and agent
@@ -1448,9 +1334,11 @@ async def promote_agent(
     agent_id: UUID,
     request: AgentPromoteRequest,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> AgentPublic:
     """Promote a private agent to organization scope."""
+    authorization.require("agents.readwrite")
+    user = authorization.requester
     result = await db.execute(
         select(Agent)
         .options(
@@ -1468,14 +1356,14 @@ async def promote_agent(
 
     if agent.access_level != AgentAccessLevel.PRIVATE:
         raise HTTPException(400, "Agent is not private — nothing to promote")
-
-    is_admin = user.is_platform_admin
-
-    if not is_admin:
-        if agent.owner_user_id != user.user_id:
-            raise HTTPException(403, "You can only promote your own agents")
-        if not await _user_has_permission(db, user.user_id, "can_promote_agent"):
-            raise HTTPException(403, "You do not have permission to promote agents")
+    authorization.require_resource_boundary(agent.organization_id)
+    if (
+        agent.owner_user_id != user.user_id
+        and not authorization.has_capability("platform.superuser")
+    ):
+        raise HTTPException(403, "You can only promote your own Agents")
+    if request.role_ids:
+        authorization.require("roles.readwrite")
 
     # Promote: change access_level, clear owner
     agent.access_level = request.access_level
@@ -1488,15 +1376,19 @@ async def promote_agent(
         for role_id in request.role_ids:
             try:
                 role_uuid = UUID(role_id)
-                result = await db.execute(
-                    select(Role).where(Role.id == role_uuid)
-                )
+                result = await db.execute(select(Role).where(Role.id == role_uuid))
                 role = result.scalar_one_or_none()
                 if role:
-                    db.add(AgentRole(agent_id=agent_id, role_id=role.id, assigned_by=user.email))
+                    db.add(
+                        AgentRole(
+                            agent_id=agent_id, role_id=role.id, assigned_by=user.email
+                        )
+                    )
             except ValueError as e:
                 # Non-UUID role_id (e.g. role name) — skip, only UUIDs supported here
-                logger.debug(f"role_id {log_safe(role_id)!r} is not a UUID, skipping: {log_safe(e)}")
+                logger.debug(
+                    f"role_id {log_safe(role_id)!r} is not a UUID, skipping: {log_safe(e)}"
+                )
 
     await db.flush()
 
@@ -1524,19 +1416,12 @@ async def promote_agent(
 async def get_agent_stats_endpoint(
     agent_id: UUID,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     window_days: int = Query(7, ge=1, le=90),
 ) -> AgentStatsResponse:
     """Per-agent run stats. Reuses the same access check as ``GET /{agent_id}``."""
-    is_admin = user.has_platform_admin_grant()
-
-    repo = AgentRepository(
-        session=db,
-        org_id=user.organization_id,
-        user_id=user.user_id,
-        is_superuser=is_admin,
-        is_external=user.is_external,
-    )
+    authorization.require("agents.read")
+    repo = _agent_repository(db, authorization)
 
     agent = await repo.get_agent_with_access_check(agent_id)
     if not agent:
@@ -1552,19 +1437,11 @@ async def get_agent_stats_endpoint(
 async def get_agent_tools(
     agent_id: UUID,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> list[dict]:
     """Get tools assigned to an agent."""
-    # Check if user is platform admin
-    is_admin = user.is_platform_admin
-
-    repo = AgentRepository(
-        session=db,
-        org_id=user.organization_id,
-        user_id=user.user_id,
-        is_superuser=is_admin,
-        is_external=user.is_external,
-    )
+    authorization.require("agents.read")
+    repo = _agent_repository(db, authorization)
 
     agent = await repo.get_agent_with_access_check(agent_id)
 
@@ -1594,19 +1471,11 @@ async def get_agent_tools(
 async def get_agent_delegations(
     agent_id: UUID,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> list[AgentSummary]:
     """Get agents this agent can delegate to."""
-    # Check if user is platform admin
-    is_admin = user.is_platform_admin
-
-    repo = AgentRepository(
-        session=db,
-        org_id=user.organization_id,
-        user_id=user.user_id,
-        is_superuser=is_admin,
-        is_external=user.is_external,
-    )
+    authorization.require("agents.read")
+    repo = _agent_repository(db, authorization)
 
     agent = await repo.get_agent_with_access_check(agent_id)
 
@@ -1634,18 +1503,12 @@ async def get_agent_delegations(
 async def upload_agent_logo(
     agent_id: UUID,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     file: UploadFile = File(..., description="Logo image (PNG/JPEG/SVG, ≤5MB)"),
 ) -> dict:
     """Upload a square logo for an agent."""
-    is_admin = user.is_platform_admin
-    repo = AgentRepository(
-        session=db,
-        org_id=user.organization_id,
-        user_id=user.user_id,
-        is_superuser=is_admin,
-        is_external=user.is_external,
-    )
+    authorization.require("agents.readwrite")
+    repo = _agent_repository(db, authorization)
     agent = await repo.get_agent_with_access_check(agent_id)
     if not agent:
         raise HTTPException(
@@ -1653,10 +1516,13 @@ async def upload_agent_logo(
             detail=f"Agent {agent_id} not found",
         )
     assert_not_solution_managed(agent)
+    _require_agent_mutation(authorization, agent)
 
     content = await file.read()
     try:
-        processed = await asyncio.to_thread(process_logo, content, file.content_type or "")
+        processed = await asyncio.to_thread(
+            process_logo, content, file.content_type or ""
+        )
     except LogoProcessingError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1689,16 +1555,10 @@ async def upload_agent_logo(
 async def get_agent_logo(
     agent_id: UUID,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> Response:
-    is_admin = user.is_platform_admin
-    repo = AgentRepository(
-        session=db,
-        org_id=user.organization_id,
-        user_id=user.user_id,
-        is_superuser=is_admin,
-        is_external=user.is_external,
-    )
+    authorization.require("agents.read")
+    repo = _agent_repository(db, authorization)
     agent = await repo.get_agent_with_access_check(agent_id)
     if not agent or not agent.logo_data:
         raise HTTPException(
@@ -1729,16 +1589,10 @@ async def get_agent_logo(
 async def delete_agent_logo(
     agent_id: UUID,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> Response:
-    is_admin = user.is_platform_admin
-    repo = AgentRepository(
-        session=db,
-        org_id=user.organization_id,
-        user_id=user.user_id,
-        is_superuser=is_admin,
-        is_external=user.is_external,
-    )
+    authorization.require("agents.readwrite")
+    repo = _agent_repository(db, authorization)
     agent = await repo.get_agent_with_access_check(agent_id)
     if not agent:
         raise HTTPException(
@@ -1746,6 +1600,7 @@ async def delete_agent_logo(
             detail=f"Agent {agent_id} not found",
         )
     assert_not_solution_managed(agent)
+    _require_agent_mutation(authorization, agent)
     agent.logo_data = None
     agent.logo_content_type = None
     agent.logo_thumbnail_data = None

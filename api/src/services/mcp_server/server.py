@@ -149,10 +149,16 @@ class MCPContext:
     agent_bundle_path: str | None = None
     agent_skill_id: UUID | str | None = None
     agent_skill_in_repo: bool = False
+    agent_skill_root: Any = None
     agent_solution_id: UUID | str | None = None
     builder_workspace: Any = None
     can_build: bool = False
     can_support_builds: bool = False
+    # Explicit human authorization boundary for REST-backed system tools.
+    # Builder targets set this server-side so a provider user operating in a
+    # customer workspace cannot accidentally fall back to their home org.
+    authorization_boundary: str | None = None
+    resource_gate_bypass: bool = False
 
     # Database session from executor context (None when running via MCP server)
     session: Any = None
@@ -222,9 +228,15 @@ async def _get_runtime_context() -> MCPContext:
       constructs a tool-specific context at dispatch time.
     """
     from fastmcp.exceptions import ToolError
-    from fastmcp.server.dependencies import get_access_token
+    from fastmcp.server.dependencies import get_access_token, get_http_headers
 
     from src.core.database import get_db_context
+    from src.core.principal import UserPrincipal
+    from src.services.authorization import (
+        AuthorizationBoundaryKind,
+        parse_authorization_boundary,
+        resolve_authorization_context,
+    )
     from src.services.mcp_server.tool_access import MCPToolAccessService
 
     token = get_access_token()
@@ -232,10 +244,57 @@ async def _get_runtime_context() -> MCPContext:
         raise ToolError("Authentication required")
 
     user_roles = token.claims.get("roles", [])
-    is_superuser = token.claims.get("is_superuser", False)
     is_external = token.claims.get("is_external", False)
     user_id = token.claims.get("user_id")
-    org_id = token.claims.get("org_id")
+    home_org_id = token.claims.get("org_id")
+    headers = get_http_headers()
+    boundary_value = (
+        headers.get("x-bifrost-boundary")
+        or headers.get("X-Bifrost-Boundary")
+    )
+    try:
+        selected_boundary = parse_authorization_boundary(
+            boundary_value,
+            home_organization_id=UUID(home_org_id) if home_org_id else None,
+        )
+    except Exception as exc:
+        raise ToolError(str(exc)) from exc
+    if selected_boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+        raise ToolError(
+            "Managed Organizations is a collection selector. Select an exact "
+            "organization or Platform before using MCP tools."
+        )
+    selected_org_id = (
+        selected_boundary.organization_id
+        if selected_boundary.kind is AuthorizationBoundaryKind.ORGANIZATION
+        else None
+    )
+    authorization_boundary = (
+        "platform"
+        if selected_boundary.kind is AuthorizationBoundaryKind.PLATFORM
+        else f"organization:{selected_org_id}"
+    )
+    requester = UserPrincipal(
+        user_id=UUID(user_id),
+        email=token.claims.get("email", ""),
+        organization_id=UUID(home_org_id) if home_org_id else None,
+        name=token.claims.get("name", ""),
+        is_active=True,
+        is_superuser=bool(token.claims.get("is_superuser", False)),
+        is_verified=True,
+        is_external=is_external,
+    )
+    from shared.authorization_scopes import PLATFORM_SUPERUSER_SCOPE
+
+    async with get_db_context() as db:
+        authorization = await resolve_authorization_context(
+            db,
+            requester=requester,
+            selected_boundary=selected_boundary,
+        )
+    resource_gate_bypass = PLATFORM_SUPERUSER_SCOPE in (
+        authorization.effective_capabilities
+    )
     agent_id = _get_agent_id_from_scope()
 
     accessible_namespaces: list[str] = []
@@ -250,9 +309,9 @@ async def _get_runtime_context() -> MCPContext:
                 agent_result = await service.get_tools_for_agent(
                     agent_id=agent_id,
                     user_roles=user_roles,
-                    is_superuser=is_superuser,
+                    is_superuser=False,
                     user_id=user_id,
-                    org_id=org_id,
+                    org_id=selected_org_id,
                     is_external=is_external,
                 )
                 if agent_result is not None:
@@ -266,8 +325,8 @@ async def _get_runtime_context() -> MCPContext:
 
     return MCPContext(
         user_id=token.claims.get("user_id", ""),
-        org_id=token.claims.get("org_id"),
-        is_platform_admin=is_superuser,
+        org_id=selected_org_id,
+        is_platform_admin=False,
         is_external=is_external,
         user_email=token.claims.get("email", ""),
         user_name=token.claims.get("name", ""),
@@ -277,6 +336,8 @@ async def _get_runtime_context() -> MCPContext:
         agent_skill_id=agent_id if agent_bundle_path else None,
         agent_skill_in_repo=agent_skill_in_repo,
         agent_solution_id=agent_solution_id,
+        authorization_boundary=authorization_boundary,
+        resource_gate_bypass=resource_gate_bypass,
     )
 
 
@@ -733,7 +794,7 @@ async def _execute_workflow_tool_impl(
                 db,
                 org_id=context.org_id,
                 user_id=context.user_id,
-                is_superuser=context.is_platform_admin,
+                bypass_resource_roles=context.is_platform_admin,
                 is_external=context.is_external,
             )
             workflow = await repo.get(id=workflow_id)

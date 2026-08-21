@@ -15,9 +15,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.log_safety import log_safe
 from src.core.org_filter import OrgFilterType
+from src.core.principal import UserPrincipal
 from src.models.orm import Agent
 from src.repositories.agents import AgentRepository
+from src.services.authorization import (
+    AuthorizationBoundaryKind,
+    AuthorizationContext,
+)
 from src.services.llm import get_llm_client, LLMMessage
+from shared.authorization_scopes import PLATFORM_SUPERUSER_SCOPE
 
 logger = logging.getLogger(__name__)
 
@@ -43,14 +49,14 @@ class AgentRouter:
         *,
         user_id: UUID | None = None,
         org_id: UUID | None = None,
-        is_superuser: bool = False,
         is_external: bool = False,
+        authorization_context: AuthorizationContext | None = None,
     ):
         self._session_factory = session_factory
         self._user_id = user_id
         self._org_id = org_id
-        self._is_superuser = is_superuser
         self._is_external = is_external
+        self._authorization_context = authorization_context
 
     @asynccontextmanager
     async def _db(self):
@@ -209,16 +215,57 @@ Your response (agent name or DIRECT):"""
             return []
 
         async with self._db() as session:
+            org_id = self._org_id
+            boundary = (
+                self._authorization_context.selected_boundary
+                if self._authorization_context is not None
+                else None
+            )
+            if boundary is not None:
+                if boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+                    return []
+                if boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+                    org_id = None
+                else:
+                    org_id = boundary.organization_id
+                resource_bypass = chat_authorization_resource_bypass(
+                    self._authorization_context
+                )
+                if resource_bypass and boundary.kind is AuthorizationBoundaryKind.ORGANIZATION:
+                    bypass_repo = AgentRepository(
+                        session=session,
+                        org_id=org_id,
+                        user_id=self._user_id,
+                        bypass_resource_roles=True,
+                        is_external=self._is_external,
+                    )
+                    return await bypass_repo.list_all_in_scope(
+                        filter_type=OrgFilterType.ORG_PLUS_GLOBAL,
+                        active_only=True,
+                    )
+                if resource_bypass and boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+                    bypass_repo = AgentRepository(
+                        session=session,
+                        org_id=None,
+                        user_id=self._user_id,
+                        bypass_resource_roles=True,
+                        is_external=self._is_external,
+                    )
+                    return await bypass_repo.list_all_in_scope(
+                        filter_type=OrgFilterType.GLOBAL_ONLY,
+                        active_only=True,
+                    )
+
             repo = AgentRepository(
                 session=session,
-                org_id=self._org_id,
+                org_id=org_id,
                 user_id=self._user_id,
-                is_superuser=self._is_superuser,
+                bypass_resource_roles=False,
                 is_external=self._is_external,
             )
-            if self._is_superuser:
+            if boundary is not None and boundary.kind is AuthorizationBoundaryKind.PLATFORM:
                 return await repo.list_all_in_scope(
-                    filter_type=OrgFilterType.ALL,
+                    filter_type=OrgFilterType.GLOBAL_ONLY,
                     active_only=True,
                 )
             return await repo.list_agents(active_only=True)
@@ -234,3 +281,50 @@ Your response (agent name or DIRECT):"""
             Message with @mention removed
         """
         return MENTION_PATTERN.sub("", message).strip()
+
+
+def chat_authorization_boundary_string(
+    authorization_context: AuthorizationContext | None,
+) -> str | None:
+    if authorization_context is None:
+        return None
+    boundary = authorization_context.selected_boundary
+    if boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+        return None
+    if boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+        return "platform"
+    return f"organization:{boundary.organization_id}"
+
+
+def chat_agent_repository_scope(
+    *,
+    user: UserPrincipal,
+    authorization_context: AuthorizationContext | None,
+) -> tuple[UUID | None, bool]:
+    """Return the exact AgentRepository scope for native Chat selection.
+
+    Boundary-aware Chat never uses the legacy superuser flag as a wildcard.
+    Platform selects Global only. Exact Organization selects that org plus
+    normal Global cascade. Managed Organizations is a collection selector and
+    is not executable as a Chat identity.
+    """
+
+    if authorization_context is None:
+        return user.organization_id, False
+
+    boundary = authorization_context.selected_boundary
+    resource_bypass = chat_authorization_resource_bypass(authorization_context)
+    if boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+        return None, False
+    if boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+        return None, resource_bypass
+    return boundary.organization_id, resource_bypass
+
+
+def chat_authorization_resource_bypass(
+    authorization_context: AuthorizationContext | None,
+) -> bool:
+    return bool(
+        authorization_context
+        and PLATFORM_SUPERUSER_SCOPE in authorization_context.effective_capabilities
+    )

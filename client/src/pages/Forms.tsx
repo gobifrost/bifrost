@@ -19,13 +19,12 @@ import {
 } from "@/components/ui/alert-dialog";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useForms, useDeleteForm, useUpdateForm } from "@/hooks/useForms";
-import { useAuth } from "@/contexts/AuthContext";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { SearchBox } from "@/components/search/SearchBox";
 import { useSearch } from "@/hooks/useSearch";
-import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { FormShareDialog } from "@/components/forms/FormShareDialog";
 import { term, useTerminology } from "@/lib/terminology";
+import { useAuthorizationBoundary } from "@/contexts/AuthorizationBoundaryContext";
 import type { components } from "@/lib/v1";
 import { preloadRunFormPage } from "@/pages/run-form-route";
 
@@ -35,10 +34,7 @@ type Organization = components["schemas"]["OrganizationPublic"];
 export function Forms() {
 	const navigate = useNavigate();
 	const terminology = useTerminology();
-	const { isPlatformAdmin } = useAuth();
-	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
-		undefined,
-	);
+	const { selectedTarget, hasSelectedCapability } = useAuthorizationBoundary();
 	const [searchTerm, setSearchTerm] = useState("");
 	const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
 	const [isDisableDialogOpen, setIsDisableDialogOpen] = useState(false);
@@ -53,13 +49,11 @@ export function Forms() {
 		isActive: boolean;
 	} | null>(null);
 
-	// Pass filterOrgId to backend for filtering (undefined = all, null = global only)
-	// For platform admins, undefined means show all. For non-admins, backend handles filtering.
 	const {
 		data: forms,
 		isLoading,
 		refetch,
-	} = useForms(isPlatformAdmin ? filterOrgId : undefined);
+	} = useForms();
 	const deleteForm = useDeleteForm();
 	const updateForm = useUpdateForm();
 
@@ -71,7 +65,7 @@ export function Forms() {
 
 	// Fetch organizations for the org name lookup (platform admins only)
 	const { data: organizations } = useOrganizations({
-		enabled: isPlatformAdmin,
+		enabled: selectedTarget?.kind === "platform",
 	});
 
 	// Helper to get organization name from ID
@@ -81,8 +75,11 @@ export function Forms() {
 		return org?.name || orgId;
 	};
 
-	// For now, only platform admins can manage forms
-	const canManageForms = isPlatformAdmin;
+	const canManageForms =
+		selectedTarget?.kind !== "managed_organizations" &&
+		hasSelectedCapability("forms.readwrite");
+	const canExecuteForms = hasSelectedCapability("workflows.execute");
+	const showOrganizationScope = selectedTarget?.kind === "platform";
 
 	// Build validation map from backend-provided missingRequiredParams
 	const formValidation = useMemo(() => {
@@ -178,7 +175,7 @@ export function Forms() {
 	const scopeFilteredForms =
 		forms?.filter((form) => {
 			// Hide invalid forms from regular users
-			if (!isPlatformAdmin) {
+			if (!canManageForms) {
 				const validation = formValidation.get(form.id);
 				if (validation && !validation.valid) {
 					return false;
@@ -262,25 +259,15 @@ export function Forms() {
 					placeholder={`Search ${term(terminology, "form", "pluralLower")} by name, description, or workflow...`}
 					className="flex-1"
 				/>
-				{isPlatformAdmin && (
-					<div className="w-full sm:w-64">
-						<OrganizationSelect
-							value={filterOrgId}
-							onChange={setFilterOrgId}
-							showAll={true}
-							showGlobal={true}
-							placeholder="All organizations"
-						/>
-					</div>
-				)}
 			</div>
 
 			<FormListSurface
 				forms={filteredForms as FormListItem[]}
 				viewMode={viewMode}
 				isLoading={isLoading}
-				isPlatformAdmin={isPlatformAdmin}
+				showOrganizationScope={showOrganizationScope}
 				canManageForms={canManageForms}
+				canExecuteForms={canExecuteForms}
 				getOrgName={getOrgName}
 				formValidation={
 					formValidation as Map<string, FormValidationState>

@@ -1,5 +1,13 @@
 # Builder capability parity and Agent Skill hydration
 
+> **Authorization sections superseded.** The operation-parity and Agent Skill
+> work in this plan remains valid. Capability naming, assignment reach,
+> default-role behavior, route migration, and the maintained coding profile now
+> follow the canonical
+> [Builder authorization boundaries and end-to-end execution plan](2026-08-19-builder-authorization-boundaries-execution.md).
+> References below to `solutions.build`, `.all`, a workspace reach scope, or a
+> per-Solution coding Agent must not be implemented as the final architecture.
+
 **Owner:** Jack Musick / Bifrost engineering
 **Created:** 2026-08-17
 **Status:** In progress — Phases 0–1 complete; Phase 2 Agent, Form, Table, App, Event, Workflow, Organization, Integration, Workspace Files, Execution History, Knowledge Search, and Role slices complete
@@ -639,6 +647,17 @@ support authority, and resource mutation authority are independent.
 - [ ] Run the same coding profile and operation envelope on existing Workers or
       Cloudflare. Local execution remains fully supported and requires no new
       container or public endpoint.
+      - Cloudflare Builder turns now use one Worker deployment with paired
+        runner/workspace sandboxes. The runner carries model/callback
+        authority and calls the shared Pydantic coordinator; the workspace is
+        secretless, default-offline, and receives only fixed brokered
+        file/search/command operations over `workspace.bifrost.internal`.
+      - Cloudflare app builds use a separate locked-down build runner envelope:
+        no model/provider key is present, internet is disabled by default, and
+        egress is limited to the Bifrost callback plus `registry.npmjs.org`.
+        The two-sandbox split remains mandatory for agentic
+        turns because model credentials and workspace command tools coexist
+        there.
 
 **Gate:** the same representative full Solution and Workspace change can be
 completed through CLI, dynamic MCP, and native Builder with equivalent final
@@ -690,8 +709,8 @@ states are visually and behaviorally verified.
 - [ ] Shared Scheduler, PlatformJob, Worker, Chat V3, app runtime, Solution
       deploy, SDK, and MCP regression selection.
 - [ ] Live local Worker build/preview/deploy/resume proof.
-- [ ] Live Cloudflare coding turn and app-build proof using the published
-      `ghcr.io/gobifrost/bifrost-build` candidate.
+- [ ] Live Cloudflare coding turn and locked-down app-build proof using the
+      published `ghcr.io/gobifrost/bifrost-build` candidate.
 - [ ] Update the recovery inventory and status ledger with exact commands,
       results, unrun broad suites, and any known failure disposition.
 - [ ] Request explicit approval before merge.

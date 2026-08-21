@@ -51,7 +51,6 @@ from src.services.builder.private_solutions import load_accessible_private_solut
 from src.services.solutions.access import SolutionAction
 from src.services.solutions.app_build import SolutionAppBuilder
 from src.services.solutions.app_runtime_access import load_runtime_viewer
-from src.services.solutions.builder_authz import can_support_builds
 
 router = APIRouter(prefix="", tags=["solution-app-host"])
 
@@ -388,9 +387,10 @@ async def create_launch(
         solution_id=solution_id,
         action=SolutionAction.VIEW,
         actor_user_id=ctx.user.user_id,
-        is_platform_admin=ctx.user.is_platform_admin,
+        is_platform_admin=ctx.authorization.has_capability("platform.superuser"),
         is_external=ctx.user.is_external,
-        can_support=can_support_builds(ctx.user),
+        can_support=ctx.authorization.has_delegated_capability("builder.read"),
+        effective_role_ids=frozenset(ctx.authorization.role_ids),
     )
     if loaded is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")

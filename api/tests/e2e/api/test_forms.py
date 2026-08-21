@@ -397,10 +397,10 @@ class TestFormScopeFiltering:
                 # Best-effort fixture cleanup; teardown shouldn't fail the test
                 logger.debug(f"fixture cleanup error: {e}")
 
-    def test_platform_admin_no_scope_sees_all(
+    def test_platform_admin_no_scope_uses_home_organization_context(
         self, e2e_client, platform_admin, scoped_forms
     ):
-        """Platform admin with no scope sees ALL forms."""
+        """An omitted boundary stays in the admin's home organization."""
         response = e2e_client.get(
             "/api/forms",
             headers=platform_admin.headers,
@@ -409,8 +409,8 @@ class TestFormScopeFiltering:
         form_ids = [f["id"] for f in response.json()]
 
         assert scoped_forms["global"]["id"] in form_ids, "Should see global form"
-        assert scoped_forms["org1"]["id"] in form_ids, "Should see org1 form"
-        assert scoped_forms["org2"]["id"] in form_ids, "Should see org2 form"
+        assert scoped_forms["org1"]["id"] not in form_ids, "Should NOT see org1 form"
+        assert scoped_forms["org2"]["id"] not in form_ids, "Should NOT see org2 form"
 
     def test_platform_admin_scope_global_sees_only_global(
         self, e2e_client, platform_admin, scoped_forms
@@ -428,10 +428,10 @@ class TestFormScopeFiltering:
         assert scoped_forms["org1"]["id"] not in form_ids, "Should NOT see org1 form"
         assert scoped_forms["org2"]["id"] not in form_ids, "Should NOT see org2 form"
 
-    def test_platform_admin_scope_org_sees_only_that_org(
+    def test_platform_admin_scope_org_sees_org_and_inherited_global(
         self, e2e_client, platform_admin, org1, scoped_forms
     ):
-        """Platform admin with scope={org1} sees ONLY org1 forms (NOT global)."""
+        """An organization context includes authorized inherited Global forms."""
         response = e2e_client.get(
             "/api/forms",
             params={"scope": org1["id"]},
@@ -440,8 +440,7 @@ class TestFormScopeFiltering:
         assert response.status_code == 200
         form_ids = [f["id"] for f in response.json()]
 
-        # KEY ASSERTION: Global should NOT be included when filtering by org
-        assert scoped_forms["global"]["id"] not in form_ids, "Should NOT see global form"
+        assert scoped_forms["global"]["id"] in form_ids, "Should see inherited global form"
         assert scoped_forms["org1"]["id"] in form_ids, "Should see org1 form"
         assert scoped_forms["org2"]["id"] not in form_ids, "Should NOT see org2 form"
 

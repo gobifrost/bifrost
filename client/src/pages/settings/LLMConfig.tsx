@@ -113,7 +113,11 @@ const DEFAULT_ENDPOINTS: Record<Provider, string> = {
 	google: "https://generativelanguage.googleapis.com",
 };
 
-export function LLMConfig() {
+interface LLMConfigProps {
+	canWrite?: boolean;
+}
+
+export function LLMConfig({ canWrite = true }: LLMConfigProps) {
 	// Form state
 	const [provider, setProvider] = useState<Provider>("openai");
 	const [model, setModel] = useState(DEFAULT_MODELS.openai);
@@ -449,7 +453,8 @@ export function LLMConfig() {
 	const isNewApiKey = apiKey.length > 0;
 	const isVerified = testResult?.success === true;
 	const hasValidConfig = config?.api_key_set && !isNewApiKey;
-	const canSave = !saving && model && (isVerified || hasValidConfig);
+	const canSave =
+		canWrite && !saving && model && (isVerified || hasValidConfig);
 
 	return (
 		<div className="space-y-6">
@@ -479,6 +484,7 @@ export function LLMConfig() {
 									variant="ghost"
 									size="sm"
 									onClick={() => setShowDeleteConfirm(true)}
+									disabled={!canWrite}
 									className="text-destructive hover:text-destructive"
 								>
 									<Trash2 className="h-4 w-4 mr-1" />
@@ -511,6 +517,7 @@ export function LLMConfig() {
 						<Select
 							value={provider}
 							onValueChange={handleProviderChange}
+							disabled={!canWrite}
 						>
 							<SelectTrigger id="provider">
 								<SelectValue placeholder="Select provider" />
@@ -533,6 +540,7 @@ export function LLMConfig() {
 							placeholder={DEFAULT_ENDPOINTS[provider]}
 							value={endpoint}
 							onChange={(e) => setEndpoint(e.target.value)}
+							disabled={!canWrite}
 						/>
 						<p className="text-xs text-muted-foreground">
 							Change this to use a compatible provider (Azure
@@ -567,12 +575,15 @@ export function LLMConfig() {
 										setAvailableModels([]);
 									}
 								}}
+								disabled={!canWrite}
 							/>
 							<Button
 								variant="secondary"
 								onClick={handleTestConnection}
 								disabled={
-									testing || (!apiKey && !config?.api_key_set)
+									!canWrite ||
+									testing ||
+									(!apiKey && !config?.api_key_set)
 								}
 							>
 								{testing ? (
@@ -997,14 +1008,15 @@ export function LLMConfig() {
 			<EmbeddingConfigCard
 				llmProvider={config?.provider}
 				llmEndpoint={config?.endpoint ?? null}
+				canWrite={canWrite}
 			/>
 
-			<MemorySettings />
+			<MemorySettings canWrite={canWrite} />
 
-			<RequiredInstructionsSettings />
+			<RequiredInstructionsSettings canWrite={canWrite} />
 
 			{/* Model Pricing Card */}
-			<ModelPricingCard refreshKey={pricingRefreshKey} />
+			<ModelPricingCard refreshKey={pricingRefreshKey} canWrite={canWrite} />
 
 			{/* Info Card */}
 			<Card>
@@ -1054,7 +1066,7 @@ export function LLMConfig() {
 						</AlertDialogCancel>
 						<AlertDialogAction
 							onClick={handleDelete}
-							disabled={saving}
+							disabled={saving || !canWrite}
 							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 						>
 							{saving ? (
@@ -1116,9 +1128,11 @@ function extractErrorMessage(error: unknown): string {
 function EmbeddingConfigCard({
 	llmProvider,
 	llmEndpoint,
+	canWrite = true,
 }: {
 	llmProvider?: string;
 	llmEndpoint?: string | null;
+	canWrite?: boolean;
 }) {
 	const navigate = useNavigate();
 	const [apiKey, setApiKey] = useState("");
@@ -1236,6 +1250,7 @@ function EmbeddingConfigCard({
 	// Manual Test (override mode only — in inherit mode we trust the LLM
 	// card's own validation and just auto-list models).
 	const handleTest = async () => {
+		if (!canWrite) return;
 		if (!apiKey) {
 			toast.error("Please enter an API key");
 			return;
@@ -1283,6 +1298,7 @@ function EmbeddingConfigCard({
 	// knowledge_store has existing rows, the response carries
 	// needs_reindex_confirmation=true and we open a dialog instead of toasting.
 	const performSave = async (confirmReindex: boolean) => {
+		if (!canWrite) return;
 		setSaving(true);
 		try {
 			const result = (await saveMutation.mutateAsync({
@@ -1346,6 +1362,7 @@ function EmbeddingConfigCard({
 
 	// Trigger an on-demand reindex against the saved config (no save).
 	const handleReindex = async () => {
+		if (!canWrite) return;
 		setReindexing(true);
 		try {
 			const response = await authFetch(
@@ -1382,6 +1399,7 @@ function EmbeddingConfigCard({
 
 	// Delete configuration
 	const handleDelete = async () => {
+		if (!canWrite) return;
 		setSaving(true);
 		setShowDeleteConfirm(false);
 
@@ -1434,7 +1452,7 @@ function EmbeddingConfigCard({
 	// don't need to gate Save on a separate Test click here.
 	const haveCredentials =
 		inheritActive || apiKey.length > 0 || (hasSavedConfig && !override);
-	const canSave = !saving && model.length > 0 && haveCredentials;
+	const canSave = canWrite && !saving && model.length > 0 && haveCredentials;
 
 	const reindexInFlight = hasActiveReindexNotification || reindexing;
 
@@ -1484,13 +1502,14 @@ function EmbeddingConfigCard({
 										variant="outline"
 										size="sm"
 										className="w-full justify-center sm:w-auto"
-										onClick={() => {
-											setOverride(true);
-											setEndpoint(config?.endpoint ?? "");
-											setAvailableModels([]);
-											setModelsLoaded(false);
-										}}
-									>
+									onClick={() => {
+										setOverride(true);
+										setEndpoint(config?.endpoint ?? "");
+										setAvailableModels([]);
+										setModelsLoaded(false);
+									}}
+									disabled={!canWrite}
+								>
 										Override
 									</Button>
 								)}
@@ -1549,6 +1568,7 @@ function EmbeddingConfigCard({
 								setAvailableModels([]);
 								setModelsLoaded(false);
 							}}
+							disabled={!canWrite}
 						>
 							Override
 						</Button>
@@ -1574,7 +1594,7 @@ function EmbeddingConfigCard({
 							setModelsLoaded(false);
 							setAvailableModels([]);
 						}}
-						disabled={!editingCredentials}
+						disabled={!editingCredentials || !canWrite}
 					/>
 					{editingCredentials && (
 						<p className="text-xs text-muted-foreground">
@@ -1607,13 +1627,13 @@ function EmbeddingConfigCard({
 								setModelsLoaded(false);
 								setAvailableModels([]);
 							}}
-							disabled={!editingCredentials}
+							disabled={!editingCredentials || !canWrite}
 						/>
 						{editingCredentials && (
 							<Button
 								variant="secondary"
 								onClick={handleTest}
-								disabled={testing || !apiKey}
+								disabled={!canWrite || testing || !apiKey}
 							>
 								{testing ? (
 									<>
@@ -1646,6 +1666,7 @@ function EmbeddingConfigCard({
 							id="embedding-model"
 							value={model}
 							onValueChange={setModel}
+							disabled={!canWrite}
 							placeholder="Select model..."
 							searchPlaceholder="Search models..."
 							emptyText="No models found."
@@ -1660,6 +1681,7 @@ function EmbeddingConfigCard({
 							placeholder="e.g. text-embedding-3-small"
 							value={model}
 							onChange={(e) => setModel(e.target.value)}
+							disabled={!canWrite}
 						/>
 					)}
 					{modelsLoaded && availableModels.length === 0 && (
@@ -1686,6 +1708,7 @@ function EmbeddingConfigCard({
 									setAvailableModels([]);
 									setModelsLoaded(false);
 								}}
+								disabled={!canWrite}
 							>
 								Cancel
 							</Button>
@@ -1696,7 +1719,7 @@ function EmbeddingConfigCard({
 								size="sm"
 								className="w-full justify-center whitespace-normal sm:w-auto sm:whitespace-nowrap"
 								onClick={handleReindex}
-								disabled={reindexInFlight}
+								disabled={!canWrite || reindexInFlight}
 								title="Re-embed every knowledge store row against the saved embedding config."
 							>
 								{reindexInFlight ? (
@@ -1764,13 +1787,13 @@ function EmbeddingConfigCard({
 							<Button
 								variant="outline"
 								onClick={() => setReindexConfirm(null)}
-								disabled={saving}
+									disabled={saving || !canWrite}
 							>
 								Cancel
 							</Button>
 							<Button
 								onClick={() => performSave(true)}
-								disabled={saving}
+									disabled={saving || !canWrite}
 							>
 								{saving ? (
 									<>
@@ -1805,7 +1828,7 @@ function EmbeddingConfigCard({
 							<Button
 								variant="outline"
 								onClick={() => setShowDeleteConfirm(false)}
-								disabled={saving}
+									disabled={saving || !canWrite}
 							>
 								Cancel
 							</Button>
@@ -1837,7 +1860,13 @@ function EmbeddingConfigCard({
  * Manage AI model pricing for cost tracking.
  * Shows models that have been used with their pricing, and allows adding/editing.
  */
-function ModelPricingCard({ refreshKey = 0 }: { refreshKey?: number }) {
+function ModelPricingCard({
+	refreshKey = 0,
+	canWrite = true,
+}: {
+	refreshKey?: number;
+	canWrite?: boolean;
+}) {
 	const [pricingData, setPricingData] = useState<AIModelPricingListItem[]>(
 		[],
 	);
@@ -1921,6 +1950,7 @@ function ModelPricingCard({ refreshKey = 0 }: { refreshKey?: number }) {
 
 	// Start editing a row
 	const startEdit = (item: AIModelPricingListItem) => {
+		if (!canWrite) return;
 		if (item.id === null) return;
 		setEditingId(item.id);
 		setEditValues({
@@ -1937,6 +1967,7 @@ function ModelPricingCard({ refreshKey = 0 }: { refreshKey?: number }) {
 
 	// Save edited values
 	const saveEdit = async () => {
+		if (!canWrite) return;
 		if (editingId === null) return;
 
 		setSaving(true);
@@ -1960,6 +1991,7 @@ function ModelPricingCard({ refreshKey = 0 }: { refreshKey?: number }) {
 
 	// Add new pricing
 	const handleAddPricing = async () => {
+		if (!canWrite) return;
 		if (!newPricing.model) {
 			toast.error("Please enter a model name");
 			return;
@@ -1991,12 +2023,14 @@ function ModelPricingCard({ refreshKey = 0 }: { refreshKey?: number }) {
 
 	// Show delete confirmation dialog
 	const handleDeletePricing = (item: AIModelPricingListItem) => {
+		if (!canWrite) return;
 		setDeletingPricing(item);
 		setShowDeleteConfirm(true);
 	};
 
 	// Confirm delete
 	const confirmDeletePricing = async () => {
+		if (!canWrite) return;
 		if (!deletingPricing?.id) return;
 
 		const deletedId = deletingPricing.id;
@@ -2059,6 +2093,7 @@ function ModelPricingCard({ refreshKey = 0 }: { refreshKey?: number }) {
 						variant="outline"
 						size="sm"
 						onClick={() => setShowAddDialog(true)}
+						disabled={!canWrite}
 					>
 						<Plus className="h-4 w-4 mr-1" />
 						Add Model
@@ -2143,6 +2178,7 @@ function ModelPricingCard({ refreshKey = 0 }: { refreshKey?: number }) {
 														});
 														setShowAddDialog(true);
 													}}
+													disabled={!canWrite}
 												>
 													<Plus className="h-4 w-4 mr-1" />
 													Add
@@ -2182,6 +2218,7 @@ function ModelPricingCard({ refreshKey = 0 }: { refreshKey?: number }) {
 														})
 													}
 													className="w-24 text-right"
+													disabled={!canWrite}
 												/>
 											) : (
 												formatPrice(
@@ -2204,6 +2241,7 @@ function ModelPricingCard({ refreshKey = 0 }: { refreshKey?: number }) {
 														})
 													}
 													className="w-24 text-right"
+													disabled={!canWrite}
 												/>
 											) : (
 												formatPrice(
@@ -2222,7 +2260,7 @@ function ModelPricingCard({ refreshKey = 0 }: { refreshKey?: number }) {
 															variant="ghost"
 															size="sm"
 															onClick={saveEdit}
-															disabled={saving}
+															disabled={saving || !canWrite}
 														>
 															{saving ? (
 																<Loader2 className="h-4 w-4 animate-spin" />
@@ -2247,6 +2285,7 @@ function ModelPricingCard({ refreshKey = 0 }: { refreshKey?: number }) {
 															onClick={() =>
 																startEdit(item)
 															}
+															disabled={!canWrite}
 														>
 															<Pencil className="h-4 w-4" />
 														</Button>
@@ -2258,6 +2297,7 @@ function ModelPricingCard({ refreshKey = 0 }: { refreshKey?: number }) {
 																	item,
 																)
 															}
+															disabled={!canWrite}
 															className="text-destructive hover:text-destructive"
 														>
 															<Trash2 className="h-4 w-4" />
@@ -2294,6 +2334,7 @@ function ModelPricingCard({ refreshKey = 0 }: { refreshKey?: number }) {
 										provider: value,
 									})
 								}
+								disabled={!canWrite}
 							>
 								<SelectTrigger id="new-provider">
 									<SelectValue />
@@ -2326,6 +2367,7 @@ function ModelPricingCard({ refreshKey = 0 }: { refreshKey?: number }) {
 										model: e.target.value,
 									})
 								}
+								disabled={!canWrite}
 							/>
 						</div>
 						<div className="grid grid-cols-2 gap-4">
@@ -2349,6 +2391,7 @@ function ModelPricingCard({ refreshKey = 0 }: { refreshKey?: number }) {
 												parseFloat(e.target.value) || 0,
 										})
 									}
+									disabled={!canWrite}
 								/>
 							</div>
 							<div className="space-y-2">
@@ -2372,6 +2415,7 @@ function ModelPricingCard({ refreshKey = 0 }: { refreshKey?: number }) {
 												parseFloat(e.target.value) || 0,
 										})
 									}
+									disabled={!canWrite}
 								/>
 							</div>
 						</div>
@@ -2384,7 +2428,7 @@ function ModelPricingCard({ refreshKey = 0 }: { refreshKey?: number }) {
 						>
 							Cancel
 						</Button>
-						<Button onClick={handleAddPricing} disabled={saving}>
+						<Button onClick={handleAddPricing} disabled={saving || !canWrite}>
 							{saving ? (
 								<>
 									<Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -2429,7 +2473,7 @@ function ModelPricingCard({ refreshKey = 0 }: { refreshKey?: number }) {
 						<Button
 							variant="destructive"
 							onClick={confirmDeletePricing}
-							disabled={saving}
+							disabled={saving || !canWrite}
 						>
 							{saving ? (
 								<>

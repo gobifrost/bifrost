@@ -12,11 +12,14 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
-from src.core.auth import CurrentSuperuser
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.services.audit import emit_audit
 from src.services.operation_catalog import operation_route
+from src.services.authorization import (
+    AuthorizationBoundaryKind,
+    CurrentAuthorizationContext,
+)
 from src.models import Organization as OrganizationORM
 from src.models import OrganizationCreate, OrganizationPublic, OrganizationUpdate
 
@@ -42,7 +45,7 @@ router = APIRouter(prefix="/api/organizations", tags=["Organizations"])
     **operation_route("organizations.list"),
 )
 async def list_organizations(
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
     include_inactive: Annotated[
         bool,
@@ -54,7 +57,19 @@ async def list_organizations(
     Provider organization is always listed first, followed by active and inactive
     organizations alphabetically.
     """
+    authorization.require_operation("organizations.list")
     query = select(OrganizationORM)
+    if not authorization.has_capability("platform.superuser"):
+        boundary = authorization.selected_boundary
+        if boundary.kind is AuthorizationBoundaryKind.ORGANIZATION:
+            query = query.where(OrganizationORM.id == boundary.organization_id)
+        elif boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+            query = query.where(OrganizationORM.is_provider.is_(False))
+        else:
+            # Platform is not shorthand for customer reach. A non-wildcard
+            # Platform assignment can administer Global resources, not browse
+            # every tenant organization.
+            return []
     if not include_inactive:
         query = query.where(OrganizationORM.is_active)
     query = query.order_by(
@@ -77,10 +92,20 @@ async def list_organizations(
 )
 async def create_organization(
     request: OrganizationCreate,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> OrganizationPublic:
     """Create a new client organization."""
+    authorization.require_operation("organizations.create")
+    if (
+        not authorization.has_capability("platform.superuser")
+        and authorization.selected_boundary.kind
+        is not AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Select Managed organizations to create a customer organization",
+        )
     now = datetime.now(timezone.utc)
 
     org = OrganizationORM(
@@ -88,7 +113,7 @@ async def create_organization(
         domain=request.domain.lower() if request.domain else None,
         is_active=request.is_active,
         settings=request.settings,
-        created_by=user.email,
+        created_by=authorization.effective_actor.email,
         created_at=now,
         updated_at=now,
     )
@@ -127,10 +152,12 @@ async def create_organization(
 )
 async def get_organization(
     org_id: UUID,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> OrganizationPublic:
     """Get a specific organization by ID."""
+    authorization.require_operation("organizations.get")
+    authorization.require_resource_boundary(org_id)
     result = await db.execute(
         select(OrganizationORM).where(OrganizationORM.id == org_id)
     )
@@ -155,10 +182,12 @@ async def get_organization(
 async def update_organization(
     org_id: UUID,
     request: OrganizationUpdate,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> OrganizationPublic:
     """Update an organization."""
+    authorization.require_operation("organizations.update")
+    authorization.require_resource_boundary(org_id)
     result = await db.execute(
         select(OrganizationORM).where(OrganizationORM.id == org_id)
     )
@@ -223,10 +252,12 @@ async def update_organization(
 )
 async def delete_organization(
     org_id: UUID,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> None:
     """Soft delete an organization."""
+    authorization.require_operation("organizations.delete")
+    authorization.require_resource_boundary(org_id)
     result = await db.execute(
         select(OrganizationORM).where(OrganizationORM.id == org_id)
     )

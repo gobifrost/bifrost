@@ -51,6 +51,7 @@ async def record_ai_usage(
     cache_read_tokens: int = 0,
     cache_write_tokens: int = 0,
     provider_cost: Decimal | None = None,
+    model_requests: int = 1,
     sequence: int = 1,
     duration_ms: int | None = None,
     execution_id: UUID | None = None,
@@ -59,6 +60,7 @@ async def record_ai_usage(
     message_id: UUID | None = None,
     organization_id: UUID | None = None,
     user_id: UUID | None = None,
+    solution_id: UUID | None = None,
     api_key: str | None = None,
 ) -> None:
     """
@@ -79,6 +81,7 @@ async def record_ai_usage(
         model: Model identifier (versioned, e.g., 'gpt-4o-2024-11-20', 'claude-opus-4-5-20251101')
         input_tokens: Number of input tokens used
         output_tokens: Number of output tokens used
+        model_requests: Number of provider/model requests represented by this row
         duration_ms: Request duration in milliseconds
         execution_id: UUID of workflow execution (for CLI AI calls)
         conversation_id: UUID of conversation (for agent chat)
@@ -86,6 +89,7 @@ async def record_ai_usage(
         message_id: UUID of message within conversation
         organization_id: UUID of organization
         user_id: UUID of user who initiated the call
+        solution_id: UUID of Solution associated with the call, when applicable
         api_key: Provider API key (optional, for fetching display names if not cached)
     """
     from src.models.orm.ai_usage import AIUsage
@@ -156,10 +160,32 @@ async def record_ai_usage(
             message_id=message_id,
             organization_id=organization_id,
             user_id=user_id,
+            solution_id=solution_id,
             sequence=sequence,
         )
         session.add(usage)
         await session.flush()
+
+        from src.services.usage_limits import (
+            UsageLimitSubject,
+            record_supported_period_usage,
+        )
+
+        await record_supported_period_usage(
+            session,
+            UsageLimitSubject(
+                organization_id=organization_id,
+                user_id=user_id,
+                solution_id=solution_id,
+            ),
+            _portable_usage_for_ai_model_call(
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cache_read_tokens=cache_read_tokens,
+                cache_write_tokens=cache_write_tokens,
+                model_requests=model_requests,
+            ),
+        )
 
         # 5. Invalidate aggregates cache
         await invalidate_usage_cache(redis_client, execution_id, conversation_id, agent_run_id)
@@ -175,6 +201,32 @@ async def record_ai_usage(
     except Exception as e:
         logger.error(f"Failed to record AI usage: {e}", exc_info=True)
         # Don't re-raise - AI usage recording should not block the main flow
+
+
+def _portable_usage_for_ai_model_call(
+    *,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int,
+    cache_write_tokens: int,
+    model_requests: int = 1,
+):
+    """Project one provider/model call into portable aggregate dimensions.
+
+    AIUsage.duration_ms is model-call latency, not end-to-end runner wall time.
+    Runner and sandbox duration must be recorded once by the owning run/turn
+    completion path to avoid multiplying wall time by model retries/tool loops.
+    """
+
+    from src.services.usage_limits import PortableUsage
+
+    return PortableUsage(
+        model_requests=model_requests,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_tokens=cache_read_tokens,
+        cache_write_tokens=cache_write_tokens,
+    )
 
 
 async def get_cached_price(

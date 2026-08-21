@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from uuid import UUID, uuid4
 
@@ -9,7 +10,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.contracts.artifacts import ArtifactRef
-from src.models.orm import Artifact
+from src.models.orm import Artifact, ArtifactWorkspaceTombstone
 from src.services.file_storage.service import get_file_storage_service
 
 
@@ -93,6 +94,39 @@ class ArtifactService:
             raise
         return artifact
 
+    async def tombstone_workspace_path(
+        self,
+        workspace_id: UUID,
+        path: str,
+        *,
+        created_by_user_id: UUID,
+        organization_id: UUID | None,
+    ) -> ArtifactWorkspaceTombstone:
+        """Hide one logical workspace path without deleting historical artifacts."""
+
+        normalized = normalize_artifact_path(path)
+        existing = (
+            await self.db.execute(
+                select(ArtifactWorkspaceTombstone)
+                .where(ArtifactWorkspaceTombstone.workspace_id == workspace_id)
+                .where(ArtifactWorkspaceTombstone.logical_path == normalized)
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            existing = ArtifactWorkspaceTombstone(
+                workspace_id=workspace_id,
+                logical_path=normalized,
+                created_by_user_id=created_by_user_id,
+                organization_id=organization_id,
+            )
+            self.db.add(existing)
+        else:
+            existing.created_by_user_id = created_by_user_id
+            existing.organization_id = organization_id
+            existing.created_at = datetime.now(timezone.utc)
+        await self.db.flush()
+        return existing
+
     async def list_workspace(
         self,
         workspace_id: UUID,
@@ -113,9 +147,25 @@ class ArtifactService:
         if not is_platform_admin:
             statement = statement.where(or_(*conditions))
         artifacts = list((await self.db.execute(statement)).scalars().all())
+        tombstones = list(
+            (
+                await self.db.execute(
+                    select(ArtifactWorkspaceTombstone)
+                    .where(ArtifactWorkspaceTombstone.workspace_id == workspace_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        tombstone_by_path = {
+            tombstone.logical_path: tombstone.created_at for tombstone in tombstones
+        }
         latest: dict[str, Artifact] = {}
         for artifact in artifacts:
             path = artifact.logical_path or artifact.filename
+            tombstoned_at = tombstone_by_path.get(path)
+            if tombstoned_at is not None and artifact.created_at <= tombstoned_at:
+                continue
             latest.setdefault(path, artifact)
         return list(latest.values())
 
@@ -144,6 +194,15 @@ class ArtifactService:
             statement = statement.where(or_(*conditions))
         artifact = (await self.db.execute(statement)).scalar_one_or_none()
         if artifact is None:
+            raise ArtifactAccessError(f"Artifact workspace path {normalized} was not found.")
+        tombstone = (
+            await self.db.execute(
+                select(ArtifactWorkspaceTombstone)
+                .where(ArtifactWorkspaceTombstone.workspace_id == workspace_id)
+                .where(ArtifactWorkspaceTombstone.logical_path == normalized)
+            )
+        ).scalar_one_or_none()
+        if tombstone is not None and artifact.created_at <= tombstone.created_at:
             raise ArtifactAccessError(f"Artifact workspace path {normalized} was not found.")
         return artifact
 

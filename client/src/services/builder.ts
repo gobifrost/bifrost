@@ -2,7 +2,7 @@
  * Private Solution Builder service.
  *
  * Wraps the `/api/builder/*` control plane: private Solutions, builder chat
- * sessions, source revisions, undo, and agent turns.
+ * sessions, source revisions, undo, and coding turns.
  *
  */
 
@@ -22,13 +22,28 @@ export type BuilderRevisionDiffFile =
 export type BuilderRevisionDiff = components["schemas"]["RevisionDiffDTO"];
 export type BuilderCollaborator =
 	components["schemas"]["BuilderCollaboratorDTO"];
+export type BuilderGrantableRole = components["schemas"]["RolePublic"];
 export type BuilderBlocker = components["schemas"]["SandboxRunnerBlocker"];
 export type GlobalWorkspaceStatus =
 	components["schemas"]["GlobalWorkspaceStatusDTO"];
 export type GlobalWorkspaceValidation =
 	components["schemas"]["GlobalWorkspaceValidationDTO"];
-export type GlobalWorkspaceApply =
-	components["schemas"]["GlobalWorkspaceApplyDTO"];
+export type PlatformJobAccepted =
+	components["schemas"]["PlatformJobAccepted"];
+export interface GlobalOperationChange {
+	id: string;
+	operation_id: string;
+	resource_type: string;
+	resource_id: string | null;
+	state: string;
+	validation_errors: string[];
+	before_state: Record<string, unknown> | null;
+	after_state: Record<string, unknown>;
+}
+export interface GlobalOperationChangesList {
+	changes: GlobalOperationChange[];
+	rollbackable_changes?: GlobalOperationChange[];
+}
 
 export type BuilderTurnStatus =
 	| "queued"
@@ -57,11 +72,29 @@ export interface BuilderDownload {
 	filename: string;
 }
 
-export type BuilderSolutionsList =
-	components["schemas"]["PrivateSolutionsList"];
+export interface BuilderRoleGrant {
+	id: string;
+	solution_id: string;
+	role_id: string;
+	access: "view" | "edit";
+	granted_by_user_id: string | null;
+	created_at: string;
+	updated_at: string;
+}
 
-interface RequestOptions {
+export type BuilderSolutionsList = components["schemas"]["PrivateSolutionsList"];
+export type BuilderTargets = components["schemas"]["BuilderTargetsDTO"];
+export type BuilderOrganizationTarget =
+	components["schemas"]["BuilderOrganizationTargetDTO"];
+
+export type BuilderBoundary =
+	| "platform"
+	| "managed_organizations"
+	| `organization:${string}`;
+
+export interface RequestOptions {
 	signal?: AbortSignal;
+	boundary?: BuilderBoundary;
 }
 
 export interface BuilderSolutionFilters {
@@ -100,6 +133,16 @@ export class BuilderApiError extends Error {
 }
 
 const BASE = "/api/builder/solutions";
+
+function withBoundary(
+	init: RequestInit,
+	boundary?: BuilderBoundary,
+): RequestInit {
+	if (!boundary) return init;
+	const headers = new Headers(init.headers);
+	headers.set("X-Bifrost-Boundary", boundary);
+	return { ...init, headers };
+}
 
 async function errorFrom(
 	response: Response,
@@ -165,6 +208,20 @@ export async function listBuilderSolutions(
 	return requestJson<BuilderSolutionsList>(
 		`${BASE}${suffix}`,
 		"Failed to list builder solutions",
+		withBoundary(
+			{ signal: options.signal },
+			options.boundary ??
+				(options.view === "all" ? "managed_organizations" : undefined),
+		),
+	);
+}
+
+export async function listBuilderTargets(
+	options: Pick<RequestOptions, "signal"> = {},
+): Promise<BuilderTargets> {
+	return requestJson<BuilderTargets>(
+		`${BASE}/targets`,
+		"Failed to discover Builder access",
 		{ signal: options.signal },
 	);
 }
@@ -175,7 +232,7 @@ export async function getGlobalWorkspace(
 	return requestJson<GlobalWorkspaceStatus>(
 		`${BASE}/global-workspace`,
 		"Failed to load the Global Workspace",
-		{ signal: options.signal },
+		withBoundary({ signal: options.signal }, "platform"),
 	);
 }
 
@@ -185,7 +242,7 @@ export async function ensureGlobalWorkspace(
 	return requestJson<GlobalWorkspaceStatus>(
 		`${BASE}/global-workspace`,
 		"Failed to open the Global Workspace",
-		{ method: "POST", signal: options.signal },
+		withBoundary({ method: "POST", signal: options.signal }, "platform"),
 	);
 }
 
@@ -195,7 +252,7 @@ export async function refreshGlobalWorkspace(
 	return requestJson<GlobalWorkspaceStatus>(
 		`${BASE}/global-workspace/refresh`,
 		"Failed to refresh the Global Workspace",
-		{ method: "POST", signal: options.signal },
+		withBoundary({ method: "POST", signal: options.signal }, "platform"),
 	);
 }
 
@@ -205,27 +262,48 @@ export async function validateGlobalWorkspace(
 	return requestJson<GlobalWorkspaceValidation>(
 		`${BASE}/global-workspace/validate`,
 		"Failed to validate the Global Workspace proposal",
-		{ method: "POST", signal: options.signal },
+		withBoundary({ method: "POST", signal: options.signal }, "platform"),
+	);
+}
+
+export async function listGlobalOperationChanges(
+	options: RequestOptions = {},
+): Promise<GlobalOperationChangesList> {
+	return requestJson<GlobalOperationChangesList>(
+		`${BASE}/global-workspace/operations`,
+		"Failed to load Global operation changes",
+		withBoundary({ signal: options.signal }, "platform"),
+	);
+}
+
+export async function discardGlobalOperationChange(
+	changeId: string,
+	options: RequestOptions = {},
+): Promise<GlobalOperationChange> {
+	return requestJson<GlobalOperationChange>(
+		`${BASE}/global-workspace/operations/${changeId}`,
+		"Failed to discard Global operation change",
+		withBoundary({ method: "DELETE", signal: options.signal }, "platform"),
 	);
 }
 
 export async function applyGlobalWorkspace(
 	options: RequestOptions = {},
-): Promise<GlobalWorkspaceApply> {
-	return requestJson<GlobalWorkspaceApply>(
+): Promise<PlatformJobAccepted> {
+	return requestJson<PlatformJobAccepted>(
 		`${BASE}/global-workspace/apply`,
-		"Failed to apply the Global Workspace proposal",
-		{ method: "POST", signal: options.signal },
+		"Failed to queue the Global Workspace release",
+		withBoundary({ method: "POST", signal: options.signal }, "platform"),
 	);
 }
 
 export async function rollbackGlobalWorkspace(
 	options: RequestOptions = {},
-): Promise<GlobalWorkspaceApply> {
-	return requestJson<GlobalWorkspaceApply>(
+): Promise<PlatformJobAccepted> {
+	return requestJson<PlatformJobAccepted>(
 		`${BASE}/global-workspace/rollback`,
-		"Failed to roll back the Global Workspace",
-		{ method: "POST", signal: options.signal },
+		"Failed to queue the Global Workspace rollback",
+		withBoundary({ method: "POST", signal: options.signal }, "platform"),
 	);
 }
 
@@ -235,9 +313,11 @@ export async function listBuilderCollaborators(
 ): Promise<BuilderCollaborator[]> {
 	const result = await requestJson<
 		components["schemas"]["BuilderCollaboratorsList"]
-	>(`${BASE}/${solutionId}/collaborators`, "Failed to load collaborators", {
-		signal: options.signal,
-	});
+	>(
+		`${BASE}/${solutionId}/collaborators`,
+		"Failed to load collaborators",
+		withBoundary({ signal: options.signal }, options.boundary),
+	);
 	return result.collaborators;
 }
 
@@ -249,11 +329,14 @@ export async function saveBuilderCollaborator(
 	return requestJson<BuilderCollaborator>(
 		`${BASE}/${solutionId}/collaborators`,
 		"Failed to save collaborator",
-		{
-			method: "PUT",
-			body: JSON.stringify(request),
-			signal: options.signal,
-		},
+		withBoundary(
+			{
+				method: "PUT",
+				body: JSON.stringify(request),
+				signal: options.signal,
+			},
+			options.boundary,
+		),
 	);
 }
 
@@ -264,10 +347,71 @@ export async function removeBuilderCollaborator(
 ): Promise<void> {
 	const response = await authFetch(
 		`${BASE}/${solutionId}/collaborators/${userId}`,
-		{ method: "DELETE", signal: options.signal },
+		withBoundary(
+			{ method: "DELETE", signal: options.signal },
+			options.boundary,
+		),
 	);
 	if (!response.ok) {
 		throw await errorFrom(response, "Failed to remove collaborator");
+	}
+}
+
+export async function listBuilderGrantableRoles(
+	options: RequestOptions = {},
+): Promise<BuilderGrantableRole[]> {
+	const roles = await requestJson<BuilderGrantableRole[]>(
+		"/api/roles",
+		"Failed to load Roles",
+		withBoundary({ signal: options.signal }, options.boundary),
+	);
+	return roles.filter((role) => role.assignable_to_resources);
+}
+
+export async function listBuilderRoleGrants(
+	solutionId: string,
+	options: RequestOptions = {},
+): Promise<BuilderRoleGrant[]> {
+	return requestJson<BuilderRoleGrant[]>(
+		`${BASE}/${solutionId}/role-grants`,
+		"Failed to load Role access",
+		withBoundary({ signal: options.signal }, options.boundary),
+	);
+}
+
+export async function saveBuilderRoleGrant(
+	solutionId: string,
+	request: { role_id: string; access: "view" | "edit" },
+	options: RequestOptions = {},
+): Promise<BuilderRoleGrant> {
+	return requestJson<BuilderRoleGrant>(
+		`${BASE}/${solutionId}/role-grants`,
+		"Failed to save Role access",
+		withBoundary(
+			{
+				method: "PUT",
+				body: JSON.stringify({ solution_id: solutionId, ...request }),
+				signal: options.signal,
+			},
+			options.boundary,
+		),
+	);
+}
+
+export async function removeBuilderRoleGrant(
+	solutionId: string,
+	roleId: string,
+	options: RequestOptions = {},
+): Promise<void> {
+	const response = await authFetch(
+		`${BASE}/${solutionId}/role-grants/${roleId}`,
+		withBoundary(
+			{ method: "DELETE", signal: options.signal },
+			options.boundary,
+		),
+	);
+	if (!response.ok) {
+		throw await errorFrom(response, "Failed to remove Role access");
 	}
 }
 
@@ -275,11 +419,18 @@ export async function createBuilderSolution(
 	request: CreateBuilderSolutionRequest,
 	options: RequestOptions = {},
 ): Promise<BuilderSolution> {
-	return requestJson<BuilderSolution>(BASE, "Failed to create app", {
-		method: "POST",
-		body: JSON.stringify(request),
-		signal: options.signal,
-	});
+	return requestJson<BuilderSolution>(
+		BASE,
+		"Failed to create app",
+		withBoundary(
+			{
+				method: "POST",
+				body: JSON.stringify(request),
+				signal: options.signal,
+			},
+			options.boundary,
+		),
+	);
 }
 
 export async function getBuilderSolution(
@@ -289,7 +440,7 @@ export async function getBuilderSolution(
 	return requestJson<BuilderSolution>(
 		`${BASE}/${solutionId}`,
 		"Failed to load solution",
-		{ signal: options.signal },
+		withBoundary({ signal: options.signal }, options.boundary),
 	);
 }
 
@@ -297,10 +448,16 @@ export async function deleteBuilderSolution(
 	solutionId: string,
 	options: RequestOptions = {},
 ): Promise<void> {
-	const response = await authFetch(`${BASE}/${solutionId}`, {
-		method: "DELETE",
-		signal: options.signal,
-	});
+	const response = await authFetch(
+		`${BASE}/${solutionId}`,
+		withBoundary(
+			{
+				method: "DELETE",
+				signal: options.signal,
+			},
+			options.boundary,
+		),
+	);
 	if (!response.ok) {
 		throw await errorFrom(response, "Failed to delete solution");
 	}
@@ -313,7 +470,10 @@ export async function requestPromotion(
 	return requestJson<BuilderProject>(
 		`${BASE}/${solutionId}/promotion-request`,
 		"Failed to request promotion",
-		{ method: "POST", signal: options.signal },
+		withBoundary(
+			{ method: "POST", signal: options.signal },
+			options.boundary,
+		),
 	);
 }
 
@@ -327,7 +487,7 @@ export async function listBuilderSessions(
 	}>(
 		`${BASE}/${solutionId}/sessions`,
 		"Failed to list builder sessions",
-		{ signal: options.signal },
+		withBoundary({ signal: options.signal }, options.boundary),
 	);
 	return result.sessions;
 }
@@ -339,7 +499,10 @@ export async function createBuilderSession(
 	return requestJson<BuilderSession>(
 		`${BASE}/${solutionId}/sessions`,
 		"Failed to start a builder session",
-		{ method: "POST", body: JSON.stringify({}), signal: options.signal },
+		withBoundary(
+			{ method: "POST", body: JSON.stringify({}), signal: options.signal },
+			options.boundary,
+		),
 	);
 }
 
@@ -353,7 +516,7 @@ export async function listRevisions(
 	}>(
 		`${BASE}/${solutionId}/revisions`,
 		"Failed to list revisions",
-		{ signal: options.signal },
+		withBoundary({ signal: options.signal }, options.boundary),
 	);
 	return result.revisions;
 }
@@ -365,7 +528,7 @@ export async function downloadRevision(
 ): Promise<BuilderDownload> {
 	const response = await authFetch(
 		`${BASE}/${solutionId}/revisions/${revisionId}/download`,
-		{ signal: options.signal },
+		withBoundary({ signal: options.signal }, options.boundary),
 	);
 	if (!response.ok) {
 		throw await errorFrom(response, "Failed to download revision");
@@ -388,7 +551,7 @@ export async function listRevisionFiles(
 	}>(
 		`${BASE}/${solutionId}/revisions/${revisionId}/files`,
 		"Failed to list revision files",
-		{ signal: options.signal },
+		withBoundary({ signal: options.signal }, options.boundary),
 	);
 	return result.files;
 }
@@ -403,7 +566,7 @@ export async function getRevisionFile(
 	return requestJson<BuilderRevisionFileContent>(
 		`${BASE}/${solutionId}/revisions/${revisionId}/file?${query.toString()}`,
 		"Failed to read revision file",
-		{ signal: options.signal },
+		withBoundary({ signal: options.signal }, options.boundary),
 	);
 }
 
@@ -421,7 +584,7 @@ export async function getRevisionDiff(
 	return requestJson<BuilderRevisionDiff>(
 		`${BASE}/${solutionId}/revisions/${revisionId}/diff${suffix}`,
 		"Failed to load revision diff",
-		{ signal: options.signal },
+		withBoundary({ signal: options.signal }, options.boundary),
 	);
 }
 
@@ -433,14 +596,17 @@ export async function undoToRevision(
 	return requestJson<BuilderTurn>(
 		`${BASE}/${solutionId}/undo`,
 		"Failed to undo",
-		{
-			method: "POST",
-			body: JSON.stringify({
-				to_revision_id: params.toRevisionId,
-				session_id: params.sessionId,
-			}),
-			signal: options.signal,
-		},
+		withBoundary(
+			{
+				method: "POST",
+				body: JSON.stringify({
+					to_revision_id: params.toRevisionId,
+					session_id: params.sessionId,
+				}),
+				signal: options.signal,
+			},
+			options.boundary,
+		),
 	);
 }
 
@@ -454,7 +620,7 @@ export async function listTurns(
 	}>(
 		`${BASE}/${solutionId}/turns`,
 		"Failed to list builder turns",
-		{ signal: options.signal },
+		withBoundary({ signal: options.signal }, options.boundary),
 	);
 	return result.turns;
 }
@@ -472,18 +638,21 @@ export async function runBuilderTurn(
 	return requestJson<BuilderTurnResult>(
 		`${BASE}/${solutionId}/turns`,
 		"Failed to run builder turn",
-		{
-			method: "POST",
-			body: JSON.stringify({
-				session_id: params.sessionId,
-				message: params.message,
-				attachment_ids: params.attachmentIds ?? [],
-				...(params.resumeFromTurnId
-					? { resume_from_turn_id: params.resumeFromTurnId }
-					: {}),
-			}),
-			signal: options.signal,
-		},
+		withBoundary(
+			{
+				method: "POST",
+				body: JSON.stringify({
+					session_id: params.sessionId,
+					message: params.message,
+					attachment_ids: params.attachmentIds ?? [],
+					...(params.resumeFromTurnId
+						? { resume_from_turn_id: params.resumeFromTurnId }
+						: {}),
+				}),
+				signal: options.signal,
+			},
+			options.boundary,
+		),
 	);
 }
 
@@ -497,7 +666,10 @@ export async function createBuilderAppLaunch(
 	return requestJson<BuilderLaunch>(
 		`${BASE}/${solutionId}/apps/${appId}/launch?${query.toString()}`,
 		"Failed to launch app preview",
-		{ method: "POST", signal: options.signal },
+		withBoundary(
+			{ method: "POST", signal: options.signal },
+			options.boundary,
+		),
 	);
 }
 

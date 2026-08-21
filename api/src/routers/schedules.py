@@ -12,8 +12,8 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import APIRouter
 
 from src.models import CronValidationRequest, CronValidationResponse
-from src.core.auth import Context, CurrentSuperuser
 from src.core.log_safety import log_safe
+from src.services.authorization import CurrentAuthorizationContext
 from src.services.cron_parser import (
     cron_to_human_readable,
     is_cron_expression_valid,
@@ -50,20 +50,25 @@ def _validate_cron(
     # Check for too-frequent schedules (warning if < 5 minutes)
     try:
         from croniter import croniter
+
         now = datetime.now(timezone.utc).astimezone(zone)
         cron = croniter(expression, now)
         next1 = cron.get_next(datetime)
         next2 = cron.get_next(datetime)
         interval = (
-            next2.astimezone(timezone.utc)
-            - next1.astimezone(timezone.utc)
+            next2.astimezone(timezone.utc) - next1.astimezone(timezone.utc)
         ).total_seconds()
 
         if interval < MIN_INTERVAL_SECONDS:
-            return "warning", f"Schedule runs more frequently than {MIN_INTERVAL_SECONDS // 60} minutes"
+            return (
+                "warning",
+                f"Schedule runs more frequently than {MIN_INTERVAL_SECONDS // 60} minutes",
+            )
     except (ImportError, ValueError) as e:
         # croniter not installed or invalid expression — already validated above, treat as valid
-        logger.debug(f"could not compute cron interval for {log_safe(expression)!r}: {log_safe(e)}")
+        logger.debug(
+            f"could not compute cron interval for {log_safe(expression)!r}: {log_safe(e)}"
+        )
 
     return "valid", None
 
@@ -76,10 +81,10 @@ def _validate_cron(
 )
 async def validate_cron_expression(
     body: CronValidationRequest,
-    ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> CronValidationResponse:
     """Validate a CRON expression and return schedule preview."""
+    authorization.require("events.read")
     expression = body.expression.strip()
 
     if not expression:
@@ -114,6 +119,7 @@ async def validate_cron_expression(
     interval_seconds: int | None = None
     try:
         from croniter import croniter
+
         now = datetime.now(timezone.utc).astimezone(zone)
         cron = croniter(expression, now)
         runs = []
@@ -124,13 +130,14 @@ async def validate_cron_expression(
         if len(runs) >= 2:
             interval_seconds = int(
                 (
-                    runs[1].astimezone(timezone.utc)
-                    - runs[0].astimezone(timezone.utc)
+                    runs[1].astimezone(timezone.utc) - runs[0].astimezone(timezone.utc)
                 ).total_seconds()
             )
     except (ImportError, ValueError) as e:
         # croniter not installed or expression rejected — return validation without preview
-        logger.debug(f"could not compute next runs for {log_safe(expression)!r}: {log_safe(e)}")
+        logger.debug(
+            f"could not compute next runs for {log_safe(expression)!r}: {log_safe(e)}"
+        )
 
     return CronValidationResponse(
         valid=True,

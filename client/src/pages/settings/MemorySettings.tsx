@@ -16,7 +16,11 @@ import {
 	updatePlatformMemorySettings,
 } from "@/services/memory";
 
-export function MemorySettings() {
+interface MemorySettingsProps {
+	canWrite?: boolean;
+}
+
+export function MemorySettings({ canWrite = true }: MemorySettingsProps) {
 	const [enabled, setEnabled] = useState(false);
 	const [loading, setLoading] = useState(true);
 	const [saving, setSaving] = useState(false);
@@ -37,6 +41,7 @@ export function MemorySettings() {
 	}, []);
 
 	const handleChange = async (nextEnabled: boolean) => {
+		if (!canWrite) return;
 		setSaving(true);
 		try {
 			const settings = await updatePlatformMemorySettings(nextEnabled);
@@ -84,7 +89,7 @@ export function MemorySettings() {
 						<Switch
 							id="platform-memory-enabled"
 							checked={enabled}
-							disabled={loading || saving}
+							disabled={loading || saving || !canWrite}
 							onCheckedChange={handleChange}
 						/>
 					</div>

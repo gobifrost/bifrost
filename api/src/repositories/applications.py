@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
 from src.core.log_safety import log_safe
@@ -44,6 +45,32 @@ class ApplicationRepository(OrgScopedRepository[Application]):
     role_table = AppRole
     role_entity_id_column = "app_id"
 
+    def __init__(
+        self,
+        session: AsyncSession,
+        org_id: UUID | str | None,
+        user_id: UUID | str | None = None,
+        *,
+        bypass_resource_roles: bool = False,
+        is_external: bool = False,
+    ):
+        """Initialize Application access with explicit admission semantics.
+
+        ``bypass_resource_roles`` means the caller has already been authorized
+        to bypass Application role rows for this scope. It intentionally does
+        not mean the principal is a human superuser. ``is_superuser`` remains
+        accepted for engine/runtime compatibility until those call sites move.
+        """
+
+        self.bypass_resource_roles = bypass_resource_roles
+        super().__init__(
+            session,
+            org_id,
+            user_id=user_id,
+            bypass_resource_admission=bypass_resource_roles,
+            is_external=is_external,
+        )
+
     async def list_applications(self) -> list[Application]:
         """
         List applications with cascade scoping and role-based access.
@@ -65,7 +92,7 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         entities = list(result.scalars().all())
 
         # Filter by role access for non-superusers with role-based entities
-        if not self.is_superuser:
+        if not self.bypass_resource_roles:
             accessible = []
             for entity in entities:
                 if await self._can_access_entity(entity):
@@ -237,7 +264,7 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         app_id: UUID,
         data: ApplicationUpdate,
         updated_by: str,
-        is_platform_admin: bool = False,
+        allow_scope_change: bool = False,
     ) -> Application | None:
         """Update application metadata and access control by ID."""
         application = await self.get(id=app_id)
@@ -264,7 +291,7 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         # The router validates authorization and target existence before the
         # repository applies an explicit scope change. Omission preserves the
         # current organization; explicit null moves the Application global.
-        if "organization_id" in data.model_fields_set and is_platform_admin:
+        if "organization_id" in data.model_fields_set and allow_scope_change:
             application.organization_id = data.organization_id
 
         # Update role associations if provided

@@ -7,9 +7,10 @@ Real-time updates are delivered via WebSocket (notification:{user_id} channel).
 
 import logging
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.auth import CurrentUser, CurrentSuperuser
+from src.core.database import get_db
 from src.core.locks import (
     UPLOAD_LOCK_NAME,
     get_lock_service,
@@ -19,11 +20,38 @@ from src.models.contracts.notifications import (
     NotificationPublic,
     UploadLockInfo,
 )
+from src.services.audit import emit_audit
+from src.services.authorization import CurrentAuthorizationContext
 from src.services.notification_service import get_notification_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/notifications", tags=["Notifications"])
+
+
+def _require_upload_lock_access(
+    authorization: CurrentAuthorizationContext,
+    capability: str,
+) -> None:
+    authorization.require(capability)
+    authorization.require_resource_boundary(None)
+
+
+def _require_admin_notification_access(
+    authorization: CurrentAuthorizationContext,
+) -> None:
+    authorization.require("platformjobs.read")
+    authorization.require_resource_boundary(None)
+
+
+def _has_admin_notification_access(
+    authorization: CurrentAuthorizationContext,
+) -> bool:
+    try:
+        _require_admin_notification_access(authorization)
+    except HTTPException:
+        return False
+    return True
 
 
 # =============================================================================
@@ -33,7 +61,7 @@ router = APIRouter(prefix="/api/notifications", tags=["Notifications"])
 
 @router.get("", response_model=NotificationListResponse)
 async def list_notifications(
-    user: CurrentUser,
+    authorization: CurrentAuthorizationContext,
 ) -> NotificationListResponse:
     """
     Get all notifications for the current user.
@@ -44,9 +72,10 @@ async def list_notifications(
         List of active notifications
     """
     service = get_notification_service()
+    actor = authorization.effective_actor
     notifications = await service.get_user_notifications(
-        user_id=str(user.user_id),
-        include_admin=user.is_superuser,
+        user_id=str(actor.user_id),
+        include_admin=_has_admin_notification_access(authorization),
     )
     return NotificationListResponse(notifications=notifications)
 
@@ -54,7 +83,7 @@ async def list_notifications(
 @router.get("/{notification_id}", response_model=NotificationPublic)
 async def get_notification(
     notification_id: str,
-    user: CurrentUser,
+    authorization: CurrentAuthorizationContext,
 ) -> NotificationPublic:
     """
     Get a specific notification by ID.
@@ -77,14 +106,17 @@ async def get_notification(
             detail="Notification not found",
         )
 
-    # Verify ownership (unless admin viewing admin notification)
-    if notification.user_id != str(user.user_id):
-        # Allow admins to view admin-scoped notifications
-        if not user.is_superuser:
+    actor = authorization.effective_actor
+
+    # Verify ownership. Admin authority only opens admin-scoped notifications,
+    # never arbitrary private notifications owned by another user.
+    if notification.user_id != str(actor.user_id):
+        if not await service._is_admin_notification(notification_id):  # noqa: SLF001
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Notification not found",
             )
+        _require_admin_notification_access(authorization)
 
     return notification
 
@@ -92,7 +124,7 @@ async def get_notification(
 @router.delete("/{notification_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def dismiss_notification(
     notification_id: str,
-    user: CurrentUser,
+    authorization: CurrentAuthorizationContext,
 ) -> None:
     """
     Dismiss (delete) a notification.
@@ -117,13 +149,14 @@ async def dismiss_notification(
     from src.services.embeddings.reindex import mark_cancelled
 
     service = get_notification_service()
+    actor = authorization.effective_actor
 
     # Check if this is a running embedding-reindex BEFORE dismissing —
     # we need the category and status to decide whether to set the cancel flag.
     notification = await service.get_notification(notification_id)
     if (
         notification is not None
-        and notification.user_id == str(user.user_id)
+        and notification.user_id == str(actor.user_id)
         and notification.category == NotificationCategory.EMBEDDING_REINDEX
         and notification.status == NotificationStatus.RUNNING
     ):
@@ -133,9 +166,17 @@ async def dismiss_notification(
         # will let the user see the final state in the UI before it disappears.
         return
 
+    if notification is not None and notification.user_id != str(actor.user_id):
+        if not await service._is_admin_notification(notification_id):  # noqa: SLF001
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Notification not found or not owned by you",
+            )
+        _require_admin_notification_access(authorization)
+
     dismissed = await service.dismiss_notification(
         notification_id=notification_id,
-        user_id=str(user.user_id),
+        user_id=str(actor.user_id),
     )
 
     if not dismissed:
@@ -152,7 +193,7 @@ async def dismiss_notification(
 
 @router.get("/locks/upload", response_model=UploadLockInfo)
 async def get_upload_lock_status(
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> UploadLockInfo:
     """
     Check the current upload lock status (admin only).
@@ -162,6 +203,7 @@ async def get_upload_lock_status(
     Returns:
         Upload lock information
     """
+    _require_upload_lock_access(authorization, "managedfiles.read")
     lock_service = get_lock_service()
     lock_info = await lock_service.get_lock_info(UPLOAD_LOCK_NAME)
 
@@ -180,7 +222,8 @@ async def get_upload_lock_status(
 
 @router.delete("/locks/upload", status_code=status.HTTP_204_NO_CONTENT)
 async def force_release_upload_lock(
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
+    db: AsyncSession = Depends(get_db),
 ) -> None:
     """
     Force release the upload lock (admin only).
@@ -190,6 +233,7 @@ async def force_release_upload_lock(
     Raises:
         404 if no lock exists
     """
+    _require_upload_lock_access(authorization, "managedfiles.readwrite")
     lock_service = get_lock_service()
     released = await lock_service.force_release_lock(UPLOAD_LOCK_NAME)
 
@@ -199,4 +243,17 @@ async def force_release_upload_lock(
             detail="No upload lock exists",
         )
 
-    logger.warning(f"Upload lock force released by admin: {user.email}")
+    logger.warning(
+        "Upload lock force released by actor: %s",
+        authorization.effective_actor.email,
+    )
+    await emit_audit(
+        db,
+        "upload_lock.force_release",
+        resource_type="upload_lock",
+        details={
+            "lock_name": UPLOAD_LOCK_NAME,
+            "released_by": authorization.effective_actor.email,
+        },
+    )
+    await db.commit()

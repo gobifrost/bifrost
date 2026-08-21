@@ -2,7 +2,7 @@
 
 import inspect
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability
 from pydantic_ai.messages import (
     ModelRequest,
@@ -67,6 +67,13 @@ class ObservedTieredCompaction(TieredCompaction[object]):
         return compacted
 
 
+@dataclass
+class AgentRunControl:
+    """Mutable per-run control flags shared across runtime capabilities."""
+
+    force_wind_down: bool = False
+
+
 @dataclass(frozen=True)
 class AgentRunBudget:
     """One shared budget expressed in the units Pydantic AI actually enforces."""
@@ -77,6 +84,7 @@ class AgentRunBudget:
     warning_threshold: float = 0.7
     initial_requests: int = 0
     initial_total_tokens: int = 0
+    control: AgentRunControl = field(default_factory=AgentRunControl)
 
     @property
     def wind_down_total_tokens(self) -> int | None:
@@ -127,7 +135,7 @@ class AgentRunBudget:
             wind_down_total_tokens is not None
             and usage.total_tokens >= wind_down_total_tokens
         )
-        return request_limit_reached or token_limit_reached
+        return self.control.force_wind_down or request_limit_reached or token_limit_reached
 
     def usage_limits(self) -> UsageLimits:
         """Return pre-request-enforced limits for the full agentic loop."""
@@ -185,6 +193,7 @@ class AgentRunBudget:
             warning_threshold=self.warning_threshold,
             initial_requests=current_requests,
             initial_total_tokens=current_total_tokens,
+            control=self.control,
         )
 
 

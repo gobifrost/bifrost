@@ -1,6 +1,7 @@
 """Unit tests for the unscoped MCP agent gateway."""
 
 from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -126,7 +127,7 @@ def test_live_config_filters_underlying_tools_by_name_or_source_id():
     assert [tool.definition.name for tool in tools] == ["lookup_ticket"]
 
 
-def test_builder_tool_schema_requires_session_and_supports_explicit_finalize():
+def test_builder_tool_schema_uses_selected_session_and_supports_finalize():
     service = MCPAgentGatewayService(_context())
     agent = _agent()
     original_schema = {
@@ -159,27 +160,21 @@ def test_builder_tool_schema_requires_session_and_supports_explicit_finalize():
     assert tool.definition.parameters["required"] == [
         "path",
         "content",
-        "builder_session_id",
     ]
     assert tool.definition.parameters["properties"]["finalize"]["default"] is False
     assert "builder_session_id" not in original_schema["properties"]
-
-    with pytest.raises(GatewayError) as exc_info:
-        service.validate_arguments(tool, {"path": "README.md", "content": "Hi"})
-    assert exc_info.value.code == "INVALID_ARGUMENTS"
 
     service.validate_arguments(
         tool,
         {
             "path": "README.md",
             "content": "Hi",
-            "builder_session_id": str(uuid4()),
             "finalize": True,
         },
     )
 
 
-def test_builder_build_check_requires_session_without_finalize():
+def test_builder_build_check_uses_selected_session_without_finalize():
     service = MCPAgentGatewayService(_context())
     agent = _agent()
 
@@ -204,7 +199,7 @@ def test_builder_build_check_requires_session_without_finalize():
     assert len(tools) == 1
     tool = tools[0]
     assert tool.source == "builder_workspace"
-    assert tool.definition.parameters["required"] == ["builder_session_id"]
+    assert tool.definition.parameters["required"] == []
     assert "finalize" not in tool.definition.parameters["properties"]
 
 
@@ -212,7 +207,6 @@ def test_builder_build_check_requires_session_without_finalize():
 async def test_builder_dispatch_routes_through_session_scoped_harness():
     context = _context()
     service = MCPAgentGatewayService(context)
-    agent = _agent()
     tool = ResolvedGatewayTool(
         tool_ref=str(uuid4()),
         definition=ToolDefinition(
@@ -231,21 +225,15 @@ async def test_builder_dispatch_routes_through_session_scoped_harness():
 
     with (
         patch("src.core.database.get_db_context", return_value=db_context),
-        patch.object(
-            service,
-            "_builder_access",
-            new=AsyncMock(return_value=(True, False)),
-        ),
         patch(
             "src.services.builder.mcp_harness.BuilderMCPHarness.execute",
             new=AsyncMock(return_value={"revision_id": str(uuid4())}),
         ) as execute,
     ):
         result = await service._dispatch_builder_workspace(
-            agent,
+            session_id,
             tool,
             {
-                "builder_session_id": str(session_id),
                 "path": "README.md",
                 "content": "Hi",
                 "finalize": True,
@@ -254,7 +242,6 @@ async def test_builder_dispatch_routes_through_session_scoped_harness():
 
     assert result["revision_id"]
     assert execute.await_args.kwargs == {
-        "agent": agent,
         "tool_name": "write_file",
         "builder_session_id": session_id,
         "arguments": {
@@ -263,6 +250,204 @@ async def test_builder_dispatch_routes_through_session_scoped_harness():
             "finalize": True,
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_gateway_resource_bypass_lists_only_selected_organization_boundary():
+    selected_org_id = uuid4()
+    context = _context()
+    context.org_id = selected_org_id
+    context.authorization_boundary = f"organization:{selected_org_id}"
+    context.resource_gate_bypass = True
+    service = MCPAgentGatewayService(context)
+    db = AsyncMock()
+    db_context = MagicMock()
+    db_context.__aenter__ = AsyncMock(return_value=db)
+    db_context.__aexit__ = AsyncMock(return_value=None)
+    repo = MagicMock()
+    repo.list_all_in_scope = AsyncMock(return_value=[_agent()])
+
+    with (
+        patch("src.core.database.get_db_context", return_value=db_context),
+        patch(
+            "src.services.mcp_server.gateway.AgentRepository",
+            return_value=repo,
+        ),
+    ):
+        await service._list_accessible_agents()
+
+    repo.list_all_in_scope.assert_awaited_once()
+    assert repo.list_all_in_scope.await_args.args[0].name == "ORG_PLUS_GLOBAL"
+
+
+@pytest.mark.asyncio
+async def test_gateway_platform_boundary_lists_global_only_even_with_resource_bypass():
+    context = _context()
+    context.org_id = None
+    context.authorization_boundary = "platform"
+    context.resource_gate_bypass = True
+    service = MCPAgentGatewayService(context)
+    db = AsyncMock()
+    db_context = MagicMock()
+    db_context.__aenter__ = AsyncMock(return_value=db)
+    db_context.__aexit__ = AsyncMock(return_value=None)
+    repo = MagicMock()
+    repo.list_all_in_scope = AsyncMock(return_value=[_agent()])
+
+    with (
+        patch("src.core.database.get_db_context", return_value=db_context),
+        patch(
+            "src.services.mcp_server.gateway.AgentRepository",
+            return_value=repo,
+        ),
+    ):
+        await service._list_accessible_agents()
+
+    repo.list_all_in_scope.assert_awaited_once()
+    assert repo.list_all_in_scope.await_args.args[0].name == "GLOBAL_ONLY"
+
+
+@pytest.mark.asyncio
+async def test_gateway_resource_bypass_direct_id_still_rejects_cross_boundary_agent():
+    selected_org_id = uuid4()
+    context = _context()
+    context.org_id = selected_org_id
+    context.authorization_boundary = f"organization:{selected_org_id}"
+    context.resource_gate_bypass = True
+    service = MCPAgentGatewayService(context)
+    in_scope_agent = _agent()
+    requested_id = uuid4()
+    db = AsyncMock()
+    db_context = MagicMock()
+    db_context.__aenter__ = AsyncMock(return_value=db)
+    db_context.__aexit__ = AsyncMock(return_value=None)
+    repo = MagicMock()
+    repo.list_all_in_scope = AsyncMock(return_value=[in_scope_agent])
+    repo.get_agent_with_access_check = AsyncMock()
+
+    with (
+        patch("src.core.database.get_db_context", return_value=db_context),
+        patch(
+            "src.services.mcp_server.gateway.AgentRepository",
+            return_value=repo,
+        ),
+    ):
+        with pytest.raises(GatewayError) as exc_info:
+            await service.get_agent_snapshot(str(requested_id))
+
+    repo.get_agent_with_access_check.assert_not_called()
+    assert exc_info.value.code == "AGENT_NOT_FOUND_OR_FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_gateway_system_tool_dispatch_propagates_selected_boundary_context():
+    selected_org_id = uuid4()
+    context = _context()
+    context.org_id = selected_org_id
+    context.authorization_boundary = f"organization:{selected_org_id}"
+    context.resource_gate_bypass = True
+    service = MCPAgentGatewayService(context)
+    agent = _agent()
+    captured = {}
+
+    async def tool_func(nested_context):
+        captured["context"] = nested_context
+        return SimpleNamespace(structured_content={"ok": True})
+
+    with patch(
+        "src.services.mcp_server.server.get_system_tool_function",
+        return_value=tool_func,
+    ):
+        result = await service._dispatch_system_tool(
+            agent,
+            _resolved_tool(name="bifrost_list_agents"),
+            {},
+        )
+
+    nested_context = captured["context"]
+    assert result == {"ok": True}
+    assert nested_context.authorization_boundary == f"organization:{selected_org_id}"
+    assert nested_context.resource_gate_bypass is True
+    assert nested_context.agent_id == agent.id
+
+
+@pytest.mark.asyncio
+async def test_builder_snapshot_uses_maintained_profile_without_loading_agent():
+    context = _context()
+    service = MCPAgentGatewayService(context)
+    session_id = uuid4()
+    profile = MagicMock()
+    profile.id = uuid4()
+    profile.name = "Solution Builder"
+    profile.description = "Maintained coding profile"
+    profile.system_prompt = "Build with the supplied tools."
+    profile.system_tools = ["write_file"]
+    profile.knowledge_sources = []
+    profile.delegated_agents = []
+    profile.organization_id = context.org_id
+    authorized = MagicMock(profile=profile)
+    db = AsyncMock()
+    db_context = MagicMock()
+    db_context.__aenter__ = AsyncMock(return_value=db)
+    db_context.__aexit__ = AsyncMock(return_value=None)
+    harness = MagicMock()
+    harness.load_authorized_profile = AsyncMock(return_value=authorized)
+    definition = ToolDefinition(
+        name="write_file",
+        description="Write a workspace file",
+        parameters={"type": "object", "properties": {}},
+    )
+
+    with (
+        patch("src.core.database.get_db_context", return_value=db_context),
+        patch(
+            "src.services.builder.mcp_harness.BuilderMCPHarness",
+            return_value=harness,
+        ),
+        patch(
+            "src.services.mcp_server.gateway.resolve_agent_tools",
+            new=AsyncMock(return_value=([definition], {})),
+        ) as resolve_tools,
+        patch(
+            "src.services.mcp_server.gateway.MCPConfigService.get_config",
+            new=AsyncMock(return_value=MCPConfig()),
+        ),
+    ):
+        snapshot = await service.get_builder_snapshot(str(session_id))
+
+    assert snapshot.agent is profile
+    assert snapshot.builder is True
+    assert snapshot.builder_session_id == session_id
+    harness.load_authorized_profile.assert_awaited_once_with(
+        builder_session_id=session_id
+    )
+    assert resolve_tools.await_args.args[0] is profile
+
+
+def test_builder_search_result_uses_session_as_capability_selector():
+    service = MCPAgentGatewayService(_context())
+    session_id = uuid4()
+    profile = _agent()
+    snapshot = AgentToolSnapshot(
+        agent=profile,
+        tools=[_resolved_tool(name="write_file")],
+        builder=True,
+        builder_session_id=session_id,
+    )
+
+    result = service._search_agent_snapshot(
+        snapshot,
+        query=None,
+        tool_ref=None,
+        limit=10,
+    )
+
+    assert result["agent_id"] is None
+    assert result["builder_session_id"] == str(session_id)
+    capability = result["agents"][0]
+    assert capability["builder"] is True
+    assert capability["builder_session_id"] == str(session_id)
+    assert f"builder_session_id='{session_id}'" in capability["search_again"]
 
 
 def test_validation_error_is_model_repairable():
@@ -293,6 +478,51 @@ def test_unknown_reference_does_not_fall_back_to_tool_name():
 
     assert exc_info.value.code == "TOOL_NOT_FOUND_OR_FORBIDDEN"
     assert exc_info.value.retryable is True
+
+
+@pytest.mark.asyncio
+async def test_get_agent_snapshot_hides_forbidden_agent():
+    context = _context()
+    service = MCPAgentGatewayService(context)
+    agent_id = uuid4()
+    db = AsyncMock()
+    db_context = MagicMock()
+    db_context.__aenter__ = AsyncMock(return_value=db)
+    db_context.__aexit__ = AsyncMock(return_value=None)
+    repo = MagicMock()
+    repo.get_agent_with_access_check = AsyncMock(return_value=None)
+
+    with (
+        patch("src.core.database.get_db_context", return_value=db_context),
+        patch(
+            "src.services.mcp_server.gateway.AgentRepository",
+            return_value=repo,
+        ),
+    ):
+        with pytest.raises(GatewayError) as exc_info:
+            await service.get_agent_snapshot(str(agent_id))
+
+    repo.get_agent_with_access_check.assert_awaited_once_with(agent_id)
+    assert exc_info.value.code == "AGENT_NOT_FOUND_OR_FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_execute_agent_tool_re_resolves_stale_discovery_snapshot():
+    service = MCPAgentGatewayService(_context())
+    stale_tool_ref = str(uuid4())
+    live_snapshot = AgentToolSnapshot(agent=_agent(), tools=[])
+    service.get_agent_snapshot = AsyncMock(return_value=live_snapshot)
+
+    with pytest.raises(GatewayError) as exc_info:
+        await service.execute_agent_tool(
+            str(live_snapshot.agent.id),
+            stale_tool_ref,
+            {},
+        )
+
+    service.get_agent_snapshot.assert_awaited_once_with(str(live_snapshot.agent.id))
+    assert exc_info.value.code == "TOOL_NOT_FOUND_OR_FORBIDDEN"
+    assert exc_info.value.details["tool_ref"] == stale_tool_ref
 
 
 def test_agent_hydration_never_implies_zero_matches_is_a_full_catalog():

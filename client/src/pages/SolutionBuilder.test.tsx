@@ -9,6 +9,7 @@ import { renderWithProviders, screen, waitFor, within } from "@/test-utils";
 import { SolutionBuilder } from "./SolutionBuilder";
 import {
 	BuilderApiError,
+	type GlobalOperationChange,
 	type BuilderRevision,
 	type BuilderSolution,
 	type BuilderTurn,
@@ -81,6 +82,8 @@ const mockValidateGlobalWorkspace = vi.fn();
 const mockRefreshGlobalWorkspace = vi.fn();
 const mockApplyGlobalWorkspace = vi.fn();
 const mockRollbackGlobalWorkspace = vi.fn();
+const mockListGlobalOperationChanges = vi.fn();
+const mockDiscardGlobalOperationChange = vi.fn();
 const mockGetPlatformJob = vi.fn();
 const mockCancelPlatformJob = vi.fn();
 const mockOnPlatformJobUpdate = vi.fn((..._args: unknown[]) => vi.fn());
@@ -136,6 +139,10 @@ vi.mock("@/services/builder", async () => {
 			mockApplyGlobalWorkspace(...a),
 		rollbackGlobalWorkspace: (...a: unknown[]) =>
 			mockRollbackGlobalWorkspace(...a),
+		listGlobalOperationChanges: (...a: unknown[]) =>
+			mockListGlobalOperationChanges(...a),
+		discardGlobalOperationChange: (...a: unknown[]) =>
+			mockDiscardGlobalOperationChange(...a),
 	};
 });
 
@@ -241,6 +248,25 @@ function platformJob(overrides: Partial<PlatformJob> = {}): PlatformJob {
 	};
 }
 
+function globalOperationChange(
+	overrides: Partial<GlobalOperationChange> = {},
+): GlobalOperationChange {
+	return {
+		id: "change-1",
+		operation_id: "agents.create",
+		resource_type: "agent",
+		resource_id: null,
+		state: "staged",
+		validation_errors: [],
+		before_state: null,
+		after_state: {
+			name: "Global Intake Agent",
+			system_prompt: "Help with intake.",
+		},
+		...overrides,
+	};
+}
+
 const SESSION = {
 	id: "sess-1",
 	solution_id: "sol-1",
@@ -310,10 +336,10 @@ beforeEach(() => {
 		errors: [],
 	});
 	mockApplyGlobalWorkspace.mockResolvedValue({
-		revision_id: "rev-2",
-		changed_paths: ["workflows/example.py"],
-		applied_at: "2026-07-25T12:00:00Z",
-		rolled_back: false,
+		job_id: "job-global-release-1",
+		notification_id: "notif-1",
+		status: "waiting",
+		reused: false,
 	});
 	mockRefreshGlobalWorkspace.mockResolvedValue({
 		exists: true,
@@ -322,11 +348,18 @@ beforeEach(() => {
 		can_rollback: false,
 	});
 	mockRollbackGlobalWorkspace.mockResolvedValue({
-		revision_id: "rev-3",
-		changed_paths: ["workflows/example.py"],
-		applied_at: "2026-07-25T12:05:00Z",
-		rolled_back: true,
+		job_id: "job-global-release-rollback-1",
+		notification_id: "notif-2",
+		status: "waiting",
+		reused: false,
 	});
+	mockListGlobalOperationChanges.mockResolvedValue({
+		changes: [],
+		rollbackable_changes: [],
+	});
+	mockDiscardGlobalOperationChange.mockResolvedValue(
+		globalOperationChange({ state: "discarded" }),
+	);
 });
 
 describe("load states", () => {
@@ -433,7 +466,7 @@ describe("top bar", () => {
 		).not.toBeInTheDocument();
 		expect(screen.queryByRole("tab", { name: "Preview" })).not.toBeInTheDocument();
 
-		const apply = screen.getByRole("button", { name: /apply to live/i });
+		const apply = screen.getByRole("button", { name: /apply release/i });
 		expect(apply).toBeDisabled();
 		await user.click(
 			screen.getByRole("button", { name: /validate proposal/i }),
@@ -446,13 +479,218 @@ describe("top bar", () => {
 		await user.click(apply);
 		expect(
 			await screen.findByRole("heading", {
-				name: /apply this proposal to live _repo/i,
+				name: /apply this release to the live platform/i,
 			}),
 		).toBeInTheDocument();
 		await user.click(
-			screen.getByRole("button", { name: /^apply to live _repo$/i }),
+			screen.getAllByRole("button", { name: /^apply release$/i }).at(-1)!,
 		);
 		await waitFor(() => expect(mockApplyGlobalWorkspace).toHaveBeenCalled());
+	});
+
+	it("shows staged Global operation diffs as human-reviewed changes", async () => {
+		mockGetBuilderSolution.mockResolvedValue(
+			solution({
+				name: "Global Workspace",
+				slug: "bifrost-global-workspace",
+				target_kind: "global_repo",
+			}),
+		);
+		mockGetGlobalWorkspace.mockResolvedValue({
+			exists: true,
+			solution_id: "sol-1",
+			current_revision_id: "rev-1",
+			deployed_revision_id: "rev-1",
+			has_pending_proposal: true,
+			pending_operation_count: 1,
+			can_rollback: false,
+			last_applied_at: null,
+		});
+		mockListGlobalOperationChanges.mockResolvedValue({
+			changes: [globalOperationChange()],
+			rollbackable_changes: [],
+		});
+
+		renderWithProviders(<SolutionBuilder />);
+
+		expect(await screen.findByText("Human review required")).toBeInTheDocument();
+		expect(screen.getByText("1 staged operation change")).toBeInTheDocument();
+		expect(screen.getByText("agents.create")).toBeInTheDocument();
+		expect(screen.getAllByText(/new global resource/i)).toHaveLength(2);
+		expect(screen.getByText("Before")).toBeInTheDocument();
+		expect(screen.getByText("Proposed")).toBeInTheDocument();
+		expect(screen.getByText("New global resource")).toBeInTheDocument();
+		expect(screen.getByText(/Global Intake Agent/)).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /apply release/i })).toBeDisabled();
+	});
+
+	it("keeps invalid Global operation changes from being applied", async () => {
+		mockGetBuilderSolution.mockResolvedValue(
+			solution({
+				name: "Global Workspace",
+				target_kind: "global_repo",
+			}),
+		);
+		mockGetGlobalWorkspace.mockResolvedValue({
+			exists: true,
+			solution_id: "sol-1",
+			current_revision_id: "rev-1",
+			deployed_revision_id: "rev-1",
+			has_pending_proposal: true,
+			pending_operation_count: 1,
+			can_rollback: false,
+			last_applied_at: null,
+		});
+		mockListGlobalOperationChanges.mockResolvedValue({
+			changes: [
+				globalOperationChange({
+					validation_errors: ["name is required"],
+				}),
+			],
+			rollbackable_changes: [],
+		});
+		mockValidateGlobalWorkspace.mockResolvedValue({
+			revision_id: "rev-1",
+			valid: false,
+			errors: ["agents.create change-1: name is required"],
+		});
+		const { user } = renderWithProviders(<SolutionBuilder />);
+
+		await user.click(await screen.findByRole("button", { name: /validate proposal/i }));
+
+		expect(await screen.findByText("name is required")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /apply release/i })).toBeDisabled();
+		expect(mockApplyGlobalWorkspace).not.toHaveBeenCalled();
+	});
+
+	it("discards one staged Global operation change from the review surface", async () => {
+		mockGetBuilderSolution.mockResolvedValue(
+			solution({
+				name: "Global Workspace",
+				target_kind: "global_repo",
+			}),
+		);
+		mockGetGlobalWorkspace.mockResolvedValue({
+			exists: true,
+			solution_id: "sol-1",
+			current_revision_id: "rev-1",
+			deployed_revision_id: "rev-1",
+			has_pending_proposal: true,
+			pending_operation_count: 1,
+			can_rollback: false,
+			last_applied_at: null,
+		});
+		mockListGlobalOperationChanges.mockResolvedValue({
+			changes: [globalOperationChange()],
+			rollbackable_changes: [],
+		});
+		const { user } = renderWithProviders(<SolutionBuilder />);
+
+		await user.click(await screen.findByRole("button", { name: /^discard$/i }));
+
+		await waitFor(() =>
+			expect(mockDiscardGlobalOperationChange).toHaveBeenCalledWith("change-1"),
+		);
+	});
+
+	it("queues a Global operation-only release as a shared PlatformJob", async () => {
+		mockGetBuilderSolution.mockResolvedValue(
+			solution({
+				name: "Global Workspace",
+				target_kind: "global_repo",
+			}),
+		);
+		mockGetGlobalWorkspace.mockResolvedValue({
+			exists: true,
+			solution_id: "sol-1",
+			current_revision_id: "rev-1",
+			deployed_revision_id: "rev-1",
+			has_pending_proposal: true,
+			pending_operation_count: 1,
+			can_rollback: false,
+			last_applied_at: null,
+		});
+		mockListGlobalOperationChanges.mockResolvedValue({
+			changes: [globalOperationChange()],
+			rollbackable_changes: [],
+		});
+		mockValidateGlobalWorkspace.mockResolvedValue({
+			revision_id: "rev-1",
+			valid: true,
+			errors: [],
+		});
+		const { user } = renderWithProviders(<SolutionBuilder />);
+
+		await user.click(await screen.findByRole("button", { name: /validate proposal/i }));
+		await waitFor(() =>
+			expect(screen.getByRole("button", { name: /apply release/i })).not.toBeDisabled(),
+		);
+		await user.click(screen.getByRole("button", { name: /apply release/i }));
+		await screen.findByRole("heading", {
+			name: /apply this release to the live platform/i,
+		});
+		await user.click(
+			screen.getAllByRole("button", { name: /^apply release$/i }).at(-1)!,
+		);
+
+		await waitFor(() => expect(mockApplyGlobalWorkspace).toHaveBeenCalled());
+		await waitFor(() => expect(mockGetPlatformJob).toHaveBeenCalledWith("job-global-release-1", expect.any(AbortSignal)));
+		expect(mockOnPlatformJobUpdate).toHaveBeenCalledWith(
+			"job-global-release-1",
+			expect.any(Function),
+		);
+	});
+
+	it("shows the latest Global release operation batch before rollback", async () => {
+		mockGetBuilderSolution.mockResolvedValue(
+			solution({
+				name: "Global Workspace",
+				target_kind: "global_repo",
+			}),
+		);
+		mockGetGlobalWorkspace.mockResolvedValue({
+			exists: true,
+			solution_id: "sol-1",
+			current_revision_id: "rev-1",
+			deployed_revision_id: "rev-1",
+			has_pending_proposal: false,
+			pending_operation_count: 0,
+			can_rollback: true,
+			last_applied_at: "2026-07-25T12:00:00Z",
+		});
+		mockListGlobalOperationChanges.mockResolvedValue({
+			changes: [],
+			rollbackable_changes: [
+				globalOperationChange({
+					operation_id: "agents.update",
+					resource_id: "agent-1",
+					before_state: { name: "Before Agent" },
+					after_state: { name: "Applied Agent" },
+				}),
+			],
+		});
+		const { user } = renderWithProviders(<SolutionBuilder />);
+
+		expect(await screen.findByText("Rollback review required")).toBeInTheDocument();
+		expect(screen.getByText("Latest Global release")).toBeInTheDocument();
+		expect(screen.getByText("Applied")).toBeInTheDocument();
+		expect(screen.getByText(/Before Agent/)).toBeInTheDocument();
+		expect(screen.getByText(/Applied Agent/)).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: /^roll back$/i }));
+		await screen.findByRole("heading", {
+			name: /roll back the latest global release/i,
+		});
+		await user.click(
+			screen.getAllByRole("button", { name: /^roll back release$/i }).at(-1)!,
+		);
+
+		await waitFor(() => expect(mockRollbackGlobalWorkspace).toHaveBeenCalled());
+		await waitFor(() =>
+			expect(mockGetPlatformJob).toHaveBeenCalledWith(
+				"job-global-release-rollback-1",
+				expect.any(AbortSignal),
+			),
+		);
 	});
 
 	it("shows the name, slug, and Private badge", async () => {
@@ -599,6 +837,38 @@ describe("top bar", () => {
 		);
 	});
 
+	it("renders organization work as a direct tool workspace without Solution controls", async () => {
+		mockGetBuilderSolution.mockResolvedValue(
+			solution({
+				name: "Customer Operations",
+				target_kind: "organization",
+			}),
+		);
+
+		renderWithProviders(<SolutionBuilder />);
+
+		expect(
+			await screen.findByText("Organization workspace"),
+		).toBeInTheDocument();
+		expect(
+			screen.getByText(/authorized changes apply directly/i),
+		).toBeInTheDocument();
+		expect(screen.getAllByText("Organization Builder")).toHaveLength(2);
+		expect(
+			screen.getByText(/uses only the tools allowed in this organization/i),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: /open app/i }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: /request promotion/i }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: /download source/i }),
+		).not.toBeInTheDocument();
+		expect(mockListRevisions).not.toHaveBeenCalled();
+	});
+
 	it("requests promotion and then disables the button", async () => {
 		mockRequestPromotion.mockResolvedValue(
 			solution({ promotion_status: "requested" }),
@@ -662,9 +932,11 @@ describe("top bar", () => {
 
 		renderWithProviders(<SolutionBuilder />);
 
-		expect(
-			await screen.findByRole("button", { name: /open app/i }),
-		).not.toBeDisabled();
+		await waitFor(() =>
+			expect(
+				screen.getByRole("button", { name: /open app/i }),
+			).not.toBeDisabled(),
+		);
 		expect(await screen.findByTestId("preview-frame")).toHaveAttribute(
 			"src",
 			"data:text/html,preview-code",

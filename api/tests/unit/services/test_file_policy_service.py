@@ -781,11 +781,9 @@ async def test_require_file_policy_denial_emits_audit(monkeypatch, db_session) -
 
 
 # ---------------------------------------------------------------------------
-# _principal_matches_org honors the two-flag bypass rule:
-# is_platform_admin OR is_provider_org. Provider-org members (portal-hopping
-# platform staff) reach any org's files just like platform admins; a plain org
-# user is still pinned to its own org, and a system/no-org user is admitted for
-# the global (org=None) scope only. (repositories/README.md — two bypass flags)
+# _principal_matches_org pins ordinary runtime principals to one organization.
+# Provider membership is not authorization; only the typed platform-admin
+# runtime identity bypasses the exact organization check.
 # ---------------------------------------------------------------------------
 
 
@@ -793,11 +791,11 @@ class TestPrincipalMatchesOrgBypass:
     def _service(self) -> FilePolicyService:
         return FilePolicyService.__new__(FilePolicyService)
 
-    def test_provider_org_member_matches_foreign_org(self) -> None:
+    def test_provider_org_member_does_not_match_foreign_org(self) -> None:
         svc = self._service()
         foreign = uuid4()
         user = _user(uuid4(), is_platform_admin=False, is_provider_org=True)
-        assert svc._principal_matches_org(user, foreign) is True
+        assert svc._principal_matches_org(user, foreign) is False
 
     def test_plain_org_user_pinned_to_own_org(self) -> None:
         svc = self._service()
@@ -821,10 +819,8 @@ class TestPrincipalMatchesOrgBypass:
 
 
 @pytest.mark.asyncio
-async def test_provider_org_member_reads_foreign_org_file(db_session) -> None:
-    """End-to-end: a provider-org, non-admin user reads a file whose org
-    policy is scoped to a DIFFERENT org — the bypass carries through
-    is_allowed()'s _principal_matches_org pre-check."""
+async def test_provider_org_member_cannot_read_foreign_org_file(db_session) -> None:
+    """Provider identity metadata cannot bypass a foreign org file boundary."""
     org = Organization(id=uuid4(), name=f"Files-{uuid4().hex[:8]}", created_by="test")
     db_session.add(org)
     await db_session.flush()
@@ -845,7 +841,7 @@ async def test_provider_org_member_reads_foreign_org_file(db_session) -> None:
         location="workspace",
         path="reports/q1.pdf",
         user=caller,
-    ) is True
+    ) is False
 
     # A plain org user from a different org is denied at the pre-check.
     outsider = _user(uuid4(), is_platform_admin=False, is_provider_org=False)

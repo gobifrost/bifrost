@@ -63,6 +63,12 @@ from .base import _apply_flags, entity_group, output_result, pass_resolver, run_
 
 integrations_group = entity_group("integrations", "Manage integrations.")
 
+_PLATFORM_HEADERS = {"X-Bifrost-Boundary": "platform"}
+
+
+def _organization_headers(organization_id: str) -> dict[str, str]:
+    return {"X-Bifrost-Boundary": f"organization:{organization_id}"}
+
 
 def load_schema_file(raw: str | None) -> list[dict[str, Any]] | None:
     """Resolve a ``--config-schema`` argument to a list of schema items.
@@ -213,7 +219,11 @@ async def create_integration(
     body = await assemble_body(IntegrationCreate, fields, resolver=resolver)
     if schema_items is not None:
         body["config_schema"] = schema_items
-    response = await client.post("/api/integrations", json=body)
+    response = await client.post(
+        "/api/integrations",
+        json=body,
+        headers=_PLATFORM_HEADERS,
+    )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
 
@@ -276,12 +286,20 @@ async def update_integration(
     ``--force-remove-keys`` is passed — removed keys cascade-delete related
     ``Config`` rows (integration-level defaults and per-org overrides).
     """
-    integration_uuid = await resolver.resolve("integration", ref)
+    platform_resolver = RefResolver(client, headers=_PLATFORM_HEADERS)
+    integration_uuid = await platform_resolver.resolve("integration", ref)
     schema_items = _extract_config_schema(fields)
-    body = await assemble_body(IntegrationUpdate, fields, resolver=resolver)
+    body = await assemble_body(
+        IntegrationUpdate,
+        fields,
+        resolver=platform_resolver,
+    )
 
     if schema_items is not None:
-        detail_resp = await client.get(f"/api/integrations/{integration_uuid}")
+        detail_resp = await client.get(
+            f"/api/integrations/{integration_uuid}",
+            headers=_PLATFORM_HEADERS,
+        )
         detail_resp.raise_for_status()
         current = detail_resp.json()
         existing_keys = _current_schema_keys(current)
@@ -311,6 +329,7 @@ async def update_integration(
         f"/api/integrations/{integration_uuid}",
         params={"force_remove_keys": force_remove_keys},
         json=body,
+        headers=_PLATFORM_HEADERS,
     )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
@@ -338,10 +357,16 @@ async def create_mapping(
     OAuth token IDs are intentionally excluded because the UI authorization
     flow owns credential creation and rotation.
     """
-    integration_uuid = await resolver.resolve("integration", integration_ref)
+    platform_resolver = RefResolver(client, headers=_PLATFORM_HEADERS)
+    integration_uuid = await platform_resolver.resolve(
+        "integration", integration_ref
+    )
     body = await assemble_body(IntegrationMappingCreate, fields, resolver=resolver)
+    organization_id = str(body["organization_id"])
     response = await client.post(
-        f"/api/integrations/{integration_uuid}/mappings", json=body
+        f"/api/integrations/{integration_uuid}/mappings",
+        json=body,
+        headers=_organization_headers(organization_id),
     )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
@@ -376,18 +401,25 @@ async def update_mapping(
     update body. OAuth token IDs are intentionally excluded because they are
     managed by the UI authorization flow.
     """
-    integration_uuid = await resolver.resolve("integration", integration_ref)
+    platform_resolver = RefResolver(client, headers=_PLATFORM_HEADERS)
+    integration_uuid = await platform_resolver.resolve(
+        "integration", integration_ref
+    )
     organization_uuid = await resolver.resolve("org", organization_ref)
+    organization_headers = _organization_headers(organization_uuid)
 
     lookup = await client.get(
-        f"/api/integrations/{integration_uuid}/mappings/by-org/{organization_uuid}"
+        f"/api/integrations/{integration_uuid}/mappings/by-org/{organization_uuid}",
+        headers=organization_headers,
     )
     lookup.raise_for_status()
     mapping_id = str(lookup.json()["id"])
 
     body = await assemble_body(IntegrationMappingUpdate, fields, resolver=resolver)
     response = await client.put(
-        f"/api/integrations/{integration_uuid}/mappings/{mapping_id}", json=body
+        f"/api/integrations/{integration_uuid}/mappings/{mapping_id}",
+        json=body,
+        headers=organization_headers,
     )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)

@@ -239,6 +239,48 @@ KNOWLEDGE_OPERATIONS = {
         ("knowledge", "search"),
         "bifrost_search_knowledge",
     ),
+    "knowledge.namespaces.list": (
+        "GET",
+        "/api/knowledge-sources",
+        ("knowledge", "list-namespaces"),
+        "bifrost_list_knowledge_namespaces",
+        True,
+    ),
+    "knowledge.documents.list": (
+        "GET",
+        "/api/knowledge-sources/documents",
+        ("knowledge", "list-documents"),
+        "bifrost_list_knowledge_documents",
+        True,
+    ),
+    "knowledge.documents.get": (
+        "GET",
+        "/api/knowledge-sources/{namespace}/documents/{doc_id}",
+        ("knowledge", "get-document"),
+        "bifrost_get_knowledge_document",
+        True,
+    ),
+    "knowledge.documents.create": (
+        "POST",
+        "/api/knowledge-sources/{namespace}/documents",
+        ("knowledge", "create-document"),
+        "bifrost_create_knowledge_document",
+        True,
+    ),
+    "knowledge.documents.update": (
+        "PUT",
+        "/api/knowledge-sources/{namespace}/documents/{doc_id}",
+        ("knowledge", "update-document"),
+        "bifrost_update_knowledge_document",
+        True,
+    ),
+    "knowledge.documents.delete": (
+        "DELETE",
+        "/api/knowledge-sources/{namespace}/documents/{doc_id}",
+        ("knowledge", "delete-document"),
+        "bifrost_delete_knowledge_document",
+        True,
+    ),
 }
 
 PLATFORM_JOB_OPERATIONS = {
@@ -247,6 +289,79 @@ PLATFORM_JOB_OPERATIONS = {
         "/api/platform-jobs/{job_id}",
         ("platform-jobs", "get"),
         "bifrost_get_platform_job",
+    ),
+}
+
+SOLUTION_OPERATIONS = {
+    "solutions.list": (
+        "GET",
+        "/api/solutions",
+        None,
+        "bifrost_list_solutions",
+        True,
+    ),
+    "solutions.get": (
+        "GET",
+        "/api/solutions/{solution_id}",
+        None,
+        "bifrost_get_solution",
+        True,
+    ),
+    "solutions.create": (
+        "POST",
+        "/api/solutions",
+        ("solution", "create"),
+        "bifrost_create_solution",
+        True,
+    ),
+    "solutions.update": (
+        "PATCH",
+        "/api/solutions/{solution_id}",
+        None,
+        "bifrost_update_solution",
+        True,
+    ),
+    "solutions.delete": (
+        "DELETE",
+        "/api/solutions/{solution_id}",
+        None,
+        "bifrost_delete_solution",
+        True,
+    ),
+    "solutions.sync": (
+        "POST",
+        "/api/solutions/{solution_id}/sync",
+        None,
+        "bifrost_sync_solution",
+        True,
+    ),
+    "solutions.export": (
+        "POST",
+        "/api/solutions/{solution_id}/export",
+        ("solution", "export"),
+        None,
+        False,
+    ),
+    "solutions.deploy": (
+        "POST",
+        "/api/solutions/{solution_id}/deploy",
+        ("solution", "deploy"),
+        None,
+        False,
+    ),
+    "solutions.install": (
+        "POST",
+        "/api/solutions/install",
+        ("solution", "install"),
+        None,
+        False,
+    ),
+    "solutions.capture": (
+        "POST",
+        "/api/solutions/{solution_id}/capture",
+        ("solution", "capture"),
+        None,
+        False,
     ),
 }
 
@@ -280,6 +395,212 @@ ROLE_OPERATIONS = {
         "/api/roles/{role_id}",
         ("roles", "delete"),
         "bifrost_delete_role",
+    ),
+}
+
+ROLE_USER_ASSIGNMENT_OPERATIONS = {
+    "roles.users.list": (
+        "GET",
+        "/api/roles/{role_id}/users",
+        None,
+        None,
+        False,
+    ),
+    "roles.users.assign": (
+        "POST",
+        "/api/roles/{role_id}/users",
+        None,
+        None,
+        False,
+    ),
+    "roles.users.remove": (
+        "DELETE",
+        "/api/roles/{role_id}/users/{user_id}",
+        None,
+        None,
+        False,
+    ),
+    "roles.users.bulk_remove": (
+        "DELETE",
+        "/api/roles/{role_id}/users",
+        None,
+        None,
+        False,
+    ),
+}
+
+
+USER_ADMIN_OPERATIONS = {
+    "users.list": ("GET", "/api/users", None, None, False),
+    "users.get": ("GET", "/api/users/{user_id}", None, None, False),
+    "users.create": ("POST", "/api/users", None, None, False),
+    "users.update": ("PATCH", "/api/users/{user_id}", None, None, False),
+    "users.delete": ("DELETE", "/api/users/{user_id}", None, None, False),
+    "users.bulk_update": ("PATCH", "/api/users/bulk", None, None, False),
+    "users.invites.resend": (
+        "POST",
+        "/api/users/{user_id}/invite/resend",
+        None,
+        None,
+        False,
+    ),
+    "users.invites.send": (
+        "POST",
+        "/api/users/{user_id}/invite/send",
+        None,
+        None,
+        False,
+    ),
+    "users.invites.regenerate": (
+        "POST",
+        "/api/users/{user_id}/invite/regenerate",
+        None,
+        None,
+        False,
+    ),
+    "users.invites.revoke": (
+        "DELETE",
+        "/api/users/{user_id}/invite",
+        None,
+        None,
+        False,
+    ),
+    "users.roles.list": (
+        "GET",
+        "/api/users/{user_id}/roles",
+        None,
+        None,
+        False,
+    ),
+    "users.forms.list": (
+        "GET",
+        "/api/users/{user_id}/forms",
+        None,
+        None,
+        False,
+    ),
+}
+
+
+ROLE_RESOURCE_ASSIGNMENT_OPERATIONS = {
+    "roles.forms.list": (
+        "GET",
+        "/api/roles/{role_id}/forms",
+        None,
+        None,
+        False,
+    ),
+    "roles.forms.assign": (
+        "POST",
+        "/api/roles/{role_id}/forms",
+        None,
+        None,
+        False,
+    ),
+    "roles.forms.remove": (
+        "DELETE",
+        "/api/roles/{role_id}/forms/{form_id}",
+        None,
+        None,
+        False,
+    ),
+    "roles.forms.bulk_remove": (
+        "DELETE",
+        "/api/roles/{role_id}/forms",
+        None,
+        None,
+        False,
+    ),
+    "roles.agents.list": (
+        "GET",
+        "/api/roles/{role_id}/agents",
+        None,
+        None,
+        False,
+    ),
+    "roles.agents.assign": (
+        "POST",
+        "/api/roles/{role_id}/agents",
+        None,
+        None,
+        False,
+    ),
+    "roles.agents.remove": (
+        "DELETE",
+        "/api/roles/{role_id}/agents/{agent_id}",
+        None,
+        None,
+        False,
+    ),
+    "roles.agents.bulk_remove": (
+        "DELETE",
+        "/api/roles/{role_id}/agents",
+        None,
+        None,
+        False,
+    ),
+    "roles.apps.list": (
+        "GET",
+        "/api/roles/{role_id}/apps",
+        None,
+        None,
+        False,
+    ),
+    "roles.apps.assign": (
+        "POST",
+        "/api/roles/{role_id}/apps",
+        None,
+        None,
+        False,
+    ),
+    "roles.apps.bulk_remove": (
+        "DELETE",
+        "/api/roles/{role_id}/apps",
+        None,
+        None,
+        False,
+    ),
+    "roles.workflows.list": (
+        "GET",
+        "/api/roles/{role_id}/workflows",
+        None,
+        None,
+        False,
+    ),
+    "roles.workflows.assign": (
+        "POST",
+        "/api/roles/{role_id}/workflows",
+        None,
+        None,
+        False,
+    ),
+    "roles.workflows.bulk_remove": (
+        "DELETE",
+        "/api/roles/{role_id}/workflows",
+        None,
+        None,
+        False,
+    ),
+    "roles.knowledge.list": (
+        "GET",
+        "/api/roles/{role_id}/knowledge",
+        None,
+        None,
+        False,
+    ),
+    "roles.knowledge.assign": (
+        "POST",
+        "/api/roles/{role_id}/knowledge",
+        None,
+        None,
+        False,
+    ),
+    "roles.knowledge.bulk_remove": (
+        "DELETE",
+        "/api/roles/{role_id}/knowledge",
+        None,
+        None,
+        False,
     ),
 }
 
@@ -413,6 +734,20 @@ FILE_POLICY_OPERATIONS = {
         ("files", "policies", "delete"),
         "bifrost_delete_file_policy",
     ),
+    "files.policies.test": (
+        "POST",
+        "/api/files/policies/test",
+        None,
+        None,
+        False,
+    ),
+    "files.structure.list": (
+        "POST",
+        "/api/files/structure",
+        None,
+        None,
+        False,
+    ),
 }
 
 EVENT_OPERATIONS = {
@@ -542,6 +877,34 @@ INTEGRATION_OPERATIONS = {
         ("integrations", "update"),
         "bifrost_update_integration",
     ),
+    "integrations.delete": (
+        "DELETE",
+        "/api/integrations/{integration_id}",
+        None,
+        None,
+        False,
+    ),
+    "integrations.mappings.list": (
+        "GET",
+        "/api/integrations/{integration_id}/mappings",
+        None,
+        None,
+        False,
+    ),
+    "integrations.mappings.get": (
+        "GET",
+        "/api/integrations/{integration_id}/mappings/{mapping_id}",
+        None,
+        None,
+        False,
+    ),
+    "integrations.mappings.get_by_org": (
+        "GET",
+        "/api/integrations/{integration_id}/mappings/by-org/{org_id}",
+        None,
+        None,
+        False,
+    ),
     "integrations.mappings.create": (
         "POST",
         "/api/integrations/{integration_id}/mappings",
@@ -553,6 +916,97 @@ INTEGRATION_OPERATIONS = {
         "/api/integrations/{integration_id}/mappings/{mapping_id}",
         ("integrations", "update-mapping"),
         "bifrost_update_integration_mapping",
+    ),
+    "integrations.config.get": (
+        "GET",
+        "/api/integrations/{integration_id}/config",
+        None,
+        None,
+        False,
+    ),
+    "integrations.config.update": (
+        "PUT",
+        "/api/integrations/{integration_id}/config",
+        None,
+        None,
+        False,
+    ),
+    "integrations.mappings.batch": (
+        "POST",
+        "/api/integrations/{integration_id}/mappings/batch",
+        None,
+        None,
+        False,
+    ),
+    "integrations.mappings.delete": (
+        "DELETE",
+        "/api/integrations/{integration_id}/mappings/{mapping_id}",
+        None,
+        None,
+        False,
+    ),
+    "integrations.mappings.authorize": (
+        "POST",
+        "/api/integrations/{integration_id}/mappings/{mapping_id}/oauth/authorize",
+        None,
+        None,
+        False,
+    ),
+    "integrations.mappings.disconnect": (
+        "POST",
+        "/api/integrations/{integration_id}/mappings/{mapping_id}/oauth/disconnect",
+        None,
+        None,
+        False,
+    ),
+    "integrations.mappings.refresh": (
+        "POST",
+        "/api/integrations/{integration_id}/mappings/{mapping_id}/oauth/refresh",
+        None,
+        None,
+        False,
+    ),
+    "integrations.oauth.get": (
+        "GET",
+        "/api/integrations/{integration_id}/oauth",
+        None,
+        None,
+        False,
+    ),
+    "integrations.oauth.authorize": (
+        "GET",
+        "/api/integrations/{integration_id}/oauth/authorize",
+        None,
+        None,
+        False,
+    ),
+    "integrations.oauth.entity_id_source.update": (
+        "PATCH",
+        "/api/integrations/{integration_id}/oauth/entity_id_source",
+        None,
+        None,
+        False,
+    ),
+    "integrations.oauth.entity_id_source.delete": (
+        "DELETE",
+        "/api/integrations/{integration_id}/oauth/entity_id_source",
+        None,
+        None,
+        False,
+    ),
+    "integrations.test": (
+        "POST",
+        "/api/integrations/{integration_id}/test",
+        None,
+        None,
+        False,
+    ),
+    "integrations.generate_sdk": (
+        "POST",
+        "/api/integrations/{integration_id}/generate-sdk",
+        None,
+        None,
+        False,
     ),
 }
 
@@ -605,6 +1059,76 @@ WORKSPACE_FILE_OPERATIONS = {
         ("files", "delete"),
         "bifrost_delete_file",
     ),
+    "workspace.files.pull": (
+        "POST",
+        "/api/files/pull",
+        None,
+        None,
+        False,
+    ),
+    "workspace.files.manifest": (
+        "GET",
+        "/api/files/manifest",
+        None,
+        None,
+        False,
+    ),
+    "workspace.files.watch": (
+        "POST",
+        "/api/files/watch",
+        None,
+        None,
+        False,
+    ),
+    "workspace.files.watchers": (
+        "GET",
+        "/api/files/watchers",
+        None,
+        None,
+        False,
+    ),
+    "workspace.files.editor.list": (
+        "GET",
+        "/api/files/editor",
+        None,
+        None,
+        False,
+    ),
+    "workspace.files.editor.read": (
+        "GET",
+        "/api/files/editor/content",
+        None,
+        None,
+        False,
+    ),
+    "workspace.files.editor.write": (
+        "PUT",
+        "/api/files/editor/content",
+        None,
+        None,
+        False,
+    ),
+    "workspace.files.editor.folder.create": (
+        "POST",
+        "/api/files/editor/folder",
+        None,
+        None,
+        False,
+    ),
+    "workspace.files.editor.delete": (
+        "DELETE",
+        "/api/files/editor",
+        None,
+        None,
+        False,
+    ),
+    "workspace.files.editor.rename": (
+        "POST",
+        "/api/files/editor/rename",
+        None,
+        None,
+        False,
+    ),
 }
 
 CANONICAL_OPERATIONS = {
@@ -616,6 +1140,8 @@ CANONICAL_OPERATIONS = {
     **EXECUTION_OPERATIONS,
     **KNOWLEDGE_OPERATIONS,
     **ROLE_OPERATIONS,
+    **ROLE_USER_ASSIGNMENT_OPERATIONS,
+    **USER_ADMIN_OPERATIONS,
     **CLAIM_OPERATIONS,
     **CONFIG_OPERATIONS,
     **POLICY_RULE_OPERATIONS,
@@ -625,42 +1151,51 @@ CANONICAL_OPERATIONS = {
     **INTEGRATION_OPERATIONS,
     **WORKSPACE_FILE_OPERATIONS,
     **PLATFORM_JOB_OPERATIONS,
+    **SOLUTION_OPERATIONS,
+    **ROLE_RESOURCE_ASSIGNMENT_OPERATIONS,
 }
+
+
+def _expanded_binding(binding: tuple) -> tuple:
+    """Add the optional native-Builder expectation used by newer surfaces."""
+
+    if len(binding) == 4:
+        return (*binding, None)
+    return binding
 
 
 def test_canonical_vertical_slices_have_stable_surface_bindings() -> None:
     assert {operation.operation_id for operation in OPERATION_CATALOG} == set(
         CANONICAL_OPERATIONS
     )
-    for operation_id, (
-        method,
-        path,
-        cli_path,
-        mcp_name,
-    ) in CANONICAL_OPERATIONS.items():
+    for operation_id, binding in CANONICAL_OPERATIONS.items():
+        method, path, cli_path, mcp_name, native_builder = _expanded_binding(binding)
         operation = get_operation(operation_id)
         assert (operation.rest.method, operation.rest.path) == (method, path)
-        assert operation.cli is not None and operation.cli.path == cli_path
-        assert operation.mcp is not None and operation.mcp.name == mcp_name
-        assert operation.native_builder is (
-            operation_id not in ORGANIZATION_OPERATIONS
-        )
+        if cli_path is None:
+            assert operation.cli is None
+        else:
+            assert operation.cli is not None and operation.cli.path == cli_path
+        if mcp_name is None:
+            assert operation.mcp is None
+        else:
+            assert operation.mcp is not None and operation.mcp.name == mcp_name
+        if native_builder is not None:
+            assert operation.native_builder is native_builder
 
 
 def test_catalog_routes_publish_identity_in_openapi() -> None:
     schema = app.openapi()
-    for operation_id, (
-        method,
-        path,
-        cli_path,
-        mcp_name,
-    ) in CANONICAL_OPERATIONS.items():
+    for operation_id, binding in CANONICAL_OPERATIONS.items():
+        method, path, cli_path, mcp_name, _native_builder = _expanded_binding(binding)
         route = schema["paths"][path][method.lower()]
         assert route["operationId"] == operation_id
         extension = route["x-bifrost-operation"]
         assert extension["id"] == operation_id
-        assert extension["cli"] == list(cli_path)
-        assert extension["mcp"] == mcp_name
+        assert extension.get("cli") == (
+            list(cli_path) if cli_path is not None else None
+        )
+        assert extension.get("mcp") == mcp_name
 
 
 def test_mcp_registration_uses_only_catalog_names() -> None:
@@ -670,7 +1205,9 @@ def test_mcp_registration_uses_only_catalog_names() -> None:
     )
 
     registered = {tool["id"] for tool in get_system_tools()}
-    catalog_names = {binding[3] for binding in CANONICAL_OPERATIONS.values()}
+    catalog_names = {
+        binding[3] for binding in CANONICAL_OPERATIONS.values() if binding[3]
+    }
     legacy_names = {name.removeprefix("bifrost_") for name in catalog_names}
     builder_workspace_names = {
         "delete_file",

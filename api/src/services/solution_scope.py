@@ -187,11 +187,10 @@ async def resolve_solution_table_by_name(
         Table.name == name,
         Table.solution_id == solution_id,
     )
-    # Bypass = is_platform_admin OR is_provider_org (repositories/README.md):
-    # provider-org members (portal-hopping platform staff) reach any org's
-    # install-owned table, same as platform admins. Row access is still decided
-    # by the client org's table/file policies after resolution.
-    if not (ctx.user.is_superuser or ctx.user.is_provider_org):
+    # Runtime identities do not inherit cross-tenant access from membership in
+    # the provider organization. Human support authority is resolved before a
+    # launch/execution is admitted; the runtime receives one exact org target.
+    if not ctx.user.is_superuser:
         own_stmt = own_stmt.where(
             or_(
                 Table.organization_id == target_org_id,
@@ -209,7 +208,7 @@ async def resolve_solution_table_by_name(
         db,
         target_org_id,
         user_id=ctx.user.user_id,
-        is_superuser=ctx.user.is_superuser,
+        bypass_resource_admission=ctx.user.is_superuser,
         is_external=ctx.user.is_external,
     )
     return await repo.get_by_name(name)

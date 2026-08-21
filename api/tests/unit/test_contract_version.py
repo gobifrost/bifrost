@@ -241,7 +241,12 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # already sent a string (it hand-built the body to bypass the dict). The
     # annotation now matches shipped behavior instead of changing it, so
     # MIN_CLI_VERSION and the frozen CONTRACT_VERSION are unchanged.
-    "d69cbdd1e0b93348d2982d50f301806579dd196244f0ec65d1bc069a00746191"
+    #
+    # RoleCreate/RoleUpdate now expose canonical `capabilities` while retaining
+    # deprecated `scopes` and arbitrary `permissions` compatibility inputs
+    # (2026-08-20). ADDITIVE/COMPATIBLE: old CLIs still send the shipped fields;
+    # new clients can use capabilities directly. Fingerprint refreshed only.
+    "c42a7e0584ac818a8fd8a6d7e19a31b1638fceee7d2726add122e72c1e5ea37a"
 )
 
 

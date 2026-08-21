@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import uuid
 import zipfile
+from pathlib import Path
 
 import pytest
 
@@ -95,6 +96,31 @@ def test_make_input_zip_is_deterministic() -> None:
 
         assert sha_a == sha_b
         assert zip_a.read_bytes() == zip_b.read_bytes()
+
+
+def test_build_input_sdk_stamp_is_runtime_version_independent(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    import src.services.sdk_package as sdk_package
+
+    versions: list[str] = []
+
+    def fake_sdk_tarball(version: str) -> bytes:
+        versions.append(version)
+        return f"sdk:{version}".encode()
+
+    monkeypatch.setattr(sdk_package, "build_sdk_tarball", fake_sdk_tarball)
+
+    materialize_build_input(
+        tmp_path,
+        uuid.uuid4(),
+        {"src/main.tsx": b"export default 1;"},
+        {},
+    )
+
+    assert versions == ["0.0.0"]
+    assert (tmp_path / "bifrost-sdk.tgz").read_bytes() == b"sdk:0.0.0"
 
 
 def test_make_input_zip_contains_package_json_and_vite_config() -> None:

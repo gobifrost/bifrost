@@ -20,10 +20,14 @@ Enums:
 from src.models.orm import (
     Base,
     Organization,
+    OrganizationGroup,
+    OrganizationGroupMembership,
     Solution,
+    RoleAssignment,
+    RoleAssignmentBoundary,
+    SolutionRoleGrant,
     User,
     Role,
-    UserRole,
     Form,
     FormField,
     FormRole,
@@ -65,7 +69,7 @@ from src.models.orm import (
     SchedulerTaskState,
     SystemDiagnosticLog,
     AppRole,
-)
+)  # noqa: F401
 
 # Pydantic schemas (API request/response) - from contracts/
 # Re-export everything from contracts (conflicting names removed from contracts/__all__)
@@ -90,10 +94,13 @@ __all__ = [
     "Base",
     # ORM models
     "Organization",
+    "OrganizationGroup",
+    "OrganizationGroupMembership",
     "Solution",
     "User",
     "Role",
-    "UserRole",
+    "RoleAssignment",
+    "RoleAssignmentBoundary",
     "Form",
     "FormField",
     "FormRole",
@@ -135,6 +142,7 @@ __all__ = [
     "SchedulerTaskState",
     "SystemDiagnosticLog",
     "AppRole",
+    "SolutionRoleGrant",
     # Enums
     "ExecutionStatus",
     "FormAccessLevel",

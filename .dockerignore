@@ -59,5 +59,7 @@ azurite/
 api/workspace/
 api/tmp/
 
-# Node modules (if any)
+# Node modules are always installed inside their owning Docker stage. Exclude
+# nested worktree installs as well as a root install from every build context.
 node_modules/
+**/node_modules/

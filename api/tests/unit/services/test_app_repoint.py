@@ -21,12 +21,12 @@ from src.routers.applications import ApplicationRepository
 
 @pytest_asyncio.fixture
 async def repo(db_session: AsyncSession) -> ApplicationRepository:
-    # org_id=None → global scope. is_superuser=True bypasses per-entity role
+    # org_id=None → global scope. bypass_resource_roles=True bypasses per-entity role
     # checks so the tests focus on replace_application's own validation logic.
     return ApplicationRepository(
         session=db_session,
         org_id=None,
-        is_superuser=True,
+        bypass_resource_roles=True,
     )
 
 

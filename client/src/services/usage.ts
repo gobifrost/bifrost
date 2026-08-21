@@ -34,6 +34,7 @@ export function useUsageReport(
 	endDate: string,
 	source: UsageSource = "all",
 	orgId?: string | null,
+	options: { enabled?: boolean } = {},
 ) {
 	return $api.useQuery(
 		"get",
@@ -50,7 +51,7 @@ export function useUsageReport(
 			},
 		},
 		{
-			enabled: !!startDate && !!endDate,
+			enabled: (options.enabled ?? true) && !!startDate && !!endDate,
 		},
 	);
 }

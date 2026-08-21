@@ -1,6 +1,7 @@
 const MAX_TIMEOUT_SECONDS = 2 * 60 * 60;
 const FAILURE_CALLBACK_TIMEOUT_MS = 10_000;
 const MAX_COMMAND_ERROR_CHARS = 2_000;
+export const WORKSPACE_BROKER_HOST = "workspace.bifrost.internal";
 
 export function boundedTimeoutSeconds(payload) {
   const requested = Number(payload?.timeout_seconds ?? 300);
@@ -49,11 +50,96 @@ export function isRetryableWorkflowFailure(error) {
   return /Durable Object reset because its code was updated\.?/i.test(message);
 }
 
+export function isContainerStartingError(error) {
+  return (
+    error instanceof Error &&
+    error.name === "SandboxError" &&
+    error.message === "Container is starting. Please retry in a moment."
+  );
+}
+
 export function sandboxIdForPayload(payload) {
+  return runnerSandboxIdForPayload(payload);
+}
+
+export function baseSandboxIdForPayload(payload) {
   if (payload?.mode === "probe") {
     return String(payload.probe_id ?? "bifrost-probe-setup");
   }
   return `bifrost-${payload?.job_id}-${payload?.dispatch_attempt}`;
+}
+
+export function runnerSandboxIdForPayload(payload) {
+  const explicit = payload?.runner_sandbox_id;
+  if (typeof explicit === "string" && explicit) return explicit;
+  if (payload?.mode === "probe") return baseSandboxIdForPayload(payload);
+  return `${baseSandboxIdForPayload(payload)}-runner`;
+}
+
+export function workspaceSandboxIdForPayload(payload) {
+  const explicit = payload?.workspace_sandbox_id;
+  if (typeof explicit === "string" && explicit) return explicit;
+  return `${baseSandboxIdForPayload(payload)}-workspace`;
+}
+
+export function workspaceBrokerUrlForPayload(payload) {
+  const explicit = payload?.workspace_broker_url;
+  if (typeof explicit === "string" && explicit) return explicit;
+  return `http://${WORKSPACE_BROKER_HOST}`;
+}
+
+export function hostFromHttpUrl(value) {
+  try {
+    const parsed = new URL(String(value));
+    if (!["http:", "https:"].includes(parsed.protocol) || !parsed.hostname) {
+      return null;
+    }
+    return parsed.hostname;
+  } catch {
+    return null;
+  }
+}
+
+export function uniqueHosts(hosts) {
+  return Array.from(
+    new Set(
+      (hosts ?? [])
+        .filter((host) => typeof host === "string")
+        .map((host) => host.trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  );
+}
+
+export function initialRunnerAllowedHosts(payload) {
+  return uniqueHosts([
+    WORKSPACE_BROKER_HOST,
+    hostFromHttpUrl(payload?.callback_base_url),
+    ...(Array.isArray(payload?.runner_allowed_hosts)
+      ? payload.runner_allowed_hosts
+      : []),
+  ]);
+}
+
+export function buildRunnerAllowedHosts(payload) {
+  return uniqueHosts([
+    hostFromHttpUrl(payload?.callback_base_url),
+    "registry.npmjs.org",
+  ]);
+}
+
+export function workspaceAllowedHosts(payload) {
+  return uniqueHosts(
+    Array.isArray(payload?.workspace_allowed_hosts)
+      ? payload.workspace_allowed_hosts
+      : [],
+  );
+}
+
+export function workspaceSandboxIdForRunnerSandboxId(runnerSandboxId) {
+  const id = String(runnerSandboxId ?? "");
+  if (!id.endsWith("-runner")) return null;
+  return `${id.slice(0, -"-runner".length)}-workspace`;
 }
 
 export function sandboxCommandFailure(result, fallback) {

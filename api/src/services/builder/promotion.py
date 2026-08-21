@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import tempfile
 import zipfile
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
@@ -36,7 +36,8 @@ from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.solution_connection_schema import SolutionConnectionSchema
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
 from src.models.orm.solutions import Solution
-from src.models.orm.users import Role, User, UserRole
+from src.models.orm.role_assignments import RoleAssignment
+from src.models.orm.users import Role, User
 from src.services.audit import emit_audit
 from src.services.builder.revision_storage import SolutionRevisionStorage
 from src.services.solutions.deploy import SolutionDeployConflict
@@ -66,11 +67,7 @@ def _promotion_build_ids(
 ) -> list[UUID]:
     """Return every app build attached to the pinned deploy, in deploy order."""
 
-    raw_ids = (
-        (deploy.result or {}).get("build_job_ids")
-        if deploy is not None
-        else None
-    )
+    raw_ids = (deploy.result or {}).get("build_job_ids") if deploy is not None else None
     if not raw_ids and turn is not None and turn.build_job_id is not None:
         return [turn.build_job_id]
     if raw_ids is None:
@@ -376,22 +373,44 @@ async def promotion_review(
     )
 
 
-async def list_promotion_reviews(db: AsyncSession) -> list[PromotionReviewDTO]:
-    ids = (
-        (
-            await db.execute(
-                select(SolutionBuilderProject.solution_id)
-                .join(Solution, Solution.id == SolutionBuilderProject.solution_id)
-                .where(
-                    Solution.visibility == "private",
-                    SolutionBuilderProject.promotion_status == "requested",
-                )
-                .order_by(SolutionBuilderProject.promotion_requested_at.asc())
-            )
+async def list_promotion_reviews(
+    db: AsyncSession,
+    *,
+    source_organization_ids: Collection[UUID | None] | None = None,
+) -> list[PromotionReviewDTO]:
+    """List requested reviews inside the caller's admitted source boundary.
+
+    ``None`` deliberately means unrestricted because the router uses it only
+    for the Platform Admin wildcard.  An empty collection means no visible
+    source organizations.  Keeping this filter in the query prevents an
+    unauthorized private Solution from being materialized and filtered later.
+    """
+
+    query = (
+        select(SolutionBuilderProject.solution_id)
+        .join(Solution, Solution.id == SolutionBuilderProject.solution_id)
+        .where(
+            Solution.visibility == "private",
+            SolutionBuilderProject.promotion_status == "requested",
         )
-        .scalars()
-        .all()
+        .order_by(SolutionBuilderProject.promotion_requested_at.asc())
     )
+    if source_organization_ids is not None:
+        organization_ids = {
+            organization_id
+            for organization_id in source_organization_ids
+            if organization_id is not None
+        }
+        include_platform = None in source_organization_ids
+        predicates = []
+        if organization_ids:
+            predicates.append(Solution.organization_id.in_(organization_ids))
+        if include_platform:
+            predicates.append(Solution.organization_id.is_(None))
+        if not predicates:
+            return []
+        query = query.where(or_(*predicates))
+    ids = (await db.execute(query)).scalars().all()
     return [await promotion_review(db, solution_id) for solution_id in ids]
 
 
@@ -561,7 +580,10 @@ async def _assign_role_users(
     assignments: dict[str, list[UUID]],
     *,
     assigned_by: UUID,
+    target_organization_id: UUID | None,
 ) -> None:
+    from src.models.orm.role_assignments import RoleAssignmentBoundary
+
     for role_name, user_ids in assignments.items():
         role_id = (
             await db.execute(select(Role.id).where(Role.name == role_name))
@@ -571,9 +593,9 @@ async def _assign_role_users(
         existing = set(
             (
                 await db.execute(
-                    select(UserRole.user_id).where(
-                        UserRole.role_id == role_id,
-                        UserRole.user_id.in_(user_ids),
+                    select(RoleAssignment.user_id).where(
+                        RoleAssignment.role_id == role_id,
+                        RoleAssignment.user_id.in_(user_ids),
                     )
                 )
             )
@@ -581,10 +603,20 @@ async def _assign_role_users(
             .all()
         )
         db.add_all(
-            UserRole(
+            RoleAssignment(
                 role_id=role_id,
                 user_id=user_id,
-                assigned_by=str(assigned_by),
+                assigned_by_user_id=assigned_by,
+                boundaries=[
+                    RoleAssignmentBoundary(
+                        boundary_kind=(
+                            "organization"
+                            if target_organization_id is not None
+                            else "platform"
+                        ),
+                        organization_id=target_organization_id,
+                    )
+                ],
             )
             for user_id in user_ids
             if user_id not in existing
@@ -704,7 +736,9 @@ async def promote_private_solution(
             )
 
             async with solution_write_lock(published.id):
-                with tempfile.TemporaryDirectory(prefix="bifrost-promotion-replay-") as tmp:
+                with tempfile.TemporaryDirectory(
+                    prefix="bifrost-promotion-replay-"
+                ) as tmp:
                     source_path = Path(tmp) / "source.zip"
                     copied = await SolutionRevisionStorage(solution_id).copy_to_path(
                         review.pinned_revision_id,
@@ -732,6 +766,7 @@ async def promote_private_solution(
                         db,
                         request.role_user_assignments,
                         assigned_by=admin_user_id,
+                        target_organization_id=target_org,
                     )
                     await db.execute(
                         update(Application)
@@ -755,7 +790,9 @@ async def promote_private_solution(
                             "source_solution_id": str(solution_id),
                             "release_id": str(release.id),
                             "target": request.target,
-                            "target_organization_id": str(target_org) if target_org else None,
+                            "target_organization_id": str(target_org)
+                            if target_org
+                            else None,
                             "revision_id": str(review.pinned_revision_id),
                             "source_sha256": review.source_sha256,
                             "roles_created": list(result.roles_created),

@@ -1116,7 +1116,7 @@ async def _apply_config_values(
     ).all()
     type_by_key = {key: _config_type(type_, key=key) for key, type_ in decls}
 
-    repo = ConfigRepository(db, org_id=solution.organization_id, is_superuser=True)
+    repo = ConfigRepository(db, org_id=solution.organization_id, bypass_resource_admission=True)
     for key, value in config_values.items():
         await repo.set_config(
             SetConfigRequest(

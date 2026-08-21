@@ -8,7 +8,6 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import func, select
 
 from src.config import get_settings
-from src.core.auth import CurrentActiveUser, RequirePlatformAdmin
 from src.core.db_deps import DbSession
 from src.jobs.platform.sandbox_runner_provision import (
     SANDBOX_RUNNER_PROVISION_DEFINITION,
@@ -27,6 +26,8 @@ from src.services.platform_jobs import (
     enqueue_platform_job,
     publish_platform_job_update,
 )
+from src.services.audit import emit_audit
+from src.services.authorization import CurrentAuthorizationContext
 from src.services.sandbox_runner_config import (
     SandboxRunnerConfigService,
     get_builder_readiness,
@@ -38,7 +39,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/admin/builder/runner",
     tags=["Builder Runner Configuration"],
-    dependencies=[RequirePlatformAdmin],
 )
 
 
@@ -47,14 +47,22 @@ def _recommended_callback_base_url(request: Request) -> str:
     return configured_url or str(request.base_url).rstrip("/")
 
 
+def _require_sandbox_runner(
+    authorization: CurrentAuthorizationContext,
+    capability: str,
+) -> None:
+    authorization.require(capability)
+    authorization.require_resource_boundary(None)
+
+
 @router.get("", response_model=SandboxRunnerSetupState)
 async def get_runner_setup(
     request: Request,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> SandboxRunnerSetupState:
     """Return masked configuration and live setup blockers."""
-    del user
+    _require_sandbox_runner(authorization, "platformjobs.read")
     config = await SandboxRunnerConfigService(db).get_config()
     _ai_configured, readiness = await get_builder_readiness(db)
     active_provisioning_job_id = await db.scalar(
@@ -80,9 +88,10 @@ async def save_runner_setup(
     request: Request,
     body: SandboxRunnerConfigSave,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> SandboxRunnerConfigPublic:
     """Save encrypted provider settings; connection state is never client-set."""
+    _require_sandbox_runner(authorization, "platformjobs.execute")
     await _require_no_active_sandbox_work(db)
     recommended_url = _recommended_callback_base_url(request)
     callback_base_url = recommended_url
@@ -92,10 +101,16 @@ async def save_runner_setup(
         saved = await SandboxRunnerConfigService(db).save_config(
             body,
             callback_base_url=callback_base_url,
-            updated_by=user.email,
+            updated_by=authorization.effective_actor.email,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await emit_audit(
+        db,
+        "sandbox_runner.config.update",
+        resource_type="sandbox_runner",
+        details={"provider": body.provider},
+    )
     await db.commit()
     return saved
 
@@ -103,14 +118,20 @@ async def save_runner_setup(
 @router.delete("", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_runner_setup(
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> Response:
     """Remove provider settings only while no sandbox work is active."""
-    del user
+    _require_sandbox_runner(authorization, "platformjobs.execute")
     await _require_no_active_sandbox_work(db)
     deleted = await SandboxRunnerConfigService(db).delete_config()
     if not deleted:
         raise HTTPException(status_code=404, detail="Sandbox runner is not configured")
+    await emit_audit(
+        db,
+        "sandbox_runner.config.delete",
+        resource_type="sandbox_runner",
+        details={"scope": "platform"},
+    )
     await db.commit()
     return Response(status_code=204)
 
@@ -123,17 +144,20 @@ async def delete_runner_setup(
 async def provision_runner(
     response: Response,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> PlatformJobAccepted:
     """Queue deployment and a real container self-test as one durable job."""
+    _require_sandbox_runner(authorization, "platformjobs.execute")
+    actor = authorization.effective_actor
     service = SandboxRunnerConfigService(db)
     config = await service.get_config()
     if config is None:
         raise HTTPException(status_code=400, detail="Save runner settings first")
     _ai_configured, readiness = await get_builder_readiness(db)
-    setup_blockers = {
-        blocker.code for blocker in readiness.blockers
-    } & {"credentials_missing", "callback_missing"}
+    setup_blockers = {blocker.code for blocker in readiness.blockers} & {
+        "credentials_missing",
+        "callback_missing",
+    }
     if setup_blockers:
         raise HTTPException(
             status_code=400,
@@ -148,9 +172,9 @@ async def provision_runner(
         resource_lock_key="sandbox-runner:global",
         priority=500,
         organization_id=None,
-        requested_by_user_id=user.user_id,
-        requested_by_email=user.email,
-        requested_by_name=user.name or user.email,
+        requested_by_user_id=actor.user_id,
+        requested_by_email=actor.email,
+        requested_by_name=actor.name or actor.email,
         resource_type="sandbox_runner",
         resource_id="global",
         title="Setting up Builder runner",
@@ -165,6 +189,13 @@ async def provision_runner(
                 extra={"platform_job_id": str(job.id)},
                 exc_info=True,
             )
+    await emit_audit(
+        db,
+        "sandbox_runner.provision.enqueue",
+        resource_type="platform_job",
+        resource_id=job.id,
+        details={"provider": config.provider, "reused": reused},
+    )
     await db.commit()
     await db.refresh(job)
     await publish_platform_job_update(job)

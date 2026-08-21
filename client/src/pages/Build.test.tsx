@@ -88,7 +88,10 @@ beforeEach(() => {
 		return 1;
 	});
 	vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => undefined);
-	mockAuth.mockReturnValue({ isPlatformAdmin: false, user: { id: "user-1" } });
+	mockAuth.mockReturnValue({
+		isPlatformAdmin: false,
+		user: { id: "user-1", organizationId: "org-1" },
+	});
 	mockListBuilderSolutions.mockResolvedValue({
 		solutions: [],
 		total: 0,
@@ -113,14 +116,26 @@ beforeEach(() => {
 	});
 	mockUseBuilderAccess.mockReturnValue({
 		aiConfigured: true,
+		canAccessBuilder: true,
 		canBuild: true,
 		hasPermission: true,
 		builderReady: true,
 		blockers: [],
 		canViewAll: false,
+		canOpenGlobalWorkspace: false,
 		isPlatformAdmin: false,
 		isLoading: false,
 		solutions: [],
+		organizationTargets: [
+			{
+				id: "org-1",
+				name: "Example Customer",
+				is_provider: false,
+				can_read: true,
+				can_execute: true,
+				can_build_resources: true,
+			},
+		],
 	});
 });
 
@@ -151,21 +166,66 @@ describe("Build home", () => {
 		);
 
 		await waitFor(() =>
-			expect(mockCreateBuilderSolution).toHaveBeenCalledWith({
-				name: "Expense Tracker",
-				slug: "expense-tracker",
-			}),
+			expect(mockCreateBuilderSolution).toHaveBeenCalledWith(
+				{
+					name: "Expense Tracker",
+					slug: "expense-tracker",
+					target_kind: "solution",
+				},
+				{ boundary: "organization:org-1" },
+			),
 		);
-		expect(mockCreateBuilderSession).toHaveBeenCalledWith("sol-9");
+		expect(mockCreateBuilderSession).toHaveBeenCalledWith("sol-9", {
+			boundary: "organization:org-1",
+		});
 		await waitFor(() =>
 			expect(mockNavigate).toHaveBeenCalledWith(
-				"/solutions/sol-9/builder",
+				"/solutions/sol-9/builder?boundary=organization%3Aorg-1",
 				{
 					state: {
 						initialPrompt: "Track receipts and monthly totals",
 						initialSessionId: "session-4",
 					},
 				},
+			),
+		);
+	});
+
+	it("starts a direct organization workspace only in an authorized target", async () => {
+		mockCreateBuilderSolution.mockResolvedValue(
+			solution({ id: "org-work-1", target_kind: "organization" }),
+		);
+		mockCreateBuilderSession.mockResolvedValue({ id: "session-org-1" });
+		const { user } = renderWithProviders(<Build />);
+
+		await user.click(
+			screen.getByRole("radio", { name: /organization workspace/i }),
+		);
+		await user.type(screen.getByLabelText(/workspace name/i), "Service Desk Setup");
+		await user.type(
+			screen.getByLabelText(/describe your organization changes/i),
+			"Create a triage agent and its intake workflow",
+		);
+		await user.click(screen.getByRole("button", { name: /start building/i }));
+
+		await waitFor(() =>
+			expect(mockCreateBuilderSolution).toHaveBeenCalledWith(
+				{
+					name: "Service Desk Setup",
+					slug: "service-desk-setup",
+					target_kind: "organization",
+				},
+				{ boundary: "organization:org-1" },
+			),
+		);
+		await waitFor(() =>
+			expect(mockNavigate).toHaveBeenCalledWith(
+				"/solutions/org-work-1/builder?boundary=organization%3Aorg-1",
+				expect.objectContaining({
+					state: expect.objectContaining({
+						initialSessionId: "session-org-1",
+					}),
+				}),
 			),
 		);
 	});
@@ -190,7 +250,7 @@ describe("Build home", () => {
 		);
 
 		expect(
-			await screen.findByText("Starting the Builder Agent"),
+			await screen.findByText("Preparing your build"),
 		).toBeInTheDocument();
 		expect(screen.queryByLabelText(/app name/i)).not.toBeInTheDocument();
 
@@ -203,11 +263,13 @@ describe("Build home", () => {
 	it("lists the user's private builds and reopens the selected history", async () => {
 		mockUseBuilderAccess.mockReturnValue({
 			aiConfigured: true,
+			canAccessBuilder: true,
 			canBuild: true,
 			hasPermission: true,
 			builderReady: true,
 			blockers: [],
 			canViewAll: false,
+			canOpenGlobalWorkspace: false,
 			isPlatformAdmin: false,
 			isLoading: false,
 			solutions: [
@@ -228,18 +290,20 @@ describe("Build home", () => {
 		await user.click(openButtons[0]);
 
 		expect(mockNavigate).toHaveBeenCalledWith(
-			"/solutions/sol-2/builder",
+			"/solutions/sol-2/builder?boundary=organization%3Aorg-1",
 		);
 	});
 
 	it("keeps support-wide builds behind an explicit All customer work view", async () => {
 		mockUseBuilderAccess.mockReturnValue({
 			aiConfigured: true,
+			canAccessBuilder: true,
 			canBuild: true,
 			hasPermission: true,
 			builderReady: true,
 			blockers: [],
 			canViewAll: true,
+			canOpenGlobalWorkspace: true,
 			isPlatformAdmin: true,
 			isLoading: false,
 			solutions: [solution()],
@@ -266,14 +330,50 @@ describe("Build home", () => {
 		);
 	});
 
+	it("gives support-only operators the customer library without build controls", () => {
+		mockUseBuilderAccess.mockReturnValue({
+			aiConfigured: true,
+			canAccessBuilder: true,
+			canBuild: false,
+			hasPermission: true,
+			builderReady: true,
+			blockers: [],
+			canViewAll: true,
+			canOpenGlobalWorkspace: false,
+			isPlatformAdmin: false,
+			isLoading: false,
+			solutions: [],
+			organizationTargets: [
+				{
+					id: "org-1",
+					name: "Example Customer",
+					is_provider: false,
+					can_read: true,
+					can_execute: false,
+					can_build_resources: false,
+				},
+			],
+		});
+
+		renderWithProviders(<Build />);
+
+		expect(screen.getByText("Customer build support")).toBeInTheDocument();
+		expect(screen.getByText("Support view")).toBeInTheDocument();
+		expect(screen.getByRole("tab", { name: /all customer work/i })).toBeInTheDocument();
+		expect(screen.queryByText("What should Bifrost build?")).not.toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /start building/i })).not.toBeInTheDocument();
+	});
+
 	it("distinguishes an unavailable support catalog from an empty one", async () => {
 		mockUseBuilderAccess.mockReturnValue({
 			aiConfigured: true,
+			canAccessBuilder: true,
 			canBuild: true,
 			hasPermission: true,
 			builderReady: true,
 			blockers: [],
 			canViewAll: true,
+			canOpenGlobalWorkspace: true,
 			isPlatformAdmin: true,
 			isLoading: false,
 			solutions: [solution()],
@@ -299,11 +399,13 @@ describe("Build home", () => {
 	it("pages the support catalog without loading every customer build", async () => {
 		mockUseBuilderAccess.mockReturnValue({
 			aiConfigured: true,
+			canAccessBuilder: true,
 			canBuild: true,
 			hasPermission: true,
 			builderReady: true,
 			blockers: [],
 			canViewAll: true,
+			canOpenGlobalWorkspace: true,
 			isPlatformAdmin: true,
 			isLoading: false,
 			solutions: [],
@@ -342,15 +444,17 @@ describe("Build home", () => {
 		);
 	});
 
-	it("gives platform admins an explicit Global Workspace entry point", async () => {
+	it("gives eligible platform users an explicit Global Workspace entry point", async () => {
 		mockUseBuilderAccess.mockReturnValue({
 			aiConfigured: true,
+			canAccessBuilder: true,
 			canBuild: true,
 			hasPermission: true,
 			builderReady: true,
 			blockers: [],
 			canViewAll: true,
-			isPlatformAdmin: true,
+			canOpenGlobalWorkspace: true,
+			isPlatformAdmin: false,
 			isLoading: false,
 			solutions: [],
 		});
@@ -366,18 +470,43 @@ describe("Build home", () => {
 
 		await waitFor(() => expect(mockEnsureGlobalWorkspace).toHaveBeenCalled());
 		expect(mockNavigate).toHaveBeenCalledWith(
-			"/solutions/global-workspace-1/builder",
+			"/solutions/global-workspace-1/builder?boundary=platform",
 		);
+	});
+
+	it("hides Global Workspace when the server withholds the capability", () => {
+		mockUseBuilderAccess.mockReturnValue({
+			aiConfigured: true,
+			canAccessBuilder: true,
+			canBuild: true,
+			hasPermission: true,
+			builderReady: true,
+			blockers: [],
+			canViewAll: true,
+			canOpenGlobalWorkspace: false,
+			isPlatformAdmin: true,
+			isLoading: false,
+			solutions: [],
+		});
+
+		renderWithProviders(<Build />);
+
+		expect(screen.queryByRole("heading", { name: "Global Workspace" })).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: /create global workspace/i }),
+		).not.toBeInTheDocument();
 	});
 
 	it("fails closed when the capability probe is unavailable", () => {
 		mockUseBuilderAccess.mockReturnValue({
 			aiConfigured: false,
+			canAccessBuilder: false,
 			canBuild: false,
 			hasPermission: false,
 			builderReady: false,
 			blockers: [],
 			canViewAll: false,
+			canOpenGlobalWorkspace: false,
 			isPlatformAdmin: false,
 			isLoading: false,
 			solutions: [],
@@ -397,11 +526,13 @@ describe("Build home", () => {
 		mockAuth.mockReturnValue({ isPlatformAdmin: true, user: { id: "user-1" } });
 		mockUseBuilderAccess.mockReturnValue({
 			aiConfigured: false,
+			canAccessBuilder: true,
 			canBuild: true,
 			hasPermission: true,
 			builderReady: false,
 			blockers: [{ code: "ai_not_configured", message: "Connect AI", action: "Choose a provider and model." }],
 			canViewAll: true,
+			canOpenGlobalWorkspace: false,
 			isPlatformAdmin: true,
 			isLoading: false,
 			solutions: [],

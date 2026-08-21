@@ -26,6 +26,10 @@ vi.mock("@/hooks/useUsers", () => ({
 		mockUseUsersFiltered(organizationId),
 }));
 
+vi.mock("@/hooks/useAdministrativeBoundary", () => ({
+	useAdministrativeBoundary: () => "managed_organizations",
+}));
+
 vi.mock("@/components/forms/OrganizationSelect", () => ({
 	OrganizationSelect: ({
 		value,
@@ -135,6 +139,7 @@ describe("SolutionPromotions", () => {
 					approved_connection_names: ["HaloPSA"],
 					target_organization_id: "org-1",
 				}),
+				{ sourceBoundary: "managed_organizations" },
 			);
 		});
 	});
@@ -163,6 +168,7 @@ describe("SolutionPromotions", () => {
 			expect(mockPromoteSolution).toHaveBeenCalledWith(
 				"solution-1",
 				expect.objectContaining({ target_organization_id: "org-2" }),
+				{ sourceBoundary: "managed_organizations" },
 			);
 		});
 	});

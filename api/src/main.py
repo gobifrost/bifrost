@@ -29,6 +29,7 @@ from src.routers import (
     passkeys_router,
     health_router,
     organizations_router,
+    organization_groups_router,
     users_router,
     roles_router,
     executions_router,
@@ -70,6 +71,7 @@ from src.routers import (
     roi_settings_router,
     roi_reports_router,
     usage_reports_router,
+    usage_limits_router,
     ai_pricing_router,
     oauth_config_router,
     tools_router,
@@ -581,6 +583,7 @@ def create_app() -> FastAPI:
     app.include_router(oauth_router)
     app.include_router(passkeys_router)
     app.include_router(organizations_router)
+    app.include_router(organization_groups_router)
     app.include_router(users_router)
     app.include_router(roles_router)
     app.include_router(executions_router)
@@ -622,6 +625,7 @@ def create_app() -> FastAPI:
     app.include_router(roi_settings_router)
     app.include_router(roi_reports_router)
     app.include_router(usage_reports_router)
+    app.include_router(usage_limits_router)
     app.include_router(ai_pricing_router)
     app.include_router(oauth_config_router)
     app.include_router(tools_router)

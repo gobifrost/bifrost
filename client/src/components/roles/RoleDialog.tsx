@@ -22,22 +22,22 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Switch } from "@/components/ui/switch";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import {
-	useAuthorizationScopes,
+	PLATFORM_BOUNDARY_HEADERS,
+	useAuthorizationCapabilities,
 	useCreateRole,
 	useUpdateRole,
 } from "@/hooks/useRoles";
 import type { components } from "@/lib/v1";
 type Role = components["schemas"]["RolePublic"];
+type Capability = components["schemas"]["AuthorizationCapabilityPublic"];
 
 const formSchema = z.object({
 	name: z.string().min(1, "Name is required").max(100, "Name too long"),
 	description: z.string().optional(),
-	can_promote_agent: z.boolean(),
-	scopes: z.array(z.string()),
+	capabilities: z.array(z.string()),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -49,37 +49,43 @@ interface RoleDialogProps {
 }
 
 export function RoleDialog({ role, open, onClose }: RoleDialogProps) {
-	const [scopeSearch, setScopeSearch] = useState("");
+	const [capabilitySearch, setCapabilitySearch] = useState("");
 	const createRole = useCreateRole();
 	const updateRole = useUpdateRole();
 	const {
-		data: scopeCatalog = [],
-		isLoading: scopesLoading,
-		isError: scopesError,
-	} = useAuthorizationScopes();
+		data: capabilityCatalogData = [],
+		isLoading: capabilitiesLoading,
+		isError: capabilitiesError,
+	} = useAuthorizationCapabilities();
 	const isEditing = !!role;
 	const isBuiltin = role?.is_builtin ?? false;
-	const visibleScopes = useMemo(() => {
-		const allowed = scopeCatalog.filter(
-			(scope) =>
-				scope.assignable_to_custom_roles || role?.scopes?.includes(scope.key),
+	const capabilityCatalog = capabilityCatalogData as Capability[];
+	const visibleCapabilities = useMemo(() => {
+		const allowed = capabilityCatalog.filter(
+			(capability) =>
+				capability.assignable_to_custom_roles ||
+				role?.capabilities?.includes(capability.key),
 		);
-		const query = scopeSearch.trim().toLocaleLowerCase();
+		const query = capabilitySearch.trim().toLocaleLowerCase();
 		if (!query) return allowed;
-		return allowed.filter((scope) =>
-			[scope.display_name, scope.key, scope.description, scope.category].some(
+		return allowed.filter((capability) =>
+			[
+				capability.display_name,
+				capability.key,
+				capability.description,
+				capability.category,
+			].some(
 				(value) => value.toLocaleLowerCase().includes(query),
 			),
 		);
-	}, [role?.scopes, scopeCatalog, scopeSearch]);
+	}, [role?.capabilities, capabilityCatalog, capabilitySearch]);
 
 	const form = useForm<FormValues>({
 		resolver: zodResolver(formSchema),
 		defaultValues: {
 			name: "",
 			description: "",
-			can_promote_agent: false,
-			scopes: [],
+			capabilities: [],
 		},
 	});
 
@@ -88,15 +94,13 @@ export function RoleDialog({ role, open, onClose }: RoleDialogProps) {
 			form.reset({
 				name: role.name,
 				description: role.description || "",
-				can_promote_agent: (role.permissions as Record<string, boolean>)?.can_promote_agent ?? false,
-				scopes: role.scopes ?? [],
+				capabilities: role.capabilities ?? [],
 			});
 		} else {
 			form.reset({
 				name: "",
 				description: "",
-				can_promote_agent: false,
-				scopes: [],
+				capabilities: [],
 			});
 		}
 	}, [role, form]);
@@ -105,30 +109,30 @@ export function RoleDialog({ role, open, onClose }: RoleDialogProps) {
 		if (isBuiltin) return;
 		if (isEditing) {
 			await updateRole.mutateAsync({
+				headers: PLATFORM_BOUNDARY_HEADERS,
 				params: { path: { role_id: role.id } },
 				body: {
 					name: values.name,
 					description: values.description || null,
-					permissions: { can_promote_agent: values.can_promote_agent },
-					scopes: values.scopes,
+					capabilities: values.capabilities,
 				},
 			});
 		} else {
 			await createRole.mutateAsync({
+				headers: PLATFORM_BOUNDARY_HEADERS,
 				body: {
 					name: values.name,
 					description: values.description || null,
-					permissions: { can_promote_agent: values.can_promote_agent },
-					scopes: values.scopes,
+					capabilities: values.capabilities,
 				},
 			});
 		}
-		setScopeSearch("");
+		setCapabilitySearch("");
 		onClose();
 	};
 
 	const closeDialog = () => {
-		setScopeSearch("");
+		setCapabilitySearch("");
 		onClose();
 	};
 
@@ -186,7 +190,7 @@ export function RoleDialog({ role, open, onClose }: RoleDialogProps) {
 									</FormLabel>
 									<FormControl>
 										<Textarea
-											placeholder="What permissions does this role have?"
+											placeholder="What should people with this role be able to do?"
 											disabled={isBuiltin}
 											{...field}
 										/>
@@ -195,34 +199,6 @@ export function RoleDialog({ role, open, onClose }: RoleDialogProps) {
 								</FormItem>
 							)}
 						/>
-
-						{/* Permissions Section */}
-						<div className="pt-4 border-t">
-							<h4 className="text-sm font-medium mb-3">Permissions</h4>
-							<FormField
-								control={form.control}
-								name="can_promote_agent"
-								render={({ field }) => (
-									<FormItem className="flex items-center justify-between rounded-lg bg-muted/50 p-3 ring-1 ring-foreground/5">
-										<div className="space-y-0.5">
-											<FormLabel className="text-sm">
-												Promote Agents
-											</FormLabel>
-											<FormDescription className="text-xs">
-												Allow users to promote private agents to the organization
-											</FormDescription>
-										</div>
-										<FormControl>
-											<Switch
-												checked={field.value}
-												onCheckedChange={field.onChange}
-												disabled={isBuiltin}
-											/>
-										</FormControl>
-									</FormItem>
-								)}
-							/>
-						</div>
 
 						<div className="border-t pt-4">
 							<div className="mb-3">
@@ -233,14 +209,14 @@ export function RoleDialog({ role, open, onClose }: RoleDialogProps) {
 								</p>
 							</div>
 							<Input
-								value={scopeSearch}
-								onChange={(event) => setScopeSearch(event.target.value)}
+								value={capabilitySearch}
+								onChange={(event) => setCapabilitySearch(event.target.value)}
 								placeholder="Search capabilities…"
 								aria-label="Search capabilities"
 							/>
-							{scopesLoading ? (
+							{capabilitiesLoading ? (
 								<p className="text-sm text-muted-foreground">Loading capabilities…</p>
-							) : scopesError ? (
+							) : capabilitiesError ? (
 								<p className="text-sm text-destructive">
 									Capabilities could not be loaded. Close this dialog and try again.
 								</p>
@@ -250,15 +226,15 @@ export function RoleDialog({ role, open, onClose }: RoleDialogProps) {
 									role="region"
 									aria-label="Capability list"
 								>
-									{visibleScopes.map((scope) => (
+									{visibleCapabilities.map((capability: Capability) => (
 											<FormField
-												key={scope.key}
+												key={capability.key}
 												control={form.control}
-												name="scopes"
+												name="capabilities"
 												render={({ field }) => {
-													const checked = field.value.includes(scope.key);
+													const checked = field.value.includes(capability.key);
 													const disabled =
-														isBuiltin || !scope.assignable_to_custom_roles;
+														isBuiltin || !capability.assignable_to_custom_roles;
 													return (
 														<label className="flex cursor-pointer items-start gap-3 rounded-2xl bg-muted/40 p-3 ring-1 ring-foreground/5 has-disabled:cursor-default">
 															<Checkbox
@@ -268,26 +244,26 @@ export function RoleDialog({ role, open, onClose }: RoleDialogProps) {
 																onCheckedChange={(value) =>
 																	field.onChange(
 																		value
-																			? [...field.value, scope.key]
+																			? [...field.value, capability.key]
 																			: field.value.filter(
-																					(key) => key !== scope.key,
+																					(key) => key !== capability.key,
 																				),
 																	)
 																}
-																aria-label={scope.display_name}
+																aria-label={capability.display_name}
 															/>
 															<span className="min-w-0 flex-1">
 																<span className="flex flex-wrap items-center gap-2 text-sm font-medium">
-																	{scope.display_name}
-																	{scope.is_privileged ? (
+																	{capability.display_name}
+																	{capability.is_privileged ? (
 																		<Badge variant="outline" className="font-normal">
 																			Privileged
 																		</Badge>
 																	) : null}
 																</span>
-																<code className="text-xs text-muted-foreground">{scope.key}</code>
+																<code className="text-xs text-muted-foreground">{capability.key}</code>
 																<span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
-																	{scope.description}
+																	{capability.description}
 																</span>
 															</span>
 														</label>
@@ -295,7 +271,7 @@ export function RoleDialog({ role, open, onClose }: RoleDialogProps) {
 												}}
 											/>
 										))}
-									{visibleScopes.length === 0 ? (
+									{visibleCapabilities.length === 0 ? (
 										<p className="py-6 text-center text-sm text-muted-foreground">
 											No capabilities match your search.
 										</p>
@@ -312,7 +288,7 @@ export function RoleDialog({ role, open, onClose }: RoleDialogProps) {
 							>
 								{isBuiltin ? "Close" : "Cancel"}
 							</Button>
-							{!isBuiltin ? <Button type="submit" disabled={isPending || scopesLoading || scopesError}>
+							{!isBuiltin ? <Button type="submit" disabled={isPending || capabilitiesLoading || capabilitiesError}>
 								{isPending
 									? "Saving..."
 									: isEditing

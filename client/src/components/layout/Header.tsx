@@ -32,6 +32,7 @@ import { profileService } from "@/services/profile";
 import { FileActivityIndicator } from "@/components/layout/FileActivityIndicator";
 import { PasskeySetupBadge } from "@/components/PasskeySetupBadge";
 import { BifrostRunMenu } from "@/components/layout/BifrostRunMenu";
+import { AuthorizationBoundaryPicker } from "@/components/layout/AuthorizationBoundaryPicker";
 
 interface HeaderProps {
 	onMobileMenuToggle?: () => void;
@@ -112,6 +113,8 @@ export function Header({
 						<PanelLeftClose className="h-5 w-5" />
 					)}
 				</Button>
+
+				<AuthorizationBoundaryPicker />
 
 				{/* Spacer */}
 				<div className="flex-1" />

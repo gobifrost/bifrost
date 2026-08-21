@@ -24,6 +24,7 @@ list so the CLI can tell the user to pass the UUID directly. There is no
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Literal
 from uuid import UUID
 
@@ -341,13 +342,38 @@ class RefResolver:
         workflow_uuid = await resolver.resolve("workflow", "MyWorkflow")
     """
 
-    def __init__(self, client: Any) -> None:
+    def __init__(
+        self,
+        client: Any,
+        *,
+        headers: Mapping[str, str] | None = None,
+    ) -> None:
         self._client = client
+        self._headers = dict(headers or {})
         self._cache: dict[tuple[str, str], str] = {}
 
     async def resolve(self, kind: RefKind, value: str) -> str:
         """Resolve ``value`` to a UUID for the given ``kind``."""
-        return await resolve_ref(self._client, kind, value, cache=self._cache)
+        client = self._client
+        if self._headers:
+            client = _HeaderBoundClient(client, self._headers)
+        return await resolve_ref(client, kind, value, cache=self._cache)
+
+
+class _HeaderBoundClient:
+    """Apply fixed request headers to reference lookup GETs."""
+
+    def __init__(self, client: Any, headers: Mapping[str, str]) -> None:
+        self._client = client
+        self._headers = dict(headers)
+
+    async def get(self, path: str, **kwargs: Any) -> Any:
+        request_headers = dict(kwargs.pop("headers", {}) or {})
+        return await self._client.get(
+            path,
+            **kwargs,
+            headers={**self._headers, **request_headers},
+        )
 
 
 __all__ = [

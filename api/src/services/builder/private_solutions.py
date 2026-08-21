@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, case, exists, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import noload
@@ -30,16 +30,16 @@ from src.models.contracts.solution_builder import (
 )
 from src.models.orm.agents import Conversation
 from src.models.orm.solution_builder import (
-    SolutionBuilderCollaborator,
+    SolutionUserGrant,
     SolutionBuilderProject,
     SolutionBuilderSession,
     SolutionBuilderTurn,
     SolutionSourceRevision,
 )
 from src.models.orm.solutions import Solution
+from src.models.orm.solution_role_grants import SolutionRoleGrant
 from src.models.orm.organizations import Organization
-from src.models.orm.users import User
-from src.services.builder.agent_identity import ensure_builder_agent
+from src.models.orm.users import Role, User
 from src.services.builder.revision_storage import BUILDER_ROOT, REVISION_ARTIFACT_NAME
 from src.services.builder.turns import BuilderTurnService
 from src.services.file_storage import FileStorageService
@@ -47,6 +47,7 @@ from src.services.solutions.access import (
     VISIBILITY_PRIVATE,
     SolutionAction,
     can_access_solution,
+    assigned_solution_role_grant_criterion,
     visible_solutions_criterion,
 )
 
@@ -67,6 +68,14 @@ class CollaboratorNotEligible(ValueError):
 
 class CollaboratorNotFound(LookupError):
     """No matching explicit collaborator grant exists."""
+
+
+class RoleGrantNotEligible(ValueError):
+    """The requested Role cannot be used as a Solution resource grant."""
+
+
+class RoleGrantNotFound(LookupError):
+    """No matching Role grant exists on the Solution."""
 
 
 @dataclass(frozen=True)
@@ -103,6 +112,14 @@ def _collaborator_access(value: str | None) -> Literal["view", "edit"] | None:
         return "view"
     if value == "edit":
         return "edit"
+    return None
+
+
+def _strongest_access(*values: str | None) -> Literal["view", "edit"] | None:
+    if "edit" in values:
+        return "edit"
+    if "view" in values:
+        return "view"
     return None
 
 
@@ -144,6 +161,7 @@ async def create_private_solution(
     name: str,
     owner_user_id: UUID,
     organization_id: UUID | None,
+    target_kind: str = "solution",
 ) -> tuple[Solution, SolutionBuilderProject]:
     """Create a private Solution owned by ``owner_user_id`` and its project row.
 
@@ -189,6 +207,7 @@ async def create_private_solution(
         name=name,
         conversation_id=None,
         user_id=owner_user_id,
+        target_kind=target_kind,
     )
     project = (
         await db.execute(
@@ -211,6 +230,7 @@ async def list_private_solutions(
     *,
     actor_user_id: UUID,
     is_external: bool,
+    effective_role_ids: frozenset[UUID] = frozenset(),
     view: Literal["mine", "all"] = "mine",
     can_support: bool = False,
     organization_id: UUID | None = None,
@@ -218,9 +238,53 @@ async def list_private_solutions(
     search: str | None = None,
     limit: int | None = None,
     offset: int = 0,
+    allowed_solution_organization_ids: frozenset[UUID] | None = None,
+    allowed_workspace_organization_ids: frozenset[UUID] | None = None,
 ) -> PrivateSolutionPage:
     """List personal/shared work or the deliberate provider support catalog."""
-    collaborator = SolutionBuilderCollaborator
+    collaborator = SolutionUserGrant
+    role_ids = tuple(effective_role_ids)
+    role_access = (
+        case(
+            (
+                exists(
+                    select(SolutionRoleGrant.id).where(
+                        SolutionRoleGrant.solution_id == Solution.id,
+                        SolutionRoleGrant.role_id.in_(role_ids),
+                        SolutionRoleGrant.access == "edit",
+                    )
+                ),
+                "edit",
+            ),
+            (
+                exists(
+                    select(SolutionRoleGrant.id).where(
+                        SolutionRoleGrant.solution_id == Solution.id,
+                        SolutionRoleGrant.role_id.in_(role_ids),
+                    )
+                ),
+                "view",
+            ),
+            else_=None,
+        )
+        if role_ids
+        else case(
+            (
+                assigned_solution_role_grant_criterion(
+                    actor_user_id=actor_user_id,
+                    access="edit",
+                ),
+                "edit",
+            ),
+            (
+                assigned_solution_role_grant_criterion(
+                    actor_user_id=actor_user_id,
+                ),
+                "view",
+            ),
+            else_=None,
+        )
+    )
     query = (
         select(
             Solution,
@@ -229,6 +293,7 @@ async def list_private_solutions(
             User.email,
             Organization.name,
             collaborator.access,
+            role_access,
         )
         .join(
             SolutionBuilderProject,
@@ -242,12 +307,36 @@ async def list_private_solutions(
             & (collaborator.user_id == actor_user_id),
         )
         .where(Solution.visibility == VISIBILITY_PRIVATE)
-        .where(SolutionBuilderProject.target_kind == "solution")
+        .where(SolutionBuilderProject.target_kind.in_(("solution", "organization")))
         .options(
             noload(Solution.connection_schema),
             noload(Solution.file_locations),
         )
     )
+    if (
+        allowed_solution_organization_ids is not None
+        or allowed_workspace_organization_ids is not None
+    ):
+        solution_org_ids = tuple(allowed_solution_organization_ids or ())
+        workspace_org_ids = tuple(allowed_workspace_organization_ids or ())
+        target_filters = []
+        if solution_org_ids:
+            target_filters.append(
+                and_(
+                    SolutionBuilderProject.target_kind == "solution",
+                    Solution.organization_id.in_(solution_org_ids),
+                )
+            )
+        if workspace_org_ids:
+            target_filters.append(
+                and_(
+                    SolutionBuilderProject.target_kind == "organization",
+                    Solution.organization_id.in_(workspace_org_ids),
+                )
+            )
+        if not target_filters:
+            return PrivateSolutionPage(records=[], total=0)
+        query = query.where(or_(*target_filters))
     if view == "all":
         if not can_support or is_external:
             return PrivateSolutionPage(records=[], total=0)
@@ -260,6 +349,7 @@ async def list_private_solutions(
             visible_solutions_criterion(
                 actor_user_id=actor_user_id,
                 is_external=is_external,
+                effective_role_ids=effective_role_ids,
             )
         )
     normalized_search = (search or "").strip().lower()
@@ -288,7 +378,10 @@ async def list_private_solutions(
             owner_name=owner_name,
             owner_email=owner_email,
             organization_name=organization_name,
-            collaborator_access=_collaborator_access(collaborator_access),
+            collaborator_access=_strongest_access(
+                collaborator_access,
+                role_grant_access,
+            ),
         )
         for (
             solution,
@@ -297,6 +390,7 @@ async def list_private_solutions(
             owner_email,
             organization_name,
             collaborator_access,
+            role_grant_access,
         ) in rows.all()
     ]
     return PrivateSolutionPage(records=records, total=total)
@@ -311,6 +405,7 @@ async def load_accessible_private_solution(
     is_platform_admin: bool,
     is_external: bool,
     can_support: bool = False,
+    effective_role_ids: frozenset[UUID] = frozenset(),
 ) -> tuple[Solution, SolutionBuilderProject] | None:
     """Load a private Solution the actor may act on, or ``None``.
 
@@ -327,6 +422,7 @@ async def load_accessible_private_solution(
                 SolutionBuilderProject.solution_id == Solution.id,
             )
             .where(Solution.id == solution_id)
+            .where(SolutionBuilderProject.target_kind.in_(("solution", "organization")))
             .options(
                 noload(Solution.connection_schema), noload(Solution.file_locations)
             )
@@ -339,11 +435,26 @@ async def load_accessible_private_solution(
     if solution.visibility != VISIBILITY_PRIVATE:
         return None
     collaborator_access = await db.scalar(
-        select(SolutionBuilderCollaborator.access).where(
-            SolutionBuilderCollaborator.solution_id == solution_id,
-            SolutionBuilderCollaborator.user_id == actor_user_id,
+        select(SolutionUserGrant.access).where(
+            SolutionUserGrant.solution_id == solution_id,
+            SolutionUserGrant.user_id == actor_user_id,
         )
     )
+    role_grant_access: Literal["view", "edit"] | None = None
+    if effective_role_ids:
+        role_accesses = (
+            (
+                await db.execute(
+                    select(SolutionRoleGrant.access).where(
+                        SolutionRoleGrant.solution_id == solution_id,
+                        SolutionRoleGrant.role_id.in_(effective_role_ids),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        role_grant_access = _strongest_access(*role_accesses)
     if not can_access_solution(
         action=action,
         visibility=solution.visibility,
@@ -352,6 +463,7 @@ async def load_accessible_private_solution(
         is_platform_admin=is_platform_admin,
         is_external=is_external,
         collaborator_access=collaborator_access,
+        role_grant_access=role_grant_access,
         can_support=can_support,
     ):
         return None
@@ -364,6 +476,7 @@ async def private_solution_dto_context(
     solution: Solution,
     actor_user_id: UUID,
     can_support: bool,
+    effective_role_ids: frozenset[UUID] = frozenset(),
 ) -> PrivateSolutionDTOContext:
     """Return display attribution and the caller's deliberate access mode."""
     row = (
@@ -372,21 +485,38 @@ async def private_solution_dto_context(
                 User.name,
                 User.email,
                 Organization.name,
-                SolutionBuilderCollaborator.access,
+                SolutionUserGrant.access,
             )
             .select_from(Solution)
             .outerjoin(User, User.id == Solution.owner_user_id)
             .outerjoin(Organization, Organization.id == Solution.organization_id)
             .outerjoin(
-                SolutionBuilderCollaborator,
-                (SolutionBuilderCollaborator.solution_id == Solution.id)
-                & (SolutionBuilderCollaborator.user_id == actor_user_id),
+                SolutionUserGrant,
+                (SolutionUserGrant.solution_id == Solution.id)
+                & (SolutionUserGrant.user_id == actor_user_id),
             )
             .where(Solution.id == solution.id)
         )
     ).one()
     owner_name, owner_email, organization_name, raw_collaborator_access = row
-    collaborator_access = _collaborator_access(raw_collaborator_access)
+    role_accesses: list[str] = []
+    if effective_role_ids:
+        role_accesses = list(
+            (
+                await db.execute(
+                    select(SolutionRoleGrant.access).where(
+                        SolutionRoleGrant.solution_id == solution.id,
+                        SolutionRoleGrant.role_id.in_(effective_role_ids),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    collaborator_access = _strongest_access(
+        raw_collaborator_access,
+        *role_accesses,
+    )
     caller_access: Literal["owner", "collaborator", "support"]
     if solution.owner_user_id == actor_user_id:
         caller_access = "owner"
@@ -406,7 +536,7 @@ async def private_solution_dto_context(
 
 
 def collaborator_to_dto(
-    collaborator: SolutionBuilderCollaborator,
+    collaborator: SolutionUserGrant,
     user: User,
 ) -> BuilderCollaboratorDTO:
     access = _collaborator_access(collaborator.access)
@@ -418,7 +548,7 @@ def collaborator_to_dto(
         name=user.name,
         email=user.email,
         access=access,
-        invited_by=collaborator.invited_by,
+        invited_by=collaborator.granted_by_user_id,
         created_at=collaborator.created_at,
         updated_at=collaborator.updated_at,
     )
@@ -430,9 +560,9 @@ async def list_collaborators(
     solution_id: UUID,
 ) -> list[BuilderCollaboratorDTO]:
     rows = await db.execute(
-        select(SolutionBuilderCollaborator, User)
-        .join(User, User.id == SolutionBuilderCollaborator.user_id)
-        .where(SolutionBuilderCollaborator.solution_id == solution_id)
+        select(SolutionUserGrant, User)
+        .join(User, User.id == SolutionUserGrant.user_id)
+        .where(SolutionUserGrant.solution_id == solution_id)
         .order_by(func.lower(User.email))
     )
     return [collaborator_to_dto(grant, user) for grant, user in rows.all()]
@@ -464,22 +594,22 @@ async def upsert_collaborator(
         raise CollaboratorNotEligible("The Solution owner already has full access")
 
     grant = await db.scalar(
-        select(SolutionBuilderCollaborator).where(
-            SolutionBuilderCollaborator.solution_id == solution.id,
-            SolutionBuilderCollaborator.user_id == user.id,
+        select(SolutionUserGrant).where(
+            SolutionUserGrant.solution_id == solution.id,
+            SolutionUserGrant.user_id == user.id,
         )
     )
     if grant is None:
-        grant = SolutionBuilderCollaborator(
+        grant = SolutionUserGrant(
             solution_id=solution.id,
             user_id=user.id,
             access=access,
-            invited_by=invited_by,
+            granted_by_user_id=invited_by,
         )
         db.add(grant)
     else:
         grant.access = access
-        grant.invited_by = invited_by
+        grant.granted_by_user_id = invited_by
         grant.updated_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(grant)
@@ -493,13 +623,82 @@ async def remove_collaborator(
     collaborator_user_id: UUID,
 ) -> None:
     grant = await db.scalar(
-        select(SolutionBuilderCollaborator).where(
-            SolutionBuilderCollaborator.solution_id == solution_id,
-            SolutionBuilderCollaborator.user_id == collaborator_user_id,
+        select(SolutionUserGrant).where(
+            SolutionUserGrant.solution_id == solution_id,
+            SolutionUserGrant.user_id == collaborator_user_id,
         )
     )
     if grant is None:
         raise CollaboratorNotFound(str(collaborator_user_id))
+    await db.delete(grant)
+    await db.commit()
+
+
+async def list_solution_role_grants(
+    db: AsyncSession,
+    *,
+    solution_id: UUID,
+) -> list[SolutionRoleGrant]:
+    result = await db.execute(
+        select(SolutionRoleGrant)
+        .where(SolutionRoleGrant.solution_id == solution_id)
+        .order_by(SolutionRoleGrant.created_at, SolutionRoleGrant.id)
+    )
+    return list(result.scalars().all())
+
+
+async def upsert_solution_role_grant(
+    db: AsyncSession,
+    *,
+    solution_id: UUID,
+    role_id: UUID,
+    access: Literal["view", "edit"],
+    granted_by_user_id: UUID,
+) -> SolutionRoleGrant:
+    role = await db.get(Role, role_id)
+    if role is None:
+        raise RoleGrantNotEligible("Role not found")
+    if not role.assignable_to_resources:
+        raise RoleGrantNotEligible(
+            "This platform capability Role cannot be assigned to a Solution"
+        )
+    grant = await db.scalar(
+        select(SolutionRoleGrant).where(
+            SolutionRoleGrant.solution_id == solution_id,
+            SolutionRoleGrant.role_id == role_id,
+        )
+    )
+    if grant is None:
+        grant = SolutionRoleGrant(
+            solution_id=solution_id,
+            role_id=role_id,
+            access=access,
+            granted_by_user_id=granted_by_user_id,
+        )
+        db.add(grant)
+    else:
+        grant.access = access
+        grant.granted_by_user_id = granted_by_user_id
+        grant.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    await db.refresh(grant)
+    return grant
+
+
+async def remove_solution_role_grant(
+    db: AsyncSession,
+    *,
+    solution_id: UUID,
+    role_id: UUID,
+) -> None:
+    grant = await db.scalar(
+        select(SolutionRoleGrant).where(
+            SolutionRoleGrant.solution_id == solution_id,
+            SolutionRoleGrant.role_id == role_id,
+        )
+    )
+    if grant is None:
+        raise RoleGrantNotFound(str(role_id))
     await db.delete(grant)
     await db.commit()
 
@@ -528,7 +727,7 @@ async def request_promotion(
     action on a separate surface (spec, "Private access invariant").
     """
     if project.target_kind != "solution":
-        raise ValueError("The global workspace cannot be published as an app")
+        raise ValueError("Organization targets cannot be published as apps")
     if (
         project.deployed_revision_id is None
         or project.current_revision_id != project.deployed_revision_id
@@ -571,8 +770,6 @@ async def create_builder_session(
     solution = await db.get(Solution, solution_id)
     if solution is None:
         raise ValueError(f"Solution {solution_id} does not exist")
-    agent = await ensure_builder_agent(db, solution=solution)
-    conversation.agent_id = agent.id
 
     session = SolutionBuilderSession(
         solution_id=solution_id,
@@ -598,14 +795,11 @@ async def list_builder_sessions(
 
 
 def session_to_dto(session: SolutionBuilderSession) -> BuilderSessionDTO:
-    from src.services.builder.scaffold import builder_agent_id
-
     return BuilderSessionDTO(
         id=session.id,
         solution_id=session.solution_id,
         conversation_id=session.conversation_id,
         user_id=session.user_id,
-        builder_agent_id=builder_agent_id(session.solution_id),
         created_at=session.created_at,
         updated_at=session.updated_at,
     )

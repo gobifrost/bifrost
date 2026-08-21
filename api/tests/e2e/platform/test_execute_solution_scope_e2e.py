@@ -52,7 +52,7 @@ class TestExecuteSolutionScopeE2E:
             db, _no_ctx(), solution_id=None, form_id=str(form.id), app_id=None
         )
         assert scope == sol.id
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         got = await repo.resolve("workflows/foo.py::main", solution_scope=scope)
         assert got is not None
         assert got.id == own_wf.id, "form must resolve its install's workflow, not _repo/"
@@ -74,6 +74,6 @@ class TestExecuteSolutionScopeE2E:
             db, _no_ctx(), solution_id=None, form_id=str(form.id), app_id=None
         )
         assert scope is None
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         got = await repo.resolve("workflows/bar.py::main", solution_scope=scope)
         assert got is not None and got.id == repo_wf.id

@@ -60,6 +60,118 @@ def test_parse_manifest_from_yaml(sample_manifest):
     assert manifest.workflows[wf_id].type == "workflow"
 
 
+def test_role_manifest_accepts_legacy_scopes_as_capabilities():
+    from bifrost.manifest import parse_manifest
+
+    role_id = str(uuid4())
+    manifest = parse_manifest(
+        yaml.dump(
+            {
+                "roles": [
+                    {
+                        "id": role_id,
+                        "name": "legacy-builder",
+                        "scopes": ["solutions.build", "agents.write"],
+                    }
+                ]
+            }
+        )
+    )
+
+    assert manifest.roles[role_id].capabilities == [
+        "agents.readwrite",
+        "builder.execute",
+        "solutions.build.execute",
+        "solutions.deploy.execute",
+        "solutions.readwrite",
+    ]
+
+
+def test_role_manifest_accepts_empty_legacy_permissions():
+    from bifrost.manifest import parse_manifest
+
+    role_id = str(uuid4())
+    manifest = parse_manifest(
+        yaml.dump(
+            {
+                "roles": [
+                    {
+                        "id": role_id,
+                        "name": "legacy-empty",
+                        "permissions": {},
+                    }
+                ]
+            }
+        )
+    )
+
+    assert manifest.roles[role_id].capabilities is None
+
+
+def test_role_manifest_translates_known_legacy_permissions():
+    from bifrost.manifest import parse_manifest
+
+    role_id = str(uuid4())
+    manifest = parse_manifest(
+        yaml.dump(
+            {
+                "roles": [
+                    {
+                        "id": role_id,
+                        "name": "legacy-agent-promoter",
+                        "permissions": {"can_promote_agent": True},
+                    }
+                ]
+            }
+        )
+    )
+
+    assert manifest.roles[role_id].capabilities == ["agents.readwrite"]
+    assert manifest.roles[role_id].permissions == {"can_promote_agent": True}
+
+
+def test_role_manifest_rejects_conflicting_legacy_scope_alias():
+    from bifrost.manifest import parse_manifest
+
+    with pytest.raises(ValueError, match="Use either capabilities"):
+        parse_manifest(
+            yaml.dump(
+                {
+                    "roles": [
+                        {
+                            "id": str(uuid4()),
+                            "name": "conflict",
+                            "capabilities": ["workflows.read"],
+                            "scopes": ["agents.read"],
+                        }
+                    ]
+                }
+            )
+        )
+
+
+def test_role_manifest_preserves_arbitrary_legacy_permissions():
+    from bifrost.manifest import parse_manifest
+
+    role_id = str(uuid4())
+    manifest = parse_manifest(
+        yaml.dump(
+            {
+                "roles": [
+                    {
+                        "id": role_id,
+                        "name": "legacy-permissions",
+                        "permissions": {"read": True},
+                    }
+                ]
+            }
+        )
+    )
+
+    assert manifest.roles[role_id].permissions == {"read": True}
+    assert manifest.roles[role_id].capabilities is None
+
+
 def test_serialize_manifest(sample_manifest):
     """Serialize a Manifest back to YAML string."""
     from bifrost.manifest import parse_manifest, serialize_manifest

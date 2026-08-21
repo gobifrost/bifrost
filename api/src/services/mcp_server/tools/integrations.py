@@ -32,11 +32,22 @@ def _rest_error(action: str, status_code: int, body: Any) -> ToolResult:
     )
 
 
-async def _resolve_ref(context: Any, kind: str, value: str) -> str:
+async def _resolve_ref(
+    context: Any,
+    kind: str,
+    value: str,
+    *,
+    authorization_boundary: str | None = None,
+) -> str:
     from bifrost.refs import RefResolver
 
     async with rest_client(context) as http:
-        return await RefResolver(http).resolve(kind, value)
+        headers = (
+            {"X-Bifrost-Boundary": authorization_boundary}
+            if authorization_boundary
+            else None
+        )
+        return await RefResolver(http, headers=headers).resolve(kind, value)
 
 
 async def _assemble_integration_body(
@@ -179,7 +190,12 @@ async def bifrost_update_integration(
     if not integration_ref:
         return error_result("integration_ref is required")
     try:
-        integration_id = await _resolve_ref(context, "integration", integration_ref)
+        integration_id = await _resolve_ref(
+            context,
+            "integration",
+            integration_ref,
+            authorization_boundary="platform",
+        )
         body = await _assemble_integration_body(
             context,
             {
@@ -228,7 +244,12 @@ async def bifrost_create_integration_mapping(
     if not integration_ref:
         return error_result("integration_ref is required")
     try:
-        integration_id = await _resolve_ref(context, "integration", integration_ref)
+        integration_id = await _resolve_ref(
+            context,
+            "integration",
+            integration_ref,
+            authorization_boundary="platform",
+        )
         body = await _assemble_integration_body(
             context,
             {
@@ -274,7 +295,12 @@ async def bifrost_update_integration_mapping(
     if not organization:
         return error_result("organization is required")
     try:
-        integration_id = await _resolve_ref(context, "integration", integration_ref)
+        integration_id = await _resolve_ref(
+            context,
+            "integration",
+            integration_ref,
+            authorization_boundary="platform",
+        )
         organization_id = await _resolve_ref(context, "org", organization)
         body = await _assemble_integration_body(
             context,

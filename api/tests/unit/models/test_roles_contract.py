@@ -9,8 +9,8 @@ from pydantic import ValidationError
 from src.models import (
     AssignFormsToRoleRequest,
     AssignUsersToRoleRequest,
-    CreateRoleRequest,
-    UpdateRoleRequest,
+    RoleCreate,
+    RoleUpdate,
 )
 
 
@@ -18,13 +18,13 @@ from src.models import (
 # This matches the OpenAPI/TypeScript schema
 
 
-class TestCreateRoleRequest:
-    """Test CreateRoleRequest validation"""
+class TestRoleCreate:
+    """Test RoleCreate validation"""
 
     def test_invalid_empty_name(self):
         """Empty name should fail validation"""
         with pytest.raises(ValidationError) as exc_info:
-            CreateRoleRequest(name="")
+            RoleCreate(name="")
 
         errors = exc_info.value.errors()
         assert any(error["type"] == "string_too_short" for error in errors)
@@ -32,29 +32,29 @@ class TestCreateRoleRequest:
     def test_invalid_name_too_long(self):
         """Name exceeding 100 characters should fail"""
         with pytest.raises(ValidationError):
-            CreateRoleRequest(name="A" * 101)
+            RoleCreate(name="A" * 101)
 
     def test_invalid_missing_name(self):
         """Missing name should fail validation"""
         with pytest.raises(ValidationError) as exc_info:
-            CreateRoleRequest()
+            RoleCreate()
 
         errors = exc_info.value.errors()
         assert any(error["loc"] == ("name",) for error in errors)
 
 
-class TestUpdateRoleRequest:
-    """Test UpdateRoleRequest validation"""
+class TestRoleUpdate:
+    """Test RoleUpdate validation"""
 
     def test_invalid_empty_name(self):
         """Empty name should fail validation"""
         with pytest.raises(ValidationError):
-            UpdateRoleRequest(name="")
+            RoleUpdate(name="")
 
     def test_invalid_name_too_long(self):
         """Name exceeding 100 characters should fail"""
         with pytest.raises(ValidationError):
-            UpdateRoleRequest(name="A" * 101)
+            RoleUpdate(name="A" * 101)
 
 
 class TestAssignUsersToRoleRequest:
@@ -95,5 +95,4 @@ class TestAssignFormsToRoleRequest:
 
         errors = exc_info.value.errors()
         assert any(error["loc"] == ("form_ids",) for error in errors)
-
 

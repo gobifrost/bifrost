@@ -121,6 +121,7 @@
 | POST | `/api/builder/solutions/global-workspace/refresh` |
 | POST | `/api/builder/solutions/global-workspace/rollback` |
 | POST | `/api/builder/solutions/global-workspace/validate` |
+| GET | `/api/builder/solutions/targets` |
 | DELETE | `/api/builder/solutions/{solution_id}` |
 | GET | `/api/builder/solutions/{solution_id}` |
 | POST | `/api/builder/solutions/{solution_id}/apps/{app_id}/launch` |
@@ -135,6 +136,9 @@
 | GET | `/api/builder/solutions/{solution_id}/revisions/{revision_id}/download` |
 | GET | `/api/builder/solutions/{solution_id}/revisions/{revision_id}/file` |
 | GET | `/api/builder/solutions/{solution_id}/revisions/{revision_id}/files` |
+| GET | `/api/builder/solutions/{solution_id}/role-grants` |
+| PUT | `/api/builder/solutions/{solution_id}/role-grants` |
+| DELETE | `/api/builder/solutions/{solution_id}/role-grants/{role_id}` |
 | GET | `/api/builder/solutions/{solution_id}/sessions` |
 | POST | `/api/builder/solutions/{solution_id}/sessions` |
 | GET | `/api/builder/solutions/{solution_id}/turns` |
@@ -344,9 +348,9 @@
 | DELETE | `/api/mcp/config` |
 | GET | `/api/mcp/config` |
 | PUT | `/api/mcp/config` |
-| POST | `/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute` |
 | POST | `/api/mcp/gateway/capabilities/search` |
 | GET | `/api/mcp/gateway/executions/{execution_id}` |
+| POST | `/api/mcp/gateway/tools/{tool_ref}/execute` |
 | GET | `/api/mcp/run` |
 | GET | `/api/mcp/run/plugin` |
 | GET | `/api/mcp/status` |
@@ -383,6 +387,10 @@
 | GET | `/api/oauth/credentials/{connection_name}` |
 | POST | `/api/oauth/refresh_all` |
 | GET | `/api/oauth/refresh_job_status` |
+| GET | `/api/organization-groups` |
+| POST | `/api/organization-groups` |
+| DELETE | `/api/organization-groups/{group_id}` |
+| PATCH | `/api/organization-groups/{group_id}` |
 | GET | `/api/organizations` |
 | POST | `/api/organizations` |
 | DELETE | `/api/organizations/{org_id}` |
@@ -425,7 +433,7 @@
 | GET | `/api/required-instructions` |
 | GET | `/api/roles` |
 | POST | `/api/roles` |
-| GET | `/api/roles/scopes` |
+| GET | `/api/roles/capabilities` |
 | DELETE | `/api/roles/{role_id}` |
 | GET | `/api/roles/{role_id}` |
 | PATCH | `/api/roles/{role_id}` |
@@ -591,6 +599,7 @@
 | POST | `/api/workflows/{workflow_id}/roles` |
 | DELETE | `/api/workflows/{workflow_id}/roles/{role_id}` |
 | POST | `/auth/admin/revoke-user` |
+| GET | `/auth/authorization-targets` |
 | POST | `/auth/device/authorize` |
 | POST | `/auth/device/code` |
 | POST | `/auth/device/token` |

@@ -6,19 +6,22 @@ import os
 import tempfile
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
 import pydantic_core
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
-from src.models.orm.agents import Agent
+from src.core.principal import UserPrincipal
 from src.models.orm.solution_builder import (
     SolutionBuilderProject,
     SolutionBuilderSession,
+)
+from src.services.builder.agent_identity import (
+    BuilderRuntimeProfile,
+    build_builder_runtime_profile,
 )
 from src.services.builder.fs_tools import (
     WorkspaceLimits,
@@ -27,7 +30,11 @@ from src.services.builder.fs_tools import (
     safe_extract_zip,
 )
 from src.services.builder.revision_storage import SolutionRevisionStorage
-from src.services.builder.scaffold import builder_agent_id
+from src.services.builder.runtime_authorization import (
+    BuilderRuntimeForbidden,
+    authorize_builder_project,
+)
+from src.services.builder.scaffold import strip_legacy_builder_assets
 from src.services.builder.turns import (
     BuilderProjectMissing,
     BuilderTurnError,
@@ -67,6 +74,13 @@ class BuilderMCPHarnessForbidden(BuilderMCPHarnessError):
     """Caller cannot access the requested Builder session."""
 
 
+@dataclass(frozen=True, slots=True)
+class AuthorizedBuilderSession:
+    session: SolutionBuilderSession
+    profile: BuilderRuntimeProfile
+    principal: UserPrincipal
+
+
 class BuilderMCPHarness:
     """Execute existing Builder workspace tools from the progressive MCP gateway."""
 
@@ -75,30 +89,15 @@ class BuilderMCPHarness:
         db: AsyncSession,
         *,
         user_id: UUID,
-        org_id: UUID | None,
-        is_platform_admin: bool,
-        is_external: bool,
-        user_email: str,
-        user_name: str,
-        can_build: bool = False,
-        can_support_builds: bool = False,
         limits: WorkspaceLimits | None = None,
     ) -> None:
         self.db = db
         self.user_id = user_id
-        self.org_id = org_id
-        self.is_platform_admin = is_platform_admin
-        self.is_external = is_external
-        self.user_email = user_email
-        self.user_name = user_name
-        self.can_build = can_build
-        self.can_support_builds = can_support_builds
         self.limits = limits or WorkspaceLimits()
 
     async def execute(
         self,
         *,
-        agent: Agent,
         tool_name: str,
         builder_session_id: UUID,
         arguments: dict[str, Any],
@@ -106,22 +105,24 @@ class BuilderMCPHarness:
         try:
             workspace_arguments = dict(arguments)
             finalize = workspace_arguments.pop("finalize", False) is True
-            session = await self._authorize(agent, builder_session_id, tool_name)
+            authorized = await self._authorize(
+                builder_session_id,
+                tool_name,
+                finalize=finalize,
+            )
             if tool_name in NON_MUTATING_BUILDER_TOOLS:
                 if finalize:
                     raise BuilderMCPHarnessError(
                         "finalize is supported only by mutating Builder tools"
                     )
                 return await self._read_only(
-                    session=session,
-                    agent=agent,
+                    authorized=authorized,
                     tool_name=tool_name,
                     arguments=workspace_arguments,
                 )
             if tool_name in MUTATING_BUILDER_TOOLS:
                 return await self._mutate(
-                    session=session,
-                    agent=agent,
+                    authorized=authorized,
                     tool_name=tool_name,
                     arguments=workspace_arguments,
                     finalize=finalize,
@@ -134,111 +135,105 @@ class BuilderMCPHarness:
         except (BuilderTurnError, WorkspaceViolation) as exc:
             raise BuilderMCPHarnessError(str(exc)) from exc
 
-    async def load_authorized_agent(
+    async def load_authorized_profile(
         self,
         *,
         builder_session_id: UUID,
-        agent_id: UUID | None = None,
         action: SolutionAction = SolutionAction.VIEW,
-    ) -> tuple[Agent, SolutionBuilderSession]:
-        """Load the deterministic Builder Agent through the private access gate."""
-        from src.services.builder.private_solutions import (
-            load_accessible_private_solution,
-        )
-
-        if not self.can_build:
-            raise BuilderMCPHarnessForbidden(
-                "The solutions.build scope is required for Builder MCP access"
-            )
+        required_capabilities: tuple[str, ...] | None = None,
+    ) -> AuthorizedBuilderSession:
+        """Load one session and its maintained coding profile through central auth."""
         session = await self.db.get(SolutionBuilderSession, builder_session_id)
         if session is None:
             raise BuilderMCPHarnessForbidden("Builder session not found")
-        expected_agent_id = builder_agent_id(session.solution_id)
-        if agent_id is not None and agent_id != expected_agent_id:
-            raise BuilderMCPHarnessForbidden(
-                "Builder session does not belong to the selected Builder agent"
-            )
-        loaded = await load_accessible_private_solution(
-            self.db,
-            solution_id=session.solution_id,
-            action=action,
-            actor_user_id=self.user_id,
-            is_platform_admin=self.is_platform_admin,
-            is_external=self.is_external,
-            can_support=self.can_support_builds,
-        )
-        if loaded is None:
+        project = await self.db.get(SolutionBuilderProject, session.solution_id)
+        if project is None:
             raise BuilderMCPHarnessForbidden("Builder session not found")
-        agent = await self.db.scalar(
-            select(Agent)
-            .where(
-                Agent.id == expected_agent_id,
-                Agent.solution_id == session.solution_id,
-                Agent.is_active.is_(True),
+        if required_capabilities is None:
+            required_capabilities = ("builder.read",)
+            if project.target_kind == "solution":
+                required_capabilities += ("solutions.read",)
+        try:
+            authorized = await authorize_builder_project(
+                self.db,
+                solution_id=session.solution_id,
+                requester_user_id=self.user_id,
+                action=action,
+                required_capabilities=required_capabilities,
             )
-            .options(
-                selectinload(Agent.tools),
-                selectinload(Agent.delegated_agents),
-                selectinload(Agent.roles),
-                selectinload(Agent.owner),
-                selectinload(Agent.mcp_connections),
-            )
+        except BuilderRuntimeForbidden as exc:
+            raise BuilderMCPHarnessForbidden("Builder session not found") from exc
+        return AuthorizedBuilderSession(
+            session=session,
+            profile=build_builder_runtime_profile(
+                authorized.solution,
+                target_kind=authorized.project.target_kind,
+                authorization=authorized.authorization,
+            ),
+            principal=authorized.principal,
         )
-        if agent is None:
-            raise BuilderMCPHarnessForbidden("Builder session not found")
-        return agent, session
 
     async def _authorize(
         self,
-        agent: Agent,
         builder_session_id: UUID,
         tool_name: str,
-    ) -> SolutionBuilderSession:
-        action = (
-            SolutionAction.VIEW
-            if tool_name in READ_ONLY_BUILDER_TOOLS
-            else SolutionAction.EDIT
+        *,
+        finalize: bool,
+    ) -> AuthorizedBuilderSession:
+        read_only = tool_name in READ_ONLY_BUILDER_TOOLS or tool_name == (
+            "bifrost_read_agent_skill_file"
         )
-        _loaded_agent, session = await self.load_authorized_agent(
-            builder_session_id=builder_session_id,
-            agent_id=agent.id,
-            action=action,
+        session = await self.db.get(SolutionBuilderSession, builder_session_id)
+        project = (
+            await self.db.get(SolutionBuilderProject, session.solution_id)
+            if session is not None
+            else None
         )
-        if agent.solution_id != session.solution_id:
+        if project is None:
+            raise BuilderMCPHarnessForbidden("Builder session not found")
+        if project.target_kind == "organization" and tool_name not in {
+            "bifrost_read_agent_skill_file"
+        }:
             raise BuilderMCPHarnessForbidden(
-                "Builder session does not belong to the selected Builder agent"
+                "Organization targets do not expose source-workspace tools"
             )
-        return session
+        capabilities = ["builder.read" if read_only else "builder.execute"]
+        if project.target_kind == "solution":
+            capabilities.append(
+                "solutions.read" if read_only else "solutions.readwrite"
+            )
+        if tool_name == TEST_SOLUTION_BUILD_TOOL_ID:
+            capabilities.append("solutions.build.execute")
+        if finalize:
+            capabilities.extend(
+                ["solutions.build.execute", "solutions.deploy.execute"]
+            )
+        return await self.load_authorized_profile(
+            builder_session_id=builder_session_id,
+            action=SolutionAction.VIEW if read_only else SolutionAction.BUILD,
+            required_capabilities=tuple(dict.fromkeys(capabilities)),
+        )
 
     async def skill_package(
         self,
         *,
-        agent: Agent,
         builder_session_id: UUID,
     ) -> tuple[str, list[str]]:
-        """Read current-revision Skill instructions and companion file names."""
-        session = await self._authorize(
-            agent,
+        """Read the maintained Skill instructions and companion file names."""
+        authorized = await self._authorize(
             builder_session_id,
             "bifrost_read_agent_skill_file",
+            finalize=False,
         )
-        if not agent.bundle_path:
-            raise BuilderMCPHarnessError("Builder agent has no Skill bundle")
-        async with self._materialized_workspace(session) as workspace:
-            skill_path = f"{agent.bundle_path.rstrip('/')}/SKILL.md"
-            markdown, truncated = workspace.read_file(skill_path)
-            if truncated:
-                raise BuilderMCPHarnessError("Builder SKILL.md exceeds the read limit")
-            prefix = agent.bundle_path.rstrip("/") + "/"
-            files = [
-                path.removeprefix(prefix)
-                for path in workspace.list_files()
-                if path.startswith(prefix) and path != skill_path
-            ]
-        try:
-            return markdown.decode("utf-8"), files
-        except UnicodeDecodeError as exc:
-            raise BuilderMCPHarnessError("Builder SKILL.md must be UTF-8") from exc
+        root = authorized.profile.skill_asset_root
+        if root is None:
+            raise BuilderMCPHarnessError("Builder profile has no Skill bundle")
+        files = sorted(
+            path.relative_to(root).as_posix()
+            for path in root.rglob("*")
+            if path.is_file() and path.relative_to(root).as_posix() != "SKILL.md"
+        )
+        return authorized.profile.system_prompt, files
 
     @asynccontextmanager
     async def _materialized_workspace(
@@ -262,16 +257,20 @@ class BuilderMCPHarness:
             workspace_path = scratch / "workspace"
             workspace_path.mkdir(mode=0o700)
             safe_extract_zip(source_zip, workspace_path, self.limits)
+            strip_legacy_builder_assets(
+                workspace_path,
+                solution_id=session.solution_id,
+            )
             yield WorkspaceRoot(workspace_path, self.limits)
 
     async def _read_only(
         self,
         *,
-        session: SolutionBuilderSession,
-        agent: Agent,
+        authorized: AuthorizedBuilderSession,
         tool_name: str,
         arguments: dict[str, Any],
     ) -> dict[str, Any]:
+        session = authorized.session
         project = await self.db.get(SolutionBuilderProject, session.solution_id)
         if project is None or project.current_revision_id is None:
             raise BuilderProjectMissing(
@@ -283,7 +282,7 @@ class BuilderMCPHarness:
                 # the authorization read transaction before that long wait.
                 await self.db.commit()
             return await self._call_workspace_tool(
-                agent=agent,
+                authorized=authorized,
                 workspace=workspace,
                 tool_name=tool_name,
                 arguments=arguments,
@@ -295,18 +294,18 @@ class BuilderMCPHarness:
     async def _mutate(
         self,
         *,
-        session: SolutionBuilderSession,
-        agent: Agent,
+        authorized: AuthorizedBuilderSession,
         tool_name: str,
         arguments: dict[str, Any],
         finalize: bool,
     ) -> dict[str, Any]:
+        session = authorized.session
         captured: dict[str, Any] = {}
 
         async def mutate(workspace: WorkspaceRoot) -> None:
             captured.update(
                 await self._call_workspace_tool(
-                    agent=agent,
+                    authorized=authorized,
                     workspace=workspace,
                     tool_name=tool_name,
                     arguments=arguments,
@@ -328,6 +327,11 @@ class BuilderMCPHarness:
         if finalize and revision_created and turn.output_revision_id is not None:
             from src.services.builder.agent_turns import enqueue_builder_turn_deploy
 
+            await self._authorize(
+                session.id,
+                tool_name,
+                finalize=True,
+            )
             await enqueue_builder_turn_deploy(
                 self.db,
                 session.solution_id,
@@ -354,7 +358,7 @@ class BuilderMCPHarness:
     async def _call_workspace_tool(
         self,
         *,
-        agent: Agent,
+        authorized: AuthorizedBuilderSession,
         workspace: WorkspaceRoot,
         tool_name: str,
         arguments: dict[str, Any],
@@ -367,16 +371,18 @@ class BuilderMCPHarness:
         func = get_system_tool_function(tool_name)
         if func is None:
             raise BuilderMCPHarnessError(f"Builder tool '{tool_name}' is unavailable")
+        profile = authorized.profile
+        principal = authorized.principal
         context = MCPContext(
-            user_id=self.user_id,
-            org_id=self.org_id,
-            is_platform_admin=self.is_platform_admin,
-            is_external=self.is_external,
-            user_email=self.user_email,
-            user_name=self.user_name,
-            agent_bundle_path=agent.bundle_path,
-            agent_solution_id=agent.solution_id,
-            agent_skill_id=agent.id if agent.bundle_path else None,
+            user_id=principal.user_id,
+            org_id=principal.organization_id,
+            is_platform_admin=principal.is_platform_admin,
+            is_external=principal.is_external,
+            user_email=principal.email,
+            user_name=principal.name,
+            agent_bundle_path=profile.bundle_path,
+            agent_solution_id=profile.solution_id,
+            agent_skill_root=profile.skill_asset_root,
             builder_workspace=workspace,
         )
         result = await func(context, **arguments)

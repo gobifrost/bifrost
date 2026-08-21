@@ -29,7 +29,7 @@ class TestDataProviderRepository:
     @pytest.fixture
     def repository(self, mock_session, org_id):
         """Create repository with mock session and org context."""
-        return DataProviderRepository(mock_session, org_id=org_id, is_superuser=True)
+        return DataProviderRepository(mock_session, org_id=org_id, bypass_resource_admission=True)
 
     @pytest.fixture
     def mock_provider(self):

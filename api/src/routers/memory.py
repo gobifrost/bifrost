@@ -4,7 +4,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, status
 
-from src.core.auth import CurrentActiveUser, RequirePlatformAdmin
+from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.models.contracts.memory import (
     MemoryDeleteResponse,
@@ -24,12 +24,13 @@ from src.services.memory import (
     MemoryDisabledError,
     MemoryService,
 )
+from src.services.audit import emit_audit
+from src.services.authorization import CurrentAuthorizationContext
 
 router = APIRouter(prefix="/api/memory", tags=["Memory"])
 admin_router = APIRouter(
     prefix="/api/admin/memory",
     tags=["Memory"],
-    dependencies=[RequirePlatformAdmin],
 )
 
 
@@ -53,7 +54,9 @@ def _entry_public(entry) -> MemoryEntryPublic:
 
 def _raise_memory_error(exc: Exception) -> None:
     if isinstance(exc, MemoryDisabledError):
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
     if isinstance(exc, MemoryConfigurationError):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -62,22 +65,50 @@ def _raise_memory_error(exc: Exception) -> None:
     raise exc
 
 
+def _require_platform_memory(
+    authorization: CurrentAuthorizationContext,
+    capability: str,
+) -> None:
+    authorization.require(capability)
+    authorization.require_resource_boundary(None)
+
+
 @admin_router.get("/settings", response_model=MemoryPlatformSettings)
 async def get_platform_memory_settings(
     db: DbSession,
-    current_user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> MemoryPlatformSettings:
-    return MemoryPlatformSettings(enabled=await _service(db, current_user).platform_enabled())
+    _require_platform_memory(authorization, "configs.read")
+    service = MemoryService(
+        db,
+        user_id=authorization.effective_actor.user_id,
+        organization_id=authorization.effective_actor.organization_id,
+    )
+    return MemoryPlatformSettings(enabled=await service.platform_enabled())
 
 
 @admin_router.put("/settings", response_model=MemoryPlatformSettings)
 async def update_platform_memory_settings(
     request: MemoryPlatformSettingsUpdate,
     db: DbSession,
-    current_user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> MemoryPlatformSettings:
-    service = _service(db, current_user)
-    await service.set_platform_enabled(request.enabled, updated_by=current_user.email)
+    _require_platform_memory(authorization, "configs.readwrite")
+    service = MemoryService(
+        db,
+        user_id=authorization.effective_actor.user_id,
+        organization_id=authorization.effective_actor.organization_id,
+    )
+    await service.set_platform_enabled(
+        request.enabled,
+        updated_by=authorization.effective_actor.email,
+    )
+    await emit_audit(
+        db,
+        "memory.platform_settings.update",
+        resource_type="memory_platform_settings",
+        details={"enabled": request.enabled},
+    )
     await db.commit()
     return MemoryPlatformSettings(enabled=request.enabled)
 
@@ -111,7 +142,9 @@ async def list_memories(
     current_user: CurrentActiveUser,
 ) -> MemoryEntryList:
     entries = await _service(db, current_user).list_entries()
-    return MemoryEntryList(entries=[_entry_public(entry) for entry in entries], count=len(entries))
+    return MemoryEntryList(
+        entries=[_entry_public(entry) for entry in entries], count=len(entries)
+    )
 
 
 @router.post("", response_model=MemoryEntryPublic, status_code=status.HTTP_201_CREATED)
@@ -154,6 +187,8 @@ async def remove_memory(
 ) -> MemoryDeleteResponse:
     removed = await _service(db, current_user).remove(memory_id)
     if not removed:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Memory not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Memory not found"
+        )
     await db.commit()
     return MemoryDeleteResponse(removed_id=memory_id)

@@ -19,7 +19,13 @@ import {
 	updateArtifactRetentionSettings,
 } from "@/services/artifactRetention";
 
-export function ArtifactRetentionSettings() {
+interface ArtifactRetentionSettingsProps {
+	canWrite?: boolean;
+}
+
+export function ArtifactRetentionSettings({
+	canWrite = true,
+}: ArtifactRetentionSettingsProps) {
 	const [enabled, setEnabled] = useState(false);
 	const [retentionDays, setRetentionDays] = useState(90);
 	const [loading, setLoading] = useState(true);
@@ -49,6 +55,7 @@ export function ArtifactRetentionSettings() {
 		nextEnabled = enabled,
 		nextDays = retentionDays,
 	) => {
+		if (!canWrite) return;
 		setSaving(true);
 		const normalizedDays = Math.max(
 			1,
@@ -74,6 +81,7 @@ export function ArtifactRetentionSettings() {
 	};
 
 	const handleCleanup = async () => {
+		if (!canWrite) return;
 		setCleaning(true);
 		try {
 			const result = await cleanupExpiredArtifacts();
@@ -123,7 +131,7 @@ export function ArtifactRetentionSettings() {
 						<Switch
 							id="artifact-retention-enabled"
 							checked={enabled}
-							disabled={loading || saving}
+							disabled={loading || saving || !canWrite}
 							onCheckedChange={(checked) =>
 								void saveSettings(checked)
 							}
@@ -142,7 +150,7 @@ export function ArtifactRetentionSettings() {
 							min={1}
 							max={3650}
 							value={retentionDays}
-							disabled={loading || saving}
+							disabled={loading || saving || !canWrite}
 							onChange={(event) =>
 								setRetentionDays(
 									Number(event.target.value) || 1,
@@ -156,7 +164,7 @@ export function ArtifactRetentionSettings() {
 						type="button"
 						variant="outline"
 						onClick={handleCleanup}
-						disabled={loading || saving || cleaning}
+						disabled={loading || saving || cleaning || !canWrite}
 					>
 						{cleaning ? (
 							<Loader2 className="h-4 w-4 mr-2 animate-spin" />

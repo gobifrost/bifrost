@@ -2,7 +2,7 @@
 OAuth SSO Configuration Router.
 
 API endpoints for managing OAuth SSO provider configurations.
-Platform admin only - used in the Settings page.
+Platform-bound settings surface used in the Settings page.
 """
 
 import logging
@@ -10,7 +10,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context
 from src.core.database import get_db
 from src.core.log_safety import log_safe
 from src.models.contracts.oauth_config import (
@@ -29,6 +29,8 @@ from src.services.oauth_config_service import (
     OAuthLoginPreferenceError,
     OAuthProviderPreferenceConflict,
 )
+from src.services.audit import emit_audit
+from src.services.authorization import CurrentAuthorizationContext
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,14 @@ def _get_callback_url(request: Request) -> str:
     return f"{proto}://{host}/auth/oauth/callback"
 
 
+def _require_platform_oauth_config(
+    authorization: CurrentAuthorizationContext,
+    capability: str,
+) -> None:
+    authorization.require(capability)
+    authorization.require_resource_boundary(None)
+
+
 @router.get(
     "",
     response_model=OAuthConfigListResponse,
@@ -52,7 +62,7 @@ def _get_callback_url(request: Request) -> str:
 async def list_oauth_configs(
     request: Request,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: AsyncSession = Depends(get_db),
 ) -> OAuthConfigListResponse:
     """
@@ -61,6 +71,7 @@ async def list_oauth_configs(
     Returns configuration details for Microsoft, Google, and OIDC providers.
     Client secrets are never exposed - only a flag indicating if they are set.
     """
+    _require_platform_oauth_config(authorization, "integrations.read")
     service = OAuthConfigService(db)
     providers = await service.get_all_provider_configs()
     login_preference = await service.get_login_preference()
@@ -82,15 +93,16 @@ async def list_oauth_configs(
 async def set_oauth_login_preference(
     preference: OAuthLoginPreference,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: AsyncSession = Depends(get_db),
 ) -> OAuthLoginPreference:
     """Update the platform-wide preferred SSO behavior."""
+    _require_platform_oauth_config(authorization, "integrations.readwrite")
     service = OAuthConfigService(db)
     try:
         result = await service.set_login_preference(
             preference,
-            updated_by=user.email,
+            updated_by=authorization.effective_actor.email,
         )
     except OAuthLoginPreferenceError as exc:
         raise HTTPException(
@@ -98,6 +110,16 @@ async def set_oauth_login_preference(
             detail=str(exc),
         ) from exc
 
+    await emit_audit(
+        ctx.db,
+        "oauth_config.login_preference.update",
+        resource_type="oauth_config",
+        details={
+            "setting": "login_preference",
+            "auto_redirect_to_sso": result.auto_redirect_to_sso,
+            "default_sso_provider": result.default_sso_provider,
+        },
+    )
     await db.commit()
     return result
 
@@ -111,10 +133,11 @@ async def set_oauth_login_preference(
 async def get_oauth_config(
     provider: OAuthSSOProvider,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: AsyncSession = Depends(get_db),
 ) -> OAuthProviderConfigResponse:
     """Get configuration for a specific OAuth provider."""
+    _require_platform_oauth_config(authorization, "integrations.read")
     service = OAuthConfigService(db)
     config = await service.get_provider_config(provider)
 
@@ -144,7 +167,7 @@ async def get_oauth_config(
 async def set_microsoft_config(
     config: MicrosoftOAuthConfigRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: AsyncSession = Depends(get_db),
 ) -> OAuthProviderConfigResponse:
     """
@@ -170,8 +193,18 @@ async def set_microsoft_config(
     - Microsoft Graph: openid (delegated)
     - Microsoft Graph: profile (delegated)
     """
+    _require_platform_oauth_config(authorization, "integrations.readwrite")
     service = OAuthConfigService(db)
-    await service.set_microsoft_config(config, updated_by=user.email)
+    await service.set_microsoft_config(
+        config,
+        updated_by=authorization.effective_actor.email,
+    )
+    await emit_audit(
+        ctx.db,
+        "oauth_config.microsoft.update",
+        resource_type="oauth_config",
+        details={"client_id": config.client_id, "tenant_id": config.tenant_id},
+    )
     await db.commit()
 
     return OAuthProviderConfigResponse(
@@ -192,7 +225,7 @@ async def set_microsoft_config(
 async def set_google_config(
     config: GoogleOAuthConfigRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: AsyncSession = Depends(get_db),
 ) -> OAuthProviderConfigResponse:
     """
@@ -210,8 +243,18 @@ async def set_google_config(
     - Add scopes: email, profile, openid
     - Set user type (Internal for G Suite, External for any Google account)
     """
+    _require_platform_oauth_config(authorization, "integrations.readwrite")
     service = OAuthConfigService(db)
-    await service.set_google_config(config, updated_by=user.email)
+    await service.set_google_config(
+        config,
+        updated_by=authorization.effective_actor.email,
+    )
+    await emit_audit(
+        ctx.db,
+        "oauth_config.google.update",
+        resource_type="oauth_config",
+        details={"client_id": config.client_id},
+    )
     await db.commit()
 
     return OAuthProviderConfigResponse(
@@ -231,7 +274,7 @@ async def set_google_config(
 async def set_oidc_config(
     config: OIDCConfigRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: AsyncSession = Depends(get_db),
 ) -> OAuthProviderConfigResponse:
     """
@@ -252,8 +295,22 @@ async def set_oidc_config(
     **Required Scopes:**
     Most OIDC providers should support: openid, email, profile
     """
+    _require_platform_oauth_config(authorization, "integrations.readwrite")
     service = OAuthConfigService(db)
-    await service.set_oidc_config(config, updated_by=user.email)
+    await service.set_oidc_config(
+        config,
+        updated_by=authorization.effective_actor.email,
+    )
+    await emit_audit(
+        ctx.db,
+        "oauth_config.oidc.update",
+        resource_type="oauth_config",
+        details={
+            "client_id": config.client_id,
+            "discovery_url": config.discovery_url,
+            "display_name": config.display_name,
+        },
+    )
     await db.commit()
 
     return OAuthProviderConfigResponse(
@@ -275,15 +332,16 @@ async def set_oidc_config(
 async def delete_oauth_config(
     provider: OAuthSSOProvider,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Delete all configuration for a specific OAuth provider."""
+    _require_platform_oauth_config(authorization, "integrations.readwrite")
     service = OAuthConfigService(db)
     try:
         deleted = await service.delete_provider_config(
             provider,
-            updated_by=user.email,
+            updated_by=authorization.effective_actor.email,
         )
     except OAuthProviderPreferenceConflict as exc:
         raise HTTPException(
@@ -298,7 +356,17 @@ async def delete_oauth_config(
             detail=f"OAuth provider {provider} not found or already deleted",
         )
 
-    logger.info(f"OAuth config deleted for {log_safe(provider)} by {user.email}")
+    await emit_audit(
+        ctx.db,
+        f"oauth_config.{provider}.delete",
+        resource_type="oauth_config",
+        details={"provider": provider},
+    )
+    logger.info(
+        "OAuth config deleted for %s by %s",
+        log_safe(provider),
+        authorization.effective_actor.email,
+    )
 
 
 @router.post(
@@ -310,7 +378,7 @@ async def delete_oauth_config(
 async def test_oauth_config(
     provider: OAuthSSOProvider,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     test_data: OAuthConfigTestRequest | None = None,
     db: AsyncSession = Depends(get_db),
 ) -> OAuthConfigTestResponse:
@@ -324,6 +392,7 @@ async def test_oauth_config(
     The test validates that the discovery endpoint is reachable and returns
     valid OIDC configuration. It does NOT test the actual OAuth flow.
     """
+    _require_platform_oauth_config(authorization, "integrations.readwrite")
     service = OAuthConfigService(db)
 
     test_dict = test_data.model_dump(exclude_none=True) if test_data else None

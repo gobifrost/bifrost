@@ -103,6 +103,7 @@ class MCPGatewayCapabilityAgent(BaseModel):
     description: str | None = None
     builder: bool = False
     builder_session_required: bool = False
+    builder_session_id: str | None = None
     instructions: str | None = None
     instructions_included: bool = False
     matching_tools: list[MCPGatewayToolSummary]
@@ -119,15 +120,22 @@ class MCPGatewayCapabilitySearchRequest(BaseModel):
 
     query: str | None = Field(default=None, max_length=500)
     agent_id: str | None = None
+    builder_session_id: str | None = None
     tool_ref: str | None = None
     limit: int = Field(default=10, ge=1, le=20)
 
     @model_validator(mode="after")
     def validate_scope(self) -> "MCPGatewayCapabilitySearchRequest":
-        if self.tool_ref and not self.agent_id:
-            raise ValueError("tool_ref requires agent_id")
-        if not self.agent_id and not (self.query and self.query.strip()):
-            raise ValueError("query is required unless agent_id is provided")
+        if self.agent_id and self.builder_session_id:
+            raise ValueError("select either agent_id or builder_session_id")
+        if self.tool_ref and not (self.agent_id or self.builder_session_id):
+            raise ValueError("tool_ref requires agent_id or builder_session_id")
+        if not (self.agent_id or self.builder_session_id) and not (
+            self.query and self.query.strip()
+        ):
+            raise ValueError(
+                "query is required unless agent_id or builder_session_id is provided"
+            )
         return self
 
 
@@ -136,6 +144,7 @@ class MCPGatewayCapabilitySearchResponse(BaseModel):
 
     query: str | None = None
     agent_id: str | None = None
+    builder_session_id: str | None = None
     tool_ref: str | None = None
     agents: list[MCPGatewayCapabilityAgent]
     returned_matches: int
@@ -146,9 +155,9 @@ class MCPGatewayCapabilitySearchResponse(BaseModel):
 
 
 class MCPGatewayExecuteRequest(BaseModel):
-    """Arguments passed to an agent-bound tool."""
+    """Arguments passed to a path-bound gateway tool execution route."""
 
-    model_config = ConfigDict(populate_by_name=True)
+    model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
     arguments: dict[str, Any] = Field(default_factory=dict)
     async_: bool | None = Field(
@@ -162,7 +171,7 @@ class MCPGatewayExecuteRequest(BaseModel):
 
 
 class MCPGatewayExecuteResponse(BaseModel):
-    """Internal REST envelope for an auditable gateway tool call.
+    """Agent-bound REST envelope for an auditable gateway tool call.
 
     Synchronous public MCP calls return ``result`` directly. Async calls return
     this compact receipt so the caller can poll ``bifrost_get_execution``.
@@ -171,6 +180,24 @@ class MCPGatewayExecuteResponse(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     agent_id: str
+    agent_name: str
+    tool_ref: str
+    tool_name: str
+    source: str
+    duration_ms: int
+    async_: bool = Field(default=False, alias="async")
+    execution_id: str | None = None
+    execution_type: Literal["workflow", "agent_run"] | None = None
+    status: str | None = None
+    result: Any = None
+
+
+class MCPGatewayBuilderExecuteResponse(BaseModel):
+    """Builder-session-bound REST envelope for an auditable gateway tool call."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    builder_session_id: str
     agent_name: str
     tool_ref: str
     tool_name: str

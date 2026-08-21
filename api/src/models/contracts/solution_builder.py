@@ -10,7 +10,7 @@ connection state, so it gets its own read shape rather than a widened one.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -28,6 +28,7 @@ class PrivateSolutionCreate(BaseModel):
 
     slug: str = Field(min_length=1, max_length=255)
     name: str = Field(min_length=1, max_length=255)
+    target_kind: Literal["solution", "organization"] = "solution"
 
 
 class PrivateSolutionDTO(BaseModel):
@@ -52,7 +53,7 @@ class PrivateSolutionDTO(BaseModel):
     caller_access: Literal["owner", "collaborator", "support"] = "owner"
     collaborator_access: Literal["view", "edit"] | None = None
     status: str
-    target_kind: Literal["solution", "global_repo"] = "solution"
+    target_kind: Literal["solution", "organization", "global_repo"] = "solution"
     promotion_status: str
     created_at: datetime
     updated_at: datetime
@@ -71,6 +72,30 @@ class PrivateSolutionsList(BaseModel):
     builder_ready: bool
     builder_blockers: list[SandboxRunnerBlocker] = Field(default_factory=list)
     is_platform_admin: bool
+    can_open_global_workspace: bool = False
+
+
+class BuilderOrganizationTargetDTO(BaseModel):
+    """One exact organization boundary available to the current Builder."""
+
+    id: UUID
+    name: str
+    is_provider: bool = False
+    can_read: bool
+    can_execute: bool
+    can_build_resources: bool
+
+
+class BuilderTargetsDTO(BaseModel):
+    """Boundary-aware Builder entry points available to the current person."""
+
+    organizations: list[BuilderOrganizationTargetDTO] = Field(default_factory=list)
+    can_view_all: bool = False
+    can_open_global_workspace: bool = False
+    ai_configured: bool
+    builder_ready: bool
+    builder_blockers: list[SandboxRunnerBlocker] = Field(default_factory=list)
+    is_platform_admin: bool = False
 
 
 class BuilderCollaboratorUpsert(BaseModel):
@@ -106,7 +131,7 @@ class BuilderProjectDTO(BaseModel):
     solution_id: UUID
     current_revision_id: UUID | None = None
     deployed_revision_id: UUID | None = None
-    target_kind: Literal["solution", "global_repo"] = "solution"
+    target_kind: Literal["solution", "organization", "global_repo"] = "solution"
     promotion_status: str
     promotion_revision_id: UUID | None = None
     promotion_requested_by: UUID | None = None
@@ -123,6 +148,7 @@ class GlobalWorkspaceStatusDTO(BaseModel):
     current_revision_id: UUID | None = None
     deployed_revision_id: UUID | None = None
     has_pending_proposal: bool = False
+    pending_operation_count: int = 0
     can_rollback: bool = False
     last_applied_at: datetime | None = None
 
@@ -135,11 +161,30 @@ class GlobalWorkspaceValidationDTO(BaseModel):
     errors: list[str] = Field(default_factory=list)
 
 
+class GlobalOperationChangeDTO(BaseModel):
+    """One staged Global loose-resource operation change for human review."""
+
+    id: UUID
+    operation_id: str
+    resource_type: str
+    resource_id: str | None = None
+    state: str
+    validation_errors: list[str] = Field(default_factory=list)
+    before_state: dict[str, Any] | None = None
+    after_state: dict[str, Any] = Field(default_factory=dict)
+
+
+class GlobalOperationChangesListDTO(BaseModel):
+    changes: list[GlobalOperationChangeDTO] = Field(default_factory=list)
+    rollbackable_changes: list[GlobalOperationChangeDTO] = Field(default_factory=list)
+
+
 class GlobalWorkspaceApplyDTO(BaseModel):
     """Result of explicitly applying or rolling back reviewed ``_repo`` source."""
 
     revision_id: UUID
     changed_paths: list[str] = Field(default_factory=list)
+    changed_operations: list[str] = Field(default_factory=list)
     applied_at: datetime
     rolled_back: bool = False
 
@@ -243,7 +288,6 @@ class BuilderSessionDTO(BaseModel):
     solution_id: UUID
     conversation_id: UUID
     user_id: UUID
-    builder_agent_id: UUID
     created_at: datetime
     updated_at: datetime
 

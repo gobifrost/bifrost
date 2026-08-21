@@ -36,6 +36,13 @@ _CATALOG_PATH = (
 # same mechanism/name SolutionAppBuilder already vendors under.
 _SDK_TARBALL = "bifrost-sdk.tgz"
 _BUILD_META = "build-meta.json"
+# The vendored package version is build metadata, not the Bifrost release.
+# API and scheduler replicas can legitimately expose different diagnostic
+# version strings during a rolling update or development run. Using either as
+# part of the build input defeats content-addressed reuse even when the SDK
+# bundle and app source are byte-identical. SDK compatibility is carried by the
+# embedded contract version and content fingerprint instead.
+_INTERNAL_SDK_PACKAGE_VERSION = "0.0.0"
 
 # Build-toolchain packages the Bifrost-owned vite.config.mjs imports. They are
 # ALWAYS written into the materialized package.json (as devDependencies, at
@@ -390,7 +397,6 @@ def materialize_build_input(
     ``index.html`` from ``src_files``; rejects executable Tailwind directives;
     and drops any user-supplied ``package.json`` ``scripts`` block.
     """
-    from shared.version import get_version
     from src.services.sdk_package import build_sdk_tarball
 
     for rel, content in _sanitize_src_files(src_files).items():
@@ -398,7 +404,9 @@ def materialize_build_input(
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(content)
 
-    (dest_dir / _SDK_TARBALL).write_bytes(build_sdk_tarball(get_version()))
+    (dest_dir / _SDK_TARBALL).write_bytes(
+        build_sdk_tarball(_INTERNAL_SDK_PACKAGE_VERSION)
+    )
     (dest_dir / "vite.config.mjs").write_text(
         _bifrost_vite_config(app_id, solution_id), encoding="utf-8"
     )

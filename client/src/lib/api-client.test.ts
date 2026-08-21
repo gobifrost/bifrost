@@ -163,6 +163,38 @@ describe("authFetch transient 5xx retry", () => {
 		expect(response.status).toBe(200);
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
+
+	it("adds the active authorization context to shared fetch requests", async () => {
+		sessionStorage.setItem("userId", "user-one");
+		sessionStorage.setItem(
+			"bifrost-authorization-boundary:user-one",
+			"organization:customer-one",
+		);
+		fetchMock.mockResolvedValueOnce(mockResponse(200));
+
+		await authFetch("/api/test");
+
+		const request = fetchMock.mock.calls[0][0] as Request;
+		expect(request.headers.get("X-Bifrost-Boundary")).toBe(
+			"organization:customer-one",
+		);
+	});
+
+	it("preserves an operation-specific authorization context override", async () => {
+		sessionStorage.setItem("userId", "user-one");
+		sessionStorage.setItem(
+			"bifrost-authorization-boundary:user-one",
+			"organization:customer-one",
+		);
+		fetchMock.mockResolvedValueOnce(mockResponse(200));
+
+		await authFetch("/api/test", {
+			headers: { "X-Bifrost-Boundary": "platform" },
+		});
+
+		const request = fetchMock.mock.calls[0][0] as Request;
+		expect(request.headers.get("X-Bifrost-Boundary")).toBe("platform");
+	});
 });
 
 /**

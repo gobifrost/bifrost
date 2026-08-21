@@ -67,6 +67,26 @@ def test_view_collaborator_cannot_edit_but_editor_can() -> None:
     )
 
 
+def test_role_grant_has_same_view_edit_resource_semantics() -> None:
+    common = dict(
+        visibility="private",
+        owner_user_id=uuid4(),
+        actor_user_id=uuid4(),
+        is_platform_admin=False,
+        is_external=False,
+    )
+
+    assert can_access_solution(
+        **common, action=SolutionAction.VIEW, role_grant_access="view"
+    )
+    assert not can_access_solution(
+        **common, action=SolutionAction.EDIT, role_grant_access="view"
+    )
+    assert can_access_solution(
+        **common, action=SolutionAction.BUILD, role_grant_access="edit"
+    )
+
+
 def test_only_platform_admin_promotes_private_solution() -> None:
     owner = uuid4()
     common = dict(

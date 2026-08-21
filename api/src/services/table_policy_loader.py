@@ -52,7 +52,7 @@ async def load_resolved_table_policies(table: Table, db: AsyncSession) -> TableP
         )
         return TablePolicies()
 
-    repo = PolicyRuleRepository(db, org_id=table.organization_id, is_superuser=True)
+    repo = PolicyRuleRepository(db, org_id=table.organization_id, bypass_resource_admission=True)
     try:
         await resolve_policy_refs(
             policies,

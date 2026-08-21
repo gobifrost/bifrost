@@ -23,6 +23,11 @@ from src.models.orm.agent_prompt_history import AgentPromptHistory
 from src.models.orm.agent_run_flag_conversations import AgentRunFlagConversation
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.ai_usage import AIUsage
+from src.models.orm.organizations import Organization
+from src.services.authorization import (
+    AuthorizationBoundary,
+    AuthorizationContext,
+)
 from src.services.execution.tuning_service import (
     CONSOLIDATED_DRY_RUN_LIMIT,
     apply_consolidated_tuning,
@@ -57,6 +62,29 @@ def _superuser_principal(user) -> UserPrincipal:  # type: ignore[no-untyped-def]
         organization_id=user.organization_id,
         is_superuser=True,
     )
+
+
+def _authorization(
+    user: UserPrincipal,
+    *,
+    capabilities: set[str],
+    organization_id=None,
+) -> AuthorizationContext:
+    return AuthorizationContext(
+        requester=user,
+        effective_actor=user,
+        selected_boundary=(
+            AuthorizationBoundary.organization(organization_id)
+            if organization_id is not None
+            else AuthorizationBoundary.platform()
+        ),
+        effective_capabilities=frozenset(capabilities),
+        grant_sources=(),
+    )
+
+
+def _superuser_authorization(user: UserPrincipal) -> AuthorizationContext:
+    return _authorization(user, capabilities={"platform.superuser"})
 
 
 @pytest_asyncio.fixture
@@ -121,10 +149,12 @@ async def test_propose_returns_proposal_with_flagged_runs(
         "get_tuning_client",
         new=AsyncMock(return_value=(mock_client, "claude-sonnet-4-6")),
     ):
+        principal = _superuser_principal(seed_user)
         proposal = await propose_consolidated_tuning(
             agent.id,
             db_session,
-            _superuser_principal(seed_user),
+            principal,
+            _superuser_authorization(principal),
         )
 
     assert proposal.summary == "Routing is too eager."
@@ -136,12 +166,89 @@ async def test_propose_returns_proposal_with_flagged_runs(
 @pytest.mark.asyncio
 async def test_propose_no_flagged_runs_raises(db_session, seed_agent, seed_user):
     """No flagged runs -> LookupError (router maps to 404)."""
+    principal = _superuser_principal(seed_user)
     with pytest.raises(LookupError):
         await propose_consolidated_tuning(
             seed_agent.id,
             db_session,
-            _superuser_principal(seed_user),
+            principal,
+            _superuser_authorization(principal),
         )
+
+
+@pytest.mark.asyncio
+async def test_propose_uses_selected_boundary_for_flagged_run_visibility(
+    db_session,
+    seed_agent,
+    seed_user,
+):
+    """A run in another org is not visible just because the caller has executions.read."""
+    caller_org_id = uuid4()
+    other_org_id = uuid4()
+    db_session.add_all(
+        [
+            Organization(
+                id=caller_org_id,
+                name="Caller Org",
+                domain=f"caller-{caller_org_id.hex[:8]}.example.com",
+                is_active=True,
+                is_provider=False,
+                created_by="test@example.com",
+            ),
+            Organization(
+                id=other_org_id,
+                name="Other Org",
+                domain=f"other-{other_org_id.hex[:8]}.example.com",
+                is_active=True,
+                is_provider=False,
+                created_by="test@example.com",
+            ),
+        ]
+    )
+    await db_session.flush()
+    run = AgentRun(
+        id=uuid4(),
+        agent_id=seed_agent.id,
+        org_id=other_org_id,
+        caller_user_id=str(uuid4()),
+        trigger_type="test",
+        status="completed",
+        iterations_used=1,
+        tokens_used=100,
+        input={"message": "foreign"},
+        output={"text": "foreign"},
+        verdict="down",
+    )
+    db_session.add(run)
+    await db_session.commit()
+
+    principal = UserPrincipal(
+        user_id=seed_user.id,
+        email=seed_user.email,
+        name=seed_user.name or "",
+        organization_id=caller_org_id,
+        is_superuser=False,
+    )
+    authorization = _authorization(
+        principal,
+        capabilities={"agents.read", "executions.read"},
+        organization_id=caller_org_id,
+    )
+
+    try:
+        with pytest.raises(LookupError):
+            await propose_consolidated_tuning(
+                seed_agent.id,
+                db_session,
+                principal,
+                authorization,
+            )
+    finally:
+        await db_session.execute(delete(AgentRun).where(AgentRun.id == run.id))
+        await db_session.execute(
+            delete(Organization).where(Organization.id.in_([caller_org_id, other_org_id]))
+        )
+        await db_session.commit()
 
 
 @pytest.mark.asyncio
@@ -152,6 +259,7 @@ async def test_apply_updates_prompt_creates_history_resets_verdicts(
     agent, runs = seed_agent_with_flagged_runs
     original_prompt = agent.system_prompt
     new_prompt = "Be more careful in routing decisions."
+    principal = _superuser_principal(seed_user)
 
     applied = await apply_consolidated_tuning(
         agent_id=agent.id,
@@ -159,7 +267,8 @@ async def test_apply_updates_prompt_creates_history_resets_verdicts(
         reason="Consolidated tuning from 3 flagged runs.",
         user_id=seed_user.id,
         db=db_session,
-        user=_superuser_principal(seed_user),
+        user=principal,
+        authorization=_superuser_authorization(principal),
     )
     await db_session.commit()
 
@@ -241,12 +350,14 @@ async def test_dry_run_caps_at_limit(db_session, seed_agent, seed_user):
             )
 
         with patch.object(mod, "evaluate_against_prompt", new=fake_evaluate):
+            principal = _superuser_principal(seed_user)
             results = await dry_run_consolidated(
                 agent_id=seed_agent.id,
                 proposed_prompt="Stricter prompt.",
                 db=db_session,
                 session_factory=MagicMock(),
-                user=_superuser_principal(seed_user),
+                user=principal,
+                authorization=_superuser_authorization(principal),
             )
 
         assert len(results) == CONSOLIDATED_DRY_RUN_LIMIT

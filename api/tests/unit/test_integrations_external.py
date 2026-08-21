@@ -63,7 +63,7 @@ class TestOAuthTokenExternal:
         # The subclass __init__ previously dropped is_external — a TypeError
         # would mean the kwarg never reached the base (silent leak risk).
         repo = OAuthTokenRepository(
-            _session(), org_id=uuid4(), is_superuser=False, is_external=True
+            _session(), org_id=uuid4(), bypass_resource_admission=False, is_external=True
         )
         assert repo.external_restricted is True
 
@@ -72,7 +72,7 @@ class TestOAuthTokenExternal:
         # Org-specific lookup returns nothing → would normally fall to global.
         session.execute.return_value = _result([])
         repo = OAuthTokenRepository(
-            session, org_id=uuid4(), is_superuser=False, is_external=True
+            session, org_id=uuid4(), bypass_resource_admission=False, is_external=True
         )
         token = await repo.get_org_level_for_provider(uuid4())
         assert token is None
@@ -84,7 +84,7 @@ class TestOAuthTokenExternal:
     async def test_normal_user_keeps_global_fallback(self):
         session = _session()
         session.execute.return_value = _result([])
-        repo = OAuthTokenRepository(session, org_id=uuid4(), is_superuser=True)
+        repo = OAuthTokenRepository(session, org_id=uuid4(), bypass_resource_admission=True)
         await repo.get_org_level_for_provider(uuid4())
         sql = _all_sql(session)
         assert "organization_id IS NULL" in sql, (
@@ -95,7 +95,7 @@ class TestOAuthTokenExternal:
         session = _session()
         session.execute.return_value = _result([])
         repo = OAuthTokenRepository(
-            session, org_id=None, is_superuser=False, is_external=True
+            session, org_id=None, bypass_resource_admission=False, is_external=True
         )
         token = await repo.get_org_level_for_provider(uuid4())
         assert token is None

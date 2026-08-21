@@ -51,6 +51,7 @@ def test_builder_control_plane_rows_are_not_deploy_managed() -> None:
         SolutionBuilderCollaborator,
         SolutionBuilderProject,
         SolutionBuilderSession,
+        SolutionGlobalOperationChange,
         SolutionGlobalWorkspaceApply,
         SolutionSourceRevision,
     )
@@ -62,6 +63,12 @@ def test_builder_control_plane_rows_are_not_deploy_managed() -> None:
         SolutionBuilderProject(solution_id=solution_id),
         SolutionBuilderCollaborator(solution_id=solution_id),
         SolutionGlobalWorkspaceApply(solution_id=solution_id),
+        SolutionGlobalOperationChange(
+            solution_id=solution_id,
+            operation_id="agents.create",
+            resource_type="agent",
+            payload={"name": "staged"},
+        ),
         SolutionSourceRevision(solution_id=solution_id),
         SolutionBuilderSession(solution_id=solution_id),
     ]
@@ -264,6 +271,35 @@ class TestBeforeFlushBackstop:
         with pytest.raises(SolutionManagedWriteError):
             await db.flush()
         await db.rollback()
+
+    async def test_global_operation_change_bookkeeping_is_allowed(self, db_session) -> None:
+        from src.models.orm.solution_builder import SolutionGlobalOperationChange
+        from src.models.orm.solutions import Solution
+
+        db = db_session
+        sol = Solution(
+            id=uuid.uuid4(),
+            slug=f"bfgo-{uuid.uuid4().hex[:8]}",
+            name="Global operation bookkeeping",
+            organization_id=None,
+        )
+        db.add(sol)
+        await db.flush()
+        row = SolutionGlobalOperationChange(
+            solution_id=sol.id,
+            operation_id="agents.create",
+            resource_type="agent",
+            payload={"name": "staged"},
+        )
+        db.add(row)
+        await db.flush()
+
+        row.state = "applying"
+        await db.flush()
+        row.state = "applied"
+        row.resource_id = str(uuid.uuid4())
+        row.applied_state = {"id": row.resource_id, "name": "staged"}
+        await db.flush()
 
     async def test_deploy_core_upsert_is_allowed(self, db_session) -> None:
         """Deploy's Core update()/insert() path must NOT be blocked by the

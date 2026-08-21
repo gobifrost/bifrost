@@ -120,7 +120,7 @@ Every execution-resolution entity (Config, Table, OAuth, etc.) goes through
 OR global), exactly one scope resolver function, exactly two repository
 methods (`get` for single-entity resolution, `list` for enumeration).
 User-ness is encoded in the repository instance, not the method names.
-Identity entities (Organization, User, UserRole, OAuthAccount, AuditLog)
+Identity entities (Organization, User, RoleAssignment, OAuthAccount, AuditLog)
 are not org-resolved and bypass this pattern.
 
 ---
@@ -237,9 +237,9 @@ fails CI for any new handler that ducks this.
 
 ## The two repository methods
 
-`OrgScopedRepository` exposes exactly two methods. User-ness lives on the
-repository instance (`user_id`, `is_superuser`); the methods themselves
-have no user-aware variants.
+`OrgScopedRepository` exposes exactly two methods. Resource admission context
+lives on the repository instance (`user_id`, `bypass_resource_admission`); the
+methods themselves have no user-aware variants.
 
 ### `repo.get(name=...)` or `repo.get(id=...)`
 
@@ -249,8 +249,8 @@ Resolve one entity. SDK execution path.
   first; fall back to global. Returns at most one row. If an org-specific
   entry exists with the same name as a global one, the org entry wins.
 - **ID lookup**: globally unique, no cascade. Returns the entity directly.
-  Access checks still apply (superusers bypass; regular users must be in
-  scope and pass role check).
+  Access checks still apply (explicit bypass skips admission; ordinary callers
+  must be in scope and pass access-level/role checks).
 
 ### `repo.list()`
 
@@ -259,11 +259,10 @@ Enumerate everything visible. UI execution path.
 - Cascade union: returns both org-specific and global entries. Name
   collisions are NOT resolved — both rows are returned. UI shows them
   side-by-side.
-- Role filter applies automatically when the repository was constructed
-  with a regular user (`user_id` set, `is_superuser=False`). Skipped for
-  superusers.
+- Role filter applies automatically unless the repository was constructed with
+  `bypass_resource_admission=True`.
 
-### How the user-ness is encoded
+### How resource admission is encoded
 
 ```python
 # Direct user endpoint (REST hit by the UI)
@@ -271,14 +270,14 @@ repo = TableRepository(
     db,
     org_id=user.org_id,
     user_id=user.id,
-    is_superuser=user.is_superuser,
+    bypass_resource_admission=authorization.has_capability("platform.superuser"),
 )
 
 # SDK execution endpoint (engine has already resolved scope)
 repo = TableRepository(
     db,
     org_id=resolved_scope,
-    is_superuser=True,  # the engine sentinel is trusted
+    bypass_resource_admission=True,  # engine/runtime already authorized it
 )
 ```
 
@@ -405,7 +404,7 @@ model without classifying it fails CI.
 
 Three additional entities are identity but do NOT carry an
 `organization_id` column themselves: `Organization` (it IS the org),
-`UserRole` (junction to users), `OAuthAccount` (joins to users via
+`RoleAssignment` (junction to users), `OAuthAccount` (joins to users via
 SSO flows). They are included here for completeness but are not part
 of the `organization_id`-bearing count.
 
@@ -648,12 +647,12 @@ reimplementing.
 @router.get("/{slug}")
 async def get_application(slug: str, ctx: Context, user: CurrentUser):
     repo = ApplicationRepository(
-        ctx.db,
-        org_id=ctx.org_id,
-        user_id=ctx.user.user_id,
-        is_superuser=ctx.user.is_superuser,
-    )
-    return await repo.can_access(slug=slug)
+    ctx.db,
+    org_id=ctx.org_id,
+    user_id=ctx.user.user_id,
+    bypass_resource_roles=authorization.has_capability("platform.superuser"),
+)
+return await repo.can_access(slug=slug)
 ```
 
 ### Workflow execution authorization (use workflow's org, not caller's)
@@ -663,7 +662,7 @@ workflow_repo = WorkflowRepository(
     session=db,
     org_id=workflow.organization_id,
     user_id=ctx.user.user_id,
-    is_superuser=ctx.user.is_superuser,
+    bypass_resource_roles=authorization.has_capability("platform.superuser"),
 )
 await workflow_repo.can_access(id=workflow_id)
 ```
@@ -675,7 +674,7 @@ await workflow_repo.can_access(id=workflow_id)
 repo = TableRepository(
     session=db,
     org_id=execution_org_id,
-    is_superuser=True,
+    bypass_resource_admission=True,
 )
 table = await repo.get(name=table_name)
 ```

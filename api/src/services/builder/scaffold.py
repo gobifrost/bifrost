@@ -24,7 +24,7 @@ import os
 import shutil
 import zipfile
 from pathlib import Path
-from uuid import NAMESPACE_URL, UUID, uuid5
+from uuid import UUID, uuid5
 
 import yaml
 
@@ -58,9 +58,7 @@ BUILDER_AGENT_SYSTEM_TOOLS = [
     "validate_solution",
     "test_solution_build",
 ]
-_BUILDER_AGENT_ID_KEY = "bifrost-private-solution-builder-agent"
-
-
+_LEGACY_BUILDER_AGENT_ID_KEY = "bifrost-private-solution-builder-agent"
 def _builder_skill_source() -> Path:
     configured = os.getenv("BIFROST_BUILDER_SKILL_PATH")
     candidates = [
@@ -72,11 +70,6 @@ def _builder_skill_source() -> Path:
         if candidate is not None and (candidate / "SKILL.md").is_file():
             return candidate
     raise FileNotFoundError("canonical bifrost-build skill bundle is unavailable")
-
-
-def builder_agent_id(solution_id: UUID) -> UUID:
-    return uuid5(solution_id, _BUILDER_AGENT_ID_KEY)
-
 
 def build_initial_workspace(
     dir: Path,
@@ -95,43 +88,40 @@ def build_initial_workspace(
     descriptor = yaml.safe_dump({"slug": slug, "name": name}, sort_keys=False, allow_unicode=True)
     (dir / DESCRIPTOR_FILENAME).write_text(descriptor, encoding="utf-8")
 
-    skill_source = _builder_skill_source()
-    agent_id = builder_agent_id(
-        solution_id or uuid5(NAMESPACE_URL, f"bifrost-builder:{slug}")
-    )
-
     workflows = dir / "workflows"
     workflows.mkdir(exist_ok=True)
     (workflows / ".gitkeep").write_text("", encoding="utf-8")
 
     (dir / "README.md").write_text(_README_TEMPLATE.format(name=name), encoding="utf-8")
-    shutil.copytree(
-        skill_source,
-        dir / BUILDER_SKILL_BUNDLE_PATH,
-        symlinks=False,
-    )
-    manifest_dir = dir / ".bifrost"
-    manifest_dir.mkdir(exist_ok=True)
-    agents = {
-        "agents": {
-            str(agent_id): {
-                "id": str(agent_id),
-                "name": f"{name} Builder",
-                "description": "Private Solution authoring agent",
-                "system_prompt": (skill_source / "SKILL.md").read_text(
-                    encoding="utf-8"
-                ),
-                "bundle_path": BUILDER_SKILL_BUNDLE_PATH,
-                "channels": ["chat"],
-                "system_tools": BUILDER_AGENT_SYSTEM_TOOLS,
-                "max_iterations": BUILDER_AGENT_MAX_ITERATIONS,
-                "max_token_budget": BUILDER_AGENT_MAX_TOKEN_BUDGET,
-                "access_level": "role_based",
-            }
-        }
-    }
-    (manifest_dir / "agents.yaml").write_text(
-        yaml.safe_dump(agents, sort_keys=False, allow_unicode=True),
+    (dir / ".bifrost").mkdir(exist_ok=True)
+
+
+def strip_legacy_builder_assets(dir: Path, *, solution_id: UUID) -> None:
+    """Remove obsolete copied Builder configuration from a materialized revision."""
+
+    bundle = dir / BUILDER_SKILL_BUNDLE_PATH
+    if bundle.is_dir():
+        shutil.rmtree(bundle)
+        skills_dir = bundle.parent
+        if skills_dir.is_dir() and not any(skills_dir.iterdir()):
+            skills_dir.rmdir()
+
+    manifest = dir / ".bifrost" / "agents.yaml"
+    if not manifest.is_file():
+        return
+    data = yaml.safe_load(manifest.read_text(encoding="utf-8"))
+    if not isinstance(data, dict) or not isinstance(data.get("agents"), dict):
+        return
+    legacy_id = str(uuid5(solution_id, _LEGACY_BUILDER_AGENT_ID_KEY))
+    agents = data["agents"]
+    if legacy_id not in agents:
+        return
+    del agents[legacy_id]
+    if not agents:
+        manifest.unlink()
+        return
+    manifest.write_text(
+        yaml.safe_dump(data, sort_keys=False, allow_unicode=True),
         encoding="utf-8",
     )
 

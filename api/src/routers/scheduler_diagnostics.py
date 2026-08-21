@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import or_, select
 
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context
 from src.models.contracts.scheduler_diagnostics import (
     SchedulerCapacityStatus,
     SchedulerDiagnosticsResponse,
@@ -34,8 +34,16 @@ from src.services.scheduler_diagnostics import (
     REPLICA_STALE_RETENTION,
     utcnow,
 )
+from src.services.authorization import CurrentAuthorizationContext
 
 router = APIRouter(prefix="/api/platform/scheduler", tags=["Platform Scheduler"])
+
+
+def _require_scheduler_diagnostics(
+    authorization: CurrentAuthorizationContext,
+) -> None:
+    authorization.require("platformjobs.read")
+    authorization.require_resource_boundary(None)
 
 
 def _run_status(
@@ -69,8 +77,9 @@ def _run_status(
 @router.get("", response_model=SchedulerDiagnosticsResponse)
 async def get_scheduler_diagnostics(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> SchedulerDiagnosticsResponse:
+    _require_scheduler_diagnostics(authorization)
     now = utcnow()
     lease = await ctx.db.get(SchedulerLease, TRIGGER_LEASE_NAME)
     leader_healthy = bool(
@@ -82,14 +91,18 @@ async def get_scheduler_diagnostics(
     leader_owner = lease.owner_id if leader_healthy and lease else None
 
     replica_rows = (
-        await ctx.db.execute(
-            select(SchedulerReplica)
-            .where(
-                SchedulerReplica.last_heartbeat_at >= now - REPLICA_STALE_RETENTION
+        (
+            await ctx.db.execute(
+                select(SchedulerReplica)
+                .where(
+                    SchedulerReplica.last_heartbeat_at >= now - REPLICA_STALE_RETENTION
+                )
+                .order_by(SchedulerReplica.id)
             )
-            .order_by(SchedulerReplica.id)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     active_rows = (
         await ctx.db.execute(
             select(PlatformJob.lease_owner, PlatformJob.id).where(
@@ -123,9 +136,7 @@ async def get_scheduler_diagnostics(
 
     state_rows = {
         row.task_id: row
-        for row in (
-            await ctx.db.execute(select(SchedulerTaskState))
-        ).scalars().all()
+        for row in (await ctx.db.execute(select(SchedulerTaskState))).scalars().all()
     }
     last_run_ids = [row.last_run_id for row in state_rows.values() if row.last_run_id]
     run_rows = {}
@@ -134,11 +145,17 @@ async def get_scheduler_diagnostics(
             row.id: row
             for row in (
                 await ctx.db.execute(
-                    select(SchedulerTaskRun).where(SchedulerTaskRun.id.in_(last_run_ids))
+                    select(SchedulerTaskRun).where(
+                        SchedulerTaskRun.id.in_(last_run_ids)
+                    )
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         }
-    linked_job_ids = [row.platform_job_id for row in run_rows.values() if row.platform_job_id]
+    linked_job_ids = [
+        row.platform_job_id for row in run_rows.values() if row.platform_job_id
+    ]
     linked_jobs = {}
     if linked_job_ids:
         linked_jobs = {
@@ -147,7 +164,9 @@ async def get_scheduler_diagnostics(
                 await ctx.db.execute(
                     select(PlatformJob).where(PlatformJob.id.in_(linked_job_ids))
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         }
 
     tasks: list[SchedulerTaskStatus] = []
@@ -162,7 +181,9 @@ async def get_scheduler_diagnostics(
                 task_id=definition.task_id,
                 name=state.name if state else definition.name,
                 schedule=state.schedule if state else definition.schedule,
-                execution_mode=state.execution_mode if state else definition.execution_mode,
+                execution_mode=state.execution_mode
+                if state
+                else definition.execution_mode,
                 enabled=state.enabled if state else False,
                 next_run_at=state.next_run_at if state else None,
                 last_run=last_run,
@@ -179,7 +200,8 @@ async def get_scheduler_diagnostics(
     oldest_queued_seconds = None
     if queued_rows:
         oldest_queued_seconds = max(
-            0.0, (now - min(created_at for created_at, _ in queued_rows)).total_seconds()
+            0.0,
+            (now - min(created_at for created_at, _ in queued_rows)).total_seconds(),
         )
     utilization = [
         100 * replica.memory_current_bytes / replica.memory_limit_bytes
@@ -220,9 +242,10 @@ async def get_scheduler_diagnostics(
 async def get_scheduler_task_history(
     task_id: str,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     limit: int = Query(default=10, ge=1, le=25),
 ) -> SchedulerTaskHistoryResponse:
+    _require_scheduler_diagnostics(authorization)
     definition = SCHEDULED_TASKS_BY_ID.get(task_id)
     if definition is None:
         raise HTTPException(
@@ -231,13 +254,17 @@ async def get_scheduler_task_history(
         )
 
     runs = (
-        await ctx.db.execute(
-            select(SchedulerTaskRun)
-            .where(SchedulerTaskRun.task_id == task_id)
-            .order_by(SchedulerTaskRun.started_at.desc())
-            .limit(limit)
+        (
+            await ctx.db.execute(
+                select(SchedulerTaskRun)
+                .where(SchedulerTaskRun.task_id == task_id)
+                .order_by(SchedulerTaskRun.started_at.desc())
+                .limit(limit)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     platform_job_ids = [run.platform_job_id for run in runs if run.platform_job_id]
     linked_jobs = {}
     if platform_job_ids:
@@ -247,7 +274,9 @@ async def get_scheduler_task_history(
                 await ctx.db.execute(
                     select(PlatformJob).where(PlatformJob.id.in_(platform_job_ids))
                 )
-            ).scalars().all()
+            )
+            .scalars()
+            .all()
         }
 
     run_ids = [run.id for run in runs]
@@ -260,15 +289,19 @@ async def get_scheduler_task_history(
                 SystemDiagnosticLog.platform_job_id.in_(platform_job_ids),
             )
         log_rows = (
-            await ctx.db.execute(
-                select(SystemDiagnosticLog)
-                .where(log_filter)
-                .order_by(
-                    SystemDiagnosticLog.created_at.asc(),
-                    SystemDiagnosticLog.id.asc(),
+            (
+                await ctx.db.execute(
+                    select(SystemDiagnosticLog)
+                    .where(log_filter)
+                    .order_by(
+                        SystemDiagnosticLog.created_at.asc(),
+                        SystemDiagnosticLog.id.asc(),
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
 
     logs_by_run: dict[UUID, list[SystemDiagnosticLogPublic]] = {
         run.id: [] for run in runs

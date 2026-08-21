@@ -104,8 +104,7 @@ async def bifrost_create_role(
     context: Any,
     name: str,
     description: str | None = None,
-    permissions: dict[str, Any] | None = None,
-    scopes: list[str] | None = None,
+    capabilities: list[str] | None = None,
 ) -> ToolResult:
     """Create a role — thin wrapper over ``POST /api/roles``."""
     if not name:
@@ -114,8 +113,7 @@ async def bifrost_create_role(
     fields = {
         "name": name,
         "description": description,
-        "permissions": permissions,
-        "scopes": scopes,
+        "capabilities": capabilities,
     }
     try:
         body = await _assemble_role_body(context, fields, is_update=False)
@@ -142,8 +140,7 @@ async def bifrost_update_role(
     role_ref: str,
     name: str | None = None,
     description: str | None = None,
-    permissions: dict[str, Any] | None = None,
-    scopes: list[str] | None = None,
+    capabilities: list[str] | None = None,
 ) -> ToolResult:
     """Update a role — thin wrapper over ``PATCH /api/roles/{uuid}``.
 
@@ -167,8 +164,7 @@ async def bifrost_update_role(
     fields = {
         "name": name,
         "description": description,
-        "permissions": permissions,
-        "scopes": scopes,
+        "capabilities": capabilities,
     }
     try:
         body = await _assemble_role_body(context, fields, is_update=True)
@@ -218,7 +214,7 @@ TOOLS = [
     (
         "bifrost_update_role",
         "Update Role",
-        "Update a role (name, description, permissions, scopes).",
+        "Update a role's name, description, or capabilities.",
     ),
     (
         "bifrost_delete_role",

@@ -117,6 +117,80 @@ class TestUserListing:
 
 
 @pytest.mark.e2e
+class TestPlatformOperatorBoundaries:
+    """Provider staff act through their Role assignment, not org membership."""
+
+    def test_operator_lists_managed_customer_users_not_provider_users(
+        self,
+        e2e_client,
+        provider_org_user,
+        org1_user,
+    ):
+        response = e2e_client.get(
+            "/api/users",
+            headers={
+                **provider_org_user.headers,
+                "X-Bifrost-Boundary": "managed_organizations",
+            },
+        )
+        assert response.status_code == 200, response.text
+        emails = {row["email"] for row in response.json()}
+        assert org1_user.email in emails
+        assert provider_org_user.email not in emails
+
+    def test_operator_can_manage_a_customer_user_in_an_exact_boundary(
+        self,
+        e2e_client,
+        provider_org_user,
+        org1,
+    ):
+        headers = {
+            **provider_org_user.headers,
+            "X-Bifrost-Boundary": f"organization:{org1['id']}",
+        }
+        create_response = e2e_client.post(
+            "/api/users",
+            headers=headers,
+            json={
+                "email": "operator-created@gobifrost.dev",
+                "name": "Operator Created",
+                "organization_id": org1["id"],
+                "is_superuser": False,
+            },
+        )
+        assert create_response.status_code == 201, create_response.text
+        user_id = create_response.json()["id"]
+        try:
+            update_response = e2e_client.patch(
+                f"/api/users/{user_id}",
+                headers=headers,
+                json={"name": "Operator Updated"},
+            )
+            assert update_response.status_code == 200, update_response.text
+            assert update_response.json()["name"] == "Operator Updated"
+        finally:
+            delete_response = e2e_client.delete(
+                f"/api/users/{user_id}",
+                headers=headers,
+            )
+            assert delete_response.status_code == 204, delete_response.text
+
+    def test_operator_cannot_select_platform_global(
+        self,
+        e2e_client,
+        provider_org_user,
+    ):
+        response = e2e_client.get(
+            "/api/roles",
+            headers={
+                **provider_org_user.headers,
+                "X-Bifrost-Boundary": "platform",
+            },
+        )
+        assert response.status_code == 403, response.text
+
+
+@pytest.mark.e2e
 class TestUserProfile:
     """Test user profile operations."""
 
@@ -292,7 +366,15 @@ class TestPermanentDelete:
         assign_resp = e2e_client.post(
             f"/api/roles/{role_id}/users",
             headers=platform_admin.headers,
-            json={"user_ids": [user_id]},
+            json={
+                "user_ids": [user_id],
+                "boundaries": [
+                    {
+                        "boundary_kind": "organization",
+                        "organization_id": org1["id"],
+                    }
+                ],
+            },
         )
         assert assign_resp.status_code == 204
 

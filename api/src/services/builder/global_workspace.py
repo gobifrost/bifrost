@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm.solution_builder import (
     SolutionBuilderProject,
+    SolutionGlobalOperationChange,
     SolutionGlobalWorkspaceApply,
     SolutionSourceRevision,
 )
@@ -24,6 +25,9 @@ from src.services.builder.fs_tools import (
     WorkspaceLimits,
     WorkspaceRoot,
     safe_extract_zip,
+)
+from src.services.builder.global_operation_changes import (
+    validate_staged_global_operation_changes,
 )
 from src.services.builder.revision_storage import SolutionRevisionStorage
 from src.services.builder.scaffold import zip_workspace
@@ -64,6 +68,7 @@ class GlobalWorkspaceApplyResult:
     revision_id: UUID
     changed_paths: list[str]
     applied_at: datetime
+    changed_operations: list[str] | None = None
     rolled_back: bool = False
 
 
@@ -73,6 +78,28 @@ def _file_map(root: Path) -> dict[str, bytes]:
         for path in sorted(root.rglob("*"))
         if path.is_file() and not path.is_symlink()
     }
+
+
+def _source_file_map(root: Path) -> dict[str, bytes]:
+    """Return reviewed source files, excluding generated Bifrost manifests."""
+
+    return {
+        path: content
+        for path, content in _file_map(root).items()
+        if not path.startswith(".bifrost/")
+    }
+
+
+def _non_manifest_drift(
+    reviewed: dict[str, bytes],
+    live: dict[str, bytes],
+) -> list[str]:
+    return sorted(
+        path
+        for path in set(reviewed) | set(live)
+        if not path.startswith(".bifrost/")
+        and reviewed.get(path) != live.get(path)
+    )
 
 
 def validate_global_workspace(base: Path, candidate: Path) -> list[str]:
@@ -200,6 +227,13 @@ async def _latest_apply(
     )
 
 
+async def latest_global_workspace_source_apply(
+    db: AsyncSession,
+    solution_id: UUID,
+) -> SolutionGlobalWorkspaceApply | None:
+    return await _latest_apply(db, solution_id)
+
+
 async def global_workspace_state(
     db: AsyncSession,
     *,
@@ -303,6 +337,16 @@ async def refresh_global_workspace(
             raise GlobalWorkspaceConflict(
                 "Apply or discard the pending proposal before refreshing from live _repo"
             )
+        staged_operations = await db.scalar(
+            select(SolutionGlobalOperationChange.id).where(
+                SolutionGlobalOperationChange.solution_id == solution_id,
+                SolutionGlobalOperationChange.state == "staged",
+            )
+        )
+        if staged_operations is not None:
+            raise GlobalWorkspaceConflict(
+                "Apply or discard staged operation changes before refreshing from live _repo"
+            )
         revision = await _create_snapshot_revision(
             db,
             solution_id=solution_id,
@@ -353,7 +397,14 @@ async def validate_global_workspace_revision(
             root / "candidate",
             limits=limits,
         )
-        return validate_global_workspace(base, candidate)
+        errors = validate_global_workspace(base, candidate)
+        errors.extend(
+            await validate_staged_global_operation_changes(
+                db,
+                solution_id=solution_id,
+            )
+        )
+        return errors
 
 
 async def _apply_maps(
@@ -462,6 +513,10 @@ async def apply_global_workspace(
     solution_id: UUID,
     requested_by: UUID,
     requested_by_email: str,
+    apply_job_id: UUID | None = None,
+    expected_from_revision_id: UUID | None = None,
+    expected_to_revision_id: UUID | None = None,
+    allow_staged_operations: bool = False,
     limits: WorkspaceLimits | None = None,
 ) -> GlobalWorkspaceApplyResult:
     limits = limits or WorkspaceLimits()
@@ -472,8 +527,39 @@ async def apply_global_workspace(
         project = state.project
         if project.current_revision_id is None or project.deployed_revision_id is None:
             raise GlobalWorkspaceError("Global workspace revisions are missing")
-        if project.current_revision_id == project.deployed_revision_id:
+        if (
+            expected_from_revision_id is not None
+            and project.deployed_revision_id != expected_from_revision_id
+        ):
+            raise GlobalWorkspaceConflict(
+                "The reviewed Global source baseline changed after approval"
+            )
+        if (
+            expected_to_revision_id is not None
+            and project.current_revision_id != expected_to_revision_id
+        ):
+            raise GlobalWorkspaceConflict(
+                "The reviewed Global source proposal changed after approval"
+            )
+        staged_operations = (
+            await db.scalars(
+                select(SolutionGlobalOperationChange).where(
+                    SolutionGlobalOperationChange.solution_id == solution_id,
+                    SolutionGlobalOperationChange.state == "staged",
+                )
+            )
+        ).all()
+        if (
+            project.current_revision_id == project.deployed_revision_id
+            and not staged_operations
+        ):
             raise GlobalWorkspaceConflict("There is no pending proposal to apply")
+        if staged_operations and not allow_staged_operations:
+            raise GlobalWorkspaceConflict(
+                "Global operation changes are staged but the reviewed operation "
+                "apply coordinator is not enabled yet. Apply/discard operation "
+                "changes before applying source revisions."
+            )
         baseline = await db.get(SolutionSourceRevision, project.deployed_revision_id)
         proposal = await db.get(SolutionSourceRevision, project.current_revision_id)
         if baseline is None or proposal is None:
@@ -482,46 +568,47 @@ async def apply_global_workspace(
         after: dict[str, bytes] | None = None
         mutation_started = False
         try:
-            with tempfile.TemporaryDirectory(prefix="bifrost-global-apply-") as tmp:
-                root = Path(tmp)
-                live_archive = root / "live.zip"
-                live_sha = await _repo_archive(live_archive, limits=limits)
-                if live_sha != baseline.source_sha256:
-                    raise GlobalWorkspaceConflict(
-                        "Live _repo changed after this proposal began. "
-                        "Refresh and review a new diff."
+            changed: list[str] = []
+            if project.current_revision_id != project.deployed_revision_id:
+                with tempfile.TemporaryDirectory(prefix="bifrost-global-apply-") as tmp:
+                    root = Path(tmp)
+                    live_archive = root / "live.zip"
+                    live_sha = await _repo_archive(live_archive, limits=limits)
+                    if live_sha != baseline.source_sha256:
+                        raise GlobalWorkspaceConflict(
+                            "Live _repo changed after this proposal began. "
+                            "Refresh and review a new diff."
+                        )
+                    baseline_root = await _materialize_revision(
+                        solution_id,
+                        baseline.id,
+                        root / "baseline",
+                        limits=limits,
                     )
-                baseline_root = await _materialize_revision(
-                    solution_id,
-                    baseline.id,
-                    root / "baseline",
-                    limits=limits,
-                )
-                proposal_root = await _materialize_revision(
-                    solution_id,
-                    proposal.id,
-                    root / "proposal",
-                    limits=limits,
-                )
-                errors = validate_global_workspace(baseline_root, proposal_root)
-                if errors:
-                    raise GlobalWorkspaceInvalid(errors)
-                before = _file_map(baseline_root)
-                after = _file_map(proposal_root)
-                mutation_started = True
-                changed = await _apply_maps(
-                    db,
-                    before=before,
-                    after=after,
-                    updated_by=requested_by_email,
-                )
-                actual_archive = root / "actual.zip"
-                actual_sha = await _repo_archive(actual_archive, limits=limits)
-                if actual_sha != proposal.source_sha256:
-                    raise GlobalWorkspaceConflict(
-                        "Live _repo did not match the reviewed proposal after apply"
+                    proposal_root = await _materialize_revision(
+                        solution_id,
+                        proposal.id,
+                        root / "proposal",
+                        limits=limits,
                     )
-
+                    errors = validate_global_workspace(baseline_root, proposal_root)
+                    if errors:
+                        raise GlobalWorkspaceInvalid(errors)
+                    before = _file_map(baseline_root)
+                    after = _file_map(proposal_root)
+                    mutation_started = True
+                    changed = await _apply_maps(
+                        db,
+                        before=before,
+                        after=after,
+                        updated_by=requested_by_email,
+                    )
+                    actual_archive = root / "actual.zip"
+                    actual_sha = await _repo_archive(actual_archive, limits=limits)
+                    if actual_sha != proposal.source_sha256:
+                        raise GlobalWorkspaceConflict(
+                            "Live _repo did not match the reviewed proposal after apply"
+                        )
             await db.execute(
                 update(SolutionGlobalWorkspaceApply)
                 .where(
@@ -536,6 +623,8 @@ async def apply_global_workspace(
                     solution_id=solution_id,
                     from_revision_id=baseline.id,
                     to_revision_id=proposal.id,
+                    released_revision_id=proposal.id,
+                    apply_job_id=apply_job_id,
                     applied_by=requested_by,
                     applied_at=applied_at,
                 )
@@ -546,7 +635,10 @@ async def apply_global_workspace(
                 "builder.global_workspace.apply",
                 resource_type="solution",
                 resource_id=solution_id,
-                details={"revision_id": str(proposal.id), "changed_paths": changed},
+                details={
+                    "revision_id": str(proposal.id),
+                    "changed_paths": changed,
+                },
             )
             await db.commit()
         except Exception as exc:  # noqa: BLE001 - compensate cross-store writes
@@ -586,20 +678,123 @@ async def apply_global_workspace(
         )
 
 
+async def finalize_global_workspace_release_revision(
+    db: AsyncSession,
+    *,
+    solution_id: UUID,
+    requested_by: UUID,
+    apply_job_id: UUID,
+    limits: WorkspaceLimits | None = None,
+) -> SolutionGlobalWorkspaceApply:
+    """Record the actual live ``_repo`` snapshot after release operations run."""
+
+    limits = limits or WorkspaceLimits()
+    async with solution_write_lock(solution_id):
+        state = await global_workspace_state(db, solution_id=solution_id)
+        if state is None:
+            raise GlobalWorkspaceConflict("Global workspace not found")
+        project = state.project
+        if project.current_revision_id is None or project.deployed_revision_id is None:
+            raise GlobalWorkspaceError("Global workspace revisions are missing")
+        release = await db.scalar(
+            select(SolutionGlobalWorkspaceApply).where(
+                SolutionGlobalWorkspaceApply.solution_id == solution_id,
+                SolutionGlobalWorkspaceApply.apply_job_id == apply_job_id,
+                SolutionGlobalWorkspaceApply.state == "applied",
+            )
+        )
+        if release is None:
+            baseline = await db.get(SolutionSourceRevision, project.deployed_revision_id)
+            if baseline is None:
+                raise GlobalWorkspaceError("Global workspace baseline revision is missing")
+            await db.execute(
+                update(SolutionGlobalWorkspaceApply)
+                .where(
+                    SolutionGlobalWorkspaceApply.solution_id == solution_id,
+                    SolutionGlobalWorkspaceApply.state == "applied",
+                )
+                .values(state="superseded")
+            )
+            release = SolutionGlobalWorkspaceApply(
+                solution_id=solution_id,
+                from_revision_id=baseline.id,
+                to_revision_id=baseline.id,
+                apply_job_id=apply_job_id,
+                applied_by=requested_by,
+                applied_at=datetime.now(timezone.utc),
+            )
+            db.add(release)
+            await db.flush()
+        with tempfile.TemporaryDirectory(prefix="bifrost-global-finalize-") as tmp:
+            root = Path(tmp)
+            reviewed_root = await _materialize_revision(
+                solution_id,
+                release.to_revision_id,
+                root / "reviewed",
+                limits=limits,
+            )
+            reviewed = _file_map(reviewed_root)
+            live = await _repo_map(limits=limits)
+            drift = sorted(
+                path
+                for path in set(reviewed) | set(live)
+                if not path.startswith(".bifrost/")
+                and reviewed.get(path) != live.get(path)
+            )
+            if drift:
+                raise GlobalWorkspaceConflict(
+                    "Live _repo changed outside generated manifests during Global "
+                    "release operations: "
+                    + ", ".join(drift[:20])
+                )
+        final_revision = await _create_snapshot_revision(
+            db,
+            solution_id=solution_id,
+            parent_revision_id=release.to_revision_id,
+            created_by=requested_by,
+            summary=f"finalized Global release {apply_job_id}",
+            limits=limits,
+        )
+        release.released_revision_id = final_revision.id
+        project.current_revision_id = final_revision.id
+        project.deployed_revision_id = final_revision.id
+        await emit_audit(
+            db,
+            "builder.global_workspace.release.finalize",
+            resource_type="solution",
+            resource_id=solution_id,
+            details={
+                "apply_job_id": str(apply_job_id),
+                "released_revision_id": str(final_revision.id),
+            },
+        )
+        await db.commit()
+        return release
+
+
 async def rollback_global_workspace(
     db: AsyncSession,
     *,
     solution_id: UUID,
     requested_by: UUID,
     requested_by_email: str,
+    source_apply_id: UUID | None = None,
+    rollback_job_id: UUID | None = None,
+    allow_generated_manifest_drift: bool = False,
     limits: WorkspaceLimits | None = None,
 ) -> GlobalWorkspaceApplyResult:
     limits = limits or WorkspaceLimits()
     async with solution_write_lock(solution_id):
         state = await global_workspace_state(db, solution_id=solution_id)
-        latest = await _latest_apply(db, solution_id)
+        latest = (
+            await db.get(SolutionGlobalWorkspaceApply, source_apply_id)
+            if source_apply_id is not None
+            else await _latest_apply(db, solution_id)
+        )
         if state is None or latest is None:
             raise GlobalWorkspaceConflict("There is no applied proposal to roll back")
+        if latest.solution_id != solution_id or latest.state != "applied":
+            raise GlobalWorkspaceConflict("The reviewed source release is not rollbackable")
         if state.project.current_revision_id != state.project.deployed_revision_id:
             raise GlobalWorkspaceConflict(
                 "Apply or discard the pending proposal before rolling back live _repo"
@@ -612,16 +807,12 @@ async def rollback_global_workspace(
         after: dict[str, bytes] | None = None
         mutation_started = False
         restored_id: UUID | None = None
+        restored: SolutionSourceRevision | None = None
         try:
             with tempfile.TemporaryDirectory(prefix="bifrost-global-rollback-") as tmp:
                 root = Path(tmp)
                 live_archive = root / "live.zip"
                 live_sha = await _repo_archive(live_archive, limits=limits)
-                if live_sha != to_revision.source_sha256:
-                    raise GlobalWorkspaceConflict(
-                        "Live _repo changed after this apply. Refresh instead of "
-                        "overwriting newer work."
-                    )
                 from_root = await _materialize_revision(
                     solution_id,
                     from_revision.id,
@@ -634,8 +825,25 @@ async def rollback_global_workspace(
                     root / "to",
                     limits=limits,
                 )
-                before = _file_map(to_root)
-                after = _file_map(from_root)
+                if allow_generated_manifest_drift:
+                    reviewed_before = _source_file_map(to_root)
+                    live = await _repo_map(limits=limits)
+                    drift = _non_manifest_drift(reviewed_before, live)
+                    if drift:
+                        raise GlobalWorkspaceConflict(
+                            "Live _repo changed after this apply. Refresh instead of "
+                            "overwriting newer work."
+                        )
+                    before = reviewed_before
+                    after = _source_file_map(from_root)
+                else:
+                    if live_sha != to_revision.source_sha256:
+                        raise GlobalWorkspaceConflict(
+                            "Live _repo changed after this apply. Refresh instead of "
+                            "overwriting newer work."
+                        )
+                    before = _file_map(to_root)
+                    after = _file_map(from_root)
                 mutation_started = True
                 changed = await _apply_maps(
                     db,
@@ -643,37 +851,59 @@ async def rollback_global_workspace(
                     after=after,
                     updated_by=requested_by_email,
                 )
-                actual_archive = root / "actual.zip"
-                actual_sha = await _repo_archive(actual_archive, limits=limits)
-                if actual_sha != from_revision.source_sha256:
-                    raise GlobalWorkspaceConflict(
-                        "Live _repo did not match the reviewed rollback revision"
+                if allow_generated_manifest_drift:
+                    live_after = await _repo_map(limits=limits)
+                    drift = _non_manifest_drift(after, live_after)
+                    if drift:
+                        raise GlobalWorkspaceConflict(
+                            "Live _repo did not match the reviewed rollback revision"
+                        )
+                    restored = await _create_snapshot_revision(
+                        db,
+                        solution_id=solution_id,
+                        parent_revision_id=latest.released_revision_id or to_revision.id,
+                        created_by=requested_by,
+                        summary=f"rolled back applied revision {to_revision.id}",
+                        limits=limits,
                     )
-                restored_id = uuid4()
-                restored_archive = root / "restored.zip"
-                zip_workspace(from_root, restored_archive)
-                restored_size = restored_archive.stat().st_size
-                await SolutionRevisionStorage(solution_id).write_from_path(
-                    restored_id,
-                    restored_archive,
-                )
+                    restored_id = restored.id
+                else:
+                    actual_archive = root / "actual.zip"
+                    actual_sha = await _repo_archive(actual_archive, limits=limits)
+                    if actual_sha != from_revision.source_sha256:
+                        raise GlobalWorkspaceConflict(
+                            "Live _repo did not match the reviewed rollback revision"
+                        )
+                    restored_id = uuid4()
+                    restored_archive = root / "restored.zip"
+                    zip_workspace(from_root, restored_archive)
+                    restored_size = restored_archive.stat().st_size
+                    restored_sha = from_revision.source_sha256
+                    await SolutionRevisionStorage(solution_id).write_from_path(
+                        restored_id,
+                        restored_archive,
+                    )
 
             assert restored_id is not None
-            restored = SolutionSourceRevision(
-                id=restored_id,
-                solution_id=solution_id,
-                parent_revision_id=to_revision.id,
-                restored_from_revision_id=from_revision.id,
-                created_by=requested_by,
-                source_sha256=from_revision.source_sha256,
-                size_bytes=restored_size,
-                summary=f"rolled back applied revision {to_revision.id}",
-            )
-            db.add(restored)
-            await db.flush()
+            if restored is None:
+                restored = SolutionSourceRevision(
+                    id=restored_id,
+                    solution_id=solution_id,
+                    parent_revision_id=to_revision.id,
+                    restored_from_revision_id=from_revision.id,
+                    created_by=requested_by,
+                    source_sha256=restored_sha,
+                    size_bytes=restored_size,
+                    summary=f"rolled back applied revision {to_revision.id}",
+                )
+                db.add(restored)
+                await db.flush()
+            else:
+                restored.restored_from_revision_id = from_revision.id
             state.project.current_revision_id = restored.id
             state.project.deployed_revision_id = restored.id
             latest.state = "rolled_back"
+            latest.rollback_job_id = rollback_job_id
             latest.rolled_back_by = requested_by
             rolled_back_at = datetime.now(timezone.utc)
             latest.rolled_back_at = rolled_back_at
@@ -729,6 +959,44 @@ async def rollback_global_workspace(
         )
 
 
+async def preflight_global_workspace_rollback(
+    db: AsyncSession,
+    *,
+    solution_id: UUID,
+    source_apply_id: UUID,
+    limits: WorkspaceLimits | None = None,
+) -> None:
+    """Verify a reviewed source rollback can proceed without mutating live _repo."""
+
+    limits = limits or WorkspaceLimits()
+    state = await global_workspace_state(db, solution_id=solution_id)
+    latest = await db.get(SolutionGlobalWorkspaceApply, source_apply_id)
+    if state is None or latest is None:
+        raise GlobalWorkspaceConflict("There is no applied proposal to roll back")
+    if latest.solution_id != solution_id or latest.state != "applied":
+        raise GlobalWorkspaceConflict("The reviewed source release is not rollbackable")
+    if state.project.current_revision_id != state.project.deployed_revision_id:
+        raise GlobalWorkspaceConflict(
+            "Apply or discard the pending proposal before rolling back live _repo"
+        )
+    from_revision = await db.get(SolutionSourceRevision, latest.from_revision_id)
+    to_revision = await db.get(SolutionSourceRevision, latest.to_revision_id)
+    released_revision = (
+        await db.get(SolutionSourceRevision, latest.released_revision_id)
+        if latest.released_revision_id is not None
+        else to_revision
+    )
+    if from_revision is None or to_revision is None or released_revision is None:
+        raise GlobalWorkspaceError("Rollback revisions are missing")
+    with tempfile.TemporaryDirectory(prefix="bifrost-global-rollback-preflight-") as tmp:
+        live_archive = Path(tmp) / "live.zip"
+        live_sha = await _repo_archive(live_archive, limits=limits)
+    if live_sha != released_revision.source_sha256:
+        raise GlobalWorkspaceConflict(
+            "Live _repo changed after this apply. Refresh instead of overwriting newer work."
+        )
+
+
 __all__ = [
     "GLOBAL_TARGET_KIND",
     "GlobalWorkspaceApplyResult",
@@ -738,7 +1006,10 @@ __all__ = [
     "GlobalWorkspaceState",
     "apply_global_workspace",
     "ensure_global_workspace",
+    "finalize_global_workspace_release_revision",
     "global_workspace_state",
+    "latest_global_workspace_source_apply",
+    "preflight_global_workspace_rollback",
     "refresh_global_workspace",
     "rollback_global_workspace",
     "validate_global_workspace",

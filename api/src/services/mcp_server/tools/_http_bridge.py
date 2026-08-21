@@ -95,7 +95,11 @@ def _build_in_process_transport() -> httpx.ASGITransport:
 
 
 @asynccontextmanager
-async def rest_client(context: "MCPContext") -> AsyncIterator[httpx.AsyncClient]:
+async def rest_client(
+    context: "MCPContext",
+    *,
+    authorization_boundary: str | None = None,
+) -> AsyncIterator[httpx.AsyncClient]:
     """Yield an ``httpx.AsyncClient`` bound to the API with auth attached.
 
     By default the client uses an in-process :class:`httpx.ASGITransport`
@@ -116,6 +120,15 @@ async def rest_client(context: "MCPContext") -> AsyncIterator[httpx.AsyncClient]
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
+    selected_boundary = authorization_boundary or getattr(
+        context, "authorization_boundary", None
+    )
+    if selected_boundary is None and bool(
+        getattr(context, "is_platform_admin", False)
+    ):
+        selected_boundary = "platform"
+    if selected_boundary:
+        headers["X-Bifrost-Boundary"] = selected_boundary
 
     override_base = os.environ.get(_BRIDGE_URL_ENV)
     if override_base:
@@ -144,6 +157,7 @@ async def call_rest(
     *,
     json_body: dict[str, Any] | None = None,
     params: dict[str, Any] | None = None,
+    authorization_boundary: str | None = None,
 ) -> tuple[int, Any]:
     """Issue a REST request through the in-process bridge.
 
@@ -151,7 +165,9 @@ async def call_rest(
     ``dict`` / ``list`` (on JSON responses), ``None`` (on 204), or a raw
     string (on non-JSON bodies).
     """
-    async with rest_client(context) as client:
+    async with rest_client(
+        context, authorization_boundary=authorization_boundary
+    ) as client:
         response = await client.request(
             method.upper(),
             path,

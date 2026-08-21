@@ -9,12 +9,15 @@ import logging
 from typing import Literal
 
 from fastapi import APIRouter, Query
+from sqlalchemy import select
 
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
-from src.core.org_filter import resolve_org_filter
+from src.core.org_filter import OrgFilterType
 from src.models.contracts.agents import ToolInfo, ToolsResponse
+from src.models.orm import Organization
 from src.repositories.workflows import WorkflowRepository
+from src.services.authorization import AuthorizationBoundaryKind, CurrentAuthorizationContext
 
 from src.services.mcp_server.server import get_system_tools as get_system_tools_from_server
 
@@ -61,6 +64,7 @@ def get_system_tool_ids(*, include_hidden: bool = False) -> list[str]:
 async def list_tools(
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     type: Literal["system", "workflow"] | None = Query(
         default=None,
         description="Filter by tool type: 'system' for built-in tools, 'workflow' for user workflows",
@@ -90,25 +94,79 @@ async def list_tools(
 
     # Add workflow tools (unless filtering to system only)
     if type is None or type == "workflow":
-        # Apply organization filter
-        try:
-            filter_type, filter_org_id = resolve_org_filter(user, scope)
-        except ValueError:
-            # Invalid scope - just return system tools
+        authorization.require("workflows.read")
+        boundary = authorization.selected_boundary
+        if boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+            customer_org_ids = (
+                (
+                    await db.execute(
+                        select(Organization.id)
+                        .where(
+                            Organization.is_active.is_(True),
+                            Organization.is_provider.is_(False),
+                        )
+                        .order_by(Organization.name)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            workflows = []
+            seen_workflow_ids: set[str] = set()
+            for customer_org_id in customer_org_ids:
+                workflow_repo = WorkflowRepository(
+                    db,
+                    org_id=customer_org_id,
+                    user_id=user.user_id,
+                    bypass_resource_roles=authorization.has_capability("platform.superuser"),
+                    is_external=user.is_external,
+                )
+                for workflow in await workflow_repo.list_tools_for_filter(
+                    OrgFilterType.ORG_PLUS_GLOBAL,
+                    customer_org_id,
+                    active_only=not include_inactive,
+                ):
+                    workflow_id = str(workflow.id)
+                    if workflow_id in seen_workflow_ids:
+                        continue
+                    seen_workflow_ids.add(workflow_id)
+                    workflows.append(workflow)
+        elif boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+            if scope not in (None, "", "global"):
+                # Invalid/conflicting legacy scope - keep the historical
+                # "system tools only" behavior for malformed workflow filters.
+                return ToolsResponse(tools=tools)
+            filter_type = OrgFilterType.GLOBAL_ONLY
+            filter_org_id = None
+            workflow_repo = WorkflowRepository(
+                db,
+                org_id=None,
+                user_id=user.user_id,
+                bypass_resource_roles=authorization.has_capability("platform.superuser"),
+                is_external=user.is_external,
+            )
+            workflows = await workflow_repo.list_tools_for_filter(
+                filter_type,
+                filter_org_id,
+                active_only=not include_inactive,
+            )
+        elif scope not in (None, "", str(boundary.organization_id)):
             return ToolsResponse(tools=tools)
-
-        workflow_repo = WorkflowRepository(
-            db,
-            org_id=user.organization_id,
-            user_id=user.user_id,
-            is_superuser=user.is_superuser,
-            is_external=user.is_external,
-        )
-        workflows = await workflow_repo.list_tools_for_filter(
-            filter_type,
-            filter_org_id,
-            active_only=not include_inactive,
-        )
+        else:
+            filter_type = OrgFilterType.ORG_PLUS_GLOBAL
+            filter_org_id = boundary.organization_id
+            workflow_repo = WorkflowRepository(
+                db,
+                org_id=boundary.organization_id,
+                user_id=user.user_id,
+                bypass_resource_roles=authorization.has_capability("platform.superuser"),
+                is_external=user.is_external,
+            )
+            workflows = await workflow_repo.list_tools_for_filter(
+                filter_type,
+                filter_org_id,
+                active_only=not include_inactive,
+            )
 
         for workflow in workflows:
             tools.append(

@@ -26,13 +26,23 @@ const mockOrgs = [
 ];
 
 const useOrganizationsMock = vi.fn();
+const useAuthorizationBoundaryMock = vi.fn();
 
 vi.mock("@/hooks/useOrganizations", () => ({
 	useOrganizations: () => useOrganizationsMock(),
 }));
+vi.mock("@/contexts/AuthorizationBoundaryContext", () => ({
+	useAuthorizationBoundary: () => useAuthorizationBoundaryMock(),
+}));
 
 beforeEach(() => {
 	useOrganizationsMock.mockReturnValue({ data: mockOrgs, isLoading: false });
+	useAuthorizationBoundaryMock.mockReturnValue({
+		selectedBoundary: "organization:org-1",
+		selectedTarget: { boundary: "organization:org-1", capabilities: [] },
+		targets: [{ boundary: "organization:org-1", capabilities: [] }],
+		hasSelectedCapability: () => true,
+	});
 });
 
 async function renderSelect(overrides: Record<string, unknown> = {}) {

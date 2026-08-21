@@ -8,15 +8,18 @@ import logging
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query, status
 from sqlalchemy import select
 
-from src.core.auth import CurrentSuperuser
 from src.core.db_deps import DbSession
 from src.models import AuditLogActor, AuditLogEntry, AuditLogListResponse
 from src.models import Organization as OrganizationORM
 from src.models import User as UserORM
 from src.repositories.audit_logs import AuditLogRepository
+from src.services.authorization import (
+    AuthorizationBoundaryKind,
+    CurrentAuthorizationContext,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -30,20 +33,35 @@ router = APIRouter(prefix="/api/audit", tags=["Audit"])
     description="List audit log entries with filters (Platform admin only)",
 )
 async def list_audit_logs(
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
-    action: str | None = Query(None, description="Action prefix filter, e.g. 'user.' or 'auth.login'"),
+    action: str | None = Query(
+        None, description="Action prefix filter, e.g. 'user.' or 'auth.login'"
+    ),
     resource_type: str | None = Query(None, description="Filter by resource type"),
-    outcome: str | None = Query(None, description="Filter by outcome: 'success' or 'failure'"),
+    outcome: str | None = Query(
+        None, description="Filter by outcome: 'success' or 'failure'"
+    ),
     user_id: UUID | None = Query(None, description="Filter by acting user ID"),
-    start_date: datetime | None = Query(None, description="Start of time range (inclusive)"),
-    end_date: datetime | None = Query(None, description="End of time range (inclusive)"),
-    search: str | None = Query(None, description="Free-text search on action/resource_type"),
+    start_date: datetime | None = Query(
+        None, description="Start of time range (inclusive)"
+    ),
+    end_date: datetime | None = Query(
+        None, description="End of time range (inclusive)"
+    ),
+    search: str | None = Query(
+        None, description="Free-text search on action/resource_type"
+    ),
     limit: int = Query(50, ge=1, le=500),
     continuation_token: str | None = Query(None, description="Pagination cursor"),
 ) -> AuditLogListResponse:
     """List audit log entries, newest first, with keyset pagination."""
-    del user  # auth gate only
+    authorization.require("audit.read")
+    if authorization.selected_boundary.kind is not AuthorizationBoundaryKind.PLATFORM:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Select Global before reviewing the platform Audit Log",
+        )
     repo = AuditLogRepository(db)
 
     rows, next_token = await repo.list(
@@ -69,7 +87,9 @@ async def list_audit_logs(
 
     orgs_by_id: dict[UUID, OrganizationORM] = {}
     if org_ids:
-        result = await db.execute(select(OrganizationORM).where(OrganizationORM.id.in_(org_ids)))
+        result = await db.execute(
+            select(OrganizationORM).where(OrganizationORM.id.in_(org_ids))
+        )
         orgs_by_id = {o.id: o for o in result.scalars().all()}
 
     entries: list[AuditLogEntry] = []

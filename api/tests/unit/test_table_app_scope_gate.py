@@ -87,11 +87,8 @@ async def test_own_org_app_id_resolves_its_table(db_session):
     assert got is not None and got.id == table_b.id
 
 
-async def test_provider_org_member_resolves_foreign_install_table(db_session):
-    """Canonical bypass rule (is_superuser OR is_provider_org): a NON-admin
-    provider-org staffer targeting org B's install (target_org defaults to their
-    own org A) resolves the install's own table, identical to a platform admin.
-    Row access is decided by org B's table policies afterward."""
+async def test_provider_org_member_does_not_resolve_foreign_install_table(db_session):
+    """Provider identity metadata cannot bypass a foreign Solution boundary."""
     db = db_session
     org_a = Organization(id=uuid4(), name=f"A-{uuid4().hex[:6]}", created_by="t")
     org_b = Organization(id=uuid4(), name=f"B-{uuid4().hex[:6]}", created_by="t")
@@ -103,7 +100,7 @@ async def test_provider_org_member_resolves_foreign_install_table(db_session):
 
     ctx = _ctx(db, app_id=app_b.id, is_superuser=False, is_provider_org=True)
     got = await resolve_solution_table_by_name(db, ctx, name, target_org_id=org_a.id)
-    assert got is not None and got.id == table_b.id
+    assert got is None
 
 
 async def test_plain_non_provider_member_still_filtered(db_session):

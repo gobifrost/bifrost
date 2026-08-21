@@ -9,6 +9,7 @@ Selectors accept entity NAMES or ids — names resolve against
 ``GET /capture/candidates`` (the same loose universe the dialog lists). These
 tests mock ``BifrostClient.get_instance`` so no network/DB is touched.
 """
+
 from __future__ import annotations
 
 from unittest import mock
@@ -31,10 +32,20 @@ def _fake_response(payload: dict, status: int = 200):
 
 
 _CANDIDATES = {
-    "workflows": [{"id": WF_ID, "name": "sync_orders", "path": "workflows/sync.py",
-                   "function_name": "run"}],
+    "workflows": [
+        {
+            "id": WF_ID,
+            "name": "sync_orders",
+            "path": "workflows/sync.py",
+            "function_name": "run",
+        }
+    ],
     "tables": [{"id": TBL_ID, "name": "orders"}],
-    "apps": [], "forms": [], "agents": [], "claims": [], "configs": [],
+    "apps": [],
+    "forms": [],
+    "agents": [],
+    "claims": [],
+    "configs": [],
 }
 
 _PREVIEW = {
@@ -42,33 +53,49 @@ _PREVIEW = {
         {"kind": "table", "ref": TBL_ID, "name": "orders", "in_selection": False},
     ],
     "outside_references": [
-        {"referencer_kind": "workflow", "referencer_ref": "x", "referencer_name": "nightly_sync",
-         "target_kind": "table", "target_ref": TBL_ID, "target_name": "orders"},
+        {
+            "referencer_kind": "workflow",
+            "referencer_ref": "x",
+            "referencer_name": "nightly_sync",
+            "target_kind": "table",
+            "target_ref": TBL_ID,
+            "target_name": "orders",
+        },
     ],
     "scan_is_static": True,
 }
 
 
 def _make_client(captured: dict) -> mock.AsyncMock:
-    async def get(path):  # type: ignore[no-untyped-def]
+    async def get(path, **kwargs):  # type: ignore[no-untyped-def]
         captured.setdefault("gets", []).append(path)
+        captured.setdefault("get_kwargs", []).append(kwargs)
         if path.endswith("/capture/candidates"):
             return _fake_response(_CANDIDATES)
         return _fake_response({})
 
-    async def post(path, json=None):  # type: ignore[no-untyped-def]
+    async def post(path, json=None, **kwargs):  # type: ignore[no-untyped-def]
         captured.setdefault("posts", []).append((path, json))
+        captured.setdefault("post_kwargs", []).append(kwargs)
         if path.endswith("/capture/preview"):
             return _fake_response(_PREVIEW)
         if path.endswith("/capture"):
-            return _fake_response({
-                "solution_id": SOL, "workflows_captured": 1, "tables_captured": 1,
-                "apps_captured": 0, "forms_captured": 0, "agents_captured": 0,
-                "claims_captured": 0, "config_declarations_captured": 0,
-            })
+            return _fake_response(
+                {
+                    "solution_id": SOL,
+                    "workflows_captured": 1,
+                    "tables_captured": 1,
+                    "apps_captured": 0,
+                    "forms_captured": 0,
+                    "agents_captured": 0,
+                    "claims_captured": 0,
+                    "config_declarations_captured": 0,
+                }
+            )
         return _fake_response({})
 
     client = mock.AsyncMock()
+    client.organization = {"id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}
     client.get = get
     client.post = post
     return client
@@ -94,6 +121,9 @@ def test_dry_run_previews_without_applying() -> None:
     # Output surfaces both the pulled-in dependency and the outside warning.
     assert "orders" in result.output
     assert "nightly_sync" in result.output
+    assert captured["get_kwargs"][0]["headers"] == {
+        "X-Bifrost-Boundary": "organization:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    }
 
 
 def test_apply_captures_and_reports_counts() -> None:
@@ -127,7 +157,10 @@ def test_no_selectors_errors() -> None:
     captured: dict = {}
     result = _invoke([SOL], captured)
     assert result.exit_code != 0
-    assert "no entities" in result.output.lower() or "at least one" in result.output.lower()
+    assert (
+        "no entities" in result.output.lower()
+        or "at least one" in result.output.lower()
+    )
 
 
 def test_apply_without_yes_prompts_and_declining_captures_nothing() -> None:

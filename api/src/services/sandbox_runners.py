@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -41,6 +41,11 @@ class SandboxJobEnvelope:
     capability: str
     input_sha256: str
     timeout_seconds: int
+    runner_sandbox_id: str | None = None
+    workspace_sandbox_id: str | None = None
+    workspace_broker_url: str | None = None
+    runner_allowed_hosts: list[str] = field(default_factory=list)
+    workspace_allowed_hosts: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -63,6 +68,18 @@ def _external_instance_id(job: PlatformJob) -> str:
     """Return a stable idempotency key for one fenced dispatch attempt."""
 
     return f"{job.id}-{job.attempt}"
+
+
+def _sandbox_base_id(job: PlatformJob) -> str:
+    return f"bifrost-{job.id}-{job.attempt}"
+
+
+def _runner_sandbox_id(job: PlatformJob) -> str:
+    return f"{_sandbox_base_id(job)}-runner"
+
+
+def _workspace_sandbox_id(job: PlatformJob) -> str:
+    return f"{_sandbox_base_id(job)}-workspace"
 
 
 async def dispatch_sandbox_platform_job(
@@ -110,6 +127,21 @@ async def dispatch_sandbox_platform_job(
                 capability=mint_sandbox_job_capability(job),
                 input_sha256=input_sha256,
                 timeout_seconds=job.timeout_seconds,
+                runner_sandbox_id=(
+                    _runner_sandbox_id(job)
+                    if job.job_type == "solution.builder.turn"
+                    else None
+                ),
+                workspace_sandbox_id=(
+                    _workspace_sandbox_id(job)
+                    if job.job_type == "solution.builder.turn"
+                    else None
+                ),
+                workspace_broker_url=(
+                    "http://workspace.bifrost.internal"
+                    if job.job_type == "solution.builder.turn"
+                    else None
+                ),
             )
 
     if provider == "cloudflare":
@@ -124,6 +156,7 @@ async def dispatch_sandbox_platform_job(
             job.id,
             dispatch_attempt,
             instance_id=instance_id,
+            input_sha256=input_sha256,
         )
     else:
         raise SandboxRunnerUnavailable(f"Unsupported sandbox runner provider: {provider}")
@@ -236,6 +269,7 @@ async def _dispatch_local(
     dispatch_attempt: int,
     *,
     instance_id: str,
+    input_sha256: str,
 ) -> str:
     """Publish a reference to the existing Bifrost Worker queue."""
     from src.jobs.rabbitmq import publish_message
@@ -257,6 +291,7 @@ async def _dispatch_local(
             {
                 "job_id": str(job_id),
                 "dispatch_attempt": dispatch_attempt,
+                "input_sha256": input_sha256,
             },
             priority=9,
         )

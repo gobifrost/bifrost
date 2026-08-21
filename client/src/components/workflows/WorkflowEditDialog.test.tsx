@@ -29,24 +29,12 @@ vi.mock("@/hooks/useWorkflowKeys", () => ({
 	useRevokeWorkflowKey: () => ({ mutateAsync: vi.fn() }),
 }));
 
-vi.mock("@/components/forms/OrganizationSelect", () => ({
-	OrganizationSelect: ({
-		value,
-		onChange,
-	}: {
-		value?: string | null;
-		onChange: (value: string | null) => void;
-	}) => (
-		<select
-			aria-label="Organization Scope"
-			value={value ?? "global"}
-			onChange={(event) =>
-				onChange(event.currentTarget.value === "global" ? null : event.currentTarget.value)
-			}
-		>
-			<option value="global">Global</option>
-		</select>
-	),
+vi.mock("@/contexts/AuthorizationBoundaryContext", () => ({
+	useAuthorizationBoundary: () => ({
+		selectedTarget: { kind: "platform" },
+		hasSelectedCapability: (capability: string) =>
+			capability === "workflows.readwrite",
+	}),
 }));
 
 import { WorkflowEditDialog } from "./WorkflowEditDialog";

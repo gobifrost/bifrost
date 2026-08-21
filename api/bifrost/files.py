@@ -54,6 +54,13 @@ def _solution_query() -> str:
     return f"?{urlencode({'solution': str(solution_id)})}" if solution_id else ""
 
 
+def _authorization_headers(location: str) -> dict[str, str] | None:
+    """Select the unambiguous authorization boundary for source operations."""
+    if location == "workspace":
+        return {"X-Bifrost-Boundary": "platform"}
+    return None
+
+
 class files:
     """
     File management operations (async).
@@ -93,7 +100,8 @@ class files:
         effective_scope = resolve_scope(scope)
         response = await client.post(
             f"/api/files/read{_solution_query()}",
-            json={"path": path, "location": location, "mode": mode, "binary": False, "scope": effective_scope}
+            json={"path": path, "location": location, "mode": mode, "binary": False, "scope": effective_scope},
+            headers=_authorization_headers(location),
         )
         raise_for_status_with_detail(response)
         return response.json()["content"]
@@ -118,7 +126,8 @@ class files:
         effective_scope = resolve_scope(scope)
         response = await client.post(
             f"/api/files/read{_solution_query()}",
-            json={"path": path, "location": location, "mode": mode, "binary": True, "scope": effective_scope}
+            json={"path": path, "location": location, "mode": mode, "binary": True, "scope": effective_scope},
+            headers=_authorization_headers(location),
         )
         raise_for_status_with_detail(response)
         import base64
@@ -160,7 +169,8 @@ class files:
                 "expected_version": expected_version,
                 "create_only": create_only,
                 "scope": effective_scope,
-            }
+            },
+            headers=_authorization_headers(location),
         )
         raise_for_status_with_detail(response)
 
@@ -202,7 +212,8 @@ class files:
                 "expected_version": expected_version,
                 "create_only": create_only,
                 "scope": effective_scope,
-            }
+            },
+            headers=_authorization_headers(location),
         )
         raise_for_status_with_detail(response)
 
@@ -237,7 +248,8 @@ class files:
         effective_scope = resolve_scope(scope)
         response = await client.post(
             f"/api/files/list{_solution_query()}",
-            json={"directory": directory, "location": location, "mode": mode, "scope": effective_scope}
+            json={"directory": directory, "location": location, "mode": mode, "scope": effective_scope},
+            headers=_authorization_headers(location),
         )
         raise_for_status_with_detail(response)
         return response.json()["files"]
@@ -275,7 +287,8 @@ class files:
                 "mode": mode,
                 "expected_version": expected_version,
                 "scope": effective_scope,
-            }
+            },
+            headers=_authorization_headers(location),
         )
         raise_for_status_with_detail(response)
 
@@ -297,6 +310,7 @@ class files:
         response = await client.post(
             f"/api/files/stat{_solution_query()}",
             json={"path": path, "location": location, "mode": mode, "scope": effective_scope},
+            headers=_authorization_headers(location),
         )
         raise_for_status_with_detail(response)
         return response.json()
@@ -321,7 +335,8 @@ class files:
         effective_scope = resolve_scope(scope)
         response = await client.post(
             f"/api/files/exists{_solution_query()}",
-            json={"path": path, "location": location, "mode": mode, "scope": effective_scope}
+            json={"path": path, "location": location, "mode": mode, "scope": effective_scope},
+            headers=_authorization_headers(location),
         )
         raise_for_status_with_detail(response)
         return response.json()["exists"]
@@ -367,7 +382,8 @@ class files:
                 "content_type": content_type,
                 "location": location,
                 "scope": effective_scope,
-            }
+            },
+            headers=_authorization_headers(location),
         )
         raise_for_status_with_detail(response)
         return response.json()
@@ -419,6 +435,7 @@ class files:
                 "include_pattern": include_pattern,
                 "max_results": max_results,
             },
+            headers=_authorization_headers("workspace"),
         )
         raise_for_status_with_detail(response)
         return response.json()

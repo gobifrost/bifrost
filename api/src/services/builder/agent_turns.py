@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.models.enums import MessageRole
-from src.models.orm.agents import Agent, Conversation, Message
+from src.models.orm.agents import Conversation, Message
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solution_builder import (
     SolutionBuilderProject,
@@ -26,8 +26,11 @@ from src.models.orm.solution_builder import (
 )
 from src.models.orm.solutions import Solution
 from src.models.orm.users import User
-from src.services.builder.agent_identity import ensure_builder_agent
 from src.services.builder.revision_storage import SolutionRevisionStorage
+from src.services.builder.scaffold import (
+    BUILDER_AGENT_MAX_ITERATIONS,
+    BUILDER_AGENT_MAX_TOKEN_BUDGET,
+)
 from src.services.builder.turns import (
     BuilderProjectMissing,
     BuilderTurnConflict,
@@ -161,7 +164,7 @@ class BuilderAgentTurnService:
     ) -> QueuedAgentTurn:
         """Persist the prompt and enqueue one encrypted sandbox PlatformJob."""
         session = await self._load_session(solution_id, session_id)
-        conversation = await self._ensure_builder_agent(
+        conversation = await self._load_conversation(
             solution_id,
             session,
         )
@@ -316,16 +319,14 @@ class BuilderAgentTurnService:
                 raise BuilderProjectMissing(
                     f"Builder conversation {session.conversation_id} is missing"
                 )
-            agent = (
-                await self.db.get(Agent, conversation.agent_id)
-                if conversation.agent_id is not None
-                else None
-            )
-            if agent is None:
+            solution = await self.db.get(Solution, solution_id)
+            if solution is None:
+                raise BuilderProjectMissing(f"Solution {solution_id} does not exist")
+            project = await self.db.get(SolutionBuilderProject, solution_id)
+            if project is None:
                 raise BuilderProjectMissing(
-                    f"Builder agent for conversation {session.conversation_id} is missing"
+                    f"Solution {solution_id} has no Builder project"
                 )
-
             if persist_assistant_message:
                 await self._append_message(
                     conversation,
@@ -358,8 +359,8 @@ class BuilderAgentTurnService:
                         model_request_count=model_request_count,
                         token_count_input=token_count_input,
                         token_count_output=token_count_output,
-                        max_requests=agent.max_iterations,
-                        max_tokens=agent.max_token_budget,
+                        max_requests=BUILDER_AGENT_MAX_ITERATIONS,
+                        max_tokens=BUILDER_AGENT_MAX_TOKEN_BUDGET,
                     ),
                 },
             )
@@ -372,8 +373,7 @@ class BuilderAgentTurnService:
                 materialized.revision_created
                 and materialized.turn.output_revision_id is not None
             ):
-                project = await self.db.get(SolutionBuilderProject, solution_id)
-                if project is not None and project.target_kind == "global_repo":
+                if project.target_kind in {"global_repo", "organization"}:
                     await self.db.commit()
                 else:
                     await enqueue_builder_turn_deploy(
@@ -620,29 +620,15 @@ class BuilderAgentTurnService:
         )
         return content or "builder turn"
 
-    async def _ensure_builder_agent(
+    async def _load_conversation(
         self,
         solution_id: UUID,
         session: SolutionBuilderSession,
     ) -> Conversation:
-        solution = await self.db.get(Solution, solution_id)
-        if solution is None:
-            raise BuilderProjectMissing(f"Solution {solution_id} does not exist")
         conversation = (
             await self.db.execute(
                 select(Conversation)
                 .where(Conversation.id == session.conversation_id)
-                .options(selectinload(Conversation.user))
-            )
-        ).scalar_one()
-        agent = await ensure_builder_agent(self.db, solution=solution)
-        conversation.agent_id = agent.id
-        await self.db.commit()
-
-        conversation = (
-            await self.db.execute(
-                select(Conversation)
-                .where(Conversation.id == conversation.id)
                 .options(selectinload(Conversation.user))
             )
         ).scalar_one()

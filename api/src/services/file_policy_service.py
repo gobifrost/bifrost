@@ -19,6 +19,7 @@ from shared.file_policies import (
 from shared.policy_rules import PolicyRuleDomainMismatch, PolicyRuleNotFound, resolve_policy_refs
 from src.models.contracts.policies import FileAction, FilePolicies
 from src.models.orm.file_metadata import FileMetadata, FilePolicy
+from src.models.orm.organizations import Organization
 from src.repositories.policy_rule import PolicyRuleRepository
 
 logger = logging.getLogger(__name__)
@@ -219,6 +220,30 @@ class FilePolicyService:
         stmt = stmt.order_by(FilePolicy.location, FilePolicy.path)
         return list((await self.db.execute(stmt)).scalars().all())
 
+    async def list_managed_organization_policies(
+        self,
+        *,
+        location: str | None = None,
+    ) -> list[FilePolicy]:
+        """List non-Solution policies owned by managed customer organizations."""
+
+        stmt = (
+            select(FilePolicy)
+            .join(Organization, Organization.id == FilePolicy.organization_id)
+            .where(
+                Organization.is_provider.is_(False),
+                FilePolicy.solution_id.is_(None),
+            )
+        )
+        if location is not None:
+            stmt = stmt.where(FilePolicy.location == location)
+        stmt = stmt.order_by(
+            Organization.name,
+            FilePolicy.location,
+            FilePolicy.path,
+        )
+        return list((await self.db.execute(stmt)).scalars().all())
+
     async def get_solution_policy_exact(
         self,
         *,
@@ -367,7 +392,7 @@ class FilePolicyService:
             )
             return False
 
-        rule_repo = PolicyRuleRepository(self.db, org_id=organization_id, is_superuser=True)
+        rule_repo = PolicyRuleRepository(self.db, org_id=organization_id, bypass_resource_admission=True)
         try:
             await resolve_policy_refs(policies, repo=rule_repo, action_domain="file")
         except (PolicyRuleNotFound, PolicyRuleDomainMismatch) as exc:
@@ -432,12 +457,10 @@ class FilePolicyService:
     ) -> bool:
         if organization_id is None:
             return True
-        # Bypass = is_platform_admin OR is_provider_org (repositories/README.md):
-        # provider-org members (portal-hopping platform staff) reach any org's
-        # files, same as platform admins.
-        if getattr(user, "is_platform_admin", False) or getattr(
-            user, "is_provider_org", False
-        ):
+        # A runtime principal is pinned to its exact organization. Provider-org
+        # membership is identity metadata, not support authority; an explicit
+        # human Role/boundary decision must happen before the runtime is minted.
+        if getattr(user, "is_platform_admin", False):
             return True
         user_org = getattr(user, "organization_id", None)
         return user_org is not None and str(user_org) == str(organization_id)

@@ -43,7 +43,7 @@ async def test_failed_bundle_never_promotes_preview(
     repo = ApplicationRepository(
         db_session,
         None,
-        is_superuser=True,
+        bypass_resource_roles=True,
     )
 
     with pytest.raises(ValueError, match="Could not resolve import"):

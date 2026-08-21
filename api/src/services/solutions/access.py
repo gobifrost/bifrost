@@ -12,12 +12,17 @@ testable without a database. Routers map a False decision on detail reads to
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from enum import Enum
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, exists, or_, select
+from sqlalchemy import ColumnElement, and_, exists, or_, select
 
-from src.models.orm.solution_builder import SolutionBuilderCollaborator
+from src.models.orm.solution_builder import SolutionUserGrant
+from src.models.orm.solution_role_grants import SolutionRoleGrant
+from src.models.orm.organization_groups import OrganizationGroupMembership
+from src.models.orm.organizations import Organization
+from src.models.orm.role_assignments import RoleAssignment, RoleAssignmentBoundary
 from src.models.orm.solutions import Solution
 
 VISIBILITY_PRIVATE = "private"
@@ -42,6 +47,7 @@ def can_access_solution(
     is_platform_admin: bool,
     is_external: bool,
     collaborator_access: str | None = None,
+    role_grant_access: str | None = None,
     can_support: bool = False,
 ) -> bool:
     """Decide whether the actor may perform ``action`` on a Solution.
@@ -72,15 +78,18 @@ def can_access_solution(
         return True
     if action is SolutionAction.MANAGE:
         return False
-    if collaborator_access == "edit":
+    if collaborator_access == "edit" or role_grant_access == "edit":
         return True
-    return collaborator_access == "view" and action is SolutionAction.VIEW
+    return (
+        collaborator_access == "view" or role_grant_access == "view"
+    ) and action is SolutionAction.VIEW
 
 
 def visible_solutions_criterion(
     *,
     actor_user_id: UUID | None,
     is_external: bool,
+    effective_role_ids: Collection[UUID] = (),
 ) -> ColumnElement[bool]:
     """SQL predicate hiding other users' private Solutions from list queries.
 
@@ -91,17 +100,103 @@ def visible_solutions_criterion(
     """
     if is_external or actor_user_id is None:
         return Solution.visibility == VISIBILITY_SHARED
-    return or_(
+    grants: list[ColumnElement[bool]] = [
         Solution.visibility == VISIBILITY_SHARED,
         Solution.owner_user_id == actor_user_id,
         exists(
-            select(SolutionBuilderCollaborator.id)
+            select(SolutionUserGrant.id)
             .where(
-                SolutionBuilderCollaborator.solution_id == Solution.id,
-                SolutionBuilderCollaborator.user_id == actor_user_id,
+                SolutionUserGrant.solution_id == Solution.id,
+                SolutionUserGrant.user_id == actor_user_id,
             )
             .correlate(Solution)
         ),
+    ]
+    cross_boundary_role_grant = assigned_solution_role_grant_criterion(
+        actor_user_id=actor_user_id,
+    )
+
+    role_ids = tuple(effective_role_ids)
+    if role_ids:
+        grants.append(
+            exists(
+                select(SolutionRoleGrant.id)
+                .where(
+                    SolutionRoleGrant.solution_id == Solution.id,
+                    SolutionRoleGrant.role_id.in_(role_ids),
+                )
+                .correlate(Solution)
+            )
+        )
+    else:
+        grants.append(cross_boundary_role_grant)
+    return or_(
+        *grants,
+    )
+
+
+def assigned_solution_role_grant_criterion(
+    *,
+    actor_user_id: UUID,
+    access: str | None = None,
+) -> ColumnElement[bool]:
+    """Match a Solution Role grant through a boundary covering that Solution."""
+
+    grant_filters: list[ColumnElement[bool]] = [
+        SolutionRoleGrant.solution_id == Solution.id,
+        RoleAssignment.user_id == actor_user_id,
+    ]
+    if access is not None:
+        grant_filters.append(SolutionRoleGrant.access == access)
+    return (
+        exists(
+            select(SolutionRoleGrant.id)
+            .join(
+                RoleAssignment,
+                RoleAssignment.role_id == SolutionRoleGrant.role_id,
+            )
+            .join(
+                RoleAssignmentBoundary,
+                RoleAssignmentBoundary.role_assignment_id == RoleAssignment.id,
+            )
+            .where(
+                *grant_filters,
+                or_(
+                    and_(
+                        RoleAssignmentBoundary.boundary_kind == "organization",
+                        RoleAssignmentBoundary.organization_id
+                        == Solution.organization_id,
+                    ),
+                    and_(
+                        RoleAssignmentBoundary.boundary_kind
+                        == "organization_group",
+                        exists(
+                            select(OrganizationGroupMembership.organization_id).where(
+                                OrganizationGroupMembership.organization_group_id
+                                == RoleAssignmentBoundary.organization_group_id,
+                                OrganizationGroupMembership.organization_id
+                                == Solution.organization_id,
+                            )
+                        ),
+                    ),
+                    and_(
+                        RoleAssignmentBoundary.boundary_kind
+                        == "managed_organizations",
+                        exists(
+                            select(Organization.id).where(
+                                Organization.id == Solution.organization_id,
+                                Organization.is_provider.is_(False),
+                            )
+                        ),
+                    ),
+                    and_(
+                        RoleAssignmentBoundary.boundary_kind == "platform",
+                        Solution.organization_id.is_(None),
+                    ),
+                ),
+            )
+            .correlate(Solution)
+        )
     )
 
 
@@ -110,6 +205,7 @@ def visible_solution_child_criterion(
     child_solution_id,
     actor_user_id: UUID | None,
     is_external: bool,
+    effective_role_ids: Collection[UUID] = (),
 ) -> ColumnElement[bool]:
     """SQL predicate for an entity optionally owned by a Solution.
 
@@ -126,6 +222,7 @@ def visible_solution_child_criterion(
                 visible_solutions_criterion(
                     actor_user_id=actor_user_id,
                     is_external=is_external,
+                    effective_role_ids=effective_role_ids,
                 ),
             )
         ),

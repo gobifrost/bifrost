@@ -16,21 +16,35 @@ from uuid import UUID, uuid4
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
-from shared.role_cache import get_user_roles
 from src.config import get_settings
 from src.core.principal import UserPrincipal
 from src.jobs.rabbitmq import BaseConsumer
-from src.models.orm import Agent, Conversation, Organization, PlatformJob, User
+from src.models.orm import Conversation, PlatformJob
 from src.models.orm.solution_builder import (
+    SolutionBuilderProject,
     SolutionBuilderSession,
     SolutionBuilderTurn,
 )
 from src.services.builder.agent_turns import BuilderAgentTurnService
-from src.services.builder.fs_tools import WorkspaceLimits, WorkspaceRoot, safe_extract_zip
-from src.services.builder.revision_storage import SolutionRevisionStorage
-from src.services.builder.scaffold import zip_workspace
+from src.services.builder.agent_identity import (
+    BuilderRuntimeProfile,
+    build_builder_runtime_profile,
+)
+from src.services.builder.fs_tools import WorkspaceLimits, WorkspaceRoot
+from src.services.builder.runtime_authorization import (
+    BuilderRuntimeForbidden,
+    authorize_builder_project,
+)
+from src.services.builder.workspace_archives import (
+    BuilderWorkspaceArchiveMismatch,
+    BuilderWorkspaceArchiveMissing,
+    BuilderWorkspaceArchiveSource,
+    hydrate_workspace_archive,
+    persist_workspace_archive,
+)
 from src.services.builder.turn_artifacts import BuilderTurnArtifactStorage
-from src.services.user_provisioning import get_user_scopes
+from src.services.authorization import AuthorizationContext
+from src.services.solutions.access import SolutionAction
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +75,10 @@ class _TurnRuntime:
     session: SolutionBuilderSession
     turn: SolutionBuilderTurn
     conversation: Conversation
-    agent: Agent
+    profile: BuilderRuntimeProfile
     principal: UserPrincipal
+    authorization: AuthorizationContext
+    input_sha256: str
 
 
 class _BuilderRunFailed(RuntimeError):
@@ -89,8 +105,13 @@ class SolutionBuilderTurnConsumer(BaseConsumer):
             return
         job_id = UUID(str(body["job_id"]))
         dispatch_attempt = int(body["dispatch_attempt"])
+        input_sha256 = str(body.get("input_sha256") or "")
         if dispatch_attempt < 1:
             raise ValueError("dispatch_attempt must be positive")
+        if len(input_sha256) != 64 or any(
+            character not in "0123456789abcdef" for character in input_sha256
+        ):
+            raise ValueError("input_sha256 must be a lowercase sha256 hex digest")
 
         async with self._execution_claim(job_id, dispatch_attempt) as claimed:
             if not claimed:
@@ -102,15 +123,25 @@ class SolutionBuilderTurnConsumer(BaseConsumer):
                     },
                 )
                 return
-            await self._process_claimed_message(job_id, dispatch_attempt)
+            await self._process_claimed_message(
+                job_id,
+                dispatch_attempt,
+                input_sha256=input_sha256,
+            )
 
     async def _process_claimed_message(
         self,
         job_id: UUID,
         dispatch_attempt: int,
+        *,
+        input_sha256: str,
     ) -> None:
         try:
-            runtime = await self._load_runtime(job_id, dispatch_attempt)
+            runtime = await self._load_runtime(
+                job_id,
+                dispatch_attempt,
+                input_sha256=input_sha256,
+            )
         except _BuilderRunFailed as exc:
             await self._finish_unloaded(job_id, dispatch_attempt, str(exc))
             return
@@ -292,106 +323,129 @@ class SolutionBuilderTurnConsumer(BaseConsumer):
         self,
         job_id: UUID,
         dispatch_attempt: int,
+        *,
+        input_sha256: str,
     ) -> _TurnRuntime | None:
         async with self._session_factory() as db:
-            job = await db.get(PlatformJob, job_id)
-            if (
-                job is None
-                or job.job_type != "solution.builder.turn"
-                or job.attempt != dispatch_attempt
-                or job.status not in {"running", "waiting"}
-            ):
-                return None
-            turn = await db.get(SolutionBuilderTurn, job_id)
-            if turn is None or turn.status not in {"queued", "running"}:
-                return None
-            session = await db.get(SolutionBuilderSession, turn.session_id)
-            if session is None:
-                raise _BuilderRunFailed("The Builder session no longer exists")
-            conversation = (
-                await db.execute(
-                    select(Conversation)
-                    .options(
-                        selectinload(Conversation.agent).selectinload(Agent.tools),
-                        selectinload(Conversation.agent).selectinload(
-                            Agent.delegated_agents
-                        ),
-                        selectinload(Conversation.agent).selectinload(Agent.roles),
-                        selectinload(Conversation.agent).selectinload(Agent.owner),
-                        selectinload(Conversation.agent).selectinload(
-                            Agent.mcp_connections
-                        ),
-                        selectinload(Conversation.user),
-                    )
-                    .where(Conversation.id == session.conversation_id)
-                )
-            ).scalar_one_or_none()
-            if conversation is None or conversation.agent is None:
-                raise _BuilderRunFailed("The Builder conversation is not available")
-            user = await db.get(User, turn.requested_by) if turn.requested_by else None
-            if user is None:
-                raise _BuilderRunFailed("The user who requested this turn no longer exists")
-            role_ids, role_names = await get_user_roles(user.id, db)
-            scopes = await get_user_scopes(db, user.id)
-            is_provider_org = False
-            if user.organization_id is not None:
-                is_provider_org = bool(
-                    await db.scalar(
-                        select(Organization.is_provider).where(
-                            Organization.id == user.organization_id
-                        )
-                    )
-                )
-            principal = UserPrincipal(
-                user_id=user.id,
-                email=user.email,
-                organization_id=user.organization_id,
-                name=user.name or user.email,
-                is_active=user.is_active,
-                is_superuser=user.is_superuser,
-                is_verified=user.is_verified,
-                is_external=user.is_external,
-                is_provider_org=is_provider_org,
-                roles=role_names,
-                scopes=scopes,
-                role_ids=role_ids,
-                role_names=role_names,
+            return await self._authorize_runtime(
+                db,
+                job_id=job_id,
+                dispatch_attempt=dispatch_attempt,
+                input_sha256=input_sha256,
             )
-            return _TurnRuntime(
+
+    async def _authorize_runtime(
+        self,
+        db: Any,
+        *,
+        job_id: UUID,
+        dispatch_attempt: int,
+        input_sha256: str | None = None,
+    ) -> _TurnRuntime | None:
+        job = await db.get(PlatformJob, job_id)
+        if (
+            job is None
+            or job.job_type != "solution.builder.turn"
+            or job.attempt != dispatch_attempt
+            or job.status not in {"running", "waiting"}
+        ):
+            return None
+        turn = await db.get(SolutionBuilderTurn, job_id)
+        if turn is None or turn.status not in {"queued", "running"}:
+            return None
+        session = await db.get(SolutionBuilderSession, turn.session_id)
+        if session is None:
+            raise _BuilderRunFailed("The Builder session no longer exists")
+        conversation = (
+            await db.execute(
+                select(Conversation)
+                .options(selectinload(Conversation.user))
+                .where(Conversation.id == session.conversation_id)
+            )
+        ).scalar_one_or_none()
+        if conversation is None:
+            raise _BuilderRunFailed("The Builder conversation is not available")
+        if turn.requested_by is None:
+            raise _BuilderRunFailed(
+                "The user who requested this turn no longer exists"
+            )
+        project = await db.get(SolutionBuilderProject, session.solution_id)
+        if project is None:
+            raise _BuilderRunFailed("The Builder project no longer exists")
+        required_capabilities = ["builder.execute"]
+        if project.target_kind == "solution":
+            required_capabilities.extend(
+                [
+                    "solutions.readwrite",
+                    "solutions.build.execute",
+                    "solutions.deploy.execute",
+                ]
+            )
+        try:
+            authorized = await authorize_builder_project(
+                db,
                 solution_id=session.solution_id,
-                session=session,
-                turn=turn,
-                conversation=conversation,
-                agent=conversation.agent,
-                principal=principal,
+                requester_user_id=turn.requested_by,
+                action=SolutionAction.EDIT,
+                required_capabilities=tuple(required_capabilities),
             )
+        except BuilderRuntimeForbidden as exc:
+            raise _BuilderRunFailed(str(exc)) from exc
+        profile = build_builder_runtime_profile(
+            authorized.solution,
+            target_kind=authorized.project.target_kind,
+            authorization=authorized.authorization,
+        )
+        return _TurnRuntime(
+            solution_id=session.solution_id,
+            session=session,
+            turn=turn,
+            conversation=conversation,
+            profile=profile,
+            principal=authorized.principal,
+            authorization=authorized.authorization,
+            input_sha256=input_sha256 or "",
+        )
 
     async def _materialize_workspace(
         self,
         runtime: _TurnRuntime,
         workspace_path: Path,
     ) -> None:
-        source_zip = workspace_path.parent / "source.zip"
-        if runtime.turn.resume_from_turn_id is not None:
-            storage = BuilderTurnArtifactStorage(runtime.turn.id, 1)
-            try:
-                with source_zip.open("xb") as output:
-                    async for chunk in storage.iter_checkpoint(
-                        runtime.solution_id,
-                        runtime.session.id,
-                        runtime.turn.resume_from_turn_id,
-                    ):
-                        output.write(chunk)
-            except FileNotFoundError as exc:
-                raise _BuilderRunFailed("The Builder checkpoint is no longer available") from exc
-        else:
-            copied = await SolutionRevisionStorage(runtime.solution_id).copy_to_path(
-                runtime.turn.base_revision_id,
-                source_zip,
+        source = self._workspace_source(runtime)
+        limits = WorkspaceLimits()
+        try:
+            await hydrate_workspace_archive(
+                source,
+                workspace_path,
+                limits=limits,
             )
-            if not copied:
-                raise _BuilderRunFailed("The Builder base revision is no longer available")
-        safe_extract_zip(source_zip, workspace_path, WorkspaceLimits())
+        except BuilderWorkspaceArchiveMissing as exc:
+            raise _BuilderRunFailed(
+                "The Builder base workspace is no longer available"
+            ) from exc
+        except BuilderWorkspaceArchiveMismatch as exc:
+            raise _BuilderRunFailed(str(exc)) from exc
+
+    def _workspace_source(
+        self,
+        runtime: _TurnRuntime,
+    ) -> BuilderWorkspaceArchiveSource:
+        if runtime.turn.resume_from_turn_id is not None:
+            return BuilderWorkspaceArchiveSource(
+                kind="checkpoint",
+                solution_id=runtime.solution_id,
+                session_id=runtime.session.id,
+                archive_id=runtime.turn.resume_from_turn_id,
+                expected_sha256=runtime.input_sha256,
+            )
+        return BuilderWorkspaceArchiveSource(
+            kind="revision",
+            solution_id=runtime.solution_id,
+            session_id=runtime.session.id,
+            archive_id=runtime.turn.base_revision_id,
+            expected_sha256=runtime.input_sha256,
+        )
 
     async def _run_agent(
         self,
@@ -430,12 +484,13 @@ class SolutionBuilderTurnConsumer(BaseConsumer):
         compaction_count = 0
 
         async for chunk in executor.chat(
-            agent=runtime.agent,
+            agent=runtime.profile,
             conversation=runtime.conversation,
             user_message=(await self._user_message(runtime.turn)),
             stream=True,
             enable_routing=False,
             user=runtime.principal,
+            authorization_context=runtime.authorization,
             existing_user_message_id=runtime.turn.user_message_id,
         ):
             await self._publish_chunk(runtime.conversation.id, chunk)
@@ -526,14 +581,23 @@ class SolutionBuilderTurnConsumer(BaseConsumer):
         dispatch_attempt: int,
         result: dict[str, Any],
     ) -> None:
-        output_zip = workspace_path.parent / "output.zip"
-        await asyncio.to_thread(zip_workspace, workspace_path, output_zip)
-        artifact_storage = BuilderTurnArtifactStorage(runtime.turn.id, dispatch_attempt)
-        output_sha256, _ = await artifact_storage.write_from_path(
-            output_zip,
+        output_sha256 = await persist_workspace_archive(
+            workspace=workspace_path,
+            turn_id=runtime.turn.id,
+            dispatch_attempt=dispatch_attempt,
             max_bytes=self._settings.builder_output_limit_bytes,
         )
         async with self._session_factory() as db:
+            revalidated = await self._authorize_runtime(
+                db,
+                job_id=runtime.turn.id,
+                dispatch_attempt=dispatch_attempt,
+                input_sha256=runtime.input_sha256,
+            )
+            if revalidated is None:
+                raise _BuilderRunFailed(
+                    "The Builder turn is no longer authorized to finalize"
+                )
             await BuilderAgentTurnService(db).finalize_agent_turn(
                 runtime.solution_id,
                 turn_id=runtime.turn.id,
@@ -631,16 +695,13 @@ class SolutionBuilderTurnConsumer(BaseConsumer):
         workspace_path: Path,
         dispatch_attempt: int,
     ) -> str:
-        output_zip = workspace_path.parent / "checkpoint.zip"
-        await asyncio.to_thread(zip_workspace, workspace_path, output_zip)
-        output_sha256, _ = await BuilderTurnArtifactStorage(
-            turn_id,
-            dispatch_attempt,
-        ).write_from_path(
-            output_zip,
+        return await persist_workspace_archive(
+            workspace=workspace_path,
+            turn_id=turn_id,
+            dispatch_attempt=dispatch_attempt,
             max_bytes=self._settings.builder_output_limit_bytes,
+            archive_name="checkpoint.zip",
         )
-        return output_sha256
 
     async def _cancel_watcher(self, job_id: UUID, task: asyncio.Task[Any]) -> None:
         try:

@@ -17,10 +17,17 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useUserRoles, useUserForms } from "@/hooks/useUsers";
+import { useRoles } from "@/hooks/useRoles";
+import { useOrganizationGroups, useOrganizations } from "@/hooks/useOrganizations";
+import {
+	organizationBoundary,
+	useAdministrativeBoundary,
+} from "@/hooks/useAdministrativeBoundary";
+import { summarizeBoundaries } from "@/components/users/RoleAssignmentEditor";
 import { formatDate, formatDateShort } from "@/lib/utils";
 import type { components } from "@/lib/v1";
 type User = components["schemas"]["UserPublic"];
-type UserRolesResponse = components["schemas"]["UserRolesResponse"];
+type RoleAssignment = components["schemas"]["RoleAssignmentPublic"];
 type UserFormsResponse = components["schemas"]["RoleFormsResponse"];
 
 interface UserDetailsDialogProps {
@@ -34,9 +41,18 @@ export function UserDetailsDialog({
 	open,
 	onClose,
 }: UserDetailsDialogProps) {
-	const { data: roles, isLoading: rolesLoading } = useUserRoles(user?.id);
+	const administrativeBoundary =
+		useAdministrativeBoundary("organizations.read");
+	const { data: roles, isLoading: rolesLoading } = useUserRoles(
+		user?.id,
+		user ? organizationBoundary(user.organization_id) : undefined,
+	);
+	const { data: roleDefinitions = [] } = useRoles(administrativeBoundary);
+	const { data: organizations = [] } = useOrganizations({ boundary: administrativeBoundary });
+	const { data: organizationGroups = [] } = useOrganizationGroups({ boundary: administrativeBoundary });
 	const { data: formsAccess, isLoading: formsLoading } = useUserForms(
 		user?.id,
+		user ? organizationBoundary(user.organization_id) : undefined,
 	);
 
 	if (!user) return null;
@@ -49,7 +65,7 @@ export function UserDetailsDialog({
 					<DialogDescription>
 						{user.email} •{" "}
 						{user.is_superuser
-							? "MSP Technician"
+							? "Platform Administrator"
 							: "Organization User"}
 					</DialogDescription>
 				</DialogHeader>
@@ -123,18 +139,20 @@ export function UserDetailsDialog({
 						</CardContent>
 					</Card>
 
-					{/* Roles and Forms Tabs (only for org users - non-superusers with org) */}
-					{!user.is_superuser && user.organization_id && (
+					{/* Role assignments are visible for every account; form access applies to org users. */}
+					{user.organization_id && (
 						<Tabs defaultValue="roles">
-							<TabsList className="grid w-full grid-cols-2">
+							<TabsList className={`grid w-full ${user.is_superuser ? "grid-cols-1" : "grid-cols-2"}`}>
 								<TabsTrigger value="roles">
 									<UserCog className="mr-2 h-4 w-4" />
 									Roles
 								</TabsTrigger>
-								<TabsTrigger value="forms">
-									<FileCode className="mr-2 h-4 w-4" />
-									Form Access
-								</TabsTrigger>
+								{!user.is_superuser ? (
+									<TabsTrigger value="forms">
+										<FileCode className="mr-2 h-4 w-4" />
+										Form Access
+									</TabsTrigger>
+								) : null}
 							</TabsList>
 
 							<TabsContent value="roles" className="mt-4">
@@ -144,8 +162,7 @@ export function UserDetailsDialog({
 											Assigned Roles
 										</CardTitle>
 										<CardDescription>
-											Roles determine which forms this
-											user can access
+										Roles define what this user can do and where that access applies.
 										</CardDescription>
 									</CardHeader>
 									<CardContent>
@@ -158,28 +175,24 @@ export function UserDetailsDialog({
 													/>
 												))}
 											</div>
-										) : roles &&
-										  (roles as UserRolesResponse)
-												.role_ids &&
-										  (roles as UserRolesResponse).role_ids
-												.length > 0 ? (
-											<div className="space-y-2">
-												{(
-													roles as UserRolesResponse
-												).role_ids.map(
-													(roleId: string) => (
-														<div
-															key={roleId}
-															className="flex items-center justify-between rounded-lg bg-muted/50 p-3 ring-1 ring-foreground/5"
-														>
-															<div>
-																<p className="font-medium">
-																	{roleId}
-																</p>
-																<p className="text-sm text-muted-foreground">
-																	Role ID:{" "}
-																	{roleId}
-																</p>
+									) : roles && roles.length > 0 ? (
+										<div className="space-y-2">
+											{(roles as RoleAssignment[]).map(
+												(assignment) => (
+													<div
+														key={assignment.id}
+														className="flex items-center justify-between rounded-lg bg-muted/50 p-3 ring-1 ring-foreground/5"
+													>
+														<div>
+															<p className="font-medium">
+																{roleDefinitions.find((role) => role.id === assignment.role_id)?.name ?? "Unknown role"}
+															</p>
+															<p className="text-sm text-muted-foreground">
+																{summarizeBoundaries(assignment.boundaries ?? [], {
+																	organizations: new Map(organizations.map((org) => [org.id, org.name])),
+																	organizationGroups: new Map(organizationGroups.map((group) => [group.id, group.name])),
+																})}
+															</p>
 															</div>
 														</div>
 													),
@@ -198,7 +211,7 @@ export function UserDetailsDialog({
 								</Card>
 							</TabsContent>
 
-							<TabsContent value="forms" className="mt-4">
+							{!user.is_superuser ? <TabsContent value="forms" className="mt-4">
 								<Card>
 									<CardHeader>
 										<CardTitle className="text-base">
@@ -252,7 +265,7 @@ export function UserDetailsDialog({
 										) : null}
 									</CardContent>
 								</Card>
-							</TabsContent>
+							</TabsContent> : null}
 						</Tabs>
 					)}
 

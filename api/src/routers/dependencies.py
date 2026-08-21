@@ -2,7 +2,7 @@
 Dependencies Router
 
 Endpoint for fetching entity dependency graphs for visualization.
-Platform admin only - used by the Dependency Canvas feature.
+Access follows the root entity's domain capability and selected boundary.
 """
 
 from typing import Literal
@@ -10,9 +10,14 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
-from src.core.auth import CurrentSuperuser
 from src.core.db_deps import DbSession
+from src.models.orm.organizations import Organization
+from src.services.authorization import (
+    AuthorizationBoundaryKind,
+    CurrentAuthorizationContext,
+)
 from src.services.dependency_graph import DependencyGraphService
 
 
@@ -40,9 +45,7 @@ class GraphEdgeResponse(BaseModel):
 
     source: str = Field(..., description="Source node ID")
     target: str = Field(..., description="Target node ID")
-    relationship: str = Field(
-        ..., description="Relationship type (uses, used_by)"
-    )
+    relationship: str = Field(..., description="Relationship type (uses, used_by)")
 
 
 class DependencyGraphResponse(BaseModel):
@@ -67,7 +70,7 @@ async def get_dependency_graph(
     entity_type: Literal["workflow", "form", "app", "agent"],
     entity_id: UUID,
     db: DbSession,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     depth: int = Query(
         default=2,
         ge=1,
@@ -91,8 +94,17 @@ async def get_dependency_graph(
     - Agents USE workflows (via tools)
     - Workflows are USED BY forms, apps, and agents
 
-    Platform admin only.
+    The selected boundary must contain the root entity. The returned graph is
+    limited to that entity's scope plus inherited Platform dependencies.
     """
+    authorization.require(
+        {
+            "workflow": "workflows.read",
+            "form": "forms.read",
+            "app": "apps.read",
+            "agent": "agents.read",
+        }[entity_type]
+    )
     service = DependencyGraphService(db)
     graph = await service.build_graph(entity_type, entity_id, depth)
 
@@ -104,6 +116,30 @@ async def get_dependency_graph(
             detail=f"{entity_type.title()} {entity_id} not found",
         )
 
+    root = graph.nodes[root_key]
+    boundary = authorization.selected_boundary
+    admitted = False
+    if boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+        admitted = root.org_id is None
+    elif boundary.kind is AuthorizationBoundaryKind.ORGANIZATION:
+        admitted = root.org_id == boundary.organization_id
+    elif root.org_id is not None:
+        is_provider = await db.scalar(
+            select(Organization.is_provider).where(Organization.id == root.org_id)
+        )
+        admitted = is_provider is False
+    if not admitted:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"{entity_type.title()} {entity_id} not found",
+        )
+
+    visible_nodes = {
+        node_id: node
+        for node_id, node in graph.nodes.items()
+        if node.org_id is None or node.org_id == root.org_id
+    }
+
     # Convert to response model
     return DependencyGraphResponse(
         nodes=[
@@ -113,7 +149,7 @@ async def get_dependency_graph(
                 name=node.name,
                 org_id=str(node.org_id) if node.org_id else None,
             )
-            for node in graph.nodes.values()
+            for node in visible_nodes.values()
         ],
         edges=[
             GraphEdgeResponse(
@@ -122,6 +158,7 @@ async def get_dependency_graph(
                 relationship=edge.relationship,
             )
             for edge in graph.edges
+            if edge.source in visible_nodes and edge.target in visible_nodes
         ],
         root_id=graph.root_id,
     )

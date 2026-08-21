@@ -109,7 +109,7 @@ async def test_repository_update_preserves_omitted_fields_and_applies_explicit_n
     db_session.add_all([organization, table])
     await db_session.flush()
 
-    repo = TableRepository(db_session, None, is_superuser=True)
+    repo = TableRepository(db_session, None, bypass_resource_admission=True)
     untouched = await repo.update_table(table.id, TableUpdate())
     assert untouched is not None
     assert untouched.description == "keep until cleared"

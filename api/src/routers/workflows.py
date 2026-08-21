@@ -70,15 +70,22 @@ from src.services.solutions.guard import (
     assert_entity_id_not_solution_managed,
     assert_not_solution_managed,
 )
-from src.services.solutions.access import visible_solution_child_criterion
-from src.repositories.workflows import WorkflowRepository
 from src.services.audit import emit_audit
 from src.services.operation_catalog import operation_route
 from src.services.repo_sync_writer import RepoSyncWriter
+from src.services.authorization import (
+    AuthorizationBoundaryKind,
+    CurrentAuthorizationContext,
+)
+from src.services.workflow_authorization import (
+    authorized_workflow_by_id,
+    authorized_workflow_repository,
+    require_workflow_mutation,
+    selected_workflow_organization_id,
+)
 
-from src.core.auth import Context, CurrentActiveUser, CurrentSuperuser
+from src.core.auth import Context, CurrentActiveUser
 from src.core.db_deps import DbSession
-from src.core.org_filter import org_filter_clause, resolve_org_filter
 from src.core.log_safety import log_safe
 from src.core.pubsub import publish_execution_update, publish_history_update
 from src.core.cache import get_cached_data_provider
@@ -93,7 +100,9 @@ router = APIRouter(prefix="/api/workflows", tags=["Workflows"])
 # =============================================================================
 
 
-def _convert_workflow_orm_to_schema(workflow: WorkflowORM, used_by_count: int = 0) -> WorkflowMetadata:
+def _convert_workflow_orm_to_schema(
+    workflow: WorkflowORM, used_by_count: int = 0
+) -> WorkflowMetadata:
     """Convert ORM model to Pydantic schema for API response."""
     from typing import Literal
     from src.models.contracts.workflows import ExecutableType
@@ -106,7 +115,9 @@ def _convert_workflow_orm_to_schema(workflow: WorkflowORM, used_by_count: int = 
 
     # Validate execution_mode - default to "sync" if invalid
     raw_mode = workflow.execution_mode or "sync"
-    execution_mode: Literal["sync", "async"] = "async" if raw_mode == "async" else "sync"
+    execution_mode: Literal["sync", "async"] = (
+        "async" if raw_mode == "async" else "sync"
+    )
 
     # Convert string type to ExecutableType enum
     workflow_type = ExecutableType(workflow.type or "workflow")
@@ -120,13 +131,17 @@ def _convert_workflow_orm_to_schema(workflow: WorkflowORM, used_by_count: int = 
         category=workflow.category or "General",
         tags=workflow.tags or [],
         type=workflow_type,
-        organization_id=str(workflow.organization_id) if workflow.organization_id else None,
+        organization_id=str(workflow.organization_id)
+        if workflow.organization_id
+        else None,
         is_solution_managed=workflow.solution_id is not None,
         solution_id=workflow.solution_id,
         access_level=workflow.access_level or "role_based",
         parameters=parameters,
         execution_mode=execution_mode,
-        timeout_seconds=workflow.timeout_seconds if workflow.timeout_seconds is not None else 1800,
+        timeout_seconds=workflow.timeout_seconds
+        if workflow.timeout_seconds is not None
+        else 1800,
         retry_policy=None,
         endpoint_enabled=workflow.endpoint_enabled or False,
         allowed_methods=workflow.allowed_methods or ["POST"],
@@ -136,7 +151,9 @@ def _convert_workflow_orm_to_schema(workflow: WorkflowORM, used_by_count: int = 
         tool_description=workflow.tool_description,
         # NOT `or 300` — 0 means "never cache" and `or` would clobber it.
         cache_ttl_seconds=(
-            workflow.cache_ttl_seconds if workflow.cache_ttl_seconds is not None else 300
+            workflow.cache_ttl_seconds
+            if workflow.cache_ttl_seconds is not None
+            else 300
         ),
         time_saved=workflow.time_saved or 0,
         value=float(workflow.value or 0.0),
@@ -193,9 +210,7 @@ async def _get_form_workflow_ids(db: DbSession, form_id: UUID) -> set[UUID]:
     from sqlalchemy.orm import selectinload
 
     result = await db.execute(
-        select(Form)
-        .options(selectinload(Form.fields))
-        .where(Form.id == form_id)
+        select(Form).options(selectinload(Form.fields)).where(Form.id == form_id)
     )
     form = result.scalar_one_or_none()
 
@@ -240,9 +255,7 @@ async def _get_app_workflow_ids(db: DbSession, app_id: UUID) -> set[UUID]:
     from src.services.app_dependencies import parse_dependencies
 
     # Get app
-    app_result = await db.execute(
-        select(Application).where(Application.id == app_id)
-    )
+    app_result = await db.execute(select(Application).where(Application.id == app_id))
     app = app_result.scalar_one_or_none()
     if not app:
         return set()
@@ -276,7 +289,9 @@ async def _get_app_workflow_ids(db: DbSession, app_id: UUID) -> set[UUID]:
     return matched
 
 
-async def _compute_used_by_counts(db: DbSession, workflow_ids: list[UUID]) -> dict[UUID, int]:
+async def _compute_used_by_counts(
+    db: DbSession, workflow_ids: list[UUID]
+) -> dict[UUID, int]:
     """
     Batch-compute how many entities reference each workflow.
 
@@ -293,29 +308,25 @@ async def _compute_used_by_counts(db: DbSession, workflow_ids: list[UUID]) -> di
     # columns to UUID for a consistent union.
     from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 
-    refs_form_wf = (
-        select(Form.workflow_id.cast(PG_UUID(as_uuid=True)).label("wf_id"))
-        .where(
-            Form.is_active == True,  # noqa: E712
-            Form.workflow_id.isnot(None),
-            func.length(Form.workflow_id) == 36,  # filter non-UUID strings (e.g. portable refs)
-        )
+    refs_form_wf = select(
+        Form.workflow_id.cast(PG_UUID(as_uuid=True)).label("wf_id")
+    ).where(
+        Form.is_active == True,  # noqa: E712
+        Form.workflow_id.isnot(None),
+        func.length(Form.workflow_id)
+        == 36,  # filter non-UUID strings (e.g. portable refs)
     )
-    refs_form_launch = (
-        select(Form.launch_workflow_id.cast(PG_UUID(as_uuid=True)).label("wf_id"))
-        .where(
-            Form.is_active == True,  # noqa: E712
-            Form.launch_workflow_id.isnot(None),
-            func.length(Form.launch_workflow_id) == 36,  # filter non-UUID strings
-        )
+    refs_form_launch = select(
+        Form.launch_workflow_id.cast(PG_UUID(as_uuid=True)).label("wf_id")
+    ).where(
+        Form.is_active == True,  # noqa: E712
+        Form.launch_workflow_id.isnot(None),
+        func.length(Form.launch_workflow_id) == 36,  # filter non-UUID strings
     )
-    refs_form_dp = (
-        select(FormField.data_provider_id.label("wf_id"))
-        .where(FormField.data_provider_id.isnot(None))
+    refs_form_dp = select(FormField.data_provider_id.label("wf_id")).where(
+        FormField.data_provider_id.isnot(None)
     )
-    refs_agent = (
-        select(AgentTool.workflow_id.label("wf_id"))
-    )
+    refs_agent = select(AgentTool.workflow_id.label("wf_id"))
 
     # Union all reference sources and count per workflow
     all_refs = union_all(
@@ -335,6 +346,42 @@ async def _compute_used_by_counts(db: DbSession, workflow_ids: list[UUID]) -> di
     return {row.wf_id: row.cnt for row in result.all()}
 
 
+async def _validate_workflow_role_ids(
+    db: DbSession,
+    role_ids: list[UUID],
+) -> None:
+    """Reject duplicate, missing, or capability-only Workflow Role grants."""
+
+    if not role_ids:
+        return
+    if len(role_ids) != len(set(role_ids)):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="role_ids contains duplicate references",
+        )
+    roles = list(
+        (await db.execute(select(Role).where(Role.id.in_(role_ids)))).scalars().all()
+    )
+    found = {role.id for role in roles}
+    missing = sorted(str(role_id) for role_id in role_ids if role_id not in found)
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Role(s) not found: {', '.join(missing)}",
+        )
+    unassignable = sorted(
+        str(role.id) for role in roles if not role.assignable_to_resources
+    )
+    if unassignable:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Capability role(s) cannot be assigned to Workflows: "
+                + ", ".join(unassignable)
+            ),
+        )
+
+
 # =============================================================================
 # HTTP Endpoints
 # =============================================================================
@@ -348,7 +395,7 @@ async def _compute_used_by_counts(db: DbSession, workflow_ids: list[UUID]) -> di
     **operation_route("workflows.list"),
 )
 async def list_workflows(
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
     type: str | None = None,
     is_tool: bool | None = None,  # Deprecated, use type="tool" instead
@@ -360,19 +407,16 @@ async def list_workflows(
     scope: str | None = Query(
         None,
         description="Filter scope: omit for user's org + global, 'global' for global only, "
-                    "'all' for all workflows (platform admins only), or org UUID for specific org."
+        "'all' for all workflows (platform admins only), or org UUID for specific org.",
     ),
     filter_by_form: UUID | None = Query(
-        None,
-        description="Filter to workflows used by a specific form"
+        None, description="Filter to workflows used by a specific form"
     ),
     filter_by_app: UUID | None = Query(
-        None,
-        description="Filter to workflows used by a specific app"
+        None, description="Filter to workflows used by a specific app"
     ),
     filter_by_agent: UUID | None = Query(
-        None,
-        description="Filter to workflows used by a specific agent"
+        None, description="Filter to workflows used by a specific agent"
     ),
 ) -> list[WorkflowMetadata]:
     """List all registered workflows from the database.
@@ -404,47 +448,22 @@ async def list_workflows(
         filter_by_agent: Agent UUID to filter workflows by.
     """
     try:
-        try:
-            filter_type, filter_org = resolve_org_filter(user, scope)
-        except ValueError as e:
+        authorization.require_operation("workflows.list")
+        if (
+            authorization.selected_boundary.kind
+            is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS
+        ):
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=str(e),
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Select one organization before listing Workflows",
             )
-
         stmt = select(WorkflowORM).where(WorkflowORM.is_active.is_(True))
-        org_clause = org_filter_clause(
-            WorkflowORM.organization_id,
-            filter_type,
-            filter_org,
-        )
-        if org_clause is not None:
-            stmt = stmt.where(org_clause)
-
-        # The ordinary catalog intentionally hides foreign private Solution
-        # children even from admins. The dedicated Builder All view is the
-        # explicit, audited support surface.
-        stmt = stmt.where(
-            visible_solution_child_criterion(
-                child_solution_id=WorkflowORM.solution_id,
-                actor_user_id=user.user_id,
-                is_external=user.is_external,
-            )
-        )
-
-        if not user.is_platform_admin:
-            repo = WorkflowRepository(
-                session=db,
-                org_id=user.organization_id,
-                user_id=user.user_id,
-                is_superuser=False,
-                is_external=user.is_external,
-            )
-            accessible = await repo.list(is_active=True)
-            accessible_ids = [workflow.id for workflow in accessible]
-            if not accessible_ids:
-                return []
-            stmt = stmt.where(WorkflowORM.id.in_(accessible_ids))
+        repo = authorized_workflow_repository(db, authorization)
+        accessible = await repo.list(is_active=True)
+        accessible_ids = [workflow.id for workflow in accessible]
+        if not accessible_ids:
+            return []
+        stmt = stmt.where(WorkflowORM.id.in_(accessible_ids))
 
         # Filter by type
         if type is not None:
@@ -507,12 +526,16 @@ async def list_workflows(
         for w in workflows:
             try:
                 workflow_list.append(
-                    _convert_workflow_orm_to_schema(w, used_by_count=used_by_counts.get(w.id, 0))
+                    _convert_workflow_orm_to_schema(
+                        w, used_by_count=used_by_counts.get(w.id, 0)
+                    )
                 )
             except Exception as e:
                 logger.error(f"Failed to convert workflow '{w.name}': {e}")
 
-        logger.info(f"Returning {len(workflow_list)} workflows (scope={log_safe(scope) or 'default'})")
+        logger.info(
+            f"Returning {len(workflow_list)} workflows (scope={log_safe(scope) or 'default'})"
+        )
         return workflow_list
 
     except HTTPException:
@@ -532,12 +555,12 @@ async def list_workflows(
     description="Returns counts of workflows used by each form, app, and agent",
 )
 async def get_workflow_usage_stats(
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
     scope: str | None = Query(
         None,
         description="Filter scope: omit for all (superusers), 'global' for global only, "
-                    "or org UUID for specific org only."
+        "or org UUID for specific org only.",
     ),
 ) -> WorkflowUsageStats:
     """Get workflow usage statistics grouped by entity type.
@@ -546,28 +569,29 @@ async def get_workflow_usage_stats(
     Returns counts of workflows used by each form, app, and agent.
     Useful for identifying which entities use workflows and filtering.
 
-    Scope parameter (consistent with forms, agents):
-    - Omitted: show all entities (superusers only)
-    - "global": show only global entities (org_id IS NULL) - returns empty for usage stats
-    - UUID string: show only that org's entities (no global fallback)
+    Visibility follows the selected authorization boundary:
+    - Organization: show that organization's entities
+    - Platform/global: return empty, because global entities do not own usage
+    - Managed collection: rejected until one organization is selected
     """
-    from src.core.org_filter import resolve_org_filter, OrgFilterType
-
     try:
-        # Use shared org filter helper for consistency with forms, agents
-        filter_type, filter_org = resolve_org_filter(user, scope)
+        authorization.require("workflows.read")
+        if (
+            authorization.selected_boundary.kind
+            is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Select one organization before viewing Workflow usage stats",
+            )
 
-        # Determine org_filter based on filter_type
-        if filter_type == OrgFilterType.ALL:
-            org_filter = None  # No filtering - show all
-        elif filter_type == OrgFilterType.GLOBAL_ONLY:
+        # The selected authorization boundary is authoritative. Keep accepting
+        # the legacy scope query only for backwards-compatible global requests.
+        if authorization.selected_boundary.kind is AuthorizationBoundaryKind.PLATFORM:
             # Global entities only - doesn't make sense for usage stats, return empty
             return WorkflowUsageStats(forms=[], apps=[], agents=[])
-        else:
-            # ORG_ONLY (admin filtering by a specific org) or the
-            # shouldn't-happen ORG_PLUS_GLOBAL fallthrough — both scope to the
-            # resolved org.
-            org_filter = filter_org
+
+        org_filter = authorization.selected_boundary.organization_id
 
         # =========================================================================
         # Forms: workflow_id, launch_workflow_id, and fields.data_provider_id
@@ -648,12 +672,13 @@ async def get_workflow_usage_stats(
         from src.models.orm.file_index import FileIndex
         from src.services.app_dependencies import parse_dependencies
 
-        apps_base_query = (
-            select(Application.id, Application.name, Application.slug, Application.repo_path)
-            .order_by(Application.name)
-        )
+        apps_base_query = select(
+            Application.id, Application.name, Application.slug, Application.repo_path
+        ).order_by(Application.name)
         if org_filter:
-            apps_base_query = apps_base_query.where(Application.organization_id == org_filter)
+            apps_base_query = apps_base_query.where(
+                Application.organization_id == org_filter
+            )
 
         apps_base_result = await db.execute(apps_base_query)
         all_apps = apps_base_result.all()
@@ -752,7 +777,7 @@ async def execute_workflow(
     request: WorkflowExecutionRequest,
     ctx: Context,
     db: DbSession,
-    user: CurrentActiveUser,  # Changed from CurrentSuperuser - auth check below
+    authorization: CurrentAuthorizationContext,
 ) -> WorkflowExecutionResponse:
     """Execute a workflow, data provider, or inline script.
 
@@ -773,29 +798,45 @@ async def execute_workflow(
         WorkflowLoadError,
     )
     from src.repositories import AccessDeniedError, WorkflowRepository
-    from src.core.org_filter import resolve_target_org
 
-    # Resolve org scope for workflow lookup — follows the same pattern as
-    # configs, tables, etc. Superusers can pass org_id to search that org;
-    # regular users always use their own org.
-    lookup_org_id = resolve_target_org(
-        user=user,
-        scope=request.org_id,
-        default_org_id=ctx.org_id,
-    )
+    user = authorization.requester
+    if ctx.user.embed:
+        from src.core.org_filter import resolve_target_org
 
-    workflow_repo = WorkflowRepository(
-        session=db,
-        org_id=lookup_org_id,
-        user_id=ctx.user.user_id,
-        is_superuser=ctx.user.is_superuser,
-        # Embed principals carry is_external=True (OPEN-D: external-equivalent
-        # for the config/knowledge/table data gates), but workflow execution
-        # is the HMAC-pre-authorized app function-call channel — deliberately
-        # allowlisted by EmbedScopeMiddleware and execution-scoped by jti.
-        # Keep the pre-OPEN-D resolution semantics for embed sessions here.
-        is_external=ctx.user.is_external and not ctx.user.embed,
-    )
+        lookup_org_id = resolve_target_org(
+            user=user,
+            scope=request.org_id,
+            default_org_id=ctx.org_id,
+        )
+        workflow_repo = WorkflowRepository(
+            session=db,
+            org_id=lookup_org_id,
+            user_id=user.user_id,
+            bypass_resource_roles=False,
+            # An embed session is pre-authorized for the exact app/form call
+            # channel and remains constrained below by its bound context.
+            is_external=False,
+        )
+    else:
+        authorization.require_operation("workflows.execute")
+        if request.org_id:
+            try:
+                lookup_org_id = UUID(request.org_id)
+            except (ValueError, AttributeError) as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="org_id must be a UUID",
+                ) from exc
+            authorization.require_resource_boundary(lookup_org_id)
+        else:
+            lookup_org_id = selected_workflow_organization_id(authorization)
+        workflow_repo = WorkflowRepository(
+            session=db,
+            org_id=lookup_org_id,
+            user_id=user.user_id,
+            bypass_resource_roles=authorization.has_capability("platform.superuser"),
+            is_external=user.is_external,
+        )
 
     # A Solution caller's path::fn ref carries no install id (it can't know the
     # per-install uuid5). Derive the install scope from the caller so a path ref
@@ -809,9 +850,8 @@ async def execute_workflow(
         form_id=request.form_id,
         app_id=request.app_id,
     )
-    allow_shared_workflow = (
-        solution_scope is None
-        or await solution_allows_global(db, solution_scope)
+    allow_shared_workflow = solution_scope is None or await solution_allows_global(
+        db, solution_scope
     )
 
     # Look up workflow metadata for type checking (needed for data provider handling)
@@ -845,7 +885,7 @@ async def execute_workflow(
     # Authorization check
     if request.code:
         # Inline code execution requires platform admin
-        if not ctx.user.is_superuser:
+        if not authorization.has_capability("platform.superuser"):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Inline code execution requires platform admin access",
@@ -867,21 +907,22 @@ async def execute_workflow(
             detail="Either workflow_id or code must be provided",
         )
 
-    # Validate admin-only overrides (org_id, run_as)
-    if (request.org_id or request.run_as) and not ctx.user.is_superuser:
+    # Acting as another user remains restricted to the immutable wildcard.
+    if request.run_as and not authorization.has_capability("platform.superuser"):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="org_id and run_as overrides require platform admin",
+            detail="run_as overrides require platform admin",
         )
 
     # Resolve run_as user if provided
     exec_user_id = str(ctx.user.user_id)
     exec_user_name = ctx.user.name or ctx.user.email or "Unknown"
     exec_user_email = ctx.user.email or ""
-    exec_is_admin = ctx.user.is_superuser
+    exec_is_admin = authorization.has_capability("platform.superuser")
 
     if request.run_as:
         from src.models.orm.users import User
+
         run_as_result = await db.execute(
             select(User).where(User.id == UUID(request.run_as))
         )
@@ -918,7 +959,9 @@ async def execute_workflow(
     # The deferred_execution_promoter job will publish this row when it matures.
     scheduled_at: datetime | None = request.scheduled_at
     if request.delay_seconds is not None:
-        scheduled_at = datetime.now(timezone.utc) + timedelta(seconds=request.delay_seconds)
+        scheduled_at = datetime.now(timezone.utc) + timedelta(
+            seconds=request.delay_seconds
+        )
 
     if scheduled_at is not None:
         # Schedule-with-code is rejected by the contract validator; workflow must exist.
@@ -1041,7 +1084,10 @@ async def execute_workflow(
 
         # If the result already has a terminal status (sync mode), mark as transient
         # so the frontend uses the inline result instead of waiting on WebSocket
-        if result.status and result.status not in (ExecutionStatus.PENDING, ExecutionStatus.RUNNING):
+        if result.status and result.status not in (
+            ExecutionStatus.PENDING,
+            ExecutionStatus.RUNNING,
+        ):
             result.is_transient = True
 
         # Publish execution update via WebSocket
@@ -1060,7 +1106,9 @@ async def execute_workflow(
                 status=result.status.value,
                 executed_by=exec_user_id,
                 executed_by_name=exec_user_name or exec_user_email or "Unknown",
-                workflow_name=result.workflow_name or request.script_name or "inline_script",
+                workflow_name=result.workflow_name
+                or request.script_name
+                or "inline_script",
                 org_id=execution_org_id,
                 started_at=result.started_at,
                 completed_at=result.completed_at,
@@ -1184,18 +1232,21 @@ async def cancel_scheduled_execution(
 )
 async def validate_workflow(
     request: WorkflowValidationRequest,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> WorkflowValidationResponse:
     """Validate a workflow file for errors."""
     from src.services.workflow_validation import validate_workflow_file
 
+    authorization.require_operation("workflows.validate")
     try:
         result = await validate_workflow_file(
             path=request.path,
             content=request.content,
         )
 
-        logger.info(f"Validation result for {log_safe(request.path)}: valid={result.valid}, issues={len(result.issues)}")
+        logger.info(
+            f"Validation result for {log_safe(request.path)}: valid={result.valid}, issues={len(result.issues)}"
+        )
         return result
 
     except ValueError as e:
@@ -1222,7 +1273,7 @@ async def validate_workflow(
 async def register_workflow(
     request: RegisterWorkflowRequest,
     db: DbSession,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> RegisterWorkflowResponse:
     """Register a workflow function from an existing Python file."""
     import ast
@@ -1230,6 +1281,8 @@ async def register_workflow(
     from src.services.file_storage import FileStorageService
     from src.services.file_storage.indexers.workflow import WorkflowIndexer
 
+    authorization.require_operation("workflows.register")
+    user = authorization.requester
     service = FileStorageService(db)
 
     # 1. Verify file exists
@@ -1287,8 +1340,10 @@ async def register_workflow(
     )
     existing_wf = existing.scalar_one_or_none()
 
-    wf_type = "data_provider" if target_decorator_type == "data_provider" else (
-        "tool" if target_decorator_type == "tool" else "workflow"
+    wf_type = (
+        "data_provider"
+        if target_decorator_type == "data_provider"
+        else ("tool" if target_decorator_type == "tool" else "workflow")
     )
 
     # Org targeting follows the unified --org standard (mirrors config's
@@ -1296,12 +1351,36 @@ async def register_workflow(
     # honor it — null means global. If it was OMITTED, default to the caller's
     # own org (HOME) so a bare `register` never silently writes a global row.
     if "organization_id" in (request.model_fields_set or set()):
-        org_uuid = UUID(request.organization_id) if request.organization_id else None
+        try:
+            org_uuid = (
+                UUID(request.organization_id) if request.organization_id else None
+            )
+        except (ValueError, AttributeError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="organization_id must be a UUID or null",
+            ) from exc
     else:
-        org_uuid = user.organization_id
+        org_uuid = selected_workflow_organization_id(authorization)
+    authorization.require_resource_boundary(org_uuid)
+    if org_uuid is not None:
+        from src.models.orm.organizations import Organization
+
+        exists = await db.scalar(
+            select(Organization.id).where(Organization.id == org_uuid)
+        )
+        if exists is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Organization with ID '{org_uuid}' not found",
+            )
 
     # Validate access_level early so we don't half-register on a typo
-    if request.access_level is not None and request.access_level not in ("authenticated", "everyone", "role_based"):
+    if request.access_level is not None and request.access_level not in (
+        "authenticated",
+        "everyone",
+        "role_based",
+    ):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Invalid access_level: '{request.access_level}'. Must be 'authenticated', 'everyone', or 'role_based'",
@@ -1309,6 +1388,8 @@ async def register_workflow(
 
     # Parse role_ids and verify they exist before any DB mutation
     role_uuids: list[UUID] = []
+    if request.role_ids is not None:
+        authorization.require("roles.readwrite")
     if request.role_ids:
         for rid_str in request.role_ids:
             try:
@@ -1318,16 +1399,7 @@ async def register_workflow(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Invalid role ID: '{rid_str}' (expected a UUID)",
                 )
-        role_check = await db.execute(
-            select(Role.id).where(Role.id.in_(role_uuids))
-        )
-        found_role_ids = set(role_check.scalars().all())
-        missing_roles = [str(rid) for rid in role_uuids if rid not in found_role_ids]
-        if missing_roles:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Role(s) not found: {', '.join(missing_roles)}",
-            )
+        await _validate_workflow_role_ids(db, role_uuids)
 
     if existing_wf and existing_wf.is_active:
         raise HTTPException(status_code=409, detail="Workflow already registered")
@@ -1353,7 +1425,9 @@ async def register_workflow(
             type=wf_type,
             is_active=True,
             organization_id=org_uuid,
-            access_level=request.access_level if request.access_level is not None else "role_based",
+            access_level=request.access_level
+            if request.access_level is not None
+            else "role_based",
         )
         db.add(new_wf)
         await db.flush()
@@ -1381,9 +1455,7 @@ async def register_workflow(
     await indexer.index_python_file(request.path, content)
 
     # 6. Re-fetch enriched record
-    result = await db.execute(
-        select(WorkflowORM).where(WorkflowORM.id == workflow_id)
-    )
+    result = await db.execute(select(WorkflowORM).where(WorkflowORM.id == workflow_id))
     workflow = result.scalar_one()
 
     await emit_audit(
@@ -1411,6 +1483,7 @@ async def register_workflow(
 
     try:
         from src.services.mcp_server.server import refresh_workflow_tools
+
         await refresh_workflow_tools()
     except Exception as e:
         logger.warning(f"Failed to refresh MCP workflow tools: {e}")
@@ -1422,7 +1495,9 @@ async def register_workflow(
         path=workflow.path,
         type=workflow.type,
         description=workflow.description,
-        organization_id=str(workflow.organization_id) if workflow.organization_id else None,
+        organization_id=str(workflow.organization_id)
+        if workflow.organization_id
+        else None,
     )
 
 
@@ -1436,7 +1511,7 @@ async def register_workflow(
 async def update_workflow(
     workflow_id: UUID,
     request: WorkflowUpdateRequest,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> WorkflowMetadata:
     """Update a workflow's editable properties.
@@ -1456,20 +1531,13 @@ async def update_workflow(
     - endpoint_enabled: Whether workflow is exposed as HTTP endpoint
     - allowed_methods: Allowed HTTP methods when endpoint is enabled
 
-    Requires platform admin access.
+    Requires Workflow write access in the selected boundary.
     """
     try:
-        # Find the workflow
-        result = await db.execute(
-            select(WorkflowORM).where(WorkflowORM.id == workflow_id)
-        )
-        workflow = result.scalar_one_or_none()
-
-        if not workflow:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Workflow with ID '{workflow_id}' not found",
-            )
+        authorization.require_operation("workflows.update")
+        user = authorization.requester
+        workflow = await authorized_workflow_by_id(db, authorization, workflow_id)
+        require_workflow_mutation(authorization, workflow)
 
         # Solution-managed workflows are read-only here; deploy is the writer.
         assert_not_solution_managed(workflow)
@@ -1479,17 +1547,29 @@ async def update_workflow(
             if request.organization_id is not None:
                 # Validate organization exists if not setting to global
                 from src.models.orm.organizations import Organization
+
+                try:
+                    target_organization_id = UUID(request.organization_id)
+                except (ValueError, AttributeError) as exc:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="organization_id must be a UUID or null",
+                    ) from exc
                 org_result = await db.execute(
-                    select(Organization).where(Organization.id == UUID(request.organization_id))
+                    select(Organization).where(
+                        Organization.id == target_organization_id
+                    )
                 )
                 if not org_result.scalar_one_or_none():
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Organization with ID '{request.organization_id}' not found",
                     )
-                workflow.organization_id = UUID(request.organization_id)
+                authorization.require_resource_boundary(target_organization_id)
+                workflow.organization_id = target_organization_id
             else:
                 # Explicitly set to global scope
+                authorization.require_resource_boundary(None)
                 workflow.organization_id = None
 
         # Update access_level if provided
@@ -1506,6 +1586,7 @@ async def update_workflow(
         # wipes assignments when ``role_ids`` was not supplied. If both are provided,
         # ``role_ids`` wins because it carries the more specific intent.
         if request.role_ids is not None:
+            authorization.require("roles.readwrite")
             target_role_uuids: list[UUID] = []
             for rid_str in request.role_ids:
                 try:
@@ -1516,17 +1597,7 @@ async def update_workflow(
                         detail=f"Invalid role ID: '{rid_str}' (expected a UUID)",
                     )
 
-            if target_role_uuids:
-                role_check = await db.execute(
-                    select(Role.id).where(Role.id.in_(target_role_uuids))
-                )
-                found_role_ids = set(role_check.scalars().all())
-                missing_roles = [str(rid) for rid in target_role_uuids if rid not in found_role_ids]
-                if missing_roles:
-                    raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
-                        detail=f"Role(s) not found: {', '.join(missing_roles)}",
-                    )
+            await _validate_workflow_role_ids(db, target_role_uuids)
 
             await db.execute(
                 delete(WorkflowRole).where(WorkflowRole.workflow_id == workflow_id)
@@ -1546,12 +1617,15 @@ async def update_workflow(
                 f"({len(target_role_uuids)} role(s))"
             )
         elif request.clear_roles:
+            authorization.require("roles.readwrite")
             await db.execute(
                 delete(WorkflowRole).where(WorkflowRole.workflow_id == workflow_id)
             )
             # Also set to role_based access level (effectively no access)
             workflow.access_level = "role_based"
-            logger.info(f"Cleared all role assignments for workflow '{log_safe(workflow.name)}'")
+            logger.info(
+                f"Cleared all role assignments for workflow '{log_safe(workflow.name)}'"
+            )
 
         # Update MCP tool name if provided. ``function_name`` remains the
         # source-code identity used for path::function references.
@@ -1674,20 +1748,26 @@ async def update_workflow(
         # Invalidate Redis caches so changes take effect immediately
         try:
             from src.core.redis_client import get_redis_client
+
             redis_client = get_redis_client()
             await redis_client.invalidate_endpoint_workflow_cache(str(workflow.id))
             await redis_client.invalidate_workflow_metadata_cache(str(workflow.id))
         except Exception as e:
-            logger.warning(f"Failed to invalidate caches for workflow {log_safe(workflow.name)}: {e}")
+            logger.warning(
+                f"Failed to invalidate caches for workflow {log_safe(workflow.name)}: {e}"
+            )
 
         # Refresh MCP tool registry so updated signatures appear immediately
         try:
             from src.services.mcp_server.server import refresh_workflow_tools
+
             await refresh_workflow_tools()
         except Exception as e:
             logger.warning(f"Failed to refresh MCP workflow tools: {e}")
 
-        logger.info(f"Updated workflow '{log_safe(workflow.name)}' organization_id={log_safe(workflow.organization_id)}, access_level={log_safe(workflow.access_level)}")
+        logger.info(
+            f"Updated workflow '{log_safe(workflow.name)}' organization_id={log_safe(workflow.organization_id)}, access_level={log_safe(workflow.access_level)}"
+        )
         return _convert_workflow_orm_to_schema(workflow)
 
     except HTTPException:
@@ -1713,8 +1793,7 @@ async def update_workflow(
     description="Get all orphaned workflows with their references",
 )
 async def list_orphaned_workflows(
-    ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> OrphanedWorkflowsResponse:
     """
@@ -1729,6 +1808,13 @@ async def list_orphaned_workflows(
     from src.services.workflow_orphan import WorkflowOrphanService
 
     try:
+        authorization.require("workflows.read")
+        repo = authorized_workflow_repository(db, authorization)
+        accessible_orphans = await repo.list(is_orphaned=True)
+        accessible_ids = {workflow.id for workflow in accessible_orphans}
+        if not accessible_ids:
+            return OrphanedWorkflowsResponse(workflows=[])
+
         orphan_service = WorkflowOrphanService(db)
         orphans = await orphan_service.get_orphaned_workflows()
 
@@ -1751,6 +1837,7 @@ async def list_orphaned_workflows(
                     orphaned_at=o.orphaned_at,
                 )
                 for o in orphans
+                if UUID(o.id) in accessible_ids
             ]
         )
 
@@ -1770,8 +1857,7 @@ async def list_orphaned_workflows(
 )
 async def get_compatible_replacements(
     workflow_id: UUID,
-    ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> CompatibleReplacementsResponse:
     """
@@ -1789,6 +1875,8 @@ async def get_compatible_replacements(
     from src.services.workflow_orphan import WorkflowOrphanService
 
     try:
+        authorization.require("workflows.read")
+        await authorized_workflow_by_id(db, authorization, workflow_id)
         orphan_service = WorkflowOrphanService(db)
         replacements = await orphan_service.get_compatible_replacements(workflow_id)
 
@@ -1827,8 +1915,7 @@ async def get_compatible_replacements(
 async def replace_workflow(
     workflow_id: UUID,
     request: ReplaceWorkflowRequest,
-    ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> ReplaceWorkflowResponse:
     """
@@ -1846,6 +1933,8 @@ async def replace_workflow(
     """
     from src.services.workflow_orphan import WorkflowOrphanService
 
+    workflow_for_auth = await authorized_workflow_by_id(db, authorization, workflow_id)
+    require_workflow_mutation(authorization, workflow_for_auth)
     await assert_entity_id_not_solution_managed(db, WorkflowORM, workflow_id)
     try:
         orphan_service = WorkflowOrphanService(db)
@@ -1889,8 +1978,7 @@ async def replace_workflow(
 async def remap_workflow_references(
     workflow_id: UUID,
     request: RemapWorkflowRequest,
-    ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> RemapWorkflowResponse:
     """Move references from ``workflow_id`` to ``target_workflow_id``."""
@@ -1898,6 +1986,14 @@ async def remap_workflow_references(
 
     try:
         target_workflow_id = UUID(request.target_workflow_id)
+        source_workflow = await authorized_workflow_by_id(
+            db, authorization, workflow_id
+        )
+        target_workflow = await authorized_workflow_by_id(
+            db, authorization, target_workflow_id
+        )
+        require_workflow_mutation(authorization, source_workflow)
+        require_workflow_mutation(authorization, target_workflow)
         orphan_service = WorkflowOrphanService(db)
         result = await orphan_service.remap_workflow_references(
             source_workflow_id=workflow_id,
@@ -1916,6 +2012,8 @@ async def remap_workflow_references(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error remapping workflow references: {e}", exc_info=True)
         raise HTTPException(
@@ -1932,8 +2030,7 @@ async def remap_workflow_references(
 )
 async def recreate_workflow_file(
     workflow_id: UUID,
-    ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> RecreateFileResponse:
     """
@@ -1951,6 +2048,9 @@ async def recreate_workflow_file(
     from src.services.workflow_orphan import WorkflowOrphanService
     from src.services.file_storage import FileStorageService
 
+    user = authorization.effective_actor
+    workflow_for_auth = await authorized_workflow_by_id(db, authorization, workflow_id)
+    require_workflow_mutation(authorization, workflow_for_auth)
     await assert_entity_id_not_solution_managed(db, WorkflowORM, workflow_id)
     try:
         orphan_service = WorkflowOrphanService(db)
@@ -1960,6 +2060,7 @@ async def recreate_workflow_file(
 
         # Load code via Redis→S3 cache chain
         from src.core.module_cache import get_module
+
         cached = await get_module(workflow.path)
         code_content = cached["content"] if cached else None
 
@@ -1975,7 +2076,9 @@ async def recreate_workflow_file(
             updated_by=user.email,
         )
 
-        logger.info(f"Recreated file for workflow {log_safe(workflow_id)} at {log_safe(workflow.path)}")
+        logger.info(
+            f"Recreated file for workflow {log_safe(workflow_id)} at {log_safe(workflow.path)}"
+        )
 
         return RecreateFileResponse(
             success=True,
@@ -2004,8 +2107,7 @@ async def recreate_workflow_file(
 )
 async def deactivate_workflow(
     workflow_id: UUID,
-    ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> DeactivateWorkflowResponse:
     """
@@ -2022,6 +2124,8 @@ async def deactivate_workflow(
     """
     from src.services.workflow_orphan import WorkflowOrphanService
 
+    workflow_for_auth = await authorized_workflow_by_id(db, authorization, workflow_id)
+    require_workflow_mutation(authorization, workflow_for_auth)
     await assert_entity_id_not_solution_managed(db, WorkflowORM, workflow_id)
     try:
         orphan_service = WorkflowOrphanService(db)
@@ -2031,7 +2135,9 @@ async def deactivate_workflow(
         if ref_count > 0:
             warning = f"{ref_count} {'form/app still references' if ref_count == 1 else 'forms/apps still reference'} this workflow"
 
-        logger.info(f"Deactivated workflow {log_safe(workflow_id)} (refs: {log_safe(ref_count)})")
+        logger.info(
+            f"Deactivated workflow {log_safe(workflow_id)} (refs: {log_safe(ref_count)})"
+        )
 
         return DeactivateWorkflowResponse(
             success=True,
@@ -2066,24 +2172,13 @@ async def deactivate_workflow(
 )
 async def get_workflow(
     workflow_id: UUID,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> WorkflowMetadata:
     """Get one workflow through the same tenant, role, and Solution gate as list."""
 
-    repo = WorkflowRepository(
-        session=db,
-        org_id=user.organization_id,
-        user_id=user.user_id,
-        is_superuser=user.is_platform_admin,
-        is_external=user.is_external,
-    )
-    workflow = await repo.get(id=workflow_id)
-    if workflow is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Workflow with ID '{workflow_id}' not found",
-        )
+    authorization.require_operation("workflows.get")
+    workflow = await authorized_workflow_by_id(db, authorization, workflow_id)
     used_by_counts = await _compute_used_by_counts(db, [workflow.id])
     return _convert_workflow_orm_to_schema(
         workflow,
@@ -2099,7 +2194,7 @@ async def get_workflow(
 )
 async def get_workflow_roles(
     workflow_id: UUID,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> WorkflowRolesResponse:
     """Get all roles assigned to a workflow.
@@ -2110,15 +2205,9 @@ async def get_workflow_roles(
     Returns:
         WorkflowRolesResponse with list of role IDs
     """
-    # Verify workflow exists
-    result = await db.execute(
-        select(WorkflowORM.id).where(WorkflowORM.id == workflow_id)
-    )
-    if not result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Workflow with ID '{workflow_id}' not found",
-        )
+    authorization.require("workflows.read")
+    authorization.require("roles.read")
+    await authorized_workflow_by_id(db, authorization, workflow_id)
 
     # Get role IDs assigned to this workflow
     result = await db.execute(
@@ -2139,7 +2228,7 @@ async def get_workflow_roles(
 async def assign_roles_to_workflow(
     workflow_id: UUID,
     request: AssignRolesToWorkflowRequest,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> None:
     """Assign roles to a workflow.
@@ -2151,35 +2240,29 @@ async def assign_roles_to_workflow(
         workflow_id: UUID of the workflow
         request: Request containing list of role IDs to assign
     """
-    # Verify workflow exists
-    result = await db.execute(
-        select(WorkflowORM.id).where(WorkflowORM.id == workflow_id)
-    )
-    if not result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Workflow with ID '{workflow_id}' not found",
-        )
+    authorization.require_operation("workflows.roles.grant")
+    user = authorization.requester
+    workflow = await authorized_workflow_by_id(db, authorization, workflow_id)
+    require_workflow_mutation(authorization, workflow)
     # Roles are solution-owned and portable — locked for managed workflows.
     # The before_flush backstop can't see this (we add WorkflowRole rows, never
     # dirtying the Workflow itself), so the explicit guard is load-bearing here.
     await assert_entity_id_not_solution_managed(db, WorkflowORM, workflow_id)
 
+    role_uuids: list[UUID] = []
+    for role_id_str in request.role_ids:
+        try:
+            role_uuids.append(UUID(role_id_str))
+        except (ValueError, AttributeError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid role ID: '{role_id_str}' (expected a UUID)",
+            ) from exc
+    await _validate_workflow_role_ids(db, role_uuids)
+
     now = datetime.now(timezone.utc)
 
-    for role_id_str in request.role_ids:
-        role_uuid = UUID(role_id_str)
-
-        # Verify role exists
-        role_result = await db.execute(
-            select(Role.id).where(Role.id == role_uuid)
-        )
-        if not role_result.scalar_one_or_none():
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Role with ID '{role_id_str}' not found",
-            )
-
+    for role_uuid in role_uuids:
         # Check if already assigned
         existing = await db.execute(
             select(WorkflowRole).where(
@@ -2221,7 +2304,7 @@ async def assign_roles_to_workflow(
 async def remove_role_from_workflow(
     workflow_id: UUID,
     role_id: UUID,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> None:
     """Remove a role from a workflow.
@@ -2230,6 +2313,9 @@ async def remove_role_from_workflow(
         workflow_id: UUID of the workflow
         role_id: UUID of the role to remove
     """
+    authorization.require_operation("workflows.roles.revoke")
+    workflow = await authorized_workflow_by_id(db, authorization, workflow_id)
+    require_workflow_mutation(authorization, workflow)
     # Locked for managed workflows. This is a Core delete() that bypasses the
     # ORM unit-of-work, so the before_flush backstop never sees it — the guard
     # is the only protection here.
@@ -2255,25 +2341,29 @@ async def remove_role_from_workflow(
         details={"role_id": str(role_id)},
     )
     await RepoSyncWriter(db).regenerate_manifest()
-    logger.info(f"Removed role {log_safe(role_id)} from workflow {log_safe(workflow_id)}")
+    logger.info(
+        f"Removed role {log_safe(role_id)} from workflow {log_safe(workflow_id)}"
+    )
 
 
 @router.delete(
     "/{workflow_id}",
     summary="Delete a workflow",
     description="Delete a workflow by removing its function from the source file. "
-                "Returns 409 with deactivation details if the workflow has history or dependencies.",
+    "Returns 409 with deactivation details if the workflow has history or dependencies.",
     responses={
         200: {"description": "Workflow deleted successfully"},
         404: {"description": "Workflow not found"},
-        409: {"description": "Workflow has dependencies or history, confirmation required"},
+        409: {
+            "description": "Workflow has dependencies or history, confirmation required"
+        },
     },
     response_model=None,
     **operation_route("workflows.delete"),
 )
 async def delete_workflow(
     workflow_id: UUID,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
     request: DeleteWorkflowRequest | None = None,
 ) -> dict[str, str] | JSONResponse:
@@ -2293,17 +2383,9 @@ async def delete_workflow(
     if request is None:
         request = DeleteWorkflowRequest()
 
-    # 1. Find the workflow
-    result = await db.execute(
-        select(WorkflowORM).where(WorkflowORM.id == workflow_id)
-    )
-    workflow = result.scalar_one_or_none()
-
-    if not workflow:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Workflow with ID '{workflow_id}' not found",
-        )
+    authorization.require_operation("workflows.delete")
+    workflow = await authorized_workflow_by_id(db, authorization, workflow_id)
+    require_workflow_mutation(authorization, workflow)
 
     # Solution-managed workflows are read-only here; deploy is the writer.
     assert_not_solution_managed(workflow)
@@ -2321,6 +2403,7 @@ async def delete_workflow(
         # We're removing this one function, so the "new" function names are
         # all existing functions at this path minus the target
         from src.models import Workflow as WfORM
+
         path_wf_result = await db.execute(
             select(WfORM).where(
                 WfORM.path == workflow.path,
@@ -2329,8 +2412,7 @@ async def delete_workflow(
         )
         path_workflows = list(path_wf_result.scalars().all())
         remaining_names = {
-            wf.function_name for wf in path_workflows
-            if wf.id != workflow_id
+            wf.function_name for wf in path_workflows if wf.id != workflow_id
         }
 
         # Build decorator info for remaining functions (for replacement suggestions)
@@ -2342,7 +2424,10 @@ async def delete_workflow(
                     wf.name,
                 )
 
-        pending, replacements_available = await deactivation_svc.detect_pending_deactivations(
+        (
+            pending,
+            replacements_available,
+        ) = await deactivation_svc.detect_pending_deactivations(
             path=workflow.path,
             new_function_names=remaining_names,
             new_decorator_info=new_decorator_info,
@@ -2421,7 +2506,10 @@ async def delete_workflow(
         )
         await RepoSyncWriter(db).regenerate_manifest()
         await db.commit()
-        return {"status": "deleted", "detail": "Source file not found, workflow deactivated"}
+        return {
+            "status": "deleted",
+            "detail": "Source file not found, workflow deactivated",
+        }
 
     # Determine: single-function file or multi-function file
     new_source = remove_function_from_source(source_content, workflow.function_name)
@@ -2429,7 +2517,9 @@ async def delete_workflow(
     if new_source is None:
         # Only function in file — delete the entire file
         await file_svc.delete_file(workflow.path)
-        logger.info(f"Deleted file {workflow.path} (contained only workflow '{workflow.name}')")
+        logger.info(
+            f"Deleted file {workflow.path} (contained only workflow '{workflow.name}')"
+        )
     else:
         # Multi-function file — write back without the removed function
         await file_svc.write_file(
@@ -2456,8 +2546,12 @@ async def delete_workflow(
     # Refresh MCP tool registry so deleted tools disappear immediately
     try:
         from src.services.mcp_server.server import refresh_workflow_tools
+
         await refresh_workflow_tools()
     except Exception as e:
         logger.warning(f"Failed to refresh MCP workflow tools: {e}")
 
-    return {"status": "deleted", "detail": f"Workflow '{workflow.name}' has been removed"}
+    return {
+        "status": "deleted",
+        "detail": f"Workflow '{workflow.name}' has been removed",
+    }

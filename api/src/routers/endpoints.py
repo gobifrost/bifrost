@@ -138,8 +138,13 @@ async def execute_endpoint(
             logger.debug(f"Cache miss for endpoint workflow: {log_safe(workflow_id)}")
 
             # Get workflow from database
-            # System-level access: org_id=None, is_superuser=True bypasses cascade scoping
-            workflow_repo = WorkflowRepository(db, org_id=None, is_superuser=True)
+            # System-level endpoint routing is an already-authorized runtime
+            # lookup and bypasses resource-role filtering.
+            workflow_repo = WorkflowRepository(
+                db,
+                org_id=None,
+                bypass_resource_roles=True,
+            )
             workflow = await workflow_repo.get_endpoint_workflow_by_id(wf_uuid)
 
             if not workflow:

@@ -10,12 +10,12 @@ from fastmcp.tools import ToolResult
 from src.services.builder.fs_tools import WorkspaceRoot, WorkspaceViolation
 from src.services.builder.workspace_tool_runtime import (
     BUILDER_WORKSPACE_TOOL_IDS,
+    TEST_SOLUTION_BUILD_TOOL_ID,
     error_result,
     execute_builder_workspace_tool,
     success_result,
 )
 
-TEST_SOLUTION_BUILD_TOOL_ID = "test_solution_build"
 BUILDER_BIFROST_TOOL_IDS = frozenset({TEST_SOLUTION_BUILD_TOOL_ID})
 HIDDEN_TOOL_IDS = frozenset(BUILDER_WORKSPACE_TOOL_IDS) | BUILDER_BIFROST_TOOL_IDS
 

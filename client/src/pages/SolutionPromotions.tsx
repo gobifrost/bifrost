@@ -31,6 +31,7 @@ import { MultiCombobox } from "@/components/ui/multi-combobox";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useUsersFiltered } from "@/hooks/useUsers";
+import { useAdministrativeBoundary } from "@/hooks/useAdministrativeBoundary";
 import {
 	listPromotionReviews,
 	promoteSolution,
@@ -93,7 +94,13 @@ function ReviewQueueItem({
 	);
 }
 
-function PromotionReviewWorkspace({ review }: { review: PromotionReview }) {
+function PromotionReviewWorkspace({
+	review,
+	sourceBoundary,
+}: {
+	review: PromotionReview;
+	sourceBoundary?: string;
+}) {
 	const queryClient = useQueryClient();
 	const blockers = review.blockers ?? [];
 	const changedPaths = review.changed_paths ?? [];
@@ -138,7 +145,7 @@ function PromotionReviewWorkspace({ review }: { review: PromotionReview }) {
 
 	const promoteMutation = useMutation({
 		mutationFn: (request: PromotionTargetRequest) =>
-			promoteSolution(review.solution_id, request),
+			promoteSolution(review.solution_id, request, { sourceBoundary }),
 		onSuccess: (result) => {
 			setConfirmOpen(false);
 			toast.success(
@@ -507,9 +514,12 @@ function PromotionReviewWorkspace({ review }: { review: PromotionReview }) {
 
 export function SolutionPromotions() {
 	const [selectedId, setSelectedId] = useState<string | null>(null);
+	const sourceBoundary =
+		useAdministrativeBoundary("solutions.read");
 	const reviewsQuery = useQuery({
-		queryKey: ["solution-promotions"],
-		queryFn: ({ signal }) => listPromotionReviews({ signal }),
+		queryKey: ["solution-promotions", sourceBoundary],
+		queryFn: ({ signal }) =>
+			listPromotionReviews({ signal, boundary: sourceBoundary }),
 	});
 	const reviews = useMemo(() => reviewsQuery.data ?? [], [reviewsQuery.data]);
 	const selected =
@@ -591,6 +601,7 @@ export function SolutionPromotions() {
 						<PromotionReviewWorkspace
 							key={selected.solution_id}
 							review={selected}
+							sourceBoundary={sourceBoundary}
 						/>
 					) : null}
 				</div>

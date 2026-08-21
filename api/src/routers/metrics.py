@@ -35,17 +35,26 @@ from src.models import (
     WorkflowMetricsSummary,
     WorkflowMetricsResponse,
 )
-from src.core.auth import Context, CurrentActiveUser, RequirePlatformAdmin
+from src.core.auth import Context, CurrentActiveUser
 from src.models import Execution as ExecutionModel
 from src.models import ExecutionMetricsDaily, Organization
 from src.models.orm import PlatformMetricsSnapshot as PlatformMetricsSnapshotORM
 from src.models.enums import ExecutionStatus
 from src.services.roi_settings_service import ROISettingsService
+from src.services.authorization import CurrentAuthorizationContext
 from shared.execution_timeseries import get_execution_time_series
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/metrics", tags=["Metrics"])
+
+
+def _require_metrics_platform(
+    authorization: CurrentAuthorizationContext,
+    capability: str = "metrics.read",
+) -> None:
+    authorization.require(capability)
+    authorization.require_resource_boundary(None)
 
 
 # =============================================================================
@@ -71,8 +80,8 @@ async def get_metrics(
 
     Authorization note: this is the universal landing dashboard and is
     deliberately available to any active user (CurrentActiveUser), unlike the
-    admin-only detail/snapshot siblings below (RequirePlatformAdmin). The
-    exposed aggregates are intentionally non-sensitive platform-wide counts.
+    platform-scoped detail/snapshot siblings below. The exposed aggregates are
+    intentionally non-sensitive platform-wide counts.
 
     Returns:
         Dashboard metrics including workflow/form counts, execution stats, etc.
@@ -143,11 +152,10 @@ async def get_metrics(
     response_model=PlatformMetricsResponse,
     summary="Get full platform metrics snapshot",
     description="Get the complete pre-computed metrics snapshot. Platform admin only.",
-    dependencies=[RequirePlatformAdmin],
 )
 async def get_metrics_snapshot(
     ctx: Context,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> PlatformMetricsResponse:
     """
     Get the full platform metrics snapshot.
@@ -157,6 +165,7 @@ async def get_metrics_snapshot(
 
     Platform admin only.
     """
+    _require_metrics_platform(authorization)
     try:
         snapshot_query = select(PlatformMetricsSnapshotORM).where(
             PlatformMetricsSnapshotORM.id == 1
@@ -271,13 +280,16 @@ async def get_dashboard_execution_time_series(
     response_model=DailyMetricsResponse,
     summary="Get daily execution metrics",
     description="Get daily execution metrics for trends. Platform admin only.",
-    dependencies=[RequirePlatformAdmin],
 )
 async def get_daily_metrics(
     ctx: Context,
-    user: CurrentActiveUser,
-    days: int = Query(default=30, ge=1, le=365, description="Number of days to include"),
-    organization_id: str | None = Query(default=None, description="Filter by organization"),
+    authorization: CurrentAuthorizationContext,
+    days: int = Query(
+        default=30, ge=1, le=365, description="Number of days to include"
+    ),
+    organization_id: str | None = Query(
+        default=None, description="Filter by organization"
+    ),
 ) -> DailyMetricsResponse:
     """
     Get daily execution metrics for trends and charts.
@@ -291,6 +303,7 @@ async def get_daily_metrics(
     Returns:
         Daily metrics entries for the requested period
     """
+    _require_metrics_platform(authorization)
     try:
         start_date = date.today() - timedelta(days=days)
 
@@ -303,6 +316,7 @@ async def get_daily_metrics(
         if organization_id:
             # Parse org ID
             from uuid import UUID
+
             org_uuid = UUID(organization_id.replace("ORG:", ""))
             query = query.where(ExecutionMetricsDaily.organization_id == org_uuid)
         else:
@@ -315,7 +329,9 @@ async def get_daily_metrics(
         entries = [
             DailyMetricsEntry(
                 date=row.date.isoformat(),
-                organization_id=f"ORG:{row.organization_id}" if row.organization_id else None,
+                organization_id=f"ORG:{row.organization_id}"
+                if row.organization_id
+                else None,
                 execution_count=row.execution_count,
                 success_count=row.success_count,
                 failed_count=row.failed_count,
@@ -349,13 +365,16 @@ async def get_daily_metrics(
     response_model=OrganizationMetricsResponse,
     summary="Get organization metrics breakdown",
     description="Get execution metrics grouped by organization. Platform admin only.",
-    dependencies=[RequirePlatformAdmin],
 )
 async def get_organization_metrics(
     ctx: Context,
-    user: CurrentActiveUser,
-    days: int = Query(default=30, ge=1, le=365, description="Number of days to include"),
-    limit: int = Query(default=20, ge=1, le=100, description="Max organizations to return"),
+    authorization: CurrentAuthorizationContext,
+    days: int = Query(
+        default=30, ge=1, le=365, description="Number of days to include"
+    ),
+    limit: int = Query(
+        default=20, ge=1, le=100, description="Max organizations to return"
+    ),
 ) -> OrganizationMetricsResponse:
     """
     Get execution metrics breakdown by organization.
@@ -369,6 +388,7 @@ async def get_organization_metrics(
     Returns:
         Organization metrics sorted by total executions (descending)
     """
+    _require_metrics_platform(authorization)
     try:
         start_date = date.today() - timedelta(days=days)
 
@@ -377,14 +397,22 @@ async def get_organization_metrics(
             select(
                 ExecutionMetricsDaily.organization_id,
                 Organization.name.label("org_name"),
-                func.sum(ExecutionMetricsDaily.execution_count).label("total_executions"),
+                func.sum(ExecutionMetricsDaily.execution_count).label(
+                    "total_executions"
+                ),
                 func.sum(ExecutionMetricsDaily.success_count).label("success_count"),
                 func.sum(ExecutionMetricsDaily.failed_count).label("failed_count"),
-                func.sum(ExecutionMetricsDaily.total_memory_bytes).label("total_memory"),
+                func.sum(ExecutionMetricsDaily.total_memory_bytes).label(
+                    "total_memory"
+                ),
                 func.sum(ExecutionMetricsDaily.total_cpu_seconds).label("total_cpu"),
-                func.sum(ExecutionMetricsDaily.total_duration_ms).label("total_duration"),
+                func.sum(ExecutionMetricsDaily.total_duration_ms).label(
+                    "total_duration"
+                ),
             )
-            .join(Organization, ExecutionMetricsDaily.organization_id == Organization.id)
+            .join(
+                Organization, ExecutionMetricsDaily.organization_id == Organization.id
+            )
             .where(ExecutionMetricsDaily.date >= start_date)
             .where(ExecutionMetricsDaily.organization_id.isnot(None))
             .group_by(ExecutionMetricsDaily.organization_id, Organization.name)
@@ -434,12 +462,13 @@ async def get_organization_metrics(
     response_model=ResourceMetricsResponse,
     summary="Get resource usage trends",
     description="Get memory and CPU usage trends. Platform admin only.",
-    dependencies=[RequirePlatformAdmin],
 )
 async def get_resource_metrics(
     ctx: Context,
-    user: CurrentActiveUser,
-    days: int = Query(default=30, ge=1, le=365, description="Number of days to include"),
+    authorization: CurrentAuthorizationContext,
+    days: int = Query(
+        default=30, ge=1, le=365, description="Number of days to include"
+    ),
 ) -> ResourceMetricsResponse:
     """
     Get resource usage trends (memory, CPU).
@@ -452,6 +481,7 @@ async def get_resource_metrics(
     Returns:
         Daily resource metrics for the requested period
     """
+    _require_metrics_platform(authorization)
     try:
         start_date = date.today() - timedelta(days=days)
 
@@ -500,12 +530,13 @@ async def get_resource_metrics(
     response_model=WorkflowMetricsResponse,
     summary="Get workflow-level metrics",
     description="Get aggregated execution metrics grouped by workflow. Platform admin only.",
-    dependencies=[RequirePlatformAdmin],
 )
 async def get_workflow_metrics(
     ctx: Context,
-    user: CurrentActiveUser,
-    days: int = Query(default=30, ge=1, le=365, description="Number of days to include"),
+    authorization: CurrentAuthorizationContext,
+    days: int = Query(
+        default=30, ge=1, le=365, description="Number of days to include"
+    ),
     sort_by: str = Query(
         default="executions",
         description="Sort by: executions, memory, duration, cpu",
@@ -525,6 +556,7 @@ async def get_workflow_metrics(
     Returns:
         Workflow metrics sorted by the specified field (descending)
     """
+    _require_metrics_platform(authorization)
     try:
         start_date = datetime.now(timezone.utc) - timedelta(days=days)
 
@@ -655,7 +687,9 @@ async def _compute_metrics_directly(ctx: Context) -> DashboardMetricsResponse:
     counts_query = select(
         select(func.count(Workflow.id))
         .where(Workflow.is_active.is_(True))
-        .where(Workflow.type != "data_provider")  # Exclude data providers from workflow count
+        .where(
+            Workflow.type != "data_provider"
+        )  # Exclude data providers from workflow count
         .correlate(None)
         .scalar_subquery()
         .label("workflow_count"),
@@ -706,7 +740,10 @@ async def _compute_metrics_directly(ctx: Context) -> DashboardMetricsResponse:
         ).label("pending_count"),
         func.avg(
             case(
-                (ExecutionModel.status == ExecutionStatus.SUCCESS.value, ExecutionModel.duration_ms),
+                (
+                    ExecutionModel.status == ExecutionStatus.SUCCESS.value,
+                    ExecutionModel.duration_ms,
+                ),
                 else_=literal_column("NULL"),
             )
         ).label("avg_duration_ms"),
@@ -721,7 +758,9 @@ async def _compute_metrics_directly(ctx: Context) -> DashboardMetricsResponse:
     pending_count = exec_row.pending_count or 0
     avg_duration_ms = exec_row.avg_duration_ms or 0
 
-    success_rate = (success_count / total_executions * 100) if total_executions > 0 else 0.0
+    success_rate = (
+        (success_count / total_executions * 100) if total_executions > 0 else 0.0
+    )
     avg_duration_seconds = float(avg_duration_ms) / 1000.0 if avg_duration_ms else 0.0
 
     # Get recent failures

@@ -37,7 +37,7 @@ async def test_get_cascades_org_over_global(db_session, seed_org):
     db_session.add(PolicyRule(name="r", domain="file", body={"actions": ["read"], "when": None}))
     db_session.add(PolicyRule(name="r", domain="file", organization_id=seed_org, body={"actions": ["write"], "when": None}))
     await db_session.flush()
-    repo = PolicyRuleRepository(db_session, org_id=seed_org, is_superuser=True)
+    repo = PolicyRuleRepository(db_session, org_id=seed_org, bypass_resource_admission=True)
     result = await repo.get(name="r", domain="file")
     assert result is not None
     assert result.body["actions"] == ["write"]

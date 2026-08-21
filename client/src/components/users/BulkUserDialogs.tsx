@@ -13,8 +13,18 @@ import {
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
-import { RolesMultiSelect } from "@/components/forms/RolesMultiSelect";
+import {
+	RoleAssignmentEditor,
+	validateBoundaries,
+	type RoleAssignmentDraft,
+} from "@/components/users/RoleAssignmentEditor";
+import { useOrganizationGroups, useOrganizations } from "@/hooks/useOrganizations";
+import { useRoles } from "@/hooks/useRoles";
 import { useBulkUserOperation } from "@/hooks/useUsers";
+import {
+	authorizationHeaders,
+	useAdministrativeBoundary,
+} from "@/hooks/useAdministrativeBoundary";
 
 import type { components } from "@/lib/v1";
 
@@ -67,6 +77,8 @@ function BulkMoveOrgDialogInner({
 	onSuccess,
 }: BulkDialogSharedProps) {
 	const [orgId, setOrgId] = useState<string | null | undefined>(undefined);
+	const administrativeBoundary =
+		useAdministrativeBoundary("organizations.read");
 	const bulkOp = useBulkUserOperation();
 
 	const handleSubmit = async () => {
@@ -77,6 +89,9 @@ function BulkMoveOrgDialogInner({
 		}
 		try {
 			const result = (await bulkOp.mutateAsync({
+				headers: administrativeBoundary
+					? authorizationHeaders(administrativeBoundary)
+					: undefined,
 				body: {
 					user_ids: users.map((u) => u.id),
 					operation: "move_org",
@@ -145,16 +160,40 @@ function BulkReplaceRolesDialogInner({
 	onPartialFailure,
 	onSuccess,
 }: BulkDialogSharedProps) {
-	const [selected, setSelected] = useState<string[]>([]);
+	const [assignments, setAssignments] = useState<RoleAssignmentDraft[]>([]);
+	const administrativeBoundary =
+		useAdministrativeBoundary("organizations.read");
 	const bulkOp = useBulkUserOperation();
+	const { data: roles = [], isLoading: rolesLoading } = useRoles(administrativeBoundary);
+	const { data: organizations = [], isLoading: organizationsLoading } = useOrganizations({ boundary: administrativeBoundary });
+	const { data: organizationGroups = [], isLoading: groupsLoading } = useOrganizationGroups({ boundary: administrativeBoundary });
+	const platformAdminRoleIds = useMemo(
+		() => roles.filter((role) => role.name === "Platform Admin").map((role) => role.id),
+		[roles],
+	);
+	const hasInvalidAssignment = assignments.some((assignment) =>
+		Boolean(
+			validateBoundaries(
+				assignment.boundaries,
+				platformAdminRoleIds.includes(assignment.role_id),
+			),
+		),
+	);
 
 	const handleSubmit = async () => {
+		if (hasInvalidAssignment) {
+			toast.error("Choose access for every assigned role");
+			return;
+		}
 		try {
 			const result = (await bulkOp.mutateAsync({
+				headers: administrativeBoundary
+					? authorizationHeaders(administrativeBoundary)
+					: undefined,
 				body: {
 					user_ids: users.map((u) => u.id),
 					operation: "replace_roles",
-					role_ids: selected,
+					role_assignments: assignments,
 				},
 			})) as BulkUserResponse;
 			summarize(result, "Replace roles");
@@ -170,7 +209,7 @@ function BulkReplaceRolesDialogInner({
 
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="max-w-lg">
+			<DialogContent className="max-h-[min(90vh,52rem)] overflow-y-auto sm:max-w-3xl">
 				<DialogHeader>
 					<DialogTitle>Replace roles for {users.length} user(s)</DialogTitle>
 					<DialogDescription>
@@ -179,12 +218,19 @@ function BulkReplaceRolesDialogInner({
 					</DialogDescription>
 				</DialogHeader>
 
-				<div className="space-y-2">
-					<Label htmlFor="bulk-roles">Roles</Label>
-					<RolesMultiSelect value={selected} onChange={setSelected} />
-				</div>
+				<RoleAssignmentEditor
+					roles={roles}
+					value={assignments}
+					organizations={organizations}
+					organizationGroups={organizationGroups}
+					platformAdminRoleIds={platformAdminRoleIds}
+					defaultBoundary={null}
+					disabled={bulkOp.isPending}
+					isLoading={rolesLoading || organizationsLoading || groupsLoading}
+					onChange={setAssignments}
+				/>
 
-				{selected.length === 0 && (
+				{assignments.length === 0 && (
 					<div className="flex items-start gap-2 text-xs text-muted-foreground">
 						<AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
 						<span>
@@ -198,7 +244,10 @@ function BulkReplaceRolesDialogInner({
 					<Button variant="outline" onClick={() => onOpenChange(false)}>
 						Cancel
 					</Button>
-					<Button onClick={handleSubmit} disabled={bulkOp.isPending}>
+					<Button
+						onClick={handleSubmit}
+						disabled={bulkOp.isPending || hasInvalidAssignment}
+					>
 						{bulkOp.isPending ? "Applying..." : "Replace roles"}
 					</Button>
 				</DialogFooter>
@@ -223,11 +272,16 @@ export function BulkSetActiveDialog({
 	onPartialFailure,
 	onSuccess,
 }: BulkSetActiveDialogProps) {
+	const administrativeBoundary =
+		useAdministrativeBoundary("organizations.read");
 	const bulkOp = useBulkUserOperation();
 
 	const handleSubmit = async () => {
 		try {
 			const result = (await bulkOp.mutateAsync({
+				headers: administrativeBoundary
+					? authorizationHeaders(administrativeBoundary)
+					: undefined,
 				body: {
 					user_ids: users.map((u) => u.id),
 					operation: "set_active",
