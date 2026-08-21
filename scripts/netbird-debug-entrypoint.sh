@@ -51,11 +51,28 @@ while [ ! -f /tmp/bifrost-netbird-expose-ready ]; do
     sleep 1
 done
 
-netbird expose \
-    --with-name-prefix "${NB_EXPOSE_NAME_PREFIX:?NETBIRD expose name is required}" \
-    80 &
-expose_pid="$!"
+# A transient management-plane timeout can terminate `netbird expose` even
+# while the peer daemon remains healthy. Keep the peer and private hostname
+# alive, and immediately establish a replacement public exposure instead of
+# letting one failed renewal take the entire debug endpoint down.
+while kill -0 "$daemon_pid" 2>/dev/null; do
+    expose_status=0
+    netbird expose \
+        --with-name-prefix "${NB_EXPOSE_NAME_PREFIX:?NETBIRD expose name is required}" \
+        80 &
+    expose_pid="$!"
+    if wait "$expose_pid"; then
+        expose_status=0
+    else
+        expose_status="$?"
+    fi
+    expose_pid=""
 
-# The container owns both processes so Compose shutdown reaches the expose
-# command and NetBird removes the ephemeral public service immediately.
-wait -n "$daemon_pid" "$expose_pid"
+    if ! kill -0 "$daemon_pid" 2>/dev/null; then
+        break
+    fi
+    echo "WARN: NetBird public exposure exited with status $expose_status; retrying in 2 seconds" >&2
+    sleep 2
+done
+
+wait "$daemon_pid"
