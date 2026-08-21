@@ -1187,7 +1187,9 @@ def test_canonical_vertical_slices_have_stable_surface_bindings() -> None:
 def test_catalog_routes_publish_identity_in_openapi() -> None:
     schema = app.openapi()
     for operation_id, binding in CANONICAL_OPERATIONS.items():
-        method, path, cli_path, mcp_name, _native_builder = _expanded_binding(binding)
+        expanded = _expanded_binding(binding)
+        method, path = expanded[:2]
+        cli_path, mcp_name = expanded[2:4]
         route = schema["paths"][path][method.lower()]
         assert route["operationId"] == operation_id
         extension = route["x-bifrost-operation"]
