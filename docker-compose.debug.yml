@@ -360,6 +360,7 @@ services:
   # Only started with --profile netbird.
   netbird:
     image: netbirdio/netbird:latest
+    restart: unless-stopped
     entrypoint: ["/usr/local/bin/bifrost-netbird-entrypoint.sh"]
     network_mode: "service:client"
     cap_add:
