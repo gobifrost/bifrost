@@ -61,8 +61,10 @@ export interface FormListSurfaceProps {
 	forms: FormListItem[];
 	viewMode: "grid" | "table";
 	isLoading?: boolean;
-	isPlatformAdmin: boolean;
+	showOrganizationScope?: boolean;
+	isPlatformAdmin?: boolean;
 	canManageForms: boolean;
+	canExecuteForms?: boolean;
 	getOrgName: (orgId: string | null | undefined) => string;
 	formValidation: Map<string, FormValidationState>;
 	onLaunch: (form: FormListItem) => void;
@@ -78,8 +80,10 @@ export function FormListSurface({
 	forms,
 	viewMode,
 	isLoading = false,
-	isPlatformAdmin,
+	showOrganizationScope: showOrganizationScopeProp,
+	isPlatformAdmin = false,
 	canManageForms,
+	canExecuteForms = true,
 	getOrgName,
 	formValidation,
 	onLaunch,
@@ -91,6 +95,7 @@ export function FormListSurface({
 	emptySearchActive = false,
 }: FormListSurfaceProps) {
 	const terminology = useTerminology();
+	const showOrganizationScope = showOrganizationScopeProp ?? isPlatformAdmin;
 
 	if (isLoading) {
 		return viewMode === "grid" || !canManageForms ? (
@@ -147,7 +152,7 @@ export function FormListSurface({
 				<DataTable className="max-h-full">
 					<DataTableHeader>
 						<DataTableRow>
-							{isPlatformAdmin && (
+							{showOrganizationScope && (
 								<DataTableHead className="w-0 whitespace-nowrap">
 									Organization
 								</DataTableHead>
@@ -165,7 +170,7 @@ export function FormListSurface({
 							const validation = formValidation.get(form.id);
 							return (
 								<DataTableRow key={form.id}>
-									{isPlatformAdmin && (
+									{showOrganizationScope && (
 										<DataTableCell className="w-0 whitespace-nowrap">
 											{form.organization_id ? (
 												<Badge
@@ -242,12 +247,15 @@ export function FormListSurface({
 												size="sm"
 												onClick={() => onLaunch(form)}
 												disabled={
+													!canExecuteForms ||
 													(!form.is_active &&
 														!canManageForms) ||
 													!validation?.valid
 												}
 												title={
-													!validation?.valid
+													!canExecuteForms
+														? "You do not have permission to execute workflows"
+														: !validation?.valid
 														? `Cannot launch: Missing ${validation?.missingParams.join(", ")}`
 														: !form.is_active &&
 															  !canManageForms
@@ -412,7 +420,7 @@ export function FormListSurface({
 
 							<div className="flex-1" />
 
-							{isPlatformAdmin && (
+							{showOrganizationScope && (
 								<div className="mb-3">
 									{form.organization_id ? (
 										<Badge
@@ -439,11 +447,14 @@ export function FormListSurface({
 									className="flex-1"
 									onClick={() => onLaunch(form)}
 									disabled={
+										!canExecuteForms ||
 										(!form.is_active && !canManageForms) ||
 										!validation?.valid
 									}
 									title={
-										!validation?.valid
+										!canExecuteForms
+											? "You do not have permission to execute workflows"
+											: !validation?.valid
 											? `Cannot launch: Missing required parameters (${validation?.missingParams.join(", ")})`
 											: !form.is_active && !canManageForms
 												? `${term(terminology, "form", "singular")} is disabled`

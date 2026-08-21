@@ -12,13 +12,12 @@ import zipfile
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import selectinload
 
-from src.core.auth import CurrentSuperuser
 from src.core.db_deps import DbSession
 from shared.policies.probe import make_seed_admin_bypass
 from src.core.security import decrypt_with_key, encrypt_secret
@@ -49,6 +48,11 @@ from src.models.contracts.export_import import (
     OAuthProviderExportItem,
     TableExportFile,
     TableExportItem,
+)
+from src.services.audit import emit_audit
+from src.services.authorization import (
+    AuthorizationBoundaryKind,
+    CurrentAuthorizationContext,
 )
 
 logger = logging.getLogger(__name__)
@@ -84,64 +88,6 @@ async def _resolve_org_names(db: DbSession, org_ids: set[UUID]) -> dict[UUID, st
     return {row.id: row.name for row in result.all()}
 
 
-async def _resolve_org_id(
-    db: DbSession,
-    item_org_id: str | None,
-    item_org_name: str | None,
-    target_org_override: UUID | None,
-    force_global: bool,
-    warnings: list[str],
-    item_label: str,
-) -> UUID | None:
-    """Resolve an organization ID for import using override, name, or UUID fallback.
-
-    Resolution priority:
-    1. force_global=True → None (global scope)
-    2. target_org_override → use that UUID directly
-    3. item_org_name match → look up by name
-    4. item_org_id UUID match → verify it exists
-    5. None + warning if org info was present but unresolvable
-    """
-    if force_global:
-        return None
-    if target_org_override is not None:
-        return target_org_override
-
-    # Try name-based resolution
-    if item_org_name:
-        result = await db.execute(
-            select(Organization.id).where(
-                Organization.name == item_org_name,
-                Organization.is_active == True,  # noqa: E712
-            )
-        )
-        org_id = result.scalar_one_or_none()
-        if org_id:
-            return org_id
-
-    # Fall back to UUID match
-    if item_org_id:
-        try:
-            uuid_val = UUID(item_org_id)
-        except ValueError:
-            warnings.append(f"{item_label}: invalid organization_id '{item_org_id}', importing as global")
-            return None
-
-        result = await db.execute(
-            select(Organization.id).where(Organization.id == uuid_val)
-        )
-        if result.scalar_one_or_none():
-            return uuid_val
-
-        # Neither name nor UUID resolved
-        warnings.append(
-            f"{item_label}: organization not found (name={item_org_name!r}, id={item_org_id}), importing as global"
-        )
-        return None
-
-    return None
-
-
 def _parse_target_org(target_organization_id: str | None) -> tuple[UUID | None, bool]:
     """Parse the target_organization_id form field.
 
@@ -157,15 +103,149 @@ def _parse_target_org(target_organization_id: str | None) -> tuple[UUID | None, 
     return UUID(target_organization_id), False
 
 
+def _require_export_capability(
+    authorization: CurrentAuthorizationContext,
+    capability: str,
+) -> None:
+    authorization.require(capability)
+
+
+def _require_import_capability(
+    authorization: CurrentAuthorizationContext,
+    capability: str,
+    *,
+    target_organization_id: str | None,
+) -> tuple[UUID | None, bool]:
+    authorization.require(capability)
+    if (
+        authorization.selected_boundary.kind
+        is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Select one organization or Global before importing data",
+        )
+
+    target_override, force_global = _parse_target_org(target_organization_id)
+    if target_organization_id is None:
+        target_org_id = (
+            None
+            if authorization.selected_boundary.kind
+            is AuthorizationBoundaryKind.PLATFORM
+            else authorization.selected_boundary.organization_id
+        )
+    elif force_global:
+        target_org_id = None
+    else:
+        target_org_id = target_override
+
+    authorization.require_resource_boundary(target_org_id)
+    return target_org_id, target_org_id is None
+
+
+async def _managed_customer_org_ids(db: DbSession) -> set[UUID]:
+    return set(
+        (
+            await db.execute(
+                select(Organization.id).where(Organization.is_provider.is_(False))
+            )
+        ).scalars()
+    )
+
+
+async def _export_organization_ids(
+    db: DbSession,
+    authorization: CurrentAuthorizationContext,
+) -> set[UUID | None]:
+    boundary = authorization.selected_boundary
+    if boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+        return {None}
+    if boundary.kind is AuthorizationBoundaryKind.ORGANIZATION:
+        return {None, boundary.organization_id}
+    return {None, *(await _managed_customer_org_ids(db))}
+
+
+def _apply_org_visibility(query, model, visible_org_ids: set[UUID | None]):
+    concrete_org_ids = {org_id for org_id in visible_org_ids if org_id is not None}
+    criteria = []
+    if None in visible_org_ids:
+        criteria.append(model.organization_id.is_(None))
+    if concrete_org_ids:
+        criteria.append(model.organization_id.in_(concrete_org_ids))
+    if not criteria:
+        return query.where(False)
+    return query.where(or_(*criteria))
+
+
+def _assert_item_matches_import_target(
+    *,
+    item_org_id: str | None,
+    item_org_name: str | None,
+    target_org_id: UUID | None,
+    item_label: str,
+) -> None:
+    if item_org_id:
+        try:
+            parsed = UUID(item_org_id)
+        except ValueError as exc:
+            raise ValueError(
+                f"{item_label}: invalid organization_id '{item_org_id}'"
+            ) from exc
+        if parsed != target_org_id:
+            expected = "global" if target_org_id is None else str(target_org_id)
+            raise ValueError(
+                f"{item_label}: file targets organization {item_org_id}, "
+                f"but selected import target is {expected}"
+            )
+    elif item_org_name and target_org_id is None:
+        raise ValueError(
+            f"{item_label}: file targets organization {item_org_name!r}, "
+            "but selected import target is global"
+        )
+
+
+async def _resolve_selected_import_org_id(
+    db: DbSession,
+    item_org_id: str | None,
+    item_org_name: str | None,
+    target_org_id: UUID | None,
+    warnings: list[str],
+    item_label: str,
+) -> UUID | None:
+    _assert_item_matches_import_target(
+        item_org_id=item_org_id,
+        item_org_name=item_org_name,
+        target_org_id=target_org_id,
+        item_label=item_label,
+    )
+    if target_org_id is None:
+        return None
+    result = await db.execute(
+        select(Organization.id).where(Organization.id == target_org_id)
+    )
+    if result.scalar_one_or_none() is None:
+        raise ValueError(f"{item_label}: selected organization does not exist")
+    if item_org_name:
+        warnings.append(
+            f"{item_label}: imported into selected organization {target_org_id}; "
+            f"file organization name {item_org_name!r} was not used for targeting"
+        )
+    return target_org_id
+
+
 # ============================================================
 # SHARED EXPORT HELPERS
 # ============================================================
 
 
 async def _build_knowledge_export(
-    db: DbSession, ids: list[str] | None = None
+    db: DbSession,
+    ids: list[str] | None = None,
+    visible_org_ids: set[UUID | None] | None = None,
 ) -> KnowledgeExportFile:
     query = select(KnowledgeStore)
+    if visible_org_ids is not None:
+        query = _apply_org_visibility(query, KnowledgeStore, visible_org_ids)
     if ids:
         uuids = [UUID(id_str) for id_str in ids]
         query = query.where(KnowledgeStore.id.in_(uuids))
@@ -183,7 +263,9 @@ async def _build_knowledge_export(
             content=doc.content,
             metadata=doc.doc_metadata or {},
             organization_id=str(doc.organization_id) if doc.organization_id else None,
-            organization_name=org_names.get(doc.organization_id) if doc.organization_id else None,
+            organization_name=org_names.get(doc.organization_id)
+            if doc.organization_id
+            else None,
         )
         for doc in docs
     ]
@@ -192,9 +274,13 @@ async def _build_knowledge_export(
 
 
 async def _build_tables_export(
-    db: DbSession, ids: list[str] | None = None
+    db: DbSession,
+    ids: list[str] | None = None,
+    visible_org_ids: set[UUID | None] | None = None,
 ) -> TableExportFile:
     query = select(Table).options(selectinload(Table.documents))
+    if visible_org_ids is not None:
+        query = _apply_org_visibility(query, Table, visible_org_ids)
     if ids:
         uuids = [UUID(id_str) for id_str in ids]
         query = query.where(Table.id.in_(uuids))
@@ -210,8 +296,12 @@ async def _build_tables_export(
             name=table.name,
             description=table.description,
             schema=table.schema,
-            organization_id=str(table.organization_id) if table.organization_id else None,
-            organization_name=org_names.get(table.organization_id) if table.organization_id else None,
+            organization_id=str(table.organization_id)
+            if table.organization_id
+            else None,
+            organization_name=org_names.get(table.organization_id)
+            if table.organization_id
+            else None,
             documents=[
                 DocumentExportItem(id=doc.id, data=doc.data or {})
                 for doc in table.documents
@@ -224,9 +314,13 @@ async def _build_tables_export(
 
 
 async def _build_configs_export(
-    db: DbSession, ids: list[str] | None = None
+    db: DbSession,
+    ids: list[str] | None = None,
+    visible_org_ids: set[UUID | None] | None = None,
 ) -> ConfigExportFile:
     query = select(Config)
+    if visible_org_ids is not None:
+        query = _apply_org_visibility(query, Config, visible_org_ids)
     if ids:
         uuids = [UUID(id_str) for id_str in ids]
         query = query.where(Config.id.in_(uuids))
@@ -251,15 +345,23 @@ async def _build_configs_export(
         if cfg.config_type == ConfigType.SECRET:
             has_secrets = True
 
-        items.append(ConfigExportItem(
-            key=cfg.key,
-            value=raw_value,
-            config_type=cfg.config_type.value if hasattr(cfg.config_type, "value") else str(cfg.config_type),
-            description=cfg.description,
-            organization_id=str(cfg.organization_id) if cfg.organization_id else None,
-            organization_name=org_names.get(cfg.organization_id) if cfg.organization_id else None,
-            integration_name=integration_name,
-        ))
+        items.append(
+            ConfigExportItem(
+                key=cfg.key,
+                value=raw_value,
+                config_type=cfg.config_type.value
+                if hasattr(cfg.config_type, "value")
+                else str(cfg.config_type),
+                description=cfg.description,
+                organization_id=str(cfg.organization_id)
+                if cfg.organization_id
+                else None,
+                organization_name=org_names.get(cfg.organization_id)
+                if cfg.organization_id
+                else None,
+                integration_name=integration_name,
+            )
+        )
 
     return ConfigExportFile(
         contains_encrypted_values=has_secrets,
@@ -269,8 +371,11 @@ async def _build_configs_export(
 
 
 async def _build_integrations_export(
-    db: DbSession, ids: list[str] | None = None
+    db: DbSession,
+    ids: list[str] | None = None,
+    visible_org_ids: set[UUID | None] | None = None,
 ) -> IntegrationExportFile:
+    visible_org_ids = visible_org_ids or {None}
     query = (
         select(Integration)
         .options(
@@ -291,9 +396,15 @@ async def _build_integrations_export(
     all_org_ids: set[UUID] = set()
     for integ in integrations:
         for mapping in integ.mappings:
+            if mapping.organization_id not in visible_org_ids:
+                continue
             if mapping.organization_id:
                 all_org_ids.add(mapping.organization_id)
-        if integ.oauth_provider and integ.oauth_provider.organization_id:
+        if (
+            integ.oauth_provider
+            and integ.oauth_provider.organization_id
+            and integ.oauth_provider.organization_id in visible_org_ids
+        ):
             all_org_ids.add(integ.oauth_provider.organization_id)
     org_names = await _resolve_org_names(db, all_org_ids)
 
@@ -304,8 +415,11 @@ async def _build_integrations_export(
         dp_name = None
         if integ.list_entities_data_provider_id:
             from src.models.orm.workflows import Workflow
+
             dp_result = await db.execute(
-                select(Workflow.name).where(Workflow.id == integ.list_entities_data_provider_id)
+                select(Workflow.name).where(
+                    Workflow.id == integ.list_entities_data_provider_id
+                )
             )
             dp_name = dp_result.scalar_one_or_none()
 
@@ -328,6 +442,8 @@ async def _build_integrations_export(
         # Mappings with their config
         mapping_items = []
         for mapping in integ.mappings:
+            if mapping.organization_id not in visible_org_ids:
+                continue
             config_result = await db.execute(
                 select(Config).where(
                     Config.integration_id == integ.id,
@@ -344,32 +460,42 @@ async def _build_integrations_export(
                 if cfg.config_type == ConfigType.SECRET:
                     has_secrets = True
 
-            mapping_items.append(IntegrationMappingExportItem(
-                organization_id=str(mapping.organization_id) if mapping.organization_id else None,
-                organization_name=org_names.get(mapping.organization_id) if mapping.organization_id else None,
-                entity_id=mapping.entity_id,
-                entity_name=mapping.entity_name,
-                config=config_dict,
-            ))
+            mapping_items.append(
+                IntegrationMappingExportItem(
+                    organization_id=str(mapping.organization_id)
+                    if mapping.organization_id
+                    else None,
+                    organization_name=org_names.get(mapping.organization_id)
+                    if mapping.organization_id
+                    else None,
+                    entity_id=mapping.entity_id,
+                    entity_name=mapping.entity_name,
+                    config=config_dict,
+                )
+            )
 
         # Default config (integration-level, org_id IS NULL)
-        default_config_result = await db.execute(
-            select(Config).where(
-                Config.integration_id == integ.id,
-                Config.organization_id.is_(None),
-            )
-        )
-        default_configs = default_config_result.scalars().all()
         default_config = {}
-        for cfg in default_configs:
-            raw_value = cfg.value.get("value") if cfg.value else None
-            default_config[cfg.key] = raw_value
-            if cfg.config_type == ConfigType.SECRET:
-                has_secrets = True
+        if None in visible_org_ids:
+            default_config_result = await db.execute(
+                select(Config).where(
+                    Config.integration_id == integ.id,
+                    Config.organization_id.is_(None),
+                )
+            )
+            default_configs = default_config_result.scalars().all()
+            for cfg in default_configs:
+                raw_value = cfg.value.get("value") if cfg.value else None
+                default_config[cfg.key] = raw_value
+                if cfg.config_type == ConfigType.SECRET:
+                    has_secrets = True
 
         # OAuth provider
         oauth_item = None
-        if integ.oauth_provider:
+        if (
+            integ.oauth_provider
+            and integ.oauth_provider.organization_id in visible_org_ids
+        ):
             op = integ.oauth_provider
             encrypted_secret_b64 = (
                 base64.b64encode(op.encrypted_client_secret).decode()
@@ -389,20 +515,24 @@ async def _build_integrations_export(
                 redirect_uri=op.redirect_uri,
                 scopes=op.scopes or [],
                 organization_id=str(op.organization_id) if op.organization_id else None,
-                organization_name=org_names.get(op.organization_id) if op.organization_id else None,
+                organization_name=org_names.get(op.organization_id)
+                if op.organization_id
+                else None,
             )
 
-        items.append(IntegrationExportItem(
-            name=integ.name,
-            entity_id=integ.entity_id,
-            entity_id_name=integ.entity_id_name,
-            default_entity_id=integ.default_entity_id,
-            list_entities_data_provider_name=dp_name,
-            config_schema=schema_items,
-            mappings=mapping_items,
-            oauth_provider=oauth_item,
-            default_config=default_config,
-        ))
+        items.append(
+            IntegrationExportItem(
+                name=integ.name,
+                entity_id=integ.entity_id,
+                entity_id_name=integ.entity_id_name,
+                default_entity_id=integ.default_entity_id,
+                list_entities_data_provider_name=dp_name,
+                config_schema=schema_items,
+                mappings=mapping_items,
+                oauth_provider=oauth_item,
+                default_config=default_config,
+            )
+        )
 
     return IntegrationExportFile(
         contains_encrypted_values=has_secrets,
@@ -420,10 +550,12 @@ async def _build_integrations_export(
 async def export_knowledge(
     request: ExportRequest,
     db: DbSession,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> StreamingResponse:
     """Export selected knowledge documents as JSON."""
-    export = await _build_knowledge_export(db, request.ids or None)
+    _require_export_capability(authorization, "knowledge.read")
+    visible_org_ids = await _export_organization_ids(db, authorization)
+    export = await _build_knowledge_export(db, request.ids or None, visible_org_ids)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     return _json_response(
         export.model_dump_json(indent=2),
@@ -435,10 +567,12 @@ async def export_knowledge(
 async def export_configs(
     request: ExportRequest,
     db: DbSession,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> StreamingResponse:
     """Export selected configs as JSON. Secret values exported encrypted."""
-    export = await _build_configs_export(db, request.ids or None)
+    _require_export_capability(authorization, "configs.read")
+    visible_org_ids = await _export_organization_ids(db, authorization)
+    export = await _build_configs_export(db, request.ids or None, visible_org_ids)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     return _json_response(
         export.model_dump_json(indent=2),
@@ -450,10 +584,12 @@ async def export_configs(
 async def export_tables(
     request: ExportRequest,
     db: DbSession,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> StreamingResponse:
     """Export selected tables with all documents as JSON."""
-    export = await _build_tables_export(db, request.ids or None)
+    _require_export_capability(authorization, "tables.read")
+    visible_org_ids = await _export_organization_ids(db, authorization)
+    export = await _build_tables_export(db, request.ids or None, visible_org_ids)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     return _json_response(
         export.model_dump_json(indent=2),
@@ -465,10 +601,12 @@ async def export_tables(
 async def export_integrations(
     request: ExportRequest,
     db: DbSession,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> StreamingResponse:
     """Export selected integrations with config schema, mappings, OAuth, and default config."""
-    export = await _build_integrations_export(db, request.ids or None)
+    _require_export_capability(authorization, "integrations.read")
+    visible_org_ids = await _export_organization_ids(db, authorization)
+    export = await _build_integrations_export(db, request.ids or None, visible_org_ids)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     return _json_response(
         export.model_dump_json(indent=2),
@@ -480,34 +618,51 @@ async def export_integrations(
 async def export_all(
     request: BulkExportRequest,
     db: DbSession,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> StreamingResponse:
     """Export all selected entities as a ZIP file containing individual JSON files."""
+    _require_export_capability(authorization, "knowledge.read")
+    _require_export_capability(authorization, "tables.read")
+    _require_export_capability(authorization, "configs.read")
+    _require_export_capability(authorization, "integrations.read")
+    visible_org_ids = await _export_organization_ids(db, authorization)
     zip_buffer = io.BytesIO()
 
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        knowledge_export = await _build_knowledge_export(db, request.knowledge_ids or None)
+        knowledge_export = await _build_knowledge_export(
+            db, request.knowledge_ids or None, visible_org_ids
+        )
         if knowledge_export.items:
             zf.writestr("knowledge.json", knowledge_export.model_dump_json(indent=2))
 
-        tables_export = await _build_tables_export(db, request.table_ids or None)
+        tables_export = await _build_tables_export(
+            db, request.table_ids or None, visible_org_ids
+        )
         if tables_export.items:
             zf.writestr("tables.json", tables_export.model_dump_json(indent=2))
 
-        configs_export = await _build_configs_export(db, request.config_ids or None)
+        configs_export = await _build_configs_export(
+            db, request.config_ids or None, visible_org_ids
+        )
         if configs_export.items:
             zf.writestr("configs.json", configs_export.model_dump_json(indent=2))
 
-        integrations_export = await _build_integrations_export(db, request.integration_ids or None)
+        integrations_export = await _build_integrations_export(
+            db, request.integration_ids or None, visible_org_ids
+        )
         if integrations_export.items:
-            zf.writestr("integrations.json", integrations_export.model_dump_json(indent=2))
+            zf.writestr(
+                "integrations.json", integrations_export.model_dump_json(indent=2)
+            )
 
     zip_buffer.seek(0)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     return StreamingResponse(
         zip_buffer,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="bifrost_export_{timestamp}.zip"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="bifrost_export_{timestamp}.zip"'
+        },
     )
 
 
@@ -519,27 +674,35 @@ async def export_all(
 @router.post("/import/knowledge")
 async def import_knowledge(
     db: DbSession,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     file: UploadFile = File(...),
     replace_existing: bool = Form(True),
     target_organization_id: str | None = Form(None),
 ) -> ImportResult:
     """Import knowledge documents from JSON file."""
+    target_org_id, _force_global = _require_import_capability(
+        authorization,
+        "knowledge.readwrite",
+        target_organization_id=target_organization_id,
+    )
     content = await file.read()
     try:
         export_data = KnowledgeExportFile.model_validate_json(content)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid export file: {e}")
 
-    target_override, force_global = _parse_target_org(target_organization_id)
     result = ImportResult(entity_type="knowledge")
 
     for item in export_data.items:
         item_name = f"{item.namespace}/{item.key or 'unnamed'}"
         try:
-            org_id = await _resolve_org_id(
-                db, item.organization_id, item.organization_name,
-                target_override, force_global, result.warnings, item_name,
+            org_id = await _resolve_selected_import_org_id(
+                db,
+                item.organization_id,
+                item.organization_name,
+                target_org_id,
+                result.warnings,
+                item_name,
             )
 
             existing_query = select(KnowledgeStore).where(
@@ -548,9 +711,13 @@ async def import_knowledge(
             if item.key:
                 existing_query = existing_query.where(KnowledgeStore.key == item.key)
             if org_id:
-                existing_query = existing_query.where(KnowledgeStore.organization_id == org_id)
+                existing_query = existing_query.where(
+                    KnowledgeStore.organization_id == org_id
+                )
             else:
-                existing_query = existing_query.where(KnowledgeStore.organization_id.is_(None))
+                existing_query = existing_query.where(
+                    KnowledgeStore.organization_id.is_(None)
+                )
 
             existing_result = await db.execute(existing_query)
             existing = existing_result.scalar_one_or_none()
@@ -560,10 +727,14 @@ async def import_knowledge(
                     existing.content = item.content
                     existing.doc_metadata = item.metadata
                     result.updated += 1
-                    result.details.append(ImportResultItem(name=item_name, status="updated"))
+                    result.details.append(
+                        ImportResultItem(name=item_name, status="updated")
+                    )
                 else:
                     result.skipped += 1
-                    result.details.append(ImportResultItem(name=item_name, status="skipped"))
+                    result.details.append(
+                        ImportResultItem(name=item_name, status="skipped")
+                    )
             else:
                 new_doc = KnowledgeStore(
                     namespace=item.namespace,
@@ -571,17 +742,20 @@ async def import_knowledge(
                     content=item.content,
                     doc_metadata=item.metadata,
                     organization_id=org_id,
-                    created_by=user.user_id,
-                    embedding=[0.0] * 1536,  # Placeholder — reindex to generate real embeddings
+                    created_by=authorization.effective_actor.user_id,
+                    embedding=[0.0]
+                    * 1536,  # Placeholder — reindex to generate real embeddings
                 )
                 db.add(new_doc)
                 result.created += 1
-                result.details.append(ImportResultItem(name=item_name, status="created"))
+                result.details.append(
+                    ImportResultItem(name=item_name, status="created")
+                )
         except Exception as e:
             result.errors += 1
-            result.details.append(ImportResultItem(name=item_name, status="error", error=str(e)))
-
-    await db.commit()
+            result.details.append(
+                ImportResultItem(name=item_name, status="error", error=str(e))
+            )
 
     if result.created > 0:
         result.warnings.append(
@@ -589,32 +763,48 @@ async def import_knowledge(
             "Run 'Reindex Workspace' from Maintenance to generate real embeddings."
         )
 
+    await emit_audit(
+        db,
+        "export_import.knowledge.import",
+        resource_type="knowledge",
+        details=result.model_dump(),
+    )
+    await db.commit()
     return result
 
 
 @router.post("/import/tables")
 async def import_tables(
     db: DbSession,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     file: UploadFile = File(...),
     replace_existing: bool = Form(True),
     target_organization_id: str | None = Form(None),
 ) -> ImportResult:
     """Import tables with documents from JSON file."""
+    target_org_id, _force_global = _require_import_capability(
+        authorization,
+        "tables.readwrite",
+        target_organization_id=target_organization_id,
+    )
     content = await file.read()
     try:
         export_data = TableExportFile.model_validate_json(content)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Invalid export file: {e}")
 
-    target_override, force_global = _parse_target_org(target_organization_id)
     result = ImportResult(entity_type="tables")
+    actor_user_id = str(authorization.effective_actor.user_id)
 
     for item in export_data.items:
         try:
-            org_id = await _resolve_org_id(
-                db, item.organization_id, item.organization_name,
-                target_override, force_global, result.warnings, item.name,
+            org_id = await _resolve_selected_import_org_id(
+                db,
+                item.organization_id,
+                item.organization_name,
+                target_org_id,
+                result.warnings,
+                item.name,
             )
 
             existing_query = select(Table).where(Table.name == item.name)
@@ -641,21 +831,27 @@ async def import_tables(
 
                         if existing_doc:
                             existing_doc.data = doc_item.data
-                            existing_doc.updated_by = str(user.user_id)
+                            existing_doc.updated_by = actor_user_id
                         else:
-                            db.add(Document(
-                                id=doc_item.id,
-                                table_id=existing_table.id,
-                                data=doc_item.data,
-                                created_by=str(user.user_id),
-                                updated_by=str(user.user_id),
-                            ))
+                            db.add(
+                                Document(
+                                    id=doc_item.id,
+                                    table_id=existing_table.id,
+                                    data=doc_item.data,
+                                    created_by=actor_user_id,
+                                    updated_by=actor_user_id,
+                                )
+                            )
 
                     result.updated += 1
-                    result.details.append(ImportResultItem(name=item.name, status="updated"))
+                    result.details.append(
+                        ImportResultItem(name=item.name, status="updated")
+                    )
                 else:
                     result.skipped += 1
-                    result.details.append(ImportResultItem(name=item.name, status="skipped"))
+                    result.details.append(
+                        ImportResultItem(name=item.name, status="skipped")
+                    )
             else:
                 # Default seed: admin_bypass so platform admins aren't locked out.
                 # Task 16 will extend TableExportItem to carry policies through
@@ -666,26 +862,38 @@ async def import_tables(
                     schema=item.schema_def,
                     organization_id=org_id,
                     access=make_seed_admin_bypass(),
-                    created_by=str(user.user_id),
+                    created_by=actor_user_id,
                 )
                 db.add(new_table)
                 await db.flush()
 
                 for doc_item in item.documents:
-                    db.add(Document(
-                        id=doc_item.id,
-                        table_id=new_table.id,
-                        data=doc_item.data,
-                        created_by=str(user.user_id),
-                        updated_by=str(user.user_id),
-                    ))
+                    db.add(
+                        Document(
+                            id=doc_item.id,
+                            table_id=new_table.id,
+                            data=doc_item.data,
+                            created_by=actor_user_id,
+                            updated_by=actor_user_id,
+                        )
+                    )
 
                 result.created += 1
-                result.details.append(ImportResultItem(name=item.name, status="created"))
+                result.details.append(
+                    ImportResultItem(name=item.name, status="created")
+                )
         except Exception as e:
             result.errors += 1
-            result.details.append(ImportResultItem(name=item.name, status="error", error=str(e)))
+            result.details.append(
+                ImportResultItem(name=item.name, status="error", error=str(e))
+            )
 
+    await emit_audit(
+        db,
+        "export_import.tables.import",
+        resource_type="table",
+        details=result.model_dump(),
+    )
     await db.commit()
     return result
 
@@ -693,13 +901,18 @@ async def import_tables(
 @router.post("/import/configs")
 async def import_configs(
     db: DbSession,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     file: UploadFile = File(...),
     replace_existing: bool = Form(True),
     source_secret_key: str | None = Form(None),
     target_organization_id: str | None = Form(None),
 ) -> ImportResult:
     """Import configs from JSON file with optional secret re-encryption."""
+    target_org_id, _force_global = _require_import_capability(
+        authorization,
+        "configs.readwrite",
+        target_organization_id=target_organization_id,
+    )
     content = await file.read()
     try:
         export_data = ConfigExportFile.model_validate_json(content)
@@ -712,14 +925,18 @@ async def import_configs(
             detail="This file contains encrypted values. Provide source_secret_key to re-encrypt for this instance.",
         )
 
-    target_override, force_global = _parse_target_org(target_organization_id)
     result = ImportResult(entity_type="configs")
+    actor_user_id = str(authorization.effective_actor.user_id)
 
     for item in export_data.items:
         try:
-            org_id = await _resolve_org_id(
-                db, item.organization_id, item.organization_name,
-                target_override, force_global, result.warnings, item.key,
+            org_id = await _resolve_selected_import_org_id(
+                db,
+                item.organization_id,
+                item.organization_name,
+                target_org_id,
+                result.warnings,
+                item.key,
             )
             value = item.value
 
@@ -730,10 +947,13 @@ async def import_configs(
                     value = encrypt_secret(plaintext)
                 except Exception as e:
                     result.errors += 1
-                    result.details.append(ImportResultItem(
-                        name=item.key, status="error",
-                        error=f"Failed to re-encrypt secret: {e}",
-                    ))
+                    result.details.append(
+                        ImportResultItem(
+                            name=item.key,
+                            status="error",
+                            error=f"Failed to re-encrypt secret: {e}",
+                        )
+                    )
                     continue
 
             # Resolve integration_id from name
@@ -758,41 +978,61 @@ async def import_configs(
             else:
                 existing_query = existing_query.where(Config.organization_id.is_(None))
             if integration_id:
-                existing_query = existing_query.where(Config.integration_id == integration_id)
+                existing_query = existing_query.where(
+                    Config.integration_id == integration_id
+                )
 
             existing_result = await db.execute(existing_query)
             existing = existing_result.scalar_one_or_none()
 
             valid_types = [e.value for e in ConfigType]
-            config_type_enum = ConfigType(item.config_type) if item.config_type in valid_types else ConfigType.STRING
+            config_type_enum = (
+                ConfigType(item.config_type)
+                if item.config_type in valid_types
+                else ConfigType.STRING
+            )
 
             if existing:
                 if replace_existing:
                     existing.value = {"value": value}
                     existing.config_type = config_type_enum
                     existing.description = item.description
-                    existing.updated_by = str(user.user_id)
+                    existing.updated_by = actor_user_id
                     result.updated += 1
-                    result.details.append(ImportResultItem(name=item.key, status="updated"))
+                    result.details.append(
+                        ImportResultItem(name=item.key, status="updated")
+                    )
                 else:
                     result.skipped += 1
-                    result.details.append(ImportResultItem(name=item.key, status="skipped"))
+                    result.details.append(
+                        ImportResultItem(name=item.key, status="skipped")
+                    )
             else:
-                db.add(Config(
-                    key=item.key,
-                    value={"value": value},
-                    config_type=config_type_enum,
-                    description=item.description,
-                    organization_id=org_id,
-                    integration_id=integration_id,
-                    updated_by=str(user.user_id),
-                ))
+                db.add(
+                    Config(
+                        key=item.key,
+                        value={"value": value},
+                        config_type=config_type_enum,
+                        description=item.description,
+                        organization_id=org_id,
+                        integration_id=integration_id,
+                        updated_by=actor_user_id,
+                    )
+                )
                 result.created += 1
                 result.details.append(ImportResultItem(name=item.key, status="created"))
         except Exception as e:
             result.errors += 1
-            result.details.append(ImportResultItem(name=item.key, status="error", error=str(e)))
+            result.details.append(
+                ImportResultItem(name=item.key, status="error", error=str(e))
+            )
 
+    await emit_audit(
+        db,
+        "export_import.configs.import",
+        resource_type="config",
+        details=result.model_dump(),
+    )
     await db.commit()
     return result
 
@@ -800,13 +1040,18 @@ async def import_configs(
 @router.post("/import/integrations")
 async def import_integrations(
     db: DbSession,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     file: UploadFile = File(...),
     replace_existing: bool = Form(True),
     source_secret_key: str | None = Form(None),
     target_organization_id: str | None = Form(None),
 ) -> ImportResult:
     """Import integrations from JSON file with optional secret re-encryption."""
+    target_org_id, _force_global = _require_import_capability(
+        authorization,
+        "integrations.readwrite",
+        target_organization_id=target_organization_id,
+    )
     content = await file.read()
     try:
         export_data = IntegrationExportFile.model_validate_json(content)
@@ -819,8 +1064,8 @@ async def import_integrations(
             detail="This file contains encrypted values. Provide source_secret_key to re-encrypt for this instance.",
         )
 
-    target_override, force_global = _parse_target_org(target_organization_id)
     result = ImportResult(entity_type="integrations")
+    actor_user_id = str(authorization.effective_actor.user_id)
 
     for item in export_data.items:
         try:
@@ -839,7 +1084,9 @@ async def import_integrations(
             if existing:
                 if not replace_existing:
                     result.skipped += 1
-                    result.details.append(ImportResultItem(name=item.name, status="skipped"))
+                    result.details.append(
+                        ImportResultItem(name=item.name, status="skipped")
+                    )
                     continue
 
                 # Update basic fields
@@ -850,8 +1097,11 @@ async def import_integrations(
                 # Resolve data provider
                 if item.list_entities_data_provider_name:
                     from src.models.orm.workflows import Workflow
+
                     dp_result = await db.execute(
-                        select(Workflow.id).where(Workflow.name == item.list_entities_data_provider_name)
+                        select(Workflow.id).where(
+                            Workflow.name == item.list_entities_data_provider_name
+                        )
                     )
                     dp_id = dp_result.scalar_one_or_none()
                     if dp_id:
@@ -861,7 +1111,9 @@ async def import_integrations(
                 await _sync_config_schema(db, existing, item.config_schema)
 
                 result.updated += 1
-                result.details.append(ImportResultItem(name=item.name, status="updated"))
+                result.details.append(
+                    ImportResultItem(name=item.name, status="updated")
+                )
                 integ = existing
             else:
                 # Create new integration
@@ -875,8 +1127,11 @@ async def import_integrations(
                 # Resolve data provider
                 if item.list_entities_data_provider_name:
                     from src.models.orm.workflows import Workflow
+
                     dp_result = await db.execute(
-                        select(Workflow.id).where(Workflow.name == item.list_entities_data_provider_name)
+                        select(Workflow.id).where(
+                            Workflow.name == item.list_entities_data_provider_name
+                        )
                     )
                     dp_id = dp_result.scalar_one_or_none()
                     if dp_id:
@@ -887,26 +1142,33 @@ async def import_integrations(
 
                 # Add config schema
                 for cs_item in item.config_schema:
-                    db.add(IntegrationConfigSchema(
-                        integration_id=integ.id,
-                        key=cs_item.key,
-                        type=cs_item.type,
-                        required=cs_item.required,
-                        description=cs_item.description,
-                        options=cs_item.options,
-                        position=cs_item.position,
-                    ))
+                    db.add(
+                        IntegrationConfigSchema(
+                            integration_id=integ.id,
+                            key=cs_item.key,
+                            type=cs_item.type,
+                            required=cs_item.required,
+                            description=cs_item.description,
+                            options=cs_item.options,
+                            position=cs_item.position,
+                        )
+                    )
 
                 result.created += 1
-                result.details.append(ImportResultItem(name=item.name, status="created"))
+                result.details.append(
+                    ImportResultItem(name=item.name, status="created")
+                )
 
             await db.flush()
 
             # Import mappings with their config
             for mapping_item in item.mappings:
-                org_id = await _resolve_org_id(
-                    db, mapping_item.organization_id, mapping_item.organization_name,
-                    target_override, force_global, result.warnings,
+                org_id = await _resolve_selected_import_org_id(
+                    db,
+                    mapping_item.organization_id,
+                    mapping_item.organization_name,
+                    target_org_id,
+                    result.warnings,
                     f"{item.name}/mapping/{mapping_item.entity_id}",
                 )
 
@@ -915,9 +1177,13 @@ async def import_integrations(
                     IntegrationMapping.integration_id == integ.id,
                 )
                 if org_id:
-                    mapping_query = mapping_query.where(IntegrationMapping.organization_id == org_id)
+                    mapping_query = mapping_query.where(
+                        IntegrationMapping.organization_id == org_id
+                    )
                 else:
-                    mapping_query = mapping_query.where(IntegrationMapping.organization_id.is_(None))
+                    mapping_query = mapping_query.where(
+                        IntegrationMapping.organization_id.is_(None)
+                    )
 
                 mapping_result = await db.execute(mapping_query)
                 existing_mapping = mapping_result.scalar_one_or_none()
@@ -926,43 +1192,76 @@ async def import_integrations(
                     existing_mapping.entity_id = mapping_item.entity_id
                     existing_mapping.entity_name = mapping_item.entity_name
                 else:
-                    db.add(IntegrationMapping(
-                        integration_id=integ.id,
-                        organization_id=org_id,
-                        entity_id=mapping_item.entity_id,
-                        entity_name=mapping_item.entity_name,
-                    ))
+                    db.add(
+                        IntegrationMapping(
+                            integration_id=integ.id,
+                            organization_id=org_id,
+                            entity_id=mapping_item.entity_id,
+                            entity_name=mapping_item.entity_name,
+                        )
+                    )
 
                 # Import config for this mapping
                 for cfg_key, cfg_value in mapping_item.config.items():
                     await _import_config_value(
-                        db, integ.id, org_id, cfg_key, cfg_value,
+                        db,
+                        integ.id,
+                        org_id,
+                        cfg_key,
+                        cfg_value,
                         source_secret_key,
-                        str(user.user_id), result,
+                        actor_user_id,
+                        result,
                     )
 
-            # Import default config (org_id = NULL)
-            for cfg_key, cfg_value in item.default_config.items():
-                await _import_config_value(
-                    db, integ.id, None, cfg_key, cfg_value,
-                    source_secret_key,
-                    str(user.user_id), result,
+            # Integration default config is global. Import it only in the
+            # Platform boundary so an Organization import cannot mutate global
+            # fallback configuration.
+            if target_org_id is None:
+                for cfg_key, cfg_value in item.default_config.items():
+                    await _import_config_value(
+                        db,
+                        integ.id,
+                        None,
+                        cfg_key,
+                        cfg_value,
+                        source_secret_key,
+                        actor_user_id,
+                        result,
+                    )
+            elif item.default_config:
+                result.warnings.append(
+                    f"{item.name}: skipped global default config while importing "
+                    "into an organization boundary"
                 )
 
             # Import OAuth provider
             if item.oauth_provider:
                 await _import_oauth_provider(
-                    db, integ, item.oauth_provider,
-                    source_secret_key, result,
-                    target_override, force_global,
+                    db,
+                    integ,
+                    item.oauth_provider,
+                    source_secret_key,
+                    result,
+                    target_org_id,
                 )
 
         except Exception as e:
             result.errors += 1
-            result.details.append(ImportResultItem(
-                name=item.name, status="error", error=str(e),
-            ))
+            result.details.append(
+                ImportResultItem(
+                    name=item.name,
+                    status="error",
+                    error=str(e),
+                )
+            )
 
+    await emit_audit(
+        db,
+        "export_import.integrations.import",
+        resource_type="integration",
+        details=result.model_dump(),
+    )
     await db.commit()
     return result
 
@@ -970,7 +1269,7 @@ async def import_integrations(
 @router.post("/import/all")
 async def import_all(
     db: DbSession,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     file: UploadFile = File(...),
     replace_existing: bool = Form(True),
     source_secret_key: str | None = Form(None),
@@ -1001,23 +1300,35 @@ async def import_all(
 
                 if entity_type == "knowledge":
                     r = await import_knowledge(
-                        db, user, temp_file, replace_existing,
+                        db,
+                        authorization,
+                        temp_file,
+                        replace_existing,
                         target_organization_id,
                     )
                 elif entity_type == "tables":
                     r = await import_tables(
-                        db, user, temp_file, replace_existing,
+                        db,
+                        authorization,
+                        temp_file,
+                        replace_existing,
                         target_organization_id,
                     )
                 elif entity_type == "configs":
                     r = await import_configs(
-                        db, user, temp_file, replace_existing,
+                        db,
+                        authorization,
+                        temp_file,
+                        replace_existing,
                         source_secret_key,
                         target_organization_id,
                     )
                 elif entity_type == "integrations":
                     r = await import_integrations(
-                        db, user, temp_file, replace_existing,
+                        db,
+                        authorization,
+                        temp_file,
+                        replace_existing,
                         source_secret_key,
                         target_organization_id,
                     )
@@ -1056,15 +1367,17 @@ async def _sync_config_schema(
             existing_cs.options = cs_item.options
             existing_cs.position = cs_item.position
         else:
-            db.add(IntegrationConfigSchema(
-                integration_id=integration.id,
-                key=cs_item.key,
-                type=cs_item.type,
-                required=cs_item.required,
-                description=cs_item.description,
-                options=cs_item.options,
-                position=cs_item.position,
-            ))
+            db.add(
+                IntegrationConfigSchema(
+                    integration_id=integration.id,
+                    key=cs_item.key,
+                    type=cs_item.type,
+                    required=cs_item.required,
+                    description=cs_item.description,
+                    options=cs_item.options,
+                    position=cs_item.position,
+                )
+            )
 
     # Remove schema items not in import (optional: skip if we want to preserve)
     for key, cs in existing_keys.items():
@@ -1126,15 +1439,17 @@ async def _import_config_value(
         existing.config_type = config_type
         existing.updated_by = user_id
     else:
-        db.add(Config(
-            key=key,
-            value={"value": value},
-            config_type=config_type,
-            organization_id=org_id,
-            integration_id=integration_id,
-            config_schema_id=config_schema_id,
-            updated_by=user_id,
-        ))
+        db.add(
+            Config(
+                key=key,
+                value={"value": value},
+                config_type=config_type,
+                organization_id=org_id,
+                integration_id=integration_id,
+                config_schema_id=config_schema_id,
+                updated_by=user_id,
+            )
+        )
 
 
 async def _import_oauth_provider(
@@ -1143,18 +1458,24 @@ async def _import_oauth_provider(
     oauth_item: OAuthProviderExportItem,
     source_secret_key: str | None,
     result: ImportResult,
-    target_override: UUID | None = None,
-    force_global: bool = False,
+    target_org_id: UUID | None,
 ) -> None:
     """Import OAuth provider for an integration."""
-    org_id = await _resolve_org_id(
-        db, oauth_item.organization_id, oauth_item.organization_name,
-        target_override, force_global, result.warnings,
+    org_id = await _resolve_selected_import_org_id(
+        db,
+        oauth_item.organization_id,
+        oauth_item.organization_name,
+        target_org_id,
+        result.warnings,
         f"{integration.name}/oauth/{oauth_item.provider_name}",
     )
 
     # Decode encrypted secret
-    encrypted_secret_bytes = base64.b64decode(oauth_item.encrypted_client_secret) if oauth_item.encrypted_client_secret else b""
+    encrypted_secret_bytes = (
+        base64.b64decode(oauth_item.encrypted_client_secret)
+        if oauth_item.encrypted_client_secret
+        else b""
+    )
 
     # If we have source keys, re-encrypt the secret
     if source_secret_key and encrypted_secret_bytes:
@@ -1172,7 +1493,9 @@ async def _import_oauth_provider(
             f2 = Fernet(dest_key)
             encrypted_secret_bytes = f2.encrypt(plaintext.encode())
         except Exception as e:
-            result.warnings.append(f"Could not re-encrypt OAuth client secret for '{oauth_item.provider_name}': {e}")
+            result.warnings.append(
+                f"Could not re-encrypt OAuth client secret for '{oauth_item.provider_name}': {e}"
+            )
 
     if integration.oauth_provider:
         # Update existing
@@ -1189,29 +1512,33 @@ async def _import_oauth_provider(
         op.scopes = oauth_item.scopes
     else:
         # Create new
-        db.add(OAuthProvider(
-            provider_name=oauth_item.provider_name,
-            display_name=oauth_item.display_name,
-            oauth_flow_type=oauth_item.oauth_flow_type,
-            client_id=oauth_item.client_id,
-            encrypted_client_secret=encrypted_secret_bytes,
-            authorization_url=oauth_item.authorization_url,
-            token_url=oauth_item.token_url,
-            token_url_defaults=oauth_item.token_url_defaults,
-            redirect_uri=oauth_item.redirect_uri,
-            scopes=oauth_item.scopes,
-            organization_id=org_id,
-            integration_id=integration.id,
-        ))
+        db.add(
+            OAuthProvider(
+                provider_name=oauth_item.provider_name,
+                display_name=oauth_item.display_name,
+                oauth_flow_type=oauth_item.oauth_flow_type,
+                client_id=oauth_item.client_id,
+                encrypted_client_secret=encrypted_secret_bytes,
+                authorization_url=oauth_item.authorization_url,
+                token_url=oauth_item.token_url,
+                token_url_defaults=oauth_item.token_url_defaults,
+                redirect_uri=oauth_item.redirect_uri,
+                scopes=oauth_item.scopes,
+                organization_id=org_id,
+                integration_id=integration.id,
+            )
+        )
 
 
 def derive_fernet_key_for_oauth(secret_key: str) -> bytes:
     """Derive Fernet key for OAuth secret re-encryption (same as derive_fernet_key)."""
     from src.core.security import derive_fernet_key
+
     return derive_fernet_key(secret_key)
 
 
 def _get_current_fernet_key() -> bytes:
     """Get current instance's Fernet key."""
     from src.core.security import _get_fernet_key
+
     return _get_fernet_key()

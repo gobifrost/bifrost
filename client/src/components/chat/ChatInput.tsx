@@ -63,6 +63,7 @@ interface ChatInputProps {
 	modelTiers?: ChatModelTierOption[];
 	modelTier?: ChatModelTierId;
 	onModelTierChange?: (tier: ChatModelTierId) => void;
+	showModelSelector?: boolean;
 }
 
 export function ChatInput({
@@ -86,6 +87,7 @@ export function ChatInput({
 	],
 	modelTier = "balanced",
 	onModelTierChange,
+	showModelSelector = true,
 }: ChatInputProps) {
 	const [message, setMessage] = useState("");
 	const [mentions, setMentions] = useState<MentionChip[]>([]);
@@ -454,7 +456,7 @@ export function ChatInput({
 							>
 								<Paperclip className="h-4 w-4" />
 							</Button>
-							{modelTiers.length > 0 && (
+							{showModelSelector && modelTiers.length > 0 && (
 								<Select
 									value={modelTier}
 									onValueChange={(value) =>

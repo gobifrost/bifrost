@@ -7,7 +7,7 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Path, status
 from sqlalchemy import select
 
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context
 from src.core.security import encrypt_secret
 from src.models.contracts.applications import (
     EmbedSecretCreate,
@@ -17,6 +17,8 @@ from src.models.contracts.applications import (
 )
 from src.models.orm.app_embed_secrets import AppEmbedSecret
 from src.models.orm.applications import Application
+from src.services.audit import emit_audit
+from src.services.authorization import CurrentAuthorizationContext
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,17 @@ async def _get_app_or_404(ctx: Context, app_id: UUID) -> Application:
     return app
 
 
+async def _authorized_app(
+    ctx: Context,
+    authorization: CurrentAuthorizationContext,
+    app_id: UUID,
+) -> Application:
+    authorization.require("apps.readwrite")
+    app = await _get_app_or_404(ctx, app_id)
+    authorization.require_resource_boundary(app.organization_id)
+    return app
+
+
 @router.post(
     "",
     response_model=EmbedSecretCreatedResponse,
@@ -43,10 +56,10 @@ async def _get_app_or_404(ctx: Context, app_id: UUID) -> Application:
 async def create_embed_secret(
     body: EmbedSecretCreate,
     ctx: Context,
-    current_user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     app_id: UUID = Path(...),
 ):
-    await _get_app_or_404(ctx, app_id)
+    app = await _authorized_app(ctx, authorization, app_id)
 
     raw_secret = body.secret or secrets.token_urlsafe(32)
     encrypted = encrypt_secret(raw_secret)
@@ -56,9 +69,16 @@ async def create_embed_secret(
         name=body.name,
         secret_encrypted=encrypted,
         hmac_scheme=body.hmac_scheme,
-        created_by=current_user.user_id,
+        created_by=authorization.effective_actor.user_id,
     )
     ctx.db.add(record)
+    await emit_audit(
+        ctx.db,
+        "app.embed_secret.create",
+        resource_type="application",
+        resource_id=app.id,
+        details={"secret_id": str(record.id), "name": record.name},
+    )
     await ctx.db.commit()
     await ctx.db.refresh(record)
 
@@ -79,10 +99,10 @@ async def create_embed_secret(
 )
 async def list_embed_secrets(
     ctx: Context,
-    _user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     app_id: UUID = Path(...),
 ):
-    await _get_app_or_404(ctx, app_id)
+    await _authorized_app(ctx, authorization, app_id)
 
     result = await ctx.db.execute(
         select(AppEmbedSecret)
@@ -111,10 +131,11 @@ async def list_embed_secrets(
 async def update_embed_secret(
     body: EmbedSecretUpdate,
     ctx: Context,
-    _user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     app_id: UUID = Path(...),
     secret_id: UUID = Path(...),
 ):
+    app = await _authorized_app(ctx, authorization, app_id)
     result = await ctx.db.execute(
         select(AppEmbedSecret).where(
             AppEmbedSecret.id == secret_id,
@@ -132,6 +153,13 @@ async def update_embed_secret(
     if body.hmac_scheme is not None:
         record.hmac_scheme = body.hmac_scheme
 
+    await emit_audit(
+        ctx.db,
+        "app.embed_secret.update",
+        resource_type="application",
+        resource_id=app.id,
+        details={"secret_id": str(record.id), "name": record.name},
+    )
     await ctx.db.commit()
     await ctx.db.refresh(record)
 
@@ -151,10 +179,11 @@ async def update_embed_secret(
 )
 async def delete_embed_secret(
     ctx: Context,
-    _user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     app_id: UUID = Path(...),
     secret_id: UUID = Path(...),
 ):
+    app = await _authorized_app(ctx, authorization, app_id)
     result = await ctx.db.execute(
         select(AppEmbedSecret).where(
             AppEmbedSecret.id == secret_id,
@@ -166,4 +195,11 @@ async def delete_embed_secret(
         raise HTTPException(status_code=404, detail="Embed secret not found")
 
     await ctx.db.delete(record)
+    await emit_audit(
+        ctx.db,
+        "app.embed_secret.delete",
+        resource_type="application",
+        resource_id=app.id,
+        details={"secret_id": str(record.id), "name": record.name},
+    )
     await ctx.db.commit()

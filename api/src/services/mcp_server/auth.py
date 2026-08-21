@@ -32,6 +32,7 @@ from shared.external_access import (
     resolve_external_claim,
     resolve_provider_org_claim,
 )
+from src.services.user_provisioning import get_user_capabilities
 
 logger = logging.getLogger(__name__)
 
@@ -433,6 +434,7 @@ class BifrostAuthProvider:
                     "is_external": await resolve_external_claim(db, user),
                     "is_provider_org": await resolve_provider_org_claim(db, user),
                     "org_id": str(user.organization_id) if user.organization_id else None,
+                    "scopes": await get_user_capabilities(db, user.id),
                     "type": "access",
                 }
                 access_token = create_access_token(data=token_data)
@@ -488,6 +490,7 @@ class BifrostAuthProvider:
                     "is_external": await resolve_external_claim(db, user),
                     "is_provider_org": await resolve_provider_org_claim(db, user),
                     "org_id": str(user.organization_id) if user.organization_id else None,
+                    "scopes": await get_user_capabilities(db, user.id),
                     "type": "access",
                 }
                 access_token = create_access_token(data=token_data)
@@ -599,13 +602,22 @@ class BifrostAuthProvider:
         Returns:
             AccessToken if valid, None otherwise
         """
-        from src.core.security import decode_token
+        from src.core.security import decode_token, is_actor_token
 
         logger.info(f"MCP auth: verify_token called with token prefix: {token[:20]}...")
 
         payload = decode_token(token, expected_type="access")
         if payload is None:
             logger.info("MCP auth: decode_token returned None (invalid/expired JWT)")
+            return None
+
+        # MCP derives a user principal from token claims. Never allow an app or
+        # other actor token to be reinterpreted as the launching user.
+        if is_actor_token(payload):
+            logger.warning(
+                "MCP auth: rejected actor token (actor_type=%s)",
+                payload.get("actor_type"),
+            )
             return None
 
         logger.info(f"MCP auth: Token decoded for user {payload.get('email')}, checking access...")
@@ -653,14 +665,15 @@ class BifrostAuthProvider:
             from sqlalchemy import select
 
             from src.core.database import get_db_context
-            from src.models.orm.users import Role, UserRole
+            from src.models.orm.role_assignments import RoleAssignment
+            from src.models.orm.users import Role
 
             async with get_db_context() as db:
-                # Single query joining UserRole to Role to get role names
+                # Single query joining RoleAssignment to Role to get role names
                 result = await db.execute(
                     select(Role.name)
-                    .join(UserRole, UserRole.role_id == Role.id)
-                    .where(UserRole.user_id == user_id)
+                    .join(RoleAssignment, RoleAssignment.role_id == Role.id)
+                    .where(RoleAssignment.user_id == user_id)
                 )
                 return list(result.scalars().all())
 

@@ -19,7 +19,6 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.auth import CurrentSuperuser, get_current_superuser
 from src.core.database import get_db
 from src.core.log_safety import log_safe
 from src.models import Execution, Workflow
@@ -40,13 +39,14 @@ from src.models.contracts.platform import (
     WorkerMetricPoint,
     WorkerMetricsResponse,
 )
+from src.services.audit import emit_audit
+from src.services.authorization import CurrentAuthorizationContext
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/platform/workers",
     tags=["Platform Admin - Workers"],
-    dependencies=[Depends(get_current_superuser)],
 )
 
 
@@ -58,6 +58,7 @@ async def _get_redis() -> aioredis.Redis:
     global _redis
     if _redis is None:
         from src.config import get_settings
+
         settings = get_settings()
         _redis = aioredis.from_url(
             settings.redis_url,
@@ -65,6 +66,14 @@ async def _get_redis() -> aioredis.Redis:
             socket_timeout=5.0,
         )
     return _redis
+
+
+def _require_platform_workers(
+    authorization: CurrentAuthorizationContext,
+    capability: str,
+) -> None:
+    authorization.require(capability)
+    authorization.require_resource_boundary(None)
 
 
 # =============================================================================
@@ -80,7 +89,7 @@ async def _get_redis() -> aioredis.Redis:
     "Downsampled for longer ranges.",
 )
 async def get_worker_metrics(
-    _admin: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: AsyncSession = Depends(get_db),
     range: str = Query(
         default="1h",
@@ -89,6 +98,7 @@ async def get_worker_metrics(
     ),
 ) -> WorkerMetricsResponse:
     """Get worker metrics for the diagnostics memory chart."""
+    _require_platform_workers(authorization, "platformjobs.read")
     from datetime import timedelta
 
     from sqlalchemy import func, select, text
@@ -106,7 +116,12 @@ async def get_worker_metrics(
     cutoff = datetime.now(timezone.utc) - delta
 
     # Bucket sizes: 1h=1min, 6h=5min, 24h=1hr, 7d=30min
-    bucket_interval = {"1h": "1 minute", "6h": "5 minutes", "24h": "1 hour", "7d": "30 minutes"}[range]
+    bucket_interval = {
+        "1h": "1 minute",
+        "6h": "5 minutes",
+        "24h": "1 hour",
+        "7d": "30 minutes",
+    }[range]
     epoch = datetime(2000, 1, 1, tzinfo=timezone.utc)
 
     # Format group labels: 1h/6h/24h → "HH:MM", 7d → "Mon D"
@@ -159,7 +174,7 @@ async def get_worker_metrics(
     description="Get aggregated statistics across all process pools",
 )
 async def get_pool_stats(
-    _admin: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> PoolStatsResponse:
     """
     Get aggregated pool statistics.
@@ -167,6 +182,7 @@ async def get_pool_stats(
     Returns counts of total pools, processes, idle, and busy across
     all registered pools.
     """
+    _require_platform_workers(authorization, "platformjobs.read")
     r = await _get_redis()
 
     # Find all pool registration keys
@@ -205,7 +221,9 @@ async def get_pool_stats(
                 total_busy += hb.get("busy_count", 0)
             except json.JSONDecodeError as e:
                 # Corrupted heartbeat JSON for this worker — skip its contribution
-                logger.debug(f"invalid heartbeat JSON for worker {log_safe(worker_id)}: {log_safe(e)}")
+                logger.debug(
+                    f"invalid heartbeat JSON for worker {log_safe(worker_id)}: {log_safe(e)}"
+                )
 
     return PoolStatsResponse(
         total_pools=total_pools,
@@ -227,7 +245,7 @@ async def get_pool_stats(
     description="Get a list of all registered process pools and their current status",
 )
 async def list_pools(
-    _admin: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> PoolsListResponse:
     """
     List all registered process pools from Redis.
@@ -235,6 +253,7 @@ async def list_pools(
     Returns pools with their current state including pool size,
     idle/busy counts, and last heartbeat time.
     """
+    _require_platform_workers(authorization, "platformjobs.read")
     r = await _get_redis()
 
     # Find all pool registration keys
@@ -298,7 +317,7 @@ async def list_pools(
 )
 async def get_pool(
     worker_id: str,
-    _admin: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> PoolDetail:
     """
     Get detailed pool information.
@@ -306,6 +325,7 @@ async def get_pool(
     Returns the latest heartbeat data for the pool including
     all processes and their current state.
     """
+    _require_platform_workers(authorization, "platformjobs.read")
     r = await _get_redis()
 
     # Check pool exists
@@ -371,8 +391,9 @@ async def get_pool(
 async def recycle_process(
     worker_id: str,
     pid: int,
-    admin: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     request: RecycleProcessRequest | None = None,
+    db: AsyncSession = Depends(get_db),
 ) -> RecycleProcessResponse:
     """
     Trigger manual recycle of a process in a pool.
@@ -386,7 +407,9 @@ async def recycle_process(
     The recycle command is published via Redis pub/sub and processed
     asynchronously by the pool manager.
     """
+    _require_platform_workers(authorization, "platformjobs.execute")
     r = await _get_redis()
+    actor = authorization.effective_actor
 
     # Check pool exists
     pool_key = f"bifrost:pool:{worker_id}"
@@ -403,7 +426,7 @@ async def recycle_process(
         "action": "recycle_process",
         "pid": pid,
         "reason": request.reason if request else "manual_recycle",
-        "requested_by": str(admin.user_id),
+        "requested_by": str(actor.user_id),
         "requested_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -411,7 +434,17 @@ async def recycle_process(
 
     logger.info(
         f"Published recycle command for pool {log_safe(worker_id)} process PID={log_safe(pid)} "
-        f"by user {admin.user_id}"
+        f"by user {actor.user_id}"
+    )
+    await emit_audit(
+        db,
+        "platform_worker.process.recycle",
+        resource_type="platform_worker",
+        details={
+            "worker_id": worker_id,
+            "pid": pid,
+            "reason": request.reason if request else "manual_recycle",
+        },
     )
 
     return RecycleProcessResponse(
@@ -430,8 +463,9 @@ async def recycle_process(
 )
 async def recycle_all_processes(
     worker_id: str,
-    admin: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     request: RecycleAllRequest | None = None,
+    db: AsyncSession = Depends(get_db),
 ) -> RecycleAllResponse:
     """
     Trigger recycle of all processes in a pool.
@@ -444,7 +478,9 @@ async def recycle_all_processes(
     - Picking up newly installed packages
     - Refreshing interpreter state
     """
+    _require_platform_workers(authorization, "platformjobs.execute")
     r = await _get_redis()
+    actor = authorization.effective_actor
 
     # Check pool exists
     pool_key = f"bifrost:pool:{worker_id}"
@@ -466,14 +502,16 @@ async def recycle_all_processes(
             processes_affected = hb.get("pool_size", 0)
         except json.JSONDecodeError as e:
             # Corrupted heartbeat JSON — processes_affected stays 0, recycle proceeds
-            logger.debug(f"invalid heartbeat JSON for worker {log_safe(worker_id)}: {log_safe(e)}")
+            logger.debug(
+                f"invalid heartbeat JSON for worker {log_safe(worker_id)}: {log_safe(e)}"
+            )
 
     # Publish recycle_all command via Redis pub/sub
     command_channel = f"bifrost:pool:{worker_id}:commands"
     command = {
         "action": "recycle_all",
         "reason": request.reason if request else "Manual recycle from Diagnostics UI",
-        "requested_by": str(admin.user_id),
+        "requested_by": str(actor.user_id),
         "requested_at": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -481,7 +519,19 @@ async def recycle_all_processes(
 
     logger.info(
         f"Published recycle_all command for pool {log_safe(worker_id)} "
-        f"({processes_affected} processes) by user {admin.user_id}"
+        f"({processes_affected} processes) by user {actor.user_id}"
+    )
+    await emit_audit(
+        db,
+        "platform_worker.recycle_all",
+        resource_type="platform_worker",
+        details={
+            "worker_id": worker_id,
+            "processes_affected": processes_affected,
+            "reason": request.reason
+            if request
+            else "Manual recycle from Diagnostics UI",
+        },
     )
 
     return RecycleAllResponse(
@@ -500,7 +550,6 @@ async def recycle_all_processes(
 queue_router = APIRouter(
     prefix="/api/platform/queue",
     tags=["Platform Admin - Queue"],
-    dependencies=[Depends(get_current_superuser)],
 )
 
 
@@ -511,7 +560,7 @@ queue_router = APIRouter(
     description="Get pending executions in the queue",
 )
 async def get_queue(
-    _admin: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     limit: int = Query(50, ge=1, le=500, description="Maximum number of items"),
     offset: int = Query(0, ge=0, description="Number of items to skip"),
 ) -> QueueStatusResponse:
@@ -521,6 +570,7 @@ async def get_queue(
     Returns executions waiting to be picked up by a worker,
     ordered by queue position.
     """
+    _require_platform_workers(authorization, "platformjobs.read")
     from src.services.execution.queue_tracker import get_all_queue_positions
 
     all_positions = await get_all_queue_positions()
@@ -548,7 +598,6 @@ async def get_queue(
 stuck_router = APIRouter(
     prefix="/api/platform/stuck-history",
     tags=["Platform Admin - Stuck History"],
-    dependencies=[Depends(get_current_superuser)],
 )
 
 
@@ -559,7 +608,7 @@ stuck_router = APIRouter(
     description="Get aggregated stuck workflow statistics",
 )
 async def get_stuck_history(
-    _admin: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     hours: int = Query(24, ge=1, le=720, description="Time window in hours"),
     db: AsyncSession = Depends(get_db),
 ) -> StuckHistoryResponse:
@@ -572,6 +621,7 @@ async def get_stuck_history(
     Note: Stuck executions are identified by error_message containing
     'stuck' or 'timeout' patterns, as there's no dedicated error_type field.
     """
+    _require_platform_workers(authorization, "platformjobs.read")
     # Use naive datetime since the database stores naive datetimes
     cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
@@ -601,7 +651,9 @@ async def get_stuck_history(
 
     for row in rows:
         # Try to find the workflow by name
-        wf_query = select(Workflow.id).where(Workflow.name == row.workflow_name).limit(1)
+        wf_query = (
+            select(Workflow.id).where(Workflow.name == row.workflow_name).limit(1)
+        )
         wf_result = await db.execute(wf_query)
         wf_row = wf_result.scalar_one_or_none()
 

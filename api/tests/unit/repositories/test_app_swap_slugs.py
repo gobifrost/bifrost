@@ -35,7 +35,7 @@ async def test_swap_slugs_exchanges_two_apps(db_session):
     b = await _mk_app(db, f"orders-v2-{uuid.uuid4().hex[:8]}")
     slug_a, slug_b = a.slug, b.slug
 
-    repo = ApplicationRepository(db, org_id=None, user_id=None, is_superuser=True)
+    repo = ApplicationRepository(db, org_id=None, user_id=None, bypass_resource_roles=True)
     ra, rb = await repo.swap_slugs(a.id, b.id)
 
     assert ra.id == a.id and ra.slug == slug_b
@@ -65,7 +65,7 @@ async def test_swap_slugs_takes_advisory_lock_for_both_slugs(db_session, monkeyp
         return await orig_execute(stmt, params, *args, **kwargs)
 
     monkeypatch.setattr(db, "execute", _spy_execute)
-    repo = ApplicationRepository(db, org_id=None, user_id=None, is_superuser=True)
+    repo = ApplicationRepository(db, org_id=None, user_id=None, bypass_resource_roles=True)
     await repo.swap_slugs(a.id, b.id)
 
     # App-IDENTITY locks come FIRST (serialize swaps sharing an app), then the
@@ -84,7 +84,7 @@ async def test_swap_slugs_takes_advisory_lock_for_both_slugs(db_session, monkeyp
 async def test_swap_slugs_rejects_self_swap(db_session):
     db = db_session
     a = await _mk_app(db, f"solo-{uuid.uuid4().hex[:8]}")
-    repo = ApplicationRepository(db, org_id=None, user_id=None, is_superuser=True)
+    repo = ApplicationRepository(db, org_id=None, user_id=None, bypass_resource_roles=True)
     with pytest.raises(ValueError, match="itself"):
         await repo.swap_slugs(a.id, a.id)
 
@@ -93,6 +93,6 @@ async def test_swap_slugs_missing_app_raises(db_session):
     db = db_session
     a = await _mk_app(db, f"present-{uuid.uuid4().hex[:8]}")
     ghost = uuid.uuid4()
-    repo = ApplicationRepository(db, org_id=None, user_id=None, is_superuser=True)
+    repo = ApplicationRepository(db, org_id=None, user_id=None, bypass_resource_roles=True)
     with pytest.raises(ValueError, match="not found"):
         await repo.swap_slugs(a.id, ghost)

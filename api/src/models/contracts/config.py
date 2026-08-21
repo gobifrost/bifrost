@@ -61,9 +61,17 @@ class UpdateConfigRequest(BaseModel):
 
 # CRUD Pattern Models for Config
 class ConfigBase(BaseModel):
-    """Shared config fields."""
+    """Shared config fields.
+
+    ``value`` is a string for every :class:`ConfigType`, matching the wire
+    contract of :class:`SetConfigRequest`. Non-string types travel serialized
+    and are coerced on read using ``config_type``: ``int``/``bool`` are cast
+    and ``json`` is parsed (see ``cli_get_config``). Storage wraps the value
+    in a single-key JSONB envelope, but that envelope is a persistence detail
+    and never reaches a caller.
+    """
     key: str = Field(max_length=255)
-    value: dict
+    value: str
     config_type: ConfigType = Field(default=ConfigType.STRING)
     description: str | None = Field(default=None)
 
@@ -74,8 +82,11 @@ class ConfigCreate(ConfigBase):
 
 
 class ConfigUpdate(BaseModel):
-    """Input for updating a config."""
-    value: dict | None = None
+    """Input for updating a config.
+
+    ``value`` is a string for every type — see :class:`ConfigBase`.
+    """
+    value: str | None = None
     config_type: ConfigType | None = None
     description: str | None = None
 

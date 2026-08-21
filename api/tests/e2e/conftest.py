@@ -85,16 +85,11 @@ def _legacy_deploy_body_to_zip(client: httpx.Client, solution_id: str, headers, 
     from src.services.solutions.deploy import SolutionBundle
     from src.services.solutions.export import build_workspace_zip
 
-    listed = client.get("/api/solutions", headers=headers)
-    assert listed.status_code == 200, (
-        f"solution lookup failed: {listed.status_code} {listed.text}"
+    fetched = client.get(f"/api/solutions/{solution_id}", headers=headers)
+    assert fetched.status_code == 200, (
+        f"solution lookup failed: {fetched.status_code} {fetched.text}"
     )
-    solution = None
-    for item in listed.json().get("solutions", []):
-        if str(item.get("id")) == solution_id:
-            solution = item
-            break
-    assert solution is not None, f"solution {solution_id} not found"
+    solution = fetched.json()
 
     org_id = solution.get("organization_id")
     sol = Solution(

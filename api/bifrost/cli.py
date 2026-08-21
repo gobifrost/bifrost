@@ -713,7 +713,7 @@ def main(args: list[str] | None = None) -> int:
             from bifrost.commands.solution import handle_deploy
             return handle_deploy(args[1:])
 
-        # Entity mutation subgroups (bifrost orgs ..., bifrost roles ..., etc.).
+        # Entity mutation subgroups (bifrost organizations ..., bifrost roles ..., etc.).
         from bifrost.commands import ENTITY_GROUPS, dispatch_entity_subgroup
 
         if command in ENTITY_GROUPS:
@@ -758,7 +758,7 @@ Flags:
   -V, --version   Print the installed CLI version
 
 Entity mutation commands (see 'bifrost <entity> --help'):
-  orgs         Manage organizations
+  organizations Manage organizations
   roles        Manage roles
   workflows    Manage workflow lifecycle and role assignments
   forms        Manage forms
@@ -770,7 +770,9 @@ Entity mutation commands (see 'bifrost <entity> --help'):
   tables       Manage tables
   files        Read/write _repo files, Solution runtime files, and file policies
   events       Manage event sources and subscriptions
-  policy-rule  Manage reusable table/file policy rules
+  knowledge    Search the knowledge store
+  policy-rules Manage reusable table/file policy rules
+  platform-jobs Read durable platform job status
   requirements Manage workspace Python requirements.txt (install/list/remove)
 
 Workspace/file targets:
@@ -3308,7 +3310,7 @@ async def _sync_files(
     Compares local files vs server state (MD5/ETag + timestamps) and presents
     a TUI for per-item actions (push/pull/delete/skip). Entity state is
     managed separately via `bifrost export` / `bifrost import` and dedicated
-    mutation commands (`bifrost orgs`, `bifrost workflows`, etc.); this
+    mutation commands (`bifrost organizations`, `bifrost workflows`, etc.); this
     function does not touch `.bifrost/` manifests.
 
     ``one_way`` (set for plain `bifrost push`) and ``single_file`` (single-file

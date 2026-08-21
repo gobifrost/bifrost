@@ -113,13 +113,19 @@ class TestOrganizationCRUD:
 class TestOrganizationAccess:
     """Test organization access control."""
 
-    def test_org_user_cannot_list_all_organizations(self, e2e_client, org1_user):
-        """Org user should not be able to list all organizations."""
+    def test_org_user_lists_only_active_boundary_organization(
+        self, e2e_client, org1_user
+    ):
+        """Baseline discovery exposes the selected org, never other tenants."""
         response = e2e_client.get(
             "/api/organizations",
             headers=org1_user.headers,
         )
-        assert response.status_code == 403
+        assert response.status_code == 200
+        organizations = response.json()
+        assert [organization["id"] for organization in organizations] == [
+            str(org1_user.organization_id)
+        ]
 
     def test_org_user_cannot_create_organization(self, e2e_client, org1_user):
         """Org user should not be able to create organizations."""

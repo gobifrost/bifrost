@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import csv
 import io
+from collections.abc import Sequence
 from pathlib import Path
 from dataclasses import dataclass
 from itertools import islice
+from typing import Protocol
 from uuid import UUID
 
 from PIL import Image, UnidentifiedImageError
@@ -64,6 +66,39 @@ class ChatInputFile:
     filename: str
     content_type: str
     data: bytes
+
+
+class AttachmentMetadata(Protocol):
+    """The attachment fields needed for model-capability validation."""
+
+    content_type: str
+
+
+def validate_model_input_capabilities(
+    attachments: Sequence[AttachmentMetadata],
+    *,
+    image_input: bool,
+    pdf_input: bool,
+    model_label: str,
+) -> None:
+    """Reject binary conversation inputs the selected model cannot consume."""
+
+    if any(
+        attachment.content_type in IMAGE_CONTENT_TYPES
+        for attachment in attachments
+    ) and not image_input:
+        raise ChatAttachmentError(
+            f"The {model_label} is not configured for image input. "
+            "Choose another model or ask an administrator to verify its capabilities."
+        )
+    if any(
+        attachment.content_type in PDF_CONTENT_TYPES
+        for attachment in attachments
+    ) and not pdf_input:
+        raise ChatAttachmentError(
+            f"The {model_label} is not configured for PDF input. "
+            "Choose another model or ask an administrator to verify its capabilities."
+        )
 
 
 def is_binary_model_input(content_type: str) -> bool:

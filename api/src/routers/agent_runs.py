@@ -52,7 +52,9 @@ from src.models.orm.agents import Agent
 from src.models.orm.solutions import Solution
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
 from src.core.redis_client import get_redis_client
-from src.services.execution.agent_run_access import agent_run_visibility_conditions
+from src.services.execution.agent_run_access import (
+    agent_run_visibility_conditions_for_authorization,
+)
 from src.services.execution.agent_run_service import (
     enqueue_agent_run,
     wait_for_agent_run_result,
@@ -63,10 +65,27 @@ from src.services.execution.tuning_service import (
     append_user_message_and_reply,
     get_or_create_conversation,
 )
+from src.services.audit import emit_audit
+from src.services.authorization import CurrentAuthorizationContext
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agent-runs", tags=["Agent Runs"])
+
+
+def _require_agent_run_platform_job(
+    authorization: CurrentAuthorizationContext,
+    capability: str,
+) -> None:
+    authorization.require(capability)
+    authorization.require_resource_boundary(None)
+
+
+def _agent_run_visibility_conditions(
+    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
+):
+    return agent_run_visibility_conditions_for_authorization(user, authorization)
 
 
 def _run_to_response(run: AgentRun) -> AgentRunResponse:
@@ -116,6 +135,7 @@ def _run_to_response(run: AgentRun) -> AgentRunResponse:
 async def list_agent_runs(
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     agent_id: UUID | None = None,
     status_filter: str | None = Query(None, alias="status"),
     trigger_type: str | None = None,
@@ -154,7 +174,7 @@ async def list_agent_runs(
             AgentRun.trigger_type != "delegation",
         )
 
-    query = query.where(*agent_run_visibility_conditions(user))
+    query = query.where(*_agent_run_visibility_conditions(user, authorization))
 
     # Apply optional filters
     if agent_id is not None:
@@ -175,9 +195,7 @@ async def list_agent_runs(
     # raw DDL and isn't on the ORM model, hence ``literal_column``.
     if q:
         query = query.where(
-            literal_column("search_tsv").op("@@")(
-                func.plainto_tsquery("english", q)
-            )
+            literal_column("search_tsv").op("@@")(func.plainto_tsquery("english", q))
         )
 
     if verdict is not None:
@@ -207,11 +225,7 @@ async def list_agent_runs(
                 detail="metadata_filter must be a JSON array of {key,op,value} objects",
             )
         for cond in md:
-            if (
-                not isinstance(cond, dict)
-                or "key" not in cond
-                or "value" not in cond
-            ):
+            if not isinstance(cond, dict) or "key" not in cond or "value" not in cond:
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="each metadata_filter entry needs 'key' and 'value'",
@@ -276,6 +290,7 @@ def _enforce_agent_scope(agent_id: UUID, user) -> None:  # type: ignore[no-untyp
 async def get_metadata_keys(
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     agent_id: UUID = Query(..., description="Required. Scope keys to this agent."),
 ) -> MetadataKeysResponse:
     """Distinct top-level keys observed in metadata for this agent's runs.
@@ -287,18 +302,13 @@ async def get_metadata_keys(
     _enforce_agent_scope(agent_id, user)
     conditions = [
         AgentRun.agent_id == agent_id,
-        *agent_run_visibility_conditions(user),
+        *_agent_run_visibility_conditions(user, authorization),
     ]
 
     # jsonb_object_keys explodes the top-level keys of each row's metadata;
     # DISTINCT + ORDER BY gives the UI a stable, deduped list.
     key_col = func.jsonb_object_keys(AgentRun.run_metadata).label("k")
-    stmt = (
-        select(key_col)
-        .where(*conditions)
-        .distinct()
-        .order_by(key_col)
-    )
+    stmt = select(key_col).where(*conditions).distinct().order_by(key_col)
     result = await db.execute(stmt)
     return MetadataKeysResponse(keys=[row[0] for row in result.all()])
 
@@ -310,6 +320,7 @@ async def get_metadata_keys(
 async def get_metadata_values(
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     agent_id: UUID = Query(..., description="Required. Scope values to this agent."),
     key: str = Query(..., min_length=1, description="Metadata key to aggregate."),
     limit: int = Query(500, ge=1, le=2000),
@@ -322,7 +333,7 @@ async def get_metadata_values(
     _enforce_agent_scope(agent_id, user)
     conditions = [
         AgentRun.agent_id == agent_id,
-        *agent_run_visibility_conditions(user),
+        *_agent_run_visibility_conditions(user, authorization),
     ]
 
     value_col = AgentRun.run_metadata[key].astext
@@ -344,6 +355,7 @@ async def get_metadata_values(
 async def list_backfill_jobs(
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     active: bool = Query(
         default=False,
         description="If true, only return running jobs.",
@@ -354,11 +366,8 @@ async def list_backfill_jobs(
     Registered before ``/{run_id}`` so the literal path isn't swallowed by
     the run-detail handler.
     """
-    if not _is_platform_admin(user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only platform administrators can view backfill jobs",
-        )
+    _require_agent_run_platform_job(authorization, "platformjobs.read")
+    del user
     q = select(SummaryBackfillJob).order_by(desc(SummaryBackfillJob.created_at))
     if active:
         q = q.where(SummaryBackfillJob.status == "running")
@@ -375,6 +384,7 @@ async def list_backfill_jobs(
 async def get_backfill_eligible(
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     agent_id: UUID | None = None,
     prompt_version_below: str | None = None,
     include_completed: bool = False,
@@ -391,11 +401,8 @@ async def get_backfill_eligible(
       - ``include_completed=true``          → above + ALL completed summaries
                                                regardless of version
     """
-    if not _is_platform_admin(user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only platform administrators can preview backfills",
-        )
+    _require_agent_run_platform_job(authorization, "platformjobs.read")
+    del user
     statuses = ["pending", "failed"]
     if prompt_version_below is not None or include_completed:
         statuses.append("completed")
@@ -417,9 +424,7 @@ async def get_backfill_eligible(
         )
 
     count = (
-        await db.execute(
-            select(func.count()).select_from(AgentRun).where(*conditions)
-        )
+        await db.execute(select(func.count()).select_from(AgentRun).where(*conditions))
     ).scalar() or 0
 
     per_run_cost, basis = await _estimate_per_run_cost(db)
@@ -437,6 +442,7 @@ async def get_agent_run(
     run_id: UUID,
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> AgentRunDetailResponse:
     """Get agent run detail with steps."""
     query = (
@@ -445,7 +451,7 @@ async def get_agent_run(
         .where(AgentRun.id == run_id)
     )
 
-    query = query.where(*agent_run_visibility_conditions(user))
+    query = query.where(*_agent_run_visibility_conditions(user, authorization))
 
     result = await db.execute(query)
     run = result.scalar_one_or_none()
@@ -476,7 +482,11 @@ async def get_agent_run(
                 output_tokens=entry.output_tokens,
                 cache_read_tokens=entry.cache_read_tokens,
                 cache_write_tokens=entry.cache_write_tokens,
-                provider_cost=(str(entry.provider_cost) if entry.provider_cost is not None else None),
+                provider_cost=(
+                    str(entry.provider_cost)
+                    if entry.provider_cost is not None
+                    else None
+                ),
                 cost=str(entry.cost) if entry.cost else None,
                 duration_ms=entry.duration_ms,
                 timestamp=entry.timestamp.isoformat(),
@@ -550,24 +560,33 @@ async def get_agent_run(
                     content = json.loads(content_raw) if content_raw else None
                     tokens_str = data.get("tokens_used", "")
                     duration_str = data.get("duration_ms", "")
-                    steps_response.append(AgentRunStepResponse(
-                        id=UUID(data["id"]),
-                        run_id=UUID(data["run_id"]),
-                        step_number=int(data["step_number"]),
-                        type=data["type"],
-                        content=content,
-                        tokens_used=int(tokens_str) if tokens_str else None,
-                        duration_ms=int(duration_str) if duration_str else None,
-                        created_at=datetime.fromisoformat(data["created_at"]),
-                    ))
+                    steps_response.append(
+                        AgentRunStepResponse(
+                            id=UUID(data["id"]),
+                            run_id=UUID(data["run_id"]),
+                            step_number=int(data["step_number"]),
+                            type=data["type"],
+                            content=content,
+                            tokens_used=int(tokens_str) if tokens_str else None,
+                            duration_ms=int(duration_str) if duration_str else None,
+                            created_at=datetime.fromisoformat(data["created_at"]),
+                        )
+                    )
         except Exception:
-            logger.warning(f"Failed to read steps from Redis for run {log_safe(run_id)}, falling back to DB")
+            logger.warning(
+                f"Failed to read steps from Redis for run {log_safe(run_id)}, falling back to DB"
+            )
             # Fall back to DB steps (may be empty if uncommitted)
             steps_response = [
                 AgentRunStepResponse(
-                    id=step.id, run_id=step.run_id, step_number=step.step_number,
-                    type=step.type, content=step.content, tokens_used=step.tokens_used,
-                    duration_ms=step.duration_ms, created_at=step.created_at,
+                    id=step.id,
+                    run_id=step.run_id,
+                    step_number=step.step_number,
+                    type=step.type,
+                    content=step.content,
+                    tokens_used=step.tokens_used,
+                    duration_ms=step.duration_ms,
+                    created_at=step.created_at,
                 )
                 for step in run.steps
             ]
@@ -575,9 +594,14 @@ async def get_agent_run(
         # Completed — read from DB (steps are committed)
         steps_response = [
             AgentRunStepResponse(
-                id=step.id, run_id=step.run_id, step_number=step.step_number,
-                type=step.type, content=step.content, tokens_used=step.tokens_used,
-                duration_ms=step.duration_ms, created_at=step.created_at,
+                id=step.id,
+                run_id=step.run_id,
+                step_number=step.step_number,
+                type=step.type,
+                content=step.content,
+                tokens_used=step.tokens_used,
+                duration_ms=step.duration_ms,
+                created_at=step.created_at,
             )
             for step in run.steps
         ]
@@ -633,11 +657,12 @@ async def rerun_agent_run(
     run_id: UUID,
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> AgentRunRerunResponse:
     """Rerun an agent run with the same input (async, non-blocking)."""
     query = select(AgentRun).where(AgentRun.id == run_id)
 
-    query = query.where(*agent_run_visibility_conditions(user))
+    query = query.where(*_agent_run_visibility_conditions(user, authorization))
 
     result = await db.execute(query)
     original = result.scalar_one_or_none()
@@ -679,11 +704,12 @@ async def cancel_agent_run(
     run_id: UUID,
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> dict:
     """Cancel a queued or running agent run."""
     query = select(AgentRun).where(AgentRun.id == run_id)
 
-    query = query.where(*agent_run_visibility_conditions(user))
+    query = query.where(*_agent_run_visibility_conditions(user, authorization))
 
     result = await db.execute(query)
     agent_run = result.scalar_one_or_none()
@@ -714,6 +740,7 @@ async def cancel_agent_run(
 
         # Also mark the Redis context so worker skips if it picks up concurrently
         from src.core.cache.redis_client import get_redis
+
         redis_key = f"bifrost:agent_run:{run_id}:context"
         async with get_redis() as r:
             context_raw = await r.get(redis_key)
@@ -734,10 +761,15 @@ async def cancel_agent_run(
 
     try:
         from src.core.pubsub import publish_agent_run_update
-        await publish_agent_run_update(agent_run, agent_run.agent.name if agent_run.agent else "Unknown")
+
+        await publish_agent_run_update(
+            agent_run, agent_run.agent.name if agent_run.agent else "Unknown"
+        )
     except Exception as e:
         # Cancel flag already set; pubsub notify is best-effort UI hint
-        logger.debug(f"failed to publish agent_run cancel update for {log_safe(run_id)}: {log_safe(e)}")
+        logger.debug(
+            f"failed to publish agent_run cancel update for {log_safe(run_id)}: {log_safe(e)}"
+        )
 
     return {"run_id": str(run_id), "status": "cancelling"}
 
@@ -748,11 +780,12 @@ async def set_verdict(
     request: VerdictRequest,
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> VerdictResponse:
     """Set a verdict on a completed run. Records an audit row."""
     query = select(AgentRun).where(AgentRun.id == run_id)
 
-    query = query.where(*agent_run_visibility_conditions(user))
+    query = query.where(*_agent_run_visibility_conditions(user, authorization))
 
     result = await db.execute(query)
     run = result.scalar_one_or_none()
@@ -801,11 +834,12 @@ async def clear_verdict(
     run_id: UUID,
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> VerdictResponse:
     """Clear the verdict on a run. Records an audit row."""
     query = select(AgentRun).where(AgentRun.id == run_id)
 
-    query = query.where(*agent_run_visibility_conditions(user))
+    query = query.where(*_agent_run_visibility_conditions(user, authorization))
 
     result = await db.execute(query)
     run = result.scalar_one_or_none()
@@ -852,6 +886,7 @@ async def get_flag_conversation(
     run_id: UUID,
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> FlagConversationResponse:
     """Return the tuning conversation attached to a flagged run.
 
@@ -859,7 +894,7 @@ async def get_flag_conversation(
     stream messages into a stable ``id``.
     """
     query = select(AgentRun).where(AgentRun.id == run_id)
-    query = query.where(*agent_run_visibility_conditions(user))
+    query = query.where(*_agent_run_visibility_conditions(user, authorization))
     run = (await db.execute(query)).scalar_one_or_none()
     if not run:
         raise HTTPException(
@@ -888,10 +923,11 @@ async def send_flag_message(
     request: SendFlagMessageRequest,
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> FlagConversationResponse:
     """Append a user turn and synchronously get the tuning-model reply."""
     query = select(AgentRun).where(AgentRun.id == run_id)
-    query = query.where(*agent_run_visibility_conditions(user))
+    query = query.where(*_agent_run_visibility_conditions(user, authorization))
     run = (await db.execute(query)).scalar_one_or_none()
     if not run:
         raise HTTPException(
@@ -922,13 +958,11 @@ async def regenerate_summary(
     run_id: UUID,
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> dict:
     """Reset summary state and re-enqueue a summarization job. Admin-only."""
-    if not _is_platform_admin(user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only platform administrators can regenerate run summaries",
-        )
+    _require_agent_run_platform_job(authorization, "platformjobs.execute")
+    del user
 
     run = (
         await db.execute(select(AgentRun).where(AgentRun.id == run_id))
@@ -941,6 +975,13 @@ async def regenerate_summary(
 
     run.summary_status = "pending"
     run.summary_error = None
+    await emit_audit(
+        db,
+        "agent_run.summary_regenerate",
+        resource_type="agent_run",
+        resource_id=run_id,
+        details={"summary_status": "pending"},
+    )
     await db.commit()
 
     await enqueue_summarize(run_id)
@@ -954,6 +995,7 @@ async def dry_run_agent_run(
     request: DryRunRequest,
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> DryRunResponse:
     """Evaluate a proposed system prompt against a past run's transcript.
 
@@ -963,7 +1005,7 @@ async def dry_run_agent_run(
     tracking (``sequence=8000``).
     """
     query = select(AgentRun).where(AgentRun.id == run_id)
-    query = query.where(*agent_run_visibility_conditions(user))
+    query = query.where(*_agent_run_visibility_conditions(user, authorization))
 
     run = (await db.execute(query)).scalar_one_or_none()
     if not run:
@@ -1004,9 +1046,7 @@ async def execute_agent_run(
 ) -> dict:
     """Execute an agent synchronously via the SDK."""
     # Look up agent by name (case-insensitive)
-    result = await db.execute(
-        select(Agent).where(Agent.name.ilike(request.agent_name))
-    )
+    result = await db.execute(select(Agent).where(Agent.name.ilike(request.agent_name)))
     agent = result.scalar_one_or_none()
 
     if not agent:
@@ -1073,10 +1113,6 @@ async def execute_agent_run(
 _BACKFILL_FALLBACK_PER_RUN_COST = Decimal("0.002")
 
 
-def _is_platform_admin(user) -> bool:  # type: ignore[no-untyped-def]
-    return user.has_platform_admin_grant()
-
-
 async def _estimate_per_run_cost(db) -> tuple[Decimal, str]:  # type: ignore[no-untyped-def]
     """Average cost-per-summarizer-call over the last 100 completed summaries.
 
@@ -1112,6 +1148,7 @@ async def backfill_summaries(
     request: BackfillSummariesRequest,
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> BackfillSummariesResponse:
     """Enqueue summarization for pending/failed runs. Admin-only.
 
@@ -1121,11 +1158,10 @@ async def backfill_summaries(
     per run tagged with the job_id; progress is broadcast on the
     ``summary-backfill:{job_id}`` channel.
     """
-    if not _is_platform_admin(user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only platform administrators can trigger summary backfills",
-        )
+    _require_agent_run_platform_job(
+        authorization,
+        "platformjobs.read" if request.dry_run else "platformjobs.execute",
+    )
 
     # Build the base query: completed runs that still need (re-)summarization.
     conditions = [
@@ -1169,10 +1205,11 @@ async def backfill_summaries(
     from uuid import uuid4
 
     central_job_id = uuid4()
+    actor = authorization.effective_actor
     job = SummaryBackfillJob(
         id=central_job_id,
         agent_id=request.agent_id,
-        requested_by=user.user_id,
+        requested_by=actor.user_id,
         status="running",
         total=eligible,
         estimated_cost_usd=estimated_total,
@@ -1183,6 +1220,7 @@ async def backfill_summaries(
     # immediately (the summarizer's idempotent short-circuit on 'completed' will
     # skip them otherwise, but admins asked for a retry — respect that).
     from sqlalchemy import update as sql_update
+
     await db.execute(
         sql_update(AgentRun)
         .where(AgentRun.id.in_(run_ids))
@@ -1192,7 +1230,10 @@ async def backfill_summaries(
         SUMMARY_BACKFILL_DEFINITION,
         SummaryBackfillPayload,
     )
-    from src.services.platform_jobs import enqueue_platform_job, publish_platform_job_update
+    from src.services.platform_jobs import (
+        enqueue_platform_job,
+        publish_platform_job_update,
+    )
 
     platform_job, _ = await enqueue_platform_job(
         db,
@@ -1201,14 +1242,25 @@ async def backfill_summaries(
         dedupe_key=str(job.id),
         priority=100,
         organization_id=None,
-        requested_by_user_id=user.user_id,
-        requested_by_email=user.email,
-        requested_by_name=user.name or user.email or "Unknown",
+        requested_by_user_id=actor.user_id,
+        requested_by_email=actor.email,
+        requested_by_name=actor.name or actor.email or "Unknown",
         resource_type="summary_backfill",
         resource_id=str(job.id),
         title=f"Summarizing {eligible} agent runs",
         action_url="/agents",
         job_id=central_job_id,
+    )
+    await emit_audit(
+        db,
+        "agent_run.summary_backfill.enqueue",
+        resource_type="summary_backfill",
+        resource_id=job.id,
+        details={
+            "agent_id": str(request.agent_id) if request.agent_id else None,
+            "queued": eligible,
+            "estimated_cost_usd": str(estimated_total),
+        },
     )
     await db.commit()
     await publish_platform_job_update(platform_job)
@@ -1230,13 +1282,11 @@ async def get_backfill_job(
     job_id: UUID,
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> SummaryBackfillJobResponse:
     """Admin-only: current progress for a summary backfill job."""
-    if not _is_platform_admin(user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only platform administrators can view backfill jobs",
-        )
+    _require_agent_run_platform_job(authorization, "platformjobs.read")
+    del user
     job = (
         await db.execute(
             select(SummaryBackfillJob).where(SummaryBackfillJob.id == job_id)
@@ -1258,6 +1308,7 @@ async def cancel_backfill_job(
     job_id: UUID,
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> SummaryBackfillJobResponse:
     """Mark a backfill job as cancelled so the UI unblocks.
 
@@ -1273,11 +1324,8 @@ async def cancel_backfill_job(
     mid-job and prefetched messages went back on the queue but the counter
     never advanced) — admins need a way out.
     """
-    if not _is_platform_admin(user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only platform administrators can cancel backfill jobs",
-        )
+    _require_agent_run_platform_job(authorization, "platformjobs.execute")
+    del user
     job = (
         await db.execute(
             select(SummaryBackfillJob).where(SummaryBackfillJob.id == job_id)
@@ -1294,6 +1342,13 @@ async def cancel_backfill_job(
 
     job.status = "cancelled"
     job.completed_at = datetime.now(timezone.utc)
+    await emit_audit(
+        db,
+        "agent_run.summary_backfill.cancel",
+        resource_type="summary_backfill",
+        resource_id=job_id,
+        details={"status": "cancelled"},
+    )
     await db.commit()
 
     from src.models.orm.platform_jobs import PlatformJob
@@ -1305,6 +1360,7 @@ async def cancel_backfill_job(
 
     # Broadcast so any attached progress card dismisses itself.
     from src.core.pubsub import publish_summary_backfill_update
+
     await publish_summary_backfill_update(
         job_id,
         {

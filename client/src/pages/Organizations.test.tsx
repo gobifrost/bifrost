@@ -54,6 +54,19 @@ vi.mock("@/hooks/useSearch", () => ({
 	useSearch: (items: unknown[]) => items,
 }));
 
+vi.mock("@/hooks/useAdministrativeBoundary", () => ({
+	useAdministrativeBoundary: () => "platform",
+	organizationBoundary: (organizationId: string | null | undefined) =>
+		organizationId ? `organization:${organizationId}` : "platform",
+	authorizationHeaders: (boundary: string) => ({
+		"X-Bifrost-Boundary": boundary,
+	}),
+}));
+
+vi.mock("@/components/organizations/OrganizationGroupsManager", () => ({
+	OrganizationGroupsManager: () => <div>Group manager</div>,
+}));
+
 vi.mock("@/pages/settings/RequiredInstructionsSettings", () => ({
 	RequiredInstructionsSettings: ({ organizationId }: { organizationId: string }) => (
 		<div>Instructions for {organizationId}</div>
@@ -80,6 +93,7 @@ describe("Organizations", () => {
 
 		expect(screen.getByText("Dormant Co")).toBeVisible();
 		expect(mockUseOrganizations).toHaveBeenLastCalledWith({
+			boundary: "platform",
 			includeInactive: true,
 		});
 	});
@@ -112,6 +126,7 @@ describe("Organizations", () => {
 
 		await waitFor(() =>
 			expect(mockUpdate).toHaveBeenCalledWith({
+				headers: { "X-Bifrost-Boundary": "organization:org-1" },
 				params: { path: { org_id: "org-1" } },
 				body: {
 					name: "Acme",
@@ -138,9 +153,19 @@ describe("Organizations", () => {
 
 		await waitFor(() =>
 			expect(mockUpdate).toHaveBeenCalledWith({
+				headers: { "X-Bifrost-Boundary": "organization:org-1" },
 				params: { path: { org_id: "org-1" } },
 				body: { is_active: false },
 			}),
 		);
+	});
+
+	it("opens provider-owned group administration from the Groups tab", async () => {
+		const user = userEvent.setup();
+		render(<Organizations />);
+
+		await user.click(screen.getByRole("tab", { name: "Groups" }));
+
+		expect(screen.getByText("Group manager")).toBeVisible();
 	});
 });

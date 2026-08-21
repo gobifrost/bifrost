@@ -16,12 +16,18 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select, or_
 
-from src.core.auth import Context, CurrentSuperuser
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.models import Workflow
 from src.models import WorkflowKeyCreateRequest, WorkflowKeyResponse
+from src.models.orm.organizations import Organization
 from src.models.orm.solutions import Solution
+from src.services.audit import emit_audit
+from src.services.authorization import (
+    AuthorizationBoundaryKind,
+    AuthorizationContext,
+    CurrentAuthorizationContext,
+)
 from src.services.solutions.setup_status import recompute_and_persist_setup_complete
 from src.services.workflow_keys import generate_workflow_key
 
@@ -34,10 +40,14 @@ router = APIRouter(prefix="/api/workflow-keys", tags=["Workflow Keys"])
 # Request/Response Models
 # =============================================================================
 
+
 # WorkflowKeyResponse with raw_key for creation
 class WorkflowKeyCreatedResponse(WorkflowKeyResponse):
     """Response when creating a key - includes the raw key (shown only once)."""
-    raw_key: str = ""  # Override parent's optional field with required but empty default
+
+    raw_key: str = (
+        ""  # Override parent's optional field with required but empty default
+    )
 
 
 # =============================================================================
@@ -52,6 +62,25 @@ def mask_key(hashed_key: str) -> str:
     return f"{hashed_key[:4]}...{hashed_key[-4:]}"
 
 
+def _workflow_key_collection_filter(authorization: AuthorizationContext):
+    boundary = authorization.selected_boundary
+    if boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+        return Workflow.organization_id.is_(None)
+    if boundary.kind is AuthorizationBoundaryKind.ORGANIZATION:
+        return Workflow.organization_id == boundary.organization_id
+    return Workflow.organization_id.in_(
+        select(Organization.id).where(Organization.is_provider.is_(False))
+    )
+
+
+def _require_workflow_key_mutation(
+    authorization: AuthorizationContext,
+    workflow: Workflow,
+) -> None:
+    authorization.require("workflows.readwrite")
+    authorization.require_resource_boundary(workflow.organization_id)
+
+
 # =============================================================================
 # HTTP Endpoints
 # =============================================================================
@@ -64,17 +93,22 @@ def mask_key(hashed_key: str) -> str:
     description="List all workflows with API keys enabled (Platform admin only)",
 )
 async def list_keys(
-    ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
     workflow_id: str | None = None,
 ) -> list[WorkflowKeyResponse]:
     """List all workflows with API keys enabled."""
-    query = select(Workflow).where(
-        Workflow.api_key_hash.isnot(None),  # Has an API key
-        Workflow.api_key_enabled == True,  # noqa: E712
-        Workflow.is_active == True,  # noqa: E712
-    ).order_by(Workflow.api_key_created_at.desc())
+    authorization.require("workflows.read")
+    query = (
+        select(Workflow)
+        .where(
+            Workflow.api_key_hash.isnot(None),  # Has an API key
+            Workflow.api_key_enabled == True,  # noqa: E712
+            Workflow.is_active == True,  # noqa: E712
+            _workflow_key_collection_filter(authorization),
+        )
+        .order_by(Workflow.api_key_created_at.desc())
+    )
 
     if workflow_id:
         try:
@@ -112,8 +146,7 @@ async def list_keys(
 )
 async def create_key(
     request: WorkflowKeyCreateRequest,
-    ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> WorkflowKeyCreatedResponse:
     """Create a new workflow API key. Each workflow can have one API key."""
@@ -122,7 +155,7 @@ async def create_key(
     if not request.workflow_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="workflow_id is required (global keys are no longer supported)"
+            detail="workflow_id is required (global keys are no longer supported)",
         )
 
     # Look up the workflow by ID
@@ -131,7 +164,7 @@ async def create_key(
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid workflow_id format (expected UUID)"
+            detail="Invalid workflow_id format (expected UUID)",
         )
 
     result = await db.execute(
@@ -145,14 +178,16 @@ async def create_key(
     if not workflow:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Workflow '{request.workflow_id}' not found"
+            detail=f"Workflow '{request.workflow_id}' not found",
         )
+
+    _require_workflow_key_mutation(authorization, workflow)
 
     # Check if workflow already has a key
     if workflow.api_key_hash and workflow.api_key_enabled:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Workflow '{workflow.name}' already has an active API key. Revoke it first."
+            detail=f"Workflow '{workflow.name}' already has an active API key. Revoke it first.",
         )
 
     # Generate new key
@@ -160,13 +195,15 @@ async def create_key(
 
     expires_at = None
     if request.expires_in_days:
-        expires_at = datetime.now(timezone.utc) + timedelta(days=request.expires_in_days)
+        expires_at = datetime.now(timezone.utc) + timedelta(
+            days=request.expires_in_days
+        )
 
     # Update workflow with API key info
     workflow.api_key_hash = hashed_key
     workflow.api_key_description = request.description
     workflow.api_key_enabled = True
-    workflow.api_key_created_by = user.email
+    workflow.api_key_created_by = authorization.effective_actor.email
     workflow.api_key_created_at = datetime.now(timezone.utc)
     workflow.api_key_expires_at = expires_at
 
@@ -175,9 +212,26 @@ async def create_key(
         solution = await db.get(Solution, workflow.solution_id)
         if solution is not None:
             await recompute_and_persist_setup_complete(db, solution)
+    await emit_audit(
+        db,
+        "workflow.api_key.create",
+        resource_type="workflow",
+        resource_id=workflow.id,
+        details={
+            "organization_id": (
+                str(workflow.organization_id) if workflow.organization_id else None
+            ),
+            "expires_at": expires_at.isoformat() if expires_at else None,
+        },
+    )
     await db.refresh(workflow)
 
-    logger.info(f"Created API key for workflow '{workflow.name}' (ID: {workflow.id}) by {user.email}")
+    logger.info(
+        "Created API key for workflow '%s' (ID: %s) by %s",
+        log_safe(workflow.name),
+        workflow.id,
+        authorization.effective_actor.email,
+    )
 
     return WorkflowKeyCreatedResponse(
         id=str(workflow.id),
@@ -186,7 +240,7 @@ async def create_key(
         masked_key=mask_key(hashed_key),
         raw_key=raw_key,
         description=workflow.api_key_description,
-        created_by=workflow.api_key_created_by or user.email,
+        created_by=(workflow.api_key_created_by or authorization.effective_actor.email),
         created_at=workflow.api_key_created_at or workflow.created_at,
         last_used_at=workflow.api_key_last_used_at,
         expires_at=workflow.api_key_expires_at,
@@ -202,14 +256,11 @@ async def create_key(
 )
 async def revoke_key(
     workflow_id: UUID,
-    ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> None:
     """Revoke (disable) a workflow API key."""
-    result = await db.execute(
-        select(Workflow).where(Workflow.id == workflow_id)
-    )
+    result = await db.execute(select(Workflow).where(Workflow.id == workflow_id))
     workflow = result.scalar_one_or_none()
 
     if not workflow:
@@ -217,6 +268,8 @@ async def revoke_key(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Workflow not found",
         )
+
+    _require_workflow_key_mutation(authorization, workflow)
 
     if not workflow.api_key_hash:
         raise HTTPException(
@@ -238,7 +291,23 @@ async def revoke_key(
         solution = await db.get(Solution, workflow.solution_id)
         if solution is not None:
             await recompute_and_persist_setup_complete(db, solution)
-    logger.info(f"Revoked API key for workflow '{log_safe(workflow.name)}' (ID: {log_safe(workflow_id)}) by {user.email}")
+    await emit_audit(
+        db,
+        "workflow.api_key.revoke",
+        resource_type="workflow",
+        resource_id=workflow.id,
+        details={
+            "organization_id": (
+                str(workflow.organization_id) if workflow.organization_id else None
+            )
+        },
+    )
+    logger.info(
+        "Revoked API key for workflow '%s' (ID: %s) by %s",
+        log_safe(workflow.name),
+        log_safe(workflow_id),
+        authorization.effective_actor.email,
+    )
 
 
 # =============================================================================

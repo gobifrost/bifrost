@@ -70,7 +70,7 @@ import {
 	useRemoveRoleFromWorkflow,
 } from "@/hooks/useWorkflowRoles";
 import { useWorkflowKeys, useCreateWorkflowKey, useRevokeWorkflowKey } from "@/hooks/useWorkflowKeys";
-import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
+import { useAuthorizationBoundary } from "@/contexts/AuthorizationBoundaryContext";
 import type { components } from "@/lib/v1";
 
 type Workflow = components["schemas"]["WorkflowMetadata"];
@@ -125,10 +125,14 @@ export function WorkflowEditDialog({
 	const updateWorkflow = useUpdateWorkflow();
 	const assignRoles = useAssignRolesToWorkflow();
 	const removeRole = useRemoveRoleFromWorkflow();
+	const { selectedTarget, hasSelectedCapability } = useAuthorizationBoundary();
 
 	// Solution-managed workflows are read-only on the platform (criterion 6):
 	// show the banner and disable Save. The API rejects the mutation regardless.
 	const isSolutionManaged = workflow?.is_solution_managed ?? false;
+	const canManageWorkflow =
+		selectedTarget?.kind !== "managed_organizations" &&
+		hasSelectedCapability("workflows.readwrite");
 
 	// Access control state
 	const [organizationId, setOrganizationId] = useState<string | null | undefined>(undefined);
@@ -601,20 +605,6 @@ export function WorkflowEditDialog({
 						{/* Access Control Tab */}
 						<TabsContent value="access" className="mt-0 space-y-4">
 							<div className="space-y-2">
-								<Label>Organization Scope</Label>
-								<OrganizationSelect
-									value={organizationId}
-									onChange={setOrganizationId}
-									showAll={false}
-									showGlobal={true}
-									placeholder="Select organization..."
-								/>
-								<p className="text-xs text-muted-foreground">
-									Global workflows are available to all organizations
-								</p>
-							</div>
-
-							<div className="space-y-2">
 								<Label>Access Level</Label>
 								<Select
 									value={accessLevel}
@@ -927,7 +917,14 @@ export function WorkflowEditDialog({
 					<Button variant="outline" onClick={handleClose} disabled={isSaving}>
 						Cancel
 					</Button>
-					<Button onClick={handleSave} disabled={isSaving || isSolutionManaged}>
+					<Button
+						onClick={handleSave}
+						disabled={
+							isSaving ||
+							isSolutionManaged ||
+							!canManageWorkflow
+						}
+					>
 						{isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
 						{isSaving ? "Saving..." : "Save Changes"}
 					</Button>

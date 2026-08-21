@@ -3,11 +3,12 @@
 Implements Task 5h of the CLI mutation surface plan:
 
 * ``bifrost configs list`` → ``GET /api/config``
-* ``bifrost configs get <ref>`` — list-and-filter (the server does not
-  expose ``GET /api/config/{uuid}``; the resolver is used to derive the
-  UUID, then the row is located in the list payload).
+* ``bifrost configs get <ref>`` → ``GET /api/config/{uuid}`` (the ref is
+  resolved to a UUID first, so a config key works too)
 * ``bifrost configs create`` → ``POST /api/config`` (flags from
-  :class:`ConfigCreate`; ``config_type`` aliases to ``type`` on the wire)
+  :class:`ConfigCreate`; ``config_type`` aliases to ``type`` on the wire.
+  ``value`` is a string for every config type — non-string types travel
+  serialized and are coerced on read.)
 * ``bifrost configs update <ref>`` → ``PUT /api/config/{uuid}`` (flags from
   :class:`ConfigUpdate`; omitting ``--value`` preserves the stored value via
   server-side omit-unset behaviour)
@@ -35,6 +36,7 @@ from bifrost.client import BifrostClient
 from bifrost.dto_flags import (
     DTO_EXCLUDES,
     DTO_REF_LOOKUPS,
+    assemble_body,
     build_cli_flags,
 )
 from bifrost.org_target import org_option, resolve_org_target
@@ -93,19 +95,13 @@ async def get_config(
 ) -> None:
     """Get a single configuration value by UUID or key.
 
-    The server does not expose a per-record GET endpoint for configs, so
-    this resolves the ref via :class:`RefResolver` and locates the entry in
-    the ``GET /api/config`` list payload.
+    ``REF`` is a UUID or config key; keys resolve via :class:`RefResolver`.
+    Secret values come back masked as ``[SECRET]``.
     """
     config_uuid = await resolver.resolve("config", ref)
-    list_response = await client.get("/api/config")
-    list_response.raise_for_status()
-    item = _find_config_by_id(list_response.json(), config_uuid)
-    if item is None:
-        raise click.ClickException(
-            f"config {ref!r} resolved to {config_uuid} but is not in the accessible list"
-        )
-    output_result(item, ctx=ctx)
+    response = await client.get(f"/api/config/{config_uuid}")
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
 
 
 async def _build_create_body(
@@ -120,10 +116,10 @@ async def _build_create_body(
 ) -> dict[str, Any]:
     """Build a POST /api/config body for ``create`` / ``set``.
 
-    ``ConfigCreate`` declares ``value: dict`` but the REST endpoint accepts
-    ``SetConfigRequest.value: str``, so ``assemble_body(ConfigCreate, ...)``
-    would mangle the plain-string value. This helper mirrors the wire
-    shape directly.
+    Delegates to :func:`assemble_body`, which applies the ``config_type`` →
+    ``type`` wire alias. ``type`` is defaulted explicitly here because
+    ``assemble_body`` drops unset fields and ``SetConfigRequest.type`` is
+    required.
 
     Org targeting follows the unified ``--org`` standard: HOME (omit) sends no
     ``organization_id`` (the server uses the caller's org), GLOBAL sends an
@@ -133,13 +129,12 @@ async def _build_create_body(
         raise click.UsageError("--key is required")
     if value is None:
         raise click.UsageError("--value is required")
-    body: dict[str, Any] = {
-        "key": key,
-        "value": value,
-        "type": config_type or ConfigType.STRING.value,
-    }
-    if description is not None:
-        body["description"] = description
+    body = await assemble_body(
+        ConfigCreate,
+        {"key": key, "value": value, "config_type": config_type, "description": description},
+        resolver=resolver,
+    )
+    body.setdefault("type", ConfigType.STRING.value)
     target = await resolve_org_target(org, is_global, resolver)
     if target.is_set:
         body["organization_id"] = target.organization_id
@@ -200,14 +195,7 @@ async def update_config(
     the plaintext value is never returned and cannot be round-tripped).
     """
     config_uuid = await resolver.resolve("config", ref)
-    # Same DTO/wire-shape mismatch as create — build manually.
-    body: dict[str, Any] = {}
-    if fields.get("value") is not None:
-        body["value"] = fields["value"]
-    if fields.get("config_type") is not None:
-        body["type"] = fields["config_type"]
-    if fields.get("description") is not None:
-        body["description"] = fields["description"]
+    body = await assemble_body(ConfigUpdate, fields, resolver=resolver)
     response = await client.put(f"/api/config/{config_uuid}", json=body)
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
@@ -240,10 +228,12 @@ async def delete_config(
     """
     config_uuid = await resolver.resolve("config", ref)
 
-    # Look up the full list to check the type (no single-GET endpoint exists).
-    list_response = await client.get("/api/config")
-    list_response.raise_for_status()
-    existing = _find_config_by_id(list_response.json(), config_uuid)
+    # Read the row to check its type before deleting. A 404 here is left to
+    # the DELETE below so the server owns the not-found response.
+    get_response = await client.get(f"/api/config/{config_uuid}")
+    existing = (
+        get_response.json() if get_response.status_code == 200 else None
+    )
 
     if existing is not None and existing.get("type") == ConfigType.SECRET.value and not confirm:
         click.echo(
@@ -342,19 +332,6 @@ async def set_config(
 
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
-
-
-def _find_config_by_id(
-    items: list[dict[str, Any]], config_id: str
-) -> dict[str, Any] | None:
-    """Return the config dict whose ``id`` matches ``config_id`` (as UUID)."""
-    target = _coerce_uuid(config_id)
-    if target is None:
-        return None
-    for item in items:
-        if _coerce_uuid(item.get("id")) == target:
-            return item
-    return None
 
 
 def _find_config_by_key(

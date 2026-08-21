@@ -19,6 +19,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.principal import UserPrincipal
 from src.core.security import decrypt_secret, encrypt_secret
 from src.models.orm.external_mcp import MCPConnection, MCPServer
 from src.models.orm.oauth import OAuthProvider, OAuthToken
@@ -26,7 +27,9 @@ from src.models.orm.organizations import Organization
 from src.routers.mcp_connections import (
     MCPConnectActivateResponse,
     _activate_client_credentials,
+    _get_connection_or_404,
 )
+from src.services.authorization import AuthorizationBoundary, AuthorizationContext
 
 
 async def _make_org(db: AsyncSession) -> Organization:
@@ -105,7 +108,41 @@ def _ctx(db: AsyncSession) -> MagicMock:
     helper uses."""
     ctx = MagicMock()
     ctx.db = db
+    ctx.org_id = None
+    ctx.user = None
     return ctx
+
+
+def _principal(
+    *,
+    organization_id,
+    is_provider_org: bool = False,
+) -> UserPrincipal:
+    return UserPrincipal(
+        user_id=uuid4(),
+        email="mcp-user@example.com",
+        name="MCP User",
+        organization_id=organization_id,
+        is_superuser=False,
+        is_provider_org=is_provider_org,
+    )
+
+
+def _authorization(
+    *,
+    principal: UserPrincipal,
+    capabilities: set[str],
+    selected_organization_id=None,
+) -> AuthorizationContext:
+    return AuthorizationContext(
+        requester=principal,
+        effective_actor=principal,
+        selected_boundary=AuthorizationBoundary.organization(
+            selected_organization_id or principal.organization_id
+        ),
+        effective_capabilities=frozenset(capabilities),
+        grant_sources=(),
+    )
 
 
 @pytest.mark.asyncio
@@ -181,6 +218,83 @@ async def test_activate_client_credentials_happy_path(db_session: AsyncSession):
 
     # Connection FK updated
     assert connection.service_oauth_token_id == token_row.id
+
+
+@pytest.mark.asyncio
+async def test_get_user_connection_uses_capability_when_legacy_admin_false(
+    db_session: AsyncSession,
+) -> None:
+    org = await _make_org(db_session)
+    server = await _make_server(db_session, None)
+    connection = await _make_connection(db_session, server, org)
+    principal = _principal(organization_id=org.id)
+    ctx = _ctx(db_session)
+    ctx.org_id = org.id
+    ctx.user = principal
+
+    loaded = await _get_connection_or_404(
+        ctx,
+        connection.id,
+        _authorization(
+            principal=principal,
+            capabilities={"integrations.read"},
+        ),
+    )
+
+    assert loaded.id == connection.id
+
+
+@pytest.mark.asyncio
+async def test_provider_membership_alone_does_not_authorize_user_connection(
+    db_session: AsyncSession,
+) -> None:
+    org = await _make_org(db_session)
+    server = await _make_server(db_session, None)
+    connection = await _make_connection(db_session, server, org)
+    principal = _principal(organization_id=org.id, is_provider_org=True)
+    ctx = _ctx(db_session)
+    ctx.org_id = org.id
+    ctx.user = principal
+
+    with pytest.raises(HTTPException) as exc:
+        await _get_connection_or_404(
+            ctx,
+            connection.id,
+            _authorization(
+                principal=principal,
+                capabilities=set(),
+            ),
+        )
+
+    assert exc.value.status_code == 403
+    assert exc.value.detail == "Missing required capability: integrations.read"
+
+
+@pytest.mark.asyncio
+async def test_user_connection_requires_home_org(
+    db_session: AsyncSession,
+) -> None:
+    home_org = await _make_org(db_session)
+    other_org = await _make_org(db_session)
+    server = await _make_server(db_session, None)
+    connection = await _make_connection(db_session, server, other_org)
+    principal = _principal(organization_id=home_org.id)
+    ctx = _ctx(db_session)
+    ctx.org_id = home_org.id
+    ctx.user = principal
+
+    with pytest.raises(HTTPException) as exc:
+        await _get_connection_or_404(
+            ctx,
+            connection.id,
+            _authorization(
+                principal=principal,
+                capabilities={"integrations.read"},
+                selected_organization_id=other_org.id,
+            ),
+        )
+
+    assert exc.value.status_code == 404
 
 
 @pytest.mark.asyncio

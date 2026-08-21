@@ -14,6 +14,7 @@ import pytest
 
 from bifrost.refs import (
     AmbiguousRefError,
+    RefResolver,
     RefNotFoundError,
     resolve_ref,
 )
@@ -52,9 +53,11 @@ class FakeClient:
         # (status_code, payload) tuples.
         self._routes = routes
         self.calls: list[str] = []
+        self.request_headers: list[dict[str, str]] = []
 
-    async def get(self, path: str, **_: Any) -> _FakeResponse:
+    async def get(self, path: str, **kwargs: Any) -> _FakeResponse:
         self.calls.append(path)
+        self.request_headers.append(dict(kwargs.get("headers") or {}))
         if path not in self._routes:
             return _FakeResponse(None, status_code=404)
         entry = self._routes[path]
@@ -79,6 +82,28 @@ async def test_uuid_passthrough_skips_lookup() -> None:
 
     assert resolved == uid
     assert client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_ref_resolver_forwards_fixed_authorization_boundary() -> None:
+    integration_id = str(uuid4())
+    client = FakeClient(
+        {
+            "/api/integrations": {
+                "items": [{"id": integration_id, "name": "Pax8"}],
+                "total": 1,
+            }
+        }
+    )
+    resolver = RefResolver(
+        client,
+        headers={"X-Bifrost-Boundary": "platform"},
+    )
+
+    assert await resolver.resolve("integration", "Pax8") == integration_id
+    assert client.request_headers == [
+        {"X-Bifrost-Boundary": "platform"}
+    ]
 
 
 # ---------------------------------------------------------------------------

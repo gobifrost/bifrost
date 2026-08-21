@@ -76,6 +76,8 @@ services:
     # Ephemeral storage so test runs never inherit broker state.
     tmpfs:
       - /var/lib/rabbitmq
+    volumes:
+      - ./config/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "check_running"]
       interval: 5s
@@ -169,6 +171,7 @@ services:
       - ./api/bifrost:/app/bifrost:ro
       - ./api/alembic:/app/alembic:ro
       - ./api/alembic.ini:/app/alembic.ini:ro
+      - ./.claude/skills/bifrost-build:/app/.claude/skills/bifrost-build:ro
       - test-mounts:/mounts  # File storage for uploads, branding, etc.
       # Share ONLY the fixture subdir the test-runner stages file:// git repos
       # in, so install/preview-repo can clone them server-side. Do NOT bind the
@@ -240,6 +243,7 @@ services:
       - /app/src/services/sdk_package/sdk_src  # preserve image-baked SDK source (masked by :ro src mount)
       - ./api/shared:/app/shared:ro
       - ./api/bifrost:/app/bifrost:ro
+      - ./.claude/skills/bifrost-build:/app/.claude/skills/bifrost-build:ro
     depends_on:
       pgbouncer:
         condition: service_healthy
@@ -289,6 +293,7 @@ services:
       - /app/src/services/sdk_package/sdk_src  # preserve image-baked SDK source (masked by :ro src mount)
       - ./api/shared:/app/shared:ro
       - ./api/bifrost:/app/bifrost:ro
+      - ./.claude/skills/bifrost-build:/app/.claude/skills/bifrost-build:ro
       - test-mounts:/mounts
     depends_on:
       pgbouncer:
@@ -384,6 +389,7 @@ services:
       - ./api/pyproject.toml:/app/pyproject.toml:ro
       - ./api/pyrightconfig.json:/app/pyrightconfig.json:ro
       - ./api/Dockerfile.dev:/app/api/Dockerfile.dev:ro
+      - ./builder-runner:/app/builder-runner:ro
       - ./.github/workflows:/app/.github/workflows:ro  # CI topology contract tests
       - ./test.sh:/app/test.sh:ro
       - ./docker-compose.test.yml:/app/docker-compose.test.yml:ro  # Read-only —
@@ -399,6 +405,7 @@ services:
       - ./client/playwright.config.ts:/app/client/playwright.config.ts:ro
       - ./client/nginx.conf:/app/client/nginx.conf:ro  # Production routing contract.
       - ./client/Dockerfile:/app/client/Dockerfile:ro  # Production asset-mode contract.
+      - ./docs/generated:/app/docs/generated:ro  # Canonical operation inventory freshness.
       - ./.claude/skills:/.claude/skills:ro  # Read-only — the drift test in
                                       # tests/unit/test_platform_api_docs.py reads
                                       # bifrost-build/platform-api.md to enforce docs

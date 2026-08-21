@@ -46,6 +46,7 @@ from src.models.contracts.mcp import (
     MCPGatewayExecuteRequest,
     MCPGatewayExecuteResponse,
     MCPGatewayExecutionResponse,
+    MCPGatewayBuilderExecuteResponse,
     MCPRunInfoResponse,
     MCPToolInfo,
     MCPToolsResponse,
@@ -53,6 +54,15 @@ from src.models.contracts.mcp import (
 from src.services.mcp_server.config_service import (
     MCPConfigService,
     invalidate_mcp_config_cache,
+)
+from src.services.audit import emit_audit
+from src.services.authorization import (
+    AuthorizationBoundaryKind,
+    CurrentAuthorizationContext,
+)
+from src.services.agent_router import (
+    chat_authorization_boundary_string,
+    chat_authorization_resource_bypass,
 )
 
 logger = logging.getLogger(__name__)
@@ -62,19 +72,47 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/mcp", tags=["mcp"])
 
 
-def _gateway_service(current_user: CurrentActiveUser):
+def _require_mcp_config(
+    authorization: CurrentAuthorizationContext,
+    capability: str = "integrations.read",
+) -> None:
+    authorization.require(capability)
+    authorization.require_resource_boundary(None)
+
+
+def _gateway_service(
+    current_user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
+):
     """Create the canonical gateway service for an authenticated REST caller."""
     from src.services.mcp_server.gateway import MCPAgentGatewayService
     from src.services.mcp_server.server import MCPContext
 
+    boundary = authorization.selected_boundary
+    if boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Managed Organizations is a collection selector. Select an exact "
+                "organization or Platform before using the MCP gateway."
+            ),
+        )
+    org_id = (
+        boundary.organization_id
+        if boundary.kind is AuthorizationBoundaryKind.ORGANIZATION
+        else None
+    )
+
     return MCPAgentGatewayService(
         MCPContext(
             user_id=current_user.user_id,
-            org_id=current_user.organization_id,
-            is_platform_admin=current_user.is_superuser,
+            org_id=org_id,
+            is_platform_admin=False,
             is_external=current_user.is_external,
             user_email=current_user.email,
             user_name=current_user.name,
+            authorization_boundary=chat_authorization_boundary_string(authorization),
+            resource_gate_bypass=chat_authorization_resource_bypass(authorization),
         )
     )
 
@@ -118,13 +156,15 @@ async def search_gateway_capabilities(
     request: MCPGatewayCapabilitySearchRequest,
     current_user: CurrentActiveUser,
     db: DbSession,
+    authorization: CurrentAuthorizationContext,
 ) -> dict:
     """Search agents and tools or hydrate one exact capability."""
     await _require_mcp_enabled(db)
     try:
-        return await _gateway_service(current_user).search_capabilities(
+        return await _gateway_service(current_user, authorization).search_capabilities(
             query=request.query,
             agent_id=request.agent_id,
+            builder_session_id=request.builder_session_id,
             tool_ref=request.tool_ref,
             limit=request.limit,
         )
@@ -140,6 +180,7 @@ async def get_gateway_execution(
     execution_id: str,
     current_user: CurrentActiveUser,
     db: DbSession,
+    authorization: CurrentAuthorizationContext,
     result_path: str = "",
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=20, ge=1, le=100),
@@ -147,7 +188,7 @@ async def get_gateway_execution(
     """Read compact status and a bounded result page for an owned execution."""
     await _require_mcp_enabled(db)
     try:
-        return await _gateway_service(current_user).get_execution(
+        return await _gateway_service(current_user, authorization).get_execution(
             execution_id,
             result_path=result_path,
             offset=offset,
@@ -161,18 +202,50 @@ async def get_gateway_execution(
     "/gateway/agents/{agent_id}/tools/{tool_ref}/execute",
     response_model=MCPGatewayExecuteResponse,
 )
-async def execute_gateway_tool(
+async def execute_gateway_agent_tool(
     agent_id: str,
     tool_ref: str,
     request: MCPGatewayExecuteRequest,
     current_user: CurrentActiveUser,
     db: DbSession,
+    authorization: CurrentAuthorizationContext,
 ) -> dict:
-    """Re-resolve, validate, and execute an agent-bound tool."""
+    """Canonical agent-bound gateway execution route."""
     await _require_mcp_enabled(db)
     try:
-        return await _gateway_service(current_user).execute_agent_tool(
+        return await _gateway_service(
+            current_user,
+            authorization,
+        ).execute_agent_tool(
             agent_id,
+            tool_ref,
+            request.arguments,
+            async_execution=request.async_,
+        )
+    except Exception as exc:
+        _raise_gateway_http_error(exc)
+
+
+@router.post(
+    "/gateway/builder-sessions/{builder_session_id}/tools/{tool_ref}/execute",
+    response_model=MCPGatewayBuilderExecuteResponse,
+)
+async def execute_gateway_builder_session_tool(
+    builder_session_id: str,
+    tool_ref: str,
+    request: MCPGatewayExecuteRequest,
+    current_user: CurrentActiveUser,
+    db: DbSession,
+    authorization: CurrentAuthorizationContext,
+) -> dict:
+    """Canonical builder-session-bound gateway execution route."""
+    await _require_mcp_enabled(db)
+    try:
+        return await _gateway_service(
+            current_user,
+            authorization,
+        ).execute_builder_tool(
+            builder_session_id,
             tool_ref,
             request.arguments,
             async_execution=request.async_,
@@ -236,6 +309,7 @@ async def download_mcp_run_plugin(
 async def mcp_status(
     current_user: CurrentActiveUser,
     db: DbSession,
+    authorization: CurrentAuthorizationContext,
 ) -> dict:
     """
     Get MCP server status and available tools for the current user.
@@ -256,7 +330,7 @@ async def mcp_status(
             detail="External MCP access is disabled",
         )
 
-    gateway = _gateway_service(current_user)
+    gateway = _gateway_service(current_user, authorization)
     accessible_agents_count = await gateway.accessible_agent_count()
     gateway_tools = sorted(GATEWAY_TOOL_NAMES)
 
@@ -279,6 +353,7 @@ async def mcp_status(
 
 # Note: The actual MCP protocol endpoint is mounted separately in main.py
 # using FastMCP's http_app() method. This router just provides helper endpoints.
+
 
 def get_mcp_asgi_app():
     """
@@ -305,7 +380,9 @@ def get_mcp_asgi_app():
     from src.services.mcp_server.server import HAS_FASTMCP
 
     if not HAS_FASTMCP:
-        logger.warning("FastMCP not installed - MCP HTTP endpoint will not be available")
+        logger.warning(
+            "FastMCP not installed - MCP HTTP endpoint will not be available"
+        )
         return None
 
     # Import here to avoid circular imports and only when FastMCP is available
@@ -318,6 +395,7 @@ def get_mcp_asgi_app():
     # Create OAuth 2.1 auth provider for Bifrost
     try:
         from src.services.mcp_server.auth import create_bifrost_auth_provider
+
         auth_provider = create_bifrost_auth_provider()
         logger.info("Created Bifrost OAuth 2.1 auth provider for MCP")
     except ImportError as e:
@@ -337,6 +415,7 @@ def get_mcp_asgi_app():
     # Add tool filtering middleware to filter tools/list based on user permissions
     try:
         from src.services.mcp_server.middleware import ToolFilterMiddleware
+
         fastmcp_server.add_middleware(ToolFilterMiddleware())
         logger.info("Added ToolFilterMiddleware for per-user tool filtering")
     except ImportError as e:
@@ -347,7 +426,7 @@ def get_mcp_asgi_app():
     mcp_app = fastmcp_server.http_app(json_response=True, stateless_http=True)
 
     # Store original lifespan before wrapping
-    original_lifespan = getattr(mcp_app, 'lifespan', None)
+    original_lifespan = getattr(mcp_app, "lifespan", None)
 
     # Create combined lifespan that registers workflow tools on startup
     @asynccontextmanager
@@ -369,6 +448,7 @@ def get_mcp_asgi_app():
 
     # Wrap with agent-scoping middleware to handle /mcp/{agent_id} paths
     from src.services.mcp_server.agent_scope import AgentScopeMCPMiddleware
+
     agent_scoped_app = AgentScopeMCPMiddleware(mcp_app)
 
     # Wrap with CORS middleware to expose Mcp-Session-Id header
@@ -391,13 +471,13 @@ def get_mcp_asgi_app():
 
 
 # =============================================================================
-# MCP Configuration Endpoints (Platform Admin Only)
+# MCP Configuration Endpoints
 # =============================================================================
 
 
 @router.get("/config")
 async def get_mcp_config(
-    current_user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> MCPConfigResponse:
     """
@@ -406,12 +486,7 @@ async def get_mcp_config(
     Returns the current configuration for external MCP access,
     including whether it's enabled and what restrictions apply.
     """
-    # Only platform admins can view MCP config
-    if not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only platform administrators can view MCP configuration"
-        )
+    _require_mcp_config(authorization)
 
     service = MCPConfigService(db)
     config = await service.get_config()
@@ -428,7 +503,7 @@ async def get_mcp_config(
 
 @router.put("/config")
 async def update_mcp_config(
-    current_user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
     request: MCPConfigRequest,
 ) -> MCPConfigResponse:
@@ -440,19 +515,24 @@ async def update_mcp_config(
     - Whether platform admin is required
     - Which tools are allowed/blocked
     """
-    # Only platform admins can update MCP config
-    if not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only platform administrators can update MCP configuration"
-        )
+    _require_mcp_config(authorization, "integrations.readwrite")
 
     service = MCPConfigService(db)
     config = await service.save_config(
         enabled=request.enabled,
         allowed_tool_ids=request.allowed_tool_ids,
         blocked_tool_ids=request.blocked_tool_ids,
-        updated_by=current_user.email,
+        updated_by=authorization.effective_actor.email,
+    )
+    await emit_audit(
+        db,
+        "mcp_config.update",
+        resource_type="mcp_config",
+        details={
+            "enabled": request.enabled,
+            "allowed_tool_ids": request.allowed_tool_ids,
+            "blocked_tool_ids": request.blocked_tool_ids,
+        },
     )
 
     # Invalidate cache so auth middleware picks up changes
@@ -470,7 +550,7 @@ async def update_mcp_config(
 
 @router.delete("/config")
 async def delete_mcp_config(
-    current_user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     db: DbSession,
 ) -> dict:
     """
@@ -480,15 +560,16 @@ async def delete_mcp_config(
     - enabled: True
     - all tools allowed
     """
-    # Only platform admins can delete MCP config
-    if not current_user.is_superuser:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Only platform administrators can delete MCP configuration"
-        )
+    _require_mcp_config(authorization, "integrations.readwrite")
 
     service = MCPConfigService(db)
     deleted = await service.delete_config()
+    await emit_audit(
+        db,
+        "mcp_config.delete",
+        resource_type="mcp_config",
+        details={"deleted": deleted},
+    )
 
     # Invalidate cache
     invalidate_mcp_config_cache()

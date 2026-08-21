@@ -52,6 +52,11 @@ from src.models.orm.tables import Table
 from src.models.orm.workflow_roles import WorkflowRole
 from src.models.orm.workflows import Workflow
 from src.services.solution_deploy_preflight import preflight_workflows
+from src.services.solutions.private_deploy_guard import (
+    PrivateDeployPolicy,
+    PrivateDeployViolation,
+    is_private_install,
+)
 from src.services.solutions.storage import SolutionStorage
 from src.services.sync_ops import Upsert
 from shared.logo_processing import ProcessedLogo, process_logo
@@ -234,6 +239,8 @@ class DeployResult:
     # global, empty roles (grant nothing until assigned). Surfaced so the
     # operator sees them — and so a typo'd manifest role name is visible.
     roles_created: list[str] = field(default_factory=list)
+    roles_unresolved: list[str] = field(default_factory=list)
+    build_job_ids: list[UUID] = field(default_factory=list)
     finalize_s3: Callable[[], Awaitable[None]] = field(
         default=_noop_finalize, compare=False, repr=False
     )
@@ -251,6 +258,7 @@ class SolutionBundle:
 
     solution: Solution
     python_files: dict[str, str] = field(default_factory=dict)
+    bundle_files: dict[str, bytes] = field(default_factory=dict)
     workflows: list[dict[str, Any]] = field(default_factory=list)
     tables: list[dict[str, Any]] = field(default_factory=list)
     apps: list[dict[str, Any]] = field(default_factory=list)
@@ -297,12 +305,18 @@ class SolutionDeployer:
         # Accumulates role names auto-created during this deploy (see
         # _resolve_roles). Surfaced on DeployResult.roles_created.
         self._created_roles: set[str] = set()
+        self._unresolved_roles: set[str] = set()
+        self._policy = PrivateDeployPolicy(private=False)
 
     async def deploy(
         self,
         bundle: SolutionBundle,
         force: bool = False,
         file_mode: str = "replace",
+        promotion: bool = False,
+        source_revision_id: UUID | None = None,
+        requested_by: UUID | None = None,
+        isolated_app_builds: bool = False,
     ) -> DeployResult:
         """Full-replace this install from ``bundle`` — DB phase + app COMPILE.
 
@@ -326,6 +340,10 @@ class SolutionDeployer:
         """
         solution = bundle.solution
         sid = solution.id
+        self._policy = PrivateDeployPolicy(
+            private=await is_private_install(self.db, sid),
+            promotion=promotion,
+        )
 
         # Source portability artifact: the exact workspace shape export/install
         # consume. Build it from the author-time bundle before per-install UUID
@@ -386,15 +404,21 @@ class SolutionDeployer:
         await self._upsert_tables(solution, rb.tables)
         builds = await self._upsert_apps(solution, rb.apps)
         await self._upsert_forms(solution, rb.forms)
-        await self._upsert_agents(solution, rb.agents)
-        await self._upsert_events(solution, rb.events)
+        await self._upsert_agents(
+            solution,
+            self._agents_with_canonical_skills(rb.agents, rb.bundle_files),
+        )
+        if not self._policy.suppress_event_activation:
+            await self._upsert_events(solution, rb.events)
         await self._upsert_config_schemas(solution, rb.config_schemas)
         # Pre-create an empty integration shell for each declared connection that
         # doesn't yet exist globally (never clobbering a configured one). Uses the
         # ORIGINAL bundle: connection declarations key on integration NAME, which
         # carries no per-install id and is therefore not part of the remap.
-        shells_created = await self._upsert_integration_shells(
-            bundle.connection_schemas
+        shells_created = (
+            0
+            if self._policy.suppress_connection_resolution
+            else await self._upsert_integration_shells(bundle.connection_schemas)
         )
         # Persist the connection DECLARATIONS on the install (keyed by the
         # install's id + integration name) so /setup surfaces a connection item
@@ -449,9 +473,26 @@ class SolutionDeployer:
         # => cleared), same lifecycle as the logo above.
         self._apply_readme(solution, bundle)
 
-        # ── COMPILE app dists to memory NOW (pre-commit) — a vite/npm failure
-        #    raises here and rolls back the whole deploy, no S3 touched. ───────
-        compiled = await self._compile_app_dists(builds)
+        compiled: list[tuple[UUID, dict[str, bytes]]] = []
+        app_outputs: list[dict[str, Any]] = []
+        if isolated_app_builds:
+            # ── BUILD app dists NOW (pre-commit) on the dedicated Builder plane.
+            # A failed child build raises here and rolls back the DB phase. The
+            # post-commit finalizer only copies verified staged outputs.
+            app_outputs = await self._prepare_app_outputs(
+                solution,
+                builds,
+                source_revision_id=source_revision_id,
+                requested_by=requested_by,
+            )
+        else:
+            # Existing deploy/install path: compile locally before commit, then
+            # upload bytes after commit. This avoids making ordinary deploys
+            # depend on Builder runner readiness.
+            compiled = await self._compile_app_dists(builds)
+
+        if self._policy.strict_private:
+            await self._assert_no_shared_side_effects(rb)
 
         # ── S3 phase, DEFERRED until after the caller's commit (cheap PUTs) ───
         # Every step is FULL-REPLACE (idempotent), so a transient storage blip is
@@ -467,11 +508,15 @@ class SolutionDeployer:
             )
             await _retry_idempotent(
                 "write python source", sid,
-                lambda: self._write_python(sid, rb.python_files),
+                lambda: self._write_python(
+                    sid, {**rb.python_files, **rb.bundle_files}
+                ),
             )
             await _retry_idempotent(
                 "upload app dists", sid,
-                lambda: self._upload_compiled_dists(compiled),
+                lambda: self._publish_app_outputs(app_outputs)
+                if isolated_app_builds
+                else self._upload_compiled_dists(compiled),
             )
             await _retry_idempotent(
                 "sweep stale dist", sid,
@@ -508,8 +553,59 @@ class SolutionDeployer:
             claims_deleted=claim_deleted,
             integrations_shell_created=shells_created,
             roles_created=sorted(self._created_roles),
+            roles_unresolved=sorted(self._unresolved_roles),
+            build_job_ids=[
+                output["build_job_id"]
+                for output in app_outputs
+                if output.get("build_job_id") is not None
+            ],
             finalize_s3=_finalize_s3,
         )
+
+    async def _assert_no_shared_side_effects(self, rb: "SolutionBundle") -> None:
+        from sqlalchemy import func
+
+        sid = rb.solution.id
+        if self._created_roles:
+            raise PrivateDeployViolation(
+                f"private solution {sid} deploy created roles: "
+                f"{sorted(self._created_roles)}"
+            )
+
+        junctions: list[tuple[type, str, list[dict[str, Any]]]] = [
+            (WorkflowRole, "workflow_id", rb.workflows),
+            (AppRole, "app_id", rb.apps),
+            (FormRole, "form_id", rb.forms),
+            (AgentRole, "agent_id", rb.agents),
+        ]
+        for junction, fk_col, entries in junctions:
+            ids = [UUID(str(e["id"])) for e in entries]
+            if not ids:
+                continue
+            bound = (
+                await self.db.execute(
+                    select(func.count())
+                    .select_from(junction)
+                    .where(getattr(junction, fk_col).in_(ids))
+                )
+            ).scalar_one()
+            if bound:
+                raise PrivateDeployViolation(
+                    f"private solution {sid} deploy wrote {bound} "
+                    f"{junction.__name__} row(s)"
+                )
+
+        sources = (
+            await self.db.execute(
+                select(func.count())
+                .select_from(EventSource)
+                .where(EventSource.solution_id == sid)
+            )
+        ).scalar_one()
+        if sources:
+            raise PrivateDeployViolation(
+                f"private solution {sid} deploy left {sources} EventSource row(s)"
+            )
 
     @staticmethod
     def _apply_readme(solution: Solution, bundle: Any) -> None:
@@ -620,6 +716,7 @@ class SolutionDeployer:
         return SolutionBundle(
             solution=bundle.solution,
             python_files=bundle.python_files,
+            bundle_files=bundle.bundle_files,
             workflows=workflows,
             tables=tables,
             apps=apps,
@@ -669,6 +766,8 @@ class SolutionDeployer:
         # authoritative). Only a truly ABSENT role_names defers to `roles`.
         role_names = entry.get("role_names")
         if role_names is not None:
+            if self._policy.suppress_role_materialization:
+                return await self._map_existing_roles(list(role_names))
             return [
                 UUID(r)
                 for r in await _resolve_role_names(
@@ -679,6 +778,26 @@ class SolutionDeployer:
                 )
             ]
         return [UUID(str(r)) for r in (entry.get("roles") or [])]
+
+    async def _map_existing_roles(self, names: list[str]) -> list[UUID]:
+        from src.models.orm.users import Role
+
+        if not names:
+            return []
+        rows = (
+            await self.db.execute(
+                select(Role.id, Role.name).where(Role.name.in_(set(names)))
+            )
+        ).all()
+        by_name: dict[str, UUID] = {row[1]: row[0] for row in rows}
+        resolved: list[UUID] = []
+        for name in names:
+            role_id = by_name.get(name)
+            if role_id is None:
+                self._unresolved_roles.add(name)
+            else:
+                resolved.append(role_id)
+        return resolved
 
     async def _sync_entity_roles(
         self,
@@ -695,6 +814,8 @@ class SolutionDeployer:
         delete-all + insert to reflect adds AND removes across redeploys
         (Codex P1-d). Mirrors the canonical FormRole/AppRole write pattern.
         """
+        if self._policy.suppress_entity_role_junctions:
+            role_ids = []
         await self.db.execute(
             delete(junction).where(getattr(junction, fk_col) == entity_id)
         )
@@ -746,6 +867,8 @@ class SolutionDeployer:
         """
         from src.models.orm.external_mcp import AgentMCPConnection
 
+        if self._policy.suppress_connection_resolution:
+            connection_ids = []
         await self.db.execute(
             delete(AgentMCPConnection).where(
                 AgentMCPConnection.agent_id == agent_id
@@ -768,15 +891,17 @@ class SolutionDeployer:
 
         await SolutionSourceArtifactStorage(sid).write(source_zip)
 
-    async def _write_python(self, sid: UUID, python_files: dict[str, str]) -> None:
-        """Full-replace this install's Python source and keep the module cache
-        consistent.
+    async def _write_python(
+        self,
+        sid: UUID,
+        source_files: dict[str, str | bytes],
+    ) -> None:
+        """Full-replace executable source plus inert skill-bundle assets.
 
         get_module_sync reads Redis (keyed by the _solutions/{id}/ storage path)
         BEFORE S3, so a plain S3 write would leave stale bytes cached for the
-        24h TTL and removed files would still resolve. So: write-through each
-        bundle file to Redis with fresh content, and delete (S3 + Redis) any
-        prior solution file absent from the new bundle (Codex P1).
+        24h TTL and removed Python files would still resolve. Only
+        ``python_files`` are cached; skill assets always read S3 directly.
         """
         from src.core.module_cache import invalidate_module, set_module
 
@@ -784,14 +909,13 @@ class SolutionDeployer:
 
         # Prior state: every file currently under this install's prefix.
         prior = set(await storage.list(""))
-        new_rel = set(python_files.keys())
+        new_rel = set(source_files)
 
-        for rel_path, content in python_files.items():
-            content_hash = await storage.write(rel_path, content.encode("utf-8"))
+        for rel_path, content in source_files.items():
+            raw = content.encode("utf-8") if isinstance(content, str) else content
+            content_hash = await storage.write(rel_path, raw)
             storage_key = storage._key(rel_path)  # _solutions/{id}/<rel>
-            # Write-through so the next execution reads the new bytes, not the
-            # 24h-TTL cache. Only .py files are import-cached.
-            if rel_path.endswith(".py"):
+            if isinstance(content, str) and rel_path.endswith(".py"):
                 await set_module(storage_key, content, content_hash)
 
         # Remove files dropped from the bundle (full replace of source).
@@ -837,6 +961,8 @@ class SolutionDeployer:
                 "organization_id": solution.organization_id,
                 "solution_id": sid,
             }
+            if self._policy.suppress_event_activation:
+                values["is_active"] = False
             # Safe now: the id is either absent or already this install's.
             await Upsert(
                 model=Workflow, id=wf_id, values=values, match_on="id"
@@ -928,7 +1054,7 @@ class SolutionDeployer:
                 ref_repo = PolicyRuleRepository(
                     self.db,
                     org_id=solution.organization_id,
-                    is_superuser=True,
+                    bypass_resource_admission=True,
                 )
                 try:
                     await resolve_policy_refs(
@@ -1135,6 +1261,12 @@ class SolutionDeployer:
                 "published_snapshot": {"deployed_by": "solution", "app_model": app_model},
                 "published_at": now,
             }
+            # Private Builder source is owner/model-authored and must always
+            # render through the opaque app host. Shared installs keep their
+            # existing runtime choice (or the trusted column default on first
+            # deploy); promotion explicitly applies the administrator's choice.
+            if self._policy.private:
+                values["runtime_mode"] = "isolated"
             # App LOGO declared in the manifest (`logo:` path), carried by the
             # collector as base64 (the only way a solution-managed app gets a
             # logo — the upload endpoint is blocked for it). Validate + sanitize
@@ -1182,16 +1314,78 @@ class SolutionDeployer:
             })
         return builds
 
+    async def _prepare_app_outputs(
+        self,
+        solution: Solution,
+        builds: list[dict[str, Any]],
+        *,
+        source_revision_id: UUID | None,
+        requested_by: UUID | None,
+    ) -> list[dict[str, Any]]:
+        """Build source apps on the dedicated plane; decode prebuilt fast paths."""
+        import base64 as _b64
+
+        from src.services.builder.build_requests import (
+            await_build_jobs,
+            request_app_build,
+        )
+
+        if not builds:
+            return []
+        outputs: list[dict[str, Any]] = []
+        pending: list[tuple[UUID, Any]] = []
+        requester = requested_by or solution.owner_user_id
+        for b in builds:
+            app_id = b["app_id"]
+            prebuilt = b["dist"]
+            bin_prebuilt = b.get("bin_dist")
+            prebuilt_bytes: dict[str, bytes] | None = None
+            if prebuilt or bin_prebuilt:
+                prebuilt_bytes = {}
+                # UTF-8 dist text → raw bytes.
+                for k, v in (prebuilt or {}).items():
+                    prebuilt_bytes[k] = v.encode("utf-8") if isinstance(v, str) else v
+                # Non-UTF-8 dist assets travel as base64 — decode to the original
+                # bytes so images/fonts/wasm round-trip byte-for-byte (a plain
+                # .encode("utf-8") on the base64 string would write the base64
+                # TEXT to S3, corrupting the asset).
+                for k, v in (bin_prebuilt or {}).items():
+                    prebuilt_bytes[k] = _b64.b64decode(v) if isinstance(v, str) else v
+                outputs.append({"app_id": app_id, "prebuilt": prebuilt_bytes})
+                continue
+            src_bytes = {
+                k: v.encode("utf-8") if isinstance(v, str) else v
+                for k, v in b["src"].items()
+            }
+            for rel, b64 in (b.get("bin") or {}).items():
+                src_bytes[rel] = _b64.b64decode(b64)
+            job = await request_app_build(
+                solution_id=solution.id,
+                app_id=app_id,
+                requested_by=requester,
+                src_files=src_bytes,
+                dependencies=b["dependencies"],
+                source_revision_id=source_revision_id,
+            )
+            pending.append((app_id, job))
+
+        completed = await await_build_jobs([job for _app_id, job in pending])
+        by_id = {job.id: job for job in completed}
+        for app_id, requested in pending:
+            finished = by_id[requested.id]
+            outputs.append(
+                {
+                    "app_id": app_id,
+                    "build_job_id": finished.id,
+                    "manifest": finished.output_manifest or [],
+                }
+            )
+        return outputs
+
     async def _compile_app_dists(
         self, builds: list[dict[str, Any]]
     ) -> list[tuple[UUID, dict[str, bytes]]]:
-        """PRE-COMMIT: compile each app's dist to memory (npm install + vite
-        build, or a shipped prebuilt dist). This is the failure-prone step — a
-        build error raises HERE, before the deploy commits, so the whole deploy
-        rolls back with no S3 side effects (Codex R4 atomicity). No S3 writes.
-
-        Returns ``[(app_id, dist_bytes), ...]`` for the post-commit upload.
-        """
+        """PRE-COMMIT: compile each app's dist to memory on the local path."""
         import asyncio
         import base64 as _b64
 
@@ -1207,13 +1401,8 @@ class SolutionDeployer:
             prebuilt_bytes: dict[str, bytes] | None = None
             if prebuilt or bin_prebuilt:
                 prebuilt_bytes = {}
-                # UTF-8 dist text → raw bytes.
                 for k, v in (prebuilt or {}).items():
                     prebuilt_bytes[k] = v.encode("utf-8") if isinstance(v, str) else v
-                # Non-UTF-8 dist assets travel as base64 — decode to the original
-                # bytes so images/fonts/wasm round-trip byte-for-byte (a plain
-                # .encode("utf-8") on the base64 string would write the base64
-                # TEXT to S3, corrupting the asset).
                 for k, v in (bin_prebuilt or {}).items():
                     prebuilt_bytes[k] = _b64.b64decode(v) if isinstance(v, str) else v
             src_bytes = {
@@ -1222,7 +1411,6 @@ class SolutionDeployer:
             }
             for rel, b64 in (b.get("bin") or {}).items():
                 src_bytes[rel] = _b64.b64decode(b64)
-            # compile_dist is subprocess-bound (npm/vite) → run off the loop.
             dist = await asyncio.to_thread(
                 builder.compile_dist,
                 b["app_id"],
@@ -1236,9 +1424,7 @@ class SolutionDeployer:
     async def _upload_compiled_dists(
         self, compiled: list[tuple[UUID, dict[str, bytes]]]
     ) -> None:
-        """POST-COMMIT: upload the already-compiled dists (cheap, retryable
-        PUTs). The compile already succeeded pre-commit, so this can't fail the
-        deploy on bad input — only a transient S3 outage, which is re-runnable."""
+        """POST-COMMIT: upload the already-compiled local dists."""
         from src.services.solutions.app_build import SolutionAppBuilder
 
         if not compiled:
@@ -1246,6 +1432,25 @@ class SolutionDeployer:
         builder = SolutionAppBuilder()
         for app_id, dist in compiled:
             await builder.upload_dist(app_id, dist)
+
+    async def _publish_app_outputs(self, outputs: list[dict[str, Any]]) -> None:
+        """POST-COMMIT: upload prebuilt bytes or copy verified staged outputs."""
+        from src.services.builder.staged_artifacts import StagedBuildArtifactStorage
+        from src.services.solutions.app_build import SolutionAppBuilder
+
+        if not outputs:
+            return
+        builder = SolutionAppBuilder()
+        for output in outputs:
+            if (prebuilt := output.get("prebuilt")) is not None:
+                await builder.upload_dist(output["app_id"], prebuilt)
+                continue
+            await StagedBuildArtifactStorage(
+                output["build_job_id"]
+            ).copy_outputs_to_app_dist(
+                output["app_id"],
+                output["manifest"],
+            )
 
     async def _delete_stale_app_dist(self, app_ids: set[UUID]) -> None:
         """S3 phase: delete the dist artifacts of apps reconciled away."""
@@ -1346,6 +1551,57 @@ class SolutionDeployer:
                 FormRole, "form_id", form_id, await self._resolve_roles(mform)
             )
 
+    @staticmethod
+    def _agents_with_canonical_skills(
+        agents: list[dict[str, Any]],
+        bundle_files: dict[str, bytes],
+    ) -> list[dict[str, Any]]:
+        """Materialize each bundled Agent's real ``SKILL.md`` for runtime use.
+
+        Also stamps ``skill_revision`` from the bundle bytes already in hand,
+        so deploy does not have to re-read what it is about to write.
+        """
+        from src.services.agent_skills import compute_skill_revision_from_files
+
+        resolved: list[dict[str, Any]] = []
+        for agent in agents:
+            bundle_path = agent.get("bundle_path")
+            if not bundle_path:
+                resolved.append(agent)
+                continue
+            skill_path = f"{str(bundle_path).rstrip('/')}/SKILL.md"
+            content = bundle_files.get(skill_path)
+            if content is None:
+                raise SolutionDeployConflict(
+                    f"agent {agent.get('id')}: bundle is missing {skill_path}"
+                )
+            try:
+                markdown = content.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise SolutionDeployConflict(
+                    f"agent {agent.get('id')}: SKILL.md must be UTF-8 text"
+                ) from exc
+            if not markdown.strip():
+                raise SolutionDeployConflict(
+                    f"agent {agent.get('id')}: SKILL.md cannot be empty"
+                )
+            if len(markdown) > 50_000:
+                raise SolutionDeployConflict(
+                    f"agent {agent.get('id')}: SKILL.md exceeds the 50,000-character limit"
+                )
+            prefix = str(bundle_path).rstrip("/") + "/"
+            skill_files = {
+                path[len(prefix):]: content
+                for path, content in bundle_files.items()
+                if path.startswith(prefix)
+            }
+            resolved.append({
+                **agent,
+                "system_prompt": markdown,
+                "skill_revision": compute_skill_revision_from_files(skill_files),
+            })
+        return resolved
+
     async def _upsert_agents(
         self, solution: Solution, agents: list[dict[str, Any]]
     ) -> None:
@@ -1385,7 +1641,15 @@ class SolutionDeployer:
             agent_values: dict[str, Any] = {
                 "organization_id": solution.organization_id,
                 "solution_id": sid,
+                "bundle_path": magent.get("bundle_path"),
             }
+            # Stamped by _agents_with_canonical_skills for bundled Agents from
+            # the bundle bytes. Absent for an inline Agent, whose digest the
+            # read path computes from its projected SKILL.md.
+            if magent.get("skill_revision") is not None:
+                agent_values["skill_revision"] = magent["skill_revision"]
+            if self._policy.suppress_event_activation:
+                agent_values["is_active"] = False
             if magent.get("access_level") is not None:
                 from src.models.enums import AgentAccessLevel
 
@@ -1510,7 +1774,7 @@ class SolutionDeployer:
                 )
             seen.add(key)
 
-        ref_repo = PolicyRuleRepository(self.db, org_id=org_id, is_superuser=True)
+        ref_repo = PolicyRuleRepository(self.db, org_id=org_id, bypass_resource_admission=True)
         present: set[tuple[str, str]] = set()
 
         for entry in file_policies:
@@ -1939,9 +2203,12 @@ class SolutionDeployer:
         # schedule/webhook rows AND subscriptions cascade via the EventSource FK
         # (ondelete=CASCADE), so sweeping the source row is sufficient — no
         # separate subscription sweep needed. Count not surfaced.
-        _ = await self._reconcile_one(
-            EventSource, sid, {UUID(e["id"]) for e in bundle.events}
+        keep_events = (
+            set()
+            if self._policy.suppress_event_activation
+            else {UUID(e["id"]) for e in bundle.events}
         )
+        _ = await self._reconcile_one(EventSource, sid, keep_events)
         return (
             wf_deleted, tbl_deleted, len(stale_app_dist), form_deleted, agent_deleted,
             claim_deleted,

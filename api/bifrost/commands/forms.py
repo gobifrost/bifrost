@@ -150,7 +150,8 @@ async def update_form(
     fields are patched.
 
     Passing ``--org``/``--global`` re-scopes the form (HOME leaves the scope
-    unchanged, since omitting org sends no ``organization_id``).
+    unchanged, since omitting org sends no ``organization_id``). Pass an empty
+    value to ``--workflow`` or ``--launch-workflow`` to clear that reference.
     """
     form_uuid = await resolver.resolve("form", ref)
     body = await assemble_body(FormUpdate, fields, resolver=resolver)

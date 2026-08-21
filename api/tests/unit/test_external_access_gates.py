@@ -27,6 +27,11 @@ from shared.external_access import (
     resolve_external_claim,
     resolve_provider_org_claim,
 )
+from src.core.principal import UserPrincipal
+from src.services.authorization import (
+    AuthorizationBoundary,
+    AuthorizationContext,
+)
 
 # =============================================================================
 # 1. resolve_external_claim (token mint)
@@ -130,46 +135,87 @@ def _workflow(access_level: str):
     return wf
 
 
+def _authorization(*, user_id, is_external: bool = False) -> AuthorizationContext:
+    organization_id = uuid4()
+    user = UserPrincipal(
+        user_id=user_id,
+        email="user@example.test",
+        organization_id=organization_id,
+        is_superuser=False,
+        is_external=is_external,
+    )
+    return AuthorizationContext(
+        requester=user,
+        effective_actor=user,
+        selected_boundary=AuthorizationBoundary.organization(organization_id),
+        effective_capabilities=frozenset({"agents.readwrite"}),
+        grant_sources=(),
+    )
+
+
+class _WorkflowRepoStub:
+    instances: list["_WorkflowRepoStub"] = []
+    next_workflow = None
+
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+        self.instances.append(self)
+
+    async def get(self, **kwargs):
+        self.get_kwargs = kwargs
+        return self.next_workflow
+
+
 class TestValidateUserToolAccessExternal:
-    async def test_authenticated_workflow_denied_for_external_without_role(self):
+    async def test_authenticated_workflow_denied_for_external_without_role(
+        self, monkeypatch
+    ):
         from src.routers.agents import _validate_user_tool_access
+        import src.routers.agents as agents_router
 
         tool_id = str(uuid4())
         db = AsyncMock()
-        db.execute.side_effect = [
-            _rows_result([]),  # user's roles: none
-            _scalar_result(_workflow("authenticated")),  # the workflow
-            _rows_result([]),  # workflow's roles: none
-        ]
+        _WorkflowRepoStub.instances = []
+        _WorkflowRepoStub.next_workflow = None
+        monkeypatch.setattr(agents_router, "WorkflowRepository", _WorkflowRepoStub)
+
         with pytest.raises(HTTPException) as exc:
             await _validate_user_tool_access(
-                db, uuid4(), [tool_id], is_external=True
+                db, _authorization(user_id=uuid4(), is_external=True), [tool_id]
             )
         assert exc.value.status_code == 403
+        assert _WorkflowRepoStub.instances[0].kwargs["is_external"] is True
 
-    async def test_authenticated_workflow_allowed_for_regular_user(self):
+    async def test_authenticated_workflow_allowed_for_regular_user(self, monkeypatch):
         from src.routers.agents import _validate_user_tool_access
+        import src.routers.agents as agents_router
 
         tool_id = str(uuid4())
         db = AsyncMock()
-        db.execute.side_effect = [
-            _rows_result([]),  # user's roles: none
-            _scalar_result(_workflow("authenticated")),
-        ]
-        await _validate_user_tool_access(db, uuid4(), [tool_id])
+        _WorkflowRepoStub.instances = []
+        _WorkflowRepoStub.next_workflow = _workflow("authenticated")
+        monkeypatch.setattr(agents_router, "WorkflowRepository", _WorkflowRepoStub)
 
-    async def test_role_based_workflow_allowed_for_external_with_role(self):
+        await _validate_user_tool_access(
+            db, _authorization(user_id=uuid4()), [tool_id]
+        )
+        assert _WorkflowRepoStub.instances[0].kwargs["is_external"] is False
+
+    async def test_role_based_workflow_allowed_for_external_with_role(self, monkeypatch):
         from src.routers.agents import _validate_user_tool_access
+        import src.routers.agents as agents_router
 
-        role_id = uuid4()
         tool_id = str(uuid4())
         db = AsyncMock()
-        db.execute.side_effect = [
-            _rows_result([role_id]),  # user's roles
-            _scalar_result(_workflow("role_based")),
-            _rows_result([role_id]),  # workflow's roles
-        ]
-        await _validate_user_tool_access(db, uuid4(), [tool_id], is_external=True)
+        _WorkflowRepoStub.instances = []
+        _WorkflowRepoStub.next_workflow = _workflow("role_based")
+        monkeypatch.setattr(agents_router, "WorkflowRepository", _WorkflowRepoStub)
+
+        await _validate_user_tool_access(
+            db, _authorization(user_id=uuid4(), is_external=True), [tool_id]
+        )
+        assert _WorkflowRepoStub.instances[0].kwargs["is_external"] is True
 
 
 # =============================================================================
@@ -210,4 +256,3 @@ class TestMCPAgentAccessExternal:
     def test_role_based_agent_allowed_for_external_with_role(self):
         agent = self._agent("role_based", role_names=("Portal User",))
         assert self._check(agent, ["Portal User"], is_external=True) is True
-

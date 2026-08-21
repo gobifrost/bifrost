@@ -17,6 +17,14 @@ vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => ({ isPlatformAdmin: false }),
 }));
 
+vi.mock("@/contexts/AuthorizationBoundaryContext", () => ({
+	useAuthorizationBoundary: () => ({
+		selectedTarget: { kind: "organization", organization_id: "org-1" },
+		hasSelectedCapability: (capability: string) =>
+			capability === "tables.readwrite",
+	}),
+}));
+
 vi.mock("@/hooks/useOrganizations", () => ({
 	useOrganizations: () => ({ data: [] }),
 }));
@@ -60,7 +68,7 @@ describe("Tables — list", () => {
 	it("fetches without include_orphaned (orphaned UI stripped)", async () => {
 		await renderPage();
 		// useTables(scope) — no include_orphaned param
-		expect(mockUseTables).toHaveBeenLastCalledWith(undefined);
+		expect(mockUseTables).toHaveBeenLastCalledWith();
 		// No show-orphaned toggle visible
 		expect(
 			screen.queryByRole("checkbox", { name: /show orphaned/i }),

@@ -122,7 +122,7 @@ async def run_reindex_for_group(
     metadata = rows[0].doc_metadata
     created_by = rows[0].created_by
 
-    repo = KnowledgeRepository(db, org_id=organization_id, is_superuser=True)
+    repo = KnowledgeRepository(db, org_id=organization_id, bypass_resource_admission=True)
     new_ids = await repo.store_chunked(
         content=full_content,
         namespace=namespace,

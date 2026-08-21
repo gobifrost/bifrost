@@ -21,7 +21,7 @@ from src.models import (  # noqa: F401
     Organization,
     User,
     Role,
-    UserRole,
+    RoleAssignment,
     Form,
     FormRole,
     Execution,

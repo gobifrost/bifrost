@@ -312,7 +312,11 @@ async def generate_manifest(
     orgs_list = org_result.scalars().all()
 
     # Fetch roles (sorted by name)
-    role_result = await db.execute(select(Role).order_by(Role.name))
+    # Built-in capability roles are installation-local policy and must never be
+    # exported as portable, resource-assignable manifest roles.
+    role_result = await db.execute(
+        select(Role).where(Role.is_builtin.is_(False)).order_by(Role.name)
+    )
     roles_list = role_result.scalars().all()
 
     # Fetch role assignments for all entity types

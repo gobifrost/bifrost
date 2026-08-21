@@ -7,8 +7,8 @@ Covers the CRUD surface from Task 5i of the CLI mutation surface plan:
   table with a loaded schema dict.
 * ``bifrost tables update <ref> --name bar`` — PATCHes and emits a stderr
   rename warning when the name actually changes.
-* ``bifrost tables update <ref> --application <slug-or-uuid>`` — reassigns
-  the owning application via the ``app`` ref resolver.
+* ``bifrost tables update <ref> --org <name-or-uuid>`` — retargets the Table
+  through the shared home/global/organization resolver.
 * ``bifrost tables delete <ref>`` — hard-deletes the table (cascade).
 
 Stderr separation: Click 8.3's :class:`CliRunner` exposes ``result.stderr``
@@ -161,3 +161,31 @@ class TestCliTables:
             assert name in names
         finally:
             _invoke(["--json", "delete", str(table_id)])
+
+    def test_update_retargets_organization_and_global(
+        self,
+        cli_client,
+        _invoke,
+        e2e_client,
+        platform_admin,
+        org2,
+    ) -> None:
+        """``tables update`` exposes the standard org-targeting contract."""
+        name = f"cli_tbl_scope_{uuid4().hex[:8]}"
+        table_id = _create_table_via_api(
+            e2e_client,
+            platform_admin.headers,
+            name,
+        )
+        try:
+            org_result = _invoke(
+                ["--json", "update", table_id, "--org", str(org2["id"])]
+            )
+            assert org_result.exit_code == 0, org_result.output
+            assert json.loads(org_result.stdout)["organization_id"] == str(org2["id"])
+
+            global_result = _invoke(["--json", "update", table_id, "--global"])
+            assert global_result.exit_code == 0, global_result.output
+            assert json.loads(global_result.stdout)["organization_id"] is None
+        finally:
+            _invoke(["--json", "delete", table_id])

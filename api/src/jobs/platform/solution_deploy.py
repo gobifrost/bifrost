@@ -37,10 +37,31 @@ async def run_solution_deploy(
     payload: SolutionDeployPayload,
 ) -> dict:
     from src.routers.solutions import _run_deploy_job, _run_install_job
+    from src.services.builder.deploy_sync import (
+        BuilderDeployLinkInvalid,
+        parse_builder_deploy_link,
+        sync_builder_deploy_state,
+    )
 
     storage = SolutionDeployJobStorage(payload.deploy_job_id)
     await context.report("Loading staged Solution input", percent=2)
     try:
+        try:
+            builder_link = parse_builder_deploy_link(
+                payload.options,
+                payload.install_id,
+            )
+        except BuilderDeployLinkInvalid as exc:
+            raise PlatformJobFailure("builder_deploy_link_invalid", str(exc)) from exc
+        if builder_link is not None:
+            try:
+                async with get_db_context() as db:
+                    await sync_builder_deploy_state(db, builder_link, running=True)
+            except BuilderDeployLinkInvalid as exc:
+                raise PlatformJobFailure(
+                    "builder_deploy_link_invalid", str(exc)
+                ) from exc
+
         with tempfile.TemporaryDirectory(prefix="bifrost-solution-job-") as tmp:
             zip_path = Path(tmp) / "input.zip"
             await storage.copy_to_path(
@@ -57,6 +78,14 @@ async def run_solution_deploy(
                     payload.install_id,
                     zip_path,
                     force=bool(payload.options.get("force", False)),
+                    promotion=bool(payload.options.get("promotion", False)),
+                    isolated_app_builds=bool(
+                        payload.options.get("isolated_app_builds", False)
+                    ),
+                    source_revision_id=(
+                        builder_link.revision_id if builder_link is not None else None
+                    ),
+                    requested_by=_requested_by_uuid(context.requested_by_user_id),
                 )
             else:
                 raw_org_id = payload.options.get("organization_id")
@@ -73,6 +102,7 @@ async def run_solution_deploy(
                     reactivate=bool(payload.options.get("reactivate", False)),
                 )
         failure: PlatformJobFailure | None = None
+        link_failure: PlatformJobFailure | None = None
         result: dict[str, Any] = {}
         async with get_db_context() as db:
             projection = await db.get(SolutionDeployJob, payload.deploy_job_id)
@@ -91,11 +121,25 @@ async def run_solution_deploy(
                 )
             else:
                 result = projection.result or {}
+            if builder_link is not None:
+                try:
+                    await sync_builder_deploy_state(
+                        db,
+                        builder_link,
+                        deploy_job=projection,
+                    )
+                except BuilderDeployLinkInvalid as exc:
+                    link_failure = PlatformJobFailure(
+                        "builder_deploy_link_invalid",
+                        str(exc),
+                    )
         # The failed install cleanup above must commit before the platform job
         # reports failure. Raising inside get_db_context would roll the delete
         # back and leave an orphan that blocks a retry with the same slug.
         if failure is not None:
             raise failure
+        if link_failure is not None:
+            raise link_failure
         await context.report("Solution deploy complete", percent=100)
         await context.log(
             "info",
@@ -112,6 +156,13 @@ async def run_solution_deploy(
                 payload.deploy_job_id,
                 exc_info=True,
             )
+
+
+def _requested_by_uuid(value: str) -> UUID | None:
+    try:
+        return UUID(value)
+    except (TypeError, ValueError):
+        return None
 
 
 SOLUTION_DEPLOY_DEFINITION = PlatformJobDefinition(

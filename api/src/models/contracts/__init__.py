@@ -15,10 +15,14 @@ from src.models.contracts.organizations import (
     CreateOrganizationRequest,
     OrganizationBase,
     OrganizationCreate,
+    OrganizationGroupBase,
+    OrganizationGroupCreate,
+    OrganizationGroupPublic,
+    OrganizationGroupUpdate,
     OrganizationPublic,
     OrganizationUpdate,
     UpdateOrganizationRequest,
-)
+)  # noqa: F401
 
 # Users & Roles
 from src.models.contracts.users import (
@@ -27,11 +31,17 @@ from src.models.contracts.users import (
     AssignKnowledgeToRoleRequest,
     AssignUsersToRoleRequest,
     AssignWorkflowsToRoleRequest,
-    CreateRoleRequest,
+    AuthorizationCapabilityPublic,
+    AuthorizationTargetPublic,
+    AuthorizationTargetsPublic,
     CreateUserRequest,
-    GrantPermissionsRequest,
     KnowledgeAssignmentInput,
-    PermissionsData,
+    RoleAssignmentPublic,
+    RoleAssignmentBoundaryBase,
+    RoleAssignmentBoundaryInput,
+    RoleAssignmentBoundaryPublic,
+    RoleAssignmentCreate,
+    RoleAssignmentSelection,
     RoleAppsResponse,
     RoleBase,
     RoleConsumerCounts,
@@ -49,7 +59,6 @@ from src.models.contracts.users import (
     UnassignKnowledgeFromRoleRequest,
     UnassignUsersFromRoleRequest,
     UnassignWorkflowsFromRoleRequest,
-    UpdateRoleRequest,
     BulkUserFailure,
     BulkUserOperation,
     BulkUserResponse,
@@ -57,12 +66,11 @@ from src.models.contracts.users import (
     UserBase,
     UserCreate,
     UserFormsResponse,
-    UserPermission,
     UserPublic,
     UserResponse,
     UserRolesResponse,
     UserUpdate,
-)
+)  # noqa: F401
 
 # Authentication & MFA
 from src.models.contracts.auth import (
@@ -139,6 +147,11 @@ from src.models.contracts.applications import (
     ApplicationUpdate,
     VersionHistoryEntry,
     VersionHistoryResponse,
+)  # noqa: F401
+from src.models.contracts.solutions import (
+    SolutionRoleGrantBase,
+    SolutionRoleGrantCreate,
+    SolutionRoleGrantPublic,
 )
 
 # Durable scheduler-owned platform jobs
@@ -159,6 +172,23 @@ from src.models.contracts.scheduler_diagnostics import (
     SchedulerTaskRunStatus,
     SchedulerTaskStatus,
     SystemDiagnosticLogPublic,
+)
+from src.models.contracts.sandbox_runner import (
+    SandboxBuilderMessage,
+    SandboxBuilderTurnCompletion,
+    SandboxBuilderTurnContext,
+    SandboxJobCancelled,
+    SandboxJobProgressUpdate,
+    SandboxRunnerBlocker,
+    SandboxRunnerCloudflareConfig,
+    SandboxRunnerCloudflarePublic,
+    SandboxRunnerConfigPublic,
+    SandboxRunnerConfigSave,
+    SandboxRunnerLocalConfig,
+    SandboxRunnerLocalPublic,
+    SandboxRunnerProvider,
+    SandboxRunnerReadiness,
+    SandboxRunnerSetupState,
 )
 
 # Agents & Chat
@@ -328,6 +358,8 @@ from src.models.contracts.files import (
     FilePullRequest,
     FilePullResponse,
     WatchSessionRequest,
+    WorkspaceFilePatchRequest,
+    WorkspaceFilePatchResponse,
 )
 
 # Common models
@@ -583,6 +615,15 @@ from src.models.contracts.ai_usage import (
     AIUsageTotals,
     AIUsageByModel,
     AIUsageSummaryResponse,
+    UsageLimitAggregateStatus,
+    UsageLimitCeilings,
+    UsageLimitDimensionStatus,
+    UsageLimitEffectiveResponse,
+    UsageLimitListResponse,
+    UsageLimitPeriodName,
+    UsageLimitPolicyPublic,
+    UsageLimitPolicyUpsert,
+    UsageLimitScopeName,
     UsageReportSummary,
     UsageTrend,
     WorkflowUsage,
@@ -637,6 +678,10 @@ __all__ = [
     "OrganizationCreate",
     "OrganizationUpdate",
     "OrganizationPublic",
+    "OrganizationGroupBase",
+    "OrganizationGroupCreate",
+    "OrganizationGroupUpdate",
+    "OrganizationGroupPublic",
     # Users - use UserPublic/UserResponse for responses
     "CreateUserRequest",
     "UpdateUserRequest",
@@ -650,16 +695,20 @@ __all__ = [
     "BulkUserOperation",
     "BulkUserResponse",
     # Roles - use RolePublic for responses
-    "CreateRoleRequest",
-    "UpdateRoleRequest",
     "RoleBase",
     "RoleCreate",
     "RoleUpdate",
     "RolePublic",
+    "AuthorizationCapabilityPublic",
+    "AuthorizationTargetPublic",
+    "AuthorizationTargetsPublic",
     # User/Role assignments
-    "UserPermission",
-    "PermissionsData",
-    "GrantPermissionsRequest",
+    "RoleAssignmentPublic",
+    "RoleAssignmentCreate",
+    "RoleAssignmentSelection",
+    "RoleAssignmentBoundaryBase",
+    "RoleAssignmentBoundaryInput",
+    "RoleAssignmentBoundaryPublic",
     "UserRolesResponse",
     "UserFormsResponse",
     "RoleUsersResponse",
@@ -1062,6 +1111,15 @@ __all__ = [
     "AIUsageTotals",
     "AIUsageByModel",
     "AIUsageSummaryResponse",
+    "UsageLimitAggregateStatus",
+    "UsageLimitCeilings",
+    "UsageLimitDimensionStatus",
+    "UsageLimitEffectiveResponse",
+    "UsageLimitListResponse",
+    "UsageLimitPeriodName",
+    "UsageLimitPolicyPublic",
+    "UsageLimitPolicyUpsert",
+    "UsageLimitScopeName",
     "UsageReportSummary",
     "UsageTrend",
     "WorkflowUsage",
@@ -1084,6 +1142,9 @@ __all__ = [
     "ApplicationDraftSave",
     "ApplicationPublishRequest",
     "ApplicationRollbackRequest",
+    "SolutionRoleGrantBase",
+    "SolutionRoleGrantCreate",
+    "SolutionRoleGrantPublic",
     "VersionHistoryEntry",
     "VersionHistoryResponse",
     # App Files
@@ -1106,6 +1167,21 @@ __all__ = [
     "SchedulerTaskRunStatus",
     "SchedulerTaskStatus",
     "SystemDiagnosticLogPublic",
+    "SandboxBuilderMessage",
+    "SandboxBuilderTurnCompletion",
+    "SandboxBuilderTurnContext",
+    "SandboxJobCancelled",
+    "SandboxJobProgressUpdate",
+    "SandboxRunnerBlocker",
+    "SandboxRunnerCloudflareConfig",
+    "SandboxRunnerCloudflarePublic",
+    "SandboxRunnerConfigPublic",
+    "SandboxRunnerConfigSave",
+    "SandboxRunnerLocalConfig",
+    "SandboxRunnerLocalPublic",
+    "SandboxRunnerProvider",
+    "SandboxRunnerReadiness",
+    "SandboxRunnerSetupState",
     # Platform Admin
     "PoolDetail",
     "PoolsListResponse",
@@ -1122,6 +1198,8 @@ __all__ = [
     "FilePullRequest",
     "FilePullResponse",
     "WatchSessionRequest",
+    "WorkspaceFilePatchRequest",
+    "WorkspaceFilePatchResponse",
     # Export/Import
     "ExportMetadata",
     "KnowledgeExportFile",

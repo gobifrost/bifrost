@@ -31,6 +31,7 @@ import { authFetch } from "@/lib/api-client";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import type { components } from "@/lib/v1";
+import { buildApplicationOrganizationUpdateBody } from "@/components/app-builder/AppInfoDialogPayload";
 
 import {
 	EntityCard,
@@ -602,7 +603,7 @@ export function EntityManagement() {
 							const app = entity.original as ApplicationPublic;
 							await updateApplication.mutateAsync({
 								params: { path: { app_id: app.id } },
-								body: { scope: orgId ?? "global" },
+								body: buildApplicationOrganizationUpdateBody(orgId),
 							});
 						}
 					} catch (error) {

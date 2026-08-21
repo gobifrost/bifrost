@@ -1,5 +1,19 @@
-import { useState, useMemo } from "react";
+import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { AlertCircle, Loader2 } from "lucide-react";
+import { toast } from "sonner";
+
+import {
+	RoleAssignmentEditor,
+	areRoleAssignmentsEqual,
+	roleAssignmentKey,
+	toRoleAssignmentDrafts,
+	validateBoundaries,
+	type RoleAssignmentDraft,
+} from "@/components/users/RoleAssignmentEditor";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { Combobox } from "@/components/ui/combobox";
 import {
 	Dialog,
 	DialogContent,
@@ -8,39 +22,26 @@ import {
 	DialogHeader,
 	DialogTitle,
 } from "@/components/ui/dialog";
-import { Combobox } from "@/components/ui/combobox";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Switch } from "@/components/ui/switch";
-import { Badge } from "@/components/ui/badge";
-import {
-	Popover,
-	PopoverContent,
-	PopoverTrigger,
-} from "@/components/ui/popover";
-import {
-	Command,
-	CommandEmpty,
-	CommandGroup,
-	CommandInput,
-	CommandItem,
-	CommandList,
-} from "@/components/ui/command";
-import { Shield, AlertCircle, Loader2, AlertTriangle, ChevronsUpDown, X } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { useQueryClient } from "@tanstack/react-query";
-import { useUpdateUser, useUserRoles } from "@/hooks/useUsers";
-import { useRoles, useAssignUsersToRole, useRemoveUserFromRole } from "@/hooks/useRoles";
-import { useOrganizations } from "@/hooks/useOrganizations";
 import { useAuth } from "@/contexts/AuthContext";
-import { toast } from "sonner";
+import {
+	authorizationHeaders,
+	organizationBoundary,
+	useAdministrativeBoundary,
+} from "@/hooks/useAdministrativeBoundary";
+import { useOrganizationGroups, useOrganizations } from "@/hooks/useOrganizations";
+import {
+	useAssignUsersToRole,
+	useRemoveUserFromRole,
+	useRoles,
+} from "@/hooks/useRoles";
+import { useUpdateUser, useUserRoles } from "@/hooks/useUsers";
 import type { components } from "@/lib/v1";
 
 type User = components["schemas"]["UserPublic"];
 type Organization = components["schemas"]["OrganizationPublic"];
-type Role = components["schemas"]["RolePublic"];
-type UserRolesResponse = components["schemas"]["UserRolesResponse"];
 
 interface EditUserDialogProps {
 	user: User | undefined;
@@ -48,7 +49,6 @@ interface EditUserDialogProps {
 	onOpenChange: (open: boolean) => void;
 }
 
-// Extract dialog content to separate component for key-based remounting
 function EditUserDialogContent({
 	user,
 	onOpenChange,
@@ -58,90 +58,51 @@ function EditUserDialogContent({
 }) {
 	const [displayName, setDisplayName] = useState(user.name || "");
 	const [isActive, setIsActive] = useState(user.is_active);
-	const [isPlatformAdmin, setIsPlatformAdmin] = useState(
-		user.is_superuser,
-	);
 	const [isExternal, setIsExternal] = useState(user.is_external);
-	const [orgId, setOrgId] = useState<string>(user.organization_id || "");
+	const [orgId, setOrgId] = useState(user.organization_id || "");
 	const [validationError, setValidationError] = useState<string | null>(null);
-	const [rolesPopoverOpen, setRolesPopoverOpen] = useState(false);
-	const [rolesInitialized, setRolesInitialized] = useState(false);
+	const [assignmentEdits, setAssignmentEdits] = useState<RoleAssignmentDraft[] | null>(null);
 
 	const queryClient = useQueryClient();
+	const administrativeBoundary =
+		useAdministrativeBoundary("organizations.read");
+	const userBoundary = organizationBoundary(user.organization_id);
 	const updateMutation = useUpdateUser();
-	const assignUsersToRole = useAssignUsersToRole();
-	const removeUserFromRole = useRemoveUserFromRole();
-	const { data: organizations, isLoading: orgsLoading } = useOrganizations();
-	const { data: allRoles } = useRoles();
-	const { data: userRolesData } = useUserRoles(user.id);
+	const assignMutation = useAssignUsersToRole();
+	const removeMutation = useRemoveUserFromRole();
+	const { data: organizations = [], isLoading: organizationsLoading } = useOrganizations({ boundary: administrativeBoundary });
+	const { data: organizationGroups = [], isLoading: groupsLoading } = useOrganizationGroups({ boundary: administrativeBoundary });
+	const { data: roles = [], isLoading: rolesLoading } = useRoles(administrativeBoundary);
+	const { data: userRoles, isLoading: assignmentsLoading } = useUserRoles(user.id, userBoundary);
 	const { user: currentUser } = useAuth();
 
-	// Derive initial role IDs from query data (stable reference)
-	const initialRoleIds = useMemo(() => {
-		return new Set((userRolesData as UserRolesResponse)?.role_ids ?? []);
-	}, [userRolesData]);
+	const initialAssignments = useMemo(
+		() => toRoleAssignmentDrafts(userRoles),
+		[userRoles],
+	);
+	const platformAdminRoleIds = useMemo(
+		() => roles.filter((role) => role.name === "Platform Admin").map((role) => role.id),
+		[roles],
+	);
 
-	// selectedRoleIds tracks the user's current selection; initialized from API on first data load
-	const [selectedRoleIds, setSelectedRoleIds] = useState<Set<string>>(new Set());
+	const assignments = assignmentEdits ?? initialAssignments;
 
-	// Initialize once when role data first arrives
-	if (userRolesData && !rolesInitialized) {
-		setRolesInitialized(true);
-		setSelectedRoleIds(initialRoleIds);
-	}
+	const isEditingSelf = currentUser?.id === user.id;
+	const isLoadingAssignments =
+		assignmentsLoading || rolesLoading || organizationsLoading || groupsLoading;
+	const isSaving =
+		updateMutation.isPending || assignMutation.isPending || removeMutation.isPending;
+	const hasInvalidAssignment = assignments.some((assignment) =>
+		Boolean(
+			validateBoundaries(
+				assignment.boundaries,
+				platformAdminRoleIds.includes(assignment.role_id),
+			),
+		),
+	);
 
-	const roles = useMemo(() => (allRoles ?? []) as Role[], [allRoles]);
-
-	// Find the provider org (for auto-selecting when promoting to platform admin)
-	const providerOrg = organizations?.find((org: Organization) => org.is_provider);
-
-	// Check if editing own account
-	const isEditingSelf = !!(currentUser && user.id === currentUser.id);
-
-	const isRoleChanging = user.is_superuser !== isPlatformAdmin;
-	const isDemoting = user.is_superuser && !isPlatformAdmin;
-	const isPromoting = !user.is_superuser && isPlatformAdmin;
-
-	// Auto-select provider org when promoting to platform admin
-	const handleUserTypeChange = (value: string) => {
-		const isAdmin = value === "platform";
-		setIsPlatformAdmin(isAdmin);
-		if (isAdmin && providerOrg) {
-			setOrgId(providerOrg.id);
-		} else if (!isAdmin && orgId === providerOrg?.id) {
-			// Clear provider org if switching to org user
-			setOrgId("");
-		}
-	};
-
-	const toggleRole = (roleId: string) => {
-		setSelectedRoleIds((prev) => {
-			const next = new Set(prev);
-			if (next.has(roleId)) {
-				next.delete(roleId);
-			} else {
-				next.add(roleId);
-			}
-			return next;
-		});
-	};
-
-	const removeRole = (roleId: string) => {
-		setSelectedRoleIds((prev) => {
-			const next = new Set(prev);
-			next.delete(roleId);
-			return next;
-		});
-	};
-
-	const selectedRoleNames = useMemo(() => {
-		return roles
-			.filter((r) => selectedRoleIds.has(r.id))
-			.map((r) => ({ id: r.id, name: r.name }));
-	}, [roles, selectedRoleIds]);
-
-	const validateForm = (): boolean => {
-		if (!displayName || displayName.trim().length === 0) {
+	const validateForm = () => {
+		if (!displayName.trim()) {
 			setValidationError("Please enter a display name");
 			return false;
 		}
@@ -149,253 +110,165 @@ function EditUserDialogContent({
 			setValidationError("Please select an organization");
 			return false;
 		}
+		if (hasInvalidAssignment) {
+			setValidationError("Choose access for every assigned role");
+			return false;
+		}
 		setValidationError(null);
 		return true;
 	};
 
-	const handleSubmit = async (e: React.FormEvent) => {
-		e.preventDefault();
+	const handleSubmit = async (event: React.FormEvent) => {
+		event.preventDefault();
+		if (!validateForm()) return;
 
-		if (!validateForm()) {
-			return;
-		}
-
-		// Build request body - only send changed fields
 		const body = {
-			name:
-				displayName.trim() !== (user.name || "")
-					? displayName.trim()
-					: null,
-			is_active:
-				!isEditingSelf && isActive !== user.is_active ? isActive : null,
-			is_superuser:
-				!isEditingSelf && isRoleChanging
-					? isPlatformAdmin
-					: null,
+			name: displayName.trim() !== (user.name || "") ? displayName.trim() : null,
+			is_active: !isEditingSelf && isActive !== user.is_active ? isActive : null,
+			is_superuser: null,
 			organization_id:
-				!isEditingSelf && orgId !== (user.organization_id || "")
-					? orgId || null
-					: null,
+				!isEditingSelf && orgId !== (user.organization_id || "") ? orgId : null,
 			is_external:
-				!isEditingSelf && isExternal !== user.is_external
-					? isExternal
-					: null,
+				!isEditingSelf && isExternal !== user.is_external ? isExternal : null,
 		};
+		const hasRoleChanges = !areRoleAssignmentsEqual(initialAssignments, assignments);
+		const hasUserChanges = Object.values(body).some((value) => value !== null);
 
-		// Compute role changes
-		const rolesToAdd = [...selectedRoleIds].filter((id) => !initialRoleIds.has(id));
-		const rolesToRemove = [...initialRoleIds].filter((id) => !selectedRoleIds.has(id));
-		const hasRoleChanges = rolesToAdd.length > 0 || rolesToRemove.length > 0;
-
-		// If no actual changes, just close
-		if (
-			body.name === null &&
-			body.is_active === null &&
-			body.is_superuser === null &&
-			body.organization_id === null &&
-			body.is_external === null &&
-			!hasRoleChanges
-		) {
+		if (!hasUserChanges && !hasRoleChanges) {
 			toast.info("No changes to save");
 			onOpenChange(false);
 			return;
 		}
 
 		try {
-			// Update user fields if changed
-			if (
-				body.name !== null ||
-				body.is_active !== null ||
-				body.is_superuser !== null ||
-				body.organization_id !== null ||
-				body.is_external !== null
-			) {
+			if (hasUserChanges) {
 				await updateMutation.mutateAsync({
+					headers: authorizationHeaders(userBoundary),
 					params: { path: { user_id: user.id } },
 					body,
 				});
 			}
 
-			// Update role assignments
-			for (const roleId of rolesToAdd) {
-				await assignUsersToRole.mutateAsync({
-					params: { path: { role_id: roleId } },
-					body: { user_ids: [user.id] },
-				});
-			}
-			for (const roleId of rolesToRemove) {
-				await removeUserFromRole.mutateAsync({
-					params: { path: { role_id: roleId, user_id: user.id } },
-				});
-			}
-
-			// Invalidate user roles cache so reopening reflects changes
 			if (hasRoleChanges) {
+				const initialByRole = new Map(
+					initialAssignments.map((assignment) => [assignment.role_id, assignment]),
+				);
+				const nextRoleIds = new Set(assignments.map((assignment) => assignment.role_id));
+				for (const assignment of assignments) {
+					const initial = initialByRole.get(assignment.role_id);
+					if (
+						initial &&
+						roleAssignmentKey(initial) === roleAssignmentKey(assignment)
+					) continue;
+					await assignMutation.mutateAsync({
+						params: { path: { role_id: assignment.role_id } },
+						body: { user_ids: [user.id], boundaries: assignment.boundaries },
+					});
+				}
+				for (const assignment of initialAssignments) {
+					if (nextRoleIds.has(assignment.role_id)) continue;
+					await removeMutation.mutateAsync({
+						params: { path: { role_id: assignment.role_id, user_id: user.id } },
+					});
+				}
 				await queryClient.invalidateQueries({
-					queryKey: ["get", "/api/users/{user_id}/roles"],
+					queryKey: ["get", "/api/users/{user_id}/role-assignments"],
 				});
 			}
 
 			toast.success("User updated successfully", {
 				description: `Changes to ${user.name || user.email} have been saved`,
 			});
-
 			onOpenChange(false);
 		} catch (error) {
-			const errorMessage =
-				error instanceof Error
-					? error.message
-					: "Unknown error occurred";
 			toast.error("Failed to update user", {
-				description: errorMessage,
+				description: error instanceof Error ? error.message : "Unknown error occurred",
 			});
 		}
 	};
 
-	const isSaving = updateMutation.isPending || assignUsersToRole.isPending || removeUserFromRole.isPending;
-
 	return (
-		<DialogContent className="sm:max-w-[500px]">
+		<DialogContent className="max-h-[min(90vh,56rem)] overflow-y-auto sm:max-w-3xl">
 			<DialogHeader>
-				<DialogTitle>Edit User</DialogTitle>
+				<DialogTitle>Edit user</DialogTitle>
 				<DialogDescription>
-					Update user details and permissions for {user.email}
+					Update account details, roles, and the boundaries where each role applies.
 				</DialogDescription>
 			</DialogHeader>
 
-			<form onSubmit={handleSubmit} className="space-y-4 mt-4">
-				{isEditingSelf && (
+			<form onSubmit={handleSubmit} className="mt-2 space-y-5">
+				{isEditingSelf ? (
 					<Alert>
 						<AlertCircle className="h-4 w-4" />
 						<AlertDescription>
-							You are editing your own account. You can only
-							change your display name. Role and status changes
-							must be made by another administrator.
+							You are editing your own account. Another administrator must change your
+							status, organization, or role access.
 						</AlertDescription>
 					</Alert>
-				)}
+				) : null}
 
-				{validationError && (
+				{validationError ? (
 					<Alert variant="destructive">
 						<AlertCircle className="h-4 w-4" />
 						<AlertDescription>{validationError}</AlertDescription>
 					</Alert>
-				)}
+				) : null}
 
-				<div className="space-y-2">
-					<Label htmlFor="email-display">Email Address</Label>
-					<Input
-						id="email-display"
-						type="email"
-						value={user.email}
-						disabled
-						className="bg-muted"
-					/>
-					<p className="text-xs text-muted-foreground">
-						Email address cannot be changed
-					</p>
-				</div>
-
-				<div className="space-y-2">
-					<Label htmlFor="displayName">Display Name</Label>
-					<Input
-						id="displayName"
-						type="text"
-						placeholder="John Doe"
-						value={displayName}
-						onChange={(e) => setDisplayName(e.target.value)}
-						required
-					/>
-				</div>
-
-				<div className="flex items-center justify-between rounded-lg bg-muted/50 p-4 ring-1 ring-foreground/5">
-					<div className="space-y-0.5">
-						<Label htmlFor="active">Account Status</Label>
-						<p className="text-xs text-muted-foreground">
-							{isActive
-								? "User can access the platform"
-								: "User access is disabled"}
-						</p>
+				<div className="grid gap-4 sm:grid-cols-2">
+					<div className="space-y-2">
+						<Label htmlFor="email-display">Email address</Label>
+						<Input id="email-display" type="email" value={user.email} disabled />
 					</div>
-					<Switch
-						id="active"
-						checked={isActive}
-						onCheckedChange={setIsActive}
-						disabled={isEditingSelf}
-					/>
+					<div className="space-y-2">
+						<Label htmlFor="displayName">Display name</Label>
+						<Input
+							id="displayName"
+							value={displayName}
+							onChange={(event) => setDisplayName(event.target.value)}
+							required
+						/>
+					</div>
 				</div>
 
 				<div className="space-y-2">
-					<Label htmlFor="userType">User Type</Label>
-					<Combobox
-						id="userType"
-						value={isPlatformAdmin ? "platform" : "org"}
-						onValueChange={handleUserTypeChange}
-						disabled={isEditingSelf}
-						options={[
-							{
-								value: "platform",
-								label: "Platform Administrator",
-								description:
-									"Full access to all organizations and settings",
-							},
-							{
-								value: "org",
-								label: "Organization User",
-								description:
-									"Access limited to specific organization",
-							},
-						]}
-						placeholder="Select user type"
-					/>
-				</div>
-
-				<div className="space-y-2">
-					<Label htmlFor="organization">Organization</Label>
+					<Label htmlFor="organization">Home organization</Label>
 					<Combobox
 						id="organization"
 						value={orgId}
 						onValueChange={setOrgId}
-						disabled={isPlatformAdmin || isEditingSelf}
-						options={
-							organizations?.map((org: Organization) => {
-								const option: {
-									value: string;
-									label: string;
-									description?: string;
-								} = {
-									value: org.id,
-									label: org.is_provider
-										? `${org.name} (Provider)`
-										: org.name,
-								};
-								if (org.domain) {
-									option.description = `@${org.domain}`;
-								}
-								return option;
-							}) ?? []
-						}
-						placeholder="Select an organization..."
+						disabled={isEditingSelf}
+						options={organizations.map((org: Organization) => ({
+							value: org.id,
+							label: org.is_provider ? `${org.name} (Provider)` : org.name,
+							description: org.domain ? `@${org.domain}` : undefined,
+						}))}
+						placeholder="Select an organization"
 						searchPlaceholder="Search organizations..."
 						emptyText="No organizations found."
-						isLoading={orgsLoading}
+						isLoading={organizationsLoading}
 					/>
 					<p className="text-xs text-muted-foreground">
-						{isPlatformAdmin
-							? "Platform administrators are assigned to the provider organization"
-							: "The organization this user belongs to"}
+						Changing the home organization does not rewrite existing role boundaries.
 					</p>
 				</div>
 
-				{!isPlatformAdmin && (
+				<div className="grid gap-3 sm:grid-cols-2">
+					<div className="flex items-center justify-between rounded-lg border p-4">
+						<div className="space-y-0.5">
+							<Label htmlFor="active">Account active</Label>
+							<p className="text-xs text-muted-foreground">Controls sign-in access.</p>
+						</div>
+						<Switch
+							id="active"
+							checked={isActive}
+							onCheckedChange={setIsActive}
+							disabled={isEditingSelf}
+						/>
+					</div>
 					<div className="flex items-center justify-between rounded-lg border p-4">
 						<div className="space-y-0.5">
 							<Label htmlFor="external">External user</Label>
-							<p className="text-xs text-muted-foreground">
-								Sees only what the Everyone tier or an explicit
-								role grant allows — excluded from
-								&ldquo;Everyone except external users&rdquo; content
-							</p>
+							<p className="text-xs text-muted-foreground">Requires explicit access grants.</p>
 						</div>
 						<Switch
 							id="external"
@@ -404,104 +277,27 @@ function EditUserDialogContent({
 							disabled={isEditingSelf}
 						/>
 					</div>
-				)}
+				</div>
 
-				{/* Roles multi-select */}
-				{!isPlatformAdmin && !isEditingSelf && (
-					<div className="space-y-2">
-						<Label>Roles</Label>
-						<Popover open={rolesPopoverOpen} onOpenChange={setRolesPopoverOpen}>
-							<PopoverTrigger asChild>
-								<Button
-									variant="outline"
-									role="combobox"
-									aria-expanded={rolesPopoverOpen}
-									className="w-full justify-between font-normal"
-								>
-									<span className={cn(
-										"truncate",
-										selectedRoleIds.size === 0 && "text-muted-foreground",
-									)}>
-										{selectedRoleIds.size === 0
-											? "Select roles..."
-											: `${selectedRoleIds.size} role${selectedRoleIds.size === 1 ? "" : "s"} selected`}
-									</span>
-									<ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-								</Button>
-							</PopoverTrigger>
-							<PopoverContent className="w-[var(--radix-popover-trigger-width)] p-0" align="start">
-								<Command>
-									<CommandInput placeholder="Search roles..." />
-									<CommandList className="max-h-48 overflow-y-auto">
-										<CommandEmpty>No roles found.</CommandEmpty>
-										<CommandGroup>
-											{roles.map((role) => (
-												<CommandItem
-													key={role.id}
-													value={role.id}
-													keywords={[role.name]}
-													data-checked={selectedRoleIds.has(role.id)}
-													onSelect={() => toggleRole(role.id)}
-												>
-													<div className="flex flex-col flex-1">
-														<span className="font-medium">{role.name}</span>
-														{role.description && (
-															<span className="text-xs text-muted-foreground">
-																{role.description}
-															</span>
-														)}
-													</div>
-												</CommandItem>
-											))}
-										</CommandGroup>
-									</CommandList>
-								</Command>
-							</PopoverContent>
-						</Popover>
-						{selectedRoleNames.length > 0 && (
-							<div className="flex flex-wrap gap-1 mt-1">
-								{selectedRoleNames.map(({ id, name }) => (
-									<Badge key={id} variant="secondary" className="text-xs">
-										{name}
-										<button
-											type="button"
-											className="ml-1 rounded-full outline-none hover:bg-muted"
-											onClick={() => removeRole(id)}
-										>
-											<X className="h-3 w-3" />
-										</button>
-									</Badge>
-								))}
-							</div>
-						)}
-						<p className="text-xs text-muted-foreground">
-							Roles determine which forms this user can access
-						</p>
-					</div>
-				)}
-
-				{isPlatformAdmin && isPromoting && (
-					<Alert>
-						<Shield className="h-4 w-4" />
-						<AlertDescription>
-							You are promoting this user to Platform
-							Administrator. They will gain unrestricted access
-							to all features, organizations, and settings.
-						</AlertDescription>
-					</Alert>
-				)}
-
-				{isDemoting && (
-					<Alert variant="destructive">
-						<AlertTriangle className="h-4 w-4" />
-						<AlertDescription>
-							You are demoting this user from Platform
-							Administrator to Organization User. They will
-							lose access to all other organizations and
-							platform settings.
-						</AlertDescription>
-					</Alert>
-				)}
+				<div className="border-t pt-5">
+					<h3 className="font-medium">Roles and access</h3>
+					<p className="mb-4 mt-1 text-sm text-muted-foreground">
+						A role defines what the user can do. Access selections define where it applies.
+					</p>
+					<RoleAssignmentEditor
+						roles={roles}
+						value={assignments}
+						organizations={organizations}
+						organizationGroups={organizationGroups}
+						platformAdminRoleIds={platformAdminRoleIds}
+						defaultBoundary={
+							orgId ? { boundary_kind: "organization", organization_id: orgId } : null
+						}
+						disabled={isEditingSelf || isSaving}
+						isLoading={isLoadingAssignments}
+						onChange={setAssignmentEdits}
+					/>
+				</div>
 
 				<DialogFooter>
 					<Button
@@ -512,11 +308,9 @@ function EditUserDialogContent({
 					>
 						Cancel
 					</Button>
-					<Button type="submit" disabled={isSaving}>
-						{isSaving && (
-							<Loader2 className="mr-2 h-4 w-4 animate-spin" />
-						)}
-						Save Changes
+					<Button type="submit" disabled={isSaving || hasInvalidAssignment}>
+						{isSaving ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+						Save changes
 					</Button>
 				</DialogFooter>
 			</form>
@@ -524,21 +318,11 @@ function EditUserDialogContent({
 	);
 }
 
-export function EditUserDialog({
-	user,
-	open,
-	onOpenChange,
-}: EditUserDialogProps) {
+export function EditUserDialog({ user, open, onOpenChange }: EditUserDialogProps) {
 	if (!user) return null;
-
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			{open && (
-				<EditUserDialogContent
-					user={user}
-					onOpenChange={onOpenChange}
-				/>
-			)}
+			{open ? <EditUserDialogContent user={user} onOpenChange={onOpenChange} /> : null}
 		</Dialog>
 	);
 }

@@ -23,6 +23,13 @@ from src.services.execution.autonomous_agent_executor import (
     ToolError,
 )
 from src.services.llm.base import LLMConfig, LLMResponse, ToolCallRequest, ToolDefinition
+from src.services.agent_runtime.usage_governance import RuntimeUsageGovernance
+from src.services.usage_limits import (
+    UsageCeilings,
+    UsageLimitPolicy,
+    UsageLimitScope,
+    UsageLimitSubject,
+)
 
 
 def _tool(name: str) -> ToolDefinition:
@@ -47,6 +54,25 @@ def mock_runtime_config():
         yield
 
 
+@pytest.fixture(autouse=True)
+def mock_default_usage_governance(request):
+    """Most executor unit tests are not quota-policy tests."""
+
+    if "mock_build_governance" in request.fixturenames:
+        yield
+        return
+    with patch(
+        "src.services.execution.autonomous_agent_executor.build_runtime_usage_governance",
+        new_callable=AsyncMock,
+        return_value=RuntimeUsageGovernance(
+            subject=UsageLimitSubject(),
+            policies=(),
+            aggregate_usage_by_scope_period={},
+        ),
+    ):
+        yield
+
+
 @pytest.fixture
 def mock_session():
     """Create a mock session factory (async_sessionmaker) for the executor.
@@ -60,6 +86,7 @@ def mock_session():
     session.flush = AsyncMock()
     session.commit = AsyncMock()
     session.get = AsyncMock(return_value=None)
+    session.scalar = AsyncMock(return_value=None)
 
     mock_ctx = AsyncMock()
     mock_ctx.__aenter__ = AsyncMock(return_value=session)
@@ -86,6 +113,7 @@ def mock_agent():
     agent.llm_model = None
     agent.llm_max_tokens = None
     agent.organization_id = uuid4()
+    agent.solution_id = None
     return agent
 
 
@@ -123,7 +151,7 @@ class TestAutonomousAgentExecutor:
                 await executor._execute_knowledge_search(
                     ToolCallRequest(
                         id="first",
-                        name="search_knowledge",
+                        name="bifrost_search_knowledge",
                         arguments={"query": "technical poc"},
                     ),
                     mock_agent,
@@ -133,7 +161,7 @@ class TestAutonomousAgentExecutor:
                 await executor._execute_knowledge_search(
                     ToolCallRequest(
                         id="second",
-                        name="search_knowledge",
+                        name="bifrost_search_knowledge",
                         arguments={"query": "billing contact role"},
                     ),
                     mock_agent,
@@ -828,6 +856,68 @@ class TestAutonomousAgentExecutor:
         assert tool_result_steps["my_tool"]["is_error"] is False
         assert "execution_id" not in tool_result_steps["system_tool"]
         assert tool_result_steps["system_tool"]["is_error"] is False
+
+    @pytest.mark.asyncio
+    @patch("src.services.execution.autonomous_agent_executor.build_runtime_usage_governance")
+    @patch("src.services.execution.autonomous_agent_executor.create_agent_model")
+    @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
+    async def test_output_usage_governance_overrun_suppresses_autonomous_tools(
+        self,
+        mock_resolve_tools,
+        mock_get_llm,
+        mock_build_governance,
+        mock_session,
+        mock_agent,
+    ):
+        """Autonomous runs use the shared wind-down flag after response overrun."""
+
+        mock_resolve_tools.return_value = (
+            [_tool("my_tool")],
+            {"my_tool": uuid4()},
+        )
+        mock_build_governance.return_value = RuntimeUsageGovernance(
+            subject=UsageLimitSubject(),
+            policies=(
+                UsageLimitPolicy(
+                    scope=UsageLimitScope.USER,
+                    per_run=UsageCeilings(output_tokens=10),
+                ),
+            ),
+            aggregate_usage_by_scope_period={},
+        )
+
+        mock_llm = AsyncMock()
+        mock_llm.complete = AsyncMock(
+            return_value=LLMResponse(
+                content="I should stop before tools",
+                tool_calls=[
+                    ToolCallRequest(id="tc1", name="my_tool", arguments={}),
+                ],
+                finish_reason="tool_use",
+                input_tokens=10,
+                output_tokens=50,
+            )
+        )
+        mock_get_llm.return_value = LegacyMockModel(mock_llm)
+
+        with patch("src.services.execution.service.execute_tool") as mock_exec_tool:
+            executor = AutonomousAgentExecutor(mock_session)
+            result = await executor.run(
+                agent=mock_agent,
+                input_data={"task": "try a tool"},
+                run_id=str(uuid4()),
+        )
+
+        assert result["status"] == "completed"
+        assert result["output"].startswith("I should stop before tools")
+        assert "configured run budget" in result["output"]
+        assert "no remaining tool actions were run" in result["output"].lower()
+        assert mock_exec_tool.call_count == 0
+        assert executor._active_budget is not None
+        assert executor._active_budget.control.force_wind_down
+        step_types = [step["type"] for step in executor._pending_steps]
+        assert "budget_warning" in step_types
+        assert "tool_call" not in step_types
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

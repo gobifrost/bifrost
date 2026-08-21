@@ -22,6 +22,7 @@ import { RouteTransitionProgress } from "@/components/layout/RouteTransitionProg
 import { useEditorStore } from "@/stores/editorStore";
 import { useQuickAccessStore } from "@/stores/quickAccessStore";
 import { AuthProvider } from "@/contexts/AuthContext";
+import { AuthorizationBoundaryProvider } from "@/contexts/AuthorizationBoundaryContext";
 import { OrgScopeProvider, useOrgScope } from "@/contexts/OrgScopeContext";
 import { useApplicationName } from "@/lib/applicationName";
 import {
@@ -58,6 +59,19 @@ const SolutionDetail = lazyWithReload(() =>
 	import("@/pages/SolutionDetail").then((m) => ({
 		default: m.SolutionDetail,
 	})),
+);
+const SolutionBuilder = lazyWithReload(() =>
+	import("@/pages/SolutionBuilder").then((m) => ({
+		default: m.SolutionBuilder,
+	})),
+);
+const SolutionPromotions = lazyWithReload(() =>
+	import("@/pages/SolutionPromotions").then((m) => ({
+		default: m.SolutionPromotions,
+	})),
+);
+const Build = lazyWithReload(() =>
+	import("@/pages/Build").then((m) => ({ default: m.Build })),
 );
 const Users = lazyWithReload(() =>
 	import("@/pages/Users").then((m) => ({ default: m.Users })),
@@ -326,7 +340,7 @@ const routeElements = (
 			loader={applicationDetailLoader(true)}
 			errorElement={<RouteLoadError />}
 			element={
-				<ProtectedRoute requirePlatformAdmin>
+				<ProtectedRoute requireCapability="apps.read">
 					<ApplicationPreview />
 				</ProtectedRoute>
 			}
@@ -368,7 +382,7 @@ const routeElements = (
 			<Route
 				path="workflows"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="workflows.read">
 						<Workflows />
 					</ProtectedRoute>
 				}
@@ -376,7 +390,7 @@ const routeElements = (
 			<Route
 				path="workflows/:workflowName/execute"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="workflows.execute">
 						<ExecuteWorkflow />
 					</ProtectedRoute>
 				}
@@ -386,7 +400,7 @@ const routeElements = (
 			<Route
 				path="forms"
 				element={
-					<ProtectedRoute requireOrgUser>
+					<ProtectedRoute requireCapability="forms.read">
 						<Forms />
 					</ProtectedRoute>
 				}
@@ -404,7 +418,7 @@ const routeElements = (
 			<Route
 				path="forms/new"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="forms.readwrite">
 						<FormBuilder />
 					</ProtectedRoute>
 				}
@@ -412,7 +426,7 @@ const routeElements = (
 			<Route
 				path="forms/:formId/edit"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="forms.readwrite">
 						<FormBuilder />
 					</ProtectedRoute>
 				}
@@ -422,27 +436,27 @@ const routeElements = (
 			<Route
 				path="history"
 				element={
-					<ProtectedRoute requireOrgUser>
+					<ProtectedRoute requireCapability="executions.read">
 						<ExecutionHistory />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Organizations - PlatformAdmin only */}
+			{/* Organization administration follows boundary-aware capability checks. */}
 			<Route
 				path="organizations"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="organizations.read">
 						<Organizations />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Users - PlatformAdmin only */}
+			{/* User administration follows the selected organization boundary. */}
 			<Route
 				path="users"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="organizations.read">
 						<Users />
 					</ProtectedRoute>
 				}
@@ -450,17 +464,17 @@ const routeElements = (
 			<Route
 				path="users/:userId"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="organizations.read">
 						<Users />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Roles - PlatformAdmin only */}
+			{/* Roles follow the active authorization context. */}
 			<Route
 				path="roles"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="roles.read">
 						<Roles />
 					</ProtectedRoute>
 				}
@@ -468,7 +482,7 @@ const routeElements = (
 			<Route
 				path="roles/:roleId"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="roles.read">
 						<RoleDetail />
 					</ProtectedRoute>
 				}
@@ -476,17 +490,17 @@ const routeElements = (
 			<Route
 				path="roles/:roleId/:tab"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="roles.read">
 						<RoleDetail />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Solutions - PlatformAdmin only */}
+			{/* Solutions and publication review follow capabilities and grants. */}
 			<Route
 				path="solutions"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="solutions.read">
 						<Solutions />
 					</ProtectedRoute>
 				}
@@ -494,27 +508,43 @@ const routeElements = (
 			<Route
 				path="solutions/:solutionId"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="solutions.read">
 						<SolutionDetail />
 					</ProtectedRoute>
 				}
 			/>
+			<Route
+				path="solution-promotions"
+				element={
+					<ProtectedRoute requireCapability="solutions.publish.read">
+						<SolutionPromotions />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="solutions/:solutionId/builder"
+				element={
+					<ProtectedRoute requireCapability="builder.read">
+						<SolutionBuilder />
+					</ProtectedRoute>
+				}
+			/>
 
-			{/* Config - PlatformAdmin only */}
+			{/* Workspace resources follow the selected boundary and capabilities. */}
 			<Route
 				path="config"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="configs.read">
 						<Config />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Data Tables - PlatformAdmin only */}
+			{/* Data Tables */}
 			<Route
 				path="tables"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="tables.read">
 						<Tables />
 					</ProtectedRoute>
 				}
@@ -522,18 +552,28 @@ const routeElements = (
 			<Route
 				path="tables/:tableId"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="tables.read">
 						<TableDetail />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Files - PlatformAdmin only */}
+			{/* Managed files and policies */}
 			<Route
 				path="files"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="managedfiles.read">
 						<Files />
+					</ProtectedRoute>
+				}
+			/>
+
+			{/* Builder is capability-gated by the API and useBuilderAccess. */}
+			<Route
+				path="build"
+				element={
+					<ProtectedRoute requireCapability="builder.read">
+						<Build />
 					</ProtectedRoute>
 				}
 			/>
@@ -542,7 +582,7 @@ const routeElements = (
 			<Route
 				path="apps"
 				element={
-					<ProtectedRoute requireOrgUser>
+					<ProtectedRoute requireCapability="apps.read">
 						<Applications />
 					</ProtectedRoute>
 				}
@@ -550,7 +590,7 @@ const routeElements = (
 			<Route
 				path="apps/new"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="apps.readwrite">
 						<AppCodeEditorPage />
 					</ProtectedRoute>
 				}
@@ -558,7 +598,7 @@ const routeElements = (
 			<Route
 				path="apps/:applicationId/edit/*"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="apps.readwrite">
 						<AppCodeEditorPage />
 					</ProtectedRoute>
 				}
@@ -568,7 +608,7 @@ const routeElements = (
 			<Route
 				path="agents"
 				element={
-					<ProtectedRoute>
+					<ProtectedRoute requireCapability="agents.read">
 						<FleetPage />
 					</ProtectedRoute>
 				}
@@ -576,7 +616,7 @@ const routeElements = (
 			<Route
 				path="agents/new"
 				element={
-					<ProtectedRoute>
+					<ProtectedRoute requireCapability="agents.readwrite">
 						<AgentDetailPage />
 					</ProtectedRoute>
 				}
@@ -586,7 +626,7 @@ const routeElements = (
 				loader={agentDetailLoader}
 				errorElement={<RouteLoadError />}
 				element={
-					<ProtectedRoute>
+					<ProtectedRoute requireCapability="agents.read">
 						<AgentDetailPage />
 					</ProtectedRoute>
 				}
@@ -594,7 +634,7 @@ const routeElements = (
 			<Route
 				path="agents/:id/review"
 				element={
-					<ProtectedRoute>
+					<ProtectedRoute requireCapability="agents.read">
 						<AgentReviewPage />
 					</ProtectedRoute>
 				}
@@ -602,7 +642,7 @@ const routeElements = (
 			<Route
 				path="agents/:id/tune"
 				element={
-					<ProtectedRoute>
+					<ProtectedRoute requireCapability="agents.readwrite">
 						<AgentTuneWorkbench />
 					</ProtectedRoute>
 				}
@@ -610,16 +650,16 @@ const routeElements = (
 			<Route
 				path="agents/:agentId/runs/:runId"
 				element={
-					<ProtectedRoute>
+					<ProtectedRoute requireCapability="executions.read">
 						<AgentRunDetailPage />
 					</ProtectedRoute>
 				}
 			/>
-			{/* Knowledge - PlatformAdmin only */}
+			{/* Knowledge */}
 			<Route
 				path="knowledge"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="knowledge.read">
 						<Knowledge />
 					</ProtectedRoute>
 				}
@@ -635,11 +675,11 @@ const routeElements = (
 				}
 			/>
 
-			{/* Integrations - PlatformAdmin only */}
+			{/* Integrations */}
 			<Route
 				path="integrations"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="integrations.read">
 						<Integrations />
 					</ProtectedRoute>
 				}
@@ -647,17 +687,17 @@ const routeElements = (
 			<Route
 				path="integrations/:id"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="integrations.read">
 						<IntegrationDetail />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* MCP Servers - PlatformAdmin only */}
+			{/* MCP server administration */}
 			<Route
 				path="mcp-servers"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="integrations.read">
 						<MCPServers />
 					</ProtectedRoute>
 				}
@@ -665,7 +705,7 @@ const routeElements = (
 			<Route
 				path="mcp-servers/:id"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="integrations.read">
 						<MCPServerDetail />
 					</ProtectedRoute>
 				}
@@ -673,17 +713,17 @@ const routeElements = (
 			<Route
 				path="mcp-servers/:serverId/connections/:connectionId/edit"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="integrations.readwrite">
 						<MCPConnectionEdit />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Event Sources - PlatformAdmin only */}
+			{/* Event Sources */}
 			<Route
 				path="event-sources"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="events.read">
 						<Events />
 					</ProtectedRoute>
 				}
@@ -691,7 +731,7 @@ const routeElements = (
 			<Route
 				path="event-sources/:sourceId"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="events.read">
 						<Events />
 					</ProtectedRoute>
 				}
@@ -699,17 +739,31 @@ const routeElements = (
 			<Route
 				path="event-sources/:sourceId/events/:eventId"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="events.read">
 						<Events />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Settings - PlatformAdmin only */}
+			{/* Platform settings */}
 			<Route
 				path="settings"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requireAnyCapability={[
+							"configs.read",
+							"configs.readwrite",
+							"integrations.read",
+							"integrations.readwrite",
+							"platformjobs.read",
+							"platformjobs.execute",
+							"repository.read",
+							"repository.readwrite",
+							"workflows.read",
+							"workflows.readwrite",
+						]}
+						requireBoundaryKind="platform"
+					>
 						<Settings />
 					</ProtectedRoute>
 				}
@@ -717,37 +771,60 @@ const routeElements = (
 			<Route
 				path="settings/:tab"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requireAnyCapability={[
+							"configs.read",
+							"configs.readwrite",
+							"integrations.read",
+							"integrations.readwrite",
+							"platformjobs.read",
+							"platformjobs.execute",
+							"repository.read",
+							"repository.readwrite",
+							"workflows.read",
+							"workflows.readwrite",
+						]}
+						requireBoundaryKind="platform"
+					>
 						<Settings />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Diagnostics - PlatformAdmin only */}
+			{/* Diagnostics */}
 			<Route
 				path="diagnostics"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requireCapability="platformjobs.read"
+						requireBoundaryKind="platform"
+					>
 						<DiagnosticsPage />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Audit Log - PlatformAdmin only */}
+			{/* Audit Log */}
 			<Route
 				path="audit"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requireCapability="audit.read"
+						requireBoundaryKind="platform"
+					>
 						<AuditLogPage />
 					</ProtectedRoute>
 				}
 			/>
 
-			{/* Reports - PlatformAdmin only */}
+			{/* Reports */}
 			<Route
 				path="reports/roi"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute
+						requireCapability="metrics.read"
+						requireBoundaryKind="platform"
+					>
 						<ROIReports />
 					</ProtectedRoute>
 				}
@@ -755,7 +832,7 @@ const routeElements = (
 			<Route
 				path="reports/usage"
 				element={
-					<ProtectedRoute requirePlatformAdmin>
+					<ProtectedRoute requireCapability="metrics.read">
 						<UsageReports />
 					</ProtectedRoute>
 				}
@@ -823,12 +900,14 @@ const routeElements = (
 function AppProviders() {
 	return (
 		<AuthProvider>
-			<OrgScopeProvider>
-				<KeyboardProvider>
-					<RouteTransitionProgress />
-					<AppFrame />
-				</KeyboardProvider>
-			</OrgScopeProvider>
+			<AuthorizationBoundaryProvider>
+				<OrgScopeProvider>
+					<KeyboardProvider>
+						<RouteTransitionProgress />
+						<AppFrame />
+					</KeyboardProvider>
+				</OrgScopeProvider>
+			</AuthorizationBoundaryProvider>
 		</AuthProvider>
 	);
 }

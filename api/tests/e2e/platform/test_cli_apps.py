@@ -8,8 +8,10 @@ Covers Task 5f of the CLI mutation surface plan:
 * ``apps create`` without ``--deps`` — single REST call, no dependencies PUT.
 * ``apps update <ref>`` — patch-without-draft via
   ``PATCH /api/applications/{id}`` (slug, UUID, or name ref).
-* ``apps set-deps <ref>`` — direct PUT to ``/dependencies`` without
+* ``apps get-dependencies <ref>`` / ``update-dependencies <ref>`` — direct
+  GET/PUT to ``/dependencies`` without
   touching the app metadata.
+* ``apps validate <ref>`` — compile and statically inspect current source.
 * ``apps delete <ref>`` — DELETE by slug, UUID, or name ref.
 
 The commands are invoked via :class:`click.testing.CliRunner` against the
@@ -148,7 +150,16 @@ class TestCliApps:
         slug = f"cli-app-nodeps-{uuid4().hex[:8]}"
 
         result = _invoke(
-            ["--json", "create", "--name", slug, "--slug", slug, "--app-model", "inline_v1"]
+            [
+                "--json",
+                "create",
+                "--name",
+                slug,
+                "--slug",
+                slug,
+                "--app-model",
+                "inline_v1",
+            ]
         )
         assert result.exit_code == 0, result.output
         created = json.loads(result.output)
@@ -176,7 +187,12 @@ class TestCliApps:
         create_resp = e2e_client.post(
             "/api/applications",
             headers=platform_admin.headers,
-            json={"name": slug, "slug": slug, "app_model": "inline_v1", "description": "before"},
+            json={
+                "name": slug,
+                "slug": slug,
+                "app_model": "inline_v1",
+                "description": "before",
+            },
         )
         assert create_resp.status_code == 201, create_resp.text
         app_id = create_resp.json()["id"]
@@ -201,10 +217,10 @@ class TestCliApps:
         # Cleanup.
         _invoke(["--json", "delete", app_id])
 
-    def test_set_deps_direct_put(
+    def test_dependency_commands_roundtrip(
         self, cli_client, _invoke, e2e_client, platform_admin, tmp_path
     ) -> None:
-        """``apps set-deps <ref>`` PUTs to /dependencies without touching metadata."""
+        """Canonical dependency commands share the REST dependency contract."""
         slug = f"cli-app-setdeps-{uuid4().hex[:8]}"
         create_resp = e2e_client.post(
             "/api/applications",
@@ -218,10 +234,14 @@ class TestCliApps:
         pkg_path = _write_package_json(tmp_path, deps)
 
         result = _invoke(
-            ["--json", "set-deps", slug, "--deps", f"@{pkg_path}"]
+            ["--json", "update-dependencies", slug, "--deps", f"@{pkg_path}"]
         )
         assert result.exit_code == 0, result.output
         assert json.loads(result.output) == deps
+
+        get_result = _invoke(["--json", "get-dependencies", app_id])
+        assert get_result.exit_code == 0, get_result.output
+        assert json.loads(get_result.output) == deps
 
         deps_resp = e2e_client.get(
             f"/api/applications/{app_id}/dependencies",
@@ -232,6 +252,47 @@ class TestCliApps:
 
         # Cleanup.
         _invoke(["--json", "delete", app_id])
+
+    def test_validate_and_unified_org_targeting(
+        self,
+        cli_client,
+        _invoke,
+        org1,
+    ) -> None:
+        """Create/update use the common --org/--global target adapter."""
+        slug = f"cli-app-org-{uuid4().hex[:8]}"
+        result = _invoke(
+            [
+                "--json",
+                "create",
+                "--name",
+                slug,
+                "--slug",
+                slug,
+                "--app-model",
+                "inline_v1",
+                "--org",
+                org1["id"],
+            ]
+        )
+        assert result.exit_code == 0, result.output
+        created = json.loads(result.output)
+        app_id = created["id"]
+        try:
+            assert created["organization_id"] == org1["id"]
+
+            validation_result = _invoke(["--json", "validate", app_id])
+            assert validation_result.exit_code == 0, validation_result.output
+            validation = json.loads(validation_result.output)
+            assert isinstance(validation["valid"], bool)
+            assert isinstance(validation["errors"], list)
+            assert isinstance(validation["warnings"], list)
+
+            global_result = _invoke(["--json", "update", app_id, "--global"])
+            assert global_result.exit_code == 0, global_result.output
+            assert json.loads(global_result.output)["organization_id"] is None
+        finally:
+            _invoke(["--json", "delete", app_id])
 
     def test_delete_by_slug(
         self, cli_client, _invoke, e2e_client, platform_admin

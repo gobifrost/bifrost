@@ -5,7 +5,7 @@ Covers Task 5j of the CLI mutation surface plan:
 * ``bifrost events create-source --source-type schedule --cron "*/5 * * * *"
   --timezone UTC`` collapses the flat schedule flags into the nested
   ``schedule`` config and POSTs to ``/api/events/sources``.
-* ``bifrost events subscribe <source-ref> --workflow path::func`` resolves
+* ``bifrost events create-subscription <source-ref> --workflow path::func`` resolves
   the workflow ref and POSTs to the source's subscriptions endpoint.
 * ``bifrost events update-subscription <source-ref> <subscription-id>
   --event-type foo`` patches only the allowed fields.
@@ -98,6 +98,12 @@ class TestCliEvents:
             assert "id" in item
             assert "name" in item
 
+    def test_list_webhook_adapters_returns_payload(self, cli_client, _invoke) -> None:
+        result = _invoke(["--json", "list-webhook-adapters"])
+        assert result.exit_code == 0, result.output
+        adapters = json.loads(result.output)["adapters"]
+        assert any(adapter["name"] == "generic" for adapter in adapters)
+
     def test_get_source_by_uuid(
         self, cli_client, _invoke, e2e_client, platform_admin
     ) -> None:
@@ -145,6 +151,7 @@ class TestCliEvents:
             "--cron", "*/5 * * * *",
             "--timezone", "UTC",
             "--schedule-enabled",
+            "--overlap-policy", "queue",
         ])
         assert result.exit_code == 0, result.output
         created = json.loads(result.output)
@@ -155,8 +162,9 @@ class TestCliEvents:
         assert created["schedule"]["cron_expression"] == "*/5 * * * *"
         assert created["schedule"]["timezone"] == "UTC"
         assert created["schedule"]["enabled"] is True
+        assert created["schedule"]["overlap_policy"] == "queue"
 
-        # Cleanup: delete the source directly via REST (no CLI delete-source cmd).
+        # Cleanup directly through REST; delete-source has its own focused test.
         e2e_client.delete(
             f"/api/events/sources/{source_id}",
             headers=platform_admin.headers,
@@ -170,7 +178,7 @@ class TestCliEvents:
         platform_admin,
         registered_workflow,
     ) -> None:
-        """``events subscribe`` creates a subscription; update-subscription
+        """``events create-subscription`` creates a subscription; update-subscription
         patches ``--event-type``."""
         # --- Create a schedule source to subscribe to ---
         source_name = f"cli-evt-src-{uuid4().hex[:8]}"
@@ -188,9 +196,11 @@ class TestCliEvents:
         # --- Subscribe the workflow ---
         sub_result = _invoke([
             "--json",
-            "subscribe", source_name,
+            "create-subscription", source_name,
             "--workflow", registered_workflow["ref"],
             "--event-type", "daily.report",
+            "--filter-expression", "$.enabled",
+            "--input-mapping", '{"report_type":"daily"}',
         ])
         assert sub_result.exit_code == 0, sub_result.output
         subscription = json.loads(sub_result.output)
@@ -210,6 +220,20 @@ class TestCliEvents:
         assert updated["event_type"] == "daily.rollup"
         # Target is untouched.
         assert str(updated["workflow_id"]) == str(registered_workflow["id"])
+
+        # Nullable PATCH fields must be clearable from the CLI, not merely set.
+        clear_result = _invoke([
+            "--json",
+            "update-subscription", source_name, subscription_id,
+            "--clear-event-type",
+            "--clear-filter-expression",
+            "--clear-input-mapping",
+        ])
+        assert clear_result.exit_code == 0, clear_result.output
+        cleared = json.loads(clear_result.output)
+        assert cleared["event_type"] is None
+        assert cleared["filter_expression"] is None
+        assert cleared["input_mapping"] is None
 
         # --- Cleanup ---
         e2e_client.delete(
@@ -243,7 +267,7 @@ class TestCliEvents:
 
         sub_result = _invoke([
             "--json",
-            "subscribe", source_name,
+            "create-subscription", source_name,
             "--workflow", registered_workflow["ref"],
         ])
         assert sub_result.exit_code == 0, sub_result.output
@@ -286,3 +310,40 @@ class TestCliEvents:
             f"/api/events/sources/{source_id}",
             headers=platform_admin.headers,
         )
+
+    def test_delete_commands(self, cli_client, _invoke, registered_workflow) -> None:
+        source_name = f"cli-evt-delete-{uuid4().hex[:8]}"
+        created = _invoke([
+            "--json",
+            "create-source",
+            "--name", source_name,
+            "--source-type", "schedule",
+            "--cron", "0 0 * * *",
+        ])
+        assert created.exit_code == 0, created.output
+        source_id = str(json.loads(created.output)["id"])
+
+        subscribed = _invoke([
+            "--json",
+            "create-subscription", source_id,
+            "--workflow", registered_workflow["ref"],
+        ])
+        assert subscribed.exit_code == 0, subscribed.output
+        subscription_id = str(json.loads(subscribed.output)["id"])
+
+        deleted_sub = _invoke([
+            "--json",
+            "delete-subscription", source_id, subscription_id,
+        ])
+        assert deleted_sub.exit_code == 0, deleted_sub.output
+        assert json.loads(deleted_sub.output) == {
+            "success": True,
+            "id": subscription_id,
+        }
+
+        deleted_source = _invoke(["--json", "delete-source", source_id])
+        assert deleted_source.exit_code == 0, deleted_source.output
+        assert json.loads(deleted_source.output) == {
+            "success": True,
+            "id": source_id,
+        }

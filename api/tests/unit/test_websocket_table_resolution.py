@@ -83,6 +83,15 @@ def _org_user(org_id) -> UserPrincipal:
     )
 
 
+def _superuser(org_id) -> UserPrincipal:
+    return UserPrincipal(
+        user_id=uuid.uuid4(),
+        email="admin@x",
+        organization_id=org_id,
+        is_superuser=True,
+    )
+
+
 class TestResolveTableIdByName:
     async def test_plain_repo_table_still_resolves(self, patched_db) -> None:
         """Happy-path regression guard: an ordinary `_repo/` table with no
@@ -117,6 +126,23 @@ class TestResolveTableIdByName:
         resolved = await ws_mod._resolve_table_id(name, _org_user(org))
         assert resolved == str(live.id)
 
+    async def test_no_authorization_superuser_does_not_cross_org_by_uuid(
+        self,
+        patched_db,
+    ) -> None:
+        """Without AuthorizationContext, WebSocket table resolution falls back
+        to the exact runtime/home-org scope and must not treat the legacy public
+        superuser bit as a cross-org wildcard.
+        """
+        db = patched_db
+        own_org = await _make_org(db)
+        other_org = await _make_org(db)
+        table = _table(f"customers_{uuid.uuid4().hex[:8]}", org_id=other_org)
+        db.add(table)
+        await db.flush()
+
+        assert await ws_mod._resolve_table_id(str(table.id), _superuser(own_org)) is None
+
 class TestLoadPoliciesForTableByName:
     async def test_name_lookup_skips_solution_rows(self, patched_db) -> None:
         """Same-name `_repo/` + solution rows: the name branch must load the
@@ -140,4 +166,3 @@ class TestLoadPoliciesForTableByName:
 
         policies = await ws_mod._load_policies_for_table(name)
         assert policies == TablePolicies()
-

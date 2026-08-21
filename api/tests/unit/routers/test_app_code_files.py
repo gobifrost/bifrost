@@ -2,6 +2,7 @@
 
 import pytest
 from fastapi import HTTPException
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 from src.routers.app_code_files import standalone_v2_runtime_contract, validate_file_path
 
@@ -232,12 +233,15 @@ class TestGetV2DistAsset:
 
         app_id = uuid4()
         fake_app = SimpleNamespace(id=app_id)
+        fake_ctx = SimpleNamespace(
+            user=SimpleNamespace(embed=False),
+        )
 
-        async def _fake_get_app(ctx, _app_id):
+        async def _fake_get_app(ctx, authorization, _app_id):
             return fake_app
 
         monkeypatch.setattr(
-            "src.routers.app_code_files.get_application_or_404", _fake_get_app
+            "src.routers.app_code_files.authorized_application_by_id", _fake_get_app
         )
 
         class _FakeBuilder:
@@ -247,7 +251,13 @@ class TestGetV2DistAsset:
         monkeypatch.setattr(
             "src.services.solutions.app_build.SolutionAppBuilder", _FakeBuilder
         )
-        return app_id
+        return app_id, fake_ctx
+
+    @staticmethod
+    def _authorization():
+        authorization = MagicMock()
+        authorization.require = MagicMock()
+        return authorization
 
     async def test_missing_key_returns_404(self, monkeypatch):
         """The not-found type read_dist actually raises (botocore ClientError
@@ -260,24 +270,38 @@ class TestGetV2DistAsset:
             {"Error": {"Code": "NoSuchKey", "Message": "The specified key does not exist."}},
             "GetObject",
         )
-        app_id = self._setup(monkeypatch, not_found)
+        app_id, ctx = self._setup(monkeypatch, not_found)
+        authorization = self._authorization()
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_v2_dist_asset(app_id=app_id, path="index.html", ctx=None, _user=None)
+            await get_v2_dist_asset(
+                app_id=app_id,
+                path="index.html",
+                ctx=ctx,
+                authorization=authorization,
+            )
         assert exc_info.value.status_code == 404
         assert exc_info.value.detail == "dist asset not found: index.html"
+        authorization.require.assert_called_once_with("apps.read")
 
     async def test_storage_error_is_logged_and_reraised_not_404(self, monkeypatch, caplog):
         """A real storage failure (RuntimeError) must NOT become a 404 — it
         surfaces as-is and is logged."""
         from src.routers.app_code_files import get_v2_dist_asset
 
-        app_id = self._setup(monkeypatch, RuntimeError("s3 exploded"))
+        app_id, ctx = self._setup(monkeypatch, RuntimeError("s3 exploded"))
+        authorization = self._authorization()
 
         with caplog.at_level("ERROR", logger="src.routers.app_code_files"):
             with pytest.raises(RuntimeError, match="s3 exploded"):
-                await get_v2_dist_asset(app_id=app_id, path="index.html", ctx=None, _user=None)
+                await get_v2_dist_asset(
+                    app_id=app_id,
+                    path="index.html",
+                    ctx=ctx,
+                    authorization=authorization,
+                )
         assert any("dist asset read failed" in r.message for r in caplog.records)
+        authorization.require.assert_called_once_with("apps.read")
 
     async def test_non_notfound_client_error_is_logged_and_reraised(self, monkeypatch, caplog):
         """A ClientError that is NOT NoSuchKey (e.g. AccessDenied) is a real
@@ -289,9 +313,140 @@ class TestGetV2DistAsset:
         denied = ClientError(
             {"Error": {"Code": "AccessDenied", "Message": "denied"}}, "GetObject"
         )
-        app_id = self._setup(monkeypatch, denied)
+        app_id, ctx = self._setup(monkeypatch, denied)
+        authorization = self._authorization()
 
         with caplog.at_level("ERROR", logger="src.routers.app_code_files"):
             with pytest.raises(ClientError):
-                await get_v2_dist_asset(app_id=app_id, path="main.js", ctx=None, _user=None)
+                await get_v2_dist_asset(
+                    app_id=app_id,
+                    path="main.js",
+                    ctx=ctx,
+                    authorization=authorization,
+                )
         assert any("dist asset read failed" in r.message for r in caplog.records)
+        authorization.require.assert_called_once_with("apps.read")
+
+
+class TestBundleAssetAuthorization:
+    async def test_exact_boundary_authorized_caller_reads_bundle_asset(
+        self,
+        monkeypatch,
+    ):
+        from types import SimpleNamespace
+        from uuid import uuid4
+
+        from src.routers.app_code_files import FileMode, get_bundle_asset
+
+        app_id = uuid4()
+        ctx = SimpleNamespace(user=SimpleNamespace(embed=False))
+        authorization = MagicMock()
+        authorization.require = MagicMock()
+        authorized = AsyncMock(return_value=SimpleNamespace(id=app_id))
+        storage = MagicMock()
+        storage.read_file = AsyncMock(return_value=b"console.log('ok')")
+        monkeypatch.setattr(
+            "src.routers.app_code_files.authorized_application_by_id",
+            authorized,
+        )
+        monkeypatch.setattr(
+            "src.routers.app_code_files.AppStorageService",
+            MagicMock(return_value=storage),
+        )
+
+        response = await get_bundle_asset(
+            app_id=app_id,
+            filename="main.js",
+            mode=FileMode.draft,
+            ctx=ctx,
+            authorization=authorization,
+        )
+
+        authorization.require.assert_called_once_with("apps.read")
+        authorized.assert_awaited_once()
+        storage.read_file.assert_awaited_once_with(str(app_id), "preview", "main.js")
+        assert response.media_type == "application/javascript"
+        assert response.body == b"console.log('ok')"
+
+    async def test_denied_caller_does_not_read_bundle_asset_storage(
+        self,
+        monkeypatch,
+    ):
+        from types import SimpleNamespace
+        from uuid import uuid4
+
+        from src.routers.app_code_files import get_bundle_asset
+
+        app_id = uuid4()
+        ctx = SimpleNamespace(user=SimpleNamespace(embed=False))
+        authorization = MagicMock()
+        authorization.require = MagicMock()
+        denied = HTTPException(status_code=404, detail="Application not found")
+        authorized = AsyncMock(side_effect=denied)
+        storage_factory = MagicMock()
+        monkeypatch.setattr(
+            "src.routers.app_code_files.authorized_application_by_id",
+            authorized,
+        )
+        monkeypatch.setattr(
+            "src.routers.app_code_files.AppStorageService",
+            storage_factory,
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_bundle_asset(
+                app_id=app_id,
+                filename="main.js",
+                ctx=ctx,
+                authorization=authorization,
+            )
+
+        assert exc_info.value is denied
+        authorization.require.assert_called_once_with("apps.read")
+        authorized.assert_awaited_once()
+        storage_factory.assert_not_called()
+
+
+class TestRuntimeApplicationAuthorization:
+    async def test_embed_token_is_admitted_only_for_bound_app(self):
+        from types import SimpleNamespace
+        from uuid import uuid4
+
+        from src.routers.app_code_files import authorized_runtime_application_by_id
+
+        app_id = uuid4()
+        app = SimpleNamespace(id=app_id)
+        user = SimpleNamespace(embed=True, app_id=str(app_id))
+        ctx = SimpleNamespace(user=user, db=MagicMock())
+        ctx.db.get = AsyncMock(return_value=app)
+
+        resolved = await authorized_runtime_application_by_id(
+            ctx,
+            authorization=None,
+            app_id=app_id,
+        )
+
+        assert resolved is app
+        ctx.db.get.assert_awaited_once_with(ANY, app_id)
+
+    async def test_embed_token_is_denied_for_unbound_app(self):
+        from types import SimpleNamespace
+        from uuid import uuid4
+
+        from src.routers.app_code_files import authorized_runtime_application_by_id
+
+        bound_app_id = uuid4()
+        requested_app_id = uuid4()
+        user = SimpleNamespace(embed=True, app_id=str(bound_app_id))
+        ctx = SimpleNamespace(user=user, db=MagicMock())
+        ctx.db.get = AsyncMock()
+
+        with pytest.raises(HTTPException) as exc_info:
+            await authorized_runtime_application_by_id(
+                ctx,
+                authorization=None,
+                app_id=requested_app_id,
+            )
+
+        assert exc_info.value.status_code == 404
+        ctx.db.get.assert_not_awaited()

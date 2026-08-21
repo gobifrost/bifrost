@@ -94,7 +94,7 @@ class PolicyRuleService:
         return row
 
     async def _get(self, name: str, domain: str, org_id: UUID | None) -> PolicyRule:
-        repo = PolicyRuleRepository(self.db, org_id=org_id, is_superuser=True)
+        repo = PolicyRuleRepository(self.db, org_id=org_id, bypass_resource_admission=True)
         row = await repo.get(name=name, domain=domain)
         if row is None:
             # A solution-managed rule is excluded from the default name-cascade
@@ -106,6 +106,14 @@ class PolicyRuleService:
         if row is None:
             raise PolicyRuleNotFoundError(name)
         return row
+
+    async def get(self, name: str, domain: str, *, org_id: UUID | None) -> PolicyRule:
+        """Read one rule by (name, domain), raising when it does not exist.
+
+        Solution-managed rules are readable: the solution-managed guard blocks
+        writes only, so a caller can inspect a rule it may not modify.
+        """
+        return await self._get(name, domain, org_id)
 
     async def update(
         self,

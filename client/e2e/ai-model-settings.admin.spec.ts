@@ -80,6 +80,13 @@ test.describe("AI model settings", () => {
 		});
 
 		await page.goto("/settings/ai");
+		const contextButton = page.getByRole("button", { name: /working in/i });
+		await expect(contextButton).toBeVisible({ timeout: 10000 });
+		await contextButton.click();
+		await page.getByRole("menuitemradio", { name: /global/i }).click();
+		await expect(
+			page.getByRole("button", { name: "Working in Global" }),
+		).toBeVisible();
 		await expect(page.getByText("Chat Model Choices")).toBeVisible();
 		const fastTier = page.getByRole("group", { name: "Fast" });
 		await expect(fastTier.getByText("Fast", { exact: true })).toBeVisible();

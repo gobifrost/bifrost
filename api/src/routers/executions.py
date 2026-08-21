@@ -46,6 +46,7 @@ from src.core.redis_client import get_redis_client
 from src.models import Execution as ExecutionModel
 from src.models import ExecutionLog as ExecutionLogORM
 from src.repositories.execution_logs import ExecutionLogRepository
+from src.services.operation_catalog import operation_route
 
 logger = logging.getLogger(__name__)
 
@@ -672,6 +673,7 @@ class ExecutionRepository:
     response_model=ExecutionsListResponse,
     summary="List workflow executions",
     description="List workflow executions with filtering and pagination",
+    **operation_route("executions.list"),
 )
 async def list_executions(
     ctx: Context,
@@ -815,6 +817,7 @@ async def list_logs(
     response_model=WorkflowExecution,
     summary="Get execution details",
     description="Get detailed information about a specific execution",
+    **operation_route("executions.get"),
 )
 async def get_execution(
     execution_id: UUID,

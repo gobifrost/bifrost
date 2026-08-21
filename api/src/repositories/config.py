@@ -81,44 +81,75 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
         result = await self.session.execute(query)
         rows = result.all()
 
-        schemas = []
-        for row in rows:
-            config = row[0]
-            integration_name = row[1]
+        return [
+            self._to_response(row[0], integration_name=row[1]) for row in rows
+        ]
 
-            raw_value = (
-                config.value.get("value")
-                if isinstance(config.value, dict)
-                else config.value
-            )
-            display_value = (
-                "[SECRET]"
-                if config.config_type == ConfigTypeEnum.SECRET
-                else raw_value
-            )
+    @staticmethod
+    def _to_response(
+        config: ConfigModel, *, integration_name: str | None
+    ) -> ConfigResponse:
+        """Shape one row into a ``ConfigResponse``.
 
-            schemas.append(
-                ConfigResponse(
-                    id=config.id,
-                    key=config.key,
-                    value=display_value,
-                    type=ConfigType(config.config_type.value)
-                    if config.config_type
-                    else ConfigType.STRING,
-                    scope="org" if config.organization_id else "GLOBAL",
-                    org_id=str(config.organization_id)
-                    if config.organization_id
-                    else None,
-                    integration_id=str(config.integration_id)
-                    if config.integration_id
-                    else None,
-                    integration_name=integration_name,
-                    description=config.description,
-                    updated_at=config.updated_at,
-                    updated_by=config.updated_by,
-                )
+        Unwraps the ``{"value": X}`` JSONB storage envelope and masks
+        ``secret``-type values, so no read surface built on this can leak a
+        stored secret.
+        """
+        raw_value = (
+            config.value.get("value")
+            if isinstance(config.value, dict)
+            else config.value
+        )
+        display_value = (
+            "[SECRET]"
+            if config.config_type == ConfigTypeEnum.SECRET
+            else raw_value
+        )
+        return ConfigResponse(
+            id=config.id,
+            key=config.key,
+            value=display_value,
+            type=ConfigType(config.config_type.value)
+            if config.config_type
+            else ConfigType.STRING,
+            scope="org" if config.organization_id else "GLOBAL",
+            org_id=str(config.organization_id) if config.organization_id else None,
+            integration_id=str(config.integration_id)
+            if config.integration_id
+            else None,
+            integration_name=integration_name,
+            description=config.description,
+            updated_at=config.updated_at,
+            updated_by=config.updated_by,
+        )
+
+    async def get_config_by_id(self, config_id: UUID) -> ConfigResponse | None:
+        """Get one config by UUID, or ``None`` when it does not exist.
+
+        No org cascade: IDs are globally unique, so an ID lookup resolves
+        directly — the semantics ``OrgScopedRepository.get(id=...)`` documents.
+        This deliberately matches :meth:`update_config_by_id` and
+        :meth:`delete_config`, which also filter on ``id`` alone; a superuser
+        able to update or delete a row by ID must also be able to read it.
+        Config routes are superuser-only, so no per-caller scope check applies
+        here. Secret values are masked by :meth:`_to_response`.
+        """
+        query = (
+            select(self.model, Integration.name.label("integration_name"))
+            .outerjoin(
+                Integration,
+                and_(
+                    self.model.integration_id == Integration.id,
+                    Integration.is_deleted.is_(False),
+                ),
             )
-        return schemas
+            .where(self.model.id == config_id)
+        )
+
+        row = (await self.session.execute(query)).first()
+        if row is None:
+            return None
+        return self._to_response(row[0], integration_name=row[1])
 
     async def get_config(self, key: str) -> ConfigModel | None:
         """Get config by key with cascade scoping: org-specific > global."""

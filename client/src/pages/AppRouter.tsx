@@ -26,6 +26,7 @@ import { useDocumentChrome } from "@/lib/useDocumentChrome";
 import { useApplicationName } from "@/lib/applicationName";
 import { term, useTerminology } from "@/lib/terminology";
 import { BundledAppShell } from "@/components/jsx-app/BundledAppShell";
+import { IsolatedSolutionApp } from "@/components/jsx-app/IsolatedSolutionApp";
 import { AppLayout } from "@/components/layout/AppLayout";
 
 interface AppRouterProps {
@@ -165,6 +166,16 @@ export function AppRouter({ preview = false }: AppRouterProps) {
 					</CardContent>
 				</Card>
 			</div>
+		);
+	}
+
+	if (application.runtime_mode === "isolated") {
+		return (
+			<IsolatedSolutionApp
+				key={application.id}
+				appId={application.id}
+				appSlug={application.slug}
+			/>
 		);
 	}
 

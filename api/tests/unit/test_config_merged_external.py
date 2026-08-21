@@ -54,7 +54,7 @@ def _executed_where(session) -> str:
 class TestMergedForSdkExternal:
     async def test_external_skips_global_tier(self, session):
         repo = ConfigRepository(
-            session, org_id=uuid4(), is_superuser=True, is_external=True
+            session, org_id=uuid4(), bypass_resource_admission=True, is_external=True
         )
         with _no_cache():
             await repo.merged_for_sdk()
@@ -64,7 +64,7 @@ class TestMergedForSdkExternal:
         )
 
     async def test_normal_caller_keeps_global_tier(self, session):
-        repo = ConfigRepository(session, org_id=uuid4(), is_superuser=True)
+        repo = ConfigRepository(session, org_id=uuid4(), bypass_resource_admission=True)
         with _no_cache():
             await repo.merged_for_sdk()
         where = _executed_where(session)
@@ -81,7 +81,7 @@ class TestMergedForSdkExternal:
         redis.expire = AsyncMock()
 
         repo = ConfigRepository(
-            session, org_id=org, is_superuser=True, is_external=True
+            session, org_id=org, bypass_resource_admission=True, is_external=True
         )
         with patch(
             "src.core.cache.redis_client.get_shared_redis",
@@ -100,7 +100,7 @@ class TestMergedForSdkExternal:
         redis.hset = AsyncMock()
         redis.expire = AsyncMock()
 
-        repo = ConfigRepository(session, org_id=org, is_superuser=True)
+        repo = ConfigRepository(session, org_id=org, bypass_resource_admission=True)
         with patch(
             "src.core.cache.redis_client.get_shared_redis",
             new=AsyncMock(return_value=redis),

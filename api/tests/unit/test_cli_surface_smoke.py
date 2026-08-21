@@ -155,7 +155,7 @@ def test_nested_help_does_not_check_cli_version(
 
 
 EXPECTED_CRUD_COMMANDS: dict[str, set[str]] = {
-    "orgs": {"list", "get", "create", "update", "delete"},
+    "organizations": {"list", "get", "create", "update", "delete"},
     "roles": {"list", "get", "create", "update", "delete"},
     "forms": {"list", "get", "create", "update", "delete"},
     "agents": {"list", "get", "create", "update", "delete"},
@@ -163,16 +163,30 @@ EXPECTED_CRUD_COMMANDS: dict[str, set[str]] = {
     "configs": {"list", "get", "create", "update", "delete"},
     "tables": {"list", "get", "create", "update", "delete"},
     "integrations": {"list", "get", "create", "update"},
-    "workflows": {"list", "get", "update", "remap", "delete"},
+    "workflows": {
+        "list",
+        "get",
+        "validate",
+        "register",
+        "execute",
+        "update",
+        "remap",
+        "delete",
+        "grant-role",
+        "revoke-role",
+    },
     "events": {
         "list-sources",
         "get-source",
         "create-source",
         "update-source",
+        "delete-source",
         "list-subscriptions",
         "get-subscription",
-        "subscribe",
+        "create-subscription",
         "update-subscription",
+        "delete-subscription",
+        "list-webhook-adapters",
     },
 }
 

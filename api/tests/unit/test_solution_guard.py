@@ -44,6 +44,38 @@ def test_message_is_the_locked_wording() -> None:
     )
 
 
+def test_builder_control_plane_rows_are_not_deploy_managed() -> None:
+    """Builder state remains writable while portable Solution entities stay locked."""
+    from src.models.orm.solution_build_jobs import SolutionBuildJob
+    from src.models.orm.solution_builder import (
+        SolutionBuilderProject,
+        SolutionBuilderSession,
+        SolutionGlobalOperationChange,
+        SolutionGlobalWorkspaceApply,
+        SolutionSourceRevision,
+        SolutionUserGrant,
+    )
+    from src.services.solutions.guard import _instance_is_managed
+
+    solution_id = uuid.uuid4()
+    operational_rows = [
+        SolutionBuildJob(solution_id=solution_id),
+        SolutionBuilderProject(solution_id=solution_id),
+        SolutionUserGrant(solution_id=solution_id, user_id=uuid.uuid4()),
+        SolutionGlobalWorkspaceApply(solution_id=solution_id),
+        SolutionGlobalOperationChange(
+            solution_id=solution_id,
+            operation_id="agents.create",
+            resource_type="agent",
+            payload={"name": "staged"},
+        ),
+        SolutionSourceRevision(solution_id=solution_id),
+        SolutionBuilderSession(solution_id=solution_id),
+    ]
+
+    assert all(not _instance_is_managed(row) for row in operational_rows)
+
+
 @pytest.mark.e2e
 class TestAssertEntityIdNotSolutionManaged:
     async def test_raw_lookup_rejects_managed_row(self, db_session) -> None:
@@ -84,6 +116,73 @@ class TestAssertEntityIdNotSolutionManaged:
         await assert_entity_id_not_solution_managed(db, Workflow, wf_id)
         # Missing row — no raise (caller's own 404 handling applies).
         await assert_entity_id_not_solution_managed(db, Workflow, uuid.uuid4())
+
+
+@pytest.mark.e2e
+class TestWorkspacePathSolutionGuard:
+    async def _managed_app(self, db, repo_path: str) -> None:
+        from src.models.orm.applications import Application
+        from src.models.orm.solutions import Solution
+
+        solution = Solution(
+            id=uuid.uuid4(),
+            slug=f"path-{uuid.uuid4().hex[:8]}",
+            name="Path guard",
+            organization_id=None,
+        )
+        db.add(solution)
+        await db.flush()
+        db.add(
+            Application(
+                id=uuid.uuid4(),
+                name=f"app_{uuid.uuid4().hex[:8]}",
+                slug=f"app-{uuid.uuid4().hex[:8]}",
+                organization_id=None,
+                solution_id=solution.id,
+                repo_path=repo_path,
+                created_by="system",
+            )
+        )
+        await db.flush()
+
+    async def test_file_inside_managed_app_is_rejected(self, db_session) -> None:
+        from src.services.solutions.guard import (
+            assert_workspace_path_not_solution_managed,
+        )
+
+        await self._managed_app(db_session, "apps/managed")
+        with pytest.raises(HTTPException) as exc:
+            await assert_workspace_path_not_solution_managed(
+                db_session,
+                "apps/managed/pages/index.tsx",
+            )
+        assert exc.value.status_code == 409
+        assert exc.value.detail == SOLUTION_MANAGED_MESSAGE
+
+    async def test_recursive_parent_of_managed_app_is_rejected(self, db_session) -> None:
+        from src.services.solutions.guard import (
+            assert_workspace_path_not_solution_managed,
+        )
+
+        await self._managed_app(db_session, "apps/managed-child")
+        with pytest.raises(HTTPException) as exc:
+            await assert_workspace_path_not_solution_managed(
+                db_session,
+                "apps",
+                recursive=True,
+            )
+        assert exc.value.detail == SOLUTION_MANAGED_MESSAGE
+
+    async def test_unmanaged_path_is_allowed(self, db_session) -> None:
+        from src.services.solutions.guard import (
+            assert_workspace_path_not_solution_managed,
+        )
+
+        await self._managed_app(db_session, "apps/managed-other")
+        await assert_workspace_path_not_solution_managed(
+            db_session,
+            "apps/loose/pages/index.tsx",
+        )
 
 
 @pytest.fixture(autouse=True)
@@ -172,6 +271,35 @@ class TestBeforeFlushBackstop:
         with pytest.raises(SolutionManagedWriteError):
             await db.flush()
         await db.rollback()
+
+    async def test_global_operation_change_bookkeeping_is_allowed(self, db_session) -> None:
+        from src.models.orm.solution_builder import SolutionGlobalOperationChange
+        from src.models.orm.solutions import Solution
+
+        db = db_session
+        sol = Solution(
+            id=uuid.uuid4(),
+            slug=f"bfgo-{uuid.uuid4().hex[:8]}",
+            name="Global operation bookkeeping",
+            organization_id=None,
+        )
+        db.add(sol)
+        await db.flush()
+        row = SolutionGlobalOperationChange(
+            solution_id=sol.id,
+            operation_id="agents.create",
+            resource_type="agent",
+            payload={"name": "staged"},
+        )
+        db.add(row)
+        await db.flush()
+
+        row.state = "applying"
+        await db.flush()
+        row.state = "applied"
+        row.resource_id = str(uuid.uuid4())
+        row.applied_state = {"id": row.resource_id, "name": "staged"}
+        await db.flush()
 
     async def test_deploy_core_upsert_is_allowed(self, db_session) -> None:
         """Deploy's Core update()/insert() path must NOT be blocked by the

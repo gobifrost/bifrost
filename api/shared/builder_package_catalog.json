@@ -1,0 +1,15 @@
+{
+  "@tailwindcss/vite": "4.3.1",
+  "@vitejs/plugin-react": "4.2.0",
+  "class-variance-authority": "0.7.0",
+  "clsx": "2.1.1",
+  "lucide-react": "0.400.0",
+  "react": "18.2.0",
+  "react-dom": "18.2.0",
+  "react-router-dom": "6.22.0",
+  "tailwind-merge": "2.5.4",
+  "tailwindcss": "4.3.1",
+  "tw-animate-css": "1.2.0",
+  "typescript": "5.4.5",
+  "vite": "5.2.0"
+}

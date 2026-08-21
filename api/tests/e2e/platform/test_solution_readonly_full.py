@@ -61,6 +61,7 @@ def test_solution_managed_trigger_is_locked(e2e_client, platform_admin):
     sid = _solution(e2e_client, headers, f"rofull-evt-{uuid.uuid4().hex[:8]}")
     wf_id = str(uuid.uuid4())
     es_id = str(uuid.uuid4())
+    sub_id = str(uuid.uuid4())
     slug = uuid.uuid4().hex[:8]
     dep = e2e_client.post(f"/api/solutions/{sid}/deploy", headers=headers, json={
         "python_files": {"workflows/w.py": "from bifrost import workflow\n@workflow\nasync def w():\n    return {}\n"},
@@ -72,14 +73,16 @@ def test_solution_managed_trigger_is_locked(e2e_client, platform_admin):
             "id": es_id, "name": f"nightly_{slug}", "source_type": "schedule",
             "cron_expression": "0 9 * * *", "timezone": "UTC",
             "subscriptions": [{
-                "id": str(uuid.uuid4()), "target_type": "workflow",
+                "id": sub_id, "target_type": "workflow",
                 "workflow_id": wf_id,
             }],
         }],
     })
     dep = wait_for_deploy(e2e_client, dep, headers)
     assert dep.status_code in (200, 201), dep.text
+    real_wf = str(solution_entity_id(UUID(sid), UUID(wf_id)))
     real_es = str(solution_entity_id(UUID(sid), UUID(es_id)))
+    real_sub = str(solution_entity_id(UUID(sid), UUID(sub_id)))
 
     patch = e2e_client.patch(
         f"/api/events/sources/{real_es}", headers=headers, json={"name": "hijack"}
@@ -89,6 +92,30 @@ def test_solution_managed_trigger_is_locked(e2e_client, platform_admin):
 
     delete = e2e_client.delete(f"/api/events/sources/{real_es}", headers=headers)
     assert delete.status_code == 409, f"{delete.status_code} {delete.text}"
+
+    create_sub = e2e_client.post(
+        f"/api/events/sources/{real_es}/subscriptions",
+        headers=headers,
+        json={"target_type": "workflow", "workflow_id": real_wf},
+    )
+    assert create_sub.status_code == 409, (
+        f"{create_sub.status_code} {create_sub.text}"
+    )
+
+    patch_sub = e2e_client.patch(
+        f"/api/events/sources/{real_es}/subscriptions/{real_sub}",
+        headers=headers,
+        json={"is_active": False},
+    )
+    assert patch_sub.status_code == 409, f"{patch_sub.status_code} {patch_sub.text}"
+
+    delete_sub = e2e_client.delete(
+        f"/api/events/sources/{real_es}/subscriptions/{real_sub}",
+        headers=headers,
+    )
+    assert delete_sub.status_code == 409, (
+        f"{delete_sub.status_code} {delete_sub.text}"
+    )
 
 
 def test_workflow_secondary_mutations_are_locked(e2e_client, platform_admin):

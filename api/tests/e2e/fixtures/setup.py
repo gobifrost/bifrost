@@ -413,12 +413,11 @@ def provider_org_user(
     e2e_client: httpx.Client,
     platform_admin: E2EUser,
 ) -> E2EUser:
-    """A regular (non-superuser) user inside the seeded provider org.
+    """A regular provider-org member provisioned as Platform Operator.
 
-    This is the caller archetype the C2 bypass rule was added for —
-    e.g. a non-admin Covi employee. ``is_superuser=False`` plus
-    ``Organization.is_provider=True`` should grant the same scope-bypass
-    as a platform admin: target any org, target global, list cross-org.
+    The default Role assignment covers Managed organizations only. Provider
+    membership itself grants nothing and does not expose Platform/Global or
+    the provider organization's own resources.
     """
     user = E2EUser(
         email="member@provider.gobifrost.com",

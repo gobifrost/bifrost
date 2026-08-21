@@ -62,6 +62,10 @@ def _patches(captured: dict, user):
             "src.services.mcp_server.auth.resolve_external_claim",
             new=AsyncMock(return_value=user.is_external),
         ),
+        patch(
+            "src.services.mcp_server.auth.get_user_capabilities",
+            new=AsyncMock(return_value=["solutions.build"]),
+        ),
     ]
 
 
@@ -121,6 +125,7 @@ async def test_auth_code_grant_stamps_is_external():
 
     assert "token_data" in captured, "create_access_token was never called"
     assert captured["token_data"].get("is_external") is True
+    assert captured["token_data"].get("scopes") == ["solutions.build"]
 
 
 @pytest.mark.asyncio
@@ -148,3 +153,4 @@ async def test_refresh_grant_stamps_is_external():
 
     assert "token_data" in captured, "create_access_token was never called"
     assert captured["token_data"].get("is_external") is True
+    assert captured["token_data"].get("scopes") == ["solutions.build"]

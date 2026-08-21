@@ -25,6 +25,7 @@ import {
 	PopoverTrigger,
 } from "@/components/ui/popover";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useAdministrativeBoundary } from "@/hooks/useAdministrativeBoundary";
 import type { components } from "@/lib/v1";
 
 type Organization = components["schemas"]["OrganizationPublic"];
@@ -63,7 +64,11 @@ export function OrganizationSelect({
 	triggerClassName,
 	contentClassName,
 }: OrganizationSelectProps) {
-	const { data: organizations, isLoading } = useOrganizations();
+	const administrativeBoundary =
+		useAdministrativeBoundary("organizations.read");
+	const { data: organizations, isLoading } = useOrganizations({
+		boundary: administrativeBoundary,
+	});
 	const [open, setOpen] = useState(false);
 
 	const selectedOrg = organizations?.find(

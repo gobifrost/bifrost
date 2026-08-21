@@ -41,10 +41,16 @@ from src.models.contracts.agents import (
 from src.models.enums import MessageRole
 from src.models.orm import Artifact, Agent, Conversation, Message, MessageAttachment
 from src.services.agent_executor import AgentExecutor
+from src.services.authorization import CurrentAuthorizationContext
+from src.services.agent_router import chat_agent_repository_scope
 from src.services.chat_attachments import (
     MAX_FILES_PER_MESSAGE,
     ChatAttachmentError,
     ChatAttachmentService,
+)
+from src.services.builder.conversation_access import (
+    BUILDER_CONVERSATION_CHANNEL,
+    can_access_conversation,
 )
 
 logger = logging.getLogger(__name__)
@@ -108,6 +114,7 @@ async def create_conversation(
     request: ConversationCreate,
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> ConversationPublic:
     """Create a new conversation, optionally with an agent."""
     agent = None
@@ -129,7 +136,7 @@ async def create_conversation(
             )
 
         # Check access based on agent's access level
-        has_access = await _check_agent_access(db, user, agent)
+        has_access = await _check_agent_access(db, user, agent, authorization)
         if not has_access:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -230,11 +237,15 @@ async def get_conversation(
         select(Conversation)
         .options(selectinload(Conversation.agent), selectinload(Conversation.messages))
         .where(Conversation.id == conversation_id)
-        .where(Conversation.user_id == user.user_id)
     )
     conversation = result.scalar_one_or_none()
 
-    if not conversation:
+    if not conversation or not await can_access_conversation(
+        db,
+        conversation=conversation,
+        principal=user,
+        action="view",
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Conversation {conversation_id} not found",
@@ -448,10 +459,14 @@ async def upload_attachments(
         await db.execute(
             select(Conversation)
             .where(Conversation.id == conversation_id)
-            .where(Conversation.user_id == user.user_id)
         )
     ).scalar_one_or_none()
-    if conversation is None:
+    if conversation is None or not await can_access_conversation(
+        db,
+        conversation=conversation,
+        principal=user,
+        action="edit",
+    ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation not found")
     if len(files) > MAX_FILES_PER_MESSAGE:
         raise HTTPException(
@@ -506,14 +521,20 @@ async def delete_unbound_attachment(
     attachment = (
         await db.execute(
             select(MessageAttachment)
-            .join(Conversation, Conversation.id == MessageAttachment.conversation_id)
             .where(MessageAttachment.artifact_id == attachment_id)
             .where(MessageAttachment.conversation_id == conversation_id)
             .where(MessageAttachment.message_id.is_(None))
-            .where(Conversation.user_id == user.user_id)
         )
     ).scalar_one_or_none()
     if attachment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+    conversation = await db.get(Conversation, conversation_id)
+    if conversation is None or not await can_access_conversation(
+        db,
+        conversation=conversation,
+        principal=user,
+        action="edit",
+    ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
 
     from src.services.artifacts import ArtifactService
@@ -540,14 +561,20 @@ async def get_attachment_content(
     attachment = (
         await db.execute(
             select(MessageAttachment)
-            .join(Conversation, Conversation.id == MessageAttachment.conversation_id)
             .where(MessageAttachment.artifact_id == attachment_id)
             .where(MessageAttachment.conversation_id == conversation_id)
-            .where(Conversation.user_id == user.user_id)
             .limit(1)
         )
     ).scalar_one_or_none()
     if attachment is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+    conversation = await db.get(Conversation, conversation_id)
+    if conversation is None or not await can_access_conversation(
+        db,
+        conversation=conversation,
+        principal=user,
+        action="view",
+    ):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
 
     from src.services.artifacts import ArtifactService
@@ -602,11 +629,15 @@ async def get_messages(
     result = await db.execute(
         select(Conversation)
         .where(Conversation.id == conversation_id)
-        .where(Conversation.user_id == user.user_id)
     )
     conversation = result.scalar_one_or_none()
 
-    if not conversation:
+    if not conversation or not await can_access_conversation(
+        db,
+        conversation=conversation,
+        principal=user,
+        action="view",
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Conversation {conversation_id} not found",
@@ -687,6 +718,7 @@ async def send_message(
     request: ChatRequest,
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> ChatResponse:
     """
     Send a message to a conversation (non-streaming).
@@ -701,21 +733,44 @@ async def send_message(
             selectinload(Conversation.agent).selectinload(Agent.delegated_agents),
         )
         .where(Conversation.id == conversation_id)
-        .where(Conversation.user_id == user.user_id)
     )
     conversation = result.scalar_one_or_none()
 
-    if not conversation:
+    if not conversation or not await can_access_conversation(
+        db,
+        conversation=conversation,
+        principal=user,
+        action="edit",
+    ):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Conversation {conversation_id} not found",
         )
-
-    if conversation.agent and not await _check_agent_access(db, user, conversation.agent):
+    if conversation.channel == BUILDER_CONVERSATION_CHANNEL:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You don't have access to this agent",
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Builder conversations must be changed through a Builder turn.",
         )
+
+    if conversation.agent:
+        org_id, is_superuser = chat_agent_repository_scope(
+            user=user,
+            authorization_context=authorization,
+        )
+        from src.repositories.agents import AgentRepository
+
+        repo = AgentRepository(
+            db,
+            org_id=org_id,
+            user_id=user.user_id,
+            bypass_resource_roles=is_superuser,
+            is_external=user.is_external,
+        )
+        if await repo.get_agent_with_access_check(conversation.agent.id) is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have access to this agent",
+            )
 
     # Agent is now optional - agentless chat uses default system prompt
 
@@ -738,6 +793,7 @@ async def send_message(
         user_message=request.message,
         stream=False,
         user=user,
+        authorization_context=authorization,
         attachment_ids=request.attachment_ids,
         model_tier=request.model_tier,
     ):
@@ -777,7 +833,12 @@ async def send_message(
 # =============================================================================
 
 
-async def _check_agent_access(db: DbSession, user, agent: Agent) -> bool:
+async def _check_agent_access(
+    db: DbSession,
+    user,
+    agent: Agent,
+    authorization: CurrentAuthorizationContext,
+) -> bool:
     """Check if user has access to an agent.
 
     Delegates to ``AgentRepository.get(id=...)`` — the same gate the UI
@@ -791,11 +852,15 @@ async def _check_agent_access(db: DbSession, user, agent: Agent) -> bool:
     """
     from src.repositories.agents import AgentRepository
 
+    org_id, bypass_resource_roles = chat_agent_repository_scope(
+        user=user,
+        authorization_context=authorization,
+    )
     repo = AgentRepository(
         db,
-        org_id=user.organization_id,
+        org_id=org_id,
         user_id=user.user_id,
-        is_superuser=user.is_platform_admin,
+        bypass_resource_roles=bypass_resource_roles,
         is_external=user.is_external,
     )
     accessible = await repo.get(id=agent.id)

@@ -26,6 +26,7 @@ from typing import Literal, Sequence
 from uuid import UUID
 
 from sqlalchemy import false, func, or_, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.core.log_safety import log_safe
@@ -57,6 +58,26 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
     model = Workflow
     role_table = WorkflowRole
     role_entity_id_column = "workflow_id"
+
+    def __init__(
+        self,
+        session: AsyncSession,
+        org_id: UUID | str | None,
+        user_id: UUID | str | None = None,
+        *,
+        bypass_resource_roles: bool = False,
+        is_external: bool = False,
+    ):
+        """Initialize Workflow access with explicit repository admission semantics."""
+
+        self.bypass_resource_roles = bypass_resource_roles
+        super().__init__(
+            session,
+            org_id,
+            user_id=user_id,
+            bypass_resource_admission=bypass_resource_roles,
+            is_external=is_external,
+        )
 
     # ==========================================================================
     # Identifier Resolution
@@ -157,12 +178,13 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
                 Workflow.solution_id == solution_scope,
                 Workflow.is_active.is_(True),
             )
+            stmt = self._apply_solution_visibility(stmt)
             # The own-install match is already install-gated by solution_id;
-            # org-gate it only for regular users. Superusers act cross-org
-            # here exactly as resolve_solution_table_by_name does for tables:
-            # an ORG-BOUND install's rows carry the INSTALL's org, which
-            # routinely differs from an admin caller's effective org.
-            if not self.is_superuser:
+            # org-gate it only unless the caller supplied an explicit
+            # resource-role bypass. Cross-boundary support/admin/runtime
+            # callers pass that admission intentionally; normal users keep the
+            # cascade so they cannot resolve another org's install row.
+            if not self.bypass_resource_roles:
                 stmt = self._apply_cascade_scope(stmt)
             result = await self.session.execute(stmt)
             own = result.scalar_one_or_none()
@@ -194,21 +216,19 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
             return None
 
         if solution_scope is not None:
-            # Own-install first, WITHOUT the caller-org cascade for superusers:
-            # the match is already install-gated by solution_id, and an
-            # ORG-BOUND install's rows carry the INSTALL's org — which
-            # routinely differs from an admin caller's effective org (a demo/
-            # support admin driving a customer install saw 404s here while
-            # global installs, whose rows have organization_id NULL, passed).
-            # Regular users keep the cascade: their org must be the install's
-            # (the cross-org negative below relies on it).
+            # Own-install first. The match is already install-gated by
+            # solution_id. Cross-boundary support/admin/runtime callers pass an
+            # explicit resource-role bypass so an org-bound install's row can
+            # be resolved from a support context; normal users keep the cascade
+            # so their org must be the install's.
             own_stmt = select(Workflow).where(
                 Workflow.path == path,
                 Workflow.function_name == function_name,
                 Workflow.is_active.is_(True),
                 Workflow.solution_id == solution_scope,
             )
-            if not self.is_superuser:
+            own_stmt = self._apply_solution_visibility(own_stmt)
+            if not self.bypass_resource_roles:
                 own_stmt = self._apply_cascade_scope(own_stmt)
             own_row = (await self.session.execute(own_stmt)).scalars().first()
             if own_row is not None:
@@ -329,6 +349,7 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
             .where(Workflow.type == "tool")
             .options(selectinload(Workflow.organization))
         )
+        stmt = self._apply_solution_visibility(stmt)
         if active_only:
             stmt = stmt.where(Workflow.is_active.is_(True))
 
@@ -436,12 +457,13 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
         Note: Returns workflows across all organizations (system-level access).
         Endpoint routing needs visibility of all endpoint-enabled workflows.
         """
-        result = await self.session.execute(
+        stmt = (
             select(Workflow)
             .where(Workflow.is_active.is_(True))
             .where(Workflow.endpoint_enabled.is_(True))
             .order_by(Workflow.name)
         )
+        result = await self.session.execute(self._apply_solution_visibility(stmt))
         return result.scalars().all()
 
     async def get_by_category(self, category: str) -> Sequence[Workflow]:
@@ -449,20 +471,19 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
 
         Note: Returns workflows across all organizations (system-level access).
         """
-        result = await self.session.execute(
+        stmt = (
             select(Workflow)
             .where(Workflow.is_active.is_(True))
             .where(Workflow.category == category)
             .order_by(Workflow.name)
         )
+        result = await self.session.execute(self._apply_solution_visibility(stmt))
         return result.scalars().all()
 
     async def count_active(self) -> int:
         """Count all active workflows."""
-        result = await self.session.execute(
-            select(func.count(Workflow.id))
-            .where(Workflow.is_active.is_(True))
-        )
+        stmt = select(func.count(Workflow.id)).where(Workflow.is_active.is_(True))
+        result = await self.session.execute(self._apply_solution_visibility(stmt))
         return result.scalar() or 0
 
     async def search(
@@ -523,12 +544,13 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
         Note: Returns workflow regardless of organization (system-level access).
         API key authentication bypasses org scoping by design.
         """
-        result = await self.session.execute(
+        stmt = (
             select(Workflow)
             .where(Workflow.api_key_hash == key_hash)
             .where(Workflow.api_key_enabled.is_(True))
             .where(Workflow.is_active.is_(True))
         )
+        result = await self.session.execute(self._apply_solution_visibility(stmt))
         return result.scalar_one_or_none()
 
     async def set_api_key(
@@ -584,12 +606,13 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
         Returns:
             Workflow if found, active, and endpoint-enabled; None otherwise
         """
-        result = await self.session.execute(
+        stmt = (
             select(Workflow)
             .where(Workflow.id == workflow_id)
             .where(Workflow.endpoint_enabled.is_(True))
             .where(Workflow.is_active.is_(True))
         )
+        result = await self.session.execute(self._apply_solution_visibility(stmt))
         return result.scalar_one_or_none()
 
     async def get_endpoint_workflow_by_name(self, name: str) -> Workflow | None:
@@ -609,12 +632,13 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
             ValueError: If multiple endpoint-enabled workflows have the same name
                         (includes file paths for debugging)
         """
-        result = await self.session.execute(
+        stmt = (
             select(Workflow)
             .where(Workflow.name == name)
             .where(Workflow.endpoint_enabled.is_(True))
             .where(Workflow.is_active.is_(True))
         )
+        result = await self.session.execute(self._apply_solution_visibility(stmt))
         workflows = list(result.scalars().all())
 
         if len(workflows) == 0:
@@ -654,7 +678,7 @@ class WorkflowRepository(OrgScopedRepository[Workflow]):
         if workflow_id:
             stmt = stmt.where(Workflow.id == workflow_id)
 
-        result = await self.session.execute(stmt)
+        result = await self.session.execute(self._apply_solution_visibility(stmt))
         workflow = result.scalar_one_or_none()
 
         if workflow:

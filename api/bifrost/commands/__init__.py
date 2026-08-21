@@ -1,6 +1,6 @@
 """CLI entity-mutation command package.
 
-Each module in this package defines a Click sub-group (``bifrost orgs ...``,
+Each module in this package defines a Click sub-group (``bifrost organizations ...``,
 ``bifrost roles ...``, etc.) that issues dedicated commands for mutating a
 specific entity type. The command surface and MCP parity tool surface are
 peers — both generate their parameter shape from the DTO-driven helpers in
@@ -25,7 +25,9 @@ from .events import events_group
 from .files import files_group
 from .forms import forms_group
 from .integrations import integrations_group
+from .knowledge import knowledge_group
 from .orgs import orgs_group
+from .platform_jobs import platform_jobs_group
 from .policy_rules import policy_rule_group
 from .requirements import requirements_group
 from .roles import roles_group
@@ -35,7 +37,7 @@ from .workflows import workflows_group
 # Map first-arg subcommand name to Click group. Argparse-style ``main`` in
 # ``bifrost.cli`` consults this table and hands off ``args[1:]`` to the group.
 ENTITY_GROUPS: dict[str, click.Group] = {
-    "orgs": orgs_group,
+    "organizations": orgs_group,
     "roles": roles_group,
     "workflows": workflows_group,
     "forms": forms_group,
@@ -43,12 +45,14 @@ ENTITY_GROUPS: dict[str, click.Group] = {
     "apps": apps_group,
     "claims": claims_group,
     "integrations": integrations_group,
+    "knowledge": knowledge_group,
     "configs": configs_group,
     "tables": tables_group,
     "events": events_group,
     "files": files_group,
     "requirements": requirements_group,
-    "policy-rule": policy_rule_group,
+    "policy-rules": policy_rule_group,
+    "platform-jobs": platform_jobs_group,
 }
 
 

@@ -67,10 +67,10 @@ class RabbitMQConnection:
             async with self._connection_pool.acquire() as connection:
                 return await connection.channel()
 
-        # Each consumer holds a connection, so pool size must be >= number of consumers
-        # 5 consumers (workflow, package-install, agent-run, summarize, tune-chat) + 2 headroom
-        self._connection_pool = Pool(get_connection, max_size=7)
-        self._channel_pool = Pool(get_channel, max_size=10)
+        # Each consumer holds a connection, so pool size must be >= the Worker
+        # consumer count. Keep two spare connections for publishers/probes.
+        self._connection_pool = Pool(get_connection, max_size=10)
+        self._channel_pool = Pool(get_channel, max_size=11)
 
         logger.info("RabbitMQ connection pools initialized")
 

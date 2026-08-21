@@ -10,6 +10,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { fireEvent, renderWithProviders, screen, within } from "@/test-utils";
 
+vi.mock("@/hooks/useAdministrativeBoundary", () => ({
+	useAdministrativeBoundary: () => "platform",
+}));
+
 // -----------------------------------------------------------------------------
 // Mocks
 // -----------------------------------------------------------------------------

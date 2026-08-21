@@ -39,6 +39,7 @@ export interface AuthUser {
 	isSuperuser: boolean;
 	organizationId: string | null;
 	roles: string[];
+	capabilities: string[];
 }
 
 // Login response with MFA state
@@ -62,6 +63,8 @@ interface AuthContextValue {
 	isPlatformAdmin: boolean;
 	isOrgUser: boolean;
 	hasRole: (role: string) => boolean;
+	/** Navigation hint only; APIs re-evaluate capabilities in an exact boundary. */
+	hasCapability: (capability: string) => boolean;
 
 	// Actions
 	login: (email: string, password: string) => Promise<LoginResult>;
@@ -96,6 +99,7 @@ interface JwtPayload {
 	is_superuser?: boolean;
 	org_id?: string | null;
 	roles?: string[];
+	scopes?: string[];
 	exp?: number;
 }
 
@@ -133,6 +137,7 @@ function extractUser(payload: JwtPayload): AuthUser {
 		isSuperuser,
 		organizationId,
 		roles: payload.roles || [],
+		capabilities: payload.scopes || [],
 	};
 }
 
@@ -461,6 +466,17 @@ export function AuthProvider({ children }: AuthProviderProps) {
 			isPlatformAdmin: user?.isSuperuser ?? false,
 			isOrgUser: !user?.isSuperuser && user?.organizationId != null,
 			hasRole: (role: string) => user?.roles.includes(role) ?? false,
+			hasCapability: (capability: string) => {
+				const capabilities = user?.capabilities ?? [];
+				if (capabilities.includes("platform.superuser")) return true;
+				if (capabilities.includes(capability)) return true;
+				if (capability.endsWith(".read")) {
+					return capabilities.includes(
+						`${capability.slice(0, -".read".length)}.readwrite`,
+					);
+				}
+				return false;
+			},
 			login,
 			loginWithMfa,
 			loginWithOAuth,

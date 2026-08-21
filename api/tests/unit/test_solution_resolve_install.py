@@ -135,14 +135,24 @@ def test_deploy_unbound_workspace_lists_ambiguous_install_options(tmp_path, monk
     (tmp_path / "bifrost.solution.yaml").write_text("slug: s\nname: S\n")
 
     class _FakeClient:
+        organization = {"id": "org-1"}
+
         async def get(self, path, **kwargs):
             assert path == "/api/solutions"
             return _Resp(
                 200,
                 body={
                     "solutions": [
-                        {"id": "org-install", "slug": "s", "organization_id": "org-1"},
-                        {"id": "global-install", "slug": "s", "organization_id": None},
+                        {
+                            "id": "org-install-a",
+                            "slug": "s",
+                            "organization_id": "org-1",
+                        },
+                        {
+                            "id": "org-install-b",
+                            "slug": "s",
+                            "organization_id": "org-1",
+                        },
                     ]
                 },
             )
@@ -157,9 +167,9 @@ def test_deploy_unbound_workspace_lists_ambiguous_install_options(tmp_path, monk
     result = CliRunner().invoke(solution_group, ["deploy"])
 
     assert result.exit_code != 0
-    assert "matches multiple installs" in result.output
-    assert "--solution org-install  (org org-1)" in result.output
-    assert "--solution global-install  (global)" in result.output
+    assert "Slug 's' matches multiple installs" in result.output
+    assert "--solution org-install-a  (org org-1)" in result.output
+    assert "--solution org-install-b  (org org-1)" in result.output
 
 
 class _MissingInstallDeployClient:

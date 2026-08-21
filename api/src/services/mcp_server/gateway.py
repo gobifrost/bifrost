@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
@@ -23,6 +24,7 @@ from src.models.orm.agent_runs import AgentRun
 from src.models.orm.executions import Execution
 from src.models.orm.external_mcp import MCPConnection, MCPServer
 from src.repositories.agents import AgentRepository
+from src.services.agent_execution_profile import AgentExecutionProfile
 from src.services.execution.agent_helpers import (
     find_delegated_agent,
     parse_mcp_tool_name,
@@ -53,6 +55,8 @@ GatewayToolSource = Literal[
     "workflow",
     "delegation",
     "external_mcp",
+    "builder_workspace",
+    "agent_skill",
 ]
 
 
@@ -108,15 +112,14 @@ class ResolvedGatewayTool:
 class AgentToolSnapshot:
     """Accessible agent plus its live, filtered tool catalog."""
 
-    agent: Agent
+    agent: AgentExecutionProfile
     tools: list[ResolvedGatewayTool]
+    builder: bool = False
+    builder_session_id: UUID | None = None
 
 
 def _json_pointer(path: Any) -> str:
-    parts = [
-        str(part).replace("~", "~0").replace("/", "~1")
-        for part in path
-    ]
+    parts = [str(part).replace("~", "~0").replace("/", "~1") for part in path]
     return "/" + "/".join(parts) if parts else "/"
 
 
@@ -207,6 +210,7 @@ def _serialized_size(value: Any) -> int:
 def _search_again_guidance(
     agent_id: str,
     *,
+    builder_session_id: UUID | None,
     complete: bool,
     query: str | None,
 ) -> str | None:
@@ -217,10 +221,15 @@ def _search_again_guidance(
         if query and query.strip()
         else "a query describing the missing capability"
     )
+    selector = (
+        f"builder_session_id='{builder_session_id}'"
+        if builder_session_id is not None
+        else f"agent_id='{agent_id}'"
+    )
     return (
         "This is not the agent's full tool catalog. Call "
         "bifrost_search_capabilities again with "
-        f"agent_id='{agent_id}' and {qualifier}."
+        f"{selector} and {qualifier}."
     )
 
 
@@ -240,21 +249,48 @@ class MCPAgentGatewayService:
             session,
             org_id=self.context.org_id,
             user_id=self.context.user_id,
-            is_superuser=self.context.is_platform_admin,
+            bypass_resource_roles=bool(getattr(self.context, "resource_gate_bypass", False)),
             is_external=self.context.is_external,
         )
+
+    def _boundary_filter_type(self) -> OrgFilterType | None:
+        boundary = getattr(self.context, "authorization_boundary", None)
+        if boundary == "platform":
+            return OrgFilterType.GLOBAL_ONLY
+        if isinstance(boundary, str) and boundary.startswith("organization:"):
+            return OrgFilterType.ORG_PLUS_GLOBAL
+        return None
 
     async def _list_accessible_agents(self) -> list[Agent]:
         from src.core.database import get_db_context
 
         async with get_db_context() as db:
             repo = self._agent_repo(db)
-            if self.context.is_platform_admin:
-                return await repo.list_all_in_scope(
+            boundary_filter = self._boundary_filter_type()
+            if boundary_filter is not None and getattr(
+                self.context,
+                "resource_gate_bypass",
+                False,
+            ):
+                ordinary_agents = await repo.list_all_in_scope(
+                    boundary_filter,
+                    active_only=True,
+                )
+            elif boundary_filter is OrgFilterType.GLOBAL_ONLY:
+                ordinary_agents = [
+                    agent
+                    for agent in await repo.list_agents(active_only=True)
+                    if agent.organization_id is None
+                ]
+            elif self.context.is_platform_admin:
+                ordinary_agents = await repo.list_all_in_scope(
                     OrgFilterType.ALL,
                     active_only=True,
                 )
-            return await repo.list_agents(active_only=True)
+            else:
+                ordinary_agents = await repo.list_agents(active_only=True)
+
+            return ordinary_agents
 
     async def accessible_agent_count(self) -> int:
         """Return the caller's live accessible-agent count."""
@@ -265,13 +301,28 @@ class MCPAgentGatewayService:
         *,
         query: str | None = None,
         agent_id: str | None = None,
+        builder_session_id: str | None = None,
         tool_ref: str | None = None,
         limit: int = 10,
     ) -> dict[str, Any]:
         """Search agents and tools, then progressively hydrate one selection."""
         bounded_limit = min(max(limit, 1), MAX_CAPABILITY_RESULTS)
+        if agent_id is not None and builder_session_id is not None:
+            raise GatewayError(
+                "INVALID_CAPABILITY_SEARCH",
+                "Select either agent_id or builder_session_id, not both.",
+                retryable=True,
+            )
         if agent_id is not None:
             snapshot = await self.get_agent_snapshot(agent_id)
+            return self._search_agent_snapshot(
+                snapshot,
+                query=query,
+                tool_ref=tool_ref,
+                limit=bounded_limit,
+            )
+        if builder_session_id is not None:
+            snapshot = await self.get_builder_snapshot(builder_session_id)
             return self._search_agent_snapshot(
                 snapshot,
                 query=query,
@@ -283,7 +334,7 @@ class MCPAgentGatewayService:
         if not normalized_query:
             raise GatewayError(
                 "INVALID_CAPABILITY_SEARCH",
-                "query is required unless agent_id is provided.",
+                "query is required unless agent_id or builder_session_id is provided.",
                 retryable=True,
             )
 
@@ -291,7 +342,9 @@ class MCPAgentGatewayService:
         for agent in await self._list_accessible_agents():
             snapshots.append(await self.get_agent_snapshot(str(agent.id)))
 
-        candidates: list[tuple[int, str, AgentToolSnapshot, ResolvedGatewayTool | None]] = []
+        candidates: list[
+            tuple[int, str, AgentToolSnapshot, ResolvedGatewayTool | None]
+        ] = []
         matching_tool_counts: dict[str, int] = {}
         for snapshot in snapshots:
             snapshot_id = str(snapshot.agent.id)
@@ -351,6 +404,7 @@ class MCPAgentGatewayService:
             budget_probe = {
                 "query": query,
                 "agent_id": None,
+                "builder_session_id": None,
                 "tool_ref": None,
                 "agents": proposed,
                 "returned_matches": proposed_returned,
@@ -369,6 +423,7 @@ class MCPAgentGatewayService:
         return {
             "query": query,
             "agent_id": None,
+            "builder_session_id": None,
             "tool_ref": None,
             "agents": agents,
             "returned_matches": returned_matches,
@@ -401,8 +456,7 @@ class MCPAgentGatewayService:
             total_matching_tools = 1
         elif query and query.strip():
             scored = [
-                (_tool_search_score(tool, query), tool)
-                for tool in snapshot.tools
+                (_tool_search_score(tool, query), tool) for tool in snapshot.tools
             ]
             scored = [item for item in scored if item[0] > 0]
             scored.sort(
@@ -434,10 +488,7 @@ class MCPAgentGatewayService:
         else:
             agent_result = self._capability_agent_result(
                 snapshot,
-                tools=[
-                    self.find_tool(snapshot, tool["tool_ref"])
-                    for tool in tools
-                ],
+                tools=[self.find_tool(snapshot, tool["tool_ref"]) for tool in tools],
                 query=query,
                 include_instructions=True,
                 total_matching_tools=total_matching_tools,
@@ -445,7 +496,14 @@ class MCPAgentGatewayService:
         has_more = total_matches > returned_matches
         return {
             "query": query,
-            "agent_id": str(snapshot.agent.id),
+            "agent_id": (
+                None if snapshot.builder else str(snapshot.agent.id)
+            ),
+            "builder_session_id": (
+                str(snapshot.builder_session_id)
+                if snapshot.builder_session_id is not None
+                else None
+            ),
             "tool_ref": tool_ref,
             "agents": [agent_result],
             "returned_matches": returned_matches,
@@ -502,7 +560,16 @@ class MCPAgentGatewayService:
             "id": agent_id,
             "name": snapshot.agent.name,
             "description": _compact_description(snapshot.agent.description),
-            "instructions": snapshot.agent.system_prompt if include_instructions else None,
+            "builder": snapshot.builder,
+            "builder_session_required": snapshot.builder,
+            "builder_session_id": (
+                str(snapshot.builder_session_id)
+                if snapshot.builder_session_id is not None
+                else None
+            ),
+            "instructions": snapshot.agent.system_prompt
+            if include_instructions
+            else None,
             "instructions_included": include_instructions,
             "matching_tools": tools,
             "total_tools": total_tools,
@@ -512,6 +579,7 @@ class MCPAgentGatewayService:
             "has_more_matches": total_matching_tools > returned_tools,
             "search_again": _search_again_guidance(
                 agent_id,
+                builder_session_id=snapshot.builder_session_id,
                 complete=complete,
                 query=query,
             ),
@@ -540,7 +608,22 @@ class MCPAgentGatewayService:
 
         async with get_db_context() as db:
             repo = self._agent_repo(db)
-            agent = await repo.get_agent_with_access_check(parsed_agent_id)
+            boundary_filter = self._boundary_filter_type()
+            if boundary_filter is not None and getattr(
+                self.context,
+                "resource_gate_bypass",
+                False,
+            ):
+                in_scope = await repo.list_all_in_scope(
+                    boundary_filter,
+                    active_only=True,
+                )
+                agent = next(
+                    (candidate for candidate in in_scope if candidate.id == parsed_agent_id),
+                    None,
+                )
+            else:
+                agent = await repo.get_agent_with_access_check(parsed_agent_id)
             if agent is None or not agent.is_active:
                 raise GatewayError(
                     "AGENT_NOT_FOUND_OR_FORBIDDEN",
@@ -553,9 +636,69 @@ class MCPAgentGatewayService:
                 caller_user_id=UUID(str(self.context.user_id)),
             )
             config = await MCPConfigService(db).get_config()
-            tools = self._resolve_gateway_tools(agent, definitions, id_map, config)
+            tools = self._resolve_gateway_tools(
+                agent,
+                definitions,
+                id_map,
+                config,
+                builder_agent=False,
+            )
 
         return AgentToolSnapshot(agent=agent, tools=tools)
+
+    async def get_builder_snapshot(
+        self,
+        builder_session_id: str,
+    ) -> AgentToolSnapshot:
+        """Resolve the maintained coding profile for one authorized session."""
+
+        from src.core.database import get_db_context
+        from src.services.builder.mcp_harness import (
+            BuilderMCPHarness,
+            BuilderMCPHarnessForbidden,
+        )
+
+        try:
+            parsed_session_id = UUID(builder_session_id)
+        except (TypeError, ValueError) as exc:
+            raise GatewayError(
+                "AGENT_NOT_FOUND_OR_FORBIDDEN",
+                "Builder session not found or you do not have access.",
+            ) from exc
+
+        async with get_db_context() as db:
+            harness = BuilderMCPHarness(
+                db,
+                user_id=UUID(str(self.context.user_id)),
+            )
+            try:
+                authorized = await harness.load_authorized_profile(
+                    builder_session_id=parsed_session_id,
+                )
+            except BuilderMCPHarnessForbidden as exc:
+                raise GatewayError(
+                    "AGENT_NOT_FOUND_OR_FORBIDDEN",
+                    "Builder session not found or you do not have access.",
+                ) from exc
+            definitions, id_map = await resolve_agent_tools(
+                authorized.profile,
+                db,
+                caller_user_id=UUID(str(self.context.user_id)),
+            )
+            config = await MCPConfigService(db).get_config()
+            tools = self._resolve_gateway_tools(
+                authorized.profile,
+                definitions,
+                id_map,
+                config,
+                builder_agent=True,
+            )
+        return AgentToolSnapshot(
+            agent=authorized.profile,
+            tools=tools,
+            builder=True,
+            builder_session_id=parsed_session_id,
+        )
 
     async def execute_agent_tool(
         self,
@@ -567,6 +710,23 @@ class MCPAgentGatewayService:
     ) -> dict[str, Any]:
         """Re-resolve, validate, and execute an agent-bound tool."""
         snapshot = await self.get_agent_snapshot(agent_id)
+        tool = self.find_tool(snapshot, tool_ref)
+        return await self.execute_tool(
+            snapshot,
+            tool,
+            arguments,
+            async_execution=async_execution,
+        )
+
+    async def execute_builder_tool(
+        self,
+        builder_session_id: str,
+        tool_ref: str,
+        arguments: dict[str, Any],
+        *,
+        async_execution: bool | None = None,
+    ) -> dict[str, Any]:
+        snapshot = await self.get_builder_snapshot(builder_session_id)
         tool = self.find_tool(snapshot, tool_ref)
         return await self.execute_tool(
             snapshot,
@@ -608,9 +768,8 @@ class MCPAgentGatewayService:
                 agent_run = agent_result.scalar_one_or_none()
 
         if execution is not None:
-            if (
-                not self.context.is_platform_admin
-                and execution.executed_by != UUID(str(self.context.user_id))
+            if not self.context.is_platform_admin and execution.executed_by != UUID(
+                str(self.context.user_id)
             ):
                 raise GatewayError(
                     "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
@@ -647,9 +806,8 @@ class MCPAgentGatewayService:
             }
 
         if agent_run is not None:
-            if (
-                not self.context.is_platform_admin
-                and agent_run.caller_user_id != str(self.context.user_id)
+            if not self.context.is_platform_admin and agent_run.caller_user_id != str(
+                self.context.user_id
             ):
                 raise GatewayError(
                     "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
@@ -685,9 +843,8 @@ class MCPAgentGatewayService:
 
         pending = await get_redis_client().get_pending_execution(execution_id)
         if pending is not None:
-            if (
-                not self.context.is_platform_admin
-                and pending.get("user_id") != str(self.context.user_id)
+            if not self.context.is_platform_admin and pending.get("user_id") != str(
+                self.context.user_id
             ):
                 raise GatewayError(
                     "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
@@ -904,47 +1061,104 @@ class MCPAgentGatewayService:
 
     def _resolve_gateway_tools(
         self,
-        agent: Agent,
+        agent: AgentExecutionProfile,
         definitions: list[ToolDefinition],
         id_map: dict[str, UUID],
         config: MCPConfig,
+        *,
+        builder_agent: bool = False,
     ) -> list[ResolvedGatewayTool]:
         resolved: list[ResolvedGatewayTool] = []
+
+        from src.services.mcp_server.tools.skill_assets import (
+            READ_SKILL_ASSET_TOOL_ID,
+        )
+
+        if builder_agent:
+            from src.services.builder.mcp_harness import (
+                BUILDER_TOOL_IDS,
+                MUTATING_BUILDER_TOOLS,
+            )
+        else:
+            BUILDER_TOOL_IDS = frozenset()
+            MUTATING_BUILDER_TOOLS = frozenset()
 
         for definition in definitions:
             source: GatewayToolSource
             source_id: UUID | None = None
             remote_tool_name: str | None = None
 
-            mcp_route = parse_mcp_tool_name(definition.name)
-            if mcp_route is not None:
-                source = "external_mcp"
-                source_id, remote_tool_name = mcp_route
-                source_identity = f"external_mcp:{source_id}:{remote_tool_name}"
-            elif definition.name == "search_knowledge":
-                source = "knowledge"
-                source_identity = f"knowledge:{definition.name}"
-            elif definition.name in (agent.system_tools or []):
-                source = "system"
-                source_identity = f"system:{definition.name}"
+            if definition.name in BUILDER_TOOL_IDS:
+                source = "builder_workspace"
+                source_identity = f"builder_workspace:{definition.name}"
+                parameters = deepcopy(definition.parameters) or {
+                    "type": "object",
+                    "properties": {},
+                }
+                properties = parameters.setdefault("properties", {})
+                required = list(parameters.get("required", []))
+                parameters["required"] = required
+                if definition.name in MUTATING_BUILDER_TOOLS:
+                    properties["finalize"] = {
+                        "type": "boolean",
+                        "default": False,
+                        "description": (
+                            "Set true only on the final mutation to validate the "
+                            "new revision and enqueue its app build."
+                        ),
+                    }
+                definition = ToolDefinition(
+                    name=definition.name,
+                    description=(
+                        f"{definition.description} Runs in the selected Builder session."
+                    ),
+                    parameters=parameters,
+                )
+            elif definition.name == READ_SKILL_ASSET_TOOL_ID:
+                # Progressive Skill loading. The execution planner injects this
+                # for a bundle-backed Agent rather than selecting it from
+                # system_tools, so without an explicit branch the classifier
+                # below would fail to place it and silently drop it — leaving a
+                # Skill whose SKILL.md references companion files the model
+                # cannot read. Bound to the selected Agent (and therefore its
+                # revision): the dispatcher resolves the bundle root from the
+                # executing Agent's context, never from caller input.
+                if not agent.bundle_path:
+                    continue
+                source = "agent_skill"
+                source_id = agent.id
+                source_identity = f"agent_skill:{agent.id}"
             else:
-                delegated = find_delegated_agent(agent, definition.name)
-                if delegated is not None:
-                    source = "delegation"
-                    source_id = delegated.id
-                    source_identity = f"delegation:{delegated.id}"
+                mcp_route = parse_mcp_tool_name(definition.name)
+                if mcp_route is not None:
+                    source = "external_mcp"
+                    source_id, remote_tool_name = mcp_route
+                    source_identity = f"external_mcp:{source_id}:{remote_tool_name}"
+                elif definition.name == "bifrost_search_knowledge":
+                    source = "knowledge"
+                    source_identity = f"knowledge:{definition.name}"
+                elif definition.name in (agent.system_tools or []):
+                    source = "system"
+                    source_identity = f"system:{definition.name}"
                 else:
-                    workflow_id = id_map.get(definition.name)
-                    if workflow_id is None:
-                        logger.warning(
-                            "Gateway could not classify resolved tool %s for agent %s",
-                            definition.name,
-                            agent.id,
-                        )
-                        continue
-                    source = "workflow"
-                    source_id = workflow_id
-                    source_identity = f"workflow:{workflow_id}"
+                    delegated = find_delegated_agent(agent, definition.name)
+                    if delegated is not None:
+                        source = "delegation"
+                        source_id = delegated.id
+                        source_identity = f"delegation:{delegated.id}"
+                    else:
+                        workflow_id = id_map.get(definition.name)
+                        if workflow_id is None:
+                            logger.warning(
+                                "Gateway could not classify resolved tool %s "
+                                "for agent %s",
+                                definition.name,
+                                agent.id,
+                            )
+                            continue
+                        source = "workflow"
+                        source_id = workflow_id
+                        source_identity = f"workflow:{workflow_id}"
 
             filter_ids = {definition.name}
             if source_id is not None:
@@ -953,9 +1167,7 @@ class MCPAgentGatewayService:
                 filter_ids & set(config.allowed_tool_ids)
             ):
                 continue
-            if config.blocked_tool_ids and (
-                filter_ids & set(config.blocked_tool_ids)
-            ):
+            if config.blocked_tool_ids and (filter_ids & set(config.blocked_tool_ids)):
                 continue
 
             tool_ref = str(
@@ -1060,9 +1272,7 @@ class MCPAgentGatewayService:
     ) -> dict[str, Any]:
         started = time.monotonic()
         resolved_async = (
-            tool.source == "delegation"
-            if async_execution is None
-            else async_execution
+            tool.source == "delegation" if async_execution is None else async_execution
         )
 
         try:
@@ -1077,6 +1287,7 @@ class MCPAgentGatewayService:
                 snapshot.agent,
                 tool,
                 arguments,
+                builder_session_id=snapshot.builder_session_id,
                 async_execution=resolved_async,
             )
         except GatewayError as exc:
@@ -1125,7 +1336,12 @@ class MCPAgentGatewayService:
             duration_ms,
         )
         response = {
-            "agent_id": str(snapshot.agent.id),
+            "agent_id": None if snapshot.builder else str(snapshot.agent.id),
+            "builder_session_id": (
+                str(snapshot.builder_session_id)
+                if snapshot.builder_session_id is not None
+                else None
+            ),
             "agent_name": snapshot.agent.name,
             "tool_ref": tool.tool_ref,
             "tool_name": tool.definition.name,
@@ -1146,13 +1362,14 @@ class MCPAgentGatewayService:
 
     async def _dispatch(
         self,
-        agent: Agent,
+        agent: AgentExecutionProfile,
         tool: ResolvedGatewayTool,
         arguments: dict[str, Any],
         *,
+        builder_session_id: UUID | None = None,
         async_execution: bool = False,
     ) -> Any:
-        if tool.source in {"system", "knowledge"}:
+        if tool.source in {"system", "knowledge", "agent_skill"}:
             return await self._dispatch_system_tool(agent, tool, arguments)
         if tool.source == "workflow":
             return await self._dispatch_workflow(
@@ -1161,6 +1378,11 @@ class MCPAgentGatewayService:
                 async_execution=async_execution,
             )
         if tool.source == "delegation":
+            if not isinstance(agent, Agent):
+                raise GatewayError(
+                    "TOOL_NOT_FOUND_OR_FORBIDDEN",
+                    "Delegation is unavailable for this capability profile.",
+                )
             return await self._dispatch_delegation(
                 agent,
                 tool,
@@ -1169,14 +1391,62 @@ class MCPAgentGatewayService:
             )
         if tool.source == "external_mcp":
             return await self._dispatch_external_mcp(tool, arguments)
+        if tool.source == "builder_workspace":
+            if builder_session_id is None:
+                raise GatewayError(
+                    "TOOL_NOT_FOUND_OR_FORBIDDEN",
+                    "Builder session is missing from this capability profile.",
+                )
+            return await self._dispatch_builder_workspace(
+                builder_session_id,
+                tool,
+                arguments,
+            )
         raise GatewayError(
             "TOOL_EXECUTION_FAILED",
             f"Unsupported tool source: {tool.source}",
         )
 
+    async def _dispatch_builder_workspace(
+        self,
+        builder_session_id: UUID,
+        tool: ResolvedGatewayTool,
+        arguments: dict[str, Any],
+    ) -> Any:
+        """Execute a Builder tool against one authorized immutable session."""
+        from src.core.database import get_db_context
+        from src.services.builder.mcp_harness import (
+            BuilderMCPHarness,
+            BuilderMCPHarnessError,
+            BuilderMCPHarnessForbidden,
+        )
+
+        async with get_db_context() as db:
+            harness = BuilderMCPHarness(
+                db,
+                user_id=UUID(str(self.context.user_id)),
+            )
+            try:
+                return await harness.execute(
+                    tool_name=tool.definition.name,
+                    builder_session_id=builder_session_id,
+                    arguments=arguments,
+                )
+            except BuilderMCPHarnessForbidden as exc:
+                raise GatewayError(
+                    "TOOL_NOT_FOUND_OR_FORBIDDEN",
+                    "Builder session not found or you do not have access.",
+                ) from exc
+            except BuilderMCPHarnessError as exc:
+                raise GatewayError(
+                    "BUILDER_WORKSPACE_ERROR",
+                    str(exc),
+                    retryable=True,
+                ) from exc
+
     async def _dispatch_system_tool(
         self,
-        agent: Agent,
+        agent: AgentExecutionProfile,
         tool: ResolvedGatewayTool,
         arguments: dict[str, Any],
     ) -> Any:
@@ -1193,14 +1463,40 @@ class MCPAgentGatewayService:
                 retryable=True,
             )
 
+        local_skill_root = getattr(agent, "skill_asset_root", None)
         context = MCPContext(
             user_id=self.context.user_id,
             org_id=self.context.org_id,
             is_platform_admin=self.context.is_platform_admin,
             is_external=self.context.is_external,
+            resource_gate_bypass=getattr(
+                self.context,
+                "resource_gate_bypass",
+                False,
+            ),
             user_email=self.context.user_email,
             user_name=self.context.user_name,
             accessible_namespaces=list(agent.knowledge_sources or []),
+            agent_id=agent.id,
+            # The Skill file reader resolves its bundle root and storage tier
+            # from the EXECUTING Agent, never from caller input, so a model
+            # cannot read another Agent's bundle by passing a crafted path.
+            # Mirrors the agent-scoped context built in server.py; bundle_in_repo
+            # is the file_sync tier that _bundle_storage keys on.
+            agent_bundle_path=agent.bundle_path,
+            agent_skill_id=(
+                agent.id
+                if agent.bundle_path and local_skill_root is None
+                else None
+            ),
+            agent_skill_in_repo=getattr(agent, "created_by", None) == "file_sync",
+            agent_skill_root=local_skill_root,
+            agent_solution_id=agent.solution_id,
+            authorization_boundary=getattr(
+                self.context,
+                "authorization_boundary",
+                None,
+            ),
         )
         result = await func(context, **arguments)
         structured = getattr(result, "structured_content", None)
@@ -1298,7 +1594,7 @@ class MCPAgentGatewayService:
                 db,
                 org_id=agent.organization_id,
                 user_id=self.context.user_id,
-                is_superuser=True,
+                bypass_resource_roles=True,
                 is_external=False,
             ).get_agent(tool.source_id)
         if delegated is None or not delegated.is_active:
@@ -1314,9 +1610,7 @@ class MCPAgentGatewayService:
             trigger_source=f"mcp_gateway:{agent.id}",
             input_data={"task": task, "_delegated_from": agent.name},
             org_id=(
-                str(delegated.organization_id)
-                if delegated.organization_id
-                else None
+                str(delegated.organization_id) if delegated.organization_id else None
             ),
             caller_user_id=str(self.context.user_id),
             caller_email=self.context.user_email,
@@ -1417,11 +1711,7 @@ class MCPAgentGatewayService:
         """Return an external MCP tool's payload without its transport envelope."""
         if result.get("is_error"):
             structured = result.get("structured_content")
-            message = (
-                structured.get("error")
-                if isinstance(structured, dict)
-                else None
-            )
+            message = structured.get("error") if isinstance(structured, dict) else None
             raise GatewayError(
                 "TOOL_EXECUTION_FAILED",
                 str(message or "External MCP tool reported an error."),

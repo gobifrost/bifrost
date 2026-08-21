@@ -17,9 +17,30 @@ from click.testing import CliRunner
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from bifrost.commands.files import files_group  # noqa: E402
+from bifrost.commands.files import _policy_authorization_headers  # noqa: E402
 
 
 _DUMMY_REQUEST = httpx.Request("POST", "https://bifrost.test/api/files/read")
+
+
+@pytest.mark.parametrize(
+    ("scope", "expected"),
+    [
+        (None, "platform"),
+        ("global", "platform"),
+        (
+            "11111111-1111-4111-8111-111111111111",
+            "organization:11111111-1111-4111-8111-111111111111",
+        ),
+    ],
+)
+def test_policy_authorization_headers_follow_policy_scope(
+    scope: str | None,
+    expected: str,
+) -> None:
+    assert _policy_authorization_headers(scope) == {
+        "X-Bifrost-Boundary": expected
+    }
 
 
 def _fake_response(body: dict, *, status: int = 200) -> httpx.Response:
@@ -32,8 +53,10 @@ def _make_mock_client(
 ) -> mock.AsyncMock:
     """Return a mock BifrostClient that records calls and replies per path."""
 
-    async def capturing_post(path, json=None):  # type: ignore[no-untyped-def]
-        captured.setdefault("calls", []).append({"path": path, "body": json})
+    async def capturing_post(path, json=None, headers=None):  # type: ignore[no-untyped-def]
+        captured.setdefault("calls", []).append(
+            {"path": path, "body": json, "headers": headers}
+        )
         body = body_by_path.get(path, {})
         if isinstance(body, httpx.Response):
             return body
@@ -70,6 +93,9 @@ class TestRead:
         assert body["path"] == "data/customers.csv"
         assert body["location"] == "workspace"
         assert body["binary"] is False
+        assert captured["calls"][0]["headers"] == {
+            "X-Bifrost-Boundary": "platform"
+        }
 
     def test_passes_location_flag(self) -> None:
         captured: dict = {}
@@ -79,6 +105,7 @@ class TestRead:
             {"/api/files/read": {"content": ""}},
         )
         assert captured["calls"][0]["body"]["location"] == "uploads"
+        assert captured["calls"][0]["headers"] is None
 
     def test_passes_custom_location_flag(self) -> None:
         captured: dict = {}
@@ -243,6 +270,49 @@ class TestWrite:
         assert payload["error"] == "file_conflict"
         assert payload["reason"] == "version_conflict"
         assert payload["current_version"] == "sha256:other"
+
+
+class TestPatch:
+    def test_patches_unique_text_with_version_guard(self) -> None:
+        captured: dict = {}
+        result = _invoke(
+            [
+                "patch",
+                "workflows/a.py",
+                "--old",
+                "old",
+                "--new",
+                "new",
+                "--expected-version",
+                "sha256:base",
+                "--force-deactivation",
+                "--json",
+            ],
+            captured,
+            {
+                "/api/files/patch": {
+                    "path": "workflows/a.py",
+                    "version": "sha256:new",
+                    "lines_changed": 1,
+                }
+            },
+        )
+
+        assert result.exit_code == 0, result.output
+        assert captured["calls"] == [
+            {
+                "path": "/api/files/patch",
+                "body": {
+                    "path": "workflows/a.py",
+                    "old_string": "old",
+                    "new_string": "new",
+                    "expected_version": "sha256:base",
+                    "force_deactivation": True,
+                },
+                "headers": {"X-Bifrost-Boundary": "platform"},
+            }
+        ]
+        assert '"version": "sha256:new"' in result.output
 
 
 class TestList:

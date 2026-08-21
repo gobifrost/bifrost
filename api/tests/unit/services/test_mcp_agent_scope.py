@@ -125,7 +125,7 @@ class TestGetToolsForAgent:
         agent.name = "Test Agent"
         agent.access_level = MagicMock()
         agent.access_level.__eq__ = lambda self, other: str(self) == str(other)
-        agent.system_tools = ["execute_workflow", "list_workflows"]
+        agent.system_tools = ["bifrost_execute_workflow", "bifrost_list_workflows"]
         agent.tools = []
         agent.roles = []
         agent.knowledge_sources = ["docs", "wiki"]
@@ -163,11 +163,11 @@ class TestGetToolsForAgent:
 
         assert result is not None
         assert result.accessible_namespaces == ["docs", "wiki"]
-        # execute_workflow and list_workflows from system_tools, plus
-        # search_knowledge auto-injected because knowledge_sources is non-empty
+        # Canonical execute/list Workflow tools from system_tools, plus
+        # bifrost_search_knowledge auto-injected because knowledge_sources is non-empty
         # (mirrors the native chat path in agent_helpers.py).
         tool_ids = {t.id for t in result.tools}
-        assert tool_ids == {"execute_workflow", "list_workflows", "search_knowledge"}
+        assert tool_ids == {"bifrost_execute_workflow", "bifrost_list_workflows", "bifrost_search_knowledge"}
 
     @pytest.mark.asyncio
     async def test_returns_none_for_nonexistent_agent(self):

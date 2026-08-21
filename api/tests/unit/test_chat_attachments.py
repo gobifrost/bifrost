@@ -8,6 +8,7 @@ from src.services.chat_attachments import (
     MAX_FILE_SIZE_BYTES,
     ChatAttachmentError,
     ChatAttachmentService,
+    validate_model_input_capabilities,
 )
 
 
@@ -29,6 +30,33 @@ def _db_with_total(total: int = 0) -> MagicMock:
 
     db.get = AsyncMock(side_effect=get)
     return db
+
+
+def test_model_input_capability_validation_covers_images_and_pdfs() -> None:
+    image = MagicMock(content_type="image/png")
+    pdf = MagicMock(content_type="application/pdf")
+
+    with pytest.raises(ChatAttachmentError, match="Builder model.*image input"):
+        validate_model_input_capabilities(
+            [image],
+            image_input=False,
+            pdf_input=True,
+            model_label="Builder model",
+        )
+    with pytest.raises(ChatAttachmentError, match="Builder model.*PDF input"):
+        validate_model_input_capabilities(
+            [pdf],
+            image_input=True,
+            pdf_input=False,
+            model_label="Builder model",
+        )
+
+    validate_model_input_capabilities(
+        [image, pdf],
+        image_input=True,
+        pdf_input=True,
+        model_label="Builder model",
+    )
 
 
 @pytest.mark.asyncio

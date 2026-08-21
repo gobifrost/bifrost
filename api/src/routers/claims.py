@@ -20,12 +20,7 @@ from shared.claims.registry import (
     find_cycle,
     referenced_claim_names,
 )
-from src.core.auth import Context, CurrentSuperuser
-from src.core.org_filter import (
-    OrgFilterType,
-    resolve_org_filter,
-    resolve_target_org,
-)
+from src.core.auth import Context
 from src.models.contracts.claims import (
     ClaimsList,
     CustomClaim as ClaimDTO,
@@ -33,32 +28,67 @@ from src.models.contracts.claims import (
     CustomClaimUpdate,
 )
 from src.models.orm.custom_claims import CustomClaim as ClaimORM
+from src.models.orm.organizations import Organization
 from src.models.orm.tables import Table
+from src.services.audit import emit_audit
+from src.services.authorization import (
+    AuthorizationBoundaryKind,
+    CurrentAuthorizationContext,
+)
+from src.services.operation_catalog import operation_route
 
 router = APIRouter(prefix="/api/claims", tags=["Claims"])
 
 
-def _resolve_target_org(ctx: Context, scope: str | None) -> UUID:
-    """Resolve the target org for write/scoped operations.
-
-    Loose Custom Claims created through this endpoint are always tied to a
-    concrete org — there is no global loose-claim create path. Superusers may
-    target any org via ``?scope=<uuid>``; non-superusers are forced to their
-    home org and ``scope`` is ignored. Solution-owned claims may be global, but
-    deploy is their writer.
-    """
+def _requested_organization_id(scope: str | None) -> UUID | None:
+    if scope is None:
+        return None
     try:
-        target = resolve_target_org(ctx.user, scope, ctx.org_id)
+        return UUID(scope)
     except ValueError as exc:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="scope must be an organization UUID",
         ) from exc
+
+
+def _resolve_target_org(
+    authorization: CurrentAuthorizationContext,
+    scope: str | None,
+) -> UUID:
+    """Resolve the target org for write/scoped operations.
+
+    Loose Custom Claims are always tied to one concrete organization. The
+    active exact Organization boundary is authoritative; Platform Admin's
+    immutable wildcard may select a target explicitly. Managed organizations
+    is collection-only and cannot identify a mutation target.
+    """
+    requested = _requested_organization_id(scope)
+    boundary = authorization.selected_boundary
+    if boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Select one organization before working with Custom Claims",
+        )
+    if boundary.kind is AuthorizationBoundaryKind.ORGANIZATION:
+        assert boundary.organization_id is not None
+        target = boundary.organization_id
+        if requested is not None and requested != target:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "scope does not match the selected Organization boundary; "
+                    f"select organization:{requested}"
+                ),
+            )
+    else:
+        target = requested
     if target is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Custom Claims must target a specific organization (set scope=<org_uuid>)",
         )
+    authorization.require_resource_boundary(target)
     return target
 
 
@@ -155,50 +185,72 @@ async def _tables_referencing_claim(
     return out
 
 
-@router.get("", response_model=ClaimsList, summary="List custom claims")
+@router.get(
+    "",
+    response_model=ClaimsList,
+    summary="List custom claims",
+    **operation_route("claims.list"),
+)
 async def list_claims(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(
         default=None,
-        description="Filter scope: omit to list across all orgs (superuser default), or pass an org UUID.",
+        description="Optional organization UUID within the active authorization boundary.",
     ),
 ) -> ClaimsList:
     """List custom claims.
 
-    Platform admins see claims across every org by default — the
-    organization column lets them filter in the UI. Non-superusers don't
-    reach this endpoint (gated by ``CurrentSuperuser``).
+    Exact Organization reads stay in that organization. Managed organizations
+    may list customer claims across the support catalog or narrow to one
+    customer. Platform has no loose Global Custom Claims.
     """
-    try:
-        filter_type, filter_org = resolve_org_filter(ctx.user, scope)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(exc),
-        ) from exc
-
+    authorization.require_operation("claims.list")
+    requested = _requested_organization_id(scope)
+    boundary = authorization.selected_boundary
     stmt = select(ClaimORM).order_by(ClaimORM.organization_id, ClaimORM.name)
-    if filter_type == OrgFilterType.GLOBAL_ONLY:
-        # Claims are always org-scoped — no rows match "global only".
-        return ClaimsList(claims=[])
-    if filter_type in (OrgFilterType.ORG_ONLY, OrgFilterType.ORG_PLUS_GLOBAL):
-        stmt = stmt.where(ClaimORM.organization_id == filter_org)
+    if boundary.kind is AuthorizationBoundaryKind.ORGANIZATION:
+        assert boundary.organization_id is not None
+        if requested is not None and requested != boundary.organization_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "scope does not match the selected Organization boundary; "
+                    f"select organization:{requested}"
+                ),
+            )
+        stmt = stmt.where(ClaimORM.organization_id == boundary.organization_id)
+    elif boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+        stmt = stmt.join(Organization, Organization.id == ClaimORM.organization_id)
+        stmt = stmt.where(Organization.is_provider.is_(False))
+        if requested is not None:
+            stmt = stmt.where(ClaimORM.organization_id == requested)
+    else:
+        if requested is None:
+            return ClaimsList(claims=[])
+        authorization.require_resource_boundary(requested)
+        stmt = stmt.where(ClaimORM.organization_id == requested)
     rows = (await ctx.db.execute(stmt)).scalars().all()
     return ClaimsList(claims=[ClaimDTO.model_validate(r) for r in rows])
 
 
-@router.get("/{name}", response_model=ClaimDTO, summary="Get a custom claim by name")
+@router.get(
+    "/{name}",
+    response_model=ClaimDTO,
+    summary="Get a custom claim by name",
+    **operation_route("claims.get"),
+)
 async def get_claim(
     name: str,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(
         default=None,
         description="Target organization scope (org UUID). Defaults to caller's home org.",
     ),
 ) -> ClaimDTO:
-    org_id = _resolve_target_org(ctx, scope)
+    authorization.require_operation("claims.get")
+    org_id = _resolve_target_org(authorization, scope)
     row = (
         await ctx.db.execute(
             select(ClaimORM).where(
@@ -218,17 +270,19 @@ async def get_claim(
     response_model=ClaimDTO,
     status_code=status.HTTP_201_CREATED,
     summary="Create a custom claim (admin only)",
+    **operation_route("claims.create"),
 )
 async def create_claim(
     body: CustomClaimCreate,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(
         default=None,
         description="Target organization scope (org UUID). Defaults to caller's home org.",
     ),
 ) -> ClaimDTO:
-    org_id = _resolve_target_org(ctx, scope)
+    authorization.require_operation("claims.create")
+    org_id = _resolve_target_org(authorization, scope)
     await _check_source_table_exists(ctx.db, org_id, body.query.table)
     await _check_known_claim_refs(
         ctx.db, org_id, body.query.where, exclude_name=body.name
@@ -256,6 +310,13 @@ async def create_claim(
     except HTTPException:
         await ctx.db.rollback()
         raise
+    await emit_audit(
+        ctx.db,
+        "claim.create",
+        resource_type="custom_claim",
+        resource_id=row.id,
+        details={"name": row.name, "organization_id": str(org_id)},
+    )
     await ctx.db.commit()
     await ctx.db.refresh(row)
     return ClaimDTO.model_validate(row)
@@ -265,18 +326,20 @@ async def create_claim(
     "/{name}",
     response_model=ClaimDTO,
     summary="Update a custom claim (admin only)",
+    **operation_route("claims.update"),
 )
 async def update_claim(
     name: str,
     body: CustomClaimUpdate,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(
         default=None,
         description="Target organization scope (org UUID). Defaults to caller's home org.",
     ),
 ) -> ClaimDTO:
-    org_id = _resolve_target_org(ctx, scope)
+    authorization.require_operation("claims.update")
+    org_id = _resolve_target_org(authorization, scope)
     row = (
         await ctx.db.execute(
             select(ClaimORM).where(
@@ -307,6 +370,13 @@ async def update_claim(
     except HTTPException:
         await ctx.db.rollback()
         raise
+    await emit_audit(
+        ctx.db,
+        "claim.update",
+        resource_type="custom_claim",
+        resource_id=row.id,
+        details={"name": row.name, "organization_id": str(org_id)},
+    )
     await ctx.db.commit()
     await ctx.db.refresh(row)
     return ClaimDTO.model_validate(row)
@@ -316,17 +386,19 @@ async def update_claim(
     "/{name}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete a custom claim (admin only)",
+    **operation_route("claims.delete"),
 )
 async def delete_claim(
     name: str,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(
         default=None,
         description="Target organization scope (org UUID). Defaults to caller's home org.",
     ),
 ) -> None:
-    org_id = _resolve_target_org(ctx, scope)
+    authorization.require_operation("claims.delete")
+    org_id = _resolve_target_org(authorization, scope)
     row = (
         await ctx.db.execute(
             select(ClaimORM).where(
@@ -348,5 +420,12 @@ async def delete_claim(
                 "tables": refs,
             },
         )
+    await emit_audit(
+        ctx.db,
+        "claim.delete",
+        resource_type="custom_claim",
+        resource_id=row.id,
+        details={"name": row.name, "organization_id": str(org_id)},
+    )
     await ctx.db.delete(row)
     await ctx.db.commit()

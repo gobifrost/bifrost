@@ -3,11 +3,12 @@ Unit tests for MCP Tools.
 
 Tests the MCP tools for the Bifrost platform:
 - get_docs: Returns unified platform documentation
-- list_workflows: Lists registered workflows
-- list_forms: Lists forms with org scoping
-- search_knowledge: Searches the knowledge base
-- list_integrations: Lists available integrations
-- execute_workflow: Executes workflows and returns results
+- bifrost_list_workflows: Lists registered workflows
+- bifrost_list_forms: Lists forms through the canonical REST API
+- bifrost_list_tables: Lists table definitions through the canonical REST API
+- bifrost_search_knowledge: Searches the knowledge base
+- bifrost_list_integrations: Lists available integrations through canonical REST
+- bifrost_execute_workflow: Executes workflows and returns an execution envelope
 
 Uses mocked database access for fast, isolated testing.
 
@@ -22,10 +23,14 @@ from uuid import UUID, uuid4
 import pytest
 
 from src.services.mcp_server.server import MCPContext
-from src.services.mcp_server.tools.forms import list_forms
-from src.services.mcp_server.tools.integrations import list_integrations
-from src.services.mcp_server.tools.knowledge import search_knowledge
-from src.services.mcp_server.tools.workflow import execute_workflow, list_workflows
+from src.services.mcp_server.tools.forms import bifrost_list_forms
+from src.services.mcp_server.tools.integrations import bifrost_list_integrations
+from src.services.mcp_server.tools.knowledge import bifrost_search_knowledge
+from src.services.mcp_server.tools.tables import bifrost_list_tables
+from src.services.mcp_server.tools.workflow import (
+    bifrost_execute_workflow,
+    bifrost_list_workflows,
+)
 
 
 # ==================== Fixtures ====================
@@ -52,229 +57,163 @@ def org_user_context() -> MCPContext:
         is_platform_admin=False,
         user_email="user@org.local",
         user_name="Org User",
+        agent_id=uuid4(),
     )
 
 
-@pytest.fixture
-def mock_workflow():
-    """Create a mock workflow ORM object."""
-    mock = MagicMock()
-    mock.id = uuid4()
-    mock.name = "test_workflow"
-    mock.description = "A test workflow for testing"
-    mock.type = "standard"
-    mock.category = "automation"
-    mock.is_tool = False
-    mock.endpoint_enabled = True
-    mock.path = "/tmp/bifrost/workspace/workflows/test_workflow.py"
-    mock.is_active = True
-    return mock
-
-
-@pytest.fixture
-def mock_form():
-    """Create a mock form ORM object."""
-    mock = MagicMock()
-    mock.id = uuid4()
-    mock.name = "Test Form"
-    mock.description = "A test form"
-    mock.workflow_id = str(uuid4())
-    mock.launch_workflow_id = None
-    mock.is_active = True
-    mock.access_level = MagicMock(value="authenticated")
-
-    # Mock fields
-    field = MagicMock()
-    field.name = "email"
-    field.label = "Email Address"
-    field.type = "email"
-    field.required = True
-    field.position = 0
-    mock.fields = [field]
-
-    return mock
-
-
-@pytest.fixture
-def mock_knowledge_document():
-    """Create a mock knowledge document."""
-    from src.repositories.knowledge import KnowledgeDocument
-
-    return KnowledgeDocument(
-        id=str(uuid4()),
-        namespace="bifrost_docs",
-        content="This is documentation about the SDK",
-        metadata={"source": "docs", "title": "SDK Guide"},
-        score=0.85,
-        organization_id=None,
-        key="sdk-guide",
-        created_at=datetime.now(timezone.utc),
-    )
-
-
-# ==================== list_workflows Tests ====================
+# ==================== canonical Workflow list wrapper ====================
 
 
 class TestListWorkflows:
-    """Tests for the list_workflows MCP tool."""
-
     @pytest.mark.asyncio
-    async def test_lists_workflows(self, org_user_context, mock_workflow):
-        """Should list registered workflows."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch(
-                "src.repositories.workflows.WorkflowRepository"
-            ) as mock_repo_cls:
-                mock_repo = MagicMock()
-                mock_repo.search = AsyncMock(return_value=[mock_workflow])
-                mock_repo.count_active = AsyncMock(return_value=1)
-                mock_repo_cls.return_value = mock_repo
-
-                result = await list_workflows(org_user_context)
-
-        # Result is a ToolResult with structured_content
-        data = result.structured_content
-        assert "workflows" in data
-        assert len(data["workflows"]) == 1
-        assert data["workflows"][0]["name"] == "test_workflow"
-        assert data["workflows"][0]["description"] == "A test workflow for testing"
-        assert data["workflows"][0]["endpoint_enabled"] is True
-        assert data["count"] == 1
-        assert data["total_count"] == 1
-
-    @pytest.mark.asyncio
-    async def test_returns_empty_list(self, org_user_context):
-        """Should return empty list when no workflows found."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch(
-                "src.repositories.workflows.WorkflowRepository"
-            ) as mock_repo_cls:
-                mock_repo = MagicMock()
-                mock_repo.search = AsyncMock(return_value=[])
-                mock_repo.count_active = AsyncMock(return_value=0)
-                mock_repo_cls.return_value = mock_repo
-
-                result = await list_workflows(org_user_context)
-
-        data = result.structured_content
-        assert data["workflows"] == []
-        assert data["count"] == 0
-        assert data["total_count"] == 0
-
-    @pytest.mark.asyncio
-    async def test_filters_by_category(self, org_user_context, mock_workflow):
-        """Should pass category filter to repository."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch(
-                "src.repositories.workflows.WorkflowRepository"
-            ) as mock_repo_cls:
-                mock_repo = MagicMock()
-                mock_repo.search = AsyncMock(return_value=[mock_workflow])
-                mock_repo.count_active = AsyncMock(return_value=1)
-                mock_repo_cls.return_value = mock_repo
-
-                await list_workflows(org_user_context, category="automation")
-
-                # Verify category was passed to search
-                mock_repo.search.assert_called_once_with(
-                    query=None,
-                    category="automation",
-                    limit=100,
-                )
-
-    @pytest.mark.asyncio
-    async def test_handles_database_error(self, org_user_context):
-        """Should return error message on database failure."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(
-                side_effect=Exception("Database connection failed")
+    async def test_forwards_filters_to_rest(self, org_user_context):
+        workflows = [{"id": str(uuid4()), "name": "test_workflow"}]
+        with (
+            patch(
+                "src.services.mcp_server.tools.workflow._resolve_scope",
+                new=AsyncMock(return_value="00000000-0000-0000-0000-000000000002"),
+            ),
+            patch(
+                "src.services.mcp_server.tools.workflow.call_rest",
+                new=AsyncMock(return_value=(200, workflows)),
+            ) as call_rest,
+        ):
+            result = await bifrost_list_workflows(
+                org_user_context,
+                query="test",
+                category="automation",
+                type="workflow",
+                scope="Customer",
             )
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            result = await list_workflows(org_user_context)
-
-        data = result.structured_content
-        assert "error" in data
-        assert "Error listing workflows" in data["error"]
+        assert result.structured_content == {
+            "workflows": workflows,
+            "count": 1,
+        }
+        call_rest.assert_awaited_once_with(
+            org_user_context,
+            "GET",
+            "/api/workflows",
+            params={
+                "query": "test",
+                "category": "automation",
+                "type": "workflow",
+                "scope": "00000000-0000-0000-0000-000000000002",
+            },
+        )
 
 
 # ==================== list_forms Tests ====================
 
 
 class TestListForms:
-    """Tests for the list_forms MCP tool."""
+    """Tests for the canonical Form list MCP tool."""
 
     @pytest.mark.asyncio
-    async def test_lists_forms_for_org_user(self, org_user_context, mock_form):
-        """Should list forms for org user."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
+    async def test_lists_forms_for_org_user(self, org_user_context):
+        """Should preserve the REST response for an organization user."""
+        forms = [
+            {
+                "id": str(uuid4()),
+                "name": "Test Form",
+                "description": "A test form",
+            }
+        ]
+        with patch(
+            "src.services.mcp_server.tools.forms.call_rest",
+            new=AsyncMock(return_value=(200, forms)),
+        ) as call_rest:
+            result = await bifrost_list_forms(org_user_context)
 
-            with patch("src.repositories.forms.FormRepository") as mock_repo_cls:
-                mock_repo = MagicMock()
-                mock_repo.list_forms = AsyncMock(return_value=[mock_form])
-                mock_repo_cls.return_value = mock_repo
-
-                result = await list_forms(org_user_context)
-
-        # Result is a ToolResult with structured_content
         data = result.structured_content
-        assert "forms" in data
-        assert len(data["forms"]) == 1
+        assert data["forms"] == forms
         assert data["forms"][0]["name"] == "Test Form"
         assert data["forms"][0]["description"] == "A test form"
         assert data["count"] == 1
+        call_rest.assert_awaited_once_with(
+            org_user_context,
+            "GET",
+            "/api/forms",
+            params=None,
+        )
 
     @pytest.mark.asyncio
-    async def test_lists_forms_for_platform_admin(
-        self, platform_admin_context, mock_form
-    ):
-        """Should list all forms for platform admin."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch("src.repositories.forms.FormRepository") as mock_repo_cls:
-                mock_repo = MagicMock()
-                # Platform admins use list_all_in_scope instead of list_forms
-                mock_repo.list_all_in_scope = AsyncMock(return_value=[mock_form])
-                mock_repo_cls.return_value = mock_repo
-
-                result = await list_forms(platform_admin_context)
+    async def test_forwards_scope_for_platform_admin(self, platform_admin_context):
+        """Should let the REST API resolve a platform-admin scope."""
+        forms = [{"id": str(uuid4()), "name": "Test Form"}]
+        with patch(
+            "src.services.mcp_server.tools.forms.call_rest",
+            new=AsyncMock(return_value=(200, forms)),
+        ) as call_rest:
+            result = await bifrost_list_forms(platform_admin_context, scope="Acme")
 
         data = result.structured_content
-        assert "forms" in data
-        assert data["forms"][0]["name"] == "Test Form"
+        assert data["forms"] == forms
+        call_rest.assert_awaited_once_with(
+            platform_admin_context,
+            "GET",
+            "/api/forms",
+            params={"scope": "Acme"},
+        )
+
+
+# ==================== bifrost_list_tables Tests ====================
+
+
+class TestListTables:
+    """Tests for the canonical Table metadata list MCP tool."""
+
+    @pytest.mark.asyncio
+    async def test_preserves_wrapped_rest_response(self, platform_admin_context):
+        tables = [
+            {
+                "id": str(uuid4()),
+                "name": "tickets",
+                "description": "Support tickets",
+            }
+        ]
+        with patch(
+            "src.services.mcp_server.tools.tables.call_rest",
+            new=AsyncMock(return_value=(200, {"tables": tables, "total": 1})),
+        ) as call_rest:
+            result = await bifrost_list_tables(platform_admin_context)
+
+        data = result.structured_content
+        assert data == {"tables": tables, "count": 1}
+        call_rest.assert_awaited_once_with(
+            platform_admin_context,
+            "GET",
+            "/api/tables",
+            params=None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_forwards_scope(self, platform_admin_context):
+        with patch(
+            "src.services.mcp_server.tools.tables.call_rest",
+            new=AsyncMock(return_value=(200, {"tables": [], "total": 0})),
+        ) as call_rest:
+            result = await bifrost_list_tables(
+                platform_admin_context,
+                scope="global",
+            )
+
+        assert result.structured_content == {"tables": [], "count": 0}
+        call_rest.assert_awaited_once_with(
+            platform_admin_context,
+            "GET",
+            "/api/tables",
+            params={"scope": "global"},
+        )
 
     @pytest.mark.asyncio
     async def test_returns_empty_list(self, org_user_context):
         """Should return empty list when no forms found."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch("src.repositories.forms.FormRepository") as mock_repo_cls:
-                mock_repo = MagicMock()
-                mock_repo.list_forms = AsyncMock(return_value=[])
-                mock_repo_cls.return_value = mock_repo
-
-                result = await list_forms(org_user_context)
+        with patch(
+            "src.services.mcp_server.tools.forms.call_rest",
+            new=AsyncMock(return_value=(200, [])),
+        ):
+            result = await bifrost_list_forms(org_user_context)
 
         data = result.structured_content
         assert data["forms"] == []
@@ -282,93 +221,80 @@ class TestListForms:
 
     @pytest.mark.asyncio
     async def test_handles_database_error(self, org_user_context):
-        """Should return error message on database failure."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(
-                side_effect=Exception("Database connection failed")
-            )
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            result = await list_forms(org_user_context)
+        """Should preserve REST failure details."""
+        with patch(
+            "src.services.mcp_server.tools.forms.call_rest",
+            new=AsyncMock(
+                return_value=(503, {"detail": "Database connection failed"})
+            ),
+        ):
+            result = await bifrost_list_forms(org_user_context)
 
         data = result.structured_content
         assert "error" in data
-        assert "Error listing forms" in data["error"]
+        assert data["error"] == "Database connection failed"
+        assert data["status_code"] == 503
 
 
-# ==================== search_knowledge Tests ====================
+# ==================== bifrost_search_knowledge Tests ====================
 
 
 class TestSearchKnowledge:
-    """Tests for the search_knowledge MCP tool."""
+    """Tests for the bifrost_search_knowledge MCP tool."""
 
     @pytest.mark.asyncio
-    async def test_searches_knowledge_base(
-        self, org_user_context, mock_knowledge_document
-    ):
-        """Should search knowledge base and return results."""
-        # Add accessible namespaces to allow knowledge search
+    async def test_forwards_agent_bound_search_to_rest(self, org_user_context):
         org_user_context.accessible_namespaces = ["test-namespace"]
+        document = {
+            "id": str(uuid4()),
+            "namespace": "test-namespace",
+            "content": "This is documentation about the SDK",
+            "metadata": {"source": "docs"},
+            "score": 0.85,
+            "organization_id": str(org_user_context.org_id),
+            "key": "sdk-guide",
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        with patch(
+            "src.services.mcp_server.tools.knowledge.call_rest",
+            new=AsyncMock(return_value=(200, [document])),
+        ) as call_rest:
+            result = await bifrost_search_knowledge(
+                org_user_context,
+                "SDK documentation",
+                min_score=0.4,
+                metadata_filter={"source": "docs"},
+            )
 
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch(
-                "src.services.embeddings.get_embedding_client"
-            ) as mock_embed_client:
-                mock_client = AsyncMock()
-                mock_client.embed_single = AsyncMock(return_value=[0.1, 0.2, 0.3])
-                mock_embed_client.return_value = mock_client
-
-                with patch(
-                    "src.repositories.knowledge.KnowledgeRepository"
-                ) as mock_repo_cls:
-                    mock_repo = MagicMock()
-                    mock_repo.search = AsyncMock(return_value=[mock_knowledge_document])
-                    mock_repo_cls.return_value = mock_repo
-
-                    result = await search_knowledge(
-                        org_user_context, "SDK documentation"
-                    )
-
-        # Result is a ToolResult with structured_content
         data = result.structured_content
-        assert "results" in data
-        assert len(data["results"]) == 1
+        assert data["results"] == [document]
         assert data["results"][0]["content"] == "This is documentation about the SDK"
         assert data["count"] == 1
-        assert mock_repo.search.await_args.kwargs["query_text"] == "SDK documentation"
+        call_rest.assert_awaited_once_with(
+            org_user_context,
+            "POST",
+            "/api/knowledge/search",
+            json_body={
+                "query": "SDK documentation",
+                "namespace": ["test-namespace"],
+                "limit": 5,
+                "fallback": True,
+                "agent_id": str(org_user_context.agent_id),
+                "min_score": 0.4,
+                "metadata_filter": {"source": "docs"},
+            },
+        )
 
     @pytest.mark.asyncio
     async def test_returns_no_results_message(self, org_user_context):
-        """Should return message when no results found."""
-        # Add accessible namespaces to allow knowledge search
         org_user_context.accessible_namespaces = ["test-namespace"]
-
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch(
-                "src.services.embeddings.get_embedding_client"
-            ) as mock_embed_client:
-                mock_client = AsyncMock()
-                mock_client.embed_single = AsyncMock(return_value=[0.1, 0.2, 0.3])
-                mock_embed_client.return_value = mock_client
-
-                with patch(
-                    "src.repositories.knowledge.KnowledgeRepository"
-                ) as mock_repo_cls:
-                    mock_repo = MagicMock()
-                    mock_repo.search = AsyncMock(return_value=[])
-                    mock_repo_cls.return_value = mock_repo
-
-                    result = await search_knowledge(
-                        org_user_context, "nonexistent topic"
-                    )
+        with patch(
+            "src.services.mcp_server.tools.knowledge.call_rest",
+            new=AsyncMock(return_value=(200, [])),
+        ):
+            result = await bifrost_search_knowledge(
+                org_user_context, "nonexistent topic"
+            )
 
         data = result.structured_content
         assert data["results"] == []
@@ -376,311 +302,161 @@ class TestSearchKnowledge:
         assert "No results found" in data["message"]
 
     @pytest.mark.asyncio
+    async def test_forwards_selected_agent_identity(self, org_user_context):
+        org_user_context.accessible_namespaces = ["customer-runbooks"]
+        with patch(
+            "src.services.mcp_server.tools.knowledge.call_rest",
+            new=AsyncMock(return_value=(200, [])),
+        ) as call_rest:
+            await bifrost_search_knowledge(org_user_context, "restart service")
+
+        body = call_rest.await_args.kwargs["json_body"]
+        assert body["agent_id"] == str(org_user_context.agent_id)
+        assert "scope" not in body
+
+    @pytest.mark.asyncio
+    async def test_requires_agent_scoped_context(self, org_user_context):
+        org_user_context.accessible_namespaces = ["global-docs"]
+        org_user_context.agent_id = None
+        result = await bifrost_search_knowledge(org_user_context, "platform docs")
+
+        assert "Agent-scoped context" in result.structured_content["error"]
+
+    @pytest.mark.asyncio
     async def test_handles_missing_query(self, org_user_context):
         """Should return error when query is empty."""
-        result = await search_knowledge(org_user_context, "")
+        result = await bifrost_search_knowledge(org_user_context, "")
         data = result.structured_content
         assert "error" in data
         assert "query is required" in data["error"]
 
     @pytest.mark.asyncio
-    async def test_handles_embedding_error(self, org_user_context):
-        """Should return error when embedding service fails."""
-        # Add accessible namespaces to allow knowledge search
+    async def test_preserves_rest_error(self, org_user_context):
         org_user_context.accessible_namespaces = ["test-namespace"]
-
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch(
-                "src.services.embeddings.get_embedding_client"
-            ) as mock_embed_client:
-                mock_embed_client.side_effect = Exception("Embedding service error")
-
-                result = await search_knowledge(org_user_context, "test query")
+        with patch(
+            "src.services.mcp_server.tools.knowledge.call_rest",
+            new=AsyncMock(
+                return_value=(503, {"detail": "Embedding service unavailable"})
+            ),
+        ):
+            result = await bifrost_search_knowledge(org_user_context, "test query")
 
         data = result.structured_content
-        assert "error" in data
-        assert "Error searching knowledge" in data["error"]
+        assert data["error"] == "Embedding service unavailable"
+        assert data["status_code"] == 503
 
 
-# ==================== list_integrations Tests ====================
-
-
-@pytest.fixture
-def mock_integration():
-    """Create a mock integration ORM object."""
-    mock = MagicMock()
-    mock.id = uuid4()
-    mock.name = "Microsoft Graph"
-    mock.is_deleted = False
-    mock.has_oauth_config = True
-    mock.entity_id_name = "Tenant ID"
-    return mock
+# ==================== bifrost_list_integrations Tests ====================
 
 
 class TestListIntegrations:
-    """Tests for the list_integrations MCP tool."""
+    """Tests for the canonical Integration list MCP tool."""
 
     @pytest.mark.asyncio
     async def test_lists_integrations_for_platform_admin(
-        self, platform_admin_context, mock_integration
+        self, platform_admin_context
     ):
-        """Should list all active integrations for platform admin."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.scalars.return_value.all.return_value = [mock_integration]
-            mock_session.execute = AsyncMock(return_value=mock_result)
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
+        integration = {
+            "id": str(uuid4()),
+            "name": "Microsoft Graph",
+            "has_oauth_config": True,
+            "entity_id_name": "Tenant ID",
+        }
+        with patch(
+            "src.services.mcp_server.tools.integrations.call_rest",
+            new=AsyncMock(return_value=(200, {"items": [integration], "total": 1})),
+        ) as call_rest:
+            result = await bifrost_list_integrations(platform_admin_context)
 
-            result = await list_integrations(platform_admin_context)
-
-        # Result is a ToolResult with structured_content
         data = result.structured_content
         assert "integrations" in data
         assert len(data["integrations"]) == 1
         assert data["integrations"][0]["name"] == "Microsoft Graph"
-        assert data["integrations"][0]["has_oauth"] is True
+        assert data["integrations"][0]["has_oauth_config"] is True
         assert data["integrations"][0]["entity_id_name"] == "Tenant ID"
         assert data["count"] == 1
-
-    @pytest.mark.asyncio
-    async def test_lists_integrations_for_org_user(
-        self, org_user_context, mock_integration
-    ):
-        """Should list org-mapped integrations for org user."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.scalars.return_value.all.return_value = [mock_integration]
-            mock_session.execute = AsyncMock(return_value=mock_result)
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            result = await list_integrations(org_user_context)
-
-        data = result.structured_content
-        assert "integrations" in data
-        assert data["integrations"][0]["name"] == "Microsoft Graph"
+        call_rest.assert_awaited_once_with(
+            platform_admin_context,
+            "GET",
+            "/api/integrations",
+        )
 
     @pytest.mark.asyncio
     async def test_returns_empty_list(self, org_user_context):
-        """Should return empty list when no integrations found."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_result = MagicMock()
-            mock_result.scalars.return_value.all.return_value = []
-            mock_session.execute = AsyncMock(return_value=mock_result)
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            result = await list_integrations(org_user_context)
+        with patch(
+            "src.services.mcp_server.tools.integrations.call_rest",
+            new=AsyncMock(return_value=(200, {"items": [], "total": 0})),
+        ):
+            result = await bifrost_list_integrations(org_user_context)
 
         data = result.structured_content
         assert data["integrations"] == []
         assert data["count"] == 0
 
     @pytest.mark.asyncio
-    async def test_handles_database_error(self, org_user_context):
-        """Should return error message on database failure."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(
-                side_effect=Exception("Database connection failed")
-            )
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            result = await list_integrations(org_user_context)
+    async def test_returns_rest_error(self, org_user_context):
+        with patch(
+            "src.services.mcp_server.tools.integrations.call_rest",
+            new=AsyncMock(return_value=(403, {"detail": "Forbidden"})),
+        ):
+            result = await bifrost_list_integrations(org_user_context)
 
         data = result.structured_content
         assert "error" in data
-        assert "Error listing integrations" in data["error"]
+        assert data["status_code"] == 403
 
 
-# ==================== execute_workflow Tests ====================
+# ==================== canonical Workflow execution wrapper ====================
 
 
 class TestExecuteWorkflow:
-    """Tests for the execute_workflow MCP tool."""
-
     @pytest.mark.asyncio
-    async def test_executes_workflow_successfully(
-        self, org_user_context, mock_workflow
-    ):
-        """Should execute workflow and return success result."""
-        # Create mock execution result
-        mock_result = MagicMock()
-        mock_result.status.value = "Success"
-        mock_result.duration_ms = 150
-        mock_result.result = {"output": "test value"}
-        mock_result.error = None
-        mock_result.error_type = None
-
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch(
-                "src.repositories.workflows.WorkflowRepository"
-            ) as mock_repo_cls:
-                mock_repo = MagicMock()
-                mock_repo.resolve = AsyncMock(return_value=mock_workflow)
-                mock_repo_cls.return_value = mock_repo
-
-                with patch(
-                    "src.services.execution.service.execute_tool"
-                ) as mock_execute:
-                    mock_execute.return_value = mock_result
-
-                    result = await execute_workflow(
-                        org_user_context,
-                        str(mock_workflow.id),
-                        {"key": "value"},
-                    )
-
-        # Result is a ToolResult with structured_content
-        data = result.structured_content
-        assert data["success"] is True
-        assert data["workflow_name"] == "test_workflow"
-        assert data["duration_ms"] == 150
-        assert data["result"]["output"] == "test value"
-        assert data["status"] == "Success"
-
-    @pytest.mark.asyncio
-    async def test_returns_error_workflow_not_found(self, org_user_context):
-        """Should return error when workflow not found."""
-        workflow_id = str(uuid4())
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch(
-                "src.repositories.workflows.WorkflowRepository"
-            ) as mock_repo_cls:
-                mock_repo = MagicMock()
-                mock_repo.resolve = AsyncMock(return_value=None)
-                mock_repo_cls.return_value = mock_repo
-
-                result = await execute_workflow(
-                    org_user_context,
-                    workflow_id,
-                )
-
-        data = result.structured_content
-        assert "error" in data
-        assert "not found" in data["error"]
-        assert workflow_id in data["error"]
-        assert "list_workflows" in data["error"]
-
-    @pytest.mark.asyncio
-    async def test_resolves_workflow_by_name(self, org_user_context, mock_workflow):
-        """Should resolve workflow by name (not just UUID)."""
-        mock_result = MagicMock()
-        mock_result.status.value = "Success"
-        mock_result.duration_ms = 100
-        mock_result.result = {"output": "ok"}
-        mock_result.error = None
-        mock_result.error_type = None
-
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch(
-                "src.repositories.workflows.WorkflowRepository"
-            ) as mock_repo_cls:
-                mock_repo = MagicMock()
-                mock_repo.resolve = AsyncMock(return_value=mock_workflow)
-                mock_repo_cls.return_value = mock_repo
-
-                with patch(
-                    "src.services.execution.service.execute_tool"
-                ) as mock_execute:
-                    mock_execute.return_value = mock_result
-
-                    result = await execute_workflow(
-                        org_user_context,
-                        "test_workflow",  # name, not UUID
-                    )
-
-        data = result.structured_content
-        assert data["success"] is True
-        assert data["workflow_name"] == "test_workflow"
-        # Verify resolve was called with the name string
-        mock_repo.resolve.assert_called_once_with("test_workflow")
-
-    @pytest.mark.asyncio
-    async def test_returns_error_on_execution_failure(
-        self, org_user_context, mock_workflow
-    ):
-        """Should return error details when workflow execution fails."""
-        # Create mock failed execution result
-        mock_result = MagicMock()
-        mock_result.status.value = "Failed"
-        mock_result.duration_ms = 50
-        mock_result.result = None
-        mock_result.error = "Division by zero"
-        mock_result.error_type = "ValueError"
-
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch(
-                "src.repositories.workflows.WorkflowRepository"
-            ) as mock_repo_cls:
-                mock_repo = MagicMock()
-                mock_repo.resolve = AsyncMock(return_value=mock_workflow)
-                mock_repo_cls.return_value = mock_repo
-
-                with patch(
-                    "src.services.execution.service.execute_tool"
-                ) as mock_execute:
-                    mock_execute.return_value = mock_result
-
-                    result = await execute_workflow(
-                        org_user_context,
-                        str(mock_workflow.id),
-                    )
-
-        data = result.structured_content
-        assert data["success"] is False
-        assert data["status"] == "Failed"
-        assert data["error"] == "Division by zero"
-        assert data["error_type"] == "ValueError"
-
-    @pytest.mark.asyncio
-    async def test_handles_missing_workflow_id(self, org_user_context):
-        """Should return error when workflow_id is empty."""
-        result = await execute_workflow(org_user_context, "")
-        data = result.structured_content
-        assert "error" in data
-        assert "workflow_id is required" in data["error"]
-
-    @pytest.mark.asyncio
-    async def test_handles_exception(self, org_user_context, mock_workflow):
-        """Should return error message on unexpected exception."""
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(
-                side_effect=Exception("Unexpected error")
-            )
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            result = await execute_workflow(
+    async def test_returns_async_execution_envelope(self, org_user_context):
+        execution = {
+            "execution_id": str(uuid4()),
+            "workflow_id": str(uuid4()),
+            "workflow_name": "test_workflow",
+            "status": "Pending",
+        }
+        resolver = AsyncMock()
+        resolver.resolve = AsyncMock(return_value=execution["workflow_id"])
+        http = AsyncMock()
+        http.__aenter__ = AsyncMock(return_value=MagicMock())
+        http.__aexit__ = AsyncMock(return_value=None)
+        with (
+            patch(
+                "src.services.mcp_server.tools.workflow.rest_client",
+                return_value=http,
+            ),
+            patch("bifrost.refs.RefResolver", return_value=resolver),
+            patch(
+                "src.services.mcp_server.tools.workflow.call_rest",
+                new=AsyncMock(return_value=(200, execution)),
+            ) as call_rest,
+        ):
+            result = await bifrost_execute_workflow(
                 org_user_context,
-                str(mock_workflow.id),
+                "test_workflow",
+                input_data={"key": "value"},
             )
 
-        data = result.structured_content
-        assert "error" in data
-        assert "Error executing workflow" in data["error"]
+        assert result.structured_content == execution
+        call_rest.assert_awaited_once_with(
+            org_user_context,
+            "POST",
+            "/api/workflows/execute",
+            json_body={
+                "workflow_id": execution["workflow_id"],
+                "input_data": {"key": "value"},
+                "sync": False,
+            },
+        )
+
+    @pytest.mark.asyncio
+    async def test_rejects_missing_workflow_ref(self, org_user_context):
+        result = await bifrost_execute_workflow(org_user_context, "")
+        assert result.structured_content is not None
+        assert result.structured_content["error"] == "workflow_ref is required"
 
 
 # ==================== BifrostMCPServer Tests ====================
@@ -723,12 +499,12 @@ class TestGetSystemToolIds:
 
         # These are some of the core system tools (not exhaustive)
         expected = [
-            "execute_workflow",
-            "list_workflows",
-            "list_integrations",
-            "list_forms",
+            "bifrost_execute_workflow",
+            "bifrost_list_workflows",
+            "bifrost_list_integrations",
+            "bifrost_list_forms",
             "get_docs",
-            "search_knowledge",
+            "bifrost_search_knowledge",
         ]
 
         for tool_id in expected:
@@ -781,8 +557,8 @@ class TestMCPConfigService:
         mock_config = MagicMock()
         mock_config.value_json = {
             "enabled": False,
-            "allowed_tool_ids": ["execute_workflow", "list_workflows"],
-            "blocked_tool_ids": ["search_knowledge"],
+            "allowed_tool_ids": ["bifrost_execute_workflow", "bifrost_list_workflows"],
+            "blocked_tool_ids": ["bifrost_search_knowledge"],
         }
         mock_config.updated_at = datetime.now(timezone.utc)
         mock_config.updated_by = "admin@test.com"
@@ -795,8 +571,11 @@ class TestMCPConfigService:
         config = await service.get_config()
 
         assert config.enabled is False
-        assert config.allowed_tool_ids == ["execute_workflow", "list_workflows"]
-        assert config.blocked_tool_ids == ["search_knowledge"]
+        assert config.allowed_tool_ids == [
+            "bifrost_execute_workflow",
+            "bifrost_list_workflows",
+        ]
+        assert config.blocked_tool_ids == ["bifrost_search_knowledge"]
         assert config.is_configured is True
         assert config.configured_by == "admin@test.com"
 
@@ -815,13 +594,13 @@ class TestMCPConfigService:
         config = await service.save_config(
             enabled=False,
             allowed_tool_ids=None,
-            blocked_tool_ids=["search_knowledge"],
+            blocked_tool_ids=["bifrost_search_knowledge"],
             updated_by="admin@test.com",
         )
 
         mock_session.add.assert_called_once()
         assert config.enabled is False
-        assert config.blocked_tool_ids == ["search_knowledge"]
+        assert config.blocked_tool_ids == ["bifrost_search_knowledge"]
 
     @pytest.mark.asyncio
     async def test_save_config_updates_existing_config(self, mock_session):
@@ -838,7 +617,7 @@ class TestMCPConfigService:
         service = MCPConfigService(mock_session)
         config = await service.save_config(
             enabled=False,
-            allowed_tool_ids=["execute_workflow"],
+            allowed_tool_ids=["bifrost_execute_workflow"],
             blocked_tool_ids=[],
             updated_by="admin@test.com",
         )
@@ -958,86 +737,33 @@ class TestToolResultDisplayText:
         assert "my_wf" in text
 
 
-# ==================== register_workflow Tests ====================
+# ==================== bifrost_register_workflow Tests ====================
 
 
 class TestRegisterWorkflow:
-    """Tests for the register_workflow MCP tool."""
+    """Input guards for the canonical register wrapper."""
 
     @pytest.mark.asyncio
     async def test_rejects_missing_path(self, platform_admin_context):
-        """register_workflow MCP tool rejects missing path."""
-        from src.services.mcp_server.tools.workflow import register_workflow
+        from src.services.mcp_server.tools.workflow import bifrost_register_workflow
 
-        result = await register_workflow(platform_admin_context, "", "my_function")
+        result = await bifrost_register_workflow(
+            platform_admin_context, "", "my_function"
+        )
         data = result.structured_content
         assert "error" in data
         assert "path is required" in data["error"]
 
     @pytest.mark.asyncio
     async def test_rejects_missing_function_name(self, platform_admin_context):
-        """register_workflow MCP tool rejects missing function_name."""
-        from src.services.mcp_server.tools.workflow import register_workflow
+        from src.services.mcp_server.tools.workflow import bifrost_register_workflow
 
-        result = await register_workflow(platform_admin_context, "workflows/test.py", "")
+        result = await bifrost_register_workflow(
+            platform_admin_context, "workflows/test.py", ""
+        )
         data = result.structured_content
         assert "error" in data
         assert "function_name is required" in data["error"]
-
-    @pytest.mark.asyncio
-    async def test_rejects_non_python_file(self, platform_admin_context):
-        """register_workflow MCP tool rejects non-.py files."""
-        from src.services.mcp_server.tools.workflow import register_workflow
-
-        result = await register_workflow(platform_admin_context, "workflows/test.yaml", "my_function")
-        data = result.structured_content
-        assert "error" in data
-        assert "path must be a .py file" in data["error"]
-
-    @pytest.mark.asyncio
-    async def test_rejects_file_not_found(self, platform_admin_context):
-        """register_workflow MCP tool returns error when file not found."""
-        from src.services.mcp_server.tools.workflow import register_workflow
-
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch("src.services.file_storage.FileStorageService") as mock_svc_cls:
-                mock_svc = MagicMock()
-                mock_svc.read_file = AsyncMock(side_effect=FileNotFoundError("not found"))
-                mock_svc_cls.return_value = mock_svc
-
-                result = await register_workflow(platform_admin_context, "workflows/missing.py", "my_func")
-
-        data = result.structured_content
-        assert "error" in data
-        assert "File not found" in data["error"]
-
-    @pytest.mark.asyncio
-    async def test_rejects_no_decorated_function(self, platform_admin_context):
-        """register_workflow MCP tool rejects files without matching decorated function."""
-        from src.services.mcp_server.tools.workflow import register_workflow
-
-        # Python file with a function but no @workflow decorator
-        code = b"def my_func():\n    return 42\n"
-
-        with patch("src.core.database.get_db_context") as mock_db_ctx:
-            mock_session = AsyncMock()
-            mock_db_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_db_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
-
-            with patch("src.services.file_storage.FileStorageService") as mock_svc_cls:
-                mock_svc = MagicMock()
-                mock_svc.read_file = AsyncMock(return_value=(code, None))
-                mock_svc_cls.return_value = mock_svc
-
-                result = await register_workflow(platform_admin_context, "workflows/test.py", "my_func")
-
-        data = result.structured_content
-        assert "error" in data
-        assert "No @workflow/@tool/@data_provider decorated function" in data["error"]
 
 
 class TestMCPContextInputCoercion:
@@ -1069,3 +795,8 @@ class TestMCPContextInputCoercion:
     def test_none_org_id_remains_none(self):
         ctx = MCPContext(user_id=uuid4(), org_id=None)
         assert ctx.org_id is None
+
+    def test_string_agent_id_coerced_to_uuid(self):
+        agent_id = uuid4()
+        ctx = MCPContext(user_id=uuid4(), agent_id=str(agent_id))
+        assert ctx.agent_id == agent_id

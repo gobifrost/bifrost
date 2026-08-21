@@ -189,6 +189,10 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # of ApplicationPublic, and the CLI polls PlatformJobPublic for durable
     # progress/result/error (2026-07-28). CONTRACT_VERSION bumped to 8.
     #
+    # TableUpdate gained optional organization_id so CLI, MCP, and REST share
+    # the same home/global/organization retargeting contract (2026-08-17).
+    # ADDITIVE: old CLIs omit it and retain existing scope. Fingerprint only.
+    #
     # Forms gained optional confirmation_markdown (2026-08-04). ADDITIVE: old
     # clients omit it and continue receiving the prior default confirmation.
     #
@@ -214,7 +218,35 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     #
     # SDK AI completion requests gained optional file inputs (2026-08-15).
     # ADDITIVE: old SDK clients omit the field and keep text-only behavior.
-    "aedcecc04849f529fb42278841f5ff3edea769d40b8ba39c131162033dc96ceb"
+    #
+    # Builder reinstatement adds optional Agent bundle metadata and PlatformJob
+    # external-execution/result fields (2026-08-16). ADDITIVE: old clients omit
+    # the Agent field and ignore the new job metadata. Skill bundle mutation is
+    # manifest/upload-owned and is intentionally excluded from generic CLI flags.
+    #
+    # ApplicationUpdate replaces the ambiguous `scope` string with the common
+    # optional `organization_id` wire field (2026-08-17). BREAKING: an older CLI
+    # would send `scope`, which the server ignores, so MIN_CLI_VERSION is raised
+    # to 1.2.3 while the frozen legacy CONTRACT_VERSION remains unchanged.
+    #
+    # Event schedules now distinguish required create configuration from partial
+    # update configuration, and subscription target_type is constrained to the
+    # two supported values (2026-08-17). These ship in the same unreleased 1.2.3
+    # compatibility floor as the canonical App/Event operation surfaces.
+    #
+    # ConfigCreate/ConfigUpdate `value` retyped dict -> str (2026-08-19).
+    # COSMETIC: the DTO described the JSONB storage envelope, not the endpoint.
+    # No route consumes these models — they only generate CLI flags — and
+    # `SetConfigRequest.value` has always been `str`, so every released CLI
+    # already sent a string (it hand-built the body to bypass the dict). The
+    # annotation now matches shipped behavior instead of changing it, so
+    # MIN_CLI_VERSION and the frozen CONTRACT_VERSION are unchanged.
+    #
+    # RoleCreate/RoleUpdate now expose canonical `capabilities` while retaining
+    # deprecated `scopes` and arbitrary `permissions` compatibility inputs
+    # (2026-08-20). ADDITIVE/COMPATIBLE: old CLIs still send the shipped fields;
+    # new clients can use capabilities directly. Fingerprint refreshed only.
+    "c42a7e0584ac818a8fd8a6d7e19a31b1638fceee7d2726add122e72c1e5ea37a"
 )
 
 

@@ -17,9 +17,9 @@ MUST:
   inline cascade queries (`WHERE organization_id == x OR
   organization_id IS NULL`). The lint test
   `test_no_inline_org_scoping_in_routers` catches this.
-- Pass `is_superuser=True` to the repository — the engine sentinel is
-  the authenticated principal here, and the SDK has already resolved
-  scope before the call reaches us.
+- Pass `bypass_resource_admission=True` to the repository when the engine
+  sentinel has already resolved and authorized scope before the call reaches
+  us. External principals do not receive this bypass.
 - Receive the scope as a request body field; trust it as-is. The engine
   did the platform-admin-or-own-org check via
   `api/shared/scope_resolver.py::resolve_effective_scope` before
@@ -61,6 +61,10 @@ from src.core.principal import UserPrincipal
 from src.core.database import get_db
 from src.core.log_safety import log_safe
 from src.models import Organization
+from src.services.authorization import (
+    AuthorizationBoundary,
+    resolve_authorization_context,
+)
 from src.models.contracts.cli import (
     CLIAICompleteRequest,
     CLIAICompleteResponse,
@@ -242,6 +246,24 @@ def _session_to_response(
     )
 
 
+async def _authorize_cli_context_org(
+    db: AsyncSession,
+    current_user: UserPrincipal,
+    target_org_id: UUID | None,
+) -> None:
+    """Authorize a human CLI context target without changing response shape."""
+
+    if target_org_id is None or target_org_id == current_user.organization_id:
+        return
+    authorization = await resolve_authorization_context(
+        db,
+        requester=current_user,
+        selected_boundary=AuthorizationBoundary.organization(target_org_id),
+    )
+    authorization.require("organizations.read")
+    authorization.require_resource_boundary(target_org_id)
+
+
 # =============================================================================
 # Context Endpoints
 # =============================================================================
@@ -260,28 +282,12 @@ async def get_dev_context(
     """Get development context for CLI initialization.
 
     Returns the authenticated user and their ``organization_id``-resolved
-    org. The optional ``org_id`` query parameter lets platform admins and
-    provider-org members target another org for the session — gated by
-    the same C2 rule the scope resolver applies elsewhere.
+    org. The optional ``org_id`` query parameter lets users with a role
+    assignment covering that organization target it for the session.
     """
     # Resolve which org to return.
     if org_id is not None and org_id != current_user.organization_id:
-        # Explicit override of another org — C2 gate: platform admin or
-        # provider-org member only. Provider-org membership is looked up
-        # against the caller's own org's ``is_provider`` flag.
-        is_provider_org = False
-        if not current_user.is_superuser and current_user.organization_id is not None:
-            row = await db.execute(
-                select(Organization.is_provider).where(
-                    Organization.id == current_user.organization_id
-                )
-            )
-            is_provider_org = bool(row.scalar_one_or_none())
-        if not (current_user.is_superuser or is_provider_org):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only platform admins or provider-org members can target another organization",
-            )
+        await _authorize_cli_context_org(db, current_user, org_id)
         target_org_id = org_id
     elif org_id is not None:
         target_org_id = org_id
@@ -428,7 +434,7 @@ async def cli_get_config(
     # Canonical SDK config load: cascade (global + org-specific) merged.
     # An EXTERNAL portal caller gets org-only — no global tier — so a global
     # secret value is never returned (and never decrypted below). EXT-1 NEW-1.
-    repo = ConfigRepository(db, org_id=org_uuid, is_superuser=True)
+    repo = ConfigRepository(db, org_id=org_uuid, bypass_resource_admission=True)
     all_config = await repo.merged_for_sdk(external=current_user.is_external)
 
     if request.key not in all_config:
@@ -556,7 +562,7 @@ async def cli_list_config(
     org_uuid = UUID(org_id) if org_id else None
 
     # External callers get org-only (no global tier) — EXT-1 NEW-1.
-    repo = ConfigRepository(db, org_id=org_uuid, is_superuser=True)
+    repo = ConfigRepository(db, org_id=org_uuid, bypass_resource_admission=True)
     all_config = await repo.merged_for_sdk(external=current_user.is_external)
 
     if not all_config:
@@ -714,7 +720,7 @@ async def sdk_integrations_get(
                     oauth_token_repo = OAuthTokenRepository(
                         db,
                         org_id=org_uuid,
-                        is_superuser=not current_user.is_external,
+                        bypass_resource_admission=not current_user.is_external,
                         is_external=current_user.is_external,
                     )
                     token = await oauth_token_repo.get_org_level_for_provider(
@@ -777,7 +783,7 @@ async def sdk_integrations_get(
             # Cascade: prefer org-scoped token, fall back to global.
             # See api/src/repositories/README.md for the pattern.
             oauth_token_repo = OAuthTokenRepository(
-                db, org_id=org_uuid, is_superuser=True
+                db, org_id=org_uuid, bypass_resource_admission=True
             )
             token = await oauth_token_repo.get_org_level_for_provider(
                 integration.oauth_provider.id
@@ -1277,7 +1283,7 @@ async def sdk_integrations_refresh_token(
         provider_repo = OAuthProviderRepository(
             db,
             org_id=org_uuid,
-            is_superuser=not current_user.is_external,
+            bypass_resource_admission=not current_user.is_external,
             is_external=current_user.is_external,
         )
         provider = await provider_repo.get(provider_name=request.connection_name)
@@ -1293,7 +1299,7 @@ async def sdk_integrations_refresh_token(
         token_repo = OAuthTokenRepository(
             db,
             org_id=org_uuid,
-            is_superuser=not current_user.is_external,
+            bypass_resource_admission=not current_user.is_external,
             is_external=current_user.is_external,
         )
         stored_token = None
@@ -2699,26 +2705,20 @@ async def cli_knowledge_search(
     """Search knowledge using fused lexical and vector rankings."""
     _deny_external_knowledge(current_user)
     from src.models.contracts.cli import CLIKnowledgeDocumentResponse
-    from src.repositories.knowledge import KnowledgeRepository
-    from src.services.embeddings import get_embedding_client
+    from src.services.knowledge.search import search_knowledge_documents
 
     try:
         org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
         org_uuid = UUID(org_id) if org_id else None
 
-        # Generate query embedding
-        embedding_client = await get_embedding_client(db)
-        query_embedding = await embedding_client.embed_single(request.query)
-
-        # Search
         # Externals were 403'd at the top of this endpoint
         # (_deny_external_knowledge); every caller past the gate gets the
         # SDK trust this surface has always extended.
-        repo = KnowledgeRepository(db, org_id=org_uuid)
-        results = await repo.search(
-            query_embedding=query_embedding,
-            namespace=request.namespace,
-            query_text=request.query,
+        results = await search_knowledge_documents(
+            db,
+            query=request.query,
+            namespaces=request.namespace,
+            organization_id=org_uuid,
             limit=request.limit,
             min_score=request.min_score,
             metadata_filter=request.metadata_filter,
@@ -3127,10 +3127,10 @@ async def cli_list_tables(
     """List tables via SDK.
 
     Engine sentinel: the SDK has already resolved scope, so non-external
-    principals get is_superuser=True and we trust the org_uuid. The base
-    class handles the cascade (org + global) for us. EXTERNAL principals
-    do not inherit sentinel trust (OPEN-B) — they get the normal user
-    cascade (org + global table names/schemas; row data is policy-gated).
+    principals receive resource-admission bypass and we trust the org_uuid.
+    The base class handles the cascade (org + global) for us. EXTERNAL
+    principals do not inherit sentinel trust (OPEN-B) — they get the normal
+    user cascade (org + global table names/schemas; row data is policy-gated).
     """
     # Local import keeps the router file's top-level imports lean.
     from src.repositories.tables import TableRepository
@@ -3138,14 +3138,14 @@ async def cli_list_tables(
     org_id = await _resolve_sdk_org_id(current_user, request.scope, db)
     org_uuid = UUID(org_id) if org_id else None
 
-    # Principal-derived sentinel trust (OPEN-B): the sentinel/admins keep
-    # is_superuser=True (their is_external claim is neutralized at mint); an
-    # EXTERNAL principal must not inherit it — they get the regular-user
-    # cascade instead.
+    # Principal-derived sentinel trust (OPEN-B): sentinel/admin callers receive
+    # explicit repository admission bypass (their is_external claim is
+    # neutralized at mint); an EXTERNAL principal must not inherit it — they get
+    # the regular-user cascade instead.
     repo = TableRepository(
         db,
         org_id=org_uuid,
-        is_superuser=not current_user.is_external,
+        bypass_resource_admission=not current_user.is_external,
         is_external=current_user.is_external,
     )
     tables = await repo.list()

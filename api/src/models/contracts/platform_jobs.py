@@ -67,6 +67,9 @@ class PlatformJobPublic(BaseModel):
     memory_start_bytes: int | None = None
     memory_peak_bytes: int | None = None
     memory_limit_bytes: int | None = None
+    external_provider: str | None = None
+    external_run_id: str | None = None
+    external_started_at: datetime | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
     created_at: datetime

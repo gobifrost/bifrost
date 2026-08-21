@@ -18,7 +18,7 @@ class TestResolveAgentTools:
         """resolve_agent_tools returns tool definitions from agent config."""
         mock_get_system_tools.return_value = [
             {
-                "id": "execute_workflow",
+                "id": "bifrost_execute_workflow",
                 "description": "Execute a workflow",
                 "parameters": {"type": "object", "properties": {}},
             }
@@ -30,7 +30,7 @@ class TestResolveAgentTools:
         # stays focused on the system-tool tier without needing a real DB.
         mock_agent.organization_id = None
         mock_agent.tools = []
-        mock_agent.system_tools = ["execute_workflow"]
+        mock_agent.system_tools = ["bifrost_execute_workflow"]
         mock_agent.knowledge_sources = []
         mock_agent.delegated_agents = []
 
@@ -38,15 +38,15 @@ class TestResolveAgentTools:
         assert isinstance(tools, list)
         assert isinstance(id_map, dict)
         assert len(tools) == 1
-        assert tools[0].name == "execute_workflow"
+        assert tools[0].name == "bifrost_execute_workflow"
 
     @pytest.mark.asyncio
     @patch("src.services.mcp_server.server.get_system_tools")
     async def test_adds_search_knowledge_when_sources_exist(self, mock_get_system_tools):
-        """Auto-adds search_knowledge tool when agent has knowledge sources."""
+        """Auto-adds bifrost_search_knowledge tool when agent has knowledge sources."""
         mock_get_system_tools.return_value = [
             {
-                "id": "search_knowledge",
+                "id": "bifrost_search_knowledge",
                 "description": "Search knowledge",
                 "parameters": {"type": "object", "properties": {}},
             }
@@ -64,7 +64,7 @@ class TestResolveAgentTools:
 
         tools, _ = await resolve_agent_tools(mock_agent, mock_session)
         tool_names = [t.name for t in tools]
-        assert "search_knowledge" in tool_names
+        assert "bifrost_search_knowledge" in tool_names
 
     @pytest.mark.asyncio
     @patch("src.services.mcp_server.server.get_system_tools", return_value=[])

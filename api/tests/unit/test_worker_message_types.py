@@ -5,6 +5,7 @@ Validates the thin RabbitMQ consumer wrappers that delegate to
 itself is implemented in T12 and T15; this task only wires the message
 plumbing and the failure-swallowing path.
 """
+
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
@@ -20,9 +21,7 @@ async def test_summarize_message_calls_summarizer():
     from src.jobs.summarize_worker import handle_summarize_message
 
     run_id = uuid4()
-    with patch(
-        "src.jobs.summarize_worker.summarize_run", new=AsyncMock()
-    ) as mock:
+    with patch("src.jobs.summarize_worker.summarize_run", new=AsyncMock()) as mock:
         await handle_summarize_message({"run_id": str(run_id)})
         mock.assert_awaited_once()
         called_run_id = mock.await_args.args[0]
@@ -90,9 +89,7 @@ async def test_summarize_failure_marks_run_failed(
         # Verify in a fresh session so we see the handler's commit.
         async with async_session_factory() as verify:
             reloaded = (
-                await verify.execute(
-                    select(AgentRun).where(AgentRun.id == run.id)
-                )
+                await verify.execute(select(AgentRun).where(AgentRun.id == run.id))
             ).scalar_one()
             assert reloaded.summary_status == "failed"
             assert reloaded.summary_error is not None
@@ -152,6 +149,7 @@ async def test_backfill_endpoint_enqueues_durable_platform_job(async_session_fac
     from src.models.orm.agents import Agent
     from src.models.orm.summary_backfill_job import SummaryBackfillJob
     from src.routers.agent_runs import backfill_summaries
+    from src.services.authorization import AuthorizationBoundary, AuthorizationContext
 
     agent_id = uuid4()
     run_id = uuid4()
@@ -189,15 +187,25 @@ async def test_backfill_endpoint_enqueues_durable_platform_job(async_session_fac
         name="Test Admin",
         is_superuser=True,
     )
+    authorization = AuthorizationContext(
+        requester=admin,
+        effective_actor=admin,
+        selected_boundary=AuthorizationBoundary.platform(),
+        effective_capabilities=frozenset({"platformjobs.execute"}),
+        grant_sources=(),
+    )
 
     try:
         async with async_session_factory() as db:
-            with patch(
-                "src.services.platform_jobs.enqueue_platform_job",
-                new=AsyncMock(return_value=(object(), True)),
-            ) as enqueue, patch(
-                "src.services.platform_jobs.publish_platform_job_update",
-                new=AsyncMock(),
+            with (
+                patch(
+                    "src.services.platform_jobs.enqueue_platform_job",
+                    new=AsyncMock(return_value=(object(), True)),
+                ) as enqueue,
+                patch(
+                    "src.services.platform_jobs.publish_platform_job_update",
+                    new=AsyncMock(),
+                ),
             ):
                 result = await backfill_summaries(
                     request=BackfillSummariesRequest(
@@ -208,6 +216,7 @@ async def test_backfill_endpoint_enqueues_durable_platform_job(async_session_fac
                     ),
                     db=db,
                     user=admin,
+                    authorization=authorization,
                 )
 
             assert result.queued == 1
@@ -226,9 +235,7 @@ async def test_backfill_endpoint_enqueues_durable_platform_job(async_session_fac
                         SummaryBackfillJob.id == created_backfill_job_id
                     )
                 )
-            await db.execute(
-                AgentRun.__table__.delete().where(AgentRun.id == run_id)
-            )
+            await db.execute(AgentRun.__table__.delete().where(AgentRun.id == run_id))
             await db.execute(Agent.__table__.delete().where(Agent.id == agent_id))
             await db.commit()
 

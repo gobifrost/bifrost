@@ -27,14 +27,14 @@ def _policy_params(location: str, scope: str | None, solution: str | None = None
     return params
 
 
-async def list_file_policies(
+async def bifrost_list_file_policies(
     context: Any,
     location: str = "workspace",
     scope: str | None = None,
     solution: str | None = None,
 ) -> ToolResult:
     """List file policies — thin wrapper over ``GET /api/files/policies``."""
-    logger.info("MCP list_file_policies (HTTP bridge)")
+    logger.info("MCP bifrost_list_file_policies (HTTP bridge)")
     status_code, body = await call_rest(
         context,
         "GET",
@@ -53,7 +53,7 @@ async def list_file_policies(
     )
 
 
-async def get_file_policy(
+async def bifrost_get_file_policy(
     context: Any,
     path: str,
     location: str = "workspace",
@@ -61,6 +61,7 @@ async def get_file_policy(
     solution: str | None = None,
 ) -> ToolResult:
     """Get a file policy — thin wrapper over ``GET /api/files/policies/{path}``."""
+    logger.info("MCP bifrost_get_file_policy (HTTP bridge)")
     if not path:
         return error_result("path is required")
     status_code, body = await call_rest(
@@ -77,7 +78,7 @@ async def get_file_policy(
     )
 
 
-async def set_file_policy(
+async def bifrost_set_file_policy(
     context: Any,
     path: str,
     policies: list[dict[str, Any]] | dict[str, Any],
@@ -86,6 +87,7 @@ async def set_file_policy(
     solution: str | None = None,
 ) -> ToolResult:
     """Set a file policy — thin wrapper over ``PUT /api/files/policies/{path}``."""
+    logger.info("MCP bifrost_set_file_policy (HTTP bridge)")
     if not path:
         return error_result("path is required")
     if not isinstance(policies, (list, dict)):
@@ -105,7 +107,7 @@ async def set_file_policy(
     )
 
 
-async def delete_file_policy(
+async def bifrost_delete_file_policy(
     context: Any,
     path: str,
     location: str = "workspace",
@@ -113,6 +115,7 @@ async def delete_file_policy(
     solution: str | None = None,
 ) -> ToolResult:
     """Delete a file policy — thin wrapper over ``DELETE /api/files/policies/{path}``."""
+    logger.info("MCP bifrost_delete_file_policy (HTTP bridge)")
     if not path:
         return error_result("path is required")
     status_code, body = await call_rest(
@@ -133,10 +136,10 @@ async def delete_file_policy(
 
 
 TOOLS = [
-    ("list_file_policies", "List File Policies", "List file access policies."),
-    ("get_file_policy", "Get File Policy", "Get a file access policy."),
-    ("set_file_policy", "Set File Policy", "Create or replace a file access policy."),
-    ("delete_file_policy", "Delete File Policy", "Delete a file access policy."),
+    ("bifrost_list_file_policies", "List File Policies", "List file access policies."),
+    ("bifrost_get_file_policy", "Get File Policy", "Get a file access policy."),
+    ("bifrost_set_file_policy", "Set File Policy", "Create or replace a file access policy."),
+    ("bifrost_delete_file_policy", "Delete File Policy", "Delete a file access policy."),
 ]
 
 
@@ -147,10 +150,10 @@ def register_tools(mcp: Any, get_context_fn: Any) -> None:
     )
 
     tool_funcs = {
-        "list_file_policies": list_file_policies,
-        "get_file_policy": get_file_policy,
-        "set_file_policy": set_file_policy,
-        "delete_file_policy": delete_file_policy,
+        "bifrost_list_file_policies": bifrost_list_file_policies,
+        "bifrost_get_file_policy": bifrost_get_file_policy,
+        "bifrost_set_file_policy": bifrost_set_file_policy,
+        "bifrost_delete_file_policy": bifrost_delete_file_policy,
     }
 
     for tool_id, _name, description in TOOLS:
@@ -161,9 +164,9 @@ def register_tools(mcp: Any, get_context_fn: Any) -> None:
 
 __all__ = [
     "TOOLS",
-    "delete_file_policy",
-    "get_file_policy",
-    "list_file_policies",
+    "bifrost_delete_file_policy",
+    "bifrost_get_file_policy",
+    "bifrost_list_file_policies",
     "register_tools",
-    "set_file_policy",
+    "bifrost_set_file_policy",
 ]

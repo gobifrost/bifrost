@@ -53,14 +53,15 @@ async def test_cloud_write_commits_metadata_before_publishing(monkeypatch, mutat
     monkeypatch.setattr("src.core.pubsub.publish_file_change", publish)
 
     await files.write_file(
-        files.FileWriteRequest(
+        request=files.FileWriteRequest(
             path="report.txt",
             content="ready",
             location="solutions",
         ),
-        mutation_context,
-        MagicMock(),
-        db,
+        http_request=MagicMock(),
+        ctx=mutation_context,
+        user=MagicMock(),
+        db=db,
     )
 
     assert events == ["write", "metadata", "commit", "publish"]
@@ -84,10 +85,11 @@ async def test_cloud_delete_commits_metadata_before_publishing(monkeypatch, muta
     monkeypatch.setattr("src.core.pubsub.publish_file_change", publish)
 
     await files.delete_file(
-        files.FileDeleteRequest(path="report.txt", location="solutions"),
-        mutation_context,
-        MagicMock(),
-        db,
+        request=files.FileDeleteRequest(path="report.txt", location="solutions"),
+        http_request=MagicMock(),
+        ctx=mutation_context,
+        user=MagicMock(),
+        db=db,
     )
 
     assert events == ["delete", "metadata", "commit", "publish"]

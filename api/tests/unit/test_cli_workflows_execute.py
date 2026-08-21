@@ -124,6 +124,42 @@ def _invoke(args: list[str]):
     )
 
 
+class TestWorkflowsValidate:
+    def test_posts_workspace_path_and_supplied_content(
+        self,
+        fake_client: _FakeClient,
+        stub_resolver: dict[str, str],
+    ) -> None:
+        fake_client.queue(
+            "POST",
+            "/api/workflows/validate",
+            200,
+            {"valid": True, "issues": [], "metadata": None},
+        )
+
+        result = _invoke(
+            [
+                "--json",
+                "validate",
+                "workflows/example.py",
+                "--content",
+                "from bifrost import workflow",
+            ]
+        )
+
+        assert result.exit_code == 0, result.output
+        assert fake_client.calls == [
+            (
+                "POST",
+                "/api/workflows/validate",
+                {
+                    "path": "workflows/example.py",
+                    "content": "from bifrost import workflow",
+                },
+            )
+        ]
+
+
 class TestWorkflowsExecute:
     def test_streams_logs_then_exits_on_terminal_status(
         self,

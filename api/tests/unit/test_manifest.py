@@ -60,6 +60,119 @@ def test_parse_manifest_from_yaml(sample_manifest):
     assert manifest.workflows[wf_id].type == "workflow"
 
 
+def test_role_manifest_accepts_legacy_scopes_as_capabilities():
+    from bifrost.manifest import parse_manifest
+
+    role_id = str(uuid4())
+    manifest = parse_manifest(
+        yaml.dump(
+            {
+                "roles": [
+                    {
+                        "id": role_id,
+                        "name": "legacy-builder",
+                        "scopes": ["solutions.build", "agents.write"],
+                    }
+                ]
+            }
+        )
+    )
+
+    assert manifest.roles[0].capabilities == [
+        "agents.readwrite",
+        "builder.execute",
+        "solutions.build.execute",
+        "solutions.deploy.execute",
+        "solutions.readwrite",
+    ]
+
+
+def test_role_manifest_accepts_empty_legacy_permissions():
+    from bifrost.manifest import parse_manifest
+
+    role_id = str(uuid4())
+    manifest = parse_manifest(
+        yaml.dump(
+            {
+                "roles": [
+                    {
+                        "id": role_id,
+                        "name": "legacy-empty",
+                        "permissions": {},
+                    }
+                ]
+            }
+        )
+    )
+
+    assert manifest.roles[0].capabilities is None
+    assert manifest.roles[0].permissions == {}
+
+
+def test_role_manifest_translates_known_legacy_permissions():
+    from bifrost.manifest import parse_manifest
+
+    role_id = str(uuid4())
+    manifest = parse_manifest(
+        yaml.dump(
+            {
+                "roles": [
+                    {
+                        "id": role_id,
+                        "name": "legacy-agent-promoter",
+                        "permissions": {"can_promote_agent": True},
+                    }
+                ]
+            }
+        )
+    )
+
+    assert manifest.roles[0].capabilities == ["agents.readwrite"]
+    assert manifest.roles[0].permissions == {"can_promote_agent": True}
+
+
+def test_role_manifest_rejects_conflicting_legacy_scope_alias():
+    from bifrost.manifest import parse_manifest
+
+    with pytest.raises(ValueError, match="Use either capabilities"):
+        parse_manifest(
+            yaml.dump(
+                {
+                    "roles": [
+                        {
+                            "id": str(uuid4()),
+                            "name": "conflict",
+                            "capabilities": ["workflows.read"],
+                            "scopes": ["agents.read"],
+                        }
+                    ]
+                }
+            )
+        )
+
+
+def test_role_manifest_preserves_arbitrary_legacy_permissions():
+    from bifrost.manifest import parse_manifest
+
+    role_id = str(uuid4())
+    manifest = parse_manifest(
+        yaml.dump(
+            {
+                "roles": [
+                    {
+                        "id": role_id,
+                        "name": "legacy-permissions",
+                        "permissions": {"read": True},
+                    }
+                ]
+            }
+        )
+    )
+
+    assert manifest.roles[0].permissions == {"read": True}
+    assert manifest.roles[0].capabilities == []
+
+
 def test_serialize_manifest(sample_manifest):
     """Serialize a Manifest back to YAML string."""
     from bifrost.manifest import parse_manifest, serialize_manifest
@@ -2078,11 +2191,12 @@ class TestInlineAgentContent:
             name="Triage",
             description="Triage incoming tickets",
             system_prompt="You are a triage agent. Classify tickets.",
+            bundle_path="skills/triage",
             channels=["chat", "email"],
             tool_ids=[tool_id],
             delegated_agent_ids=[delegate_id],
             knowledge_sources=["faq", "runbooks"],
-            system_tools=["execute_workflow", "search_knowledge"],
+            system_tools=["bifrost_execute_workflow", "bifrost_search_knowledge"],
             llm_model="claude-sonnet-4",
             llm_max_tokens=8000,
             max_iterations=15,
@@ -2095,11 +2209,12 @@ class TestInlineAgentContent:
         rt = parsed.agents[agent_id]
         assert rt.description == "Triage incoming tickets"
         assert rt.system_prompt == "You are a triage agent. Classify tickets."
+        assert rt.bundle_path == "skills/triage"
         assert rt.channels == ["chat", "email"]
         assert rt.tool_ids == [tool_id]
         assert rt.delegated_agent_ids == [delegate_id]
         assert rt.knowledge_sources == ["faq", "runbooks"]
-        assert rt.system_tools == ["execute_workflow", "search_knowledge"]
+        assert rt.system_tools == ["bifrost_execute_workflow", "bifrost_search_knowledge"]
         assert rt.llm_model == "claude-sonnet-4"
         assert rt.llm_max_tokens == 8000
         assert rt.max_iterations == 15

@@ -15,6 +15,7 @@ import {
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -47,6 +48,7 @@ import {
 	SheetTitle,
 } from "@/components/ui/sheet";
 import {
+	PLATFORM_BOUNDARY_HEADERS,
 	useRoles,
 	useDeleteRole,
 	useRoleUsers,
@@ -75,6 +77,7 @@ import { useApplications } from "@/hooks/useApplications";
 import { useWorkflows } from "@/hooks/useWorkflows";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { RoleDialog } from "@/components/roles/RoleDialog";
+import { useAuthorizationBoundary } from "@/contexts/AuthorizationBoundaryContext";
 import {
 	ConsumerTab,
 	type ConsumerTabItem,
@@ -83,14 +86,13 @@ import {
 import type { components } from "@/lib/v1";
 
 type ConsumerKey =
-	| "users"
-	| "forms"
-	| "agents"
-	| "apps"
-	| "workflows"
-	| "knowledge";
+	"users" | "forms" | "agents" | "apps" | "workflows" | "knowledge";
 
-const TABS: { key: ConsumerKey; label: string; Icon: React.ComponentType<{ className?: string }> }[] = [
+const TABS: {
+	key: ConsumerKey;
+	label: string;
+	Icon: React.ComponentType<{ className?: string }>;
+}[] = [
 	{ key: "users", label: "Users", Icon: Users },
 	{ key: "forms", label: "Forms", Icon: FileText },
 	{ key: "agents", label: "Agents", Icon: Bot },
@@ -107,14 +109,16 @@ export function RoleDetail() {
 	const [deleteOpen, setDeleteOpen] = useState(false);
 
 	const { data: roles, isLoading: rolesLoading } = useRoles();
+	const { selectedTarget, hasSelectedCapability } =
+		useAuthorizationBoundary();
+	const canManageRoleDefinition =
+		selectedTarget?.kind === "platform" &&
+		hasSelectedCapability("roles.readwrite");
 	const role = useMemo(
 		() => roles?.find((r) => r.id === roleId),
 		[roles, roleId],
 	);
 	const deleteRole = useDeleteRole();
-
-	const currentTab: ConsumerKey =
-		tab && TABS.some((t) => t.key === tab) ? (tab as ConsumerKey) : "users";
 
 	if (!roleId) {
 		return (
@@ -150,9 +154,20 @@ export function RoleDetail() {
 		);
 	}
 
+	const availableTabs = role.assignable_to_resources
+		? TABS
+		: TABS.filter(({ key }) => key === "users");
+	const currentTab: ConsumerKey =
+		tab && availableTabs.some((item) => item.key === tab)
+			? (tab as ConsumerKey)
+			: "users";
+
 	const handleDelete = () => {
 		deleteRole.mutate(
-			{ params: { path: { role_id: role.id } } },
+			{
+				headers: PLATFORM_BOUNDARY_HEADERS,
+				params: { path: { role_id: role.id } },
+			},
 			{
 				onSuccess: () => {
 					navigate("/roles");
@@ -183,27 +198,42 @@ export function RoleDetail() {
 					<h1 className="text-3xl font-extrabold tracking-tight">
 						{role.name}
 					</h1>
+					{role.is_builtin ? (
+						<Badge variant="secondary" className="mt-2 font-normal">
+							Built-in · Managed by Bifrost
+						</Badge>
+					) : null}
 					{role.description && (
-						<p className="mt-1 text-muted-foreground">{role.description}</p>
+						<p className="mt-1 text-muted-foreground">
+							{role.description}
+						</p>
 					)}
 					<p className="mt-2 text-xs text-muted-foreground">
-						A role grants access to every user, form, agent, app, workflow, and
-						knowledge namespace you assign below.
+						{role.assignable_to_resources
+							? "A role grants access to every user, form, agent, app, workflow, and knowledge namespace you assign below."
+							: "Assign users to this role to grant its fixed platform capabilities."}
 					</p>
 				</div>
 				<div className="flex gap-2">
-					<Button variant="outline" onClick={() => setEditOpen(true)}>
-						<Pencil className="h-4 w-4 mr-1.5" />
-						Edit
-					</Button>
-					<Button
-						variant="outline"
-						className="text-destructive hover:text-destructive"
-						onClick={() => setDeleteOpen(true)}
-					>
-						<Trash2 className="h-4 w-4 mr-1.5" />
-						Delete
-					</Button>
+					{role.is_builtin || canManageRoleDefinition ? (
+						<Button
+							variant="outline"
+							onClick={() => setEditOpen(true)}
+						>
+							<Pencil className="h-4 w-4 mr-1.5" />
+							{role.is_builtin ? "View" : "Edit"}
+						</Button>
+					) : null}
+					{!role.is_builtin && canManageRoleDefinition ? (
+						<Button
+							variant="outline"
+							className="text-destructive hover:text-destructive"
+							onClick={() => setDeleteOpen(true)}
+						>
+							<Trash2 className="h-4 w-4 mr-1.5" />
+							Delete
+						</Button>
+					) : null}
 				</div>
 			</div>
 
@@ -214,10 +244,14 @@ export function RoleDetail() {
 				className="flex-1 min-h-0 flex flex-col"
 			>
 				<TabsList className="self-start">
-					{TABS.map(({ key, label, Icon }) => {
+					{availableTabs.map(({ key, label, Icon }) => {
 						const count = role.consumer_counts?.[key] ?? 0;
 						return (
-							<TabsTrigger key={key} value={key} className="gap-1.5">
+							<TabsTrigger
+								key={key}
+								value={key}
+								className="gap-1.5"
+							>
 								<Icon className="h-4 w-4" />
 								{label}
 								<span className="ml-1 text-xs text-muted-foreground">
@@ -259,9 +293,10 @@ export function RoleDetail() {
 					<AlertDialogHeader>
 						<AlertDialogTitle>Delete role</AlertDialogTitle>
 						<AlertDialogDescription>
-							Are you sure you want to delete "{role.name}"? This action cannot
-							be undone and removes the role from every user, form, and other
-							consumer it's assigned to.
+							Are you sure you want to delete "{role.name}"? This
+							action cannot be undone and removes the role from
+							every user, form, and other consumer it's assigned
+							to.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -291,10 +326,14 @@ export function RoleDetail() {
 function useOrgLookup() {
 	const { data: orgs } = useOrganizations();
 	return useMemo(() => {
-		const byId = new Map<string, components["schemas"]["OrganizationPublic"]>();
+		const byId = new Map<
+			string,
+			components["schemas"]["OrganizationPublic"]
+		>();
 		for (const o of orgs ?? []) byId.set(o.id, o);
 		return (orgId: string | null | undefined) => {
-			if (!orgId) return { id: null, name: "Platform", isProvider: false };
+			if (!orgId)
+				return { id: null, name: "Platform", isProvider: false };
 			const o = byId.get(orgId);
 			return {
 				id: orgId,
@@ -311,6 +350,16 @@ function UsersTab({ roleId }: { roleId: string }) {
 	const assignMut = useAssignUsersToRole();
 	const unassignMut = useBulkUnassignUsers();
 	const orgFor = useOrgLookup();
+
+	const buildRoleBoundaries = (organizationId: string | null) =>
+		organizationId
+			? [
+					{
+						boundary_kind: "organization" as const,
+						organization_id: organizationId,
+					},
+				]
+			: [{ boundary_kind: "platform" as const }];
 
 	const assignedIds = useMemo(
 		() => new Set(assigned?.user_ids ?? []),
@@ -329,7 +378,8 @@ function UsersTab({ roleId }: { roleId: string }) {
 				return {
 					id,
 					primary: u?.name || u?.email || id,
-					secondary: u?.email && u?.name !== u?.email ? u.email : null,
+					secondary:
+						u?.email && u?.name !== u?.email ? u.email : null,
 					org: orgFor(u?.organization_id),
 				};
 			}),
@@ -359,9 +409,16 @@ function UsersTab({ roleId }: { roleId: string }) {
 			secondaryColumnLabel="Email"
 			showOrgColumn
 			onAssign={async (ids) => {
+				const target =
+					ids.length > 0 ? userById.get(ids[0]) : undefined;
 				await assignMut.mutateAsync({
 					params: { path: { role_id: roleId } },
-					body: { user_ids: ids },
+					body: {
+						user_ids: ids,
+						boundaries: buildRoleBoundaries(
+							target?.organization_id || null,
+						),
+					},
 				});
 			}}
 			onUnassign={async (ids) => {
@@ -516,7 +573,15 @@ function AppsTab({ roleId }: { roleId: string }) {
 
 	const allApps = useMemo(() => {
 		if (Array.isArray(allAppsResp)) return allAppsResp;
-		return (allAppsResp as { applications?: components["schemas"]["ApplicationPublic"][] } | undefined)?.applications ?? [];
+		return (
+			(
+				allAppsResp as
+					| {
+							applications?: components["schemas"]["ApplicationPublic"][];
+					  }
+					| undefined
+			)?.applications ?? []
+		);
 	}, [allAppsResp]);
 
 	const appById = useMemo(() => {
@@ -663,25 +728,28 @@ function KnowledgeTab({ roleId }: { roleId: string }) {
 	const entries = useMemo(() => data?.entries ?? [], [data]);
 
 	const orgName = useMemo(
-		() =>
-			(orgId?: string | null) => {
-				if (!orgId) return "All organizations";
-				const o = orgs?.find((x) => x.id === orgId);
-				return o?.name || orgId;
-			},
+		() => (orgId?: string | null) => {
+			if (!orgId) return "All organizations";
+			const o = orgs?.find((x) => x.id === orgId);
+			return o?.name || orgId;
+		},
 		[orgs],
 	);
 
 	const visible = useMemo(() => {
 		const q = search.trim().toLowerCase();
 		if (!q) return entries;
-		return entries.filter((e) =>
-			e.namespace.toLowerCase().includes(q) ||
-			orgName(e.organization_id).toLowerCase().includes(q),
+		return entries.filter(
+			(e) =>
+				e.namespace.toLowerCase().includes(q) ||
+				orgName(e.organization_id).toLowerCase().includes(q),
 		);
 	}, [entries, search, orgName]);
 
-	const visibleIds = useMemo(() => new Set(visible.map((e) => e.id)), [visible]);
+	const visibleIds = useMemo(
+		() => new Set(visible.map((e) => e.id)),
+		[visible],
+	);
 	const effective = useMemo(() => {
 		const out = new Set<string>();
 		for (const id of selected) if (visibleIds.has(id)) out.add(id);
@@ -887,18 +955,24 @@ function KnowledgeAssignDrawer({
 
 	return (
 		<Sheet open onOpenChange={(o) => !o && onClose()}>
-			<SheetContent side="right" className="w-[480px] sm:max-w-[480px] flex flex-col">
+			<SheetContent
+				side="right"
+				className="w-[480px] sm:max-w-[480px] flex flex-col"
+			>
 				<SheetHeader>
 					<SheetTitle>Assign knowledge namespace</SheetTitle>
 					<SheetDescription>
-						Grant this role access to a knowledge namespace. Namespaces are
-						free-form strings — pick the one used in your knowledge store.
+						Grant this role access to a knowledge namespace.
+						Namespaces are free-form strings — pick the one used in
+						your knowledge store.
 					</SheetDescription>
 				</SheetHeader>
 
 				<div className="px-6 space-y-3">
 					<label className="block text-sm">
-						<span className="block mb-1 text-muted-foreground">Namespace</span>
+						<span className="block mb-1 text-muted-foreground">
+							Namespace
+						</span>
 						<Input
 							type="text"
 							value={namespace}
@@ -908,7 +982,9 @@ function KnowledgeAssignDrawer({
 					</label>
 
 					<label className="block text-sm">
-						<span className="block mb-1 text-muted-foreground">Scope</span>
+						<span className="block mb-1 text-muted-foreground">
+							Scope
+						</span>
 						<select
 							value={orgId}
 							onChange={(e) => setOrgId(e.target.value)}

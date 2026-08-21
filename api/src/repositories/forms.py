@@ -7,6 +7,7 @@ Repository for Form CRUD operations with organization scoping and role-based acc
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.core.org_filter import OrgFilterType
@@ -31,6 +32,26 @@ class FormRepository(OrgScopedRepository[FormORM]):
     role_table = FormRole
     role_entity_id_column = "form_id"
 
+    def __init__(
+        self,
+        session: AsyncSession,
+        org_id: UUID | str | None,
+        user_id: UUID | str | None = None,
+        *,
+        bypass_resource_roles: bool = False,
+        is_external: bool = False,
+    ):
+        """Initialize Form access with explicit repository admission semantics."""
+
+        self.bypass_resource_roles = bypass_resource_roles
+        super().__init__(
+            session,
+            org_id,
+            user_id=user_id,
+            bypass_resource_admission=bypass_resource_roles,
+            is_external=is_external,
+        )
+
     async def list_forms(
         self,
         active_only: bool = True,
@@ -48,7 +69,9 @@ class FormRepository(OrgScopedRepository[FormORM]):
             List of Form ORM objects with fields eager-loaded
         """
         # Build base query with cascade scoping
-        query = select(self.model).options(selectinload(self.model.fields))
+        query = self._apply_solution_visibility(
+            select(self.model).options(selectinload(self.model.fields))
+        )
         query = self._apply_cascade_scope(query)
 
         if active_only:
@@ -59,8 +82,9 @@ class FormRepository(OrgScopedRepository[FormORM]):
         result = await self.session.execute(query)
         entities = list(result.scalars().all())
 
-        # Filter by role access for non-superusers with role-based entities
-        if not self.is_superuser:
+        # Filter by access-level and role rows unless the caller supplied an
+        # already-authorized repository admission bypass.
+        if not self.bypass_resource_roles:
             accessible = []
             for entity in entities:
                 if await self._can_access_entity(entity):
@@ -75,9 +99,10 @@ class FormRepository(OrgScopedRepository[FormORM]):
         active_only: bool = False,
     ) -> list[FormORM]:
         """
-        List all forms in scope without role-based filtering.
+        List all forms in scope without access-level/role-row filtering.
 
-        Used by platform admins who bypass role checks.
+        Used only after the caller has explicitly authorized a cross-scope
+        collection view and supplied ``bypass_resource_roles`` semantics.
         Supports all filter types:
         - ALL: No org filter, show everything
         - GLOBAL_ONLY: Only forms with org_id IS NULL
@@ -91,7 +116,9 @@ class FormRepository(OrgScopedRepository[FormORM]):
         Returns:
             List of Form ORM objects with fields eager-loaded
         """
-        query = select(self.model).options(selectinload(self.model.fields))
+        query = self._apply_solution_visibility(
+            select(self.model).options(selectinload(self.model.fields))
+        )
 
         # Apply org filtering based on filter type
         if filter_type == OrgFilterType.ALL:
@@ -132,11 +159,12 @@ class FormRepository(OrgScopedRepository[FormORM]):
         Returns:
             Form ORM object or None if not found
         """
-        result = await self.session.execute(
+        query = self._apply_solution_visibility(
             select(self.model)
             .options(selectinload(self.model.fields))
             .where(self.model.id == form_id)
         )
+        result = await self.session.execute(query)
         return result.scalar_one_or_none()
 
     async def get_form_with_access_check(self, form_id: UUID) -> FormORM | None:
@@ -157,6 +185,7 @@ class FormRepository(OrgScopedRepository[FormORM]):
             .options(selectinload(self.model.fields))
             .where(self.model.id == form_id)
         )
+        query = self._apply_solution_visibility(query)
 
         # Apply cascade scoping: prioritize org-specific, then global
         if self.org_id is not None:

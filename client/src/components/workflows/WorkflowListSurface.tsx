@@ -55,8 +55,10 @@ export interface WorkflowListSurfaceProps {
 	workflows: WorkflowListItem[];
 	viewMode: "grid" | "table";
 	isLoading?: boolean;
-	isPlatformAdmin: boolean;
+	showOrganizationScope?: boolean;
+	isPlatformAdmin?: boolean;
 	canManageWorkflows: boolean;
+	canExecuteWorkflows?: boolean;
 	getOrgName: (orgId: string | null | undefined) => string;
 	hasGlobalKey?: boolean;
 	workflowsWithKeys?: Set<string>;
@@ -114,8 +116,10 @@ export function WorkflowListSurface({
 	workflows,
 	viewMode,
 	isLoading = false,
-	isPlatformAdmin,
+	showOrganizationScope: showOrganizationScopeProp,
+	isPlatformAdmin = false,
 	canManageWorkflows,
+	canExecuteWorkflows = true,
 	getOrgName,
 	hasGlobalKey = false,
 	workflowsWithKeys = new Set<string>(),
@@ -129,6 +133,8 @@ export function WorkflowListSurface({
 	onOpenEmpty,
 	emptySearchActive = false,
 }: WorkflowListSurfaceProps) {
+	const showOrganizationScope = showOrganizationScopeProp ?? isPlatformAdmin;
+
 	if (isLoading) {
 		return viewMode === "grid" ? (
 			<div className="grid gap-4 grid-cols-[repeat(auto-fill,minmax(300px,1fr))]">
@@ -181,7 +187,7 @@ export function WorkflowListSurface({
 				<DataTable className="max-h-full">
 					<DataTableHeader>
 						<DataTableRow>
-							{isPlatformAdmin && (
+							{showOrganizationScope && (
 								<DataTableHead className="w-0 whitespace-nowrap">
 									Organization
 								</DataTableHead>
@@ -196,7 +202,7 @@ export function WorkflowListSurface({
 					<DataTableBody>
 						{workflows.map((workflow) => (
 							<DataTableRow key={workflow.id ?? workflow.name}>
-								{isPlatformAdmin && (
+								{showOrganizationScope && (
 									<DataTableCell className="w-0 whitespace-nowrap">
 										{workflow.organization_id ? (
 											<Badge variant="outline" className="text-xs">
@@ -266,8 +272,7 @@ export function WorkflowListSurface({
 										{workflow.is_solution_managed && (
 											<SolutionManagedBadge solutionId={workflow.solution_id} />
 										)}
-										{isPlatformAdmin &&
-											canManageWorkflows &&
+										{canManageWorkflows &&
 											!workflow.is_solution_managed &&
 											onEditScope && (
 												<Button
@@ -283,6 +288,7 @@ export function WorkflowListSurface({
 											variant="outline"
 											size="icon-sm"
 											onClick={() => onExecute(workflow)}
+											disabled={!canExecuteWorkflows}
 											title="Execute"
 										>
 											<PlayCircle className="h-4 w-4" />
@@ -349,8 +355,7 @@ export function WorkflowListSurface({
 								{workflow.is_solution_managed && (
 									<SolutionManagedBadge solutionId={workflow.solution_id} />
 								)}
-								{isPlatformAdmin &&
-									canManageWorkflows &&
+								{canManageWorkflows &&
 									!workflow.is_solution_managed &&
 									onEditScope && (
 										<Button
@@ -379,11 +384,11 @@ export function WorkflowListSurface({
 						<div className="flex items-center gap-2 text-xs text-muted-foreground">
 							{workflow.category && <span>{workflow.category}</span>}
 							{workflow.category &&
-								(isPlatformAdmin ||
+								(showOrganizationScope ||
 									workflow.endpoint_enabled ||
 									workflow.is_orphaned ||
 									workflow.disable_global_key) && <span>·</span>}
-							{isPlatformAdmin && (
+							{showOrganizationScope && (
 								<span className="flex items-center gap-1">
 									{workflow.organization_id ? (
 										<>
@@ -398,7 +403,7 @@ export function WorkflowListSurface({
 									)}
 								</span>
 							)}
-							{isPlatformAdmin && workflow.access_level && (
+							{showOrganizationScope && workflow.access_level && (
 								<>
 									<span>·</span>
 									<Tooltip>
@@ -502,7 +507,11 @@ export function WorkflowListSurface({
 							</div>
 						)}
 
-						<Button className="w-full" onClick={() => onExecute(workflow)}>
+						<Button
+							className="w-full"
+							onClick={() => onExecute(workflow)}
+							disabled={!canExecuteWorkflows}
+						>
 							<PlayCircle className="mr-2 h-4 w-4" />
 							{executeLabel(workflow)}
 						</Button>

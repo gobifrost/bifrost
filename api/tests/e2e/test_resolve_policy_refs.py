@@ -35,7 +35,7 @@ async def test_resolves_inline(db_session, seed_org):
         body={"actions": ["read", "write", "delete", "list"], "when": {"user": "is_platform_admin"}},
     ))
     await db_session.flush()
-    repo = PolicyRuleRepository(db_session, org_id=seed_org, is_superuser=True)
+    repo = PolicyRuleRepository(db_session, org_id=seed_org, bypass_resource_admission=True)
     doc = FilePolicies.model_validate({"policies": [{"$ref": "ab"}, {"name": "x", "actions": ["read"], "when": None}]})
     await resolve_policy_refs(doc, repo=repo, action_domain="file")
     assert all(isinstance(p, FilePolicyRule) for p in doc.policies)
@@ -44,7 +44,7 @@ async def test_resolves_inline(db_session, seed_org):
 
 @pytest.mark.asyncio
 async def test_missing_raises(db_session, seed_org):
-    repo = PolicyRuleRepository(db_session, org_id=seed_org, is_superuser=True)
+    repo = PolicyRuleRepository(db_session, org_id=seed_org, bypass_resource_admission=True)
     doc = FilePolicies.model_validate({"policies": [{"$ref": "nope"}]})
     with pytest.raises(PolicyRuleNotFound):
         await resolve_policy_refs(doc, repo=repo, action_domain="file")
@@ -57,7 +57,7 @@ async def test_cross_domain_raises(db_session, seed_org):
         body={"actions": ["create"], "when": None},
     ))
     await db_session.flush()
-    repo = PolicyRuleRepository(db_session, org_id=seed_org, is_superuser=True)
+    repo = PolicyRuleRepository(db_session, org_id=seed_org, bypass_resource_admission=True)
     doc = FilePolicies.model_validate({"policies": [{"$ref": "t"}]})  # table rule in a file policy
     with pytest.raises(PolicyRuleDomainMismatch):
         await resolve_policy_refs(doc, repo=repo, action_domain="file")
@@ -96,7 +96,7 @@ async def test_solution_rule_wins_over_org_rule(db_session, seed_org, seed_solut
     ))
     await db_session.flush()
 
-    repo = PolicyRuleRepository(db_session, org_id=seed_org, is_superuser=True)
+    repo = PolicyRuleRepository(db_session, org_id=seed_org, bypass_resource_admission=True)
     doc = FilePolicies.model_validate({"policies": [{"$ref": "ab"}]})
     await resolve_policy_refs(doc, repo=repo, action_domain="file", solution_id=seed_solution)
     assert isinstance(doc.policies[0], FilePolicyRule)
@@ -114,7 +114,7 @@ async def test_solution_falls_back_to_org_global(db_session, seed_org, seed_solu
     ))
     await db_session.flush()
 
-    repo = PolicyRuleRepository(db_session, org_id=seed_org, is_superuser=True)
+    repo = PolicyRuleRepository(db_session, org_id=seed_org, bypass_resource_admission=True)
     doc = FilePolicies.model_validate({"policies": [{"$ref": "fallback"}]})
     await resolve_policy_refs(doc, repo=repo, action_domain="file", solution_id=seed_solution)
     assert isinstance(doc.policies[0], FilePolicyRule)
@@ -145,7 +145,7 @@ async def test_cross_domain_does_not_leak_foreign_solution_rule(db_session, seed
 
     # Caller resolves with solution_id=None (no solution context) — the foreign-solution
     # rule above must be invisible; the resolver should raise PolicyRuleNotFound.
-    repo = PolicyRuleRepository(db_session, org_id=seed_org, is_superuser=True)
+    repo = PolicyRuleRepository(db_session, org_id=seed_org, bypass_resource_admission=True)
     doc = FilePolicies.model_validate({"policies": [{"$ref": "x"}]})
     with pytest.raises(PolicyRuleNotFound):
         await resolve_policy_refs(doc, repo=repo, action_domain="file")

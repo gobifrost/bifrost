@@ -165,6 +165,31 @@ def test_different_requester_gets_conflict_for_active_job(
     org1,
     org1_user,
 ):
+    role_response = e2e_client.post(
+        "/api/roles",
+        headers=platform_admin.headers,
+        json={
+            "name": f"App publisher {uuid.uuid4().hex[:8]}",
+            "description": "Publishes organization applications in this test",
+            "capabilities": ["apps.deploy.execute"],
+        },
+    )
+    assert role_response.status_code == 201, role_response.text
+    assignment = e2e_client.post(
+        f"/api/roles/{role_response.json()['id']}/users",
+        headers=platform_admin.headers,
+        json={
+            "user_ids": [str(org1_user.user_id)],
+            "boundaries": [
+                {
+                    "boundary_kind": "organization",
+                    "organization_id": org1["id"],
+                }
+            ],
+        },
+    )
+    assert assignment.status_code == 204, assignment.text
+
     app = _create_app(
         e2e_client,
         platform_admin.headers,
@@ -179,7 +204,10 @@ def test_different_requester_gets_conflict_for_active_job(
 
     duplicate = e2e_client.post(
         f"/api/applications/{app['id']}/publish",
-        headers=org1_user.headers,
+        headers={
+            **org1_user.headers,
+            "X-Bifrost-Boundary": f"organization:{org1['id']}",
+        },
     )
     assert duplicate.status_code == 409, duplicate.text
     assert duplicate.json()["detail"] == (

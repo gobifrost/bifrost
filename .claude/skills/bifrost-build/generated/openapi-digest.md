@@ -6,6 +6,10 @@
 | Method | Path |
 |---|---|
 | GET | `/` |
+| DELETE | `/api/admin/builder/runner` |
+| GET | `/api/admin/builder/runner` |
+| PUT | `/api/admin/builder/runner` |
+| POST | `/api/admin/builder/runner/provision` |
 | DELETE | `/api/admin/llm/config` |
 | GET | `/api/admin/llm/config` |
 | POST | `/api/admin/llm/config` |
@@ -58,6 +62,12 @@
 | GET | `/api/agents/{agent_id}/logo` |
 | POST | `/api/agents/{agent_id}/logo` |
 | POST | `/api/agents/{agent_id}/promote` |
+| GET | `/api/agents/{agent_id}/skill` |
+| DELETE | `/api/agents/{agent_id}/skill/bundle` |
+| PUT | `/api/agents/{agent_id}/skill/bundle` |
+| GET | `/api/agents/{agent_id}/skill/download` |
+| POST | `/api/agents/{agent_id}/skill/export` |
+| GET | `/api/agents/{agent_id}/skill/file` |
 | GET | `/api/agents/{agent_id}/stats` |
 | GET | `/api/agents/{agent_id}/tools` |
 | POST | `/api/agents/{agent_id}/tuning-session` |
@@ -84,6 +94,7 @@
 | DELETE | `/api/applications/{app_id}/files/{file_path}` |
 | GET | `/api/applications/{app_id}/files/{file_path}` |
 | PUT | `/api/applications/{app_id}/files/{file_path}` |
+| POST | `/api/applications/{app_id}/isolated-launch` |
 | DELETE | `/api/applications/{app_id}/logo` |
 | GET | `/api/applications/{app_id}/logo` |
 | POST | `/api/applications/{app_id}/logo` |
@@ -102,6 +113,39 @@
 | DELETE | `/api/branding/logo/{logo_type}` |
 | GET | `/api/branding/logo/{logo_type}` |
 | POST | `/api/branding/logo/{logo_type}` |
+| GET | `/api/builder/solutions` |
+| POST | `/api/builder/solutions` |
+| GET | `/api/builder/solutions/global-workspace` |
+| POST | `/api/builder/solutions/global-workspace` |
+| POST | `/api/builder/solutions/global-workspace/apply` |
+| GET | `/api/builder/solutions/global-workspace/operations` |
+| DELETE | `/api/builder/solutions/global-workspace/operations/{change_id}` |
+| POST | `/api/builder/solutions/global-workspace/refresh` |
+| POST | `/api/builder/solutions/global-workspace/rollback` |
+| POST | `/api/builder/solutions/global-workspace/validate` |
+| GET | `/api/builder/solutions/targets` |
+| DELETE | `/api/builder/solutions/{solution_id}` |
+| GET | `/api/builder/solutions/{solution_id}` |
+| POST | `/api/builder/solutions/{solution_id}/apps/{app_id}/launch` |
+| GET | `/api/builder/solutions/{solution_id}/build-jobs/{job_id}` |
+| GET | `/api/builder/solutions/{solution_id}/collaborators` |
+| PUT | `/api/builder/solutions/{solution_id}/collaborators` |
+| DELETE | `/api/builder/solutions/{solution_id}/collaborators/{collaborator_user_id}` |
+| GET | `/api/builder/solutions/{solution_id}/deploy-jobs/{job_id}` |
+| POST | `/api/builder/solutions/{solution_id}/promotion-request` |
+| GET | `/api/builder/solutions/{solution_id}/revisions` |
+| GET | `/api/builder/solutions/{solution_id}/revisions/{revision_id}/diff` |
+| GET | `/api/builder/solutions/{solution_id}/revisions/{revision_id}/download` |
+| GET | `/api/builder/solutions/{solution_id}/revisions/{revision_id}/file` |
+| GET | `/api/builder/solutions/{solution_id}/revisions/{revision_id}/files` |
+| GET | `/api/builder/solutions/{solution_id}/role-grants` |
+| PUT | `/api/builder/solutions/{solution_id}/role-grants` |
+| DELETE | `/api/builder/solutions/{solution_id}/role-grants/{role_id}` |
+| GET | `/api/builder/solutions/{solution_id}/sessions` |
+| POST | `/api/builder/solutions/{solution_id}/sessions` |
+| GET | `/api/builder/solutions/{solution_id}/turns` |
+| POST | `/api/builder/solutions/{solution_id}/turns` |
+| POST | `/api/builder/solutions/{solution_id}/undo` |
 | GET | `/api/chat/artifacts` |
 | DELETE | `/api/chat/artifacts/{attachment_id}` |
 | PATCH | `/api/chat/artifacts/{attachment_id}` |
@@ -126,6 +170,7 @@
 | GET | `/api/config` |
 | POST | `/api/config` |
 | DELETE | `/api/config/{config_id}` |
+| GET | `/api/config/{config_id}` |
 | PUT | `/api/config/{config_id}` |
 | GET | `/api/decorator-properties` |
 | PUT | `/api/decorator-properties` |
@@ -148,6 +193,7 @@
 | GET | `/api/events/sources/{source_id}/subscriptions` |
 | POST | `/api/events/sources/{source_id}/subscriptions` |
 | DELETE | `/api/events/sources/{source_id}/subscriptions/{subscription_id}` |
+| GET | `/api/events/sources/{source_id}/subscriptions/{subscription_id}` |
 | PATCH | `/api/events/sources/{source_id}/subscriptions/{subscription_id}` |
 | GET | `/api/events/topics` |
 | GET | `/api/events/{event_id}` |
@@ -184,6 +230,7 @@
 | POST | `/api/files/exists` |
 | POST | `/api/files/list` |
 | GET | `/api/files/manifest` |
+| POST | `/api/files/patch` |
 | GET | `/api/files/policies` |
 | POST | `/api/files/policies/test` |
 | DELETE | `/api/files/policies/{policy_path}` |
@@ -275,6 +322,7 @@
 | DELETE | `/api/knowledge-sources/{namespace}/documents/{doc_id}` |
 | GET | `/api/knowledge-sources/{namespace}/documents/{doc_id}` |
 | PUT | `/api/knowledge-sources/{namespace}/documents/{doc_id}` |
+| POST | `/api/knowledge/search` |
 | GET | `/api/llms.txt` |
 | POST | `/api/maintenance/artifact-retention/cleanup` |
 | GET | `/api/maintenance/artifact-retention/settings` |
@@ -303,6 +351,7 @@
 | GET | `/api/mcp/config` |
 | PUT | `/api/mcp/config` |
 | POST | `/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute` |
+| POST | `/api/mcp/gateway/builder-sessions/{builder_session_id}/tools/{tool_ref}/execute` |
 | POST | `/api/mcp/gateway/capabilities/search` |
 | GET | `/api/mcp/gateway/executions/{execution_id}` |
 | GET | `/api/mcp/run` |
@@ -341,6 +390,10 @@
 | GET | `/api/oauth/credentials/{connection_name}` |
 | POST | `/api/oauth/refresh_all` |
 | GET | `/api/oauth/refresh_job_status` |
+| GET | `/api/organization-groups` |
+| POST | `/api/organization-groups` |
+| DELETE | `/api/organization-groups/{group_id}` |
+| PATCH | `/api/organization-groups/{group_id}` |
 | GET | `/api/organizations` |
 | POST | `/api/organizations` |
 | DELETE | `/api/organizations/{org_id}` |
@@ -366,6 +419,7 @@
 | GET | `/api/policy-rules` |
 | POST | `/api/policy-rules` |
 | DELETE | `/api/policy-rules/{domain}/{name}` |
+| GET | `/api/policy-rules/{domain}/{name}` |
 | PUT | `/api/policy-rules/{domain}/{name}` |
 | GET | `/api/policy-rules/{domain}/{name}/usages` |
 | GET | `/api/profile` |
@@ -382,6 +436,8 @@
 | GET | `/api/required-instructions` |
 | GET | `/api/roles` |
 | POST | `/api/roles` |
+| GET | `/api/roles/capabilities` |
+| GET | `/api/roles/scopes` |
 | DELETE | `/api/roles/{role_id}` |
 | GET | `/api/roles/{role_id}` |
 | PATCH | `/api/roles/{role_id}` |
@@ -456,6 +512,10 @@
 | POST | `/api/settings/ai/pricing` |
 | DELETE | `/api/settings/ai/pricing/{pricing_id}` |
 | PUT | `/api/settings/ai/pricing/{pricing_id}` |
+| GET | `/api/settings/ai/usage-limits` |
+| GET | `/api/settings/ai/usage-limits/effective/{scope}/{target_id}` |
+| DELETE | `/api/settings/ai/usage-limits/{scope}/{target_id}` |
+| PUT | `/api/settings/ai/usage-limits/{scope}/{target_id}` |
 | GET | `/api/settings/oauth` |
 | PUT | `/api/settings/oauth/google` |
 | PUT | `/api/settings/oauth/login-preference` |
@@ -464,6 +524,9 @@
 | DELETE | `/api/settings/oauth/{provider}` |
 | GET | `/api/settings/oauth/{provider}` |
 | POST | `/api/settings/oauth/{provider}/test` |
+| GET | `/api/solution-promotions` |
+| GET | `/api/solution-promotions/{solution_id}` |
+| POST | `/api/solution-promotions/{solution_id}/promote` |
 | GET | `/api/solutions` |
 | POST | `/api/solutions` |
 | GET | `/api/solutions/deploy-jobs/{job_id}` |
@@ -520,6 +583,7 @@
 | POST | `/api/users/{user_id}/invite/regenerate` |
 | POST | `/api/users/{user_id}/invite/resend` |
 | POST | `/api/users/{user_id}/invite/send` |
+| GET | `/api/users/{user_id}/role-assignments` |
 | GET | `/api/users/{user_id}/roles` |
 | GET | `/api/version` |
 | GET | `/api/workflow-keys` |
@@ -533,6 +597,7 @@
 | GET | `/api/workflows/usage-stats` |
 | POST | `/api/workflows/validate` |
 | DELETE | `/api/workflows/{workflow_id}` |
+| GET | `/api/workflows/{workflow_id}` |
 | PATCH | `/api/workflows/{workflow_id}` |
 | GET | `/api/workflows/{workflow_id}/compatible-replacements` |
 | POST | `/api/workflows/{workflow_id}/deactivate` |
@@ -543,6 +608,7 @@
 | POST | `/api/workflows/{workflow_id}/roles` |
 | DELETE | `/api/workflows/{workflow_id}/roles/{role_id}` |
 | POST | `/auth/admin/revoke-user` |
+| GET | `/auth/authorization-targets` |
 | POST | `/auth/device/authorize` |
 | POST | `/auth/device/code` |
 | POST | `/auth/device/token` |

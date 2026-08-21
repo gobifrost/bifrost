@@ -88,6 +88,7 @@ class _FakeAppRow:
         self.has_unpublished_changes = False
         self.access_level = "authenticated"
         self.app_model = "inline_v1"
+        self.runtime_mode = "trusted"
         self.repo_path = "apps/my-app"
         self.logo_data = None
         self.logo_content_type = None

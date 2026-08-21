@@ -39,6 +39,12 @@ class Agent(Base):
     logo_thumbnail_content_type: Mapped[str | None] = mapped_column(String(50), default=None)
     logo_thumbnail_version: Mapped[str | None] = mapped_column(String(64), default=None)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    bundle_path: Mapped[str | None] = mapped_column(String(1024), default=None)
+    # sha256 over the canonical Skill content (SKILL.md + companion files).
+    # Durable so a consumer can compare a cached Skill without re-reading
+    # storage; recomputed on every write that can change that content.
+    # NULL means "not yet computed" — read paths fall back to computing it.
+    skill_revision: Mapped[str | None] = mapped_column(String(64), default=None)
     channels: Mapped[list] = mapped_column(JSONB, default=["chat"])
     access_level: Mapped[AgentAccessLevel] = mapped_column(
         SQLAlchemyEnum(
@@ -68,7 +74,8 @@ class Agent(Base):
     knowledge_sources: Mapped[list[str]] = mapped_column(
         ARRAY(String), nullable=False, default=list, server_default='{}'
     )
-    # System tools enabled for this agent (e.g., ["execute_workflow", "search_knowledge"])
+    # System tools enabled for this agent (for example,
+    # ["bifrost_execute_workflow", "bifrost_search_knowledge"])
     system_tools: Mapped[list[str]] = mapped_column(
         ARRAY(String), nullable=False, default=list, server_default='{}'
     )

@@ -23,6 +23,7 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy import delete, func, select
 
+from src.core.principal import UserPrincipal
 from src.models.contracts.knowledge import (
     KnowledgeDocumentCreate,
     KnowledgeDocumentUpdate,
@@ -35,6 +36,7 @@ from src.routers.knowledge_sources import (
     get_document,
     update_document,
 )
+from src.services.authorization import AuthorizationBoundary, AuthorizationContext
 
 
 class _FakeEmbedder:
@@ -50,15 +52,31 @@ class _FakeEmbedder:
         return (await self.embed([text]))[0]
 
 
-class _User:
-    def __init__(self):
-        # created_by is FK → users; leave it NULL (nullable column) so the
-        # test doesn't need to seed a user row. Identity is incidental to what
-        # these tests assert (vector shape / chunking / upsert).
-        self.user_id = None
-        self.organization_id = None
-        self.is_superuser = True
-        self.is_provider_org = False
+def _authorization(
+    *,
+    organization_id: UUID | None = None,
+    user_id: UUID | None = None,
+) -> AuthorizationContext:
+    principal = UserPrincipal(
+        # These repository-focused tests historically left created_by NULL so
+        # they do not need an incidental User fixture. The dedicated creator
+        # attribution test supplies a real persisted UUID explicitly.
+        user_id=user_id,  # type: ignore[arg-type]
+        email="knowledge-builder@example.com",
+        organization_id=organization_id,
+        is_superuser=True,
+    )
+    return AuthorizationContext(
+        requester=principal,
+        effective_actor=principal,
+        selected_boundary=(
+            AuthorizationBoundary.organization(organization_id)
+            if organization_id
+            else AuthorizationBoundary.platform()
+        ),
+        effective_capabilities=frozenset({"platform.superuser"}),
+        grant_sources=(),
+    )
 
 
 class _FailingEmbedder:
@@ -94,13 +112,13 @@ async def _count_rows(db, namespace: str) -> int:
 @pytest.mark.asyncio
 async def test_update_keyed_doc_stores_flat_vectors(db_session):
     """The core regression: update must not crash and must store flat vectors."""
-    user = _User()
+    user = _authorization()
     with _patch_embedder():
         created = await create_document(
             namespace="ku",
             data=KnowledgeDocumentCreate(content="original", key="k1"),
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
         updated = await update_document(
@@ -108,16 +126,20 @@ async def test_update_keyed_doc_stores_flat_vectors(db_session):
             doc_id=UUID(created.id),
             data=KnowledgeDocumentUpdate(content="updated body"),
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
 
     # Load every row for the key and assert each embedding is a flat list[float].
     rows = (
-        await db_session.execute(
-            select(KnowledgeStore).where(KnowledgeStore.key == "k1")
+        (
+            await db_session.execute(
+                select(KnowledgeStore).where(KnowledgeStore.key == "k1")
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert rows, "expected at least one stored row"
     for row in rows:
         assert isinstance(row.embedding, list)
@@ -128,13 +150,13 @@ async def test_update_keyed_doc_stores_flat_vectors(db_session):
 @pytest.mark.asyncio
 async def test_update_upserts_and_does_not_duplicate(db_session):
     """Updating a keyed doc replaces its rows rather than accumulating them."""
-    user = _User()
+    user = _authorization()
     with _patch_embedder():
         created = await create_document(
             namespace="ku2",
             data=KnowledgeDocumentCreate(content="v1", key="k"),
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
         before = await _count_rows(db_session, "ku2")
@@ -143,7 +165,7 @@ async def test_update_upserts_and_does_not_duplicate(db_session):
             doc_id=UUID(created.id),
             data=KnowledgeDocumentUpdate(content="v2 short"),
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
         after = await _count_rows(db_session, "ku2")
@@ -156,14 +178,14 @@ async def test_update_upserts_and_does_not_duplicate(db_session):
 @pytest.mark.asyncio
 async def test_update_rechunks_long_content(db_session):
     """Long updated content is re-chunked into multiple rows (parity with create)."""
-    user = _User()
+    user = _authorization()
     long_content = "sentence. " * 4000  # well past the chunk threshold
     with _patch_embedder():
         created = await create_document(
             namespace="ku3",
             data=KnowledgeDocumentCreate(content="short original", key="big"),
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
         assert await _count_rows(db_session, "ku3") == 1
@@ -173,15 +195,19 @@ async def test_update_rechunks_long_content(db_session):
             doc_id=UUID(created.id),
             data=KnowledgeDocumentUpdate(content=long_content),
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
 
     rows = (
-        await db_session.execute(
-            select(KnowledgeStore).where(KnowledgeStore.key == "big")
+        (
+            await db_session.execute(
+                select(KnowledgeStore).where(KnowledgeStore.key == "big")
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(rows) > 1, "long content should produce multiple chunk rows"
     assert {r.chunk_count for r in rows} == {len(rows)}
     for r in rows:
@@ -191,8 +217,8 @@ async def test_update_rechunks_long_content(db_session):
 @pytest.mark.asyncio
 async def test_update_keyless_doc(db_session):
     """A keyless doc updates in place without crashing or duplicating."""
-    user = _User()
-    repo = KnowledgeRepository(db_session, org_id=None, is_superuser=True)
+    user = _authorization()
+    repo = KnowledgeRepository(db_session, org_id=None, bypass_resource_admission=True)
     with _patch_embedder():
         ids = await repo.store_chunked(
             content="keyless original",
@@ -207,15 +233,19 @@ async def test_update_keyless_doc(db_session):
             doc_id=UUID(ids[0]),
             data=KnowledgeDocumentUpdate(content="keyless updated"),
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
 
     rows = (
-        await db_session.execute(
-            select(KnowledgeStore).where(KnowledgeStore.namespace == "ku4")
+        (
+            await db_session.execute(
+                select(KnowledgeStore).where(KnowledgeStore.namespace == "ku4")
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1
     assert rows[0].content == "keyless updated"
     assert all(isinstance(v, float) for v in rows[0].embedding)
@@ -224,13 +254,13 @@ async def test_update_keyless_doc(db_session):
 @pytest.mark.asyncio
 async def test_update_preserves_created_at(db_session):
     """Editing a document must NOT reset created_at (docs are listed by it)."""
-    user = _User()
+    user = _authorization()
     with _patch_embedder():
         created = await create_document(
             namespace="ku5",
             data=KnowledgeDocumentCreate(content="v1", key="k"),
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
         original_created_at = (
@@ -246,7 +276,7 @@ async def test_update_preserves_created_at(db_session):
             doc_id=UUID(created.id),
             data=KnowledgeDocumentUpdate(content="v2 edited"),
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
 
@@ -273,14 +303,15 @@ async def test_update_with_scope_change_moves_not_copies(db_session):
     db_session.add(target_org)
     await db_session.flush()
 
-    user = _User()
+    global_authorization = _authorization()
+    target_authorization = _authorization(organization_id=target_org.id)
     with _patch_embedder():
         # Create globally (organization_id = None).
         created = await create_document(
             namespace="ku6",
             data=KnowledgeDocumentCreate(content="movable", key="mk"),
             db=db_session,
-            user=user,
+            authorization=global_authorization,
             scope=None,
         )
         assert created.organization_id is None
@@ -290,20 +321,24 @@ async def test_update_with_scope_change_moves_not_copies(db_session):
             doc_id=UUID(created.id),
             data=KnowledgeDocumentUpdate(content="movable v2"),
             db=db_session,
-            user=user,
+            authorization=target_authorization,
             scope=str(target_org.id),
         )
 
     assert moved.organization_id == str(target_org.id)
 
     all_rows = (
-        await db_session.execute(
-            select(KnowledgeStore).where(
-                KnowledgeStore.namespace == "ku6",
-                KnowledgeStore.key == "mk",
+        (
+            await db_session.execute(
+                select(KnowledgeStore).where(
+                    KnowledgeStore.namespace == "ku6",
+                    KnowledgeStore.key == "mk",
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     # Exactly one logical doc, and it lives in the target org — no global copy left.
     assert len(all_rows) == 1
     assert all_rows[0].organization_id == target_org.id
@@ -320,7 +355,7 @@ async def test_update_embed_failure_does_not_lose_document(db_session):
     doc (as a prior request would), force the update's embed to fail, then
     roll back like get_db does, and assert the original doc is intact.
     """
-    user = _User()
+    user = _authorization()
 
     # Create + COMMIT the original doc, so it exists independently of the
     # update transaction (mirrors a prior successful request).
@@ -329,7 +364,7 @@ async def test_update_embed_failure_does_not_lose_document(db_session):
             namespace="ku7",
             data=KnowledgeDocumentCreate(content="precious original", key="p"),
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
     await db_session.commit()
@@ -343,7 +378,7 @@ async def test_update_embed_failure_does_not_lose_document(db_session):
                 doc_id=original_id,
                 data=KnowledgeDocumentUpdate(content="new content that never embeds"),
                 db=db_session,
-                user=user,
+                authorization=user,
                 scope=None,
             )
 
@@ -351,10 +386,14 @@ async def test_update_embed_failure_does_not_lose_document(db_session):
     await db_session.rollback()
 
     surviving = (
-        await db_session.execute(
-            select(KnowledgeStore).where(KnowledgeStore.key == "p")
+        (
+            await db_session.execute(
+                select(KnowledgeStore).where(KnowledgeStore.key == "p")
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(surviving) == 1
     assert surviving[0].id == original_id
     assert surviving[0].content == "precious original"
@@ -388,22 +427,22 @@ async def test_update_multichunk_keyed_full_content_roundtrip(db_session):
     every chunk row — so a round-trip through the read surface preserves the
     whole document instead of silently dropping everything past chunk 0.
     """
-    user = _User()
-    original = "First version sentence. " * 1000   # multi-chunk
-    edited = "Second version sentence. " * 1200    # multi-chunk, different size
+    user = _authorization()
+    original = "First version sentence. " * 1000  # multi-chunk
+    edited = "Second version sentence. " * 1200  # multi-chunk, different size
     with _patch_embedder():
         created = await create_document(
             namespace="ku8",
             data=KnowledgeDocumentCreate(content=original, key="full"),
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
         # Create echoes the full submitted content, not chunk 0's slice.
         assert created.content == original
 
         fetched = await get_document(
-            namespace="ku8", doc_id=UUID(created.id), db=db_session, user=user
+            namespace="ku8", doc_id=UUID(created.id), db=db_session, authorization=user
         )
         assert fetched.content == original
 
@@ -412,22 +451,26 @@ async def test_update_multichunk_keyed_full_content_roundtrip(db_session):
             doc_id=UUID(created.id),
             data=KnowledgeDocumentUpdate(content=edited),
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
         assert updated.content == edited
 
         refetched = await get_document(
-            namespace="ku8", doc_id=UUID(created.id), db=db_session, user=user
+            namespace="ku8", doc_id=UUID(created.id), db=db_session, authorization=user
         )
         assert refetched.content == edited
 
     # No stale rows: every remaining row belongs to the new version.
     rows = (
-        await db_session.execute(
-            select(KnowledgeStore).where(KnowledgeStore.namespace == "ku8")
+        (
+            await db_session.execute(
+                select(KnowledgeStore).where(KnowledgeStore.namespace == "ku8")
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(rows) > 1
     assert {r.chunk_count for r in rows} == {len(rows)}
 
@@ -436,13 +479,13 @@ async def test_update_multichunk_keyed_full_content_roundtrip(db_session):
 async def test_update_preserves_document_id(db_session):
     """The document keeps its public id across edits — stored references
     (UI rows, sync jobs, SDK callers) must not 404 after an update."""
-    user = _User()
+    user = _authorization()
     with _patch_embedder():
         created = await create_document(
             namespace="ku9",
             data=KnowledgeDocumentCreate(content="v1", key="stable"),
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
         updated = await update_document(
@@ -450,7 +493,7 @@ async def test_update_preserves_document_id(db_session):
             doc_id=UUID(created.id),
             data=KnowledgeDocumentUpdate(content="v2 " * 2000),  # goes multi-chunk
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
         assert updated.id == created.id
@@ -460,13 +503,13 @@ async def test_update_preserves_document_id(db_session):
             doc_id=UUID(created.id),
             data=KnowledgeDocumentUpdate(content="v3 back to short"),
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
         assert again.id == created.id
 
         fetched = await get_document(
-            namespace="ku9", doc_id=UUID(created.id), db=db_session, user=user
+            namespace="ku9", doc_id=UUID(created.id), db=db_session, authorization=user
         )
         assert fetched.id == created.id
         assert fetched.content == "v3 back to short"
@@ -478,13 +521,13 @@ async def test_update_keyless_multichunk_replaces_all_rows(db_session):
     the NULL key in the unique constraint). Updating it must replace ALL of
     its rows — not just the addressed one — or the re-store collides on
     chunk_index / strands stale chunks."""
-    user = _User()
+    user = _authorization()
     with _patch_embedder():
         created = await create_document(
             namespace="ku10",
             data=KnowledgeDocumentCreate(content="keyless long. " * 1000),
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
         assert await _count_rows(db_session, "ku10") > 1
@@ -496,14 +539,18 @@ async def test_update_keyless_multichunk_replaces_all_rows(db_session):
             doc_id=UUID(created.id),
             data=KnowledgeDocumentUpdate(content="keyless edited. " * 1000),
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
         rows = (
-            await db_session.execute(
-                select(KnowledgeStore).where(KnowledgeStore.namespace == "ku10")
+            (
+                await db_session.execute(
+                    select(KnowledgeStore).where(KnowledgeStore.namespace == "ku10")
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert {r.chunk_count for r in rows} == {len(rows)}
         assert all("edited" in r.content for r in rows)
 
@@ -513,7 +560,7 @@ async def test_update_keyless_multichunk_replaces_all_rows(db_session):
             doc_id=UUID(created.id),
             data=KnowledgeDocumentUpdate(content="keyless short"),
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
         assert await _count_rows(db_session, "ku10") == 1
@@ -524,15 +571,16 @@ async def test_update_scope_change_conflict_multichunk_409_and_replace(db_sessio
     """A scope move onto a MULTI-chunk conflicting doc must 409 cleanly (the
     old single-row lookup raised MultipleResultsFound → 500), and
     replace=true must remove every chunk row of the conflicting doc."""
-    user = _User()
     org = await _seed_org(db_session)
+    global_authorization = _authorization()
+    target_authorization = _authorization(organization_id=org.id)
     with _patch_embedder():
         # Conflicting doc in the target org — long enough to chunk.
         await create_document(
             namespace="ku11",
             data=KnowledgeDocumentCreate(content="occupant. " * 1000, key="ck"),
             db=db_session,
-            user=user,
+            authorization=target_authorization,
             scope=str(org.id),
         )
         # Global doc with the same key.
@@ -540,7 +588,7 @@ async def test_update_scope_change_conflict_multichunk_409_and_replace(db_sessio
             namespace="ku11",
             data=KnowledgeDocumentCreate(content="mover", key="ck"),
             db=db_session,
-            user=user,
+            authorization=global_authorization,
             scope=None,
         )
 
@@ -553,7 +601,7 @@ async def test_update_scope_change_conflict_multichunk_409_and_replace(db_sessio
                 doc_id=UUID(source.id),
                 data=KnowledgeDocumentUpdate(content="mover v2"),
                 db=db_session,
-                user=user,
+                authorization=target_authorization,
                 scope=str(org.id),
                 replace=False,
             )
@@ -565,7 +613,7 @@ async def test_update_scope_change_conflict_multichunk_409_and_replace(db_sessio
             doc_id=UUID(source.id),
             data=KnowledgeDocumentUpdate(content="mover v2"),
             db=db_session,
-            user=user,
+            authorization=target_authorization,
             scope=str(org.id),
             replace=True,
         )
@@ -574,13 +622,17 @@ async def test_update_scope_change_conflict_multichunk_409_and_replace(db_sessio
     # Only the moved doc remains under the key — every chunk row of the
     # conflicting occupant is gone.
     rows = (
-        await db_session.execute(
-            select(KnowledgeStore).where(
-                KnowledgeStore.namespace == "ku11",
-                KnowledgeStore.key == "ck",
+        (
+            await db_session.execute(
+                select(KnowledgeStore).where(
+                    KnowledgeStore.namespace == "ku11",
+                    KnowledgeStore.key == "ck",
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1
     assert rows[0].content == "mover v2"
     assert rows[0].organization_id == org.id
@@ -591,21 +643,22 @@ async def test_update_keyless_scope_move_conflict_409_and_replace(db_session):
     """Keyless docs collide too (NULL key == NULL key under NULLS NOT
     DISTINCT) — a keyless scope move onto an occupied namespace/org must 409
     instead of dying on the unique constraint, and replace=true resolves it."""
-    user = _User()
     org = await _seed_org(db_session)
+    global_authorization = _authorization()
+    target_authorization = _authorization(organization_id=org.id)
     with _patch_embedder():
         await create_document(
             namespace="ku12",
             data=KnowledgeDocumentCreate(content="org keyless occupant"),
             db=db_session,
-            user=user,
+            authorization=target_authorization,
             scope=str(org.id),
         )
         source = await create_document(
             namespace="ku12",
             data=KnowledgeDocumentCreate(content="global keyless"),
             db=db_session,
-            user=user,
+            authorization=global_authorization,
             scope=None,
         )
 
@@ -616,7 +669,7 @@ async def test_update_keyless_scope_move_conflict_409_and_replace(db_session):
                 doc_id=UUID(source.id),
                 data=KnowledgeDocumentUpdate(content="global keyless v2"),
                 db=db_session,
-                user=user,
+                authorization=target_authorization,
                 scope=str(org.id),
                 replace=False,
             )
@@ -628,17 +681,21 @@ async def test_update_keyless_scope_move_conflict_409_and_replace(db_session):
             doc_id=UUID(source.id),
             data=KnowledgeDocumentUpdate(content="global keyless v2"),
             db=db_session,
-            user=user,
+            authorization=target_authorization,
             scope=str(org.id),
             replace=True,
         )
         assert moved.organization_id == str(org.id)
 
     rows = (
-        await db_session.execute(
-            select(KnowledgeStore).where(KnowledgeStore.namespace == "ku12")
+        (
+            await db_session.execute(
+                select(KnowledgeStore).where(KnowledgeStore.namespace == "ku12")
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(rows) == 1
     assert rows[0].content == "global keyless v2"
 
@@ -647,13 +704,13 @@ async def test_update_keyless_scope_move_conflict_409_and_replace(db_session):
 async def test_update_embed_valueerror_maps_to_503(db_session):
     """Embed-time ValueError keeps the old contract: 503 'Embedding service
     unavailable', not an opaque 500."""
-    user = _User()
+    user = _authorization()
     with _patch_embedder():
         created = await create_document(
             namespace="ku13",
             data=KnowledgeDocumentCreate(content="v1", key="e503"),
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
 
@@ -664,7 +721,7 @@ async def test_update_embed_valueerror_maps_to_503(db_session):
                 doc_id=UUID(created.id),
                 data=KnowledgeDocumentUpdate(content="v2"),
                 db=db_session,
-                user=user,
+                authorization=user,
                 scope=None,
             )
     assert exc.value.status_code == 503
@@ -677,7 +734,7 @@ async def test_update_via_sibling_chunk_preserves_canonical_document_id(db_sessi
     stable public id. Updating through a sibling must not promote that sibling
     and invalidate references to the canonical id.
     """
-    user = _User()
+    user = _authorization()
     with _patch_embedder():
         created = await create_document(
             namespace="ku14",
@@ -686,16 +743,20 @@ async def test_update_via_sibling_chunk_preserves_canonical_document_id(db_sessi
                 key="canonical",
             ),
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
         rows = (
-            await db_session.execute(
-                select(KnowledgeStore)
-                .where(KnowledgeStore.namespace == "ku14")
-                .order_by(KnowledgeStore.chunk_index)
+            (
+                await db_session.execute(
+                    select(KnowledgeStore)
+                    .where(KnowledgeStore.namespace == "ku14")
+                    .order_by(KnowledgeStore.chunk_index)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert len(rows) > 1
 
         updated = await update_document(
@@ -703,7 +764,7 @@ async def test_update_via_sibling_chunk_preserves_canonical_document_id(db_sessi
             doc_id=rows[1].id,
             data=KnowledgeDocumentUpdate(content="replacement"),
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
 
@@ -712,7 +773,7 @@ async def test_update_via_sibling_chunk_preserves_canonical_document_id(db_sessi
             namespace="ku14",
             doc_id=UUID(created.id),
             db=db_session,
-            user=user,
+            authorization=user,
         )
         assert fetched.content == "replacement"
 
@@ -738,17 +799,15 @@ async def test_update_preserves_original_creator(db_session):
     )
     await db_session.flush()
 
-    creator = _User()
-    creator.user_id = creator_id
-    editor = _User()
-    editor.user_id = editor_id
+    creator = _authorization(user_id=creator_id)
+    editor = _authorization(user_id=editor_id)
 
     with _patch_embedder():
         created = await create_document(
             namespace="ku15",
             data=KnowledgeDocumentCreate(content="original", key="audit"),
             db=db_session,
-            user=creator,
+            authorization=creator,
             scope=None,
         )
         await update_document(
@@ -756,7 +815,7 @@ async def test_update_preserves_original_creator(db_session):
             doc_id=UUID(created.id),
             data=KnowledgeDocumentUpdate(content="edited"),
             db=db_session,
-            user=editor,
+            authorization=editor,
             scope=None,
         )
 
@@ -777,7 +836,7 @@ async def test_concurrent_updates_via_different_chunks_serialize(
     """Chunk aliases must converge on one lock; locking the addressed rows
     separately lets the two group-wide replacements deadlock each other.
     """
-    user = _User()
+    user = _authorization()
     with _patch_embedder():
         created = await create_document(
             namespace="ku16",
@@ -786,16 +845,20 @@ async def test_concurrent_updates_via_different_chunks_serialize(
                 key="serialized",
             ),
             db=db_session,
-            user=user,
+            authorization=user,
             scope=None,
         )
     rows = (
-        await db_session.execute(
-            select(KnowledgeStore)
-            .where(KnowledgeStore.namespace == "ku16")
-            .order_by(KnowledgeStore.chunk_index)
+        (
+            await db_session.execute(
+                select(KnowledgeStore)
+                .where(KnowledgeStore.namespace == "ku16")
+                .order_by(KnowledgeStore.chunk_index)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(rows) > 1
     canonical_id = UUID(created.id)
     sibling_id = rows[1].id
@@ -808,7 +871,7 @@ async def test_concurrent_updates_via_different_chunks_serialize(
                 doc_id=addressed_id,
                 data=KnowledgeDocumentUpdate(content=content),
                 db=session,
-                user=user,
+                authorization=user,
                 scope=None,
             )
             await session.commit()

@@ -176,6 +176,15 @@ def decode_token(token: str, expected_type: str | None = None) -> dict[str, Any]
         return None
 
 
+ACTOR_TYPE_SOLUTION_APP = "solution_app"
+
+
+def is_actor_token(payload: dict[str, Any]) -> bool:
+    """Return whether a JWT represents a constrained non-user actor."""
+
+    return payload.get("actor_type") is not None
+
+
 def create_mfa_token(user_id: str, purpose: str = "mfa_verify") -> str:
     """
     Create a short-lived token for MFA verification step.

@@ -9,7 +9,6 @@ import logging
 
 from fastapi import APIRouter, HTTPException, status
 
-from src.core.auth import CurrentActiveUser, RequirePlatformAdmin
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.models.contracts.llm import (
@@ -38,20 +37,36 @@ from src.services.embeddings.factory import (
     LLM_CONFIG_KEY,
 )
 from src.services.llm_config_service import LLMConfigService
+from src.services.audit import emit_audit
+from src.services.authorization import CurrentAuthorizationContext
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/admin/llm",
     tags=["LLM Configuration"],
-    dependencies=[RequirePlatformAdmin],  # All endpoints require platform admin
 )
+
+
+def _require_llm_config(
+    authorization: CurrentAuthorizationContext,
+    capability: str,
+) -> None:
+    authorization.require(capability)
+    authorization.require_resource_boundary(None)
+
+
+def _require_embedding_reindex(
+    authorization: CurrentAuthorizationContext,
+) -> None:
+    _require_llm_config(authorization, "configs.readwrite")
+    authorization.require("knowledge.readwrite")
 
 
 @router.get("/config")
 async def get_llm_config(
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> LLMConfigResponse | None:
     """
     Get current LLM provider configuration.
@@ -59,6 +74,7 @@ async def get_llm_config(
     Returns the configuration without the API key (only indicates if it's set).
     Requires platform admin access.
     """
+    _require_llm_config(authorization, "configs.read")
     service = LLMConfigService(db)
     config = await service.get_config()
 
@@ -73,6 +89,7 @@ async def get_llm_config(
         default_system_prompt=config.default_system_prompt,
         summarization_model=config.summarization_model,
         tuning_model=config.tuning_model,
+        builder_model=config.builder_model,
         image_generation_model=config.image_generation_model,
         video_generation_model=config.video_generation_model,
         chat_fast_label=config.chat_fast_label,
@@ -81,9 +98,14 @@ async def get_llm_config(
         chat_balanced_model=config.chat_balanced_model,
         chat_pro_label=config.chat_pro_label,
         chat_pro_model=config.chat_pro_model,
-        chat_fast_capabilities=config.resolve_chat_capabilities("fast") if config.chat_fast_model else None,
+        chat_fast_capabilities=config.resolve_chat_capabilities("fast")
+        if config.chat_fast_model
+        else None,
         chat_balanced_capabilities=config.resolve_chat_capabilities("balanced"),
-        chat_pro_capabilities=config.resolve_chat_capabilities("pro") if config.chat_pro_model else None,
+        chat_pro_capabilities=config.resolve_chat_capabilities("pro")
+        if config.chat_pro_model
+        else None,
+        builder_capabilities=config.resolve_builder_capabilities(),
         is_configured=config.is_configured,
         api_key_set=config.api_key_set,
     )
@@ -93,7 +115,7 @@ async def get_llm_config(
 async def set_llm_config(
     request: LLMConfigRequest,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> LLMConfigResponse:
     """
     Set LLM provider configuration.
@@ -101,6 +123,8 @@ async def set_llm_config(
     The API key will be encrypted before storage.
     Requires platform admin access.
     """
+    _require_llm_config(authorization, "configs.readwrite")
+    actor = authorization.effective_actor
     service = LLMConfigService(db)
 
     try:
@@ -113,6 +137,7 @@ async def set_llm_config(
             default_system_prompt=request.default_system_prompt,
             summarization_model=request.summarization_model,
             tuning_model=request.tuning_model,
+            builder_model=request.builder_model,
             image_generation_model=request.image_generation_model,
             video_generation_model=request.video_generation_model,
             chat_fast_label=request.chat_fast_label,
@@ -124,7 +149,8 @@ async def set_llm_config(
             chat_fast_capabilities=request.chat_fast_capabilities,
             chat_balanced_capabilities=request.chat_balanced_capabilities,
             chat_pro_capabilities=request.chat_pro_capabilities,
-            updated_by=user.email,
+            builder_capabilities=request.builder_capabilities,
+            updated_by=actor.email,
         )
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -142,9 +168,16 @@ async def set_llm_config(
             detail=f"Configuration not saved — {completion_result.message}",
         )
 
+    await emit_audit(
+        db,
+        "llm_config.update",
+        resource_type="llm_config",
+        details={"provider": request.provider, "model": request.model},
+    )
     await db.commit()
-
-    logger.info(f"LLM config updated by {user.email}: provider={log_safe(request.provider)}, model={log_safe(request.model)}")
+    logger.info(
+        f"LLM config updated by {actor.email}: provider={log_safe(request.provider)}, model={log_safe(request.model)}"
+    )
 
     # Auto-sync pricing from provider if using a custom endpoint
     if request.endpoint:
@@ -160,6 +193,7 @@ async def set_llm_config(
                 request.chat_pro_model,
                 request.summarization_model,
                 request.tuning_model,
+                request.builder_model,
                 request.image_generation_model,
                 request.video_generation_model,
             )
@@ -181,7 +215,9 @@ async def set_llm_config(
                         canonical_provider(request.provider, request.endpoint),
                         model,
                     )
-                logger.info(f"Synced pricing for {count} models from {log_safe(request.endpoint)}")
+                logger.info(
+                    f"Synced pricing for {count} models from {log_safe(request.endpoint)}"
+                )
         except Exception as e:
             await db.rollback()
             logger.warning(f"Failed to sync provider pricing: {e}")
@@ -198,6 +234,7 @@ async def set_llm_config(
         default_system_prompt=request.default_system_prompt,
         summarization_model=request.summarization_model,
         tuning_model=request.tuning_model,
+        builder_model=request.builder_model,
         image_generation_model=request.image_generation_model,
         video_generation_model=request.video_generation_model,
         chat_fast_label=request.chat_fast_label,
@@ -206,9 +243,16 @@ async def set_llm_config(
         chat_balanced_model=request.chat_balanced_model,
         chat_pro_label=request.chat_pro_label,
         chat_pro_model=request.chat_pro_model,
-        chat_fast_capabilities=config.resolve_chat_capabilities("fast") if config and config.chat_fast_model else None,
-        chat_balanced_capabilities=config.resolve_chat_capabilities("balanced") if config else None,
-        chat_pro_capabilities=config.resolve_chat_capabilities("pro") if config and config.chat_pro_model else None,
+        chat_fast_capabilities=config.resolve_chat_capabilities("fast")
+        if config and config.chat_fast_model
+        else None,
+        chat_balanced_capabilities=config.resolve_chat_capabilities("balanced")
+        if config
+        else None,
+        chat_pro_capabilities=config.resolve_chat_capabilities("pro")
+        if config and config.chat_pro_model
+        else None,
+        builder_capabilities=config.resolve_builder_capabilities() if config else None,
         is_configured=True,
         api_key_set=api_key_set,
     )
@@ -218,10 +262,11 @@ async def set_llm_config(
 async def discover_model_capabilities(
     request: ModelCapabilityLookupRequest,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> ModelCapabilityLookupResponse:
     """Look up model features without trusting provider model-list labels."""
-    del db, user
+    _require_llm_config(authorization, "configs.read")
+    del db
     from src.services.model_capabilities import lookup_model_capabilities
 
     capabilities, message = await lookup_model_capabilities(
@@ -236,10 +281,10 @@ async def discover_model_capabilities(
 async def verify_model_capability_support(
     request: ModelCapabilityVerifyRequest,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> ModelCapabilityLookupResponse:
     """Run a bounded, one-time provider conformance check for an unknown model."""
-    del user
+    _require_llm_config(authorization, "configs.readwrite")
     from src.services.llm.factory import get_llm_config
     from src.services.model_capabilities import verify_model_capabilities
 
@@ -278,13 +323,14 @@ async def verify_model_capability_support(
 @router.delete("/config", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_llm_config(
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> None:
     """
     Delete LLM provider configuration.
 
     Requires platform admin access.
     """
+    _require_llm_config(authorization, "configs.readwrite")
     service = LLMConfigService(db)
     deleted = await service.delete_config()
 
@@ -294,15 +340,21 @@ async def delete_llm_config(
             detail="LLM configuration not found",
         )
 
+    await emit_audit(
+        db,
+        "llm_config.delete",
+        resource_type="llm_config",
+        details={"scope": "platform"},
+    )
     await db.commit()
-    logger.info(f"LLM config deleted by {user.email}")
+    logger.info(f"LLM config deleted by {authorization.effective_actor.email}")
 
 
 @router.post("/test")
 async def test_llm_connection(
     request: LLMTestRequest,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> LLMTestResponse:
     """
     Test LLM connection with provided credentials.
@@ -312,6 +364,7 @@ async def test_llm_connection(
     Also caches the model ID -> display name mapping for AI usage tracking.
     Requires platform admin access.
     """
+    _require_llm_config(authorization, "configs.readwrite")
     service = LLMConfigService(db)
 
     # Temporarily save the config to test
@@ -321,7 +374,7 @@ async def test_llm_connection(
         model=request.model,
         api_key=request.api_key,
         endpoint=request.endpoint,
-        updated_by=user.email,
+        updated_by=authorization.effective_actor.email,
     )
 
     result = await service.test_connection()
@@ -337,16 +390,22 @@ async def test_llm_connection(
         success=result.success,
         message=result.message,
         models=[
-            LLMModelInfo(id=m.id, display_name=m.display_name, output_modalities=m.output_modalities)
+            LLMModelInfo(
+                id=m.id,
+                display_name=m.display_name,
+                output_modalities=m.output_modalities,
+            )
             for m in result.models
-        ] if result.models else None,
+        ]
+        if result.models
+        else None,
     )
 
 
 @router.post("/test-saved")
 async def test_saved_llm_connection(
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> LLMTestResponse:
     """
     Test connection using saved LLM configuration.
@@ -355,6 +414,7 @@ async def test_saved_llm_connection(
     Also refreshes the model ID -> display name mapping cache.
     Requires platform admin access.
     """
+    _require_llm_config(authorization, "configs.readwrite")
     service = LLMConfigService(db)
     config = await service.get_config()
 
@@ -374,16 +434,22 @@ async def test_saved_llm_connection(
         success=result.success,
         message=result.message,
         models=[
-            LLMModelInfo(id=m.id, display_name=m.display_name, output_modalities=m.output_modalities)
+            LLMModelInfo(
+                id=m.id,
+                display_name=m.display_name,
+                output_modalities=m.output_modalities,
+            )
             for m in result.models
-        ] if result.models else None,
+        ]
+        if result.models
+        else None,
     )
 
 
 @router.get("/models")
 async def list_llm_models(
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> LLMModelsResponse:
     """
     List available models from the configured LLM provider.
@@ -391,6 +457,7 @@ async def list_llm_models(
     Works with OpenAI, Anthropic, and Google.
     Requires platform admin access.
     """
+    _require_llm_config(authorization, "configs.read")
     service = LLMConfigService(db)
     config = await service.get_config()
 
@@ -410,7 +477,11 @@ async def list_llm_models(
 
     return LLMModelsResponse(
         models=[
-            LLMModelInfo(id=m.id, display_name=m.display_name, output_modalities=m.output_modalities)
+            LLMModelInfo(
+                id=m.id,
+                display_name=m.display_name,
+                output_modalities=m.output_modalities,
+            )
             for m in models
         ],
         provider=config.provider,
@@ -438,7 +509,7 @@ def _normalize_endpoint(value: str | None) -> str | None:
 @router.get("/embedding-config")
 async def get_embedding_config_endpoint(
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> EmbeddingConfigResponse:
     """
     Get current embedding configuration.
@@ -448,6 +519,7 @@ async def get_embedding_config_endpoint(
     resolved endpoint (dedicated → inherited LLM → null = OpenAI default).
     Requires platform admin access.
     """
+    _require_llm_config(authorization, "configs.read")
     from sqlalchemy import select
     from src.models.orm import SystemConfig
 
@@ -491,7 +563,7 @@ async def get_embedding_config_endpoint(
 async def set_embedding_config(
     request: EmbeddingConfigRequest,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> EmbeddingConfigSaveResponse:
     """
     Set dedicated embedding configuration.
@@ -506,6 +578,11 @@ async def set_embedding_config(
     reindex via the scheduler.
     Requires platform admin access.
     """
+    if request.confirm_reindex:
+        _require_embedding_reindex(authorization)
+    else:
+        _require_llm_config(authorization, "configs.readwrite")
+    actor = authorization.effective_actor
     import base64
     from cryptography.fernet import Fernet
     from sqlalchemy import select
@@ -519,7 +596,10 @@ async def set_embedding_config(
         EMBEDDING_REINDEX_DEFINITION,
         EmbeddingReindexPayload,
     )
-    from src.services.platform_jobs import enqueue_platform_job, publish_platform_job_update
+    from src.services.platform_jobs import (
+        enqueue_platform_job,
+        publish_platform_job_update,
+    )
     from src.models.orm import SystemConfig
     from src.services.embeddings.base import EmbeddingConfig as EmbeddingClientConfig
     from src.services.embeddings.openai_client import OpenAIEmbeddingClient
@@ -552,7 +632,11 @@ async def set_embedding_config(
     if request.api_key:
         encrypted_key = fernet.encrypt(request.api_key.encode()).decode()
         decrypted_key = request.api_key
-    elif existing and existing.value_json and existing.value_json.get("encrypted_api_key"):
+    elif (
+        existing
+        and existing.value_json
+        and existing.value_json.get("encrypted_api_key")
+    ):
         encrypted_key = existing.value_json["encrypted_api_key"]
         decrypted_key = fernet.decrypt(encrypted_key.encode()).decode()
     else:
@@ -662,21 +746,32 @@ async def set_embedding_config(
 
     if existing:
         existing.value_json = config_data
-        existing.updated_by = user.email
+        existing.updated_by = actor.email
     else:
         new_config = SystemConfig(
             category=EMBEDDING_CONFIG_CATEGORY,
             key=EMBEDDING_CONFIG_KEY,
             value_json=config_data,
-            created_by=user.email,
-            updated_by=user.email,
+            created_by=actor.email,
+            updated_by=actor.email,
         )
         db.add(new_config)
 
+    await emit_audit(
+        db,
+        "embedding_config.update",
+        resource_type="embedding_config",
+        details={
+            "model": request.model,
+            "dimensions": dimensions,
+            "endpoint": normalized_endpoint,
+            "confirm_reindex": request.confirm_reindex,
+        },
+    )
     await db.commit()
 
     logger.info(
-        f"Embedding config updated by {user.email}: model={log_safe(request.model)}, "
+        f"Embedding config updated by {actor.email}: model={log_safe(request.model)}, "
         f"endpoint={log_safe(normalized_endpoint or 'default')}"
     )
 
@@ -698,7 +793,7 @@ async def set_embedding_config(
         if row_count > 0:
             notif_service = get_notification_service()
             notification = await notif_service.create_notification(
-                user_id=str(user.user_id),
+                user_id=str(actor.user_id),
                 request=NotificationCreate(
                     category=NotificationCategory.EMBEDDING_REINDEX,
                     title="Re-embedding knowledge store",
@@ -724,13 +819,20 @@ async def set_embedding_config(
                 resource_lock_key="embedding.reindex",
                 priority=250,
                 organization_id=None,
-                requested_by_user_id=user.user_id,
-                requested_by_email=user.email,
-                requested_by_name=user.name or user.email or "Unknown",
+                requested_by_user_id=actor.user_id,
+                requested_by_email=actor.email,
+                requested_by_name=actor.name or actor.email or "Unknown",
                 resource_type="knowledge_store",
                 resource_id="embedding-index",
                 title="Re-embedding knowledge store",
                 action_url="/settings/llm",
+            )
+            await emit_audit(
+                db,
+                "embedding.reindex.enqueue",
+                resource_type="platform_job",
+                resource_id=platform_job.id,
+                details={"row_count": row_count, "trigger": "embedding_config_save"},
             )
             await db.commit()
             await publish_platform_job_update(platform_job)
@@ -748,7 +850,7 @@ async def set_embedding_config(
 @router.delete("/embedding-config", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_embedding_config(
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> None:
     """
     Delete dedicated embedding configuration.
@@ -757,6 +859,7 @@ async def delete_embedding_config(
     OpenAI key (if available).
     Requires platform admin access.
     """
+    _require_llm_config(authorization, "configs.readwrite")
     from sqlalchemy import select
     from src.models.orm import SystemConfig
 
@@ -776,15 +879,21 @@ async def delete_embedding_config(
         )
 
     await db.delete(existing)
+    await emit_audit(
+        db,
+        "embedding_config.delete",
+        resource_type="embedding_config",
+        details={"scope": "platform"},
+    )
     await db.commit()
 
-    logger.info(f"Embedding config deleted by {user.email}")
+    logger.info(f"Embedding config deleted by {authorization.effective_actor.email}")
 
 
 @router.post("/embedding-reindex", response_model=EmbeddingReindexResponse)
 async def trigger_embedding_reindex(
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> EmbeddingReindexResponse:
     """
     Re-embed every knowledge_store row against the currently-saved embedding config.
@@ -797,6 +906,8 @@ async def trigger_embedding_reindex(
     is created).
     Requires platform admin access.
     """
+    _require_embedding_reindex(authorization)
+    actor = authorization.effective_actor
     from sqlalchemy import select
     from src.jobs.platform.embedding_reindex import (
         EMBEDDING_REINDEX_DEFINITION,
@@ -810,7 +921,10 @@ async def trigger_embedding_reindex(
     from src.models.orm import SystemConfig
     from src.services.embeddings.reindex import count_knowledge_rows
     from src.services.notification_service import get_notification_service
-    from src.services.platform_jobs import enqueue_platform_job, publish_platform_job_update
+    from src.services.platform_jobs import (
+        enqueue_platform_job,
+        publish_platform_job_update,
+    )
 
     # Confirm an embedding config exists — reindex against nothing is a no-op.
     config_result = await db.execute(
@@ -835,7 +949,7 @@ async def trigger_embedding_reindex(
 
     notif_service = get_notification_service()
     notification = await notif_service.create_notification(
-        user_id=str(user.user_id),
+        user_id=str(actor.user_id),
         request=NotificationCreate(
             category=NotificationCategory.EMBEDDING_REINDEX,
             title="Re-embedding knowledge store",
@@ -859,18 +973,25 @@ async def trigger_embedding_reindex(
         resource_lock_key="embedding.reindex",
         priority=250,
         organization_id=None,
-        requested_by_user_id=user.user_id,
-        requested_by_email=user.email,
-        requested_by_name=user.name or user.email or "Unknown",
+        requested_by_user_id=actor.user_id,
+        requested_by_email=actor.email,
+        requested_by_name=actor.name or actor.email or "Unknown",
         resource_type="knowledge_store",
         resource_id="embedding-index",
         title="Re-embedding knowledge store",
         action_url="/settings/llm",
     )
+    await emit_audit(
+        db,
+        "embedding.reindex.enqueue",
+        resource_type="platform_job",
+        resource_id=platform_job.id,
+        details={"row_count": row_count, "trigger": "on_demand"},
+    )
     await db.commit()
     await publish_platform_job_update(platform_job)
     logger.info(
-        f"On-demand embedding reindex triggered by {user.email}: "
+        f"On-demand embedding reindex triggered by {actor.email}: "
         f"notification_id={notification.id}, rows={row_count}"
     )
 
@@ -884,7 +1005,7 @@ async def trigger_embedding_reindex(
 async def test_embedding_connection(
     request: EmbeddingTestRequest,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> EmbeddingTestResponse:
     """
     Validate credentials and list embedding-capable models.
@@ -900,6 +1021,7 @@ async def test_embedding_connection(
     3. LLM provider config — only when provider is openai (Anthropic doesn't
        have embeddings). Inherits both key and endpoint.
     """
+    _require_llm_config(authorization, "configs.readwrite")
     import base64
     from cryptography.fernet import Fernet
     from src.config import get_settings
@@ -925,8 +1047,14 @@ async def test_embedding_connection(
                 )
             )
             existing = result.scalars().first()
-            if existing and existing.value_json and existing.value_json.get("encrypted_api_key"):
-                api_key = fernet.decrypt(existing.value_json["encrypted_api_key"].encode()).decode()
+            if (
+                existing
+                and existing.value_json
+                and existing.value_json.get("encrypted_api_key")
+            ):
+                api_key = fernet.decrypt(
+                    existing.value_json["encrypted_api_key"].encode()
+                ).decode()
                 if request.endpoint is None:
                     normalized_endpoint = existing.value_json.get("endpoint")
             else:
@@ -989,7 +1117,9 @@ async def test_embedding_connection(
         )
 
 
-async def _list_embedding_models(api_key: str, endpoint: str | None) -> list[str] | None:
+async def _list_embedding_models(
+    api_key: str, endpoint: str | None
+) -> list[str] | None:
     """
     List embedding-capable models from an OpenAI-compatible endpoint.
 
@@ -1068,8 +1198,7 @@ async def _list_embedding_models(api_key: str, endpoint: str | None) -> list[str
             if not isinstance(modalities, list):
                 continue
             if not any(
-                isinstance(m, str) and m.lower() == "embeddings"
-                for m in modalities
+                isinstance(m, str) and m.lower() == "embeddings" for m in modalities
             ):
                 continue
         ids.append(model_id)
@@ -1104,4 +1233,6 @@ async def _cache_model_mapping_from_result(
         mapping = {m.id: m.display_name for m in models}
         await cache_model_mapping(redis_client, provider, mapping)
     except Exception as e:
-        logger.warning(f"Failed to cache model mapping for {log_safe(provider)}: {log_safe(e)}")
+        logger.warning(
+            f"Failed to cache model mapping for {log_safe(provider)}: {log_safe(e)}"
+        )

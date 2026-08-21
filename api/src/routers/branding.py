@@ -16,8 +16,10 @@ from fastapi.responses import Response
 from shared.svg_sanitizer import SvgSanitizationError, sanitize_svg
 
 from src.models import BrandingSettings, BrandingTerminology, BrandingUpdateRequest, GlobalBranding
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context
 from src.core.database import AsyncSession, get_db
+from src.services.audit import emit_audit
+from src.services.authorization import CurrentAuthorizationContext
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +47,13 @@ def _branding_response(branding: GlobalBranding | None) -> BrandingSettings:
         square_logo_url="/api/branding/logo/square" if branding.square_logo_data else None,
         rectangle_logo_url="/api/branding/logo/rectangle" if branding.rectangle_logo_data else None,
     )
+
+
+def _require_platform_branding_write(
+    authorization: CurrentAuthorizationContext,
+) -> None:
+    authorization.require("configs.readwrite")
+    authorization.require_resource_boundary(None)
 
 
 # =============================================================================
@@ -87,7 +96,7 @@ async def get_branding(
 async def update_branding(
     request: BrandingUpdateRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> BrandingSettings:
     """
     Update primary color only.
@@ -95,6 +104,7 @@ async def update_branding(
     Only superusers can update global branding.
     Use POST /logo/{type} to upload logos.
     """
+    _require_platform_branding_write(authorization)
 
     from src.repositories.branding import BrandingRepository
     branding_repo = BrandingRepository(ctx.db)
@@ -112,8 +122,18 @@ async def update_branding(
         **extra,
     )
 
+    await emit_audit(
+        ctx.db,
+        "branding.update",
+        resource_type="branding",
+        details={
+            "primary_color_set": request.primary_color is not None,
+            "application_name_set": request.application_name is not None,
+            "terminology_set": request.terminology is not None,
+        },
+    )
     await ctx.db.commit()
-    logger.info(f"Branding updated by {user.email}")
+    logger.info("Branding updated by %s", authorization.effective_actor.email)
 
     return _branding_response(branding)
 
@@ -128,7 +148,7 @@ async def upload_logo(
     logo_type: str,
     file: Annotated[UploadFile, File(description="Logo image file")],
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> BrandingSettings:
     """
     Upload a logo file.
@@ -137,6 +157,7 @@ async def upload_logo(
         logo_type: 'square' or 'rectangle'
         file: Image file (PNG, JPEG, SVG)
     """
+    _require_platform_branding_write(authorization)
 
     if logo_type not in ("square", "rectangle"):
         raise HTTPException(
@@ -183,8 +204,22 @@ async def upload_logo(
             rectangle_logo_content_type=file.content_type,
         )
 
+    await emit_audit(
+        ctx.db,
+        "branding.logo.upload",
+        resource_type="branding",
+        details={
+            "logo_type": logo_type,
+            "content_type": file.content_type,
+            "size": len(content),
+        },
+    )
     await ctx.db.commit()
-    logger.info(f"Logo '{logo_type}' uploaded by {user.email}")
+    logger.info(
+        "Logo '%s' uploaded by %s",
+        logo_type,
+        authorization.effective_actor.email,
+    )
 
     return _branding_response(branding)
 
@@ -247,7 +282,7 @@ async def get_logo(logo_type: str, db: AsyncSession = Depends(get_db)):
 async def reset_logo(
     logo_type: str,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> BrandingSettings:
     """
     Reset a specific logo to default.
@@ -255,6 +290,7 @@ async def reset_logo(
     Args:
         logo_type: 'square' or 'rectangle'
     """
+    _require_platform_branding_write(authorization)
 
     if logo_type not in ("square", "rectangle"):
         raise HTTPException(
@@ -277,8 +313,18 @@ async def reset_logo(
             rectangle_logo_content_type=None,
         )
 
+    await emit_audit(
+        ctx.db,
+        "branding.logo.reset",
+        resource_type="branding",
+        details={"logo_type": logo_type},
+    )
     await ctx.db.commit()
-    logger.info(f"Logo '{logo_type}' reset to default by {user.email}")
+    logger.info(
+        "Logo '%s' reset to default by %s",
+        logo_type,
+        authorization.effective_actor.email,
+    )
 
     return _branding_response(branding)
 
@@ -291,9 +337,10 @@ async def reset_logo(
 )
 async def reset_color(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> BrandingSettings:
     """Reset primary color to default."""
+    _require_platform_branding_write(authorization)
 
     from src.repositories.branding import BrandingRepository
     branding_repo = BrandingRepository(ctx.db)
@@ -301,8 +348,16 @@ async def reset_color(
     # Reset primary color by setting it to None
     branding = await branding_repo.set_branding(primary_color=None)
 
+    await emit_audit(
+        ctx.db,
+        "branding.color.reset",
+        resource_type="branding",
+    )
     await ctx.db.commit()
-    logger.info(f"Primary color reset to default by {user.email}")
+    logger.info(
+        "Primary color reset to default by %s",
+        authorization.effective_actor.email,
+    )
 
     return _branding_response(branding)
 
@@ -315,17 +370,26 @@ async def reset_color(
 )
 async def reset_application_name(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> BrandingSettings:
     """Reset application name to default."""
+    _require_platform_branding_write(authorization)
     from src.repositories.branding import BrandingRepository
     branding_repo = BrandingRepository(ctx.db)
 
     # Clear application name (pass explicit None to clear, not the unchanged sentinel)
     branding = await branding_repo.set_branding(application_name=None)
 
+    await emit_audit(
+        ctx.db,
+        "branding.application_name.reset",
+        resource_type="branding",
+    )
     await ctx.db.commit()
-    logger.info(f"Application name reset to default by {user.email}")
+    logger.info(
+        "Application name reset to default by %s",
+        authorization.effective_actor.email,
+    )
 
     return _branding_response(branding)
 
@@ -338,9 +402,10 @@ async def reset_application_name(
 )
 async def reset_all_branding(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> BrandingSettings:
     """Reset all branding to defaults."""
+    _require_platform_branding_write(authorization)
 
     from src.repositories.branding import BrandingRepository
     branding_repo = BrandingRepository(ctx.db)
@@ -348,8 +413,16 @@ async def reset_all_branding(
     # Delete all branding - this will return defaults
     await branding_repo.delete_branding()
 
+    await emit_audit(
+        ctx.db,
+        "branding.reset",
+        resource_type="branding",
+    )
     await ctx.db.commit()
-    logger.info(f"All branding reset to defaults by {user.email}")
+    logger.info(
+        "All branding reset to defaults by %s",
+        authorization.effective_actor.email,
+    )
 
     return BrandingSettings(
         application_name=None,

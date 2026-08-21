@@ -17,7 +17,7 @@ These tests pin the fix:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -44,12 +44,19 @@ def _config_row(*, id: UUID, key: str, org_id: UUID | None, value: str = "v1"):
 
 def _mk_repo(row):
     session = AsyncMock()
+    session.get = AsyncMock(return_value=row)
     exec_result = MagicMock()
     exec_result.scalar_one_or_none = MagicMock(return_value=row)
     session.execute = AsyncMock(return_value=exec_result)
     session.flush = AsyncMock()
     session.refresh = AsyncMock()
-    return ConfigRepository(session, org_id=None, is_superuser=True)
+    return ConfigRepository(session, org_id=None, bypass_resource_admission=True)
+
+
+def _authorization():
+    authorization = MagicMock()
+    authorization.requester.email = "admin@example.com"
+    return authorization
 
 
 @pytest.mark.asyncio
@@ -121,15 +128,16 @@ async def test_router_invalidates_old_cache_entry_on_rename():
     ctx.db = repo.session
     ctx.org_id = org
     ctx.user = MagicMock(email="admin@example.com", is_superuser=True)
-    user = MagicMock(email="admin@example.com")
+    authorization = _authorization()
     request = UpdateConfigRequest(key="new_name", type=ConfigType.STRING)
 
     with (
         patch("src.routers.config.ConfigRepository", return_value=repo),
         patch("src.routers.config.invalidate_config", new=AsyncMock()) as inv,
         patch("src.routers.config.upsert_config", new=AsyncMock()) as ups,
+        patch("src.routers.config.emit_audit", new=AsyncMock()),
     ):
-        await update_config(config_id, request, ctx, user)
+        await update_config(config_id, request, ctx, authorization)
 
     # OLD (org, key) invalidated
     inv.assert_awaited_once_with(str(org), "old_name")
@@ -138,6 +146,11 @@ async def test_router_invalidates_old_cache_entry_on_rename():
     assert args is not None
     assert args.args[0] == str(org)
     assert args.args[1] == "new_name"
+    authorization.require_operation.assert_called_once_with("configs.update")
+    assert authorization.require_resource_boundary.call_args_list == [
+        call(org),
+        call(org),
+    ]
 
 
 @pytest.mark.asyncio
@@ -155,17 +168,19 @@ async def test_router_does_not_invalidate_when_identity_unchanged():
     ctx.db = repo.session
     ctx.org_id = org
     ctx.user = MagicMock(email="admin@example.com", is_superuser=True)
-    user = MagicMock(email="admin@example.com")
+    authorization = _authorization()
     request = UpdateConfigRequest(value="new value")
 
     with (
         patch("src.routers.config.ConfigRepository", return_value=repo),
         patch("src.routers.config.invalidate_config", new=AsyncMock()) as inv,
         patch("src.routers.config.upsert_config", new=AsyncMock()),
+        patch("src.routers.config.emit_audit", new=AsyncMock()),
     ):
-        await update_config(config_id, request, ctx, user)
+        await update_config(config_id, request, ctx, authorization)
 
     inv.assert_not_called()
+    authorization.require_operation.assert_called_once_with("configs.update")
 
 
 @pytest.mark.asyncio
@@ -184,7 +199,7 @@ async def test_router_bumps_global_version_on_org_to_global_transition():
     ctx.db = repo.session
     ctx.org_id = org
     ctx.user = MagicMock(email="admin@example.com", is_superuser=True)
-    user = MagicMock(email="admin@example.com")
+    authorization = _authorization()
     request = UpdateConfigRequest(organization_id=None)
 
     fake_redis = AsyncMock()
@@ -194,7 +209,12 @@ async def test_router_bumps_global_version_on_org_to_global_transition():
         patch("src.routers.config.invalidate_config", new=AsyncMock()),
         patch("src.routers.config.upsert_config", new=AsyncMock()),
         patch("src.core.cache.get_shared_redis", return_value=fake_redis),
+        patch("src.routers.config.emit_audit", new=AsyncMock()),
     ):
-        await update_config(config_id, request, ctx, user)
+        await update_config(config_id, request, ctx, authorization)
 
     fake_redis.incr.assert_awaited()
+    assert authorization.require_resource_boundary.call_args_list == [
+        call(org),
+        call(None),
+    ]

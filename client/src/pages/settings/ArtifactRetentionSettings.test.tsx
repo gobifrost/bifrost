@@ -68,4 +68,19 @@ describe("ArtifactRetentionSettings", () => {
 		await user.click(screen.getByRole("button", { name: "Run Cleanup" }));
 		expect(cleanup).toHaveBeenCalledOnce();
 	});
+
+	it("renders retention controls read-only without execute access", async () => {
+		render(<ArtifactRetentionSettings canWrite={false} />);
+
+		const toggle = await screen.findByRole("switch", {
+			name: "Enable Scheduled Cleanup",
+		});
+		await waitFor(() => expect(toggle).toBeDisabled());
+		expect(screen.getByLabelText("Retention Days")).toBeDisabled();
+		expect(
+			screen.getByRole("button", { name: "Run Cleanup" }),
+		).toBeDisabled();
+		expect(updateSettings).not.toHaveBeenCalled();
+		expect(cleanup).not.toHaveBeenCalled();
+	});
 });

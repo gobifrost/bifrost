@@ -1,690 +1,384 @@
-"""
-Agent MCP Tools
+"""Agent MCP tools backed by the canonical REST API.
 
-Tools for listing, creating, updating, and managing AI agents.
+The five Agent CRUD tools are deliberately thin adapters. They resolve human
+references and assemble the shared Agent DTO, then cross the same FastAPI
+authorization, validation, side-effect, and audit boundary used by the CLI and
+web client. No Agent ORM or repository logic belongs in this module.
 """
 
-import logging
-from datetime import datetime, timezone
+from __future__ import annotations
+
 from typing import Any
-from uuid import UUID
-from uuid import uuid4
 
 from fastmcp.tools import ToolResult
 
 from src.services.mcp_server.tool_result import error_result, success_result
-from src.services.mcp_server.tools._http_bridge import call_rest
-from src.services.mcp_server.tools.db import get_tool_db
-
-# MCPContext is imported where needed to avoid circular imports
-
-logger = logging.getLogger(__name__)
+from src.services.mcp_server.tools._http_bridge import call_rest, rest_client
 
 
-# ==================== SCHEMA TOOL ====================
+def _ref_error_payload(exc: Exception) -> dict[str, Any]:
+    from bifrost.refs import AmbiguousRefError, RefNotFoundError
+
+    if isinstance(exc, AmbiguousRefError):
+        return {"kind": exc.kind, "value": exc.value, "candidates": exc.candidates}
+    if isinstance(exc, RefNotFoundError):
+        return {"kind": exc.kind, "value": exc.value}
+    return {"detail": str(exc)}
 
 
-async def get_agent_schema(context: Any) -> ToolResult:  # noqa: ARG001
-    """Get agent schema documentation generated from Pydantic models."""
-    from src.models.contracts.agents import AgentCreate, AgentUpdate
-    from src.services.mcp_server.schema_utils import models_to_markdown
-
-    # Generate markdown from Pydantic models
-    model_docs = models_to_markdown([
-        (AgentCreate, "AgentCreate (for creating agents)"),
-        (AgentUpdate, "AgentUpdate (for updating agents)"),
-    ], "Agent Schema Documentation")
-
-    # Add channel enum documentation
-    channels_doc = """
-## Available Channels
-
-| Channel | Description |
-|---------|-------------|
-| chat | Web chat interface |
-| voice | Voice/phone integration |
-| teams | Microsoft Teams bot |
-| slack | Slack bot integration |
-
-## Usage Notes
-
-- **tool_ids**: UUIDs of workflows to assign as callable tools. Use `list_workflows` to find available tools.
-- **delegated_agent_ids**: UUIDs of agents this agent can delegate to for specialized tasks.
-- **knowledge_sources**: Knowledge namespaces for RAG search.
-- **system_tools**: Built-in MCP tool names to enable (e.g., "list_tables", "query_table").
-- **scope**: Use "global" for visibility to all orgs, or "organization" (default).
-
-## MCP Tools for Agents
-
-- `list_agents` - List all accessible agents
-- `get_agent` - Get agent details by ID or name
-- `create_agent` - Create a new agent
-- `update_agent` - Update agent properties
-- `delete_agent` - Permanently delete an agent
-"""
-
-    schema_doc = model_docs + channels_doc
-    return success_result("Agent schema documentation", {"schema": schema_doc})
+def _rest_error(action: str, status_code: int, body: Any) -> ToolResult:
+    detail = body.get("detail") if isinstance(body, dict) else None
+    if isinstance(detail, dict):
+        message = detail.get("message") or detail.get("detail")
+    else:
+        message = detail
+    return error_result(
+        str(message) if message else f"{action} failed: HTTP {status_code}",
+        {"status_code": status_code, "body": body},
+    )
 
 
-# ==================== LIST/GET TOOLS ====================
+async def _resolve_ref(context: Any, kind: str, value: str) -> str:
+    from bifrost.refs import RefResolver
+
+    async with rest_client(context) as http:
+        return await RefResolver(http).resolve(kind, value)  # type: ignore[arg-type]
 
 
-async def list_agents(context: Any) -> ToolResult:
-    """List all agents."""
-    from src.core.org_filter import OrgFilterType
-    from src.repositories.agents import AgentRepository
-
-    logger.info("MCP list_agents called")
-
-    try:
-        async with get_tool_db(context) as db:
-            # Determine org_id and admin status based on context
-            is_admin = context.is_platform_admin
-            if context.org_id:
-                org_id = UUID(str(context.org_id)) if isinstance(context.org_id, str) else context.org_id
-            else:
-                org_id = None
-
-            # Get user_id from context if available
-            user_id = None
-            if hasattr(context, "user_id") and context.user_id:
-                user_id = UUID(str(context.user_id)) if isinstance(context.user_id, str) else context.user_id
-
-            repo = AgentRepository(
-                session=db,
-                org_id=org_id,
-                user_id=user_id,
-                is_superuser=is_admin,
-                is_external=context.is_external,
-            )
-
-            if is_admin:
-                # Platform admins see all agents using list_all_in_scope
-                agents = await repo.list_all_in_scope(OrgFilterType.ALL, active_only=True)
-            else:
-                # Regular users use list_agents with built-in cascade + role-based access
-                agents = await repo.list_agents(active_only=True)
-
-            agents_data = [
-                {
-                    "id": str(agent.id),
-                    "name": agent.name,
-                    "description": agent.description,
-                    "channels": agent.channels,
-                    "is_active": agent.is_active,
-                    "llm_model": agent.llm_model,
-                }
-                for agent in agents
-            ]
-
-            display_text = f"Found {len(agents_data)} agent(s)"
-            return success_result(display_text, {"agents": agents_data, "count": len(agents_data)})
-
-    except Exception as e:
-        logger.exception(f"Error listing agents via MCP: {e}")
-        return error_result(f"Error listing agents: {str(e)}")
-
-
-async def get_agent(
+async def _assemble_agent_body(
     context: Any,
-    agent_id: str | None = None,
-    agent_name: str | None = None,
-) -> ToolResult:
-    """Get detailed information about a specific agent.
+    fields: dict[str, Any],
+    *,
+    is_update: bool,
+    scope: str | None,
+) -> dict[str, Any]:
+    """Assemble a shared DTO payload and resolve every supported human ref."""
 
-    Args:
-        context: MCP context with user permissions
-        agent_id: Agent UUID (preferred)
-        agent_name: Agent name (alternative to ID)
+    from bifrost.dto_flags import assemble_body
+    from bifrost.refs import RefResolver
+    from src.models.contracts.agents import AgentCreate, AgentUpdate
 
-    Returns:
-        ToolResult with agent details
-    """
-    from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
+    model_cls = AgentUpdate if is_update else AgentCreate
+    async with rest_client(context) as http:
+        resolver = RefResolver(http)
+        body = await assemble_body(model_cls, fields, resolver=resolver)
+        for field_name, kind in (
+            ("tool_ids", "workflow"),
+            ("delegated_agent_ids", "agent"),
+        ):
+            values = body.get(field_name)
+            if isinstance(values, list):
+                body[field_name] = [
+                    await resolver.resolve(kind, str(value))  # type: ignore[arg-type]
+                    for value in values
+                ]
 
-    from src.models.orm import Agent
-    from src.services.mcp_server.tools._org_scope import apply_mcp_org_scope
-
-    logger.info(f"MCP get_agent called: agent_id={agent_id}, agent_name={agent_name}")
-
-    if not agent_id and not agent_name:
-        return error_result("Either agent_id or agent_name is required")
-
-    try:
-        async with get_tool_db(context) as db:
-            # Build query
-            query = select(Agent).options(
-                selectinload(Agent.tools),
-                selectinload(Agent.delegated_agents),
-                selectinload(Agent.roles),
-            )
-
-            if agent_id:
-                # ID-based lookup: IDs are unique, so cascade filter is safe
-                try:
-                    uuid_id = UUID(agent_id)
-                except ValueError:
-                    return error_result(f"'{agent_id}' is not a valid UUID")
-                query = query.where(Agent.id == uuid_id)
-                # Apply org scoping for non-admins (cascade filter for ID lookups)
-                query = apply_mcp_org_scope(query, Agent, context)
+        if scope is not None:
+            if scope == "global":
+                body["organization_id"] = None
             else:
-                # Name-based lookup: use prioritized lookup (org-specific > global)
-                query = query.where(Agent.name == agent_name)
-                query = apply_mcp_org_scope(query, Agent, context)
-                if not context.is_platform_admin and context.org_id:
-                    # Prioritize org-specific over global (nulls come last)
-                    query = query.order_by(
-                        Agent.organization_id.desc().nulls_last()
-                    ).limit(1)
-
-            result = await db.execute(query)
-            agent = result.scalar_one_or_none()
-
-            if not agent:
-                identifier = agent_id or agent_name
-                return error_result(f"Agent '{identifier}' not found. Use list_agents to see available agents.")
-
-            agent_data = {
-                "id": str(agent.id),
-                "name": agent.name,
-                "description": agent.description,
-                "system_prompt": agent.system_prompt,
-                "channels": agent.channels,
-                "access_level": agent.access_level.value if agent.access_level else "role_based",
-                "organization_id": str(agent.organization_id) if agent.organization_id else None,
-                "is_active": agent.is_active,
-                "created_by": agent.created_by,
-                "created_at": agent.created_at.isoformat() if agent.created_at else None,
-                "updated_at": agent.updated_at.isoformat() if agent.updated_at else None,
-                "tool_ids": [str(t.id) for t in agent.tools] if agent.tools else [],
-                "delegated_agent_ids": [str(a.id) for a in agent.delegated_agents] if agent.delegated_agents else [],
-                "role_ids": [str(r.id) for r in agent.roles] if agent.roles else [],
-                "knowledge_sources": agent.knowledge_sources or [],
-                "system_tools": agent.system_tools or [],
-                "llm_model": agent.llm_model,
-                "llm_max_tokens": agent.llm_max_tokens,
-            }
-
-            display_text = f"Agent: {agent.name}"
-            return success_result(display_text, agent_data)
-
-    except Exception as e:
-        logger.exception(f"Error getting agent via MCP: {e}")
-        return error_result(f"Error getting agent: {str(e)}")
+                body["organization_id"] = await resolver.resolve("org", scope)
+    return body
 
 
-async def create_agent(
+async def bifrost_list_agents(
+    context: Any,
+    scope: str | None = None,
+    active_only: bool = True,
+    include_stats: bool = False,
+) -> ToolResult:
+    """List Agents visible to the caller through ``GET /api/agents``."""
+
+    params: dict[str, Any] = {
+        "active_only": active_only,
+        "include_stats": include_stats,
+    }
+    if scope is not None:
+        params["scope"] = scope
+    status_code, body = await call_rest(
+        context,
+        "GET",
+        "/api/agents",
+        params=params,
+    )
+    if status_code != 200:
+        return _rest_error("List Agents", status_code, body)
+    agents = body if isinstance(body, list) else []
+    return success_result(
+        f"Found {len(agents)} Agent(s)",
+        {"agents": agents, "count": len(agents)},
+    )
+
+
+async def bifrost_get_agent(context: Any, agent_ref: str) -> ToolResult:
+    """Get one Agent by UUID or accessible name, including its Skill.
+
+    The payload carries a ``skill`` block so a harness can hydrate the Agent in
+    one call: canonical instructions, the companion-file inventory, and the
+    content ``revision`` it can cache against. Companion files are read
+    individually with ``bifrost_read_agent_skill_file``; no storage path is
+    exposed.
+
+    A Skill that cannot be projected (an unreadable or malformed bundle) does
+    not fail the whole read: the Agent is still returned, with ``skill`` set to
+    an error marker, so callers can distinguish "no Skill" from "Agent absent".
+    """
+
+    if not agent_ref:
+        return error_result("agent_ref is required")
+    try:
+        agent_id = await _resolve_ref(context, "agent", agent_ref)
+    except Exception as exc:
+        return error_result(
+            f"Could not resolve Agent {agent_ref!r}",
+            _ref_error_payload(exc),
+        )
+    status_code, body = await call_rest(
+        context,
+        "GET",
+        f"/api/agents/{agent_id}",
+    )
+    if status_code != 200:
+        return _rest_error("Get Agent", status_code, body)
+    payload = body if isinstance(body, dict) else {"body": body}
+
+    skill_status, skill_body = await call_rest(
+        context,
+        "GET",
+        f"/api/agents/{agent_id}/skill",
+    )
+    if skill_status == 200 and isinstance(skill_body, dict):
+        payload["skill"] = {
+            "name": skill_body.get("name"),
+            "description": skill_body.get("description"),
+            "revision": skill_body.get("revision"),
+            "source": skill_body.get("source"),
+            "is_managed": skill_body.get("is_managed"),
+            "instructions": skill_body.get("skill_markdown"),
+            "files": skill_body.get("files", []),
+            "companion_files": skill_body.get("companion_files", []),
+            "read_file_tool": "bifrost_read_agent_skill_file",
+        }
+    else:
+        payload["skill"] = {
+            "error": f"skill projection unavailable: HTTP {skill_status}",
+        }
+    return success_result(f"Agent: {payload.get('name', agent_id)}", payload)
+
+
+async def bifrost_create_agent(
     context: Any,
     name: str,
     system_prompt: str,
     description: str | None = None,
     channels: list[str] | None = None,
+    access_level: str | None = None,
     tool_ids: list[str] | None = None,
     delegated_agent_ids: list[str] | None = None,
+    role_ids: list[str] | None = None,
     knowledge_sources: list[str] | None = None,
     system_tools: list[str] | None = None,
-    scope: str = "organization",
-    organization_id: str | None = None,
+    mcp_connection_ids: list[str] | None = None,
     llm_model: str | None = None,
     llm_max_tokens: int | None = None,
+    max_iterations: int | None = None,
+    max_token_budget: int | None = None,
+    scope: str | None = None,
 ) -> ToolResult:
-    """Create a new agent.
+    """Create an Agent through ``POST /api/agents``.
 
-    Args:
-        context: MCP context with user permissions
-        name: Agent name (1-255 chars)
-        system_prompt: System prompt that defines the agent's behavior
-        description: Optional description of what the agent does
-        channels: Communication channels (default: ['chat'])
-        tool_ids: List of workflow IDs to assign as tools
-        delegated_agent_ids: List of agent IDs this agent can delegate to
-        knowledge_sources: List of knowledge namespaces this agent can search
-        system_tools: List of system tool names enabled for this agent
-        scope: 'global' (visible to all orgs) or 'organization' (default)
-        organization_id: Override context.org_id when scope='organization'
-
-    Returns:
-        ToolResult with created agent details
+    Workflow, delegated-Agent, role, and organization values accept UUIDs or
+    human refs. MCP connection values are UUIDs. ``scope`` is ``global``, an
+    organization UUID/name, or omitted for the caller's home organization.
     """
-    from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
 
-    from src.models.enums import AgentAccessLevel
-    from src.models.orm import Agent, AgentDelegation, AgentTool, Workflow
-
-    logger.info(f"MCP create_agent called: name={name}, scope={scope}")
-
-    # Validate inputs
-    if not name:
-        return error_result("name is required")
-    if not system_prompt:
-        return error_result("system_prompt is required")
-    if len(name) > 255:
-        return error_result("name must be 255 characters or less")
-    if len(system_prompt) > 50000:
-        return error_result("system_prompt must be 50000 characters or less")
-
-    # Validate scope parameter
-    if scope not in ("global", "organization"):
-        return error_result("scope must be 'global' or 'organization'")
-
-    # Validate channels if provided
-    valid_channels = {"chat", "voice", "teams", "slack"}
-    if channels:
-        invalid_channels = set(channels) - valid_channels
-        if invalid_channels:
-            return error_result(f"Invalid channels: {list(invalid_channels)}. Valid options: {list(valid_channels)}")
-    else:
-        channels = ["chat"]
-
-    # Determine effective organization_id based on scope
-    effective_org_id: UUID | None = None
-    if scope == "global":
-        # Global resources have no organization_id
-        effective_org_id = None
-    else:
-        # Organization scope: use provided organization_id or fall back to context.org_id
-        if organization_id:
-            try:
-                effective_org_id = UUID(organization_id)
-            except ValueError:
-                return error_result(f"organization_id '{organization_id}' is not a valid UUID")
-        elif context.org_id:
-            effective_org_id = UUID(str(context.org_id)) if isinstance(context.org_id, str) else context.org_id
-        else:
-            return error_result("organization_id is required when scope='organization' and no context org_id is set")
-
+    fields = {
+        "name": name,
+        "system_prompt": system_prompt,
+        "description": description,
+        "channels": channels,
+        "access_level": access_level,
+        "tool_ids": tool_ids,
+        "delegated_agent_ids": delegated_agent_ids,
+        "role_ids": role_ids,
+        "knowledge_sources": knowledge_sources,
+        "system_tools": system_tools,
+        "mcp_connection_ids": mcp_connection_ids,
+        "llm_model": llm_model,
+        "llm_max_tokens": llm_max_tokens,
+        "max_iterations": max_iterations,
+        "max_token_budget": max_token_budget,
+    }
     try:
-        async with get_tool_db(context) as db:
-            agent_id = uuid4()
-            now = datetime.now(timezone.utc)
-
-            # Create the agent
-            agent = Agent(
-                id=agent_id,
-                name=name,
-                description=description,
-                system_prompt=system_prompt,
-                channels=channels,
-                access_level=AgentAccessLevel.ROLE_BASED,
-                organization_id=effective_org_id,
-                is_active=True,
-                knowledge_sources=knowledge_sources or [],
-                system_tools=system_tools or [],
-                llm_model=llm_model,
-                llm_max_tokens=llm_max_tokens,
-                created_by=context.user_email,
-                created_at=now,
-                updated_at=now,
-            )
-            db.add(agent)
-
-            # Add tool relationships
-            tools: list[Workflow] = []
-            if tool_ids:
-                for tool_id in tool_ids:
-                    try:
-                        workflow_uuid = UUID(tool_id)
-                        result = await db.execute(
-                            select(Workflow)
-                            .where(Workflow.id == workflow_uuid)
-                            .where(Workflow.type == "tool")
-                            .where(Workflow.is_active.is_(True))
-                        )
-                        workflow = result.scalar_one_or_none()
-                        if workflow:
-                            tools.append(workflow)
-                            db.add(AgentTool(agent_id=agent_id, workflow_id=workflow.id))
-                        else:
-                            logger.warning(f"Tool workflow not found or inactive: {tool_id}")
-                    except ValueError:
-                        logger.warning(f"Invalid tool ID: {tool_id}")
-
-            # Add delegation relationships
-            delegated_agents: list[Agent] = []
-            if delegated_agent_ids:
-                for delegate_id in delegated_agent_ids:
-                    try:
-                        delegate_uuid = UUID(delegate_id)
-                        if delegate_uuid == agent_id:
-                            logger.warning("Agent cannot delegate to itself, skipping")
-                            continue
-                        result = await db.execute(
-                            select(Agent)
-                            .where(Agent.id == delegate_uuid)
-                            .where(Agent.is_active.is_(True))
-                        )
-                        delegate = result.scalar_one_or_none()
-                        if delegate:
-                            delegated_agents.append(delegate)
-                            db.add(AgentDelegation(
-                                parent_agent_id=agent_id,
-                                child_agent_id=delegate.id,
-                            ))
-                        else:
-                            logger.warning(f"Delegate agent not found or inactive: {delegate_id}")
-                    except ValueError:
-                        logger.warning(f"Invalid delegate agent ID: {delegate_id}")
-
-            await db.flush()
-
-            # Reload with relationships
-            result = await db.execute(
-                select(Agent)
-                .options(
-                    selectinload(Agent.tools),
-                    selectinload(Agent.delegated_agents),
-                    selectinload(Agent.roles),
-                )
-                .where(Agent.id == agent_id)
-            )
-            agent = result.scalar_one()
-
-            logger.info(f"Created agent {agent.id}: {agent.name}")
-
-            display_text = f"Created agent: {agent.name}"
-            return success_result(display_text, {
-                "success": True,
-                "id": str(agent.id),
-                "name": agent.name,
-                "description": agent.description,
-                "channels": agent.channels,
-                "tool_count": len(tools),
-                "delegated_agent_count": len(delegated_agents),
-            })
-
-    except Exception as e:
-        logger.exception(f"Error creating agent via MCP: {e}")
-        return error_result(f"Error creating agent: {str(e)}")
+        body = await _assemble_agent_body(
+            context,
+            fields,
+            is_update=False,
+            scope=scope,
+        )
+    except Exception as exc:
+        return error_result(f"Invalid Agent input: {exc}", _ref_error_payload(exc))
+    status_code, response = await call_rest(
+        context,
+        "POST",
+        "/api/agents",
+        json_body=body,
+    )
+    if status_code != 201:
+        return _rest_error("Create Agent", status_code, response)
+    payload = response if isinstance(response, dict) else {"body": response}
+    return success_result(f"Created Agent: {payload.get('name', name)}", payload)
 
 
-async def update_agent(
+async def bifrost_update_agent(
     context: Any,
-    agent_id: str,
+    agent_ref: str,
     name: str | None = None,
     description: str | None = None,
     system_prompt: str | None = None,
     channels: list[str] | None = None,
+    access_level: str | None = None,
     is_active: bool | None = None,
     tool_ids: list[str] | None = None,
     delegated_agent_ids: list[str] | None = None,
+    role_ids: list[str] | None = None,
     knowledge_sources: list[str] | None = None,
     system_tools: list[str] | None = None,
+    mcp_connection_ids: list[str] | None = None,
+    clear_roles: bool | None = None,
     llm_model: str | None = None,
     llm_max_tokens: int | None = None,
+    max_iterations: int | None = None,
+    max_token_budget: int | None = None,
+    scope: str | None = None,
 ) -> ToolResult:
-    """Update an existing agent.
+    """Update an Agent through ``PUT /api/agents/{id}``."""
 
-    Args:
-        context: MCP context with user permissions
-        agent_id: Agent UUID (required)
-        name: New agent name
-        description: New description
-        system_prompt: New system prompt
-        channels: New communication channels
-        is_active: Enable/disable the agent
-        tool_ids: New list of workflow IDs (replaces existing)
-        delegated_agent_ids: New list of delegated agent IDs (replaces existing)
-        knowledge_sources: New list of knowledge namespaces
-        system_tools: New list of system tool names
-
-    Returns:
-        ToolResult with update confirmation
-    """
-    from sqlalchemy import delete, select
-    from sqlalchemy.orm import selectinload
-
-    from src.models.orm import Agent, AgentDelegation, AgentTool, Workflow
-
-    logger.info(f"MCP update_agent called: agent_id={agent_id}")
-
-    if not agent_id:
-        return error_result("agent_id is required")
-
-    # Validate agent_id is a valid UUID
+    if not agent_ref:
+        return error_result("agent_ref is required")
     try:
-        uuid_id = UUID(agent_id)
-    except ValueError:
-        return error_result(f"'{agent_id}' is not a valid UUID")
+        agent_id = await _resolve_ref(context, "agent", agent_ref)
+        body = await _assemble_agent_body(
+            context,
+            {
+                "name": name,
+                "description": description,
+                "system_prompt": system_prompt,
+                "channels": channels,
+                "access_level": access_level,
+                "is_active": is_active,
+                "tool_ids": tool_ids,
+                "delegated_agent_ids": delegated_agent_ids,
+                "role_ids": role_ids,
+                "knowledge_sources": knowledge_sources,
+                "system_tools": system_tools,
+                "mcp_connection_ids": mcp_connection_ids,
+                "clear_roles": clear_roles,
+                "llm_model": llm_model,
+                "llm_max_tokens": llm_max_tokens,
+                "max_iterations": max_iterations,
+                "max_token_budget": max_token_budget,
+            },
+            is_update=True,
+            scope=scope,
+        )
+    except Exception as exc:
+        return error_result(f"Invalid Agent input: {exc}", _ref_error_payload(exc))
+    if not body:
+        return error_result("No updates provided")
+    status_code, response = await call_rest(
+        context,
+        "PUT",
+        f"/api/agents/{agent_id}",
+        json_body=body,
+    )
+    if status_code != 200:
+        return _rest_error("Update Agent", status_code, response)
+    payload = response if isinstance(response, dict) else {"body": response}
+    return success_result(f"Updated Agent: {payload.get('name', agent_id)}", payload)
 
-    # Validate channels if provided
-    valid_channels = {"chat", "voice", "teams", "slack"}
-    if channels:
-        invalid_channels = set(channels) - valid_channels
-        if invalid_channels:
-            return error_result(f"Invalid channels: {list(invalid_channels)}. Valid options: {list(valid_channels)}")
 
+async def bifrost_delete_agent(context: Any, agent_ref: str) -> ToolResult:
+    """Delete an Agent by UUID or accessible name through the REST API."""
+
+    if not agent_ref:
+        return error_result("agent_ref is required")
     try:
-        async with get_tool_db(context) as db:
-            # Get existing agent
-            result = await db.execute(
-                select(Agent)
-                .options(
-                    selectinload(Agent.tools),
-                    selectinload(Agent.delegated_agents),
-                    selectinload(Agent.roles),
-                )
-                .where(Agent.id == uuid_id)
-            )
-            agent = result.scalar_one_or_none()
-
-            if not agent:
-                return error_result(f"Agent '{agent_id}' not found. Use list_agents to see available agents.")
-
-            # Solution-managed agents are read-only (criterion 6). Refuse BEFORE
-            # any mutation: this tool issues Core bulk deletes (AgentTool /
-            # AgentDelegation) that bypass the ORM-flush backstop, and the agent
-            # executor commits even after an error_result — so a late guard would
-            # leave the bulk delete persisted (Codex #13).
-            from src.services.solutions.guard import (
-                SOLUTION_MANAGED_MESSAGE,
-                is_solution_managed,
-            )
-
-            if is_solution_managed(agent):
-                return error_result(SOLUTION_MANAGED_MESSAGE)
-
-            # Check access for non-admins
-            if not context.is_platform_admin:
-                if agent.organization_id:
-                    if context.org_id and str(agent.organization_id) != str(context.org_id):
-                        return error_result("You don't have permission to update this agent.")
-                # Global agents can only be updated by admins
-                if agent.organization_id is None:
-                    return error_result("Only platform admins can update global agents.")
-
-            updates_made = []
-
-            # Apply updates
-            if name is not None:
-                if len(name) > 255:
-                    return error_result("name must be 255 characters or less")
-                agent.name = name
-                updates_made.append("name")
-
-            if description is not None:
-                agent.description = description
-                updates_made.append("description")
-
-            if system_prompt is not None:
-                if len(system_prompt) > 50000:
-                    return error_result("system_prompt must be 50000 characters or less")
-                agent.system_prompt = system_prompt
-                updates_made.append("system_prompt")
-
-            if channels is not None:
-                agent.channels = channels
-                updates_made.append("channels")
-
-            if is_active is not None:
-                agent.is_active = is_active
-                updates_made.append("is_active")
-
-            if knowledge_sources is not None:
-                agent.knowledge_sources = knowledge_sources
-                updates_made.append("knowledge_sources")
-
-            if system_tools is not None:
-                agent.system_tools = system_tools
-                updates_made.append("system_tools")
-
-            if llm_model is not None:
-                agent.llm_model = llm_model if llm_model else None
-                updates_made.append("llm_model")
-
-            if llm_max_tokens is not None:
-                agent.llm_max_tokens = llm_max_tokens if llm_max_tokens > 0 else None
-                updates_made.append("llm_max_tokens")
-
-            agent.updated_at = datetime.now(timezone.utc)
-
-            # Update tool relationships if provided
-            tools: list[Workflow] = []
-            if tool_ids is not None:
-                await db.execute(
-                    delete(AgentTool).where(AgentTool.agent_id == uuid_id)
-                )
-                for tool_id in tool_ids:
-                    try:
-                        workflow_uuid = UUID(tool_id)
-                        result = await db.execute(
-                            select(Workflow)
-                            .where(Workflow.id == workflow_uuid)
-                            .where(Workflow.type == "tool")
-                            .where(Workflow.is_active.is_(True))
-                        )
-                        workflow = result.scalar_one_or_none()
-                        if workflow:
-                            tools.append(workflow)
-                            db.add(AgentTool(agent_id=uuid_id, workflow_id=workflow.id))
-                    except ValueError:
-                        logger.warning(f"Invalid tool ID: {tool_id}")
-                updates_made.append("tool_ids")
-
-            # Update delegation relationships if provided
-            delegated_agents: list[Agent] = []
-            if delegated_agent_ids is not None:
-                await db.execute(
-                    delete(AgentDelegation).where(AgentDelegation.parent_agent_id == uuid_id)
-                )
-                for delegate_id in delegated_agent_ids:
-                    try:
-                        delegate_uuid = UUID(delegate_id)
-                        if delegate_uuid == uuid_id:
-                            logger.warning("Agent cannot delegate to itself, skipping")
-                            continue
-                        result = await db.execute(
-                            select(Agent)
-                            .where(Agent.id == delegate_uuid)
-                            .where(Agent.is_active.is_(True))
-                        )
-                        delegate = result.scalar_one_or_none()
-                        if delegate:
-                            delegated_agents.append(delegate)
-                            db.add(AgentDelegation(
-                                parent_agent_id=uuid_id,
-                                child_agent_id=delegate.id,
-                            ))
-                    except ValueError:
-                        logger.warning(f"Invalid delegate agent ID: {delegate_id}")
-                updates_made.append("delegated_agent_ids")
-
-            if not updates_made:
-                return error_result("No updates provided. Specify at least one field to update.")
-
-            await db.flush()
-
-            # Reload with relationships
-            result = await db.execute(
-                select(Agent)
-                .options(
-                    selectinload(Agent.tools),
-                    selectinload(Agent.delegated_agents),
-                    selectinload(Agent.roles),
-                )
-                .where(Agent.id == uuid_id)
-            )
-            agent = result.scalar_one()
-
-            logger.info(f"Updated agent {agent.id}: {', '.join(updates_made)}")
-
-            display_text = f"Updated agent: {agent.name} ({', '.join(updates_made)})"
-            return success_result(display_text, {
-                "success": True,
-                "id": str(agent.id),
-                "name": agent.name,
-                "updates": updates_made,
-            })
-
-    except Exception as e:
-        logger.exception(f"Error updating agent via MCP: {e}")
-        return error_result(f"Error updating agent: {str(e)}")
-
-
-async def delete_agent(
-    context: Any,
-    agent_id: str,
-) -> ToolResult:
-    """Permanently delete an agent through the canonical REST endpoint.
-
-    Args:
-        context: MCP context with user permissions
-        agent_id: Agent UUID
-
-    Returns:
-        ToolResult with deletion confirmation
-    """
-    logger.info(f"MCP delete_agent called: agent_id={agent_id}")
-
-    if not agent_id:
-        return error_result("agent_id is required")
-
-    try:
-        uuid_id = UUID(agent_id)
-    except ValueError:
-        return error_result(f"'{agent_id}' is not a valid UUID")
-
+        agent_id = await _resolve_ref(context, "agent", agent_ref)
+    except Exception as exc:
+        return error_result(
+            f"Could not resolve Agent {agent_ref!r}",
+            _ref_error_payload(exc),
+        )
     status_code, body = await call_rest(
         context,
         "DELETE",
-        f"/api/agents/{uuid_id}",
+        f"/api/agents/{agent_id}",
     )
     if status_code != 204:
-        return error_result(
-            f"delete_agent failed: HTTP {status_code}",
-            {"body": body},
-        )
-
-    return success_result(
-        f"Deleted agent {uuid_id}",
-        {"deleted": str(uuid_id)},
-    )
+        return _rest_error("Delete Agent", status_code, body)
+    return success_result(f"Deleted Agent {agent_id}", {"deleted": agent_id})
 
 
-# Tool metadata for registration
 TOOLS = [
-("list_agents", "List Agents", "List all AI agents accessible to the current user."),
-    ("get_agent", "Get Agent", "Get detailed information about a specific agent including assigned tools and delegation targets."),
-    ("create_agent", "Create Agent", "Create a new AI agent with system prompt and configuration."),
-    ("update_agent", "Update Agent", "Update an existing agent's properties."),
-    ("delete_agent", "Delete Agent", "Permanently delete an agent."),
+    (
+        "bifrost_list_agents",
+        "List Agents",
+        "List AI Agents visible to the caller.",
+    ),
+    (
+        "bifrost_get_agent",
+        "Get Agent",
+        "Get an Agent by UUID or accessible name.",
+    ),
+    (
+        "bifrost_create_agent",
+        "Create Agent",
+        "Create an Agent through the canonical platform API.",
+    ),
+    (
+        "bifrost_update_agent",
+        "Update Agent",
+        "Update an Agent through the canonical platform API.",
+    ),
+    (
+        "bifrost_delete_agent",
+        "Delete Agent",
+        "Permanently delete an Agent through the canonical platform API.",
+    ),
 ]
 
 
 def register_tools(mcp: Any, get_context_fn: Any) -> None:
-    """Register all agents tools with FastMCP."""
-    from src.services.mcp_server.generators.fastmcp_generator import register_tool_with_context
+    """Register Agent tools with FastMCP."""
+
+    from src.services.mcp_server.generators.fastmcp_generator import (
+        register_tool_with_context,
+    )
 
     tool_funcs = {
-"list_agents": list_agents,
-        "get_agent": get_agent,
-        "create_agent": create_agent,
-        "update_agent": update_agent,
-        "delete_agent": delete_agent,
+        "bifrost_list_agents": bifrost_list_agents,
+        "bifrost_get_agent": bifrost_get_agent,
+        "bifrost_create_agent": bifrost_create_agent,
+        "bifrost_update_agent": bifrost_update_agent,
+        "bifrost_delete_agent": bifrost_delete_agent,
     }
+    for tool_id, _name, description in TOOLS:
+        register_tool_with_context(
+            mcp,
+            tool_funcs[tool_id],
+            tool_id,
+            description,
+            get_context_fn,
+        )
 
-    for tool_id, name, description in TOOLS:
-        register_tool_with_context(mcp, tool_funcs[tool_id], tool_id, description, get_context_fn)
+
+__all__ = [
+    "TOOLS",
+    "bifrost_create_agent",
+    "bifrost_delete_agent",
+    "bifrost_get_agent",
+    "bifrost_list_agents",
+    "bifrost_update_agent",
+    "register_tools",
+]

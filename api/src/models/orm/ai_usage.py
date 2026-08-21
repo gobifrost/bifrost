@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import (
+    BigInteger,
     CheckConstraint,
     Date,
     DateTime,
@@ -21,6 +22,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
@@ -30,6 +32,7 @@ if TYPE_CHECKING:
     from src.models.orm.agents import Conversation, Message
     from src.models.orm.executions import Execution
     from src.models.orm.organizations import Organization
+    from src.models.orm.solutions import Solution
     from src.models.orm.users import User
 
 
@@ -124,6 +127,9 @@ class AIUsage(Base):
     user_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), default=None
     )
+    solution_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("solutions.id", ondelete="SET NULL"), default=None
+    )
 
     # Relationships
     execution: Mapped["Execution | None"] = relationship(back_populates="ai_usages")
@@ -132,6 +138,7 @@ class AIUsage(Base):
     message: Mapped["Message | None"] = relationship()
     organization: Mapped["Organization | None"] = relationship()
     user: Mapped["User | None"] = relationship()
+    solution: Mapped["Solution | None"] = relationship()
 
     __table_args__ = (
         CheckConstraint(
@@ -154,5 +161,173 @@ class AIUsage(Base):
             postgresql_where=text("agent_run_id IS NOT NULL"),
         ),
         Index("ix_ai_usage_org", "organization_id"),
+        Index("ix_ai_usage_solution", "solution_id"),
         Index("ix_ai_usage_timestamp", "timestamp"),
+    )
+
+
+class UsageLimitPolicyORM(Base):
+    """Configured provider-neutral usage limits for one authorization scope."""
+
+    __tablename__ = "usage_limit_policies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    scope_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    organization_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), default=None
+    )
+    user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), default=None
+    )
+    solution_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("solutions.id", ondelete="CASCADE"), default=None
+    )
+
+    per_run_ceilings: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    aggregate_ceilings: Mapped[dict] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=text("'{}'::jsonb")
+    )
+    aggregate_period: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="monthly", server_default="monthly"
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=text("NOW()"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=text("NOW()"),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    organization: Mapped["Organization | None"] = relationship()
+    user: Mapped["User | None"] = relationship()
+    solution: Mapped["Solution | None"] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint("scope", "scope_key", name="uq_usage_limit_policies_scope"),
+        CheckConstraint(
+            "scope IN ('platform', 'organization', 'user', 'solution')",
+            name="ck_usage_limit_policies_scope",
+        ),
+        CheckConstraint(
+            "aggregate_period IN ('daily', 'monthly')",
+            name="ck_usage_limit_policies_aggregate_period",
+        ),
+        CheckConstraint(
+            "(scope = 'platform' AND scope_key = 'platform' "
+            "AND organization_id IS NULL AND user_id IS NULL "
+            "AND solution_id IS NULL) OR "
+            "(scope = 'organization' AND organization_id IS NOT NULL "
+            "AND scope_key = organization_id::text AND user_id IS NULL "
+            "AND solution_id IS NULL) OR "
+            "(scope = 'user' AND user_id IS NOT NULL "
+            "AND scope_key = user_id::text AND solution_id IS NULL) OR "
+            "(scope = 'solution' AND solution_id IS NOT NULL "
+            "AND scope_key = solution_id::text)",
+            name="ck_usage_limit_policies_scope_target",
+        ),
+        Index("ix_usage_limit_policies_org", "organization_id"),
+        Index("ix_usage_limit_policies_user", "user_id"),
+        Index("ix_usage_limit_policies_solution", "solution_id"),
+    )
+
+
+class UsageLedgerPeriod(Base):
+    """Period aggregate usage ledger in portable, provider-neutral dimensions."""
+
+    __tablename__ = "usage_ledger_periods"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    period: Mapped[str] = mapped_column(String(16), nullable=False)
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    scope: Mapped[str] = mapped_column(String(32), nullable=False)
+    scope_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    organization_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), default=None
+    )
+    user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), default=None
+    )
+    solution_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("solutions.id", ondelete="CASCADE"), default=None
+    )
+
+    model_requests: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    input_tokens: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    output_tokens: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    cache_read_tokens: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    cache_write_tokens: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    runner_duration_ms: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+    sandbox_compute_ms: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=0, server_default="0"
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=text("NOW()"),
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=text("NOW()"),
+        onupdate=lambda: datetime.now(timezone.utc),
+    )
+
+    organization: Mapped["Organization | None"] = relationship()
+    user: Mapped["User | None"] = relationship()
+    solution: Mapped["Solution | None"] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint(
+            "period",
+            "period_start",
+            "scope",
+            "scope_key",
+            name="uq_usage_ledger_periods_scope_period",
+        ),
+        CheckConstraint(
+            "scope IN ('platform', 'organization', 'user', 'solution')",
+            name="ck_usage_ledger_periods_scope",
+        ),
+        CheckConstraint(
+            "period IN ('daily', 'monthly')",
+            name="ck_usage_ledger_periods_period",
+        ),
+        CheckConstraint(
+            "(scope = 'platform' AND scope_key = 'platform' "
+            "AND organization_id IS NULL AND user_id IS NULL "
+            "AND solution_id IS NULL) OR "
+            "(scope = 'organization' AND organization_id IS NOT NULL "
+            "AND scope_key = organization_id::text AND user_id IS NULL "
+            "AND solution_id IS NULL) OR "
+            "(scope = 'user' AND user_id IS NOT NULL "
+            "AND scope_key = user_id::text AND solution_id IS NULL) OR "
+            "(scope = 'solution' AND solution_id IS NOT NULL "
+            "AND scope_key = solution_id::text)",
+            name="ck_usage_ledger_periods_scope_target",
+        ),
+        Index("ix_usage_ledger_periods_period_start", "period", "period_start"),
+        Index("ix_usage_ledger_periods_org", "organization_id"),
+        Index("ix_usage_ledger_periods_user", "user_id"),
+        Index("ix_usage_ledger_periods_solution", "solution_id"),
     )

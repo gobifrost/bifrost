@@ -6,6 +6,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import logging
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -13,6 +14,10 @@ import httpx
 
 from src.models.contracts.artifacts import ModelCapabilities
 from src.services.llm import LLMInputFile, LLMMessage, ToolDefinition
+
+logger = logging.getLogger(__name__)
+
+TOOL_CAPABILITY_PROBE_MAX_TOKENS = 128
 
 OPENROUTER_MODELS_URL = (
     "https://openrouter.ai/api/v1/models?output_modalities=all"
@@ -65,14 +70,20 @@ async def verify_model_capabilities(
                         },
                     )
                 ],
-                max_tokens=16,
+                max_tokens=TOOL_CAPABILITY_PROBE_MAX_TOKENS,
                 require_tool_call=True,
             )
         tool_calling = bool(
             response.tool_calls
             and response.tool_calls[0].name == "capability_probe"
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "Tool capability probe failed for %s/%s: %s",
+            provider,
+            model,
+            exc,
+        )
         tool_calling = False
 
     async def accepts_file(filename: str, media_type: str, data: bytes) -> bool:

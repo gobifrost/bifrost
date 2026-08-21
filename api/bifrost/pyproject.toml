@@ -20,6 +20,7 @@ dependencies = [
     "textual>=1.0.0",
     "python-dotenv>=1.0.0",
     "keyring>=24.0.0",
+    "packaging>=24.0",
 ]
 
 [project.optional-dependencies]

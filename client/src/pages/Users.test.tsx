@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, waitFor, within } from "@/test-utils";
 
+vi.mock("@/hooks/useAdministrativeBoundary", () => ({
+	useAdministrativeBoundary: () => "platform",
+}));
+
 const mockUseUsersFiltered = vi.fn();
 const mockUseDeleteUser = vi.fn();
 const mockUseUpdateUser = vi.fn();
@@ -132,6 +136,8 @@ describe("Users — registration links", () => {
 		mockUseAuth.mockReturnValue({
 			user: { id: "admin-1" },
 			isPlatformAdmin: false,
+			hasRole: () => false,
+			hasCapability: () => true,
 		});
 		mockUseOrgScope.mockReturnValue({
 			scope: { type: "global", orgName: null },
@@ -271,6 +277,8 @@ describe("Users", () => {
 		mockUseAuth.mockReturnValue({
 			isPlatformAdmin: true,
 			user: { id: "current-user" },
+			hasRole: () => false,
+			hasCapability: () => true,
 		});
 		mockUseOrgScope.mockReturnValue({
 			scope: { type: "global", orgId: null, orgName: null },
@@ -298,12 +306,20 @@ describe("Users", () => {
 	it("includes inactive users when Show Inactive is enabled", async () => {
 		const { user } = renderWithProviders(<Users />);
 
-		expect(mockUseUsersFiltered).toHaveBeenLastCalledWith(undefined, false);
+		expect(mockUseUsersFiltered).toHaveBeenLastCalledWith(
+			undefined,
+			false,
+			undefined,
+		);
 
 		await user.click(
 			screen.getByRole("switch", { name: "Show Inactive" }),
 		);
 
-		expect(mockUseUsersFiltered).toHaveBeenLastCalledWith(undefined, true);
+		expect(mockUseUsersFiltered).toHaveBeenLastCalledWith(
+			undefined,
+			true,
+			undefined,
+		);
 	});
 });

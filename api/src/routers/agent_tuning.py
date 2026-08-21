@@ -33,6 +33,7 @@ from src.models.contracts.agent_tuning import (
     DryRunPerRun,
 )
 from src.models.orm.agents import Agent
+from src.services.authorization import AuthorizationContext, CurrentAuthorizationContext
 from src.services.execution.tuning_service import (
     apply_consolidated_tuning,
     dry_run_consolidated,
@@ -45,14 +46,20 @@ router = APIRouter(prefix="/api/agents", tags=["Agent Tuning"])
 
 
 async def _load_agent_with_access(
-    agent_id: UUID, db: DbSession, user: CurrentActiveUser
+    agent_id: UUID,
+    db: DbSession,
+    authorization: AuthorizationContext,
+    *,
+    capability: str,
 ) -> Agent:
-    """Fetch an agent and enforce org scoping for non-superusers.
+    """Fetch an agent and enforce canonical capability plus boundary access.
 
-    Org users can only tune agents in their own org (or global agents,
-    where ``organization_id is None``). Platform admins can tune any.
+    Proposal and dry-run require agent read authority. Applying a prompt
+    changes the Agent and therefore requires readwrite. Global Agents must be
+    tuned from the Platform boundary; organization Agents from their exact
+    organization boundary.
     """
-    is_admin = user.has_platform_admin_grant()
+    authorization.require(capability)
 
     agent = (
         await db.execute(select(Agent).where(Agent.id == agent_id))
@@ -63,15 +70,15 @@ async def _load_agent_with_access(
             detail=f"Agent {agent_id} not found",
         )
 
-    if not is_admin:
-        if (
-            agent.organization_id is not None
-            and agent.organization_id != user.organization_id
-        ):
+    try:
+        authorization.require_resource_boundary(agent.organization_id)
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_409_CONFLICT:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Agent {agent_id} not found",
-            )
+            ) from exc
+        raise
 
     return agent
 
@@ -84,12 +91,23 @@ async def create_tuning_session(
     agent_id: UUID,
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> ConsolidatedProposalResponse:
     """Generate a consolidated prompt proposal from this agent's flagged runs."""
-    await _load_agent_with_access(agent_id, db, user)
+    await _load_agent_with_access(
+        agent_id,
+        db,
+        authorization,
+        capability="agents.read",
+    )
 
     try:
-        proposal = await propose_consolidated_tuning(agent_id, db, user)
+        proposal = await propose_consolidated_tuning(
+            agent_id,
+            db,
+            user,
+            authorization,
+        )
     except LookupError as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
@@ -111,12 +129,18 @@ async def dry_run_tuning_session(
     request: ConsolidatedDryRunRequest,
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> ConsolidatedDryRunResponse:
     """Per-run dry-run of a proposed prompt across this agent's flagged runs.
 
     Capped at 10 runs by the service layer to bound cost.
     """
-    await _load_agent_with_access(agent_id, db, user)
+    await _load_agent_with_access(
+        agent_id,
+        db,
+        authorization,
+        capability="agents.read",
+    )
 
     session_factory = get_session_factory()
     raw = await dry_run_consolidated(
@@ -125,6 +149,7 @@ async def dry_run_tuning_session(
         db=db,
         session_factory=session_factory,
         user=user,
+        authorization=authorization,
     )
     return ConsolidatedDryRunResponse(
         results=[
@@ -148,9 +173,15 @@ async def apply_tuning_session(
     request: ApplyTuningRequest,
     db: DbSession,
     user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> ApplyTuningResponse:
     """Apply a consolidated tuning proposal: update prompt, write history, clear verdicts."""
-    await _load_agent_with_access(agent_id, db, user)
+    await _load_agent_with_access(
+        agent_id,
+        db,
+        authorization,
+        capability="agents.readwrite",
+    )
 
     try:
         applied = await apply_consolidated_tuning(
@@ -160,6 +191,7 @@ async def apply_tuning_session(
             user_id=user.user_id,
             db=db,
             user=user,
+            authorization=authorization,
         )
     except LookupError as exc:
         raise HTTPException(

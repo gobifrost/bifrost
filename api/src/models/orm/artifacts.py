@@ -6,7 +6,15 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, DateTime, ForeignKey, Index, String, text
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Index,
+    String,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
@@ -51,4 +59,46 @@ class Artifact(Base):
         Index("ix_artifacts_organization_id", "organization_id"),
         Index("ix_artifacts_workspace_path", "workspace_id", "logical_path"),
         Index("ix_artifacts_created_at", "created_at"),
+    )
+
+
+class ArtifactWorkspaceTombstone(Base):
+    """Logical delete marker for one artifact workspace path.
+
+    Artifact bytes are immutable and may be referenced by prior messages or
+    external ArtifactRefs. A tombstone hides a logical path from future
+    workspace hydration without deleting historical artifacts.
+    """
+
+    __tablename__ = "artifact_workspace_tombstones"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    workspace_id: Mapped[UUID] = mapped_column(nullable=False)
+    logical_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    created_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    organization_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=text("NOW()"),
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "workspace_id",
+            "logical_path",
+            name="uq_artifact_workspace_tombstones_path",
+        ),
+        Index(
+            "ix_artifact_workspace_tombstones_workspace_path",
+            "workspace_id",
+            "logical_path",
+        ),
+        Index("ix_artifact_workspace_tombstones_created_at", "created_at"),
     )

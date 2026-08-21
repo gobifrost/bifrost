@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.models.orm.agents import Agent
+from src.services.agent_execution_profile import AgentExecutionProfile
 from src.models.orm.external_mcp import (
     AgentMCPConnection,
     MCPConnection,
@@ -72,13 +73,22 @@ EXECUTION MODE: You are running autonomously — there is no human in this conve
 - If you lack information, state what you could not determine and why, then provide the best result possible with available data.
 - If a tool call fails, attempt reasonable alternatives before reporting failure."""
 
+BUNDLE_PROMPT_CONTRACT = """
+
+---
+You are backed by a skill bundle. Follow SKILL.md naturally.
+When it references a relative file, use bifrost_read_agent_skill_file."""
+
 
 def agent_delegation_slug(name: str) -> str:
     """Generate the tool name slug for a delegated agent."""
     return f"delegate_to_{name.lower().replace(' ', '_')}"
 
 
-def find_delegated_agent(agent: Agent, tool_name: str) -> Agent | None:
+def find_delegated_agent(
+    agent: AgentExecutionProfile,
+    tool_name: str,
+) -> Agent | None:
     """Match a delegate_to_* tool name to the target agent."""
     for d in (agent.delegated_agents or []):
         if agent_delegation_slug(d.name) == tool_name and d.is_active:
@@ -86,8 +96,28 @@ def find_delegated_agent(agent: Agent, tool_name: str) -> Agent | None:
     return None
 
 
+def _bundle_path(agent: AgentExecutionProfile) -> str | None:
+    value = getattr(agent, "bundle_path", None)
+    return value if isinstance(value, str) and value else None
+
+
+def is_agent_system_tool(
+    agent: AgentExecutionProfile,
+    tool_name: str,
+) -> bool:
+    """Whether a tool may dispatch through the system-tool executor."""
+
+    from src.services.mcp_server.tools.skill_assets import READ_SKILL_ASSET_TOOL_ID
+
+    return (
+        bool(_bundle_path(agent))
+        if tool_name == READ_SKILL_ASSET_TOOL_ID
+        else tool_name in (agent.system_tools or [])
+    )
+
+
 def build_agent_system_prompt(
-    agent: Agent,
+    agent: AgentExecutionProfile,
     *,
     execution_context: dict | None = None,
 ) -> str:
@@ -97,6 +127,8 @@ def build_agent_system_prompt(
     telling the LLM to produce conclusive output (no follow-up questions).
     """
     prompt = agent.system_prompt
+    if _bundle_path(agent):
+        prompt += BUNDLE_PROMPT_CONTRACT
 
     if execution_context and execution_context.get("mode") == "autonomous":
         prompt += AUTONOMOUS_MODE_SUFFIX
@@ -105,7 +137,7 @@ def build_agent_system_prompt(
 
 
 async def resolve_agent_tools(
-    agent: Agent,
+    agent: AgentExecutionProfile,
     session: AsyncSession,
     *,
     caller_user_id: UUID | None = None,
@@ -134,11 +166,19 @@ async def resolve_agent_tools(
     seen_names: dict[str, str] = {}
 
     # 1. System tools first (they always win conflicts)
-    system_tool_ids = list(agent.system_tools or [])
+    from src.services.mcp_server.tools.skill_assets import READ_SKILL_ASSET_TOOL_ID
 
-    # Auto-add search_knowledge when agent has knowledge sources
-    if agent.knowledge_sources and "search_knowledge" not in system_tool_ids:
-        system_tool_ids.append("search_knowledge")
+    system_tool_ids = [
+        tool_id
+        for tool_id in (agent.system_tools or [])
+        if tool_id != READ_SKILL_ASSET_TOOL_ID
+    ]
+    if _bundle_path(agent):
+        system_tool_ids.append(READ_SKILL_ASSET_TOOL_ID)
+
+    # Auto-add canonical knowledge search when the Agent has knowledge sources.
+    if agent.knowledge_sources and "bifrost_search_knowledge" not in system_tool_ids:
+        system_tool_ids.append("bifrost_search_knowledge")
 
     if system_tool_ids:
         from src.services.mcp_server.server import get_system_tools

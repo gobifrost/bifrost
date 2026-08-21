@@ -3,7 +3,7 @@ Data Provider MCP Tools
 
 Tools for getting schema documentation for data providers.
 Note: Data providers are now stored in the workflows table with type='data_provider'.
-Use list_workflows to see data providers.
+Use bifrost_list_workflows to see data providers.
 """
 
 import logging
@@ -58,7 +58,7 @@ Reference a data provider in form field definitions:
 ## Viewing Data Providers
 
 Data providers are stored as workflows with type='data_provider'.
-Use `list_workflows` with type filter to see all available data providers.
+Use `bifrost_list_workflows` with the type filter to see all available data providers.
 
 ## SDK Documentation
 

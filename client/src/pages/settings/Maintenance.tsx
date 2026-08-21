@@ -64,7 +64,15 @@ interface AppDependencyScanResponse {
 
 type ScanResultType = "none" | "docs" | "app-deps";
 
-export function Maintenance() {
+interface MaintenanceProps {
+	canExecute?: boolean;
+	canWrite?: boolean;
+}
+
+export function Maintenance({
+	canExecute = true,
+	canWrite = canExecute,
+}: MaintenanceProps) {
 	// Checklist state
 	const [selectedActions, setSelectedActions] = useState<Set<string>>(new Set());
 	const [runningAction, setRunningAction] = useState<string | null>(null);
@@ -89,6 +97,7 @@ export function Maintenance() {
 	};
 
 	const handleDocsIndex = async () => {
+		if (!canWrite) return;
 		setRunningAction("docs");
 
 		try {
@@ -134,6 +143,7 @@ export function Maintenance() {
 	};
 
 	const handleAppDepScan = async () => {
+		if (!canWrite) return;
 		setRunningAction("app-deps");
 
 		try {
@@ -175,6 +185,7 @@ export function Maintenance() {
 	};
 
 	const handleReimport = async () => {
+		if (!canWrite) return;
 		setRunningAction("reimport");
 
 		try {
@@ -238,6 +249,7 @@ export function Maintenance() {
 	};
 
 	const handleExportAll = async () => {
+		if (!canWrite) return;
 		setIsExportingAll(true);
 		try {
 			await exportAll({});
@@ -250,6 +262,7 @@ export function Maintenance() {
 	};
 
 	const toggleAction = (id: string) => {
+		if (!canWrite) return;
 		setSelectedActions((prev) => {
 			const next = new Set(prev);
 			if (next.has(id)) {
@@ -284,6 +297,7 @@ export function Maintenance() {
 	}, [runningAction, actionQueue]);
 
 	const handleRunSelected = () => {
+		if (!canWrite) return;
 		if (selectedActions.size === 0) return;
 		setCompletedActions(new Set());
 		const order = ["docs", "app-deps", "reimport"];
@@ -315,7 +329,7 @@ export function Maintenance() {
 
 	return (
 		<div className="space-y-6">
-			<ArtifactRetentionSettings />
+			<ArtifactRetentionSettings canWrite={canWrite} />
 
 			{/* Export/Import Card */}
 			<Card>
@@ -332,7 +346,7 @@ export function Maintenance() {
 					<div className="flex items-center gap-4">
 						<Button
 							onClick={handleExportAll}
-							disabled={isExportingAll}
+							disabled={isExportingAll || !canWrite}
 						>
 							{isExportingAll ? (
 								<Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -344,6 +358,7 @@ export function Maintenance() {
 						<Button
 							variant="outline"
 							onClick={() => setIsImportAllOpen(true)}
+							disabled={!canWrite}
 						>
 							<Upload className="h-4 w-4 mr-2" />
 							Import All
@@ -388,7 +403,7 @@ export function Maintenance() {
 												id={`action-${action.id}`}
 												checked={selectedActions.has(action.id)}
 												onCheckedChange={() => toggleAction(action.id)}
-												disabled={isAnyRunning}
+												disabled={isAnyRunning || !canWrite}
 											/>
 										)}
 										<Icon className="h-4 w-4 text-muted-foreground flex-shrink-0" />
@@ -411,7 +426,7 @@ export function Maintenance() {
 
 					<Button
 						onClick={handleRunSelected}
-						disabled={selectedActions.size === 0 || isAnyRunning}
+						disabled={selectedActions.size === 0 || isAnyRunning || !canWrite}
 					>
 						{isAnyRunning ? (
 							<Loader2 className="h-4 w-4 mr-2 animate-spin" />

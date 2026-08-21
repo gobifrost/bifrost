@@ -7,9 +7,14 @@ Pydantic models for AI usage tracking and model pricing.
 import datetime as dt
 from datetime import date, datetime
 from decimal import Decimal
+from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_serializer
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
+
+
+UsageLimitScopeName = Literal["platform", "organization", "user", "solution"]
+UsageLimitPeriodName = Literal["daily", "monthly"]
 
 
 # ==================== AI MODEL PRICING MODELS ====================
@@ -169,6 +174,96 @@ class AIUsageSummaryResponse(BaseModel):
     totals: AIUsageTotals
     by_model: list[AIUsageByModel] = Field(default_factory=list)
     usage: list[AIUsagePublic] = Field(default_factory=list)
+
+
+# ==================== AI USAGE LIMIT MODELS ====================
+
+
+class UsageLimitCeilings(BaseModel):
+    """Provider-neutral usage ceilings."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    model_requests: int | None = Field(default=None, ge=0)
+    input_tokens: int | None = Field(default=None, ge=0)
+    output_tokens: int | None = Field(default=None, ge=0)
+    cache_read_tokens: int | None = Field(default=None, ge=0)
+    cache_write_tokens: int | None = Field(default=None, ge=0)
+    total_tokens: int | None = Field(default=None, ge=0)
+    runner_duration_ms: int | None = Field(default=None, ge=0)
+    sandbox_compute_ms: int | None = Field(default=None, ge=0)
+
+    def configured(self) -> dict[str, int]:
+        return self.model_dump(exclude_none=True)
+
+
+class UsageLimitPolicyUpsert(BaseModel):
+    """Create or replace a usage-limit policy."""
+
+    per_run: UsageLimitCeilings = Field(default_factory=UsageLimitCeilings)
+    aggregate: UsageLimitCeilings = Field(default_factory=UsageLimitCeilings)
+    aggregate_period: UsageLimitPeriodName = "monthly"
+
+    @model_validator(mode="after")
+    def require_at_least_one_ceiling(self) -> "UsageLimitPolicyUpsert":
+        if not self.per_run.configured() and not self.aggregate.configured():
+            raise ValueError("At least one per-run or aggregate ceiling is required")
+        return self
+
+
+class UsageLimitPolicyPublic(BaseModel):
+    """Configured usage-limit policy."""
+
+    id: int
+    scope: UsageLimitScopeName
+    scope_key: str
+    organization_id: UUID | None = None
+    user_id: UUID | None = None
+    solution_id: UUID | None = None
+    per_run: UsageLimitCeilings
+    aggregate: UsageLimitCeilings
+    aggregate_period: UsageLimitPeriodName
+    created_at: datetime
+    updated_at: datetime
+
+
+class UsageLimitListResponse(BaseModel):
+    """Usage-limit policies visible in the selected authorization boundary."""
+
+    policies: list[UsageLimitPolicyPublic] = Field(default_factory=list)
+
+
+class UsageLimitDimensionStatus(BaseModel):
+    """Current usage percentage for one configured ceiling."""
+
+    dimension: str
+    limit: int = Field(ge=0)
+    current: int = Field(ge=0)
+    remaining: int = Field(ge=0)
+    percentage: float = Field(ge=0)
+
+
+class UsageLimitAggregateStatus(BaseModel):
+    """One cumulative aggregate policy with current usage."""
+
+    scope: UsageLimitScopeName
+    aggregate_period: UsageLimitPeriodName
+    period_start: date
+    usage: UsageLimitCeilings
+    ceilings: UsageLimitCeilings
+    dimensions: list[UsageLimitDimensionStatus] = Field(default_factory=list)
+
+
+class UsageLimitEffectiveResponse(BaseModel):
+    """Effective policy diagnostics for a concrete run subject."""
+
+    subject_scope: UsageLimitScopeName
+    organization_id: UUID | None = None
+    user_id: UUID | None = None
+    solution_id: UUID | None = None
+    effective_per_run_scope: UsageLimitScopeName | None = None
+    effective_per_run: UsageLimitCeilings = Field(default_factory=UsageLimitCeilings)
+    aggregate: list[UsageLimitAggregateStatus] = Field(default_factory=list)
 
 
 # ==================== USAGE REPORTS MODELS ====================

@@ -35,3 +35,38 @@ class WatchSessionRequest(BaseModel):
     action: Literal["start", "stop", "heartbeat"]
     prefix: str
     session_id: str | None = None
+
+
+class WorkspaceFilePatchRequest(BaseModel):
+    """Conflict-safe unique-string edit for the global source workspace."""
+
+    path: str = Field(..., min_length=1, description="Workspace-relative file path")
+    old_string: str = Field(..., min_length=1, description="Unique text to replace")
+    new_string: str = Field(default="", description="Replacement text")
+    expected_version: str | None = Field(
+        default=None,
+        description="Optional version returned by the file stat operation",
+    )
+    force_deactivation: bool = Field(
+        default=False,
+        description="Allow workflows removed by this edit to be deactivated",
+    )
+    replacements: dict[str, str] | None = Field(
+        default=None,
+        description="Map old workflow IDs to replacement function names",
+    )
+    workflows_to_deactivate: list[str] | None = Field(
+        default=None,
+        description="Workflow IDs explicitly selected for deactivation",
+    )
+
+
+class WorkspaceFilePatchResponse(BaseModel):
+    """Result of a successful workspace patch."""
+
+    path: str
+    version: str
+    lines_changed: int = Field(ge=1)
+    content_modified: bool = False
+    needs_indexing: bool = False
+    diagnostics: list[dict] = Field(default_factory=list)

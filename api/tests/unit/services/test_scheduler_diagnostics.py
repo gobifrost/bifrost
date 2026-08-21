@@ -25,6 +25,13 @@ from src.scheduler.registry import SCHEDULED_TASKS_BY_ID, ScheduledTaskDefinitio
 from src.services import scheduler_diagnostics as diagnostics
 
 
+def _make_authorization():
+    auth = SimpleNamespace()
+    auth.require = lambda *_args, **_kwargs: None
+    auth.require_resource_boundary = lambda *_args, **_kwargs: None
+    return auth
+
+
 @pytest.fixture
 def diagnostics_context(
     monkeypatch: pytest.MonkeyPatch,
@@ -126,7 +133,7 @@ async def test_scheduler_snapshot_explains_capacity_pressure(
     )
     response = await get_scheduler_diagnostics(
         SimpleNamespace(db=db_session),  # type: ignore[arg-type]
-        SimpleNamespace(is_superuser=True),  # type: ignore[arg-type]
+        _make_authorization(),
     )
 
     replica = next(item for item in response.replicas if item.id == replica_id)
@@ -174,7 +181,7 @@ async def test_scheduler_snapshot_drops_expired_replicas(
 
     response = await get_scheduler_diagnostics(
         SimpleNamespace(db=db_session),  # type: ignore[arg-type]
-        SimpleNamespace(is_superuser=True),  # type: ignore[arg-type]
+        _make_authorization(),
     )
 
     replicas = {replica.id: replica for replica in response.replicas}
@@ -224,7 +231,7 @@ async def test_scheduler_task_history_groups_published_logs_by_run(
     response = await get_scheduler_task_history(
         task_id,
         SimpleNamespace(db=db_session),  # type: ignore[arg-type]
-        SimpleNamespace(is_superuser=True),  # type: ignore[arg-type]
+        _make_authorization(),
         limit=2,
     )
 
