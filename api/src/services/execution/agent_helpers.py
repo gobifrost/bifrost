@@ -73,6 +73,15 @@ EXECUTION MODE: You are running autonomously — there is no human in this conve
 - If a tool call fails, attempt reasonable alternatives before reporting failure."""
 
 
+CHAT_MODE_SUFFIX = """
+
+---
+INTERACTIVE CHAT TOOL USE:
+- Use the tools available in this conversation whenever they can answer the user's request or perform the requested action.
+- Do not claim you lack access, promise to look something up later, or ask the user to provide information that an available tool can retrieve.
+- If the required tool input can be reasonably inferred from the request and conversation context, make the call. Ask a clarifying question only when a required input truly cannot be determined."""
+
+
 def agent_delegation_slug(name: str) -> str:
     """Generate the tool name slug for a delegated agent."""
     return f"delegate_to_{name.lower().replace(' ', '_')}"
@@ -93,13 +102,17 @@ def build_agent_system_prompt(
 ) -> str:
     """Build the system prompt from agent configuration.
 
-    When execution_context has mode="autonomous", appends instructions
-    telling the LLM to produce conclusive output (no follow-up questions).
+    Appends the execution-mode contract when the caller identifies one.
+    Autonomous runs require a conclusive result; interactive chat requires
+    attempting relevant available tools before declining or asking the user
+    to provide data the tools can retrieve.
     """
     prompt = agent.system_prompt
 
     if execution_context and execution_context.get("mode") == "autonomous":
         prompt += AUTONOMOUS_MODE_SUFFIX
+    elif execution_context and execution_context.get("mode") == "chat":
+        prompt += CHAT_MODE_SUFFIX
 
     return prompt
 

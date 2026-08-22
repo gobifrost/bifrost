@@ -8,6 +8,7 @@ from src.services.execution.agent_helpers import (
     find_delegated_agent,
     resolve_agent_tools,
     AUTONOMOUS_MODE_SUFFIX,
+    CHAT_MODE_SUFFIX,
 )
 
 
@@ -152,13 +153,16 @@ class TestBuildAgentSystemPrompt:
         assert "conclusive" in result
         assert "Do NOT ask questions" in result
 
-    def test_chat_mode_returns_prompt_verbatim(self):
-        """mode=chat returns prompt unchanged (no suffix)."""
+    def test_chat_mode_requires_attempting_relevant_available_tools(self):
+        """Interactive chat cannot decline work an available tool can do."""
         mock_agent = MagicMock()
         mock_agent.system_prompt = "Base prompt."
 
         result = build_agent_system_prompt(mock_agent, execution_context={"mode": "chat"})
-        assert result == "Base prompt."
+        assert result == "Base prompt." + CHAT_MODE_SUFFIX
+        assert "Use the tools available" in result
+        assert "Do not claim you lack access" in result
+        assert "Ask a clarifying question only" in result
 
 
 class TestAgentDelegationSlug:

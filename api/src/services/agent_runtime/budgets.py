@@ -239,7 +239,33 @@ class BudgetWindDown(AbstractCapability[object]):
         return replace(response, parts=parts, finish_reason="stop")
 
 
-def build_runtime_capabilities(budget: AgentRunBudget) -> list[AgentCapability[object]]:
+@dataclass
+class RequireFirstTool(AbstractCapability[object]):
+    """Require one named tool on the first model request of a run.
+
+    Pydantic rejects a static required tool choice because it would also block
+    the final text response. A capability-provided callable can safely require
+    the tool only before the run has made its first request, then restore normal
+    model choice after the tool result is in history.
+    """
+
+    tool_name: str
+    budget: AgentRunBudget
+
+    def get_model_settings(self):  # type: ignore[no-untyped-def]
+        def settings(ctx: RunContext[object]) -> dict[str, object]:
+            if ctx.usage.requests == 0 and not self.budget.should_wind_down(ctx.usage):
+                return {"tool_choice": [self.tool_name]}
+            return {"tool_choice": "auto"}
+
+        return settings
+
+
+def build_runtime_capabilities(
+    budget: AgentRunBudget,
+    *,
+    required_first_tool: str | None = None,
+) -> list[AgentCapability[object]]:
     """Build the standard context and wind-down policy.
 
     Cheap, deterministic compaction runs before lossy sliding-window trimming.
@@ -252,7 +278,7 @@ def build_runtime_capabilities(budget: AgentRunBudget) -> list[AgentCapability[o
 
     target = budget.context_target_tokens
     retained_tail = max(4_000, int(target * 0.75))
-    return [
+    capabilities: list[AgentCapability[object]] = [
         CacheStabilityMonitor(min_prefix_tokens=1_024),
         TieredCompaction(
             tiers=[
@@ -283,3 +309,6 @@ def build_runtime_capabilities(budget: AgentRunBudget) -> list[AgentCapability[o
         ),
         BudgetWindDown(budget),
     ]
+    if required_first_tool:
+        capabilities.append(RequireFirstTool(required_first_tool, budget))
+    return capabilities
