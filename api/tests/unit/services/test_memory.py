@@ -89,5 +89,11 @@ async def test_memory_save_search_and_remove_stay_in_the_user_store(
     assert first_removed is True
     assert all(entry.id != acme.id for entry in first_entries)
 
-    stores = (await db_session.execute(select(MemoryStore))).scalars().all()
+    stores = (
+        await db_session.execute(
+            select(MemoryStore).where(
+                MemoryStore.user_id.in_([first_user.id, second_user.id])
+            )
+        )
+    ).scalars().all()
     assert {store.user_id for store in stores} == {first_user.id}
