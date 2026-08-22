@@ -827,7 +827,12 @@ class WorkflowExecutionConsumer(BaseConsumer):
             # its one-shot process environment — no SECRET_KEY or persistent
             # credential write is needed in the child.
             from src.core.security import mint_engine_token
-            engine_token, _ = mint_engine_token()
+            engine_token, _ = mint_engine_token(
+                execution_id=execution_id,
+                solution_id=solution_id,
+                global_repo_access=solution_global_repo_access,
+                timeout_seconds=timeout_seconds,
+            )
 
             # Build context for worker process
             context_data = {

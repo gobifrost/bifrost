@@ -86,7 +86,6 @@ class ModuleResolutionError(RuntimeError):
 
 def set_solution_context(solution_id: UUID | str, global_repo_access: bool) -> None:
     """Activate the solution import root for the current thread/execution."""
-    _close_http_client()
     _solution_ctx.value = SolutionContext(
         solution_id=str(solution_id), global_repo_access=bool(global_repo_access)
     )
@@ -95,7 +94,6 @@ def set_solution_context(solution_id: UUID | str, global_repo_access: bool) -> N
 
 def clear_solution_context() -> None:
     """Deactivate the solution import root (restore plain _repo/ behavior)."""
-    _close_http_client()
     _solution_ctx.value = None
     _solution_ctx.resolution_cache = {}
 

@@ -20,14 +20,16 @@ Endpoints:
 import asyncio
 import logging
 import re
+from dataclasses import dataclass
 from typing import Annotated
 from uuid import UUID
 from weakref import WeakValueDictionary
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 
 from src.core.auth import get_current_superuser
+from src.core.constants import SYSTEM_USER_UUID
 from src.core.log_safety import log_safe
 from src.core.module_cache import (
     get_module,
@@ -36,6 +38,8 @@ from src.core.module_cache import (
     set_module_resolution_cache,
 )
 from src.core.requirements_cache import get_requirements
+from src.core.principal import UserPrincipal
+from src.core.security import decode_token
 from src.services.repo_storage import RepoStorage
 from src.services.solutions.storage import SOLUTIONS_ROOT, SolutionStorage
 
@@ -44,6 +48,67 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/sdk", tags=["SDK Internals"])
 _MODULE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(?:[./][A-Za-z_][A-Za-z0-9_]*)*$")
 _RESOLUTION_LOCKS: WeakValueDictionary[str, asyncio.Lock] = WeakValueDictionary()
+
+
+@dataclass(frozen=True)
+class _EngineModuleScope:
+    solution_id: str | None
+    global_repo_access: bool
+
+
+def _engine_module_scope(
+    request: Request,
+    user: UserPrincipal,
+) -> _EngineModuleScope | None:
+    """Read authoritative source scope from a system execution token.
+
+    Human platform admins retain explicit query scope for diagnostics. The
+    system execution identity must carry signed per-execution scope claims;
+    query parameters are never authoritative for it.
+    """
+    if user.user_id != SYSTEM_USER_UUID:
+        return None
+
+    authorization = request.headers.get("authorization", "")
+    if not authorization.lower().startswith("bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Execution-scoped engine token required",
+        )
+    payload = decode_token(authorization[7:], expected_type="access")
+    if payload is None or not payload.get("engine_execution_id"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Execution-scoped engine token required",
+        )
+
+    solution_id = payload.get("engine_solution_id")
+    if solution_id is not None:
+        _validate_solution_id(solution_id)
+    return _EngineModuleScope(
+        solution_id=solution_id,
+        global_repo_access=bool(payload.get("engine_global_repo_access", False)),
+    )
+
+
+def _validate_engine_storage_path(path: str, scope: _EngineModuleScope) -> None:
+    """Prevent a cold-cache fetch outside the execution's signed scope."""
+    if path.startswith(f"{SOLUTIONS_ROOT}/"):
+        expected_prefix = (
+            f"{SOLUTIONS_ROOT}/{scope.solution_id}/" if scope.solution_id else None
+        )
+        if expected_prefix is None or not path.startswith(expected_prefix):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Module path is outside execution scope",
+            )
+        return
+
+    if scope.solution_id is not None and not scope.global_repo_access:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Workspace module access is disabled for this Solution",
+        )
 
 
 def _resolution_lock(cache_key: str) -> asyncio.Lock:
@@ -186,7 +251,8 @@ async def _resolve_module_name(
 @router.get("/modules/{path:path}")
 async def fetch_module(
     path: str,
-    _user: Annotated[object, Depends(get_current_superuser)],
+    request: Request,
+    user: Annotated[UserPrincipal, Depends(get_current_superuser)],
 ) -> JSONResponse:
     """
     Fetch a workspace module by path.
@@ -204,6 +270,9 @@ async def fetch_module(
     # Validate path — reject any attempt to escape the workspace prefix
     # (Redis key is always "bifrost:module:<path>"; the S3 key is "_repo/<path>")
     _validate_module_path(path)
+    engine_scope = _engine_module_scope(request, user)
+    if engine_scope is not None:
+        _validate_engine_storage_path(path, engine_scope)
 
     module = await get_module(path)
     if module is None:
@@ -217,8 +286,9 @@ async def fetch_module(
 
 @router.get("/modules-resolve")
 async def resolve_module(
+    request: Request,
+    user: Annotated[UserPrincipal, Depends(get_current_superuser)],
     name: str,
-    _user: Annotated[object, Depends(get_current_superuser)],
     solution_id: str | None = None,
     global_repo_access: bool = False,
 ) -> JSONResponse:
@@ -236,6 +306,11 @@ async def resolve_module(
     uses a bounded prefix existence check instead of listing the whole module
     index.
     """
+    engine_scope = _engine_module_scope(request, user)
+    if engine_scope is not None:
+        solution_id = engine_scope.solution_id
+        global_repo_access = engine_scope.global_repo_access
+
     return JSONResponse(
         content=await _resolve_module_name(
             name,

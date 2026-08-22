@@ -1,5 +1,85 @@
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import HTTPException
+
+from src.core.constants import SYSTEM_USER_UUID
+from src.core.principal import UserPrincipal
+
+
+def _system_user() -> UserPrincipal:
+    return UserPrincipal(
+        user_id=SYSTEM_USER_UUID,
+        email="engine@bifrost.internal",
+        organization_id=None,
+        is_superuser=True,
+    )
+
+
+async def test_system_resolver_uses_signed_scope_not_query_scope():
+    from src.routers.sdk_modules import resolve_module
+
+    signed_solution = "12345678-1234-5678-1234-567812345678"
+    requested_solution = "87654321-4321-8765-4321-876543218765"
+    request = MagicMock()
+    request.headers = {"authorization": "Bearer signed-token"}
+
+    with (
+        patch(
+            "src.routers.sdk_modules.decode_token",
+            return_value={
+                "engine_execution_id": "execution-1",
+                "engine_solution_id": signed_solution,
+                "engine_global_repo_access": False,
+            },
+        ),
+        patch(
+            "src.routers.sdk_modules._resolve_module_name",
+            new_callable=AsyncMock,
+            return_value={"kind": "not_found", "path": "modules/missing"},
+        ) as resolver,
+    ):
+        await resolve_module(
+            request=request,
+            user=_system_user(),
+            name="modules.missing",
+            solution_id=requested_solution,
+            global_repo_access=True,
+        )
+
+    resolver.assert_awaited_once_with(
+        "modules.missing",
+        solution_id=signed_solution,
+        global_repo_access=False,
+    )
+
+
+def test_system_module_path_cannot_cross_signed_solution_scope():
+    from src.routers.sdk_modules import (
+        _EngineModuleScope,
+        _validate_engine_storage_path,
+    )
+
+    scope = _EngineModuleScope(
+        solution_id="12345678-1234-5678-1234-567812345678",
+        global_repo_access=False,
+    )
+    _validate_engine_storage_path(
+        "_solutions/12345678-1234-5678-1234-567812345678/modules/ok.py",
+        scope,
+    )
+
+    with pytest.raises(HTTPException) as cross_solution:
+        _validate_engine_storage_path(
+            "_solutions/87654321-4321-8765-4321-876543218765/modules/no.py",
+            scope,
+        )
+    assert cross_solution.value.status_code == 403
+
+    with pytest.raises(HTTPException) as workspace:
+        _validate_engine_storage_path("modules/no.py", scope)
+    assert workspace.value.status_code == 403
 
 
 async def test_resolve_module_returns_solution_module_before_repo_fallback():

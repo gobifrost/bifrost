@@ -365,6 +365,23 @@ class TestInstallRemoveHook:
         assert len(sys.meta_path) == initial_count + 1
         assert sys.meta_path[0] is finder
 
+    def test_http_client_is_built_before_hook_becomes_visible(self):
+        """Lazy HTTP transport imports must not recurse into the resolver."""
+        def build_client():
+            assert not any(
+                finder.__class__.__name__ == "VirtualModuleFinder"
+                for finder in sys.meta_path
+            )
+            return MagicMock()
+
+        with patch(
+            "src.core.module_cache_sync._get_http_client",
+            side_effect=build_client,
+        ) as get_client:
+            install_virtual_import_hook()
+
+        get_client.assert_called_once_with()
+
     def test_install_virtual_import_hook_idempotent(self):
         """Test that installing twice returns same finder."""
         finder1 = install_virtual_import_hook()

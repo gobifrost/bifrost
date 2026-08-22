@@ -111,6 +111,7 @@ def test_targeted_resolution_threads_solution_scope_params():
     client = MagicMock()
     client.get.return_value = response
 
+    mcs._close_http_client()
     mcs.set_solution_context("sol-1", global_repo_access=True)
     try:
         with (
@@ -137,6 +138,7 @@ def test_targeted_resolution_threads_solution_scope_params():
         )
     finally:
         mcs.clear_solution_context()
+        mcs._close_http_client()
 
 
 def test_targeted_resolution_hydrates_resolver_metadata_from_redis_without_http():

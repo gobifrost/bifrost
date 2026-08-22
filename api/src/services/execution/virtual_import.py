@@ -444,6 +444,20 @@ def _preload_required_modules() -> None:
         # Stdlib module — should never fail
         logger.debug(f"codecs preload failed: {e}")
 
+    # Build the scope-neutral HTTP client before the finder is active. httpx
+    # and httpcore load some optional transports lazily while constructing the
+    # client; if that happens after hook installation, a missing optional
+    # package (for example trio) can recursively enter the workspace resolver.
+    # The client carries no auth or Solution state — those are supplied per
+    # request — so it is safe to retain across context activation in this
+    # one-shot child.
+    try:
+        from src.core.module_cache_sync import _get_http_client
+
+        _get_http_client()
+    except Exception as e:
+        logger.debug(f"module resolver HTTP client preload failed: {e}")
+
 
 def remove_virtual_import_hook() -> None:
     """
@@ -456,6 +470,9 @@ def remove_virtual_import_hook() -> None:
     if _finder is not None:
         sys.meta_path = [f for f in sys.meta_path if f is not _finder]
         _finder = None
+        from src.core.module_cache_sync import _close_http_client
+
+        _close_http_client()
         logger.info("Virtual import hook removed")
 
 
