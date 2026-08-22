@@ -24,6 +24,7 @@ import logging
 import os
 import sys
 import threading
+from contextlib import suppress
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, cast
@@ -124,10 +125,10 @@ def _get_http_client() -> Any:
 def _close_http_client() -> None:
     client = getattr(_solution_ctx, "http_client", None)
     if client is not None:
-        try:
+        # Teardown must not replace the workflow result with a transport-close
+        # failure; the process is exiting and owns no reusable client state.
+        with suppress(Exception):
             client.close()
-        except Exception:
-            pass
         _solution_ctx.http_client = None
 
 
