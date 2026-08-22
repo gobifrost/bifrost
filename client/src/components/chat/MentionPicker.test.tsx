@@ -12,11 +12,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import {
-	renderWithProviders,
-	screen,
-	fireEvent,
-} from "@/test-utils";
+import { renderWithProviders, screen, fireEvent } from "@/test-utils";
 
 const agentsRef: { data: Array<Record<string, unknown>> } = { data: [] };
 
@@ -81,13 +77,7 @@ describe("MentionPicker — filtering", () => {
 		expect(screen.queryByText("DataBot")).not.toBeInTheDocument();
 	});
 
-	// NOTE: MentionPicker's own filter (useMemo on `filteredAgents`) matches
-	// on description, but cmdk's <Command> component also applies an internal
-	// filter against each item's `value` (the agent name). As a result
-	// description-only matches are hidden by cmdk even though the parent
-	// passed them through. Calling this out here so the discrepancy surfaces
-	// if someone later tightens or loosens that behavior.
-	it("description-only matches are hidden by cmdk's own filter layer", () => {
+	it("description-only matches stay visible because the picker filters them itself", () => {
 		renderWithProviders(
 			<MentionPicker
 				open
@@ -96,9 +86,41 @@ describe("MentionPicker — filtering", () => {
 				searchTerm="tickets"
 			/>,
 		);
-		// "answers support tickets" description belongs to SupportBot, but
-		// cmdk suppresses the row because "tickets" isn't in its name.
-		expect(screen.queryByText("SupportBot")).not.toBeInTheDocument();
+		expect(screen.getByText("SupportBot")).toBeInTheDocument();
+		expect(
+			screen.getByText("SupportBot").closest("[cmdk-item]"),
+		).toHaveAttribute("data-checked", "true");
+	});
+
+	it("resets the highlighted row when the search term changes", () => {
+		const view = renderWithProviders(
+			<MentionPicker
+				open
+				onOpenChange={vi.fn()}
+				onSelect={vi.fn()}
+				searchTerm=""
+			/>,
+		);
+
+		fireEvent.keyDown(window, { key: "ArrowDown" });
+		const highlightedItem = screen
+			.getByText("DevBot")
+			.closest("[cmdk-item]");
+		expect(highlightedItem).toHaveAttribute("data-checked", "true");
+		expect(highlightedItem).toHaveAttribute("data-selected", "true");
+
+		view.rerender(
+			<MentionPicker
+				open
+				onOpenChange={vi.fn()}
+				onSelect={vi.fn()}
+				searchTerm="bot"
+			/>,
+		);
+
+		expect(
+			screen.getByText("SupportBot").closest("[cmdk-item]"),
+		).toHaveAttribute("data-checked", "true");
 	});
 
 	it("shows the empty-state when nothing matches", () => {

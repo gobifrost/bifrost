@@ -223,6 +223,10 @@ export function ChatInput({
 			) {
 				return;
 			}
+			if (mentionOpen && event.key === "Tab") {
+				event.preventDefault();
+				return;
+			}
 			if (event.key === "Enter" && !event.shiftKey && !mentionOpen) {
 				event.preventDefault();
 				void handleSend();

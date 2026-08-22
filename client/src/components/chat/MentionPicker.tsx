@@ -44,12 +44,15 @@ export function MentionPicker({
 }: MentionPickerProps) {
 	const terminology = useTerminology();
 	const { data: agents } = useAgents();
-	const [selectedIndex, setSelectedIndex] = useState(0);
+	const selectionKey = `${open ? "open" : "closed"}:${searchTerm}`;
+	const [selection, setSelection] = useState({ key: selectionKey, index: 0 });
 	const listRef = useRef<HTMLDivElement>(null);
+	if (selection.key !== selectionKey) {
+		setSelection({ key: selectionKey, index: 0 });
+	}
+	const selectedIndex = selection.key === selectionKey ? selection.index : 0;
 
-	// Filter agents by search term - include searchTerm to reset selection
 	const filteredAgents = useMemo(() => {
-		// Reset selection when search term changes by returning fresh array
 		const filtered =
 			agents?.filter((agent) => {
 				if (!searchTerm) return true;
@@ -62,7 +65,6 @@ export function MentionPicker({
 		return filtered;
 	}, [agents, searchTerm]);
 
-	// Clamp selectedIndex to valid range
 	const clampedIndex = Math.min(
 		selectedIndex,
 		Math.max(0, filteredAgents.length - 1),
@@ -86,12 +88,19 @@ export function MentionPicker({
 		const handleKeyDown = (e: KeyboardEvent) => {
 			if (e.key === "ArrowDown") {
 				e.preventDefault();
-				setSelectedIndex((prev) =>
-					prev < filteredAgents.length - 1 ? prev + 1 : prev,
-				);
+				setSelection({
+					key: selectionKey,
+					index:
+						clampedIndex < filteredAgents.length - 1
+							? clampedIndex + 1
+							: clampedIndex,
+				});
 			} else if (e.key === "ArrowUp") {
 				e.preventDefault();
-				setSelectedIndex((prev) => (prev > 0 ? prev - 1 : prev));
+				setSelection({
+					key: selectionKey,
+					index: clampedIndex > 0 ? clampedIndex - 1 : clampedIndex,
+				});
 			} else if (
 				(e.key === "Enter" || e.key === "Tab") &&
 				filteredAgents.length > 0
@@ -106,7 +115,14 @@ export function MentionPicker({
 
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [open, filteredAgents, clampedIndex, onSelect, onOpenChange]);
+	}, [
+		open,
+		filteredAgents,
+		clampedIndex,
+		onSelect,
+		onOpenChange,
+		selectionKey,
+	]);
 
 	if (!open) return null;
 
@@ -126,7 +142,18 @@ export function MentionPicker({
 				sideOffset={8}
 				onOpenAutoFocus={(e) => e.preventDefault()}
 			>
-				<Command>
+				<Command
+					shouldFilter={false}
+					value={filteredAgents[clampedIndex]?.id ?? ""}
+					onValueChange={(agentId) => {
+						const index = filteredAgents.findIndex(
+							(agent) => agent.id === agentId,
+						);
+						if (index >= 0) {
+							setSelection({ key: selectionKey, index });
+						}
+					}}
+				>
 					<CommandInput
 						placeholder={`Search ${term(terminology, "agent", "pluralLower")}...`}
 						value={searchTerm}
@@ -134,7 +161,8 @@ export function MentionPicker({
 					/>
 					<CommandList ref={listRef}>
 						<CommandEmpty>
-							No {term(terminology, "agent", "pluralLower")} found.
+							No {term(terminology, "agent", "pluralLower")}{" "}
+							found.
 						</CommandEmpty>
 						<CommandGroup
 							heading={term(terminology, "agent", "plural")}
@@ -142,7 +170,7 @@ export function MentionPicker({
 							{filteredAgents.map((agent, index) => (
 								<CommandItem
 									key={agent.id}
-									value={agent.name}
+									value={agent.id}
 									data-checked={index === clampedIndex}
 									onSelect={() => onSelect(agent)}
 									className={cn(

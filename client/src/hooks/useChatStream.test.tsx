@@ -24,7 +24,10 @@ const mocks = vi.hoisted(() => {
 		addMessage: vi.fn(),
 		setTodos: vi.fn(),
 		updateMessage: vi.fn(),
-		messagesByConversation: {} as Record<string, Array<Record<string, unknown>>>,
+		messagesByConversation: {} as Record<
+			string,
+			Array<Record<string, unknown>>
+		>,
 		streamingMessageIds: {} as Record<string, string | null>,
 		setStreamingMessageIdForConversation: vi.fn(),
 		mapLocalIdToServerId: vi.fn(),
@@ -89,13 +92,14 @@ describe("useChatStream video jobs", () => {
 	it("does not end an active run when the new conversation subscription mounts", async () => {
 		const queryClient = new QueryClient();
 		const wrapper = ({ children }: { children: ReactNode }) => (
-			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+			<QueryClientProvider client={queryClient}>
+				{children}
+			</QueryClientProvider>
 		);
 
-		renderHook(
-			() => useChatStream({ conversationId: "conversation-1" }),
-			{ wrapper },
-		);
+		renderHook(() => useChatStream({ conversationId: "conversation-1" }), {
+			wrapper,
+		});
 
 		await waitFor(() => expect(mocks.callbacks.chat).toBeDefined());
 		expect(mocks.store.resetStream).not.toHaveBeenCalled();
@@ -104,12 +108,13 @@ describe("useChatStream video jobs", () => {
 	it("reconciles intermediate and final stream IDs around tool calls", async () => {
 		const queryClient = new QueryClient();
 		const wrapper = ({ children }: { children: ReactNode }) => (
-			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+			<QueryClientProvider client={queryClient}>
+				{children}
+			</QueryClientProvider>
 		);
-		renderHook(
-			() => useChatStream({ conversationId: "conversation-1" }),
-			{ wrapper },
-		);
+		renderHook(() => useChatStream({ conversationId: "conversation-1" }), {
+			wrapper,
+		});
 		await waitFor(() => expect(mocks.callbacks.chat).toBeDefined());
 
 		act(() => {
@@ -163,12 +168,13 @@ describe("useChatStream video jobs", () => {
 	it("applies final duration after the text segment already ended", async () => {
 		const queryClient = new QueryClient();
 		const wrapper = ({ children }: { children: ReactNode }) => (
-			<QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+			<QueryClientProvider client={queryClient}>
+				{children}
+			</QueryClientProvider>
 		);
-		renderHook(
-			() => useChatStream({ conversationId: "conversation-1" }),
-			{ wrapper },
-		);
+		renderHook(() => useChatStream({ conversationId: "conversation-1" }), {
+			wrapper,
+		});
 		await waitFor(() => expect(mocks.callbacks.chat).toBeDefined());
 
 		act(() => {
@@ -193,6 +199,55 @@ describe("useChatStream video jobs", () => {
 		);
 	});
 
+	it("keeps agent-switch activity open until the done snapshot completes the run", async () => {
+		const queryClient = new QueryClient();
+		const wrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>
+				{children}
+			</QueryClientProvider>
+		);
+		renderHook(() => useChatStream({ conversationId: "conversation-1" }), {
+			wrapper,
+		});
+		await waitFor(() => expect(mocks.callbacks.chat).toBeDefined());
+
+		act(() => {
+			mocks.callbacks.chat?.({
+				type: "message_start",
+				assistant_message_id: "assistant-progress",
+			});
+			mocks.callbacks.chat?.({
+				type: "agent_switch",
+				agent_switch: {
+					agent_name: "Billing",
+					agent_id: "agent-billing",
+					reason: "@mention",
+				},
+			});
+		});
+
+		expect(mocks.store.addSystemEvent).toHaveBeenCalledWith(
+			"conversation-1",
+			expect.objectContaining({
+				type: "agent_switch",
+				agentName: "Billing",
+				agentId: "agent-billing",
+				reason: "@mention",
+			}),
+		);
+		expect(mocks.store.completeStream).not.toHaveBeenCalled();
+
+		act(() => {
+			mocks.callbacks.chat?.({
+				type: "done",
+				message_id: "assistant-summary",
+				duration_ms: 2_400,
+			});
+		});
+
+		expect(mocks.store.completeStream).toHaveBeenCalledTimes(1);
+	});
+
 	it("adds an opaque artifact reference to the completed tool message", async () => {
 		const queryClient = new QueryClient({
 			defaultOptions: { queries: { retry: false } },
@@ -206,10 +261,9 @@ describe("useChatStream video jobs", () => {
 			"conversation-1": [{ id: "tool-message-1", attachments: [] }],
 		};
 
-		renderHook(
-			() => useChatStream({ conversationId: "conversation-1" }),
-			{ wrapper },
-		);
+		renderHook(() => useChatStream({ conversationId: "conversation-1" }), {
+			wrapper,
+		});
 		await waitFor(() => expect(mocks.callbacks.chat).toBeDefined());
 
 		act(() => {
@@ -254,10 +308,9 @@ describe("useChatStream video jobs", () => {
 			</QueryClientProvider>
 		);
 
-		renderHook(
-			() => useChatStream({ conversationId: "conversation-1" }),
-			{ wrapper },
-		);
+		renderHook(() => useChatStream({ conversationId: "conversation-1" }), {
+			wrapper,
+		});
 		await waitFor(() => expect(mocks.callbacks.chat).toBeDefined());
 
 		act(() => {

@@ -67,6 +67,7 @@ from src.services.agent_runtime import (
     create_agent_model,
     provider_reported_cost,
 )
+from src.services.model_capabilities import should_offer_tool_calling
 from src.services.execution.agent_helpers import (
     find_delegated_agent,
     parse_mcp_tool_name,
@@ -386,7 +387,7 @@ class AgentExecutor:
                 if agent
                 else []
             )
-            if not model_capabilities.tool_calling:
+            if not should_offer_tool_calling(model_capabilities):
                 tool_definitions = []
             else:
                 from src.services.chat_artifacts import artifact_tool_definitions

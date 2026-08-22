@@ -536,7 +536,8 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 								result={tc.tool_result}
 								error={
 									tc.tool_state === "error"
-										? (tc.tool_result as { error?: string })?.error
+										? (tc.tool_result as { error?: string })
+												?.error
 										: undefined
 								}
 								durationMs={tc.duration_ms || undefined}
@@ -558,7 +559,12 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 					{item.data.map((tc) => {
 						const reauth = extractNeedsReauth(tc.tool_result);
 						if (!reauth) return null;
-						return <NeedsReauthCard key={`reauth-${tc.id}`} metadata={reauth} />;
+						return (
+							<NeedsReauthCard
+								key={`reauth-${tc.id}`}
+								metadata={reauth}
+							/>
+						);
 					})}
 				</div>
 			);
@@ -572,7 +578,8 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 				toolResultMessages={toolResultMessages}
 				conversationId={conversationId}
 				isStreaming={
-					(msg as UnifiedMessage).isStreaming || msg.id === streamingMessageId
+					(msg as UnifiedMessage).isStreaming ||
+					msg.id === streamingMessageId
 				}
 			/>
 		);
@@ -590,8 +597,6 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 					{/* Unified user turns and their progressive activity */}
 					{preludeItems.map((item) => renderTimelineItem(item))}
 					{turns.map((turn, turnIndex) => {
-						const isActiveTurn =
-							isStreaming && turnIndex === turns.length - 1;
 						const assistantIndexes = turn.activity
 							.map((item, index) =>
 								item.type === "message" &&
@@ -601,35 +606,56 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 									: -1,
 							)
 							.filter((index) => index >= 0);
-						const finalAssistantIndex = assistantIndexes.at(-1) ?? -1;
+						const finalAssistantIndex =
+							assistantIndexes.at(-1) ?? -1;
 						const finalAssistant =
 							finalAssistantIndex >= 0
 								? turn.activity[finalAssistantIndex]
 								: undefined;
+						const isActiveTurn =
+							isStreaming && turnIndex === turns.length - 1;
 						const isFinalResponseStreaming =
 							isActiveTurn &&
 							finalAssistant?.type === "message" &&
-							(Boolean((finalAssistant.data as UnifiedMessage).isStreaming) ||
+							(Boolean(
+								(finalAssistant.data as UnifiedMessage)
+									.isStreaming,
+							) ||
 								finalAssistant.data.id === streamingMessageId);
 						const runSummaryAssistant = turn.activity
 							.filter(
-								(item): item is Extract<TimelineItem, { type: "message" }> =>
+								(
+									item,
+								): item is Extract<
+									TimelineItem,
+									{ type: "message" }
+								> =>
 									item.type === "message" &&
 									item.data.role === "assistant" &&
 									item.data.duration_ms != null,
 							)
 							.at(-1);
+						const hasCompletedRun =
+							Boolean(runSummaryAssistant) ||
+							(finalAssistant?.type === "message" &&
+								Boolean(
+									(finalAssistant.data as UnifiedMessage)
+										.isFinal,
+								));
 						const durationMs =
 							runSummaryAssistant?.type === "message"
 								? runSummaryAssistant.data.duration_ms
 								: turn.activity
-									.flatMap((item) =>
-										item.type === "tool_group" ? item.data : [],
-									)
-									.reduce(
-										(total, tool) => total + (tool.duration_ms ?? 0),
-										0,
-									);
+										.flatMap((item) =>
+											item.type === "tool_group"
+												? item.data
+												: [],
+										)
+										.reduce(
+											(total, tool) =>
+												total + (tool.duration_ms ?? 0),
+											0,
+										);
 						const runningTool = turn.activity
 							.flatMap((item) =>
 								item.type === "tool_group" ? item.data : [],
@@ -640,7 +666,10 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 						const detailItems = turn.activity.filter(
 							(item, index) =>
 								index !== finalAssistantIndex &&
-								!(item.type === "event" && item.data.type === "error") &&
+								!(
+									item.type === "event" &&
+									item.data.type === "error"
+								) &&
 								!(
 									item.type === "message" &&
 									item.data.role === "assistant" &&
@@ -650,18 +679,22 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 								),
 						);
 						const errors = turn.activity.filter(
-							(item) => item.type === "event" && item.data.type === "error",
+							(item) =>
+								item.type === "event" &&
+								item.data.type === "error",
 						);
 						const artifacts = turn.activity.flatMap((item) =>
 							item.type === "tool_group"
-								? item.data.flatMap((tool) => tool.attachments ?? [])
+								? item.data.flatMap(
+										(tool) => tool.attachments ?? [],
+									)
 								: [],
 						);
 
 						return (
 							<div key={`turn-${turn.user.timestamp}`}>
 								{renderTimelineItem(turn.user)}
-								{(isActiveTurn || turn.activity.length > 0) && (
+								{(isActiveTurn || hasCompletedRun) && (
 									<ChatRunActivity
 										isActive={isActiveTurn}
 										durationMs={durationMs}
@@ -691,7 +724,8 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 									/>
 								)}
 								{errors.map((item) => renderTimelineItem(item))}
-								{finalAssistant && renderTimelineItem(finalAssistant)}
+								{finalAssistant &&
+									renderTimelineItem(finalAssistant)}
 							</div>
 						);
 					})}

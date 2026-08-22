@@ -7,6 +7,7 @@ from src.services.model_capabilities import (
     lookup_model_capabilities,
     model_fingerprint,
     normalize_capabilities,
+    should_offer_tool_calling,
     verify_model_capabilities,
 )
 
@@ -98,6 +99,18 @@ def test_stale_capability_fingerprint_is_not_reused() -> None:
     assert normalized.source == "unknown"
     assert normalized.tool_calling is False
     assert normalized.fingerprint != stale.fingerprint
+
+
+def test_unknown_capabilities_are_optimistic_for_tool_calling() -> None:
+    unknown = ModelCapabilities(source="unknown", tool_calling=False)
+    verified_unsupported = ModelCapabilities(source="verified", tool_calling=False)
+    manual_unsupported = ModelCapabilities(source="manual", tool_calling=False)
+    verified_supported = ModelCapabilities(source="verified", tool_calling=True)
+
+    assert should_offer_tool_calling(unknown) is True
+    assert should_offer_tool_calling(verified_unsupported) is False
+    assert should_offer_tool_calling(manual_unsupported) is False
+    assert should_offer_tool_calling(verified_supported) is True
 
 
 @pytest.mark.asyncio

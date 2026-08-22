@@ -223,7 +223,9 @@ describe("ChatWindow — messages render & send", () => {
 
 		renderWithProviders(<ChatWindow conversationId="c-1" />);
 
-		expect(screen.getByText("Thinking…")).toHaveClass("chat-activity-shimmer");
+		expect(screen.getByText("Thinking…")).toHaveClass(
+			"chat-activity-shimmer",
+		);
 	});
 
 	it("collapses tool activity when the final response starts streaming", () => {
@@ -259,10 +261,9 @@ describe("ChatWindow — messages render & send", () => {
 		);
 
 		expect(screen.getByText("Responding…")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: /Responding/i })).toHaveAttribute(
-			"aria-expanded",
-			"false",
-		);
+		expect(
+			screen.getByRole("button", { name: /Responding/i }),
+		).toHaveAttribute("aria-expanded", "false");
 		expect(container.querySelector(".grid-rows-\\[0fr\\]")).not.toBeNull();
 	});
 
@@ -315,6 +316,34 @@ describe("ChatWindow — messages render & send", () => {
 		renderWithProviders(<ChatWindow conversationId="c-1" />);
 
 		expect(screen.getByText("Worked for 9s")).toBeInTheDocument();
+	});
+
+	it("does not mark agent-switch activity complete before the run summary arrives", () => {
+		messagesRef.data = [
+			{
+				id: "m-1",
+				role: "user",
+				content: "Check my tickets",
+				created_at: "2026-04-20T00:00:00Z",
+			},
+		];
+		storeSelectors.systemEventsByConversation = {
+			"c-1": [
+				{
+					id: "event-1",
+					type: "agent_switch",
+					timestamp: "2026-04-20T00:00:01Z",
+					agentName: "Work Tracking Agent",
+					agentId: "agent-work",
+					reason: "automatic",
+				},
+			],
+		};
+		streamRef.isStreaming = false;
+
+		renderWithProviders(<ChatWindow conversationId="c-1" />);
+
+		expect(screen.queryByText(/Worked for/i)).not.toBeInTheDocument();
 	});
 
 	it("forwards a typed message to the stream's sendMessage", async () => {

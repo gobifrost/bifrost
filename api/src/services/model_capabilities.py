@@ -153,6 +153,18 @@ def normalize_capabilities(
     return capabilities
 
 
+def should_offer_tool_calling(capabilities: ModelCapabilities) -> bool:
+    """Decide whether Chat should optimistically offer tools to the model.
+
+    Unknown capability records are deliberately optimistic: when we do not have
+    an authoritative answer yet, we should still offer tools and let the model
+    try. Explicitly verified or manually asserted unsupported records continue
+    to suppress tools.
+    """
+
+    return capabilities.tool_calling or capabilities.source == "unknown"
+
+
 def manual_capabilities(
     *,
     provider: str,

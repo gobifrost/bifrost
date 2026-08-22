@@ -1,6 +1,7 @@
 """Chat contract coverage for the Pydantic AI loop."""
 
 from contextlib import asynccontextmanager
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -12,6 +13,7 @@ from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
 from src.models.contracts.agents import ToolResult
+from src.models.contracts.artifacts import ModelCapabilities
 from src.services.agent_executor import AgentExecutor
 from src.services.llm import LLMMessage, ToolDefinition
 from src.services.llm.base import LLMConfig
@@ -178,6 +180,105 @@ async def test_chat_reapplies_agent_instructions_when_stored_history_exists(
     assert len(instructions) == 1
     assert instructions[0].startswith("Stable triage instructions\n\n")
     assert "shared artifact workspace" in instructions[0]
+
+
+@pytest.mark.asyncio
+async def test_unknown_capabilities_still_offer_agent_tools(
+    executor: AgentExecutor,
+    conversation,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class FakeRunStreamEvents:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            raise StopAsyncIteration
+
+    class FakePydanticAgent:
+        def __init__(self, model, **kwargs):
+            captured["toolsets"] = kwargs["toolsets"]
+
+        def run_stream_events(self, *args, **kwargs):
+            return FakeRunStreamEvents()
+
+    config = LLMProviderConfig(
+        provider="openai",
+        model="test-model",
+        chat_balanced_capabilities=ModelCapabilities(
+            source="unknown",
+            tool_calling=False,
+        ),
+    )
+    agent = MagicMock()
+    agent.id = uuid4()
+    agent.name = "Test Agent"
+    agent.organization_id = None
+    agent.max_iterations = None
+    agent.max_token_budget = None
+    agent.llm_max_tokens = None
+
+    executor._save_message = AsyncMock(side_effect=_saved_message)
+    executor._record_ai_usage = AsyncMock()
+    executor._build_message_history = AsyncMock(
+        return_value=[
+            LLMMessage(role="system", content="Be useful"),
+            LLMMessage(role="user", content="Hello"),
+        ]
+    )
+    executor._get_agent_tools = AsyncMock(
+        return_value=[
+            ToolDefinition(
+                name="wf_test",
+                description="Test",
+                parameters={"type": "object"},
+            )
+        ]
+    )
+
+    llm_client = MagicMock()
+    llm_client.config = LLMConfig(
+        provider="openai",
+        model="test-model",
+        api_key="test-key",
+    )
+    llm_client.provider_name = "openrouter"
+
+    with patch(
+        "src.services.llm_config_service.LLMConfigService.get_config",
+        new=AsyncMock(return_value=config),
+    ), patch(
+        "src.services.agent_executor.get_llm_client",
+        new=AsyncMock(return_value=llm_client),
+    ), patch(
+        "src.services.agent_executor.create_agent_model",
+        return_value=CountingTestModel(custom_output_text="Hello from Pydantic"),
+    ), patch(
+        "src.services.agent_executor.PydanticAgent",
+        new=FakePydanticAgent,
+    ):
+        chunks = [
+            chunk
+            async for chunk in executor.chat(
+                agent,
+                conversation,
+                "Hello",
+                stream=False,
+                enable_routing=False,
+            )
+        ]
+
+    assert any(chunk.type == "done" for chunk in chunks)
+    toolsets = captured["toolsets"]
+    assert len(toolsets) == 1
+    assert toolsets[0]._definitions[0].name == "wf_test"
 
 
 @pytest.mark.asyncio
