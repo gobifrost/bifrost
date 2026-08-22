@@ -156,7 +156,18 @@ STDLIB_PREFIXES = frozenset([
     "fastapi",
     "uvicorn",
     "pytest",
+    # Bifrost runtime packages are platform code, not workspace import roots.
+    # Let PathFinder resolve them without asking the module API first.
+    "bifrost",
+    "src",
 ])
+
+_APP_ROOT = Path(__file__).resolve().parents[3]
+_BIFROST_SOURCE_ROOTS = (
+    _APP_ROOT / "src",
+    _APP_ROOT / "shared",
+    _APP_ROOT / "bifrost",
+)
 
 
 
@@ -269,7 +280,8 @@ class VirtualModuleFinder(MetaPathFinder):
     resolver whether the name is a workspace module, package, namespace, or miss.
 
     Key design points:
-    - Locally installed modules get first refusal through PathFinder
+    - Installed dependencies get first refusal through PathFinder
+    - Workspace code still wins over accidental same-named platform source files
     - The targeted resolver is the source of truth for workspace ownership
     - Non-workspace third-party imports fall through to normal import handling
     - Supports both modules (.py) and packages (__init__.py)
@@ -327,12 +339,13 @@ class VirtualModuleFinder(MetaPathFinder):
 
         Separated from find_spec to keep the recursion guard clean.
 
-        Locally installed modules are allowed to resolve before workspace code.
-        Only unresolved names are sent to the targeted resolver, which avoids
-        the old repeated whole-index lookup path for misses.
+        Installed dependencies are allowed to resolve before workspace code.
+        A source file merely present on Bifrost's application path does not get
+        that privilege: the targeted resolver must first be allowed to claim a
+        same-named workspace package, preserving the collision fix from #419.
         """
         local_spec = PathFinder.find_spec(fullname, path)
-        if local_spec is not None:
+        if local_spec is not None and not _is_bifrost_source_spec(local_spec):
             return None
 
         resolution = resolve_module_sync(fullname)
@@ -368,6 +381,24 @@ class VirtualModuleFinder(MetaPathFinder):
 
         return None
 
+
+def _is_bifrost_source_spec(spec: ModuleSpec) -> bool:
+    """Return whether a PathFinder result came from Bifrost application source.
+
+    Installed dependencies, including packages with unusual install layouts,
+    retain normal Python precedence. Only modules found inside Bifrost's own
+    source roots defer to the targeted workspace resolver so an accidental
+    platform-name collision cannot shadow Solution/workspace code.
+    """
+    locations = [spec.origin or "", *(spec.submodule_search_locations or ())]
+    for location in locations:
+        if not location or location in {"built-in", "frozen"}:
+            continue
+        resolved = Path(location).resolve()
+        if any(resolved.is_relative_to(root) for root in _BIFROST_SOURCE_ROOTS):
+            return True
+    return False
+
 # Global finder instance (for invalidation access)
 _finder: VirtualModuleFinder | None = None
 
@@ -398,10 +429,15 @@ def install_virtual_import_hook() -> VirtualModuleFinder:
     # might try to fetch from Redis before Redis can even connect.
     _preload_required_modules()
 
-    # Create finder and install the hook before filesystem resolution so
-    # workspace packages cannot be shadowed by platform modules on sys.path.
+    # BuiltinImporter and FrozenImporter keep their normal precedence. Install
+    # immediately before PathFinder so workspace packages can still override an
+    # accidental same-named Bifrost source module.
     _finder = VirtualModuleFinder()
-    sys.meta_path.insert(0, _finder)
+    path_finder_index = next(
+        (index for index, finder in enumerate(sys.meta_path) if finder is PathFinder),
+        len(sys.meta_path),
+    )
+    sys.meta_path.insert(path_finder_index, _finder)
 
     logger.info("Virtual import hook installed")
     return _finder

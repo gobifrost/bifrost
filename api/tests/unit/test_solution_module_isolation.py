@@ -19,6 +19,18 @@ import pytest
 pytestmark = pytest.mark.e2e
 
 
+@pytest.fixture(autouse=True)
+def _restore_virtual_import_hook():
+    """Importing worker installs the production hook; do not leak it to later tests."""
+    from src.services.execution import virtual_import
+
+    meta_path_before = list(sys.meta_path)
+    finder_before = virtual_import._finder
+    yield
+    sys.meta_path[:] = meta_path_before
+    virtual_import._finder = finder_before
+
+
 def _fake_solution_module(
     name: str,
     rel_path: str,

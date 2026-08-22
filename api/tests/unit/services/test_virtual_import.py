@@ -18,6 +18,7 @@ import pytest
 
 from src.core.module_cache_sync import ModuleResolution
 from src.services.execution.virtual_import import (
+    _is_bifrost_source_spec,
     NamespacePackageLoader,
     VirtualModuleFinder,
     VirtualModuleLoader,
@@ -227,6 +228,22 @@ class TestVirtualModuleFinder:
         finally:
             _thread_local.in_find_spec = False
 
+    def test_identifies_bifrost_source_specs(self):
+        """Only Bifrost application source defers to workspace resolution."""
+        from importlib.machinery import ModuleSpec
+        from src.services.execution import virtual_import
+
+        source_path = virtual_import._BIFROST_SOURCE_ROOTS[0] / "services" / "collision.py"
+        source_spec = ModuleSpec("collision", loader=None, origin=str(source_path))
+        installed_spec = ModuleSpec(
+            "dependency",
+            loader=None,
+            origin="/usr/local/lib/python3.14/site-packages/dependency.py",
+        )
+
+        assert _is_bifrost_source_spec(source_spec)
+        assert not _is_bifrost_source_spec(installed_spec)
+
 class TestNamespacePackageLoader:
     """Tests for NamespacePackageLoader class."""
 
@@ -363,7 +380,11 @@ class TestInstallRemoveHook:
 
         assert isinstance(finder, VirtualModuleFinder)
         assert len(sys.meta_path) == initial_count + 1
-        assert sys.meta_path[0] is finder
+        finder_index = sys.meta_path.index(finder)
+        path_finder_index = sys.meta_path.index(importlib.machinery.PathFinder)
+        assert finder_index == path_finder_index - 1
+        assert importlib.machinery.BuiltinImporter in sys.meta_path[:finder_index]
+        assert importlib.machinery.FrozenImporter in sys.meta_path[:finder_index]
 
     def test_http_client_is_built_before_hook_becomes_visible(self):
         """Lazy HTTP transport imports must not recurse into the resolver."""
@@ -556,12 +577,14 @@ class TestIntegration:
             assert hasattr(virtual_test_ns, "__path__")
             assert hasattr(virtual_test_ns.extensions, "__path__")
 
-    def test_filesystem_module_takes_precedence_over_virtual_package(self, tmp_path):
-        """Locally installed modules should be resolved before workspace modules."""
+    def test_installed_dependency_takes_precedence_over_virtual_package(self, tmp_path):
+        """Installed requirements should be resolved before workspace modules."""
         module_name = "virtual_collision_pkg"
-        filesystem_module = tmp_path / f"{module_name}.py"
+        installed_dir = tmp_path / "site-packages"
+        installed_dir.mkdir()
+        filesystem_module = installed_dir / f"{module_name}.py"
         filesystem_module.write_text("ORIGIN = 'filesystem'\n")
-        sys.path.insert(0, str(tmp_path))
+        sys.path.insert(0, str(installed_dir))
         install_virtual_import_hook()
 
         try:
@@ -571,9 +594,54 @@ class TestIntegration:
                 assert module.ORIGIN == "filesystem"
                 mock_resolve.assert_not_called()
         finally:
-            sys.path.remove(str(tmp_path))
+            sys.path.remove(str(installed_dir))
             for loaded in [
                 module_name,
                 f"{module_name}.submodule",
             ]:
+                sys.modules.pop(loaded, None)
+
+    def test_virtual_package_takes_precedence_over_platform_source_module(self, tmp_path):
+        """Workspace packages should not be shadowed by Bifrost source modules."""
+        module_name = "virtual_platform_collision_pkg"
+        filesystem_module = tmp_path / f"{module_name}.py"
+        filesystem_module.write_text("ORIGIN = 'platform_source'\n")
+        sys.path.insert(0, str(tmp_path))
+        install_virtual_import_hook()
+
+        resolutions = {
+            module_name: ModuleResolution(
+                kind="package",
+                path=f"{module_name}/__init__.py",
+                content="ORIGIN = 'virtual_package'",
+                hash="abc",
+            ),
+            f"{module_name}.submodule": ModuleResolution(
+                kind="module",
+                path=f"{module_name}/submodule.py",
+                content="VALUE = 'from_submodule'",
+                hash="def",
+            ),
+        }
+
+        try:
+            with (
+                patch(
+                    "src.services.execution.virtual_import._is_bifrost_source_spec",
+                    return_value=True,
+                ),
+                patch(
+                    "src.services.execution.virtual_import.resolve_module_sync",
+                    side_effect=lambda name: resolutions[name],
+                ),
+            ):
+                package = importlib.import_module(module_name)
+                submodule = importlib.import_module(f"{module_name}.submodule")
+
+                assert package.ORIGIN == "virtual_package"
+                assert submodule.VALUE == "from_submodule"
+                assert package.__file__ == f"{module_name}/__init__.py"
+        finally:
+            sys.path.remove(str(tmp_path))
+            for loaded in [module_name, f"{module_name}.submodule"]:
                 sys.modules.pop(loaded, None)
