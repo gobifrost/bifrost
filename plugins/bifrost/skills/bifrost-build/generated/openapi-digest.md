@@ -438,7 +438,7 @@
 | POST | `/api/sdk/knowledge/search` |
 | POST | `/api/sdk/knowledge/store` |
 | POST | `/api/sdk/knowledge/store-many` |
-| GET | `/api/sdk/modules-index` |
+| GET | `/api/sdk/modules-resolve` |
 | GET | `/api/sdk/modules/{path}` |
 | GET | `/api/sdk/requirements` |
 | GET | `/api/sdk/sessions` |
