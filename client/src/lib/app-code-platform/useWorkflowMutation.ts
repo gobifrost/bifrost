@@ -10,9 +10,9 @@
 import { useState, useCallback, useRef, useEffect } from "react";
 import { apiClient } from "@/lib/api-client";
 import {
-	webSocketService,
-	type ExecutionLog,
-} from "@/services/websocket";
+	subscribeToExecution,
+	type ExecutionStreamEvent,
+} from "@/lib/app-sdk/execution-stream";
 import {
 	useExecutionStreamStore,
 	type ExecutionStatus,
@@ -68,11 +68,11 @@ export interface UseWorkflowMutationResult<T> {
 }
 
 interface Subscription {
-	unsubUpdate: () => void;
-	unsubLog: () => void;
-	channel: string;
+	unsubscribe: () => void;
 	timeout: ReturnType<typeof setTimeout>;
 }
+
+const POLL_INTERVAL_MS = 2_000;
 
 export function useWorkflowMutation<T = unknown>(
 	workflowId: string,
@@ -90,10 +90,8 @@ export function useWorkflowMutation<T = unknown>(
 	const cleanupExecution = useCallback((execId: string) => {
 		const sub = subscriptionsRef.current.get(execId);
 		if (sub) {
-			sub.unsubUpdate();
-			sub.unsubLog();
+			sub.unsubscribe();
 			clearTimeout(sub.timeout);
-			webSocketService.unsubscribe(sub.channel);
 			subscriptionsRef.current.delete(execId);
 		}
 		deferredMapRef.current.delete(execId);
@@ -112,10 +110,8 @@ export function useWorkflowMutation<T = unknown>(
 				deferred.reject(new Error("Component unmounted"));
 				const sub = subscriptions.get(execId);
 				if (sub) {
-					sub.unsubUpdate();
-					sub.unsubLog();
+					sub.unsubscribe();
 					clearTimeout(sub.timeout);
-					webSocketService.unsubscribe(sub.channel);
 				}
 				useExecutionStreamStore.getState().clearStream(execId);
 			}
@@ -149,9 +145,7 @@ export function useWorkflowMutation<T = unknown>(
 					typeof responseError === "object" &&
 					responseError !== null &&
 					"detail" in responseError
-						? String(
-								(responseError as { detail: unknown }).detail,
-							)
+						? String((responseError as { detail: unknown }).detail)
 						: "Workflow execution failed";
 				if (mountedRef.current) {
 					setError(errorMessage);
@@ -186,8 +180,7 @@ export function useWorkflowMutation<T = unknown>(
 					return result;
 				} else {
 					const errMsg =
-						responseData.error ??
-						`Workflow ${responseData.status}`;
+						responseData.error ?? `Workflow ${responseData.status}`;
 					if (mountedRef.current) {
 						setError(errMsg);
 						setIsLoading(false);
@@ -209,23 +202,6 @@ export function useWorkflowMutation<T = unknown>(
 			const store = useExecutionStreamStore.getState();
 			store.startStreaming(execId);
 
-			// Connect WebSocket and subscribe
-			const channel = `execution:${execId}`;
-			try {
-				await webSocketService.connect([channel]);
-			} catch (err) {
-				cleanupExecution(execId);
-				const errorMessage =
-					err instanceof Error
-						? err.message
-						: "WebSocket connection failed";
-				if (mountedRef.current) {
-					setError(errorMessage);
-					setIsLoading(false);
-				}
-				throw new Error(errorMessage, { cause: err });
-			}
-
 			// Set up timeout
 			const timeout = setTimeout(() => {
 				const pending = deferredMapRef.current.get(execId);
@@ -241,52 +217,47 @@ export function useWorkflowMutation<T = unknown>(
 				}
 			}, EXECUTION_TIMEOUT_MS);
 
-			// Subscribe to execution updates
-			const unsubUpdate = webSocketService.onExecutionUpdate(
-				execId,
-				async (update) => {
-					const currentStore = useExecutionStreamStore.getState();
-
-					if (update.status) {
+			let pollTimer: ReturnType<typeof setInterval> | null = null;
+			const stopPolling = () => {
+				if (pollTimer) clearInterval(pollTimer);
+				pollTimer = null;
+			};
+			const reconcileExecution = async () => {
+				if (!deferredMapRef.current.has(execId)) return;
+				try {
+					const execution = await getExecution(execId);
+					if (
+						TERMINAL_STATUSES.includes(
+							execution.status as ExecutionStatus,
+						)
+					) {
+						const currentStore = useExecutionStreamStore.getState();
 						currentStore.updateStatus(
 							execId,
-							update.status as ExecutionStatus,
+							execution.status as ExecutionStatus,
 						);
-					}
-
-					if (update.isComplete) {
 						currentStore.completeExecution(
 							execId,
 							undefined,
-							update.status as ExecutionStatus,
+							execution.status as ExecutionStatus,
 						);
 
 						const pending = deferredMapRef.current.get(execId);
 						if (pending) {
-							try {
-								const execution = await getExecution(execId);
-								if (execution.status === "Success") {
-									const result = execution.result as T;
-									if (mountedRef.current) {
-										setData(result);
-										setIsLoading(false);
-									}
-									pending.resolve(result);
-								} else {
-									const errMsg =
-										execution.error_message ||
-										`Workflow ${update.status}`;
-									if (mountedRef.current) {
-										setError(errMsg);
-										setIsLoading(false);
-									}
-									pending.reject(new Error(errMsg));
+							if (
+								execution.status === "Success" ||
+								execution.status === "CompletedWithErrors"
+							) {
+								const result = execution.result as T;
+								if (mountedRef.current) {
+									setData(result);
+									setIsLoading(false);
 								}
-							} catch (fetchErr) {
+								pending.resolve(result);
+							} else {
 								const errMsg =
-									fetchErr instanceof Error
-										? fetchErr.message
-										: "Failed to fetch result";
+									execution.error_message ||
+									`Workflow ${execution.status}`;
 								if (mountedRef.current) {
 									setError(errMsg);
 									setIsLoading(false);
@@ -296,84 +267,56 @@ export function useWorkflowMutation<T = unknown>(
 							cleanupExecution(execId);
 						}
 					}
-				},
-			);
+				} catch {
+					// A transient read failure must not strand the execution. The stream,
+					// reconnect acknowledgement, or polling fallback will check again.
+				}
+			};
+			const startPolling = () => {
+				if (!pollTimer) {
+					pollTimer = setInterval(() => {
+						void reconcileExecution();
+					}, POLL_INTERVAL_MS);
+				}
+			};
 
-			// Subscribe to execution logs
-			const unsubLog = webSocketService.onExecutionLog(
+			const unsubscribeStream = subscribeToExecution(
 				execId,
-				(log: ExecutionLog) => {
+				(event: ExecutionStreamEvent) => {
 					const currentStore = useExecutionStreamStore.getState();
-					const streamingLog: StreamingLog = {
-						level: log.level,
-						message: log.message,
-						timestamp: log.timestamp,
-					};
-					if (log.sequence !== undefined) {
-						streamingLog.sequence = log.sequence;
+					if (event.type === "ready") {
+						void reconcileExecution();
+					} else if (event.type === "status") {
+						if (event.status) {
+							currentStore.updateStatus(
+								execId,
+								event.status as ExecutionStatus,
+							);
+						}
+						if (event.isTerminal) {
+							startPolling();
+							void reconcileExecution();
+						}
+					} else if (event.type === "log" && event.log) {
+						const streamingLog: StreamingLog = { ...event.log };
+						currentStore.appendLogs(execId, [streamingLog]);
 					}
-					currentStore.appendLogs(execId, [streamingLog]);
 				},
+				startPolling,
 			);
 
-			// Store subscription references
+			// Keep the exact reconnecting stream used by the v2 SDK. If the socket
+			// drops, poll until settlement and reconcile after every subscribe ack.
 			subscriptionsRef.current.set(execId, {
-				unsubUpdate,
-				unsubLog,
-				channel,
+				unsubscribe: () => {
+					stopPolling();
+					unsubscribeStream();
+				},
 				timeout,
 			});
 
-			// Fast workflows can complete before the WebSocket callback is attached.
-			// Check once immediately after subscribing so the hook does not stay
-			// unresolved when the terminal event was missed.
-			try {
-				const execution = await getExecution(execId);
-				if (
-					TERMINAL_STATUSES.includes(
-						execution.status as ExecutionStatus,
-					)
-				) {
-					const currentStore = useExecutionStreamStore.getState();
-					currentStore.updateStatus(
-						execId,
-						execution.status as ExecutionStatus,
-					);
-					currentStore.completeExecution(
-						execId,
-						undefined,
-						execution.status as ExecutionStatus,
-					);
-
-					const pending = deferredMapRef.current.get(execId);
-					if (pending) {
-						if (
-							execution.status === "Success" ||
-							execution.status === "CompletedWithErrors"
-						) {
-							const result = execution.result as T;
-							if (mountedRef.current) {
-								setData(result);
-								setIsLoading(false);
-							}
-							pending.resolve(result);
-						} else {
-							const errMsg =
-								execution.error_message ||
-								`Workflow ${execution.status}`;
-							if (mountedRef.current) {
-								setError(errMsg);
-								setIsLoading(false);
-							}
-							pending.reject(new Error(errMsg));
-						}
-						cleanupExecution(execId);
-					}
-				}
-			} catch {
-				// Ignore immediate status fetch failures; the normal WebSocket path
-				// still handles ordinary execution flow.
-			}
+			// Fast workflows can finish before the first subscription acknowledgement.
+			void reconcileExecution();
 
 			return deferred.promise;
 		},
