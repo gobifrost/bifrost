@@ -972,7 +972,18 @@ class TestExplicitScopeOverride:
         assert response.status_code == 200, (
             f"Failed to store provider knowledge: {response.text}"
         )
-        return {"scope_marker": "provider"}
+        yield {"scope_marker": "provider"}
+
+        cleanup = e2e_client.post(
+            "/api/sdk/knowledge/delete",
+            headers=platform_admin.headers,
+            json={
+                "key": "provider-doc",
+                "namespace": scope_test_knowledge_namespace,
+                "scope": self.PROVIDER_ORG_ID,
+            },
+        )
+        assert cleanup.status_code == 200, cleanup.text
 
     @pytest.fixture(scope="class")
     def scope_override_workflow(

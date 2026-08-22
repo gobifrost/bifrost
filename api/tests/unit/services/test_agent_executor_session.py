@@ -259,6 +259,9 @@ class TestDelegationUsesFactory:
             "run",
             new_callable=AsyncMock,
             return_value=child_run_result,
+        ), patch(
+            "src.services.execution.run_summarizer.enqueue_summarize",
+            new_callable=AsyncMock,
         ):
             executor = AutonomousAgentExecutor(factory, redis_client=mock_redis)
             executor._current_run_id = str(uuid4())

@@ -18,7 +18,6 @@ from src.models import ExecutionMetricsDaily
 from src.models.orm import Organization
 from src.models.enums import ExecutionStatus
 from src.core.metrics import _upsert_daily_metrics
-from src.core.database import get_session_factory
 
 METRICS_TEST_DATE = date(2000, 1, 1)
 
@@ -333,15 +332,14 @@ class TestDailyMetricsUpsert:
         assert row.execution_count == 3
 
     async def test_concurrent_global_updates_preserve_count_and_average(
-        self, db_session: AsyncSession, clean_metrics
+        self, db_session: AsyncSession, async_session_factory, clean_metrics
     ):
         """Concurrent completions atomically update the shared global row."""
         today = METRICS_TEST_DATE
         durations = [101, 202, 303, 404]
-        session_factory = get_session_factory()
 
         async def record(duration_ms: int) -> None:
-            async with session_factory() as session:
+            async with async_session_factory() as session:
                 await _upsert_daily_metrics(
                     db=session,
                     today=today,

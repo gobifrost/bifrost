@@ -35,6 +35,7 @@ def knowledge_cleanup(
     e2e_client,
     platform_admin,
     org1,
+    org2,
 ) -> Generator[None, None, None]:
     """
     Clean up any knowledge entries after test.
@@ -53,27 +54,24 @@ def knowledge_cleanup(
         "e2e-dedup",
     ]
 
-    for ns in namespaces_to_clean:
-        try:
-            e2e_client.delete(
-                f"/api/sdk/knowledge/namespace/{ns}",
-                headers=platform_admin.headers,
-            )
-        except Exception:
-            pass  # Ignore if no namespace exists
+    scopes_to_clean = ["global", org1["id"], org2["id"]]
+
+    def clean() -> None:
+        for ns in namespaces_to_clean:
+            for scope in scopes_to_clean:
+                response = e2e_client.delete(
+                    f"/api/sdk/knowledge/namespace/{ns}",
+                    headers=platform_admin.headers,
+                    params={"scope": scope},
+                )
+                response.raise_for_status()
+
+    clean()
 
     yield
 
     # Clean up after test
-    for ns in namespaces_to_clean:
-        try:
-            e2e_client.delete(
-                f"/api/sdk/knowledge/namespace/{ns}",
-                headers=platform_admin.headers,
-            )
-            logger.info(f"Cleaned up knowledge namespace: {ns}")
-        except Exception:
-            pass  # Ignore cleanup failures
+    clean()
 
 
 @pytest.fixture(scope="function")
