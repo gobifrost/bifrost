@@ -14,7 +14,9 @@ def set_process_engine_credentials():
     from src.services.execution.worker import _set_process_engine_credentials
 
     remove_virtual_import_hook()
-    return _set_process_engine_credentials
+    yield _set_process_engine_credentials
+    os.environ.pop("BIFROST_ACCESS_TOKEN", None)
+    os.environ.pop("BIFROST_REFRESH_TOKEN", None)
 
 
 def test_handed_down_token_uses_ephemeral_process_backend(

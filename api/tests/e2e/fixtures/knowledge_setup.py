@@ -54,15 +54,19 @@ def knowledge_cleanup(
         "e2e-dedup",
     ]
 
-    scopes_to_clean = ["global", org1["id"], org2["id"]]
+    # Also issue an unscoped delete for the caller's own organization. The
+    # seeded platform admin belongs to the provider org in the complete suite,
+    # which is distinct from org1 and org2.
+    scopes_to_clean = [None, "global", org1["id"], org2["id"]]
 
     def clean() -> None:
         for ns in namespaces_to_clean:
             for scope in scopes_to_clean:
+                params = {"scope": scope} if scope is not None else None
                 response = e2e_client.delete(
                     f"/api/sdk/knowledge/namespace/{ns}",
                     headers=platform_admin.headers,
-                    params={"scope": scope},
+                    params=params,
                 )
                 response.raise_for_status()
 
