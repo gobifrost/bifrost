@@ -81,19 +81,11 @@ class Settings(BaseSettings):
         description="Max concurrent workflow executions (controls RabbitMQ prefetch)"
     )
 
-    # Process Pool Configuration. Every execution still gets a fresh one-shot
-    # child; a bounded number may be forked ahead of demand so concurrent
-    # requests do not serialize on the template process's fork loop.
+    # Process Pool Configuration (on-demand only — every execution forks
+    # a fresh one-shot worker, capped at `max_workers` concurrent forks).
     max_workers: int = Field(
         default=10,
         description="Maximum concurrent worker processes (queue cap)"
-    )
-    warm_workers: int = Field(
-        default=4,
-        description=(
-            "One-shot worker children kept pre-forked and waiting for their "
-            "single execution (clamped to max_workers)"
-        ),
     )
     execution_timeout_seconds: int = Field(
         default=300,

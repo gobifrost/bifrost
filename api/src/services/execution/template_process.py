@@ -430,13 +430,6 @@ def _run_forked_child(
 
             work_item = work_recv.recv()
 
-            if work_item is None:
-                # A pre-forked one-shot child can be retired without ever
-                # receiving user work (pool shutdown, template recycle, or
-                # memory-pressure scale-down). None is its private shutdown
-                # sentinel; no execution result is expected.
-                break
-
             execution_id, context = work_item
 
             logger.info(f"Worker {worker_id} processing execution: {execution_id[:8]}...")
