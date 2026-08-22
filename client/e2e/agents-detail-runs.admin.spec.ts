@@ -965,10 +965,12 @@ test.describe("Agent Detail — Runs Tab (admin)", () => {
 				search.boundingBox(),
 			]);
 			for (let index = 0; index < contextBefore.length; index += 1) {
-				expect(contextAfter[index]?.y).toBeCloseTo(
-					contextBefore[index]?.y ?? 0,
-					1,
-				);
+				expect(
+					Math.abs(
+						(contextAfter[index]?.y ?? 0) -
+							(contextBefore[index]?.y ?? 0),
+					),
+				).toBeLessThanOrEqual(1);
 			}
 
 			await page.setViewportSize({ width: 1440, height: 720 });

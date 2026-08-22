@@ -45,18 +45,13 @@ test.describe("Form Listing", () => {
 			timeout: 10000,
 		});
 
-		// Either we have forms or an empty state
-		const formContent = page.locator(
-			"table tbody tr, [data-testid='form-card'], [data-testid='form-row']",
-		);
-
-		const hasforms = await formContent.count().catch(() => 0);
-		const hasEmptyState = await page
-			.getByText(/no forms|create your first/i)
-			.isVisible()
-			.catch(() => false);
-
-		expect(hasforms > 0 || hasEmptyState).toBe(true);
+		// Wait for loading to resolve to either a populated list or its empty state.
+		await expect(
+			page
+				.getByRole("button", { name: "Launch", exact: true })
+				.first()
+				.or(page.getByRole("heading", { name: /no forms found/i })),
+		).toBeVisible();
 	});
 });
 
