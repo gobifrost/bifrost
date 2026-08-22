@@ -75,6 +75,49 @@ describe("ChatMessage — user messages", () => {
 		expect(screen.getByText("SupportBot")).toBeInTheDocument();
 		expect(screen.getByText(/please help/)).toBeInTheDocument();
 	});
+
+	it("preserves email addresses instead of rendering their domains as mentions", () => {
+		renderWithProviders(
+			<ChatMessage
+				message={makeMessage({
+					role: "user",
+					content: "Contact jack@example.com for access",
+				})}
+			/>,
+		);
+
+		expect(
+			screen.getByRole("link", { name: "jack@example.com" }),
+		).toHaveAttribute("href", "mailto:jack@example.com");
+		expect(screen.queryByText("example")).not.toBeInTheDocument();
+	});
+
+	it("leaves bare @words as ordinary message text", () => {
+		renderWithProviders(
+			<ChatMessage
+				message={makeMessage({
+					role: "user",
+					content: "Ask @SupportBot for help",
+				})}
+			/>,
+		);
+
+		expect(screen.getByText(/Ask @SupportBot for help/)).toBeInTheDocument();
+	});
+
+	it("renders punctuation in canonical agent names without changing the name", () => {
+		renderWithProviders(
+			<ChatMessage
+				message={makeMessage({
+					role: "user",
+					content: '@[R&D "Tier 2" Agent] investigate',
+				})}
+			/>,
+		);
+
+		expect(screen.getByText('R&D "Tier 2" Agent')).toBeInTheDocument();
+		expect(screen.getByText(/investigate/)).toBeInTheDocument();
+	});
 });
 
 describe("ChatMessage — assistant messages", () => {

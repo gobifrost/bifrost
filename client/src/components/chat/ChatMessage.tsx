@@ -49,18 +49,19 @@ function isProgressUpdate(text: string): boolean {
 }
 
 /**
- * Convert @mentions to HTML spans for markdown rendering
- * Supports both @[Agent Name] (new) and @AgentName (legacy) formats
+ * Convert canonical agent mentions to HTML spans for markdown rendering.
+ * Bare @words are ordinary message content so email addresses are preserved.
  */
 function preprocessMentions(content: string): string {
-	// Match both formats:
-	// 1. @[Agent Name] - bracketed format (preferred)
-	// 2. @Word - single word without brackets (legacy fallback)
-	const mentionRegex = /@\[([^\]]+)\]|@(\w+)/g;
-	return content.replace(mentionRegex, (_, bracketName, wordName) => {
-		const agentName = bracketName || wordName;
+	const mentionRegex = /@\[([^\]\r\n]{1,256})\]/g;
+	return content.replace(mentionRegex, (_, agentName: string) => {
 		// Use data attribute to mark as mention for custom rendering
-		return `<span data-mention="${agentName}"></span>`;
+		const escapedName = agentName
+			.replaceAll("&", "&amp;")
+			.replaceAll('"', "&quot;")
+			.replaceAll("<", "&lt;")
+			.replaceAll(">", "&gt;");
+		return `<span data-mention="${escapedName}"></span>`;
 	});
 }
 
