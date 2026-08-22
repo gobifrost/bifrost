@@ -7,10 +7,12 @@
  * Mirrors: api/tests/e2e/api/test_organizations.py
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/api-fixture";
 
 test.describe("Organization Management", () => {
-	test("should display organizations list", async ({ page }) => {
+	test("displays the organization list with standard row actions", async ({
+		page,
+	}) => {
 		await page.goto("/organizations");
 
 		// Should see organizations page
@@ -18,41 +20,64 @@ test.describe("Organization Management", () => {
 			page.getByRole("heading", { name: /organizations/i }).first(),
 		).toBeVisible({ timeout: 10000 });
 
-		// Should see some organization content or empty state
-		const hasOrgs = (await page.locator("table tbody tr").count()) > 0;
-		const hasCards =
-			(await page.locator("[data-testid='org-card']").count()) > 0;
-		const hasContent = await page
-			.getByText(/bifrost|gobifrost|organization/i)
-			.first()
-			.isVisible()
-			.catch(() => false);
+		const organizationRow = page.locator("table tbody tr").first();
+		await expect(organizationRow).toBeVisible();
 
-		expect(hasOrgs || hasCards || hasContent).toBe(true);
+		await organizationRow.getByRole("button", { name: /actions$/ }).click();
+		await expect(
+			page.getByRole("menuitem", { name: /^Edit / }),
+		).toBeVisible();
+		await expect(
+			page.getByRole("menuitem", { name: /^Disable / }),
+		).toBeVisible();
 	});
 
-	test("should show organization details", async ({ page }) => {
-		await page.goto("/organizations");
+	test("edits status and instructions from the organization row", async ({
+		page,
+		api,
+	}) => {
+		const organizationName = `Organization UX ${Date.now()}`;
+		const createResponse = await api.post("/api/organizations", {
+			data: { name: organizationName, domain: "organization-ux.example" },
+		});
+		expect(createResponse.ok(), await createResponse.text()).toBeTruthy();
+		const organization = (await createResponse.json()) as { id: string };
 
-		// Wait for list to load
-		await expect(
-			page.getByRole("heading", { name: /organizations/i }).first(),
-		).toBeVisible({ timeout: 10000 });
+		try {
+			await page.goto("/organizations");
+			const organizationRow = page.getByRole("row", {
+				name: new RegExp(organizationName),
+			});
+			await expect(organizationRow).toBeVisible({ timeout: 10000 });
 
-		// Click on first organization
-		const orgRow = page
-			.locator(
-				"table tbody tr, [data-testid='org-row'], [data-testid='org-card']",
-			)
-			.first();
-
-		if (await orgRow.isVisible().catch(() => false)) {
-			await orgRow.click();
-
-			// Should show organization details
+			await organizationRow.click();
 			await expect(
-				page.getByText(/details|settings|members/i),
-			).toBeVisible({ timeout: 5000 });
+				page.getByRole("heading", { name: "Edit Organization" }),
+			).toBeVisible();
+			await page
+				.getByRole("switch", { name: "Organization Status" })
+				.click();
+			await page.getByRole("button", { name: "Save Changes" }).click();
+			await expect(
+				page.getByRole("heading", { name: "Edit Organization" }),
+			).toBeHidden();
+			await expect(organizationRow).toBeHidden();
+
+			await page.getByRole("switch", { name: "Show Inactive" }).click();
+			await expect(organizationRow).toBeVisible();
+			await organizationRow.click();
+			await expect(
+				page.getByRole("switch", { name: "Organization Status" }),
+			).not.toBeChecked();
+
+			await page.getByRole("tab", { name: "Instructions" }).click();
+			await expect(
+				page.getByRole("heading", {
+					name: "Organization Instructions",
+				}),
+			).toBeVisible();
+		} finally {
+			await api.delete(`/api/organizations/${organization.id}`);
 		}
 	});
 

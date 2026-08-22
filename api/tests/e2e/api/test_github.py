@@ -17,8 +17,6 @@ Tests skip gracefully if environment variables are not configured.
 
 import logging
 
-import pytest
-
 logger = logging.getLogger(__name__)
 
 
@@ -263,40 +261,3 @@ class TestGitHubAccessControl:
             headers=platform_admin.headers,
         )
         assert response.status_code in [400, 422]
-
-
-# =============================================================================
-# Create Repository Tests
-# =============================================================================
-
-
-class TestGitHubCreateRepository:
-    """Test repository creation (skipped by default as it creates real repos)."""
-
-    @pytest.mark.skip(reason="Creates real GitHub repository - run manually")
-    def test_create_repository(
-        self,
-        e2e_client,
-        platform_admin,
-        github_token_only,  # noqa: ARG002 - fixture sets up test state
-    ):
-        """Test creating a new GitHub repository."""
-        import uuid
-
-        unique_name = f"test-repo-{uuid.uuid4().hex[:8]}"
-
-        response = e2e_client.post(
-            "/api/github/create-repository",
-            json={
-                "name": unique_name,
-                "description": "Test repository created by E2E tests",
-                "private": True,
-            },
-            headers=platform_admin.headers,
-        )
-        assert response.status_code == 200
-
-        data = response.json()
-        assert "full_name" in data
-        assert "url" in data
-        assert unique_name in data["full_name"]

@@ -1,0 +1,208 @@
+name: Nightly Test Discovery
+
+on:
+  schedule:
+    - cron: "20 7 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-test-discovery
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  product-browser:
+    name: Full Product Playwright
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build API dev image (cached)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ./api/Dockerfile.dev
+          load: true
+          tags: bifrost-test-api-dev:latest
+          cache-from: type=gha,scope=test-api-dev
+          cache-to: type=gha,scope=test-api-dev,mode=max
+
+      - name: Build production client under test (cached)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: ./client
+          file: ./client/Dockerfile
+          target: production
+          load: true
+          tags: bifrost-test-client-e2e:latest
+          build-args: VITE_BIFROST_VERSION=nightly-${{ github.sha }}
+          cache-from: type=gha,scope=test-client-e2e
+          cache-to: type=gha,scope=test-client-e2e,mode=max
+
+      - name: Build Playwright runner (cached)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: ./client
+          file: ./client/Dockerfile.playwright
+          load: true
+          tags: bifrost-test-playwright:latest
+          cache-from: type=gha,scope=test-playwright
+          cache-to: type=gha,scope=test-playwright,mode=max
+
+      - name: Run full product browser suite once
+        env:
+          BIFROST_SKIP_BUILD: "1"
+          BIFROST_TEST_USE_CLEAN_BOOT: "1"
+        run: |
+          chmod +x test.sh
+          ./test.sh stack up
+          ./test.sh client nightly
+
+      - name: Export stack logs and tear down
+        if: always()
+        run: ./test.sh stack down
+
+      - name: Upload browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nightly-product-browser-${{ github.run_attempt }}
+          path: |
+            client/playwright-results
+            /tmp/bifrost-*/
+          if-no-files-found: error
+          retention-days: 21
+
+  slow-unit-contracts:
+    name: Slow Backend Contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build API dev image (cached)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ./api/Dockerfile.dev
+          load: true
+          tags: bifrost-test-api-dev:latest
+          cache-from: type=gha,scope=test-api-dev
+          cache-to: type=gha,scope=test-api-dev,mode=max
+
+      - name: Run slow backend contracts once
+        env:
+          BIFROST_SKIP_BUILD: "1"
+          BIFROST_TEST_USE_CLEAN_BOOT: "1"
+        run: |
+          chmod +x test.sh
+          ./test.sh stack up
+          ./test.sh tests/ --ignore=tests/e2e/ -m slow -v
+
+      - name: Export stack logs and tear down
+        if: always()
+        run: ./test.sh stack down
+
+      - name: Upload backend diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: nightly-slow-backend-${{ github.run_attempt }}
+          path: /tmp/bifrost-*/
+          if-no-files-found: error
+          retention-days: 21
+
+  backend-coverage:
+    name: API Unit Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build API dev image (cached)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ./api/Dockerfile.dev
+          load: true
+          tags: bifrost-test-api-dev:latest
+          cache-from: type=gha,scope=test-api-dev
+          cache-to: type=gha,scope=test-api-dev,mode=max
+
+      - name: Measure backend unit coverage
+        env:
+          BIFROST_SKIP_BUILD: "1"
+          BIFROST_TEST_USE_CLEAN_BOOT: "1"
+        run: |
+          chmod +x test.sh
+          ./test.sh stack up
+          ./test.sh unit \
+            --cov=src \
+            --cov=shared \
+            --cov=bifrost \
+            --cov-report=term \
+            --cov-report=xml:/tmp/bifrost/coverage.xml
+          coverage_file=$(find /tmp -maxdepth 2 -path '/tmp/bifrost-*/coverage.xml' -print -quit)
+          test -n "$coverage_file"
+          cp "$coverage_file" coverage.xml
+
+      - name: Export stack logs and tear down
+        if: always()
+        run: ./test.sh stack down
+
+      - name: Upload measured coverage to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          files: ./coverage.xml
+          flags: api-unit
+          name: api-unit-coverage
+          disable_search: true
+          fail_ci_if_error: true
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+  clean-production-build:
+    name: Clean Production Image Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build API production image without cache
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ./api/Dockerfile
+          load: false
+          push: false
+          no-cache: true
+          build-args: BIFROST_VERSION=nightly-${{ github.sha }}
+
+      - name: Build client production image without cache
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: ./client
+          file: ./client/Dockerfile
+          target: production
+          load: false
+          push: false
+          no-cache: true
+          build-args: VITE_BIFROST_VERSION=nightly-${{ github.sha }}

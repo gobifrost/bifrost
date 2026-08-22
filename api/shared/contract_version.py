@@ -1,17 +1,15 @@
-"""Server-side source of truth for the CLI contract version.
+"""Legacy transition marker for CLIs released without minimum-version gating.
 
-This integer is returned to the CLI at ``GET /api/version`` as
-``contract_version`` and compared against the CLI's baked-in value to decide
-whether a CLI is contract-compatible with this server.
+Version 10 is returned by ``GET /api/version`` so already-installed CLIs that
+still treat ``contract_version`` as a hard gate upgrade once into a CLI that
+honors the server's ``min_cli_version``. New CLIs ignore this value at runtime.
 
-**Bump this (and the CLI mirror in ``api/bifrost/contract_version.py``) only on
-a BREAKING change to the contract surface the CLI consumes** — a request/response
-DTO field removed/renamed/retyped, or a route the CLI calls renamed. Additive
-or cosmetic changes do NOT bump it. The tripwire in
-``tests/unit/test_contract_version.py`` forces this decision at PR time.
+Keep this marker frozen at 10. The ongoing compatibility mechanism is
+``MIN_CLI_VERSION`` in ``shared/version.py``; the contract fingerprint test is
+the development-time tripwire that prompts an explicit minimum-version decision.
 """
 
-#: Breaking-change counter for the CLI <-> server contract. See module docstring.
+#: Frozen one-release bridge for legacy CLIs. See module docstring.
 # v2: claims organization_id widened to nullable for global/solution-managed claims (2026-06-13)
 # v4: unified --org standard — SolutionCreate/SolutionBase drop `scope` (install
 #     kind is derived from organization_id); SolutionRepoPreviewRequest gains
@@ -30,11 +28,14 @@ or cosmetic changes do NOT bump it. The tripwire in
 #     standardized PlatformJobPublic contract (2026-07-28)
 # v9: PlatformJobStatus gained the waiting state used by durable parent jobs;
 #     stale CLIs cannot parse that enum value and must upgrade (2026-08-07)
-CONTRACT_VERSION: int = 9
+# v10: restore the server-controlled minimum CLI gate. The contract bump is the
+#      one-time bridge that forces CLIs shipped while min_cli_version was absent
+#      to upgrade to a build that honors the restored floor (2026-08-14).
+CONTRACT_VERSION: int = 10
 
 
 def get_contract_version() -> int:
-    """Return the server's CLI contract version.
+    """Return the server's frozen legacy bridge version.
 
     Prefer this accessor over importing the bare constant: it gives the value a
     single resolved read site (callers go through a function, not a module

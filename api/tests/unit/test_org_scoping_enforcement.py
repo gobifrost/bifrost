@@ -245,6 +245,9 @@ IDENTITY_MODELS: set[str] = {
     # looked up by id with requester/admin authorization, never name-resolved
     # through the org-to-global execution cascade.
     "PlatformJob",
+    # Artifacts are opaque file identities authorized by creator/org and
+    # workspace membership. They are never resolved through the name cascade.
+    "Artifact",
     # File policies resolve with the SAME org→global cascade-and-override as
     # OrgScopedRepository (org-specific prefix wins; fall back to the global
     # (org=NULL) prefix), so a global `shared/<prefix>` policy cascades to every

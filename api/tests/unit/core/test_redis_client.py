@@ -21,7 +21,7 @@ class TestRedisClient:
         redis.expire = AsyncMock()
         redis.blpop = AsyncMock()
         redis.setex = AsyncMock()
-        redis.close = AsyncMock()
+        redis.aclose = AsyncMock()
         return redis
 
     async def test_push_result_success(self, mock_redis):
@@ -119,7 +119,7 @@ class TestRedisClient:
 
         await client.close()
 
-        mock_redis.close.assert_called_once()
+        mock_redis.aclose.assert_called_once()
         assert client._redis is None
 
     async def test_set_workflow_metadata_cache_serializes_decimal(self, mock_redis):

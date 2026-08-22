@@ -71,6 +71,7 @@ def test_read_solution_binding_returns_none_when_org_scope_missing_org_id(
     tmp_path: Path,
 ) -> None:
     (tmp_path / ".env").write_text(
+        "BIFROST_API_URL=https://local.example\n"
         "BIFROST_SOLUTION_ID=11111111-1111-1111-1111-111111111111\n"
         "BIFROST_SOLUTION_SLUG=dispatch\n"
         "BIFROST_SOLUTION_ORG_ID=\n"
@@ -82,6 +83,7 @@ def test_read_solution_binding_returns_none_when_org_scope_missing_org_id(
 
 def test_read_solution_binding_parses_global_scope(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text(
+        "BIFROST_API_URL=https://local.example\n"
         "BIFROST_SOLUTION_ID=11111111-1111-1111-1111-111111111111\n"
         "BIFROST_SOLUTION_SLUG=dispatch\n"
         "BIFROST_SOLUTION_ORG_ID=\n"
@@ -142,7 +144,11 @@ def test_resolve_install_ref_resolves_by_unique_slug() -> None:
         {"id": "b", "slug": "expected", "organization_id": None},
     ]
 
-    binding = resolve_install_ref(installs, "expected", descriptor_slug="expected")
+    binding = resolve_install_ref(
+        installs,
+        "expected",
+        descriptor_slug="expected",
+    )
 
     assert binding.solution_id == "b"
     assert binding.slug == "expected"
@@ -156,7 +162,11 @@ def test_resolve_install_ref_prefers_id_over_slug() -> None:
         {"id": "b", "slug": "expected", "organization_id": "org-b"},
     ]
 
-    binding = resolve_install_ref(installs, "expected", descriptor_slug="descriptor")
+    binding = resolve_install_ref(
+        installs,
+        "expected",
+        descriptor_slug="descriptor",
+    )
 
     assert binding.solution_id == "expected"
     assert binding.slug == "descriptor"
@@ -169,5 +179,11 @@ def test_resolve_install_ref_rejects_ambiguous_slug() -> None:
         {"id": "a", "slug": "expected", "organization_id": "org-a"},
         {"id": "b", "slug": "expected", "organization_id": "org-b"},
     ]
-    with pytest.raises(SolutionBindingError, match="multiple installs"):
-        resolve_install_ref(installs, "expected", descriptor_slug="expected")
+    with pytest.raises(SolutionBindingError, match="multiple installs") as exc:
+        resolve_install_ref(
+            installs,
+            "expected",
+            descriptor_slug="expected",
+        )
+    assert "--solution a  (org org-a)" in str(exc.value)
+    assert "--solution b  (org org-b)" in str(exc.value)

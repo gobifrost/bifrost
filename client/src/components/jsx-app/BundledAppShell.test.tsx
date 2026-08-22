@@ -15,7 +15,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { renderWithProviders, screen, waitFor } from "@/test-utils";
+import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils";
 
 const { mockStandaloneV2App } = vi.hoisted(() => ({
 	mockStandaloneV2App: vi.fn(),
@@ -120,7 +120,11 @@ afterEach(() => {
 async function renderShell({ isPreview = true }: { isPreview?: boolean } = {}) {
 	const { BundledAppShell } = await import("./BundledAppShell");
 	return renderWithProviders(
-		<BundledAppShell appId="app-1" appSlug="my-app" isPreview={isPreview} />,
+		<BundledAppShell
+			appId="app-1"
+			appSlug="my-app"
+			isPreview={isPreview}
+		/>,
 	);
 }
 
@@ -140,9 +144,7 @@ describe("BundledAppShell — loading", () => {
 
 		await renderShell();
 
-		expect(
-			screen.getByText(/loading application/i),
-		).toBeInTheDocument();
+		expect(screen.getByText(/loading application/i)).toBeInTheDocument();
 
 		// Clean up the hanging promise so the test doesn't leak.
 		resolveFetch({
@@ -209,6 +211,40 @@ describe("BundledAppShell — websocket subscription", () => {
 });
 
 describe("BundledAppShell — app_model render branch", () => {
+	it("uses a route-prepared bundle without fetching its manifest again", async () => {
+		mockManifestOk({
+			app_model: "standalone_v2",
+			entry: "assets/main-prepared.js",
+			base_url: "/api/applications/app-prepared/dist",
+			runtime_contract: "mount-v1",
+		});
+		const { BundledAppShell, prepareAppBundle } =
+			await import("./BundledAppShell");
+		const preparation = prepareAppBundle({
+			appId: "app-prepared",
+			isPreview: false,
+		});
+		await waitFor(() => {
+			const preload = document.querySelector('link[rel="modulepreload"]');
+			expect(preload).not.toBeNull();
+			fireEvent.load(preload!);
+		});
+		await preparation;
+
+		renderWithProviders(
+			<BundledAppShell
+				appId="app-prepared"
+				appSlug="prepared"
+				isPreview={false}
+			/>,
+		);
+
+		expect(
+			await screen.findByTestId("solution-v2-app-root"),
+		).toBeInTheDocument();
+		expect(mockAuthFetch).toHaveBeenCalledTimes(1);
+	});
+
 	it("mounts the standalone v2 app same-document (no iframe) and injects auth", async () => {
 		mockManifestOk({
 			app_model: "standalone_v2",
@@ -255,7 +291,9 @@ describe("BundledAppShell — app_model render branch", () => {
 		const { rerender } = renderWithProviders(
 			<BundledAppShell appId="app-v2" appSlug="v2" isPreview />,
 		);
-		expect(await screen.findByTestId("solution-v2-app-root")).toBeInTheDocument();
+		expect(
+			await screen.findByTestId("solution-v2-app-root"),
+		).toBeInTheDocument();
 
 		// Navigate to a different, inline_v1 app: the v2 container must go away
 		// (the shell re-fetches and resets the model). The inline dynamic import
@@ -289,7 +327,9 @@ describe("BundledAppShell — app_model render branch", () => {
 		);
 
 		// Navigate to app B; B's manifest fetch is PENDING (never resolves here).
-		mockAuthFetch.mockImplementationOnce(() => new Promise<Response>(() => {}));
+		mockAuthFetch.mockImplementationOnce(
+			() => new Promise<Response>(() => {}),
+		);
 		rerender(<BundledAppShell appId="app-B" appSlug="bbb" isPreview />);
 
 		// During the pending window the stale A v2 mount must be cleared — NOT

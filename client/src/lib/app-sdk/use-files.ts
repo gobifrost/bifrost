@@ -99,6 +99,11 @@ export function useFiles(
 					void loadIfCurrent();
 				}
 			},
+			() => {
+				// Re-list after the replacement subscription is acknowledged so
+				// changes made during the disconnected window cannot stay hidden.
+				void loadIfCurrent();
+			},
 		);
 
 		return () => {

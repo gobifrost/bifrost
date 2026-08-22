@@ -129,8 +129,13 @@ def resolve_install_ref(
     if not matches:
         raise SolutionBindingError(f"No solution install found for {ref!r}")
     if len(matches) > 1:
-        ids = ", ".join(str(m.get("id")) for m in matches)
+        options = []
+        for match in matches:
+            org_id = match.get("organization_id")
+            scope = f"org {org_id}" if org_id else "global"
+            options.append(f"  --solution {match.get('id')}  ({scope})")
         raise SolutionBindingError(
-            f"Slug {ref!r} matches multiple installs ({ids}); pass an install id"
+            f"Slug {ref!r} matches multiple installs. Re-run with one of:\n"
+            + "\n".join(options)
         )
     return binding_from_install(matches[0], descriptor_slug=descriptor_slug)

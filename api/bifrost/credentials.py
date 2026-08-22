@@ -88,8 +88,8 @@ def get_config_path() -> Path:
     return get_config_dir() / "config.json"
 
 
-def _current_dotenv_values() -> tuple[Path, dict[str, str | None]] | None:
-    """Read only ``./.env`` without copying values into the process.
+def _dotenv_values_for(directory: Path) -> tuple[Path, dict[str, str | None]] | None:
+    """Read only ``.env`` in ``directory`` without changing process state.
 
     Ancestor dotenv files are ambient state, not an explicit connection choice
     for this invocation. Local-development scratch directories remain supported
@@ -100,7 +100,7 @@ def _current_dotenv_values() -> tuple[Path, dict[str, str | None]] | None:
     except ImportError:
         return None
 
-    env_path = Path.cwd() / ".env"
+    env_path = directory / ".env"
     if not env_path.is_file():
         return None
     try:
@@ -110,13 +110,21 @@ def _current_dotenv_values() -> tuple[Path, dict[str, str | None]] | None:
     return env_path, dict(values)
 
 
-def _current_dotenv_url() -> str | None:
-    snapshot = _current_dotenv_values()
+def _current_dotenv_values() -> tuple[Path, dict[str, str | None]] | None:
+    return _dotenv_values_for(Path.cwd())
+
+
+def _dotenv_url_for(directory: Path) -> str | None:
+    snapshot = _dotenv_values_for(directory)
     if snapshot is None:
         return None
     _path, values = snapshot
     api_url = str(values.get("BIFROST_API_URL") or "").rstrip("/")
     return api_url or None
+
+
+def _current_dotenv_url() -> str | None:
+    return _dotenv_url_for(Path.cwd())
 
 
 def load_dotenv_context() -> None:
@@ -135,12 +143,12 @@ def load_dotenv_context() -> None:
             os.environ.setdefault(key, value)
 
 
-def resolve_environment_url() -> str | None:
-    """Resolve only the process/current-directory URL, without stored defaults."""
+def resolve_environment_url(directory: Path | None = None) -> str | None:
+    """Resolve the process or exact-directory URL, without stored defaults."""
     process_url = os.environ.get("BIFROST_API_URL", "").rstrip("/")
     if process_url:
         return process_url
-    return _current_dotenv_url()
+    return _dotenv_url_for(directory) if directory is not None else _current_dotenv_url()
 
 
 # --------------------------------------------------------------------------- #

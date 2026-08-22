@@ -118,7 +118,7 @@ def _gateway_call(
     structured = result.get("structuredContent")
     if structured is not None:
         return structured
-    assert len(result["content"]) == 1, result
+    assert len(result.get("content", [])) == 1, result
     return json.loads(result["content"][0]["text"])
 
 

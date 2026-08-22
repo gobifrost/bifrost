@@ -160,8 +160,13 @@ class ApplicationPublic(ApplicationBase):
     )
     logo: str | None = Field(
         default=None,
-        description="Inline logo as a data URL, or null when no logo is set. Avoids an N+1 GET per card in list views.",
+        description="Inline presentation logo as a data URL on single-application responses.",
     )
+    logo_url: str | None = Field(
+        default=None,
+        description="Versioned presentation-logo URL, or null when no logo is set.",
+    )
+    logo_version: str | None = Field(default=None, description="Presentation-logo content hash.")
 
     @field_serializer("created_at", "updated_at", "published_at")
     def serialize_dt(self, dt: datetime | None) -> str | None:

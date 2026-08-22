@@ -314,9 +314,10 @@ export const tables = {
     tableId: string,
     filter: Expr | null,
     onEvent: (evt: TableChangeEvent) => void,
+    onReconnect?: () => void,
   ): () => void {
     return subscribeToTable(tableId, filter, (msg) => {
       onEvent(msg as TableChangeEvent);
-    });
+    }, onReconnect);
   },
 };

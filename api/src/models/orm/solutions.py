@@ -145,6 +145,9 @@ class Solution(Base):
     # stamped by deploy (present => set, absent => cleared).
     logo_data: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
     logo_content_type: Mapped[str | None] = mapped_column(String(100), default=None)
+    logo_thumbnail_data: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
+    logo_thumbnail_content_type: Mapped[str | None] = mapped_column(String(50), default=None)
+    logo_thumbnail_version: Mapped[str | None] = mapped_column(String(64), default=None)
 
     # Long-form README markdown (Task 6). Rendered on the solution's README tab.
     # Synced from the bundle's README file by deploy; portable, carries no secrets.

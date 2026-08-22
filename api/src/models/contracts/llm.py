@@ -8,17 +8,30 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from src.models.contracts.artifacts import ModelCapabilities
+
 
 class LLMConfigResponse(BaseModel):
     """LLM configuration response (API key is never returned)."""
 
-    provider: Literal["openai", "anthropic"]
+    provider: Literal["openai", "anthropic", "google"]
     model: str
     endpoint: str | None = None
     max_tokens: int = 16384
     default_system_prompt: str | None = None
     summarization_model: str | None = None
     tuning_model: str | None = None
+    image_generation_model: str | None = None
+    video_generation_model: str | None = None
+    chat_fast_label: str = "Fast"
+    chat_fast_model: str | None = None
+    chat_balanced_label: str = "Balanced"
+    chat_balanced_model: str | None = None
+    chat_pro_label: str = "Pro"
+    chat_pro_model: str | None = None
+    chat_fast_capabilities: ModelCapabilities | None = None
+    chat_balanced_capabilities: ModelCapabilities | None = None
+    chat_pro_capabilities: ModelCapabilities | None = None
     is_configured: bool = True
     api_key_set: bool = False
 
@@ -26,14 +39,14 @@ class LLMConfigResponse(BaseModel):
 class LLMConfigRequest(BaseModel):
     """Request to set LLM configuration."""
 
-    provider: Literal["openai", "anthropic"] = Field(
+    provider: Literal["openai", "anthropic", "google"] = Field(
         ...,
         description="LLM provider type",
     )
     model: str = Field(
         ...,
         min_length=1,
-        description="Model identifier (e.g., 'gpt-4o', 'claude-sonnet-4-20250514')",
+        description="Model identifier (for example 'gpt-4o', 'claude-sonnet-4-20250514', or 'gemini-2.5-flash')",
     )
     api_key: str | None = Field(
         None,
@@ -61,12 +74,38 @@ class LLMConfigRequest(BaseModel):
         default=None,
         description="Model override for tuning chat + dry-run. Falls back to primary model if unset.",
     )
+    image_generation_model: str | None = Field(
+        default=None,
+        description="Optional dedicated model for image generation.",
+    )
+    video_generation_model: str | None = Field(
+        default=None,
+        description="Optional dedicated model for video generation.",
+    )
+    chat_fast_label: str = Field(default="Fast", min_length=1, max_length=30)
+    chat_fast_model: str | None = Field(
+        default=None,
+        description="Optional model exposed as the Fast Chat tier.",
+    )
+    chat_balanced_label: str = Field(default="Balanced", min_length=1, max_length=30)
+    chat_balanced_model: str | None = Field(
+        default=None,
+        description="Optional Balanced model; the primary model is used when unset.",
+    )
+    chat_pro_label: str = Field(default="Pro", min_length=1, max_length=30)
+    chat_pro_model: str | None = Field(
+        default=None,
+        description="Optional model exposed as the Pro Chat tier.",
+    )
+    chat_fast_capabilities: ModelCapabilities | None = None
+    chat_balanced_capabilities: ModelCapabilities | None = None
+    chat_pro_capabilities: ModelCapabilities | None = None
 
 
 class LLMTestRequest(BaseModel):
     """Request to test LLM configuration before saving."""
 
-    provider: Literal["openai", "anthropic"] = Field(
+    provider: Literal["openai", "anthropic", "google"] = Field(
         ...,
         description="LLM provider type",
     )
@@ -91,6 +130,7 @@ class LLMModelInfo(BaseModel):
 
     id: str
     display_name: str
+    output_modalities: list[str] | None = None
 
 
 class LLMTestResponse(BaseModel):

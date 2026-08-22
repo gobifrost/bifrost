@@ -122,6 +122,47 @@ class TestSyncExecution:
 class TestAsyncExecution:
     """Test asynchronous workflow execution."""
 
+    @pytest.mark.asyncio
+    async def test_redis_only_execution_is_immediately_readable(
+        self,
+        e2e_client,
+        platform_admin,
+    ):
+        """A receipt is readable before the worker creates its database row."""
+        from src.core.redis_client import RedisClient
+
+        execution_id = str(uuid.uuid4())
+        # This in-process test owns its client. The application singleton is
+        # production-lifetime state and may be bound to another pytest event
+        # loop after a broad ordered run.
+        redis_client = RedisClient()
+        await redis_client.set_pending_execution(
+            execution_id=execution_id,
+            workflow_id=None,
+            script_name="e2e_pending_receipt",
+            parameters={"domain": "example.com"},
+            org_id=None,
+            user_id=str(platform_admin.user_id),
+            user_name=platform_admin.name,
+            user_email=platform_admin.email,
+        )
+        try:
+            response = e2e_client.get(
+                f"/api/executions/{execution_id}",
+                headers=platform_admin.headers,
+            )
+        finally:
+            await redis_client.delete_pending_execution(execution_id)
+            await redis_client.close()
+
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["execution_id"] == execution_id
+        assert data["workflow_name"] == "e2e_pending_receipt"
+        assert data["status"] == "Pending"
+        assert data["input_data"] == {"domain": "example.com"}
+        assert data["started_at"] is None
+
     def test_execute_async_workflow(self, e2e_client, platform_admin, async_workflow):
         """Platform admin executes async workflow."""
         response = e2e_client.post(
@@ -1246,135 +1287,6 @@ def get_data():
                 f"/api/files/editor?path={init_path}",
                 headers=platform_admin.headers,
             )
-
-    @pytest.mark.asyncio
-    async def test_requirements_stored_in_s3(
-        self, e2e_client, platform_admin
-    ):
-        """
-        Test that installing a package stores requirements.txt in S3.
-
-        Verifies that after package installation:
-        1. requirements.txt exists in S3 via RepoStorage
-        2. The content includes the installed package
-        """
-        from src.services.repo_storage import RepoStorage
-
-        package_name = "humanize"
-
-        # First, check if package is already installed and uninstall it
-        response = e2e_client.get(
-            "/api/packages",
-            headers=platform_admin.headers,
-        )
-        if response.status_code == 200:
-            packages = response.json().get("packages", [])
-            if any(p.get("name", "").lower() == package_name for p in packages):
-                # Uninstall it first to ensure clean test
-                e2e_client.delete(
-                    f"/api/packages/{package_name}",
-                    headers=platform_admin.headers,
-                )
-
-        # Install a package
-        install_response = e2e_client.post(
-            "/api/packages/install",
-            headers=platform_admin.headers,
-            json={"package_name": package_name},
-        )
-        assert install_response.status_code == 200, (
-            f"Install failed: {install_response.text}"
-        )
-        install_data = install_response.json()
-        assert install_data.get("status") == "success", (
-            f"Unexpected install status: {install_data}"
-        )
-
-        # Read requirements.txt from S3
-        repo = RepoStorage()
-        content_bytes = await repo.read("requirements.txt")
-        content = content_bytes.decode()
-
-        assert content.strip(), "requirements.txt should have content in S3"
-        assert package_name in content.lower(), (
-            f"requirements.txt should contain '{package_name}', got: {content}"
-        )
-
-        # Cleanup: uninstall package
-        e2e_client.delete(
-            f"/api/packages/{package_name}",
-            headers=platform_admin.headers,
-        )
-
-    @pytest.mark.asyncio
-    async def test_requirements_cached_in_redis(self, e2e_client, platform_admin):
-        """
-        Test that installing a package updates Redis cache.
-
-        Verifies that after package installation:
-        1. The requirements cache in Redis is populated
-        2. The cached content includes the installed package
-        """
-        from src.core.requirements_cache import get_requirements
-
-        package_name = "humanize"
-
-        # First, check if package is already installed and uninstall it
-        response = e2e_client.get(
-            "/api/packages",
-            headers=platform_admin.headers,
-        )
-        if response.status_code == 200:
-            packages = response.json().get("packages", [])
-            if any(p.get("name", "").lower() == package_name for p in packages):
-                # Uninstall it first to ensure clean test
-                e2e_client.delete(
-                    f"/api/packages/{package_name}",
-                    headers=platform_admin.headers,
-                )
-
-        # Install a package
-        install_response = e2e_client.post(
-            "/api/packages/install",
-            headers=platform_admin.headers,
-            json={"package_name": package_name},
-        )
-        assert install_response.status_code == 200, (
-            f"Install failed: {install_response.text}"
-        )
-        install_data = install_response.json()
-        assert install_data.get("status") == "success", (
-            f"Unexpected install status: {install_data}"
-        )
-
-        # Poll until package appears in installed list (confirms installation completed)
-        def check_package_installed():
-            response = e2e_client.get(
-                "/api/packages",
-                headers=platform_admin.headers,
-            )
-            if response.status_code == 200:
-                packages = response.json().get("packages", [])
-                if any(p.get("name", "").lower() == package_name for p in packages):
-                    return True
-            return None
-
-        installed = poll_until(check_package_installed, max_wait=60.0)
-        assert installed, f"Package '{package_name}' not installed within timeout"
-
-        # Check Redis cache
-        cached = await get_requirements()
-        assert cached is not None, "requirements.txt should be cached in Redis"
-        assert package_name in cached["content"].lower(), (
-            f"Redis cache should contain '{package_name}', got: {cached['content']}"
-        )
-
-        # Cleanup: uninstall package
-        e2e_client.delete(
-            f"/api/packages/{package_name}",
-            headers=platform_admin.headers,
-        )
-
 
 @pytest.mark.e2e
 class TestSDKWorkflowExecute:

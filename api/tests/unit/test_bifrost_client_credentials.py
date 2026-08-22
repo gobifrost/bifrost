@@ -90,6 +90,61 @@ def test_get_instance_uses_persistent_tuple_for_url_only_process_override(
     client._sync_http.close()
 
 
+def test_get_instance_explicit_url_ignores_stale_default_profile(
+    isolated_credentials,
+) -> None:
+    from bifrost import client as client_mod
+
+    isolated_credentials.save_credentials(
+        "https://musick.example",
+        "stale-default-token",
+        "stale-default-refresh",
+        "2099-01-01T00:00:00+00:00",
+    )
+    isolated_credentials.save_credentials(
+        "https://local.example",
+        "local-token",
+        "local-refresh",
+        "2099-01-01T00:00:00+00:00",
+    )
+    isolated_credentials.set_default_connection("https://musick.example")
+
+    client = client_mod.BifrostClient.get_instance(
+        require_auth=True,
+        api_url="https://local.example/",
+    )
+
+    assert client.api_url == "https://local.example"
+    assert client._access_token == "local-token"
+    client._sync_http.close()
+
+
+def test_get_instance_explicit_url_replaces_cached_client_from_other_instance(
+    isolated_credentials,
+) -> None:
+    from bifrost import client as client_mod
+
+    isolated_credentials.save_credentials(
+        "https://local.example",
+        "local-token",
+        "local-refresh",
+        "2099-01-01T00:00:00+00:00",
+    )
+    stale = client_mod.BifrostClient("https://musick.example", "stale-token")
+    client_mod._thread_local.bifrost_client = stale
+
+    local = client_mod.BifrostClient.get_instance(
+        require_auth=True,
+        api_url="https://local.example",
+    )
+
+    assert local is not stale
+    assert local.api_url == "https://local.example"
+    assert local._access_token == "local-token"
+    stale._sync_http.close()
+    local._sync_http.close()
+
+
 @pytest.mark.asyncio
 async def test_get_instance_refreshes_expired_credentials_inside_running_loop(
     isolated_credentials, monkeypatch

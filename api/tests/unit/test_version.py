@@ -38,3 +38,9 @@ def test_get_version_accepts_semver_dev_format(monkeypatch):
     monkeypatch.setenv("BIFROST_VERSION", "0.8.1-dev.47")
     v = _reload_version()
     assert v.get_version() == "0.8.1-dev.47"
+
+
+def test_min_cli_version_is_release_floor():
+    import shared.version as version
+
+    assert version.MIN_CLI_VERSION == "1.2.2"

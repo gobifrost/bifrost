@@ -19,6 +19,7 @@ from sqlalchemy.orm import selectinload
 
 from src.core.org_filter import OrgFilterType
 from src.models.orm.agents import Agent
+from src.models.orm.agent_runs import AgentRun
 from src.models.orm.executions import Execution
 from src.models.orm.external_mcp import MCPConnection, MCPServer
 from src.repositories.agents import AgentRepository
@@ -98,6 +99,8 @@ class ResolvedGatewayTool:
             "name": self.definition.name,
             "description": self.definition.description,
             "source": self.source,
+            "supports_async": self.source in {"workflow", "delegation"},
+            "default_async": self.source == "delegation",
         }
 
 
@@ -459,6 +462,8 @@ class MCPAgentGatewayService:
             "name": tool.definition.name,
             "description": _compact_description(tool.definition.description) or "",
             "source": tool.source,
+            "supports_async": tool.source in {"workflow", "delegation"},
+            "default_async": tool.source == "delegation",
             "input_schema": None,
             "schema_included": False,
         }
@@ -558,7 +563,7 @@ class MCPAgentGatewayService:
         tool_ref: str,
         arguments: dict[str, Any],
         *,
-        async_execution: bool = False,
+        async_execution: bool | None = None,
     ) -> dict[str, Any]:
         """Re-resolve, validate, and execute an agent-bound tool."""
         snapshot = await self.get_agent_snapshot(agent_id)
@@ -595,6 +600,12 @@ class MCPAgentGatewayService:
                 select(Execution).where(Execution.id == parsed_execution_id)
             )
             execution = result.scalar_one_or_none()
+            agent_run = None
+            if execution is None:
+                agent_result = await db.execute(
+                    select(AgentRun).where(AgentRun.id == parsed_execution_id)
+                )
+                agent_run = agent_result.scalar_one_or_none()
 
         if execution is not None:
             if (
@@ -617,10 +628,13 @@ class MCPAgentGatewayService:
                 )
             return {
                 "execution_id": str(execution.id),
+                "execution_type": "workflow",
                 "workflow_id": (
                     str(execution.workflow_id) if execution.workflow_id else None
                 ),
                 "workflow_name": execution.workflow_name,
+                "agent_id": None,
+                "agent_name": None,
                 "status": execution.status.value,
                 "created_at": execution.created_at,
                 "started_at": execution.started_at,
@@ -632,24 +646,97 @@ class MCPAgentGatewayService:
                 "result_page": result_page,
             }
 
+        if agent_run is not None:
+            if (
+                not self.context.is_platform_admin
+                and agent_run.caller_user_id != str(self.context.user_id)
+            ):
+                raise GatewayError(
+                    "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
+                    "Execution not found or you do not have access.",
+                )
+            result_available = agent_run.output is not None
+            result_value = None
+            result_page = None
+            if result_available:
+                result_value, result_page = self._page_execution_result(
+                    agent_run.output,
+                    result_path=result_path,
+                    offset=offset,
+                    limit=limit,
+                )
+            return {
+                "execution_id": str(agent_run.id),
+                "execution_type": "agent_run",
+                "workflow_id": None,
+                "workflow_name": None,
+                "agent_id": str(agent_run.agent_id),
+                "agent_name": agent_run.agent.name if agent_run.agent else None,
+                "status": self._agent_run_gateway_status(agent_run.status),
+                "created_at": agent_run.created_at,
+                "started_at": agent_run.started_at,
+                "completed_at": agent_run.completed_at,
+                "duration_ms": agent_run.duration_ms,
+                "error": agent_run.error,
+                "result_available": result_available,
+                "result": result_value,
+                "result_page": result_page,
+            }
+
         pending = await get_redis_client().get_pending_execution(execution_id)
-        if pending is None or (
+        if pending is not None:
+            if (
+                not self.context.is_platform_admin
+                and pending.get("user_id") != str(self.context.user_id)
+            ):
+                raise GatewayError(
+                    "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
+                    "Execution not found or you do not have access.",
+                )
+            created_at = pending.get("created_at")
+            return {
+                "execution_id": execution_id,
+                "execution_type": "workflow",
+                "workflow_id": pending.get("workflow_id"),
+                "workflow_name": pending.get("script_name"),
+                "agent_id": None,
+                "agent_name": None,
+                "status": "Pending",
+                "created_at": (
+                    datetime.fromisoformat(created_at) if created_at else None
+                ),
+                "started_at": None,
+                "completed_at": None,
+                "duration_ms": None,
+                "error": None,
+                "result_available": False,
+                "result": None,
+                "result_page": None,
+            }
+
+        from src.services.execution.agent_run_service import (
+            get_pending_agent_run_context,
+        )
+
+        pending_agent_run = await get_pending_agent_run_context(execution_id)
+        if pending_agent_run is None or (
             not self.context.is_platform_admin
-            and pending.get("user_id") != str(self.context.user_id)
+            and pending_agent_run.get("caller", {}).get("user_id")
+            != str(self.context.user_id)
         ):
             raise GatewayError(
                 "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
                 "Execution not found or you do not have access.",
             )
-        created_at = pending.get("created_at")
         return {
             "execution_id": execution_id,
-            "workflow_id": pending.get("workflow_id"),
-            "workflow_name": pending.get("script_name"),
+            "execution_type": "agent_run",
+            "workflow_id": None,
+            "workflow_name": None,
+            "agent_id": pending_agent_run.get("agent_id"),
+            "agent_name": None,
             "status": "Pending",
-            "created_at": (
-                datetime.fromisoformat(created_at) if created_at else None
-            ),
+            "created_at": None,
             "started_at": None,
             "completed_at": None,
             "duration_ms": None,
@@ -658,6 +745,20 @@ class MCPAgentGatewayService:
             "result": None,
             "result_page": None,
         }
+
+    @staticmethod
+    def _agent_run_gateway_status(status: str) -> str:
+        """Normalize agent-run states to the gateway execution vocabulary."""
+        return {
+            "queued": "Pending",
+            "running": "Running",
+            "completed": "Success",
+            "failed": "Failed",
+            "timeout": "Timeout",
+            "cancelled": "Cancelled",
+            "budget_exceeded": "BudgetExceeded",
+            "paused": "Paused",
+        }.get(status, status)
 
     @classmethod
     def _page_execution_result(
@@ -955,23 +1056,28 @@ class MCPAgentGatewayService:
         tool: ResolvedGatewayTool,
         arguments: dict[str, Any],
         *,
-        async_execution: bool = False,
+        async_execution: bool | None = None,
     ) -> dict[str, Any]:
         started = time.monotonic()
+        resolved_async = (
+            tool.source == "delegation"
+            if async_execution is None
+            else async_execution
+        )
 
         try:
             self.validate_arguments(tool, arguments)
-            if async_execution and tool.source != "workflow":
+            if resolved_async and tool.source not in {"workflow", "delegation"}:
                 raise GatewayError(
                     "ASYNC_NOT_SUPPORTED",
-                    "Async execution is currently supported only for workflow tools.",
+                    "Async execution is supported only for workflow and delegation tools.",
                     retryable=True,
                 )
             result = await self._dispatch(
                 snapshot.agent,
                 tool,
                 arguments,
-                async_execution=async_execution,
+                async_execution=resolved_async,
             )
         except GatewayError as exc:
             duration_ms = int((time.monotonic() - started) * 1000)
@@ -1025,13 +1131,15 @@ class MCPAgentGatewayService:
             "tool_name": tool.definition.name,
             "source": tool.source,
             "duration_ms": duration_ms,
-            "async": async_execution,
+            "async": resolved_async,
             "execution_id": None,
+            "execution_type": None,
             "status": None,
             "result": result,
         }
-        if async_execution:
+        if resolved_async:
             response["execution_id"] = result["execution_id"]
+            response["execution_type"] = result["execution_type"]
             response["status"] = result["status"]
             response["result"] = None
         return response
@@ -1053,7 +1161,12 @@ class MCPAgentGatewayService:
                 async_execution=async_execution,
             )
         if tool.source == "delegation":
-            return await self._dispatch_delegation(agent, tool, arguments)
+            return await self._dispatch_delegation(
+                agent,
+                tool,
+                arguments,
+                async_execution=async_execution,
+            )
         if tool.source == "external_mcp":
             return await self._dispatch_external_mcp(tool, arguments)
         raise GatewayError(
@@ -1142,6 +1255,7 @@ class MCPAgentGatewayService:
         if async_execution:
             return {
                 "execution_id": response.execution_id,
+                "execution_type": "workflow",
                 "status": response.status.value,
             }
         if response.status.value != "Success":
@@ -1157,11 +1271,13 @@ class MCPAgentGatewayService:
         agent: Agent,
         tool: ResolvedGatewayTool,
         arguments: dict[str, Any],
+        *,
+        async_execution: bool = False,
     ) -> Any:
-        from src.core.cache import get_shared_redis
-        from src.core.database import get_db_context, get_session_factory
-        from src.services.execution.autonomous_agent_executor import (
-            AutonomousAgentExecutor,
+        from src.core.database import get_db_context
+        from src.services.execution.agent_run_service import (
+            enqueue_agent_run,
+            wait_for_agent_run_result,
         )
 
         if tool.source_id is None:
@@ -1192,20 +1308,43 @@ class MCPAgentGatewayService:
                 retryable=True,
             )
 
-        executor = AutonomousAgentExecutor(
-            get_session_factory(),
-            redis_client=await get_shared_redis(),
-        )
-        result = await executor.run(
-            agent=delegated,
+        run_id = await enqueue_agent_run(
+            agent_id=str(delegated.id),
+            trigger_type="delegation",
+            trigger_source=f"mcp_gateway:{agent.id}",
             input_data={"task": task, "_delegated_from": agent.name},
-            _caller={"user_id": str(self.context.user_id)},
+            org_id=(
+                str(delegated.organization_id)
+                if delegated.organization_id
+                else None
+            ),
+            caller_user_id=str(self.context.user_id),
+            caller_email=self.context.user_email,
+            caller_name=self.context.user_name,
+            sync=not async_execution,
         )
+        if async_execution:
+            return {
+                "execution_id": run_id,
+                "execution_type": "agent_run",
+                "status": "Pending",
+            }
+
+        result = await wait_for_agent_run_result(
+            run_id,
+            timeout=delegated.max_run_timeout or 1800,
+        )
+        if result is None:
+            raise GatewayError(
+                "TOOL_EXECUTION_FAILED",
+                "Delegated agent execution timed out while waiting for a result.",
+                details={"execution_id": run_id},
+            )
         if result.get("status") == "failed":
             raise GatewayError(
                 "TOOL_EXECUTION_FAILED",
                 str(result.get("error") or "Delegated agent execution failed."),
-                details={"underlying_result": result},
+                details={"execution_id": run_id, "underlying_result": result},
             )
         return result
 

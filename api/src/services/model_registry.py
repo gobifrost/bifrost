@@ -43,7 +43,7 @@ async def get_display_name(
 
     Args:
         redis_client: Redis connection
-        provider: LLM provider ("openai" or "anthropic")
+        provider: LLM provider ("openai", "anthropic", or "google")
         model_id: Versioned model ID from API response
         api_key: Provider API key (used to refresh cache on miss)
 
@@ -88,7 +88,7 @@ async def cache_model_mapping(
 
     Args:
         redis_client: Redis connection
-        provider: LLM provider ("openai" or "anthropic")
+        provider: LLM provider ("openai", "anthropic", or "google")
         mapping: Dictionary mapping model IDs to display names
     """
     if not mapping:
@@ -113,7 +113,7 @@ async def refresh_model_registry(
 
     Args:
         redis_client: Redis connection
-        provider: LLM provider ("openai" or "anthropic")
+        provider: LLM provider ("openai", "anthropic", or "google")
         api_key: Provider API key
 
     Returns:
@@ -149,7 +149,7 @@ async def invalidate_model_registry(
             await redis_client.delete(cache_key)
         else:
             # Invalidate all providers
-            for p in ["openai", "anthropic"]:
+            for p in ["openai", "anthropic", "google"]:
                 cache_key = f"{MODEL_REGISTRY_KEY_PREFIX}{p}"
                 await redis_client.delete(cache_key)
     except Exception as e:
@@ -161,7 +161,7 @@ async def _fetch_model_mapping(provider: str, api_key: str) -> dict[str, str]:
     Fetch model ID -> display name mapping from provider API.
 
     Args:
-        provider: LLM provider ("openai" or "anthropic")
+        provider: LLM provider ("openai", "anthropic", or "google")
         api_key: Provider API key
 
     Returns:
@@ -171,9 +171,29 @@ async def _fetch_model_mapping(provider: str, api_key: str) -> dict[str, str]:
         return await _fetch_anthropic_models(api_key)
     elif provider == "openai":
         return await _fetch_openai_models(api_key)
+    elif provider == "google":
+        return await _fetch_google_models(api_key)
     else:
         logger.warning(f"Unknown provider: {provider}")
         return {}
+
+
+async def _fetch_google_models(api_key: str) -> dict[str, str]:
+    """Fetch the Gemini Developer API model list."""
+    from google import genai
+
+    client = genai.Client(api_key=api_key)
+    try:
+        pager = await client.aio.models.list(config={"page_size": 100})
+        return {
+            (item.name or "").removeprefix("models/"): (
+                item.display_name or item.name or "Unknown model"
+            )
+            for item in pager.page
+            if item.name
+        }
+    finally:
+        await client.aio.aclose()
 
 
 async def _fetch_anthropic_models(api_key: str) -> dict[str, str]:

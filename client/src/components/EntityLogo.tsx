@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+
 import { useEntityLogoVersion } from "./entityLogoVersions";
 
 export type EntityLogoProps = {
@@ -9,11 +10,9 @@ export type EntityLogoProps = {
 	cacheKey?: string;
 	className?: string;
 	/**
-	 * Inline logo (data URL) from the list/detail response. When provided as a
-	 * string, renders directly — no extra GET. When explicitly `null`, renders
-	 * the fallback without hitting the per-entity endpoint. When `undefined`,
-	 * falls back to fetching /api/{type}/{id}/logo (preserves the upload
-	 * dialog's live-preview behavior).
+	 * Logo source from the list/detail response. A string is rendered directly,
+	 * null means there is no logo, and undefined retains the endpoint behavior
+	 * used by upload surfaces.
 	 */
 	logo?: string | null;
 };
@@ -33,45 +32,38 @@ export function EntityLogo({
 	className,
 	logo,
 }: EntityLogoProps) {
-	const [erroredVersion, setErroredVersion] = useState<string | null>(null);
+	const [erroredSource, setErroredSource] = useState<string | null>(null);
+	const [loadedSource, setLoadedSource] = useState<string | null>(null);
 	const globalVersion = useEntityLogoVersion(entityType, entityId);
-
-	if (logo === null) {
-		return <>{fallback}</>;
-	}
-
-	if (typeof logo === "string") {
-		return (
-			<img
-				data-testid="entity-logo"
-				src={logo}
-				alt=""
-				width={size}
-				height={size}
-				className={className}
-			/>
-		);
-	}
-
 	const base = `${PATHS[entityType]}/${entityId}/logo`;
 	const effectiveKey = cacheKey ?? globalVersion?.toString() ?? null;
-	const src = effectiveKey
+	const endpointSource = effectiveKey
 		? `${base}?v=${encodeURIComponent(effectiveKey)}`
 		: base;
-
-	if (erroredVersion !== null && erroredVersion === (effectiveKey ?? "")) {
-		return <>{fallback}</>;
-	}
+	const src = logo === null ? null : (logo ?? endpointSource);
+	const hasUsableSource = src !== null && erroredSource !== src;
+	const imageLoaded = src !== null && loadedSource === src;
 
 	return (
-		<img
-			data-testid="entity-logo"
-			src={src}
-			alt=""
-			width={size}
-			height={size}
-			className={className}
-			onError={() => setErroredVersion(effectiveKey ?? "")}
-		/>
+		<span
+			className={`relative inline-grid place-items-center overflow-hidden ${className ?? ""}`}
+			style={{ width: size, height: size }}
+		>
+			<span className="absolute inset-0 grid place-items-center">
+				{fallback}
+			</span>
+			{hasUsableSource ? (
+				<img
+					data-testid="entity-logo"
+					src={src}
+					alt=""
+					width={size}
+					height={size}
+					className={`absolute inset-0 h-full w-full object-cover transition-opacity duration-150 motion-reduce:transition-none ${imageLoaded ? "opacity-100" : "opacity-0"}`}
+					onLoad={() => setLoadedSource(src)}
+					onError={() => setErroredSource(src)}
+				/>
+			) : null}
+		</span>
 	);
 }

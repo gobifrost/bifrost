@@ -4,10 +4,12 @@ declarations paired with whether each has a value set (admin only)."""
 from __future__ import annotations
 
 import base64
+import io
 import uuid
 from uuid import UUID
 
 import pytest
+from PIL import Image
 
 from src.models.orm.solution_file_location import SolutionFileLocation
 from src.services.solutions.deploy import solution_entity_id
@@ -22,13 +24,9 @@ async def _declare_file_location(db_session, solution_id: str, location: str) ->
     )
     await db_session.commit()
 
-CLEAN_PNG = (
-    b"\x89PNG\r\n\x1a\n"
-    b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
-    b"\x08\x06\x00\x00\x00\x1f\x15\xc4\x89"
-    b"\x00\x00\x00\rIDATx\x9cc\xfa\xcf\x00\x00\x00\x02\x00\x01\xe5'\xde\xfc"
-    b"\x00\x00\x00\x00IEND\xaeB`\x82"
-)
+_png_buffer = io.BytesIO()
+Image.new("RGBA", (1, 1), (255, 0, 0, 255)).save(_png_buffer, "PNG")
+CLEAN_PNG = _png_buffer.getvalue()
 
 
 def _create_solution(e2e_client, headers, slug: str) -> str:
@@ -144,8 +142,9 @@ async def test_get_solution_entities_includes_app_logo(e2e_client, platform_admi
     solution_app = next(
         item for item in entities.json()["apps"] if item["id"] == app["id"]
     )
-    assert solution_app["logo"] == (
-        "data:image/png;base64," + base64.b64encode(CLEAN_PNG).decode("ascii")
+    assert solution_app["logo"] is None
+    assert solution_app["logo_url"].startswith(
+        f"/api/applications/{app['id']}/logo?v="
     )
 
 

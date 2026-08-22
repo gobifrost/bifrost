@@ -204,8 +204,7 @@ async def e2e_ws_exec_workflow(message: str = "test"):
         execution_workflow,
     ):
         """Subscribe to execution channel and receive updates."""
-        if not execution_workflow["id"]:
-            pytest.skip("Could not create execution workflow")
+        assert execution_workflow["id"], "execution workflow fixture returned no id"
 
         # Execute the workflow first
         exec_response = e2e_client.post(
@@ -217,14 +216,14 @@ async def e2e_ws_exec_workflow(message: str = "test"):
             },
         )
 
-        if exec_response.status_code not in [200, 201]:
-            pytest.skip(f"Failed to execute workflow: {exec_response.text}")
+        assert exec_response.status_code in [200, 201], (
+            f"Failed to execute workflow: {exec_response.text}"
+        )
 
         exec_data = exec_response.json()
         execution_id = exec_data.get("id") or exec_data.get("execution_id")
 
-        if not execution_id:
-            pytest.skip("No execution ID returned")
+        assert execution_id, f"Execution response returned no id: {exec_data}"
 
         ws_url = f"{e2e_ws_url}/ws/connect"
         extra_headers = {"Authorization": f"Bearer {platform_admin.access_token}"}

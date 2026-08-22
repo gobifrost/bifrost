@@ -6,8 +6,13 @@ Requires LLM configuration to be set for message sending tests.
 """
 
 import logging
+from uuid import UUID, uuid4
 
 import pytest
+
+from src.models.enums import MessageRole
+from src.models.orm import Conversation, Message
+from src.services.chat_attachments import ChatAttachmentService
 
 logger = logging.getLogger(__name__)
 
@@ -151,6 +156,197 @@ class TestConversationsCRUD:
         assert response.status_code == 200
         conv_ids = [c["id"] for c in response.json()]
         assert test_conversation["id"] not in conv_ids
+
+
+class TestChatAttachments:
+    """Files can be uploaded, previewed, downloaded, and remain owner-scoped."""
+
+    def test_attachment_upload_and_content_access(
+        self,
+        e2e_client,
+        platform_admin,
+        org1_user,
+        test_conversation,
+    ):
+        auth_headers = {"Authorization": platform_admin.headers["Authorization"]}
+        upload = e2e_client.post(
+            f"/api/chat/conversations/{test_conversation['id']}/attachments",
+            files=[("files", ("notes.txt", b"attachment preview", "text/plain"))],
+            headers=auth_headers,
+        )
+        assert upload.status_code == 200, upload.text
+        attachment = upload.json()["attachments"][0]
+        assert attachment["filename"] == "notes.txt"
+        assert attachment["content_type"] == "text/plain"
+
+        content_url = (
+            f"/api/chat/conversations/{test_conversation['id']}"
+            f"/attachments/{attachment['id']}/content"
+        )
+        preview = e2e_client.get(content_url, headers=platform_admin.headers)
+        assert preview.status_code == 200
+        assert preview.content == b"attachment preview"
+        assert preview.headers["content-disposition"].startswith("inline;")
+
+        download = e2e_client.get(
+            f"{content_url}?download=true", headers=platform_admin.headers
+        )
+        assert download.status_code == 200
+        assert download.headers["content-disposition"].startswith("attachment;")
+
+        forbidden = e2e_client.get(content_url, headers=org1_user.headers)
+        assert forbidden.status_code == 404
+
+        discard = e2e_client.delete(
+            f"/api/chat/conversations/{test_conversation['id']}"
+            f"/attachments/{attachment['id']}",
+            headers=platform_admin.headers,
+        )
+        assert discard.status_code == 204
+        missing = e2e_client.get(content_url, headers=platform_admin.headers)
+        assert missing.status_code == 404
+
+    def test_sdk_document_artifact_returns_readable_opaque_reference(
+        self,
+        e2e_client,
+        platform_admin,
+    ):
+        response = e2e_client.post(
+            "/api/sdk/artifacts/document",
+            json={
+                "filename": "e2e-brief",
+                "format": "pdf",
+                "title": "E2E brief",
+                "sections": [
+                    {
+                        "heading": "Decision",
+                        "paragraphs": ["Ship the artifact path."],
+                    }
+                ],
+            },
+            headers=platform_admin.headers,
+        )
+
+        assert response.status_code == 200, response.text
+        artifact = response.json()
+        assert artifact["type"] == "bifrost_artifact"
+        assert artifact["id"]
+        assert artifact["filename"] == "E2E Brief.pdf"
+        assert artifact["content_type"] == "application/pdf"
+        assert "path" not in artifact
+        assert "location" not in artifact
+
+        content = e2e_client.get(
+            f"/api/sdk/artifacts/{artifact['id']}/content",
+            headers=platform_admin.headers,
+        )
+        assert content.status_code == 200, content.text
+        assert content.content.startswith(b"%PDF-")
+
+        library = e2e_client.get("/api/chat/artifacts", headers=platform_admin.headers)
+        listed = next(item for item in library.json() if item["id"] == artifact["id"])
+        assert listed["conversation_id"] is None
+
+    def test_sdk_can_store_and_read_workflow_produced_bytes(
+        self,
+        e2e_client,
+        platform_admin,
+    ):
+        upload_headers = {
+            key: value
+            for key, value in platform_admin.headers.items()
+            if key.lower() != "content-type"
+        }
+        workspace_id = uuid4()
+        stored = e2e_client.post(
+            f"/api/sdk/artifacts?workspace_id={workspace_id}",
+            files={"file": ("Workflow Notes.md", b"# Ready", "text/markdown")},
+            headers=upload_headers,
+        )
+
+        assert stored.status_code == 200, stored.text
+        ref = stored.json()
+        assert ref == {
+            "type": "bifrost_artifact",
+            "id": ref["id"],
+            "filename": "Workflow Notes.md",
+            "content_type": "text/markdown",
+            "size_bytes": 7,
+        }
+        content = e2e_client.get(
+            f"/api/sdk/artifacts/{ref['id']}/content",
+            headers=platform_admin.headers,
+        )
+        assert content.content == b"# Ready"
+        workspace = e2e_client.get(
+            f"/api/sdk/artifacts?workspace_id={workspace_id}",
+            headers=platform_admin.headers,
+        )
+        assert workspace.status_code == 200, workspace.text
+        assert workspace.json() == [ref]
+
+    @pytest.mark.asyncio
+    async def test_artifact_library_lists_renames_and_deletes_owned_files(
+        self,
+        e2e_client,
+        db_session,
+        platform_admin,
+        org1_user,
+        test_conversation,
+    ):
+        conversation_id = UUID(test_conversation["id"])
+        conversation = await db_session.get(Conversation, conversation_id)
+        assert conversation is not None
+        message = Message(
+            conversation_id=conversation_id,
+            role=MessageRole.TOOL_CALL,
+            content=None,
+            tool_name="create_text_artifact",
+            tool_state="completed",
+            sequence=1,
+        )
+        db_session.add(message)
+        await db_session.flush()
+        artifact = await ChatAttachmentService(db_session).store_generated(
+            conversation_id=conversation_id,
+            message_id=message.id,
+            filename="Welcome Page.html",
+            content_type="text/html",
+            content=b"<!doctype html><title>Welcome</title>",
+        )
+        await db_session.commit()
+
+        library = e2e_client.get("/api/chat/artifacts", headers=platform_admin.headers)
+        assert library.status_code == 200, library.text
+        listed = next(item for item in library.json() if item["id"] == str(artifact.id))
+        assert listed["filename"] == "Welcome Page.html"
+        assert listed["kind"] == "artifact"
+        assert listed["conversation_id"] == test_conversation["id"]
+        assert "created_at" in listed
+
+        forbidden = e2e_client.patch(
+            f"/api/chat/artifacts/{artifact.id}",
+            json={"filename": "Not Yours.html"},
+            headers=org1_user.headers,
+        )
+        assert forbidden.status_code == 404
+
+        renamed = e2e_client.patch(
+            f"/api/chat/artifacts/{artifact.id}",
+            json={"filename": "Bifrost Welcome.html"},
+            headers=platform_admin.headers,
+        )
+        assert renamed.status_code == 200, renamed.text
+        assert renamed.json()["filename"] == "Bifrost Welcome.html"
+
+        deleted = e2e_client.delete(
+            f"/api/chat/artifacts/{artifact.id}", headers=platform_admin.headers
+        )
+        assert deleted.status_code == 204
+        library_after = e2e_client.get(
+            "/api/chat/artifacts", headers=platform_admin.headers
+        )
+        assert all(item["id"] != str(artifact.id) for item in library_after.json())
 
 
 # =============================================================================

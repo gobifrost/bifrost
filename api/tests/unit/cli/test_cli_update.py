@@ -48,7 +48,10 @@ def test_update_resolves_current_connection_and_normalizes_url(
     assert rc == 0
     resolve.assert_called_once_with(None, prompt_for_default=True)
     run.assert_called_once_with(
-        ["installer", "https://bifrost.example.com/api/cli/download"],
+        [
+            "installer",
+            "https://bifrost.example.com/api/cli/download/bifrost-cli.tar.gz",
+        ],
         check=False,
     )
 
@@ -90,11 +93,12 @@ def test_update_uses_pipx_for_pipx_managed_install(
     monkeypatch.setattr(cli.sys, "prefix", str(tmp_path))
     monkeypatch.setattr(cli.shutil, "which", lambda name: "/usr/bin/pipx")
 
-    assert cli._update_install_command("https://example.com/api/cli/download") == [
+    download_url = "https://example.com/api/cli/download/bifrost-cli.tar.gz"
+    assert cli._update_install_command(download_url) == [
         "/usr/bin/pipx",
         "install",
         "--force",
-        "https://example.com/api/cli/download",
+        download_url,
     ]
 
 
@@ -105,13 +109,14 @@ def test_update_uses_current_python_outside_pipx(
     monkeypatch.setattr(cli.sys, "prefix", str(tmp_path))
     monkeypatch.setattr(cli.sys, "executable", "/venv/bin/python")
 
-    assert cli._update_install_command("https://example.com/api/cli/download") == [
+    download_url = "https://example.com/api/cli/download/bifrost-cli.tar.gz"
+    assert cli._update_install_command(download_url) == [
         "/venv/bin/python",
         "-m",
         "pip",
         "install",
         "--upgrade",
-        "https://example.com/api/cli/download",
+        download_url,
     ]
 
 

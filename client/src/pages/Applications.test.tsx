@@ -23,8 +23,12 @@ vi.mock("@/hooks/useOrganizations", () => ({
 	useOrganizations: () => ({ data: [] }),
 }));
 
-// Heavy children that aren't relevant to the badge behaviour.
-vi.mock("@/components/EntityLogo", () => ({ EntityLogo: () => null }));
+// Keep the icon contract observable without loading image resources in happy-dom.
+vi.mock("@/components/EntityLogo", () => ({
+	EntityLogo: ({ logo }: { logo?: string | null }) => (
+		<span data-testid="entity-logo" data-logo={logo ?? ""} />
+	),
+}));
 vi.mock("@/components/app-builder/AppInfoDialog", () => ({
 	AppInfoDialog: () => null,
 }));
@@ -44,7 +48,7 @@ function makeApp(overrides: Partial<Record<string, unknown>> = {}) {
 		has_unpublished_changes: false,
 		is_solution_managed: false,
 		solution_id: null,
-		logo: null,
+		logo_url: "/api/applications/app-1/logo",
 		app_model: "legacy",
 		...overrides,
 	};
@@ -69,6 +73,18 @@ async function renderPage() {
 }
 
 describe("Applications — app launch behavior", () => {
+	it("shows a loading indicator while the list loads", async () => {
+		mockUseApplications.mockReturnValue({
+			data: undefined,
+			isLoading: true,
+			refetch: vi.fn(),
+		});
+		await renderPage();
+		expect(
+			screen.getByRole("status", { name: /loading applications/i }),
+		).toBeInTheDocument();
+	});
+
 	it("does not expose the deprecated create code application action", async () => {
 		await renderPage();
 		expect(
@@ -176,6 +192,10 @@ describe("Applications — solution-managed badge (table view)", () => {
 	it("shows Delete and no badge on a non-managed app row", async () => {
 		await renderTable([makeApp()]);
 		const table = document.querySelector("table")!;
+		expect(within(table).getByTestId("entity-logo")).toHaveAttribute(
+			"data-logo",
+			"/api/applications/app-1/logo",
+		);
 		expect(
 			within(table).queryByTestId("solution-managed-badge"),
 		).not.toBeInTheDocument();

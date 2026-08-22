@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from uuid import UUID
 
 from sqlalchemy import delete, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import defer, selectinload
 
 from src.core.org_filter import OrgFilterType
 from src.models.orm.agents import Agent, AgentRole
@@ -41,8 +41,12 @@ class AgentRepository(OrgScopedRepository[Agent]):
         from src.models.enums import AgentAccessLevel
 
         query = select(self.model).options(
+            defer(self.model.logo_data),
+            defer(self.model.logo_thumbnail_data),
             selectinload(self.model.tools),
-            selectinload(self.model.delegated_agents),
+            selectinload(self.model.delegated_agents)
+            .defer(Agent.logo_data)
+            .defer(Agent.logo_thumbnail_data),
             selectinload(self.model.roles),
         )
 
@@ -103,8 +107,12 @@ class AgentRepository(OrgScopedRepository[Agent]):
             List of Agent ORM objects with tools eager-loaded
         """
         query = select(self.model).options(
+            defer(self.model.logo_data),
+            defer(self.model.logo_thumbnail_data),
             selectinload(self.model.tools),
-            selectinload(self.model.delegated_agents),
+            selectinload(self.model.delegated_agents)
+            .defer(Agent.logo_data)
+            .defer(Agent.logo_thumbnail_data),
             selectinload(self.model.roles),
         )
 

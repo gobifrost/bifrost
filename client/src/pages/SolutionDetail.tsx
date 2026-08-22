@@ -530,6 +530,7 @@ function SolutionEntityGrid({
 										<EntityLogo
 											entityType="app"
 											entityId={entity.id}
+											logo={entity.logo_url ?? null}
 											fallback={
 												<AppWindow className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
 											}
@@ -589,6 +590,7 @@ function SolutionEntityGrid({
 										<EntityLogo
 											entityType="agent"
 											entityId={entity.id}
+											logo={entity.logo_url ?? null}
 											fallback={
 												<Bot className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
 											}
@@ -788,6 +790,7 @@ function SolutionEntityTable({
 										<EntityLogo
 											entityType="app"
 											entityId={entity.id}
+											logo={entity.logo_url ?? null}
 											fallback={
 												<AppWindow className="h-4 w-4 shrink-0 text-muted-foreground" />
 											}
@@ -799,6 +802,7 @@ function SolutionEntityTable({
 										<EntityLogo
 											entityType="agent"
 											entityId={entity.id}
+											logo={entity.logo_url ?? null}
 											fallback={
 												<Bot className="h-4 w-4 shrink-0 text-muted-foreground" />
 											}

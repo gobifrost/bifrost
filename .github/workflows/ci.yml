@@ -82,7 +82,9 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Check GitHub Action pins
-        run: python3 api/scripts/check_github_action_pins.py
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 api/scripts/check_github_action_pins.py --verify-versions
 
       # Codex skill mirrors (plugins/bifrost/skills/, .codex/skills/) are
       # generated from the canonical .claude/skills/ source. Regenerate and fail
@@ -175,6 +177,202 @@ jobs:
         run: npm test
 
   # =============================================================================
+  # Dev Artifact Candidate - build once for the exact merge candidate.
+  #
+  # The SHA-addressed candidate tags are internal staging references, not the
+  # shared :dev channel. This job runs in parallel with the complete suite and
+  # is folded into the required aggregate below. Only after the identical SHA
+  # reaches main may build-dev promote these exact digests to :dev.
+  # =============================================================================
+  build-dev-candidate:
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    name: Build Dev Candidate
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout exact merge candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Compute candidate version
+        id: version
+        run: echo "version=$(./scripts/compute-dev-version.sh)" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Build and push SHA-addressed API candidate
+        id: api
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ./api/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ env.API_IMAGE }}:candidate-${{ github.sha }}
+          build-args: BIFROST_VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha,scope=dev-candidate-api
+          cache-to: type=gha,scope=dev-candidate-api,mode=max
+
+      - name: Exercise the exact API candidate artifact
+        env:
+          EXPECTED_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          docker run --rm \
+            -e EXPECTED_VERSION \
+            --entrypoint python \
+            "ghcr.io/${{ env.API_IMAGE }}@${{ steps.api.outputs.digest }}" \
+            -c "import os; from shared.version import get_version; from src.main import app; assert app is not None; assert get_version() == os.environ['EXPECTED_VERSION']"
+
+      - name: Sign API candidate digest
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: cosign sign --yes ghcr.io/${{ env.API_IMAGE }}@${{ steps.api.outputs.digest }}
+
+      - name: Attest API candidate provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-name: ghcr.io/${{ env.API_IMAGE }}
+          subject-digest: ${{ steps.api.outputs.digest }}
+          push-to-registry: true
+
+      - name: Build and push SHA-addressed client candidate
+        id: client
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: ./client
+          file: ./client/Dockerfile
+          target: production
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ env.CLIENT_IMAGE }}:candidate-${{ github.sha }}
+          build-args: VITE_BIFROST_VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha,scope=dev-candidate-client
+          cache-to: type=gha,scope=dev-candidate-client,mode=max
+
+      - name: Sign client candidate digest
+        env:
+          COSIGN_EXPERIMENTAL: "true"
+        run: cosign sign --yes ghcr.io/${{ env.CLIENT_IMAGE }}@${{ steps.client.outputs.digest }}
+
+      - name: Attest client candidate provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-name: ghcr.io/${{ env.CLIENT_IMAGE }}
+          subject-digest: ${{ steps.client.outputs.digest }}
+          push-to-registry: true
+
+  # =============================================================================
+  # Critical Browser Smoke - exact candidates only, zero retries.
+  # This is deliberately not the full Playwright product suite; nightly owns
+  # that breadth. These paths prove the live browser/API/worker boundaries that
+  # backend E2E cannot observe.
+  # =============================================================================
+  test-client-smoke:
+    if: >-
+      always() && (
+        github.event_name == 'merge_group' ||
+        github.event_name == 'workflow_dispatch' ||
+        startsWith(github.ref, 'refs/tags/v')
+      )
+    needs: [build-dev-candidate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    name: Critical Browser Smoke
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Build API dev image (cached)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: ./api/Dockerfile.dev
+          load: true
+          tags: bifrost-test-api-dev:latest
+          cache-from: type=gha,scope=test-api-dev
+          cache-to: type=gha,scope=test-api-dev,mode=max
+
+      - name: Build production client under test (cached)
+        if: github.event_name != 'merge_group'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: ./client
+          file: ./client/Dockerfile
+          target: production
+          load: true
+          tags: bifrost-test-client-e2e:latest
+          build-args: VITE_BIFROST_VERSION=test-${{ github.sha }}
+          cache-from: type=gha,scope=test-client-e2e
+          cache-to: type=gha,scope=test-client-e2e,mode=max
+
+      - name: Use the exact merge candidate client image
+        if: github.event_name == 'merge_group'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull ghcr.io/${{ env.CLIENT_IMAGE }}:candidate-${GITHUB_SHA}
+          docker tag \
+            ghcr.io/${{ env.CLIENT_IMAGE }}:candidate-${GITHUB_SHA} \
+            bifrost-test-client-e2e:latest
+
+      - name: Build Playwright runner (cached)
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: ./client
+          file: ./client/Dockerfile.playwright
+          load: true
+          tags: bifrost-test-playwright:latest
+          cache-from: type=gha,scope=test-playwright
+          cache-to: type=gha,scope=test-playwright,mode=max
+
+      - name: Run critical browser smoke
+        env:
+          BIFROST_SKIP_BUILD: "1"
+          BIFROST_TEST_USE_CLEAN_BOOT: "1"
+        run: |
+          chmod +x test.sh
+          ./test.sh stack up
+          ./test.sh client smoke
+
+      - name: Export stack logs and tear down
+        if: always()
+        run: ./test.sh stack down
+
+      - name: Upload browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: critical-browser-smoke-${{ github.run_attempt }}
+          path: |
+            client/playwright-results
+            /tmp/bifrost-*/
+          if-no-files-found: error
+          retention-days: 14
+
+  # =============================================================================
   # Unit Tests - Fast, gates all builds
   # =============================================================================
   test-unit:
@@ -189,11 +387,11 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
-      # Pre-build dev images via build-push-action for GHA layer caching.
+      # Pre-build the API dev image via build-push-action for GHA layer caching.
       # docker-compose.test.yml pins all api-stack services to bifrost-test-api-dev:latest
-      # and the client service to bifrost-test-client-dev:latest. When
+      # Browser jobs separately build the production client under test. When
       # BIFROST_SKIP_BUILD=1, test.sh passes --no-build to compose so it reuses
-      # these local images instead of rebuilding (which would skip the GHA cache).
+      # the local API image instead of rebuilding (which would skip the GHA cache).
       # Cache scope is shared with test-e2e so whichever job runs second gets warm hits.
       - name: Build API dev image (cached)
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
@@ -205,31 +403,14 @@ jobs:
           cache-from: type=gha,scope=test-api-dev
           cache-to: type=gha,scope=test-api-dev,mode=max
 
-      - name: Build client dev image (cached)
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: ./client
-          file: ./client/Dockerfile.dev
-          load: true
-          tags: bifrost-test-client-dev:latest
-          cache-from: type=gha,scope=test-client-dev
-          cache-to: type=gha,scope=test-client-dev,mode=max
-
       - name: Run unit tests
         env:
           BIFROST_SKIP_BUILD: "1"
+          BIFROST_TEST_USE_CLEAN_BOOT: "1"
         run: |
           chmod +x test.sh
           ./test.sh stack up
           ./test.sh unit
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        with:
-          files: ./coverage.xml
-          flags: api
-          name: api-coverage
-          token: ${{ secrets.CODECOV_TOKEN }}
 
   # =============================================================================
   # E2E Tests - Sharded across 2 parallel runners. Each shard boots its own
@@ -238,14 +419,21 @@ jobs:
   # bin-packed first, then round-robin in sorted order — adding a file only
   # moves files in shards downstream of the insertion point.
   #
+  # The complete suite intentionally runs on merge_group rather than ordinary
+  # pull_request events. The merge queue's synthetic ref is the exact candidate
+  # that can reach main and trigger shared :dev image publication. Tag and
+  # workflow_dispatch runs remain complete as well.
+  #
   # The internal matrix job (test-e2e) uses shard names like
   # "E2E Tests (shard 1/2)". The aggregate gate job below (test-e2e-gate)
   # is named EXACTLY "E2E Tests" to match the required status check name —
   # no ruleset edits needed.
   # =============================================================================
   test-e2e:
-    # Skip on push: main — covered by the merge_group run.
-    if: github.event_name != 'push' || github.ref != 'refs/heads/main'
+    if: >-
+      github.event_name == 'merge_group' ||
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     name: E2E Tests (shard ${{ matrix.shard }}/2)
     strategy:
@@ -270,19 +458,10 @@ jobs:
           cache-from: type=gha,scope=test-api-dev
           cache-to: type=gha,scope=test-api-dev,mode=max
 
-      - name: Build client dev image (cached)
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: ./client
-          file: ./client/Dockerfile.dev
-          load: true
-          tags: bifrost-test-client-dev:latest
-          cache-from: type=gha,scope=test-client-dev
-          cache-to: type=gha,scope=test-client-dev,mode=max
-
       - name: Run E2E tests (shard ${{ matrix.shard }}/2)
         env:
           BIFROST_SKIP_BUILD: "1"
+          BIFROST_TEST_USE_CLEAN_BOOT: "1"
         run: |
           chmod +x test.sh
           ./test.sh stack up
@@ -295,42 +474,77 @@ jobs:
           ./test.sh "${shard_files[@]}" -v --durations=50
 
   # Aggregate gate — required check named "E2E Tests" (matches ruleset 15329014).
-  # Fails if any shard failed or was cancelled. Runs even when shards fail
-  # (if: always()) so branch protection always sees a conclusive result.
+  # Fails if either backend E2E shard, the client unit suite, or the critical
+  # browser smoke failed/cancelled. The component/browser jobs have their own
+  # visible names but are folded into this required context so the repository
+  # settings do not need to change.
+  # Runs even when dependencies fail (if: always()) so branch protection always
+  # sees a conclusive result.
   test-e2e-gate:
-    if: always() && (github.event_name != 'push' || github.ref != 'refs/heads/main')
-    needs: [test-e2e]
+    if: >-
+      always() && (
+        github.event_name == 'pull_request' ||
+        github.event_name == 'merge_group' ||
+        github.event_name == 'workflow_dispatch' ||
+        startsWith(github.ref, 'refs/tags/v')
+      )
+    needs: [test-e2e, test-client-unit, test-client-smoke, build-dev-candidate]
     runs-on: ubuntu-latest
     name: E2E Tests
     steps:
       - name: Check shard results
         run: |
-          if [ "${{ needs.test-e2e.result }}" != "success" ]; then
-            echo "One or more e2e shards failed or were cancelled (result: ${{ needs.test-e2e.result }})"
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            if [ "${{ needs.test-client-unit.result }}" != "success" ]; then
+              echo "Client unit tests failed or were cancelled (result: ${{ needs.test-client-unit.result }})"
+              exit 1
+            fi
+            echo "Full E2E is deferred to the merge queue's exact merge candidate."
+            echo "A successful merge_group E2E Tests check is required before main and :dev images."
+            exit 0
+          fi
+
+          if [ "${{ needs.test-e2e.result }}" != "success" ] || \
+             [ "${{ needs.test-client-unit.result }}" != "success" ] || \
+             [ "${{ needs.test-client-smoke.result }}" != "success" ] || \
+             { [ "${{ github.event_name }}" = "merge_group" ] && \
+               [ "${{ needs.build-dev-candidate.result }}" != "success" ]; }; then
+            echo "E2E matrix result: ${{ needs.test-e2e.result }}"
+            echo "Client unit result: ${{ needs.test-client-unit.result }}"
+            echo "Critical browser smoke result: ${{ needs.test-client-smoke.result }}"
+            echo "Dev candidate result: ${{ needs.build-dev-candidate.result }}"
             exit 1
           fi
-          echo "All e2e shards passed."
+          echo "All exact-candidate suites and required artifact builds passed."
 
   # =============================================================================
-  # Dev Build - Every push to main, gated by unit tests only
+  # Dev Promotion - main may only publish the already-built exact candidate.
   # =============================================================================
   build-dev:
     # Only fires on push: main — branch protection + merge queue
     # already gated this commit, so no needs: here.
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    name: Build Dev Images
+    name: Promote Dev Images
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     permissions:
       contents: read
       packages: write
-      id-token: write # OIDC for keyless cosign signing
-      attestations: write # for actions/attest-build-provenance
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+
+      - name: Verify exact merge candidate gate
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 api/scripts/verify_merge_candidate.py
+          --repository "$GITHUB_REPOSITORY"
+          --sha "$GITHUB_SHA"
 
       - name: Compute version
         id: version
@@ -373,71 +587,53 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-
-      - name: Build and push API dev image
-        id: build-api
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          file: ./api/Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ghcr.io/${{ env.API_IMAGE }}:${{ steps.version.outputs.version }}
-            ghcr.io/${{ env.API_IMAGE }}:dev
-            ghcr.io/${{ env.API_IMAGE }}:sha-${{ steps.version.outputs.short_sha }}
-          build-args: |
-            BIFROST_VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Sign API dev image
-        env:
-          COSIGN_EXPERIMENTAL: "true"
+      - name: Resolve exact-candidate digests
+        id: candidate
         run: |
-          cosign sign --yes \
-            ghcr.io/${{ env.API_IMAGE }}@${{ steps.build-api.outputs.digest }}
+          set -euo pipefail
+          API_CANDIDATE="ghcr.io/${{ env.API_IMAGE }}:candidate-${GITHUB_SHA}"
+          CLIENT_CANDIDATE="ghcr.io/${{ env.CLIENT_IMAGE }}:candidate-${GITHUB_SHA}"
+          API_DIGEST=$(docker buildx imagetools inspect "$API_CANDIDATE" --format '{{ .Manifest.Digest }}')
+          CLIENT_DIGEST=$(docker buildx imagetools inspect "$CLIENT_CANDIDATE" --format '{{ .Manifest.Digest }}')
+          case "$API_DIGEST" in sha256:*) ;; *) echo "Invalid API candidate digest: $API_DIGEST" >&2; exit 1;; esac
+          case "$CLIENT_DIGEST" in sha256:*) ;; *) echo "Invalid client candidate digest: $CLIENT_DIGEST" >&2; exit 1;; esac
+          echo "api_digest=$API_DIGEST" >> "$GITHUB_OUTPUT"
+          echo "client_digest=$CLIENT_DIGEST" >> "$GITHUB_OUTPUT"
 
-      - name: Attest API dev image provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
-        with:
-          subject-name: ghcr.io/${{ env.API_IMAGE }}
-          subject-digest: ${{ steps.build-api.outputs.digest }}
-          push-to-registry: true
-
-      - name: Build and push client dev image
-        id: build-client
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: ./client
-          file: ./client/Dockerfile
-          target: production
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ghcr.io/${{ env.CLIENT_IMAGE }}:${{ steps.version.outputs.version }}
-            ghcr.io/${{ env.CLIENT_IMAGE }}:dev
-            ghcr.io/${{ env.CLIENT_IMAGE }}:sha-${{ steps.version.outputs.short_sha }}
-          build-args: |
-            VITE_BIFROST_VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Sign client dev image
-        env:
-          COSIGN_EXPERIMENTAL: "true"
+      - name: Promote the identical signed candidate digests
         run: |
-          cosign sign --yes \
-            ghcr.io/${{ env.CLIENT_IMAGE }}@${{ steps.build-client.outputs.digest }}
+          set -euo pipefail
+          API_SOURCE="ghcr.io/${{ env.API_IMAGE }}@${{ steps.candidate.outputs.api_digest }}"
+          CLIENT_SOURCE="ghcr.io/${{ env.CLIENT_IMAGE }}@${{ steps.candidate.outputs.client_digest }}"
+          docker buildx imagetools create \
+            --tag "ghcr.io/${{ env.API_IMAGE }}:${{ steps.version.outputs.version }}" \
+            --tag "ghcr.io/${{ env.API_IMAGE }}:dev" \
+            --tag "ghcr.io/${{ env.API_IMAGE }}:sha-${{ steps.version.outputs.short_sha }}" \
+            "$API_SOURCE"
+          docker buildx imagetools create \
+            --tag "ghcr.io/${{ env.CLIENT_IMAGE }}:${{ steps.version.outputs.version }}" \
+            --tag "ghcr.io/${{ env.CLIENT_IMAGE }}:dev" \
+            --tag "ghcr.io/${{ env.CLIENT_IMAGE }}:sha-${{ steps.version.outputs.short_sha }}" \
+            "$CLIENT_SOURCE"
 
-      - name: Attest client dev image provenance
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
-        with:
-          subject-name: ghcr.io/${{ env.CLIENT_IMAGE }}
-          subject-digest: ${{ steps.build-client.outputs.digest }}
-          push-to-registry: true
+      - name: Verify every promoted tag resolves to the candidate digest
+        run: |
+          set -euo pipefail
+          verify_tags() {
+            local image="$1" expected="$2"
+            shift 2
+            for tag in "$@"; do
+              actual=$(docker buildx imagetools inspect "ghcr.io/${image}:${tag}" --format '{{ .Manifest.Digest }}')
+              if [ "$actual" != "$expected" ]; then
+                echo "Digest mismatch for ${image}:${tag}: expected ${expected}, got ${actual}" >&2
+                exit 1
+              fi
+            done
+          }
+          verify_tags "${{ env.API_IMAGE }}" "${{ steps.candidate.outputs.api_digest }}" \
+            "${{ steps.version.outputs.version }}" dev "sha-${{ steps.version.outputs.short_sha }}"
+          verify_tags "${{ env.CLIENT_IMAGE }}" "${{ steps.candidate.outputs.client_digest }}" \
+            "${{ steps.version.outputs.version }}" dev "sha-${{ steps.version.outputs.short_sha }}"
 
       # ---------------------------------------------------------------------------
       # Transitional dual-publish to legacy ghcr.io/jackmusick/* namespace.
@@ -454,25 +650,16 @@ jobs:
         run: |
           echo "$GHCR_LEGACY_TOKEN" | docker login ghcr.io -u jackmusick --password-stdin
 
-          # Retag and push API dev images to legacy namespace
-          for tag in \
-            "${{ steps.version.outputs.version }}" \
-            "dev" \
-            "sha-${{ steps.version.outputs.short_sha }}"; do
-            docker pull ghcr.io/${{ env.API_IMAGE }}:${tag}
-            docker tag  ghcr.io/${{ env.API_IMAGE }}:${tag} ghcr.io/${{ env.LEGACY_API_IMAGE }}:${tag}
-            docker push ghcr.io/${{ env.LEGACY_API_IMAGE }}:${tag}
-          done
-
-          # Retag and push Client dev images to legacy namespace
-          for tag in \
-            "${{ steps.version.outputs.version }}" \
-            "dev" \
-            "sha-${{ steps.version.outputs.short_sha }}"; do
-            docker pull ghcr.io/${{ env.CLIENT_IMAGE }}:${tag}
-            docker tag  ghcr.io/${{ env.CLIENT_IMAGE }}:${tag} ghcr.io/${{ env.LEGACY_CLIENT_IMAGE }}:${tag}
-            docker push ghcr.io/${{ env.LEGACY_CLIENT_IMAGE }}:${tag}
-          done
+          docker buildx imagetools create \
+            --tag "ghcr.io/${{ env.LEGACY_API_IMAGE }}:${{ steps.version.outputs.version }}" \
+            --tag "ghcr.io/${{ env.LEGACY_API_IMAGE }}:dev" \
+            --tag "ghcr.io/${{ env.LEGACY_API_IMAGE }}:sha-${{ steps.version.outputs.short_sha }}" \
+            "ghcr.io/${{ env.API_IMAGE }}@${{ steps.candidate.outputs.api_digest }}"
+          docker buildx imagetools create \
+            --tag "ghcr.io/${{ env.LEGACY_CLIENT_IMAGE }}:${{ steps.version.outputs.version }}" \
+            --tag "ghcr.io/${{ env.LEGACY_CLIENT_IMAGE }}:dev" \
+            --tag "ghcr.io/${{ env.LEGACY_CLIENT_IMAGE }}:sha-${{ steps.version.outputs.short_sha }}" \
+            "ghcr.io/${{ env.CLIENT_IMAGE }}@${{ steps.candidate.outputs.client_digest }}"
 
           docker logout ghcr.io
 
@@ -506,7 +693,7 @@ jobs:
           kubectl auth can-i patch deployment -n bifrost
           echo "::endgroup::"
 
-          echo "::group::Deployments the real job would restart"
+          echo "::group::Deployments the real job would monitor"
           kubectl -n bifrost get deployment \
             -l app.kubernetes.io/part-of=bifrost,app.kubernetes.io/component!=message-broker \
             -o wide
@@ -520,7 +707,7 @@ jobs:
             echo ""
             echo "If the step above passed, the real \`deploy-dev\` job will work when this PR merges."
             echo ""
-            echo "### Deployments that would be restarted"
+            echo "### Deployments that would be monitored"
             echo ""
             echo '```'
             kubectl -n bifrost get deployment \
@@ -531,8 +718,9 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # =============================================================================
-  # Deploy Dev - Push-to-main only. Rolls the DigitalOcean deployment once
-  # the :dev images are published. Targets anything labeled
+  # Deploy Dev - Push-to-main only. Waits for Keel to move the DigitalOcean
+  # deployments to the immutable version tags published alongside :dev.
+  # Targets anything labeled
   # `app.kubernetes.io/part-of=bifrost` in the `bifrost` namespace so new
   # services are picked up automatically. Failures page the maintainer via
   # GitHub's built-in workflow-failure email (no extra wiring).
@@ -558,15 +746,49 @@ jobs:
       - name: Save kubeconfig
         run: doctl kubernetes cluster kubeconfig save "${{ secrets.DO_CLUSTER_NAME }}"
 
-      - name: Roll deployments
+      - name: Wait for image automation
+        env:
+          EXPECTED_VERSION: ${{ needs.build-dev.outputs.version }}
         run: |
-          kubectl -n bifrost rollout restart deployment \
-            -l app.kubernetes.io/part-of=bifrost,app.kubernetes.io/component!=message-broker
+          set -euo pipefail
+          expected_api="ghcr.io/${{ env.API_IMAGE }}:${EXPECTED_VERSION}"
+          expected_client="ghcr.io/${{ env.CLIENT_IMAGE }}:${EXPECTED_VERSION}"
+          deadline=$((SECONDS + 600))
+
+          while true; do
+            pending=0
+            DEPLOYMENTS=$(kubectl -n bifrost get deployment \
+              -l app.kubernetes.io/part-of=bifrost,app.kubernetes.io/component!=message-broker \
+              -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}')
+            for d in $DEPLOYMENTS; do
+              component=$(kubectl -n bifrost get "deployment/$d" \
+                -o jsonpath='{.metadata.labels.app\.kubernetes\.io/component}')
+              case "$component" in
+                client) expected="$expected_client" ;;
+                api|scheduler|worker) expected="$expected_api" ;;
+                *) echo "Unsupported Bifrost deployment component: $d ($component)" >&2; exit 1 ;;
+              esac
+              images=$(kubectl -n bifrost get "deployment/$d" \
+                -o jsonpath='{range .spec.template.spec.initContainers[*]}{.image}{"\n"}{end}{range .spec.template.spec.containers[*]}{.image}{"\n"}{end}')
+              if [ -z "$images" ] || [ "$(printf '%s\n' "$images" | sort -u)" != "$expected" ]; then
+                echo "Waiting for $d to use $expected (currently: $(printf '%s' "$images" | tr '\n' ' '))"
+                pending=1
+              fi
+            done
+            if [ "$pending" -eq 0 ]; then
+              break
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "Timed out waiting for image automation to deploy ${EXPECTED_VERSION}" >&2
+              exit 1
+            fi
+            sleep 10
+          done
 
       - name: Wait for rollouts
         run: |
           set -e
-          # Query the same label selector we restarted, so new services are
+          # Query the same label selector watched above, so new services are
           # picked up without editing this workflow.
           DEPLOYMENTS=$(kubectl -n bifrost get deployment \
             -l app.kubernetes.io/part-of=bifrost,app.kubernetes.io/component!=message-broker \
@@ -576,6 +798,34 @@ jobs:
             kubectl -n bifrost rollout status "deployment/$d" --timeout=5m
             echo "::endgroup::"
           done
+
+      - name: Smoke deployed API and client services
+        run: |
+          set -euo pipefail
+          kubectl -n bifrost port-forward service/api 18000:8000 > /tmp/bifrost-api-port-forward.log 2>&1 &
+          API_FORWARD_PID=$!
+          kubectl -n bifrost port-forward service/client 18080:80 > /tmp/bifrost-client-port-forward.log 2>&1 &
+          CLIENT_FORWARD_PID=$!
+          cleanup() {
+            kill "$API_FORWARD_PID" "$CLIENT_FORWARD_PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          for log in /tmp/bifrost-api-port-forward.log /tmp/bifrost-client-port-forward.log; do
+            ready=0
+            for _ in {1..40}; do
+              if grep -q "Forwarding from" "$log"; then
+                ready=1
+                break
+              fi
+              sleep 0.25
+            done
+            if [ "$ready" -ne 1 ]; then
+              cat "$log"
+              exit 1
+            fi
+          done
+          curl --fail --silent --show-error http://127.0.0.1:18000/health/ready > /dev/null
+          curl --fail --silent --show-error http://127.0.0.1:18080/ | grep -q '<div id="root">'
 
       - name: Summary
         if: always()

@@ -648,6 +648,8 @@ class TestChatDelegation:
             tool_call=tool_call,
             conversation_id=conversation.id,
             caller=caller,
+            _shared_usage=None,
+            _shared_budget=None,
         )
 
     def test_parent_history_prefers_error_over_partial_result(self):
@@ -662,6 +664,18 @@ class TestChatDelegation:
         assert _serialize_tool_result_for_history(tool_result) == (
             "Specialist failed after producing a partial answer"
         )
+
+    def test_parent_history_bounds_large_tool_result(self):
+        tool_result = ToolResult(
+            tool_call_id="tc1",
+            tool_name="large_result",
+            result="A" * 40_000,
+        )
+
+        serialized = _serialize_tool_result_for_history(tool_result)
+
+        assert len(serialized) < 40_000
+        assert "[tool result truncated: 16000 of 40000 characters omitted" in serialized
 
     @pytest.mark.asyncio
     async def test_delegation_without_conversation_still_uses_shared_runner(
@@ -709,6 +723,8 @@ class TestChatDelegation:
             tool_call=tool_call,
             conversation_id=None,
             caller=None,
+            _shared_usage=None,
+            _shared_budget=None,
         )
         assert result.error is None
 

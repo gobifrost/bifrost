@@ -212,22 +212,6 @@ async def test_subscribe_by_unknown_name_rejected(platform_admin, alice_user):
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
-@pytest.mark.skip(
-    reason="created_by is a column overwriting JSONB created_by in _row_from_doc; "
-    "visibility-gain logic is unit-tested in tests/unit/test_subscription_visibility.py "
-    "(Task 12). Expressing this via a custom user_id field is possible but adds little "
-    "over the unit coverage."
-)
-async def test_visibility_gain_emits_insert(platform_admin, alice_user, bob_user):
-    """Row originally invisible to Alice (Bob's row) gets reassigned to Alice → insert.
-
-    Skipped: see decorator. The four-way fanout's visibility-gain branch is
-    covered at the function level in `decide_visibility_change` unit tests.
-    """
-
-
-@pytest.mark.e2e
-@pytest.mark.asyncio
 async def test_subscription_revoked_on_policy_change(platform_admin, alice_user):
     """Admin removes read access → Alice's ws gets subscription_revoked."""
     async with httpx.AsyncClient(base_url=TEST_API_URL) as client:

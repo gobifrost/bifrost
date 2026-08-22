@@ -22,6 +22,12 @@ class AIModelPricingBase(BaseModel):
     model: str = Field(..., max_length=100, description="Model identifier")
     input_price_per_million: Decimal = Field(..., description="Cost per million input tokens")
     output_price_per_million: Decimal = Field(..., description="Cost per million output tokens")
+    cache_read_price_per_million: Decimal | None = Field(
+        default=None, description="Cost per million cached input tokens read"
+    )
+    cache_write_price_per_million: Decimal | None = Field(
+        default=None, description="Cost per million cached input tokens written"
+    )
 
 
 class AIModelPricingCreate(AIModelPricingBase):
@@ -38,6 +44,12 @@ class AIModelPricingUpdate(BaseModel):
     )
     output_price_per_million: Decimal | None = Field(
         default=None, description="Cost per million output tokens"
+    )
+    cache_read_price_per_million: Decimal | None = Field(
+        default=None, description="Cost per million cached input tokens read"
+    )
+    cache_write_price_per_million: Decimal | None = Field(
+        default=None, description="Cost per million cached input tokens written"
     )
     effective_date: date | None = Field(default=None, description="Date pricing takes effect")
 
@@ -60,9 +72,14 @@ class AIModelPricingPublic(AIModelPricingBase):
     def serialize_date(self, d: date) -> str:
         return d.isoformat()
 
-    @field_serializer("input_price_per_million", "output_price_per_million")
-    def serialize_decimal(self, d: Decimal) -> str:
-        return str(d)
+    @field_serializer(
+        "input_price_per_million",
+        "output_price_per_million",
+        "cache_read_price_per_million",
+        "cache_write_price_per_million",
+    )
+    def serialize_decimal(self, d: Decimal | None) -> str | None:
+        return str(d) if d is not None else None
 
 
 # ==================== AI USAGE MODELS ====================
@@ -75,6 +92,15 @@ class AIUsageBase(BaseModel):
     model: str = Field(..., max_length=100, description="Model identifier")
     input_tokens: int = Field(..., ge=0, description="Number of input tokens")
     output_tokens: int = Field(..., ge=0, description="Number of output tokens")
+    cache_read_tokens: int = Field(
+        default=0, ge=0, description="Input tokens served from provider cache"
+    )
+    cache_write_tokens: int = Field(
+        default=0, ge=0, description="Input tokens written to provider cache"
+    )
+    provider_cost: Decimal | None = Field(
+        default=None, description="Exact cost reported by the provider"
+    )
     cost: Decimal | None = Field(default=None, description="Calculated cost in USD")
     duration_ms: int | None = Field(default=None, ge=0, description="Request duration in milliseconds")
 
@@ -97,7 +123,7 @@ class AIUsagePublic(AIUsageBase):
     def serialize_dt(self, dt: datetime) -> str:
         return dt.isoformat()
 
-    @field_serializer("cost")
+    @field_serializer("cost", "provider_cost")
     def serialize_cost(self, d: Decimal | None) -> str | None:
         return str(d) if d is not None else None
 
@@ -107,11 +133,14 @@ class AIUsageTotals(BaseModel):
 
     total_input_tokens: int = Field(default=0, description="Total input tokens")
     total_output_tokens: int = Field(default=0, description="Total output tokens")
+    total_cache_read_tokens: int = Field(default=0, description="Total cached input tokens read")
+    total_cache_write_tokens: int = Field(default=0, description="Total cached input tokens written")
+    total_provider_cost: Decimal = Field(default=Decimal("0"), description="Total provider-reported cost in USD")
     total_cost: Decimal = Field(default=Decimal("0"), description="Total cost in USD")
     total_duration_ms: int = Field(default=0, description="Total duration in milliseconds")
     call_count: int = Field(default=0, description="Number of AI calls")
 
-    @field_serializer("total_cost")
+    @field_serializer("total_cost", "total_provider_cost")
     def serialize_cost(self, d: Decimal) -> str:
         return str(d)
 
@@ -123,6 +152,9 @@ class AIUsageByModel(BaseModel):
     model: str
     input_tokens: int
     output_tokens: int
+    cache_read_tokens: int = 0
+    cache_write_tokens: int = 0
+    provider_cost: Decimal = Decimal("0")
     cost: Decimal
     call_count: int
 

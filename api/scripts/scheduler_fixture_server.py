@@ -83,7 +83,11 @@ class FixtureHandler(BaseHTTPRequestHandler):
                         {
                             "object": "embedding",
                             "index": index,
-                            "embedding": [1.0, 0.0, 0.0],
+                            # Match OpenAI's default embedding dimension so this
+                            # deterministic fixture does not force an unrelated
+                            # global reindex when earlier tests created real
+                            # text-embedding-3-small rows.
+                            "embedding": [1.0] + [0.0] * 1535,
                         }
                         for index, _text in enumerate(inputs)
                     ],
@@ -91,6 +95,31 @@ class FixtureHandler(BaseHTTPRequestHandler):
                     "usage": {
                         "prompt_tokens": len(inputs),
                         "total_tokens": len(inputs),
+                    },
+                },
+            )
+            return
+
+        if self.path == "/v1/chat/completions":
+            request = json.loads(body or b"{}")
+            self._json(
+                200,
+                {
+                    "id": "chatcmpl-fixture",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": request.get("model", "fixture-chat"),
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": "ok"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 1,
+                        "completion_tokens": 1,
+                        "total_tokens": 2,
                     },
                 },
             )

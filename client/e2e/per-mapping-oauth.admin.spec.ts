@@ -1,49 +1,29 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import {
-	test,
-	expect,
-	request as playwrightRequest,
-	type APIRequestContext,
-	type Page,
-} from "@playwright/test";
+import { test, expect } from "./fixtures/api-fixture";
 import type { AllCredentials } from "./setup/auth-helpers";
 
-const API_URL = process.env.TEST_API_URL || "http://api:8000";
 const BIFROST_URL = process.env.TEST_BASE_URL || "http://client:80";
 const BIFROST_ORIGIN = new URL(BIFROST_URL).origin;
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10_000)}`;
 
-async function expectOk(
-	response: Awaited<ReturnType<APIRequestContext["fetch"]>>,
-) {
-	expect(response.ok(), await response.text()).toBe(true);
-}
-
 test.describe.serial("Per-mapping OAuth", () => {
-	let api: APIRequestContext;
 	let integrationId: string;
 	let integrationName: string;
 	let mappingId: string;
 	let organizationName: string;
 
-	test.beforeAll(async () => {
+	test.beforeAll(async ({ api }) => {
 		const credentials = JSON.parse(
 			readFileSync(resolve("e2e/.auth/credentials.json"), "utf8"),
 		) as AllCredentials;
-		api = await playwrightRequest.newContext({
-			baseURL: API_URL,
-			extraHTTPHeaders: {
-				Authorization: `Bearer ${credentials.platform_admin.accessToken}`,
-			},
-		});
 
 		integrationName = `E2E per-mapping OAuth ${UNIQUE}`;
 		organizationName = credentials.org1.name;
 		const integration = await api.post("/api/integrations", {
 			data: { name: integrationName },
 		});
-		await expectOk(integration);
+		expect(integration.ok(), await integration.text()).toBe(true);
 		integrationId = ((await integration.json()) as { id: string }).id;
 
 		const oauth = await api.post("/api/oauth/connections", {
@@ -58,7 +38,7 @@ test.describe.serial("Per-mapping OAuth", () => {
 				scopes: "read,write",
 			},
 		});
-		await expectOk(oauth);
+		expect(oauth.ok(), await oauth.text()).toBe(true);
 
 		const mapping = await api.post(
 			`/api/integrations/${integrationId}/mappings`,
@@ -70,12 +50,11 @@ test.describe.serial("Per-mapping OAuth", () => {
 				},
 			},
 		);
-		await expectOk(mapping);
+		expect(mapping.ok(), await mapping.text()).toBe(true);
 		mappingId = ((await mapping.json()) as { id: string }).id;
 	});
 
-	test.afterAll(async () => {
-		if (!api) return;
+	test.afterAll(async ({ api }) => {
 		if (integrationName) {
 			await api.delete(
 				`/api/oauth/connections/${encodeURIComponent(integrationName)}`,
@@ -84,10 +63,9 @@ test.describe.serial("Per-mapping OAuth", () => {
 		if (integrationId) {
 			await api.delete(`/api/integrations/${integrationId}`);
 		}
-		await api.dispose();
 	});
 
-	async function openMappings(page: Page) {
+	async function openMappings(page: import("@playwright/test").Page) {
 		await page.goto(`/integrations/${integrationId}`);
 		await page.getByRole("tab", { name: "Mappings" }).click();
 		await expect(

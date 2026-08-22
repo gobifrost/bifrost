@@ -102,6 +102,41 @@ export function useInfiniteTable(
 
     let unsubscribe: (() => void) | null = null;
 
+    async function refreshLoadedSnapshot() {
+      const targetCount = Math.max(offsetRef.current, pageSize);
+      const refreshedRows: TableRow[] = [];
+      let refreshOffset = 0;
+      let total = 0;
+
+      while (refreshOffset < targetCount) {
+        const limit = Math.min(1000, targetCount - refreshOffset);
+        const snap = await tables.query(
+          name,
+          {
+            where,
+            limit,
+            offset: refreshOffset,
+            order_by,
+            order_dir,
+            skip_count: refreshOffset > 0 ? true : undefined,
+          },
+          scope,
+        );
+        if (cancelledRef.current) return;
+        if (refreshOffset === 0) total = snap.total;
+        const pageRows = snap.documents.map(flattenDocument);
+        refreshedRows.push(...pageRows);
+        refreshOffset += pageRows.length;
+        if (pageRows.length < limit) break;
+      }
+
+      if (cancelledRef.current) return;
+      setRows(refreshedRows);
+      offsetRef.current = refreshedRows.length;
+      setHasMore(refreshedRows.length < total);
+      setError(null);
+    }
+
     async function init() {
       try {
         // Pre-compile the filter so we surface unsupported-operator errors
@@ -131,6 +166,13 @@ export function useInfiniteTable(
                 return;
               }
               applyEvent(evt, setRows);
+            },
+            () => {
+              void refreshLoadedSnapshot().catch((e) => {
+                if (!cancelledRef.current) {
+                  setError(e instanceof Error ? e : new Error(String(e)));
+                }
+              });
             },
           );
         }

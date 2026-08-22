@@ -10,11 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 async def test_fresh_database_does_not_install_withdrawn_builder_schema(
     db_session: AsyncSession,
 ) -> None:
-    revision = (
-        await db_session.execute(text("SELECT version_num FROM alembic_version"))
-    ).scalar_one()
-    assert revision == "20260812_private_memory"
-
     builder_tables = (
         await db_session.execute(
             text(

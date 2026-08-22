@@ -43,7 +43,7 @@ function getErrorMessage(error: unknown, fallback: string): string {
  */
 export function useAgents(
 	filterScope?: string | null,
-	options?: { includeInactive?: boolean },
+	options?: { includeInactive?: boolean; includeStats?: boolean },
 ) {
 	// Build query params - scope is the new filter parameter
 	const queryParams: Record<string, string | boolean | undefined> = {};
@@ -59,6 +59,9 @@ export function useAgents(
 		// Default server-side is active_only=true; opt in to paused agents too.
 		queryParams.active_only = false;
 	}
+	if (options?.includeStats) {
+		queryParams.include_stats = true;
+	}
 
 	return $api.useQuery("get", "/api/agents", {
 		params: {
@@ -69,6 +72,7 @@ export function useAgents(
 			query?: {
 				category?: string | null;
 				active_only?: boolean;
+				include_stats?: boolean;
 				scope?: string;
 			};
 		},
@@ -81,7 +85,7 @@ export function useAgent(agentId: string | undefined) {
 		"get",
 		"/api/agents/{agent_id}",
 		{ params: { path: { agent_id: agentId ?? "" } } },
-		{ enabled: !!agentId },
+		{ enabled: !!agentId, staleTime: 60_000 },
 	);
 }
 

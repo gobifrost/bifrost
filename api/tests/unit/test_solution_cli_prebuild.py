@@ -14,6 +14,30 @@ INSTALL_ID = UUID("33333333-3333-3333-3333-333333333333")
 APP_ID = "11111111-1111-1111-1111-111111111111"
 
 
+def test_local_prebuild_ignores_stale_package_lock(tmp_path: Path, monkeypatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(argv, **kwargs):
+        calls.append(list(argv))
+
+    monkeypatch.setattr(solution_command.subprocess, "run", fake_run)
+
+    solution_command._run_local_vite_build(
+        tmp_path,
+        npm="/usr/bin/npm",
+        npx="/usr/bin/npx",
+        base="/apps/test/",
+    )
+
+    assert calls[0] == [
+        "/usr/bin/npm",
+        "install",
+        "--no-audit",
+        "--no-fund",
+        "--package-lock=false",
+    ]
+
+
 def test_prebuild_apps_builds_in_temp_with_install_scoped_base(
     tmp_path: Path, monkeypatch
 ) -> None:

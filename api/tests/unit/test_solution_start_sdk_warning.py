@@ -16,6 +16,21 @@ from click.testing import CliRunner
 from bifrost.commands.solution import sdk_staleness_warning, solution_group
 
 
+def _solutions_response():
+    class _Response:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"solutions": [{
+                "id": "11111111-1111-1111-1111-111111111111",
+                "slug": "s",
+                "organization_id": "org-1",
+            }]}
+
+    return _Response()
+
+
 class TestSdkStalenessWarningHelper:
     def test_server_fp_none_is_silent(self):
         assert sdk_staleness_warning("abc", None, 1, 1) is None
@@ -75,6 +90,7 @@ def _start_workspace(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / "bifrost.solution.yaml").write_text("slug: s\nname: S\nscope: org\n")
     (tmp_path / ".env").write_text(
+        "BIFROST_API_URL=http://localhost:8000\n"
         "BIFROST_SOLUTION_ID=11111111-1111-1111-1111-111111111111\n"
         "BIFROST_SOLUTION_SLUG=s\n"
         "BIFROST_SOLUTION_ORG_ID=org-1\n"
@@ -94,6 +110,10 @@ def _start_workspace(tmp_path, monkeypatch):
         user = {"id": "u", "is_superuser": True}
         api_url = "http://localhost:8000"
         _access_token = "tok"
+
+        async def get(self, path, **kwargs):
+            assert path == "/api/solutions"
+            return _solutions_response()
 
     fake_client = _FakeClient()
     monkeypatch.setattr(client_mod.BifrostClient, "get_instance", staticmethod(lambda **k: fake_client))
@@ -153,6 +173,8 @@ class TestStartWiresInStalenessWarning:
                 return {"sdk_fingerprint": "new-fp", "sdk_contract_version": 1}
 
         async def _fake_get(path, **kwargs):
+            if path == "/api/solutions":
+                return _solutions_response()
             assert path == "/api/version"
             return _VersionResp()
 
@@ -175,6 +197,8 @@ class TestStartWiresInStalenessWarning:
         }))
 
         async def _fake_get(path, **kwargs):
+            if path == "/api/solutions":
+                return _solutions_response()
             raise RuntimeError("network is down")
 
         fake_client.get = _fake_get

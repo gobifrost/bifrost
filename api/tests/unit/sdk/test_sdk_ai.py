@@ -6,6 +6,7 @@ Uses mocked dependencies for fast, isolated testing.
 """
 
 import json
+from unittest.mock import AsyncMock
 import pytest
 from pydantic import BaseModel
 
@@ -104,4 +105,30 @@ class TestAIStructuredOutput:
         with pytest.raises(json.JSONDecodeError):
             _parse_structured_response(content, SampleResponse)
 
+
+@pytest.mark.asyncio
+async def test_encode_input_files_resolves_artifact_refs(monkeypatch):
+    from bifrost.ai import _encode_input_files
+    from bifrost.artifacts import artifacts
+    from bifrost.models import ArtifactRef
+
+    read = AsyncMock(return_value=b"%PDF-input")
+    monkeypatch.setattr(artifacts, "read", read)
+    ref = ArtifactRef(
+        id="artifact-input",
+        filename="input.pdf",
+        content_type="application/pdf",
+        size_bytes=10,
+    )
+
+    encoded = await _encode_input_files([ref])
+
+    assert encoded == [
+        {
+            "filename": "input.pdf",
+            "content_type": "application/pdf",
+            "data_base64": "JVBERi1pbnB1dA==",
+        }
+    ]
+    read.assert_awaited_once_with(ref)
 

@@ -52,3 +52,33 @@ describe("platform-job WebSocket contract", () => {
 		unsubscribe();
 	});
 });
+
+describe("chat WebSocket contract", () => {
+	it("sends attachment ids and the governed model tier", () => {
+		const send = vi.fn();
+		const service = webSocketService as unknown as {
+			ws: { readyState: number; send: typeof send } | null;
+		};
+		service.ws = { readyState: WebSocket.OPEN, send };
+
+		expect(
+			webSocketService.sendChatMessage(
+				"conversation-1",
+				"Summarize this",
+				"local-1",
+				["attachment-1"],
+				"pro",
+			),
+		).toBe(true);
+		expect(JSON.parse(send.mock.calls[0][0])).toEqual({
+			type: "chat",
+			conversation_id: "conversation-1",
+			message: "Summarize this",
+			local_id: "local-1",
+			attachment_ids: ["attachment-1"],
+			model_tier: "pro",
+		});
+
+		service.ws = null;
+	});
+});

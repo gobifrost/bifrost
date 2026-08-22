@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+import httpx
 import pytest
 from cryptography.fernet import Fernet
 
@@ -19,7 +20,61 @@ from src.services.llm_config_service import (
     LLMTestResult,
     LLM_CONFIG_CATEGORY,
     LLM_CONFIG_KEY,
+    _list_openrouter_models,
+    _model_output_modalities,
 )
+
+
+def test_openrouter_output_modalities_are_preserved() -> None:
+    model = MagicMock()
+    model.architecture = {
+        "input_modalities": ["text"],
+        "output_modalities": ["text", "image"],
+    }
+
+    assert _model_output_modalities(model) == ["text", "image"]
+
+
+@pytest.mark.asyncio
+async def test_openrouter_catalog_includes_all_output_modalities() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.headers["Authorization"] == "Bearer test-key"
+        if request.url.path == "/api/v1/images/models":
+            return httpx.Response(
+                200,
+                json={"data": [{"id": "google/nano-banana", "name": "Nano Banana"}]},
+            )
+        if request.url.path == "/api/v1/videos/models":
+            return httpx.Response(
+                200,
+                json={"data": [{"id": "openai/sora", "name": "Sora"}]},
+            )
+        assert request.url.params["output_modalities"] == "all"
+        return httpx.Response(
+            200,
+            json={
+                "data": [
+                    {
+                        "id": "google/nano-banana",
+                        "name": "Nano Banana",
+                        "architecture": {"output_modalities": ["text"]},
+                    },
+                    {
+                        "id": "openai/sora",
+                        "name": "Sora",
+                        "architecture": {"output_modalities": ["text"]},
+                    },
+                ]
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        models = await _list_openrouter_models("test-key", client)
+
+    assert [(model.id, model.output_modalities) for model in models] == [
+        ("google/nano-banana", ["text", "image"]),
+        ("openai/sora", ["text", "video"]),
+    ]
 
 
 @pytest.fixture
@@ -58,6 +113,8 @@ def sample_config_data(fernet_instance):
         "encrypted_api_key": encrypted_key,
         "endpoint": None,
         "max_tokens": 4096,
+        "image_generation_model": "imagen-test",
+        "video_generation_model": "veo-test",
     }
 
 
@@ -112,10 +169,30 @@ class TestLLMConfigService:
         assert isinstance(result, LLMProviderConfig)
         assert result.provider == "anthropic"
         assert result.model == "claude-sonnet-4-20250514"
+        assert result.image_generation_model == "imagen-test"
+        assert result.video_generation_model == "veo-test"
         assert result.is_configured is True
         assert result.api_key_set is True
         # API key should NOT be returned
         assert not hasattr(result, "api_key") or result.api_key_set is True
+
+    def test_chat_model_tiers_are_governed_by_configuration(self):
+        config = LLMProviderConfig(
+            provider="openai",
+            model="balanced-default",
+            chat_fast_model="fast-model",
+            chat_pro_model="pro-model",
+        )
+
+        assert config.resolve_chat_model("fast") == "fast-model"
+        assert config.resolve_chat_model("balanced") == "balanced-default"
+        assert config.resolve_chat_model("pro") == "pro-model"
+
+    def test_disabled_optional_chat_tier_is_rejected(self):
+        config = LLMProviderConfig(provider="openai", model="balanced-default")
+
+        with pytest.raises(ValueError, match="fast Chat model tier is not enabled"):
+            config.resolve_chat_model("fast")
 
     @pytest.mark.asyncio
     async def test_save_config_creates_new_config(
@@ -133,6 +210,8 @@ class TestLLMConfigService:
                 provider="openai",
                 model="gpt-4o",
                 api_key="sk-test-key",
+                image_generation_model="image-model",
+                video_generation_model="video-model",
                 updated_by="test@example.com",
             )
 
@@ -146,6 +225,8 @@ class TestLLMConfigService:
         assert added_config.key == LLM_CONFIG_KEY
         assert added_config.value_json["provider"] == "openai"
         assert added_config.value_json["model"] == "gpt-4o"
+        assert added_config.value_json["image_generation_model"] == "image-model"
+        assert added_config.value_json["video_generation_model"] == "video-model"
         assert "encrypted_api_key" in added_config.value_json
         assert added_config.organization_id is None
 
@@ -207,6 +288,26 @@ class TestLLMConfigService:
         # Verify it can be decrypted back to original
         decrypted = fernet_instance.decrypt(encrypted_key.encode()).decode()
         assert decrypted == test_api_key
+
+    @pytest.mark.asyncio
+    async def test_save_config_accepts_google_provider(
+        self, mock_session, mock_settings
+    ):
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.first.return_value = None
+        mock_session.execute.return_value = mock_result
+
+        with patch("src.services.llm_config_service.get_settings", return_value=mock_settings):
+            service = LLMConfigService(mock_session)
+            await service.save_config(
+                provider="google",
+                model="gemini-2.5-flash",
+                api_key="google-test-key",
+            )
+
+        added_config = mock_session.add.call_args[0][0]
+        assert added_config.value_json["provider"] == "google"
+        assert added_config.value_json["model"] == "gemini-2.5-flash"
 
     @pytest.mark.asyncio
     async def test_delete_config_returns_true_when_deleted(
@@ -332,6 +433,36 @@ class TestLLMConfigServiceTestConnection:
         assert result.success is True
         assert "api.anthropic.com" in result.message
         assert result.models is not None
+
+    @pytest.mark.asyncio
+    async def test_test_connection_google_success(
+        self, mock_session, mock_settings
+    ):
+        mock_llm_config = MagicMock(
+            provider="google",
+            api_key="google-test-key",
+            model="gemini-2.5-flash",
+            endpoint=None,
+        )
+        model = MagicMock()
+        model.name = "models/gemini-2.5-flash"
+        model.display_name = "Gemini 2.5 Flash"
+        pager = MagicMock(page=[model])
+        google_client = MagicMock()
+        google_client.aio.models.list = AsyncMock(return_value=pager)
+        google_client.aio.aclose = AsyncMock()
+
+        with patch("src.services.llm_config_service.get_settings", return_value=mock_settings), patch(
+            "src.services.llm.factory.get_llm_config",
+            return_value=mock_llm_config,
+        ), patch("google.genai.Client", return_value=google_client):
+            result = await LLMConfigService(mock_session).test_connection()
+
+        assert result.success is True
+        assert result.models == [
+            LLMModelInfo(id="gemini-2.5-flash", display_name="Gemini 2.5 Flash")
+        ]
+        google_client.aio.aclose.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_test_connection_handles_api_error(

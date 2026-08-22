@@ -105,6 +105,32 @@ class TestCalculateCost:
         expected = Decimal("20.00")
         assert result == expected
 
+    def test_prices_cached_input_without_double_counting_it(self):
+        """Provider input totals include cache reads, so split them from regular input."""
+        result = calculate_cost(
+            input_tokens=1_000,
+            output_tokens=100,
+            cache_read_tokens=800,
+            input_price_per_million=Decimal("10"),
+            output_price_per_million=Decimal("20"),
+            cache_read_price_per_million=Decimal("1"),
+        )
+
+        # 200 uncached input at $10/M + 800 cache reads at $1/M +
+        # 100 output at $20/M.
+        assert result == Decimal("0.0048")
+
+    def test_falls_back_to_regular_input_price_when_cache_rate_is_unknown(self):
+        result = calculate_cost(
+            input_tokens=1_000,
+            output_tokens=0,
+            cache_read_tokens=800,
+            input_price_per_million=Decimal("10"),
+            output_price_per_million=Decimal("20"),
+        )
+
+        assert result == Decimal("0.010")
+
 
 class TestGetCachedPrice:
     """Tests for get_cached_price function."""
@@ -224,7 +250,10 @@ class TestGetUsageTotals:
         assert result == {
             "input_tokens": 0,
             "output_tokens": 0,
+            "cache_read_tokens": 0,
+            "cache_write_tokens": 0,
             "total_cost": None,
+            "provider_cost": None,
             "call_count": 0,
         }
         mock_redis.get.assert_not_called()
@@ -278,7 +307,10 @@ class TestGetUsageTotals:
         mock_row = MagicMock()
         mock_row.input_tokens = 1500
         mock_row.output_tokens = 750
+        mock_row.cache_read_tokens = 0
+        mock_row.cache_write_tokens = 0
         mock_row.total_cost = Decimal("0.02")
+        mock_row.provider_cost = None
         mock_row.call_count = 3
 
         mock_result = MagicMock()
@@ -505,6 +537,60 @@ class TestRecordAIUsage:
 
             mock_session.add.assert_called_once_with(mock_usage)
             mock_session.flush.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_openrouter_uses_exact_cost_and_recovers_missing_catalog_price(
+        self, mock_redis, mock_session
+    ):
+        """Exact response cost wins while catalog recovery fills future pricing."""
+        exact_cost = Decimal("0.00012345")
+        recovered_pricing = (
+            Decimal("0.20"),
+            Decimal("0.80"),
+            Decimal("0.02"),
+            None,
+        )
+
+        with (
+            patch("src.models.orm.ai_usage.AIUsage") as MockAIUsage,
+            patch(
+                "src.services.ai_usage_service.get_cached_pricing",
+                new=AsyncMock(
+                    side_effect=[
+                        (None, None, None, None),
+                        recovered_pricing,
+                    ]
+                ),
+            ) as pricing_lookup,
+            patch(
+                "src.services.model_pricing.discover_openrouter_pricing",
+                new=AsyncMock(return_value=True),
+            ) as discover,
+        ):
+            await record_ai_usage(
+                session=mock_session,
+                redis_client=mock_redis,
+                provider="openrouter",
+                model="deepseek/deepseek-v4-flash",
+                input_tokens=10_000,
+                output_tokens=500,
+                cache_read_tokens=8_000,
+                provider_cost=exact_cost,
+                execution_id=uuid4(),
+            )
+
+        discover.assert_awaited_once_with(
+            mock_session,
+            mock_redis,
+            "deepseek/deepseek-v4-flash",
+        )
+        assert pricing_lookup.await_count == 2
+        call_kwargs = MockAIUsage.call_args.kwargs
+        assert call_kwargs["provider"] == "openrouter"
+        assert call_kwargs["model"] == "deepseek/deepseek-v4-flash"
+        assert call_kwargs["cache_read_tokens"] == 8_000
+        assert call_kwargs["provider_cost"] == exact_cost
+        assert call_kwargs["cost"] == exact_cost
 
     @pytest.mark.asyncio
     async def test_converts_versioned_model_to_display_name(self, mock_redis, mock_session):

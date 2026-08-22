@@ -4,6 +4,7 @@ import { createRoot } from "react-dom/client";
 import "./style.css";
 
 export const sharedLabel = "Lazy chunk rendered";
+const buildLabel = import.meta.env.VITE_ASSET_FIXTURE ?? "default";
 
 interface Bootstrap {
 	basename: string;
@@ -42,6 +43,7 @@ const LazyPage = lazy(() => import("./LazyPage"));
 function FixtureApp({ bootstrap }: { bootstrap: Bootstrap }) {
 	return (
 		<main>
+			<p data-testid="fixture-build">{buildLabel}</p>
 			<p data-testid="fixture-basename">{bootstrap.basename}</p>
 			<Suspense fallback={<p>Loading lazy chunk…</p>}>
 				<LazyPage />

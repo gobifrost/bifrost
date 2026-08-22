@@ -36,6 +36,7 @@ from src.models.contracts.executions import (
 from src.models.orm.ai_usage import AIUsage
 
 from bifrost._logging import read_logs_from_stream
+from shared.pending_execution import get_pending_execution_fallback
 from src.core.auth import Context, RequirePlatformAdmin
 from src.core.principal import UserPrincipal
 from src.core.log_safety import log_safe
@@ -334,6 +335,9 @@ class ExecutionRepository:
                 model=entry.model,
                 input_tokens=entry.input_tokens,
                 output_tokens=entry.output_tokens,
+                cache_read_tokens=entry.cache_read_tokens,
+                cache_write_tokens=entry.cache_write_tokens,
+                provider_cost=(str(entry.provider_cost) if entry.provider_cost is not None else None),
                 cost=str(entry.cost) if entry.cost else None,
                 duration_ms=entry.duration_ms,
                 timestamp=entry.timestamp.isoformat() if entry.timestamp else "",
@@ -348,6 +352,9 @@ class ExecutionRepository:
             totals_query = select(
                 func.coalesce(func.sum(AIUsage.input_tokens), 0).label("total_input"),
                 func.coalesce(func.sum(AIUsage.output_tokens), 0).label("total_output"),
+                func.coalesce(func.sum(AIUsage.cache_read_tokens), 0).label("total_cache_read"),
+                func.coalesce(func.sum(AIUsage.cache_write_tokens), 0).label("total_cache_write"),
+                func.coalesce(func.sum(AIUsage.provider_cost), Decimal("0")).label("total_provider_cost"),
                 func.coalesce(func.sum(AIUsage.cost), Decimal("0")).label("total_cost"),
                 func.coalesce(func.sum(AIUsage.duration_ms), 0).label("total_duration"),
                 func.count(AIUsage.id).label("call_count"),
@@ -359,6 +366,9 @@ class ExecutionRepository:
             ai_totals = AIUsageTotalsSimple(
                 total_input_tokens=int(totals_row.total_input or 0),
                 total_output_tokens=int(totals_row.total_output or 0),
+                total_cache_read_tokens=int(totals_row.total_cache_read or 0),
+                total_cache_write_tokens=int(totals_row.total_cache_write or 0),
+                total_provider_cost=str(totals_row.total_provider_cost or Decimal("0")),
                 total_cost=str(totals_row.total_cost or Decimal("0")),
                 total_duration_ms=int(totals_row.total_duration or 0),
                 call_count=int(totals_row.call_count or 0),
@@ -815,11 +825,13 @@ async def get_execution(
     execution, error = await repo.get_execution(execution_id, ctx.user)
 
     if error == "NotFound":
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Execution {execution_id} not found",
+        execution, error = await get_pending_execution_fallback(
+            execution_id,
+            ctx.user,
+            ctx.db,
         )
-    elif error == "Forbidden":
+
+    if error == "Forbidden":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You do not have permission to view this execution",

@@ -34,7 +34,10 @@ describe("LogoDropZone", () => {
 	it("renders the preview img pointing at previewUrl", () => {
 		render(<LogoDropZone {...baseProps} />);
 		const img = screen.getByTestId("logo-drop-zone-img");
-		expect(img.getAttribute("src")).toContain(baseProps.previewUrl);
+		expect(img.getAttribute("src")).toBe(baseProps.previewUrl);
+		expect(img).toHaveClass("opacity-0");
+		fireEvent.load(img);
+		expect(img).toHaveClass("opacity-100");
 	});
 
 	it("shows the fallback when the preview img errors", () => {
@@ -45,7 +48,9 @@ describe("LogoDropZone", () => {
 	});
 
 	it("POSTs the dropped file via authFetch", async () => {
-		mockAuthFetch.mockResolvedValueOnce(new Response(null, { status: 200 }));
+		mockAuthFetch.mockResolvedValueOnce(
+			new Response(null, { status: 200 }),
+		);
 		const onChange = vi.fn();
 		render(<LogoDropZone {...baseProps} onChange={onChange} />);
 		const zone = screen.getByTestId("logo-drop-zone");
@@ -72,7 +77,9 @@ describe("LogoDropZone", () => {
 	});
 
 	it("DELETEs via authFetch when Remove is clicked", async () => {
-		mockAuthFetch.mockResolvedValueOnce(new Response(null, { status: 204 }));
+		mockAuthFetch.mockResolvedValueOnce(
+			new Response(null, { status: 204 }),
+		);
 		const onChange = vi.fn();
 		render(<LogoDropZone {...baseProps} onChange={onChange} />);
 		// Remove button only shows once an image has actually loaded

@@ -1,14 +1,13 @@
 /**
  * ToolExecutionBadge Component
  *
- * Compact inline badge for displaying SDK tool execution status.
- * Designed to flow horizontally and take minimal space.
+ * Compact SDK tool execution row with inline expandable details.
  *
  * Features:
  * - Status icon (spinner for running, check for success, x for failed)
  * - Tool name
  * - Optional duration
- * - Click to expand details in a popover
+ * - Click to expand full-width details in the conversation flow
  */
 
 import { useState } from "react";
@@ -20,12 +19,6 @@ import {
 	ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Badge } from "@/components/ui/badge";
-import {
-	Popover,
-	PopoverContent,
-	PopoverTrigger,
-} from "@/components/ui/popover";
 import { PrettyInputDisplay } from "@/components/execution/PrettyInputDisplay";
 import type { components } from "@/lib/v1";
 import type {
@@ -49,7 +42,7 @@ interface ToolExecutionBadgeProps {
 	toolCall: ToolCall;
 	/** Status from streaming state or saved execution */
 	status: ToolExecutionStatus;
-	/** Execution result (for popover details) */
+	/** Execution result (for inline details) */
 	result?: unknown;
 	/** Error message if failed */
 	error?: string;
@@ -65,38 +58,27 @@ const statusConfig: Record<
 	{
 		icon: typeof Clock;
 		className: string;
-		badgeClassName: string;
 	}
 > = {
 	pending: {
 		icon: Clock,
 		className: "text-muted-foreground",
-		badgeClassName:
-			"bg-muted text-muted-foreground hover:bg-muted/80 border-muted-foreground/20",
 	},
 	running: {
 		icon: Loader2,
 		className: "text-blue-500 animate-spin",
-		badgeClassName:
-			"bg-blue-500/10 text-blue-600 hover:bg-blue-500/20 border-blue-500/30 animate-pulse",
 	},
 	success: {
 		icon: CheckCircle2,
 		className: "text-green-500",
-		badgeClassName:
-			"bg-green-500/10 text-green-600 hover:bg-green-500/20 border-green-500/30",
 	},
 	failed: {
 		icon: XCircle,
 		className: "text-destructive",
-		badgeClassName:
-			"bg-destructive/10 text-destructive hover:bg-destructive/20 border-destructive/30",
 	},
 	timeout: {
 		icon: Clock,
 		className: "text-amber-500",
-		badgeClassName:
-			"bg-amber-500/10 text-amber-600 hover:bg-amber-500/20 border-amber-500/30",
 	},
 };
 
@@ -126,40 +108,39 @@ export function ToolExecutionBadge({
 		(toolCall.arguments && Object.keys(toolCall.arguments).length > 0);
 
 	return (
-		<Popover open={isOpen} onOpenChange={setIsOpen}>
-			<PopoverTrigger asChild>
-				<Badge
-					variant="outline"
-					className={cn(
-						"cursor-pointer gap-1.5 px-2 py-1 text-xs font-normal transition-colors",
-						config.badgeClassName,
-						className,
-					)}
-				>
-					<StatusIcon className={cn("h-3 w-3", config.className)} />
-					<span className="font-medium">{toolCall.name}</span>
-					{durationMs !== undefined && (
-						<span className="text-muted-foreground">
-							{formatDuration(durationMs)}
-						</span>
-					)}
-					{hasDetails && (
-						<ChevronDown
-							className={cn(
-								"h-3 w-3 text-muted-foreground transition-transform",
-								isOpen && "rotate-180",
-							)}
-						/>
-					)}
-				</Badge>
-			</PopoverTrigger>
+		<div className="w-full min-w-0">
+			<button
+				type="button"
+				disabled={!hasDetails}
+				onClick={() => setIsOpen((value) => !value)}
+				aria-expanded={hasDetails ? isOpen : undefined}
+				className={cn(
+					"flex min-h-11 w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-xs text-muted-foreground outline-none transition-colors hover:bg-muted/50 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none motion-reduce:transition-none sm:min-h-7",
+					status === "failed" && "text-destructive",
+					status === "timeout" && "text-amber-600 dark:text-amber-400",
+					className,
+				)}
+			>
+				<StatusIcon className={cn("h-3 w-3 shrink-0", config.className)} />
+				<span className="font-medium">{toolCall.name}</span>
+				{durationMs !== undefined && (
+					<span className="text-muted-foreground">
+						{formatDuration(durationMs)}
+					</span>
+				)}
+				{hasDetails && (
+					<ChevronDown
+						className={cn(
+							"ml-0.5 h-3 w-3 text-muted-foreground transition-transform motion-reduce:transition-none",
+							isOpen && "rotate-180",
+						)}
+					/>
+				)}
+			</button>
 
-			{hasDetails && (
-				<PopoverContent
-					className="w-96 max-h-80 overflow-auto"
-					align="start"
-				>
-					<div className="space-y-3">
+			{hasDetails && isOpen && (
+				<div className="mt-1 w-full overflow-hidden rounded-xl border border-border bg-muted/20 text-foreground">
+					<div className="max-h-[28rem] w-full space-y-4 overflow-auto p-4">
 						{/* Input Parameters */}
 						{toolCall.arguments &&
 							Object.keys(toolCall.arguments).length > 0 && (
@@ -246,8 +227,8 @@ export function ToolExecutionBadge({
 							</div>
 						)}
 					</div>
-				</PopoverContent>
+				</div>
 			)}
-		</Popover>
+		</div>
 	);
 }

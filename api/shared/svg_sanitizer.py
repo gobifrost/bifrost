@@ -1,8 +1,8 @@
 """SVG sanitizer.
 
 Parses SVG bytes with defusedxml (blocking XXE / billion-laughs), strips
-script elements, event-handler attributes, and javascript: hrefs. Returns
-sanitized bytes ready to store and serve.
+active content, and prevents external resource resolution. Returns sanitized
+bytes ready to store, serve, or rasterize on the backend.
 """
 
 from __future__ import annotations
@@ -14,7 +14,12 @@ from defusedxml import ElementTree as DefusedET
 
 _SVG_NS = "http://www.w3.org/2000/svg"
 _XLINK_NS = "http://www.w3.org/1999/xlink"
-_JS_URI = re.compile(r"^\s*javascript:", re.IGNORECASE)
+_XML_NS = "http://www.w3.org/XML/1998/namespace"
+_CSS_URL = re.compile(r"url\(\s*(['\"]?)(.*?)\1\s*\)", re.IGNORECASE)
+_EMBEDDED_RASTER = re.compile(
+    r"^\s*data:image/(?:png|jpeg|jpg|gif|webp);base64,",
+    re.IGNORECASE,
+)
 
 # Register common SVG namespaces so tostring() emits clean tag names
 # (e.g. <svg> instead of <ns0:svg>).
@@ -26,6 +31,19 @@ class SvgSanitizationError(ValueError):
     """Raised when the SVG cannot be safely parsed or sanitized."""
 
 
+def _safe_resource_reference(value: str) -> bool:
+    """Allow document fragments and embedded raster images, never I/O."""
+    stripped = value.strip()
+    return stripped.startswith("#") or bool(_EMBEDDED_RASTER.match(stripped))
+
+
+def _has_external_css_reference(value: str) -> bool:
+    """Detect CSS capable of loading a resource outside this document."""
+    if "@import" in value.lower():
+        return True
+    return any(not _safe_resource_reference(match.group(2)) for match in _CSS_URL.finditer(value))
+
+
 def _strip(element: Element) -> None:
     # Remove disallowed attributes
     for attr in list(element.attrib.keys()):
@@ -33,14 +51,23 @@ def _strip(element: Element) -> None:
         if local.startswith("on"):
             del element.attrib[attr]
             continue
+        if attr == f"{{{_XML_NS}}}base":
+            del element.attrib[attr]
+            continue
         if local == "href" or attr == f"{{{_XLINK_NS}}}href":
-            if _JS_URI.match(element.attrib[attr]):
+            if not _safe_resource_reference(element.attrib[attr]):
                 del element.attrib[attr]
+                continue
+        if _has_external_css_reference(element.attrib[attr]):
+            del element.attrib[attr]
 
-    # Recurse, removing forbidden children in place
+    # Recurse, removing forbidden children in place.
     for child in list(element):
         tag = child.tag.split("}")[-1].lower()
-        if tag in ("script",):
+        if tag in ("script", "link"):
+            element.remove(child)
+            continue
+        if tag == "style" and _has_external_css_reference(child.text or ""):
             element.remove(child)
             continue
         _strip(child)

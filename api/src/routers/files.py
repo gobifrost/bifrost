@@ -1276,6 +1276,10 @@ async def write_file(
                 solution_id=solution_id,
                 org_id=await _install_org_id(ctx, solution_id),
             )
+            # The yielded DB dependency commits after the response body is sent.
+            # Commit here so a successful write response and its notification
+            # never race ahead of durable metadata.
+            await db.commit()
             await publish_file_change(
                 location=request.location,
                 scope=effective_scope,
@@ -1361,19 +1365,21 @@ async def delete_file(
             from src.core.pubsub import publish_file_change
             from src.services.file_policy_service import FilePolicyService
 
-            await publish_file_change(
-                location=request.location,
-                scope=effective_scope,
-                path=request.path,
-                action="delete",
-            )
             await FilePolicyService(db).delete_metadata(
                 organization_id=await _install_org_id(ctx, solution_id),
                 location=request.location,
                 path=request.path,
                 solution_id=solution_id,
             )
-            await db.flush()
+            # Do not acknowledge or publish the deletion while its metadata is
+            # still visible to another transaction.
+            await db.commit()
+            await publish_file_change(
+                location=request.location,
+                scope=effective_scope,
+                path=request.path,
+                action="delete",
+            )
 
         logger.info(f"Deleted file: {log_safe(request.path)} (mode={log_safe(request.mode)}, location={log_safe(request.location)})")
 

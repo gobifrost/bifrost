@@ -6,6 +6,7 @@ from uuid import uuid4
 import redis.asyncio as aioredis
 
 from src.core.cache.redis_client import get_redis
+from src.core.log_safety import log_safe
 from src.jobs.rabbitmq import publish_message
 
 logger = logging.getLogger(__name__)
@@ -68,6 +69,21 @@ async def enqueue_agent_run(
 
     logger.info(f"Enqueued agent run {run_id} for agent {agent_id} (trigger={trigger_type})")
     return run_id
+
+
+async def get_pending_agent_run_context(run_id: str) -> dict | None:
+    """Return the short-lived enqueue context before its AgentRun row exists."""
+    redis_key = f"{REDIS_PREFIX}:{run_id}:context"
+    async with get_redis() as redis:
+        raw_context = await redis.get(redis_key)
+    if raw_context is None:
+        return None
+    try:
+        context = json.loads(raw_context)
+    except (TypeError, json.JSONDecodeError):
+        logger.warning("Invalid pending agent-run context for %s", log_safe(run_id))
+        return None
+    return context if isinstance(context, dict) else None
 
 
 async def wait_for_agent_run_result(run_id: str, timeout: int = 1800) -> dict | None:

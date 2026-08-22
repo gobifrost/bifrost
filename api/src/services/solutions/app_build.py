@@ -167,7 +167,7 @@ class SolutionAppBuilder:
         build — Vite cannot resolve bare imports from a bare package.json alone.
         """
         subprocess.run(  # noqa: S603 - trusted toolchain, fixed argv
-            ["npm", "install", "--no-audit", "--no-fund"],
+            ["npm", "install", "--no-audit", "--no-fund", "--package-lock=false"],
             cwd=str(workdir),
             check=True,
             capture_output=True,

@@ -1,7 +1,7 @@
 """Tests for ``bifrost.cli._check_cli_version`` — URL resolution and transport.
 
-The *behavioral* contract of the gate (contract-version hard gate, build-drift
-soft notice, old-server fallback, un-reachable warning) lives in
+The *behavioral* contract of the gate (server-minimum hard gate, build-drift
+soft notice, old-server behavior, un-reachable warning) lives in
 ``test_cli_contract_gate.py``. This file keeps the still-valid cross-cutting
 concerns the gate must honor regardless of which gate fires:
 

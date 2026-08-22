@@ -14,7 +14,7 @@
 
 import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { renderWithProviders, screen, fireEvent } from "@/test-utils";
+import { renderWithProviders, screen, fireEvent, waitFor } from "@/test-utils";
 
 // --- mocks --------------------------------------------------------------
 
@@ -32,7 +32,7 @@ const streamRef = {
 };
 
 const createConversationRef = {
-	mutate: vi.fn(),
+	mutateAsync: vi.fn(),
 	isPending: false,
 };
 
@@ -42,6 +42,24 @@ vi.mock("@/hooks/useChat", () => ({
 		isLoading: messagesRef.isLoading,
 	}),
 	useCreateConversation: () => createConversationRef,
+	useChatModelTiers: () => ({
+		data: {
+			tiers: [
+				{
+					id: "balanced",
+					label: "Balanced",
+					capabilities: {
+						image_input: false,
+						pdf_input: false,
+						tool_calling: true,
+						source: "verified",
+						fingerprint: "test",
+					},
+				},
+			],
+			default_tier: "balanced",
+		},
+	}),
 }));
 
 vi.mock("@/hooks/useChatStream", () => ({
@@ -67,19 +85,18 @@ vi.mock("@/stores/chatStore", () => ({
 
 const mockNavigate = vi.fn();
 vi.mock("react-router-dom", async () => {
-	const actual = await vi.importActual<typeof import("react-router-dom")>(
-		"react-router-dom",
-	);
+	const actual =
+		await vi.importActual<typeof import("react-router-dom")>(
+			"react-router-dom",
+		);
 	return { ...actual, useNavigate: () => mockNavigate };
 });
 
 // Child components we don't need to exercise — stub to simple markers.
 vi.mock("./ChatMessage", () => ({
-	ChatMessage: ({
-		message,
-	}: {
-		message: { content?: string | null };
-	}) => <div data-marker="chat-message">{message.content}</div>,
+	ChatMessage: ({ message }: { message: { content?: string | null } }) => (
+		<div data-marker="chat-message">{message.content}</div>
+	),
 }));
 
 vi.mock("./ChatInput", () => ({
@@ -87,7 +104,7 @@ vi.mock("./ChatInput", () => ({
 		onSend,
 		placeholder,
 	}: {
-		onSend: (m: string) => void;
+		onSend: (m: string, files: File[], tier: "balanced") => void;
 		placeholder?: string;
 	}) => (
 		<div>
@@ -96,7 +113,11 @@ vi.mock("./ChatInput", () => ({
 				placeholder={placeholder}
 				onKeyDown={(e) => {
 					if (e.key === "Enter") {
-						onSend((e.target as HTMLInputElement).value);
+						onSend(
+							(e.target as HTMLInputElement).value,
+							[],
+							"balanced",
+						);
 					}
 				}}
 			/>
@@ -144,7 +165,7 @@ beforeEach(() => {
 	streamRef.isStreaming = false;
 	streamRef.pendingQuestion = null;
 	streamRef.stopStreaming = vi.fn();
-	createConversationRef.mutate = vi.fn();
+	createConversationRef.mutateAsync = vi.fn();
 	createConversationRef.isPending = false;
 	storeSelectors.setActiveConversation.mockReset();
 	storeSelectors.setActiveAgent.mockReset();
@@ -182,13 +203,69 @@ describe("ChatWindow — loading state", () => {
 		const { container } = renderWithProviders(
 			<ChatWindow conversationId="c-1" />,
 		);
-		expect(container.querySelectorAll(".animate-pulse").length).toBeGreaterThan(
-			0,
-		);
+		expect(
+			container.querySelectorAll(".animate-pulse").length,
+		).toBeGreaterThan(0);
 	});
 });
 
 describe("ChatWindow — messages render & send", () => {
+	it("shows an immediate thinking activity line while the run is starting", () => {
+		messagesRef.data = [
+			{
+				id: "m-1",
+				role: "user",
+				content: "Build a report",
+				created_at: "2026-04-20T00:00:00Z",
+			},
+		];
+		streamRef.isStreaming = true;
+
+		renderWithProviders(<ChatWindow conversationId="c-1" />);
+
+		expect(screen.getByText("Thinking…")).toHaveClass("chat-activity-shimmer");
+	});
+
+	it("collapses tool activity when the final response starts streaming", () => {
+		messagesRef.data = [
+			{
+				id: "m-1",
+				role: "user",
+				content: "Build a report",
+				created_at: "2026-04-20T00:00:00Z",
+			},
+			{
+				id: "tool-1",
+				role: "tool_call",
+				tool_name: "create_text_artifact",
+				tool_state: "completed",
+				created_at: "2026-04-20T00:00:01Z",
+			},
+			{
+				id: "assistant-final",
+				role: "assistant",
+				content: "I created the report.",
+				isStreaming: true,
+				created_at: "2026-04-20T00:00:02Z",
+			},
+		];
+		streamRef.isStreaming = true;
+		storeSelectors.streamingMessageIds = {
+			"c-1": "assistant-final",
+		};
+
+		const { container } = renderWithProviders(
+			<ChatWindow conversationId="c-1" />,
+		);
+
+		expect(screen.getByText("Responding…")).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: /Responding/i })).toHaveAttribute(
+			"aria-expanded",
+			"false",
+		);
+		expect(container.querySelector(".grid-rows-\\[0fr\\]")).not.toBeNull();
+	});
+
 	it("renders messages returned from the hook", () => {
 		messagesRef.data = [
 			{
@@ -212,7 +289,35 @@ describe("ChatWindow — messages render & send", () => {
 		expect(screen.getByText("pong")).toBeInTheDocument();
 	});
 
-	it("forwards a typed message to the stream's sendMessage", () => {
+	it("uses the persisted run summary duration even when its content is empty", () => {
+		messagesRef.data = [
+			{
+				id: "m-1",
+				role: "user",
+				content: "Generate files",
+				created_at: "2026-04-20T00:00:00Z",
+			},
+			{
+				id: "m-2",
+				role: "assistant",
+				content: "I created the files.",
+				created_at: "2026-04-20T00:00:01Z",
+			},
+			{
+				id: "m-3",
+				role: "assistant",
+				content: "",
+				duration_ms: 8_500,
+				created_at: "2026-04-20T00:00:09Z",
+			},
+		];
+
+		renderWithProviders(<ChatWindow conversationId="c-1" />);
+
+		expect(screen.getByText("Worked for 9s")).toBeInTheDocument();
+	});
+
+	it("forwards a typed message to the stream's sendMessage", async () => {
 		messagesRef.data = [
 			{
 				id: "m-1",
@@ -224,31 +329,36 @@ describe("ChatWindow — messages render & send", () => {
 
 		renderWithProviders(<ChatWindow conversationId="c-1" />);
 
-		const input = screen.getByLabelText(
-			/chat input/i,
-		) as HTMLInputElement;
+		const input = screen.getByLabelText(/chat input/i) as HTMLInputElement;
 		fireEvent.change(input, { target: { value: "hello" } });
 		fireEvent.keyDown(input, { key: "Enter" });
 
-		expect(streamRef.sendMessage).toHaveBeenCalledWith("hello");
+		await waitFor(() =>
+			expect(streamRef.sendMessage).toHaveBeenCalledWith(
+				"hello",
+				"c-1",
+				[],
+				"balanced",
+			),
+		);
 	});
 
-	it("creates a conversation from the blank draft and sends the first message", () => {
-		createConversationRef.mutate.mockImplementation((_variables, options) => {
-			options?.onSuccess?.({ id: "new-conversation-id" });
+	it("creates a conversation from the blank draft and sends the first message", async () => {
+		createConversationRef.mutateAsync.mockResolvedValue({
+			id: "new-conversation-id",
+			agent_id: null,
 		});
 
 		renderWithProviders(<ChatWindow conversationId={undefined} />);
 
-		const input = screen.getByLabelText(
-			/chat input/i,
-		) as HTMLInputElement;
+		const input = screen.getByLabelText(/chat input/i) as HTMLInputElement;
 		fireEvent.change(input, { target: { value: "hello from draft" } });
 		fireEvent.keyDown(input, { key: "Enter" });
 
-		expect(createConversationRef.mutate).toHaveBeenCalledWith(
-			{ body: { channel: "chat" } },
-			expect.objectContaining({ onSuccess: expect.any(Function) }),
+		await waitFor(() =>
+			expect(createConversationRef.mutateAsync).toHaveBeenCalledWith({
+				body: { channel: "chat" },
+			}),
 		);
 		expect(storeSelectors.setActiveConversation).toHaveBeenCalledWith(
 			"new-conversation-id",
@@ -258,6 +368,8 @@ describe("ChatWindow — messages render & send", () => {
 		expect(streamRef.sendMessage).toHaveBeenCalledWith(
 			"hello from draft",
 			"new-conversation-id",
+			[],
+			"balanced",
 		);
 	});
 });

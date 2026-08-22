@@ -47,6 +47,12 @@ class AIModelPricing(Base):
     output_price_per_million: Mapped[Decimal] = mapped_column(
         Numeric(10, 4), nullable=False
     )
+    cache_read_price_per_million: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 4), default=None
+    )
+    cache_write_price_per_million: Mapped[Decimal | None] = mapped_column(
+        Numeric(10, 4), default=None
+    )
     effective_date: Mapped[date] = mapped_column(
         Date, nullable=False, server_default=text("CURRENT_DATE")
     )
@@ -93,6 +99,15 @@ class AIUsage(Base):
     model: Mapped[str] = mapped_column(String(100), nullable=False)
     input_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     output_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    cache_read_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    cache_write_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    provider_cost: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 8), default=None
+    )
     cost: Mapped[Decimal | None] = mapped_column(Numeric(12, 8), default=None)
     duration_ms: Mapped[int | None] = mapped_column(Integer, default=None)
 

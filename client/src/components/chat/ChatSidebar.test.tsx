@@ -118,6 +118,9 @@ describe("ChatSidebar — conversation list", () => {
 		expect(screen.getByText("First")).toBeInTheDocument();
 		const secondRow = screen.getByText("Second").closest("div.group");
 		expect(secondRow?.className).toMatch(/bg-accent/);
+		expect(
+			screen.getByRole("button", { name: /open second/i }),
+		).toBeInTheDocument();
 	});
 
 	it("filters by title via the search input", () => {
@@ -195,6 +198,7 @@ describe("ChatSidebar — delete flow", () => {
 
 		expect(deleteButton.className).toContain("opacity-100");
 		expect(deleteButton.className).toContain("sm:opacity-0");
+		expect(deleteButton.className).toContain("size-11");
 	});
 
 	it("opens the confirm dialog and triggers delete on confirm", async () => {

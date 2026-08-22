@@ -108,6 +108,9 @@ class TestGetUsageTotalsWithAgentRunId:
         mock_row = MagicMock()
         mock_row.input_tokens = 5000
         mock_row.output_tokens = 2000
+        mock_row.cache_read_tokens = 0
+        mock_row.cache_write_tokens = 0
+        mock_row.provider_cost = None
         mock_row.total_cost = Decimal("0.045")
         mock_row.call_count = 7
 

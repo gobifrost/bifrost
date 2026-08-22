@@ -179,15 +179,16 @@ The test stack runs in Docker and is separate from your dev stack. Boot it once 
 # Backend tests (stack must be up)
 ./test.sh                                          # Unit tests (fast default)
 ./test.sh e2e                                      # Backend e2e
-./test.sh all                                      # Unit + e2e (mirrors CI)
+./test.sh all                                      # All backend tests, including slow tests
 ./test.sh tests/unit/test_foo.py::test_bar -v      # Passthrough to pytest
 
 # Client tests
 ./test.sh client unit                              # Vitest (no stack needed)
 ./test.sh client e2e                               # Playwright in containers
 
-# CI-equivalent (one-shot: boot → run → tear down)
-./test.sh ci
+# Required pre-PR gate and broader one-shot run
+./test.sh pre-pr                                 # Required clean-commit gate before a PR
+./test.sh ci                                     # All backend + full browser suites
 ```
 
 Parallel worktrees each get their own isolated stack, so you can run tests in several worktrees simultaneously without conflict.

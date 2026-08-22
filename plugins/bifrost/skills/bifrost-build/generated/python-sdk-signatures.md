@@ -13,11 +13,48 @@ Agent execution operations.
 
 
 
-**`ai.complete(prompt: str | None = None, messages: list[dict[str, str]] | None = None, system: str | None = None, response_format: type[T] | None = None, knowledge: list[str] | None = None, max_tokens: int | None = None, org_id: str | None = None, model: str | None = None, timeout: float | None = None) -> AIResponse | T`**
+**`ai.complete(prompt: str | None = None, messages: list[dict[str, str]] | None = None, system: str | None = None, response_format: type[T] | None = None, knowledge: list[str] | None = None, max_tokens: int | None = None, org_id: str | None = None, model: str | None = None, timeout: float | None = None, files: list[AIInputFile | ArtifactRef | dict[str, Any]] | None = None) -> AIResponse | T`**
+
+**`ai.create_image(prompt: str, filename: str | None = None) -> ArtifactRef`**
+  Generate an image and return one portable artifact reference.
+
+**`ai.create_video(prompt: str, filename: str | None = None, timeout_seconds: float = 1800, poll_interval_seconds: float = 2) -> ArtifactRef`**
+  Generate a durable video and return one portable artifact reference.
 
 **`ai.get_model_info() -> dict[str, Any]`**
 
-**`ai.stream(prompt: str | None = None, messages: list[dict[str, str]] | None = None, system: str | None = None, knowledge: list[str] | None = None, max_tokens: int | None = None, org_id: str | None = None, model: str | None = None) -> AsyncGenerator[AIStreamChunk, None]`**
+**`ai.stream(prompt: str | None = None, messages: list[dict[str, str]] | None = None, system: str | None = None, knowledge: list[str] | None = None, max_tokens: int | None = None, org_id: str | None = None, model: str | None = None, files: list[AIInputFile | ArtifactRef | dict[str, Any]] | None = None) -> AsyncGenerator[AIStreamChunk, None]`**
+
+### artifacts
+
+Create, read, and share generated files from workflows.
+
+**`artifacts.create_document(filename: str, format: Literal['pdf', 'docx'], title: str, sections: list[dict[str, Any]], subtitle: str | None = None, page_size: Literal['letter', 'a4'] = 'letter') -> ArtifactRef`**
+  Create a flowing PDF or DOCX document and return its reference.
+
+**`artifacts.create_image(filename: str, prompt: str) -> ArtifactRef`**
+  Generate an image with the configured image model.
+
+**`artifacts.create_spreadsheet(filename: str, sheets: list[dict[str, Any]]) -> ArtifactRef`**
+  Create a styled XLSX workbook and return its reference.
+
+**`artifacts.create_text(filename: str, format: Literal['csv', 'html', 'markdown', 'text', 'json'], content: str) -> ArtifactRef`**
+  Create a text-family artifact and return its reference.
+
+**`artifacts.create_video(filename: str, prompt: str, timeout_seconds: float = 1800, poll_interval_seconds: float = 2) -> ArtifactRef`**
+  Generate a video through a durable platform job and return its reference.
+
+**`artifacts.get_download_url(ref: ArtifactRef | dict[str, Any]) -> str`**
+  Create a short-lived download URL for an authorized ArtifactRef.
+
+**`artifacts.list() -> list[ArtifactRef]`**
+  List the latest files available in the active run workspace.
+
+**`artifacts.read(ref: ArtifactRef | dict[str, Any]) -> bytes`**
+  Read an ArtifactRef received as workflow or MCP tool input.
+
+**`artifacts.write(filename: str, content: bytes, content_type: str) -> ArtifactRef`**
+  Store validated workflow-produced bytes behind an opaque reference.
 
 ### config
 

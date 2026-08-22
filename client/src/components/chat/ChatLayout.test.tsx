@@ -36,6 +36,9 @@ vi.mock("./ChatWindow", () => ({
 		</div>
 	),
 }));
+vi.mock("./ArtifactsLibrary", () => ({
+	ArtifactsLibrary: () => <div data-marker="artifacts-library">Artifacts library</div>,
+}));
 
 // Store state ChatLayout reads from.
 const storeState = {
@@ -154,12 +157,25 @@ describe("ChatLayout — composition", () => {
 
 		const { container } = renderWithProviders(<ChatLayout />);
 
-		expect(
-			screen.getByRole("button", { name: /open chat sidebar/i }),
-		).toBeInTheDocument();
+		const openSidebar = screen.getByRole("button", {
+			name: /open chat sidebar/i,
+		});
+		expect(openSidebar).toBeInTheDocument();
+		expect(openSidebar).toHaveClass("size-11");
 		const sidebarShell = getSidebarShell(container);
 		expect(sidebarShell?.className).toContain("w-0");
 		expect(screen.getByText("no-convo|no-agent")).toBeInTheDocument();
+	});
+
+	it("keeps artifact navigation reachable on mobile", () => {
+		mediaQueryState.matches = false;
+
+		const { container } = renderWithProviders(<ChatLayout view="artifacts" />);
+
+		expect(container.querySelector('[data-marker="artifacts-library"]')).not.toBeNull();
+		expect(
+			screen.getByRole("button", { name: /open chat sidebar/i }),
+		).toBeInTheDocument();
 	});
 
 	it("closes the mobile sidebar after a conversation is selected", async () => {

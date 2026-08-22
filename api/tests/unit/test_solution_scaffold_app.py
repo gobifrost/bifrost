@@ -19,7 +19,7 @@ def _init_workspace(root: pathlib.Path) -> None:
 
 
 def test_scaffold_files_shape_and_dev_wiring() -> None:
-    files = _v2_scaffold_files("my-app", "https://inst.example")
+    files = _v2_scaffold_files("my-app")
 
     # All the files a normal Vite app needs.
     for f in ("package.json", "vite.config.ts", "index.html", "src/main.tsx",
@@ -28,15 +28,16 @@ def test_scaffold_files_shape_and_dev_wiring() -> None:
 
     pkg = json.loads(files["package.json"])
     assert pkg["name"] == "my-app"
-    # `bifrost` resolves FROM THE INSTANCE (no public npm, no pasting).
-    assert pkg["dependencies"]["bifrost"] == "https://inst.example/api/sdk/download"
+    # The CLI/server supply the instance's SDK at runtime/build time; generated
+    # source must not persist the creating instance.
+    assert "bifrost" not in pkg["dependencies"]
+    assert "inst.example" not in files["package.json"]
     assert "react" in pkg["dependencies"]
     assert "lucide-react" in pkg["dependencies"]
     assert pkg["scripts"]["dev"] == "vite"
 
-    # vite.config reads a URL selector (process env or exact-directory .env)
-    # and gets credentials from process env or the global CLI store, so
-    # `npm run dev` authenticates with NO token pasting.
+    # vite.config reads process/exact-directory overrides, then uses the CLI's
+    # selected default profile, so `npm run dev` authenticates with no pasting.
     vc = files["vite.config.ts"]
     assert "BIFROST_ACCESS_TOKEN" in vc
     assert "VITE_BIFROST_TOKEN" in vc
@@ -49,6 +50,10 @@ def test_scaffold_files_shape_and_dev_wiring() -> None:
     # back to the CLI store via `bifrost auth token`.
     assert "auth" in vc and "token" in vc
     assert "execFileSync" in vc
+    assert "if (!out.token)" in vc
+    assert 'const args = ["auth", "token"]' in vc
+    assert 'if (out.url) args.push("--url", out.url)' in vc
+    assert 'if (creds.api_url && !out.url) out.url = creds.api_url' in vc
     # SECURITY (Codex R6-P1-c): the token is injected ONLY for `vite` serve
     # (dev), never for `vite build` — baking it into the production bundle would
     # leak a usable credential to every app user. The config must gate `define`
@@ -57,6 +62,7 @@ def test_scaffold_files_shape_and_dev_wiring() -> None:
 
     # The README must NOT tell the developer to paste a token.
     assert "paste" not in files["README.md"].lower()
+    assert "selected default profile" in files["README.md"].lower()
 
     # main.tsx follows the explicit lifecycle contract: the immutable module
     # registers mount(), receives bootstrap directly, and returns teardown.
@@ -88,7 +94,7 @@ def test_scaffold_ships_tailwind_v4_shadcn_and_theme() -> None:
     """A v2 app with no Tailwind renders UNSTYLED — so the scaffold ships Tailwind
     v4 + the shadcn token layer + theme wiring by DEFAULT (this is the fix for the
     migrated-app 'unstyled gray box, no dark toggle' regression)."""
-    files = _v2_scaffold_files("my-app", "https://inst.example")
+    files = _v2_scaffold_files("my-app")
     pkg = json.loads(files["package.json"])
 
     # Tailwind v4 via the vite plugin + the shadcn cn() deps.
@@ -145,7 +151,7 @@ def test_scaffold_app_nested_path_anchors_manifests_at_root(tmp_path, monkeypatc
 
     result = CliRunner().invoke(
         solution_group,
-        ["scaffold-app", "dash", "--path", "src/apps/dash", "--api-url", "http://localhost:8000"],
+        ["scaffold-app", "dash", "--path", "src/apps/dash"],
     )
     assert result.exit_code == 0, result.output
 
@@ -170,7 +176,7 @@ def test_scaffold_app_path_outside_workspace_refuses(tmp_path, monkeypatch) -> N
 
     result = CliRunner().invoke(
         solution_group,
-        ["scaffold-app", "dash", "--path", "../elsewhere/dash", "--api-url", "http://localhost:8000"],
+        ["scaffold-app", "dash", "--path", "../elsewhere/dash"],
     )
     assert result.exit_code != 0
     assert "inside the solution workspace" in result.output
@@ -182,9 +188,7 @@ def test_scaffold_app_path_outside_workspace_refuses(tmp_path, monkeypatch) -> N
 
 def test_scaffold_app_refuses_outside_solution_workspace(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)  # no bifrost.solution.yaml anywhere up the tree
-    result = CliRunner().invoke(
-        solution_group, ["scaffold-app", "dash", "--api-url", "http://localhost:8000"]
-    )
+    result = CliRunner().invoke(solution_group, ["scaffold-app", "dash"])
     assert result.exit_code != 0
     assert "solution init" in result.output
     assert not (tmp_path / ".bifrost").exists()

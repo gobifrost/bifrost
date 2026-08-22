@@ -5,17 +5,21 @@ const subscribeMock = vi.fn();
 let lastOnEvent:
   | ((evt: Record<string, unknown>) => void)
   | null = null;
+let lastOnReconnect: (() => void) | null = null;
 
 vi.mock("./ws-client", () => ({
   subscribeToTable: (
     _tableId: string,
     _filter: unknown,
     cb: (evt: Record<string, unknown>) => void,
+    onReconnect?: () => void,
   ) => {
     lastOnEvent = cb;
+    lastOnReconnect = onReconnect ?? null;
     subscribeMock(_tableId, _filter, cb);
     return () => {
       lastOnEvent = null;
+      lastOnReconnect = null;
     };
   },
 }));
@@ -41,6 +45,7 @@ describe("useInfiniteTable", () => {
     vi.restoreAllMocks();
     subscribeMock.mockClear();
     lastOnEvent = null;
+    lastOnReconnect = null;
   });
 
   it("loads the first page with skip_count omitted (server returns count)", async () => {
@@ -80,6 +85,33 @@ describe("useInfiniteTable", () => {
     expect(secondBody.skip_count).toBe(true);
     expect(secondBody.offset).toBe(2);
     expect(result.current.rows.map((r) => r.id)).toEqual(["a", "b", "c", "d"]);
+  });
+
+  it("refreshes all loaded rows after a subscription reconnect", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(makePage(["a", "b"], 4))
+      .mockResolvedValueOnce(makePage(["c", "d"], 4))
+      .mockResolvedValueOnce(makePage(["a", "b", "c", "changed"], 4));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() =>
+      useInfiniteTable("t1", { pageSize: 2 }),
+    );
+    await waitFor(() => expect(result.current.rows).toHaveLength(2));
+    await act(async () => result.current.loadMore());
+    expect(result.current.rows.map((row) => row.id)).toEqual(["a", "b", "c", "d"]);
+
+    act(() => lastOnReconnect?.());
+
+    await waitFor(() =>
+      expect(result.current.rows.map((row) => row.id)).toEqual([
+        "a",
+        "b",
+        "c",
+        "changed",
+      ]),
+    );
   });
 
   it("hasMore flips false when a partial page comes back", async () => {

@@ -26,6 +26,7 @@ from bifrost.commands.solution import solution_group
 from bifrost.solution_descriptor import DESCRIPTOR_FILENAME
 
 INSTALL_ID = "33333333-3333-3333-3333-333333333333"
+API_URL = "https://local.example"
 
 
 def _resp(payload, status=200):
@@ -38,6 +39,12 @@ def _resp(payload, status=200):
 
 def _client(captured: dict | None = None):
     async def get(path, **_kwargs):  # type: ignore[no-untyped-def]
+        if path == "/api/solutions":
+            return _resp({"solutions": [{
+                "id": INSTALL_ID,
+                "slug": "demo",
+                "organization_id": "00000000-0000-0000-0000-000000000000",
+            }]})
         if "/deploy-jobs/" in path:
             return _resp({"status": "succeeded", "error": None, "install_id": INSTALL_ID})
         return _resp({}, status=404)
@@ -56,6 +63,7 @@ def _client(captured: dict | None = None):
     c.get = get
     c.post = post
     c.organization = {"id": "00000000-0000-0000-0000-000000000000"}
+    c.api_url = API_URL
     return c
 
 
@@ -74,6 +82,7 @@ def _scaffold(tmp_path: pathlib.Path) -> pathlib.Path:
         )
     )
     (ws / ".env").write_text(
+        f"BIFROST_API_URL={API_URL}\n"
         f"BIFROST_SOLUTION_ID={INSTALL_ID}\n"
         "BIFROST_SOLUTION_SLUG=demo\n"
         "BIFROST_SOLUTION_ORG_ID=00000000-0000-0000-0000-000000000000\n"
@@ -104,6 +113,56 @@ def test_deploy_prints_each_phase(tmp_path) -> None:
     assert "Bundle:" in out
     assert "Uploading workspace zip..." in out
     assert "Deploying install" in out
+
+
+def test_deploy_uses_optional_workspace_url_selector(
+    tmp_path,
+) -> None:
+    ws = _scaffold(tmp_path)
+    with mock.patch(
+        "bifrost.client.BifrostClient.get_instance", return_value=_client()
+    ) as get_instance:
+        result = CliRunner().invoke(
+            solution_group, ["deploy", str(ws)], catch_exceptions=False
+        )
+
+    assert result.exit_code == 0, result.output
+    get_instance.assert_called_once_with(require_auth=True, api_url=API_URL)
+
+
+def test_deploy_uses_default_profile_without_workspace_url(tmp_path) -> None:
+    ws = _scaffold(tmp_path)
+    env = ws / ".env"
+    env.write_text("\n".join(
+        line for line in env.read_text().splitlines()
+        if not line.startswith("BIFROST_API_URL=")
+    ) + "\n")
+    with mock.patch(
+        "bifrost.client.BifrostClient.get_instance", return_value=_client()
+    ) as get_instance:
+        result = CliRunner().invoke(
+            solution_group, ["deploy", str(ws)], catch_exceptions=False
+        )
+
+    assert result.exit_code == 0, result.output
+    get_instance.assert_called_once_with(require_auth=True, api_url=None)
+
+
+def test_deploy_url_option_overrides_workspace_selector(tmp_path) -> None:
+    ws = _scaffold(tmp_path)
+    with mock.patch(
+        "bifrost.client.BifrostClient.get_instance", return_value=_client()
+    ) as get_instance:
+        result = CliRunner().invoke(
+            solution_group,
+            ["deploy", str(ws), "--url", "https://override.example"],
+            catch_exceptions=False,
+        )
+
+    assert result.exit_code == 0, result.output
+    get_instance.assert_called_once_with(
+        require_auth=True, api_url="https://override.example"
+    )
 
 
 def test_deploy_reports_when_nothing_to_vendor(tmp_path) -> None:

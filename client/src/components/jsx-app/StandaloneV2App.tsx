@@ -6,9 +6,11 @@
  * once per host mount. This preserves browser ES-module identity across lazy
  * chunks while still giving every mount its own React root and bootstrap.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
+import { ApplicationUpdateScreen } from "@/components/ApplicationUpdateScreen";
 import { useOrgScope } from "@/hooks/useOrgScope";
+import { authFetch } from "@/lib/api-client";
 import { clearAuthTokens, getActiveToken } from "@/lib/auth-token";
 
 export interface BifrostAppBootstrap {
@@ -64,6 +66,8 @@ interface PendingLegacyLoad {
 
 const pendingLegacyLoads = new Map<string, PendingLegacyLoad>();
 
+class ApplicationAssetLoadError extends Error {}
+
 function registeredModule(entryUrl: string): StandaloneV2Module | undefined {
 	return window.__BIFROST_APP_MODULES__?.get(entryUrl);
 }
@@ -101,7 +105,11 @@ function loadMountModule(entryUrl: string): Promise<StandaloneV2Module> {
 		};
 		script.onerror = () => {
 			cleanup();
-			reject(new Error(`Failed to load the application entry: ${entryUrl}`));
+			reject(
+				new ApplicationAssetLoadError(
+					`Failed to load the application entry: ${entryUrl}`,
+				),
+			);
 		};
 		document.head.appendChild(script);
 	}).catch((error: unknown) => {
@@ -172,7 +180,11 @@ function loadLegacyOrUnmarkedModule(
 			};
 			script.onerror = () => {
 				cleanup();
-				reject(new Error(`Failed to load the legacy application entry: ${entryUrl}`));
+				reject(
+					new ApplicationAssetLoadError(
+						`Failed to load the legacy application entry: ${entryUrl}`,
+					),
+				);
 			};
 			document.head.appendChild(script);
 		});
@@ -210,6 +222,21 @@ interface StandaloneV2AppProps {
 	runtimeContract: StandaloneV2RuntimeContract;
 }
 
+interface StandaloneAssets {
+	entry: string;
+	css: string | null;
+	baseUrl: string;
+	runtimeContract: StandaloneV2RuntimeContract;
+}
+
+interface StandaloneBundleManifest {
+	entry: string | null;
+	css: string | null;
+	base_url: string;
+	app_model?: "inline_v1" | "standalone_v2";
+	runtime_contract?: StandaloneV2RuntimeContract;
+}
+
 export function StandaloneV2App({
 	appId,
 	appSlug,
@@ -222,6 +249,21 @@ export function StandaloneV2App({
 }: StandaloneV2AppProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [loadError, setLoadError] = useState<string | null>(null);
+	const [isRecovering, setIsRecovering] = useState(false);
+	const sourceAssets = useMemo<StandaloneAssets>(
+		() => ({ entry, css, baseUrl, runtimeContract }),
+		[entry, css, baseUrl, runtimeContract],
+	);
+	const sourceKey = useMemo(
+		() => JSON.stringify({ appId, isPreview, assets: sourceAssets }),
+		[appId, isPreview, sourceAssets],
+	);
+	const [recovery, setRecovery] = useState<{
+		sourceKey: string;
+		assets: StandaloneAssets;
+	} | null>(null);
+	const assets = recovery?.sourceKey === sourceKey ? recovery.assets : sourceAssets;
+	const recoveryAttempts = useRef(new Set<string>());
 	const { scope } = useOrgScope();
 
 	const token = getActiveToken();
@@ -237,14 +279,30 @@ export function StandaloneV2App({
 			: `/apps/${appSlug}`;
 		const orgScope =
 			appOrgId ?? (scope.type === "organization" ? scope.orgId : null);
-		const entryUrl = new URL(`${baseUrl}/${entry}`, window.location.origin).href;
+		const entryUrl = new URL(
+			`${assets.baseUrl}/${assets.entry}`,
+			window.location.origin,
+		).href;
 		mountEl.dataset.bifrostEntry = entryUrl;
 
 		let cssEl: HTMLLinkElement | null = null;
-		if (css) {
+		let stylesheetReady = Promise.resolve();
+		if (assets.css) {
 			cssEl = document.createElement("link");
 			cssEl.rel = "stylesheet";
-			cssEl.href = new URL(`${baseUrl}/${css}`, window.location.origin).href;
+			cssEl.href = new URL(
+				`${assets.baseUrl}/${assets.css}`,
+				window.location.origin,
+			).href;
+			stylesheetReady = new Promise<void>((resolve, reject) => {
+				cssEl!.onload = () => resolve();
+				cssEl!.onerror = () =>
+					reject(
+						new ApplicationAssetLoadError(
+							`Failed to load the application stylesheet: ${cssEl!.href}`,
+						),
+					);
+			});
 			document.head.appendChild(cssEl);
 		}
 
@@ -263,11 +321,65 @@ export function StandaloneV2App({
 			theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
 		};
 
-		const reportError = (value: unknown) => {
-			if (!cancelled) {
+		const reportError = async (value: unknown) => {
+			if (cancelled) return;
+			if (!(value instanceof ApplicationAssetLoadError)) {
 				setLoadError(
 					value instanceof Error ? value.message : "Failed to load the application.",
 				);
+				return;
+			}
+			const failedAssetKey = JSON.stringify(assets);
+			const recoveryAttemptKey = JSON.stringify({ sourceKey, assets });
+			if (recoveryAttempts.current.has(recoveryAttemptKey)) {
+				setLoadError(
+					value instanceof Error ? value.message : "Failed to load the application.",
+				);
+				return;
+			}
+			recoveryAttempts.current.add(recoveryAttemptKey);
+			setIsRecovering(true);
+
+			try {
+				const mode = isPreview ? "draft" : "live";
+				const response = await authFetch(
+					`/api/applications/${appId}/bundle-manifest?mode=${mode}`,
+					{
+						cache: "no-store",
+						headers: { "Cache-Control": "no-cache" },
+					},
+				);
+				if (!response.ok) {
+					throw new Error(`Bundle manifest refresh failed: ${response.status}`);
+				}
+				const manifest = (await response.json()) as StandaloneBundleManifest;
+				if (manifest.app_model !== "standalone_v2" || !manifest.entry) {
+					throw new Error("The refreshed manifest is not a built standalone app.");
+				}
+				const refreshed: StandaloneAssets = {
+					entry: manifest.entry,
+					css: manifest.css,
+					baseUrl: manifest.base_url,
+					runtimeContract: manifest.runtime_contract ?? null,
+				};
+				if (JSON.stringify(refreshed) === failedAssetKey) {
+					throw value instanceof Error
+						? value
+						: new Error("The latest application assets are unavailable.");
+				}
+				if (!cancelled) {
+					setRecovery({ sourceKey, assets: refreshed });
+					setIsRecovering(false);
+				}
+			} catch (recoveryError) {
+				if (!cancelled) {
+					setIsRecovering(false);
+					setLoadError(
+						recoveryError instanceof Error
+							? recoveryError.message
+							: "Failed to recover the application after deployment.",
+					);
+				}
 			}
 		};
 		const mountModule = (appModule: StandaloneV2Module) => {
@@ -280,8 +392,10 @@ export function StandaloneV2App({
 		};
 
 		let legacyBootstrap: LegacyBifrostAppBootstrap | null = null;
-		if (runtimeContract === "mount-v1") {
-			loadMountModule(entryUrl).then(mountModule).catch(reportError);
+		if (assets.runtimeContract === "mount-v1") {
+			Promise.all([loadMountModule(entryUrl), stylesheetReady])
+				.then(([appModule]) => mountModule(appModule))
+				.catch((error: unknown) => void reportError(error));
 		} else {
 			legacyBootstrap = {
 				...bootstrap,
@@ -290,7 +404,9 @@ export function StandaloneV2App({
 					appTeardown = teardown;
 				},
 			};
-			loadLegacyOrUnmarkedModule(entryUrl, legacyBootstrap)
+			const bootstrapForLoad = legacyBootstrap;
+			stylesheetReady
+				.then(() => loadLegacyOrUnmarkedModule(entryUrl, bootstrapForLoad))
 				.then((result) => {
 					if (cancelled) return;
 					if (result.kind === "module") {
@@ -305,7 +421,7 @@ export function StandaloneV2App({
 						);
 					}
 				})
-				.catch(reportError);
+				.catch((error: unknown) => void reportError(error));
 		}
 
 		return () => {
@@ -334,11 +450,9 @@ export function StandaloneV2App({
 		appId,
 		appSlug,
 		isPreview,
-		entry,
-		css,
-		baseUrl,
+		assets,
+		sourceKey,
 		appOrgId,
-		runtimeContract,
 		scope,
 		token,
 	]);
@@ -352,6 +466,8 @@ export function StandaloneV2App({
 			</div>
 		);
 	}
+
+	if (isRecovering) return <ApplicationUpdateScreen />;
 
 	return (
 		<div

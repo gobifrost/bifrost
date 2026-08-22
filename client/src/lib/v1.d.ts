@@ -1273,8 +1273,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List all organizations
-         * @description Get all organizations (Platform admin only)
+         * List organizations
+         * @description Get active organizations, optionally including inactive ones (Platform admin only)
          */
         get: operations["list_organizations_api_organizations_get"];
         put?: never;
@@ -4516,6 +4516,170 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sdk/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sdk List Artifacts
+         * @description List the latest logical files in one authorized execution workspace.
+         */
+        get: operations["sdk_list_artifacts_api_sdk_artifacts_get"];
+        put?: never;
+        /**
+         * Sdk Store Artifact
+         * @description Validate and store workflow-produced bytes behind an opaque identity.
+         */
+        post: operations["sdk_store_artifact_api_sdk_artifacts_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/artifacts/document": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sdk Render Document Artifact
+         * @description Render and store a trusted PDF or DOCX artifact.
+         */
+        post: operations["sdk_render_document_artifact_api_sdk_artifacts_document_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/artifacts/spreadsheet": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sdk Render Spreadsheet Artifact
+         * @description Render and store a trusted XLSX artifact.
+         */
+        post: operations["sdk_render_spreadsheet_artifact_api_sdk_artifacts_spreadsheet_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/artifacts/text": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sdk Render Text Artifact
+         * @description Render and store a trusted text-family artifact.
+         */
+        post: operations["sdk_render_text_artifact_api_sdk_artifacts_text_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/artifacts/image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sdk Generate Image Artifact
+         * @description Generate and store an image with the configured provider.
+         */
+        post: operations["sdk_generate_image_artifact_api_sdk_artifacts_image_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/artifacts/video": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sdk Generate Video Artifact
+         * @description Queue durable video generation into canonical artifact storage.
+         */
+        post: operations["sdk_generate_video_artifact_api_sdk_artifacts_video_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/artifacts/{artifact_id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sdk Read Artifact
+         * @description Read an opaque artifact after enforcing caller scope.
+         */
+        get: operations["sdk_read_artifact_api_sdk_artifacts__artifact_id__content_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/artifacts/{artifact_id}/download-url": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Sdk Artifact Download Url
+         * @description Create a short-lived download URL for an opaque artifact.
+         */
+        get: operations["sdk_artifact_download_url_api_sdk_artifacts__artifact_id__download_url_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sdk/ai/complete": {
         parameters: {
             query?: never;
@@ -4725,7 +4889,7 @@ export interface paths {
         };
         /**
          * Download the bifrost web SDK package
-         * @description Serve the `bifrost` web SDK as an npm-installable tarball. A standalone_v2 app declares `"bifrost": "<instance>/api/sdk/download"` and resolves it identically on a dev laptop (`npm run dev`) and in the platform's server-side build.
+         * @description Serve the `bifrost` web SDK as an npm-installable tarball. The Solution CLI installs it transiently from the selected instance for local development; the platform vendors its local SDK into server-side builds.
          */
         get: operations["download_sdk_api_sdk_download_get"];
         put?: never;
@@ -4790,10 +4954,50 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Download CLI package
-         * @description Download the Bifrost CLI as a pip-installable tarball
+         * Legacy CLI download URL
+         * @description Redirect to the installer-compatible CLI download URL
          */
         get: operations["download_cli_api_cli_download_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cli/download/bifrost-cli.tar.gz": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download CLI package
+         * @description Redirect to the versioned, pip-installable CLI artifact
+         */
+        get: operations["download_cli_alias_api_cli_download_bifrost_cli_tar_gz_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cli/artifacts/{filename}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Serve a versioned CLI artifact
+         * @description Serve the immutable CLI artifact bundled into the API image
+         */
+        get: operations["download_cli_artifact_api_cli_artifacts__filename__get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -5806,6 +6010,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/chat/model-tiers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Model Tiers
+         * @description Return only the administrator-governed model choices available in Chat.
+         */
+        get: operations["get_model_tiers_api_chat_model_tiers_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/chat/conversations": {
         parameters: {
             query?: never;
@@ -5849,6 +6073,110 @@ export interface paths {
          * @description Delete a conversation (soft delete).
          */
         delete: operations["delete_conversation_api_chat_conversations__conversation_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat/artifacts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Chat Artifacts
+         * @description List the current user's durable generated and uploaded Chat files.
+         */
+        get: operations["list_chat_artifacts_api_chat_artifacts_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat/artifacts/{attachment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Chat Artifact
+         * @description Delete one Chat file owned by the current user.
+         */
+        delete: operations["delete_chat_artifact_api_chat_artifacts__attachment_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename Chat Artifact
+         * @description Rename a Chat file without changing its immutable storage object.
+         */
+        patch: operations["rename_chat_artifact_api_chat_artifacts__attachment_id__patch"];
+        trace?: never;
+    };
+    "/api/chat/conversations/{conversation_id}/attachments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Upload Attachments
+         * @description Validate and store files for the next message in this conversation.
+         */
+        post: operations["upload_attachments_api_chat_conversations__conversation_id__attachments_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat/conversations/{conversation_id}/attachments/{attachment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Unbound Attachment
+         * @description Delete an uploaded attachment that was never bound to a message.
+         */
+        delete: operations["delete_unbound_attachment_api_chat_conversations__conversation_id__attachments__attachment_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/chat/conversations/{conversation_id}/attachments/{attachment_id}/content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Attachment Content
+         * @description Preview or download an attachment after enforcing conversation ownership.
+         */
+        get: operations["get_attachment_content_api_chat_conversations__conversation_id__attachments__attachment_id__content_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -5916,6 +6244,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/llm/model-capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Discover Model Capabilities
+         * @description Look up model features without trusting provider model-list labels.
+         */
+        post: operations["discover_model_capabilities_api_admin_llm_model_capabilities_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/llm/model-capabilities/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Verify Model Capability Support
+         * @description Run a bounded, one-time provider conformance check for an unknown model.
+         */
+        post: operations["verify_model_capability_support_api_admin_llm_model_capabilities_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/llm/test": {
         parameters: {
             query?: never;
@@ -5976,7 +6344,7 @@ export interface paths {
          * List Llm Models
          * @description List available models from the configured LLM provider.
          *
-         *     Works with OpenAI and Anthropic (both support model listing).
+         *     Works with OpenAI, Anthropic, and Google.
          *     Requires platform admin access.
          */
         get: operations["list_llm_models_api_admin_llm_models_get"];
@@ -6464,6 +6832,41 @@ export interface paths {
          */
         put: operations["update_decorator_properties_api_decorator_properties_put"];
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/maintenance/artifact-retention/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get artifact retention settings */
+        get: operations["get_artifact_retention_settings_api_maintenance_artifact_retention_settings_get"];
+        /** Update artifact retention settings */
+        put: operations["update_artifact_retention_settings_api_maintenance_artifact_retention_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/maintenance/artifact-retention/cleanup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Clean up expired artifacts */
+        post: operations["cleanup_artifact_retention_api_maintenance_artifact_retention_cleanup_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9963,6 +10366,16 @@ export interface components {
              */
             output_price_per_million: number | string;
             /**
+             * Cache Read Price Per Million
+             * @description Cost per million cached input tokens read
+             */
+            cache_read_price_per_million?: number | string | null;
+            /**
+             * Cache Write Price Per Million
+             * @description Cost per million cached input tokens written
+             */
+            cache_write_price_per_million?: number | string | null;
+            /**
              * Effective Date
              * @description Date pricing takes effect
              */
@@ -9987,12 +10400,22 @@ export interface components {
              * Input Price Per Million
              * @description Cost per million input tokens
              */
-            input_price_per_million: string;
+            input_price_per_million: string | null;
             /**
              * Output Price Per Million
              * @description Cost per million output tokens
              */
-            output_price_per_million: string;
+            output_price_per_million: string | null;
+            /**
+             * Cache Read Price Per Million
+             * @description Cost per million cached input tokens read
+             */
+            cache_read_price_per_million?: string | null;
+            /**
+             * Cache Write Price Per Million
+             * @description Cost per million cached input tokens written
+             */
+            cache_write_price_per_million?: string | null;
             /** Id */
             id: number;
             /** Effective Date */
@@ -10040,12 +10463,22 @@ export interface components {
              * Input Price Per Million
              * @description Cost per million input tokens
              */
-            input_price_per_million: string;
+            input_price_per_million: string | null;
             /**
              * Output Price Per Million
              * @description Cost per million output tokens
              */
-            output_price_per_million: string;
+            output_price_per_million: string | null;
+            /**
+             * Cache Read Price Per Million
+             * @description Cost per million cached input tokens read
+             */
+            cache_read_price_per_million?: string | null;
+            /**
+             * Cache Write Price Per Million
+             * @description Cost per million cached input tokens written
+             */
+            cache_write_price_per_million?: string | null;
             /** Id */
             id: number;
             /** Effective Date */
@@ -10071,6 +10504,16 @@ export interface components {
              */
             output_price_per_million?: number | string | null;
             /**
+             * Cache Read Price Per Million
+             * @description Cost per million cached input tokens read
+             */
+            cache_read_price_per_million?: number | string | null;
+            /**
+             * Cache Write Price Per Million
+             * @description Cost per million cached input tokens written
+             */
+            cache_write_price_per_million?: number | string | null;
+            /**
              * Effective Date
              * @description Date pricing takes effect
              */
@@ -10089,6 +10532,18 @@ export interface components {
             input_tokens: number;
             /** Output Tokens */
             output_tokens: number;
+            /**
+             * Cache Read Tokens
+             * @default 0
+             */
+            cache_read_tokens: number;
+            /**
+             * Cache Write Tokens
+             * @default 0
+             */
+            cache_write_tokens: number;
+            /** Provider Cost */
+            provider_cost?: string | null;
             /** Cost */
             cost?: string | null;
             /** Duration Ms */
@@ -10116,6 +10571,21 @@ export interface components {
              * @default 0
              */
             total_output_tokens: number;
+            /**
+             * Total Cache Read Tokens
+             * @default 0
+             */
+            total_cache_read_tokens: number;
+            /**
+             * Total Cache Write Tokens
+             * @default 0
+             */
+            total_cache_write_tokens: number;
+            /**
+             * Total Provider Cost
+             * @default 0
+             */
+            total_provider_cost: string;
             /**
              * Total Cost
              * @default 0
@@ -10361,9 +10831,19 @@ export interface components {
             max_token_budget?: number | null;
             /**
              * Logo
-             * @description Inline logo as a data URL, or null when no logo is set.
+             * @description Inline presentation logo as a data URL on single-agent responses.
              */
             logo?: string | null;
+            /**
+             * Logo Url
+             * @description Versioned presentation-logo URL, or null when no logo is set.
+             */
+            logo_url?: string | null;
+            /**
+             * Logo Version
+             * @description Presentation-logo content hash.
+             */
+            logo_version?: string | null;
         };
         /**
          * AgentRunChildResponse
@@ -10728,9 +11208,21 @@ export interface components {
             mcp_connection_count: number;
             /**
              * Logo
-             * @description Inline logo as a data URL, or null when no logo is set. Avoids an N+1 GET per card in list views.
+             * @description Inline presentation logo as a data URL when explicitly requested.
              */
             logo?: string | null;
+            /**
+             * Logo Url
+             * @description Versioned presentation-logo URL, or null when no logo is set.
+             */
+            logo_url?: string | null;
+            /**
+             * Logo Version
+             * @description Presentation-logo content hash.
+             */
+            logo_version?: string | null;
+            /** @description Per-agent run stats when explicitly requested by the list caller. */
+            stats?: components["schemas"]["AgentStatsResponse"] | null;
             /**
              * Is Solution Managed
              * @description True if managed by a deployed Solution (read-only on platform)
@@ -11116,9 +11608,19 @@ export interface components {
             repo_path: string;
             /**
              * Logo
-             * @description Inline logo as a data URL, or null when no logo is set. Avoids an N+1 GET per card in list views.
+             * @description Inline presentation logo as a data URL on single-application responses.
              */
             logo?: string | null;
+            /**
+             * Logo Url
+             * @description Versioned presentation-logo URL, or null when no logo is set.
+             */
+            logo_url?: string | null;
+            /**
+             * Logo Version
+             * @description Presentation-logo content hash.
+             */
+            logo_version?: string | null;
         };
         /**
          * ApplicationPublishRequest
@@ -11248,6 +11750,66 @@ export interface components {
             affected_run_ids: string[];
         };
         /**
+         * ArtifactDownloadResponse
+         * @description Short-lived authenticated download location for an artifact.
+         */
+        ArtifactDownloadResponse: {
+            /** Url */
+            url: string;
+        };
+        /**
+         * ArtifactRef
+         * @description Opaque portable reference returned by Bifrost tools and accepted as input.
+         */
+        ArtifactRef: {
+            /**
+             * Type
+             * @default bifrost_artifact
+             * @constant
+             */
+            type: "bifrost_artifact";
+            /** Id */
+            id: string;
+            /** Filename */
+            filename: string;
+            /** Content Type */
+            content_type: string;
+            /** Size Bytes */
+            size_bytes: number;
+        };
+        /** ArtifactRetentionSettings */
+        ArtifactRetentionSettings: {
+            /**
+             * Enabled
+             * @description Whether scheduled cleanup deletes expired Chat attachments and artifacts.
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * Retention Days
+             * @description Number of days to retain Chat attachments and generated artifacts.
+             * @default 90
+             */
+            retention_days: number;
+        };
+        /** ArtifactRetentionSettingsUpdate */
+        ArtifactRetentionSettingsUpdate: {
+            /** Enabled */
+            enabled: boolean;
+            /** Retention Days */
+            retention_days: number;
+        };
+        /**
+         * ArtifactTable
+         * @description A bounded table that can be rendered into a document.
+         */
+        ArtifactTable: {
+            /** Columns */
+            columns: string[];
+            /** Rows */
+            rows?: unknown[][];
+        };
+        /**
          * AssignAgentsToRoleRequest
          * @description Request for assigning agents to a role.
          */
@@ -11327,6 +11889,34 @@ export interface components {
              * Format: date-time
              */
             at?: string;
+        };
+        /**
+         * AttachmentPublic
+         * @description Metadata for a file attached to a chat message.
+         */
+        AttachmentPublic: {
+            /** Id */
+            id: string;
+            /** Filename */
+            filename: string;
+            /** Content Type */
+            content_type: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /**
+             * Kind
+             * @default attachment
+             * @enum {string}
+             */
+            kind: "attachment" | "artifact";
+        };
+        /**
+         * AttachmentUploadResponse
+         * @description Files accepted for the next message in a conversation.
+         */
+        AttachmentUploadResponse: {
+            /** Attachments */
+            attachments: components["schemas"]["AttachmentPublic"][];
         };
         /**
          * AuditLogActor
@@ -11733,6 +12323,11 @@ export interface components {
              */
             client_secret?: string | null;
         };
+        /** Body_sdk_store_artifact_api_sdk_artifacts_post */
+        Body_sdk_store_artifact_api_sdk_artifacts_post: {
+            /** File */
+            file: string;
+        };
         /** Body_upload_agent_logo_api_agents__agent_id__logo_post */
         Body_upload_agent_logo_api_agents__agent_id__logo_post: {
             /**
@@ -11748,6 +12343,11 @@ export interface components {
              * @description Logo image (PNG/JPEG/SVG, ≤5MB)
              */
             file: string;
+        };
+        /** Body_upload_attachments_api_chat_conversations__conversation_id__attachments_post */
+        Body_upload_attachments_api_chat_conversations__conversation_id__attachments_post: {
+            /** Files */
+            files: string[];
         };
         /** Body_upload_avatar_api_profile_avatar_post */
         Body_upload_avatar_api_profile_avatar_post: {
@@ -11924,6 +12524,8 @@ export interface components {
              * @description Execution ID for AI usage tracking
              */
             execution_id?: string | null;
+            /** Input Files */
+            input_files?: components["schemas"]["CLIAIInputFile"][];
         };
         /**
          * CLIAICompleteResponse
@@ -11958,7 +12560,7 @@ export interface components {
         CLIAIInfoResponse: {
             /**
              * Provider
-             * @description LLM provider (openai, anthropic)
+             * @description LLM provider (openai, anthropic, google)
              */
             provider: string;
             /**
@@ -11971,6 +12573,18 @@ export interface components {
              * @description Default max tokens
              */
             max_tokens: number;
+        };
+        /**
+         * CLIAIInputFile
+         * @description Base64 binary input for an SDK AI request.
+         */
+        CLIAIInputFile: {
+            /** Filename */
+            filename: string;
+            /** Content Type */
+            content_type: string;
+            /** Data Base64 */
+            data_base64: string;
         };
         /**
          * CLIConfigDeleteRequest
@@ -12456,11 +13070,77 @@ export interface components {
             logs?: components["schemas"]["CLISessionLogRequest"][];
         };
         /**
+         * ChatArtifactPublic
+         * @description A durable Chat file with enough context for the user's artifact library.
+         */
+        ChatArtifactPublic: {
+            /** Id */
+            id: string;
+            /** Filename */
+            filename: string;
+            /** Content Type */
+            content_type: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /**
+             * Kind
+             * @default attachment
+             * @enum {string}
+             */
+            kind: "attachment" | "artifact";
+            /** Conversation Id */
+            conversation_id?: string | null;
+            /** Message Id */
+            message_id?: string | null;
+            /** Conversation Title */
+            conversation_title?: string | null;
+            /** Created At */
+            created_at: string;
+        };
+        /**
+         * ChatArtifactUpdate
+         * @description Editable metadata for a durable Chat file.
+         */
+        ChatArtifactUpdate: {
+            /** Filename */
+            filename: string;
+        };
+        /**
+         * ChatModelTierPublic
+         * @description One administrator-governed model choice exposed in Chat.
+         */
+        ChatModelTierPublic: {
+            /**
+             * Id
+             * @enum {string}
+             */
+            id: "fast" | "balanced" | "pro";
+            /** Label */
+            label: string;
+            capabilities: components["schemas"]["ModelCapabilities"];
+        };
+        /**
+         * ChatModelTiersResponse
+         * @description Enabled Chat model tiers and the default selection.
+         */
+        ChatModelTiersResponse: {
+            /** Tiers */
+            tiers: components["schemas"]["ChatModelTierPublic"][];
+            /**
+             * Default Tier
+             * @enum {string}
+             */
+            default_tier: "fast" | "balanced" | "pro";
+        };
+        /**
          * ChatRequest
          * @description Request for sending a chat message.
          */
         ChatRequest: {
-            /** Message */
+            /**
+             * Message
+             * @default
+             */
             message: string;
             /**
              * Stream
@@ -12468,6 +13148,14 @@ export interface components {
              * @default true
              */
             stream: boolean;
+            /** Attachment Ids */
+            attachment_ids?: string[];
+            /**
+             * Model Tier
+             * @default balanced
+             * @enum {string}
+             */
+            model_tier: "fast" | "balanced" | "pro";
         };
         /**
          * ChatResponse
@@ -12480,6 +13168,8 @@ export interface components {
             content: string;
             /** Tool Calls */
             tool_calls?: components["schemas"]["ToolCall"][] | null;
+            /** Artifacts */
+            artifacts?: components["schemas"]["ArtifactRef"][];
             /** Token Count Input */
             token_count_input?: number | null;
             /** Token Count Output */
@@ -13624,6 +14314,34 @@ export interface components {
             message?: string | null;
         };
         /**
+         * DocumentArtifactSpec
+         * @description Schema-first payload for a flowing PDF or DOCX document.
+         */
+        DocumentArtifactSpec: {
+            /**
+             * Filename
+             * @description A short, descriptive filename; Bifrost applies proper casing and the extension.
+             */
+            filename: string;
+            /**
+             * Format
+             * @enum {string}
+             */
+            format: "pdf" | "docx";
+            /** Title */
+            title: string;
+            /** Subtitle */
+            subtitle?: string | null;
+            /** Sections */
+            sections: components["schemas"]["DocumentSection"][];
+            /**
+             * Page Size
+             * @default letter
+             * @enum {string}
+             */
+            page_size: "letter" | "a4";
+        };
+        /**
          * DocumentBatchCreate
          * @description Input for inserting or upserting multiple documents.
          */
@@ -13752,6 +14470,24 @@ export interface components {
             updated_by?: string | null;
         };
         /**
+         * DocumentImage
+         * @description A raster file from the active artifact workspace.
+         */
+        DocumentImage: {
+            /**
+             * Path
+             * @description Logical workspace path or filename returned by an earlier artifact tool.
+             */
+            path: string;
+            /** Caption */
+            caption?: string | null;
+            /**
+             * Max Width Inches
+             * @default 6.5
+             */
+            max_width_inches: number;
+        };
+        /**
          * DocumentListResponse
          * @description Response for document queries.
          */
@@ -13844,6 +14580,21 @@ export interface components {
              * @default false
              */
             skip_count: boolean;
+        };
+        /**
+         * DocumentSection
+         * @description One flowing section in a PDF or DOCX artifact.
+         */
+        DocumentSection: {
+            /** Heading */
+            heading?: string | null;
+            /** Paragraphs */
+            paragraphs?: string[];
+            /** Bullets */
+            bullets?: string[];
+            table?: components["schemas"]["ArtifactTable"] | null;
+            /** Images */
+            images?: components["schemas"]["DocumentImage"][];
         };
         /**
          * DocumentUpdate
@@ -16911,6 +17662,19 @@ export interface components {
             /** Environment */
             environment: string;
         };
+        /**
+         * ImageArtifactSpec
+         * @description Prompt for a provider-generated image saved as a Chat artifact.
+         */
+        ImageArtifactSpec: {
+            /**
+             * Filename
+             * @description A short, descriptive filename; Bifrost applies proper casing and the extension.
+             */
+            filename: string;
+            /** Prompt */
+            prompt: string;
+        };
         /** ImportResult */
         ImportResult: {
             /** Entity Type */
@@ -17836,10 +18600,10 @@ export interface components {
              * @description LLM provider type
              * @enum {string}
              */
-            provider: "openai" | "anthropic";
+            provider: "openai" | "anthropic" | "google";
             /**
              * Model
-             * @description Model identifier (e.g., 'gpt-4o', 'claude-sonnet-4-20250514')
+             * @description Model identifier (for example 'gpt-4o', 'claude-sonnet-4-20250514', or 'gemini-2.5-flash')
              */
             model: string;
             /**
@@ -17873,6 +18637,49 @@ export interface components {
              * @description Model override for tuning chat + dry-run. Falls back to primary model if unset.
              */
             tuning_model?: string | null;
+            /**
+             * Image Generation Model
+             * @description Optional dedicated model for image generation.
+             */
+            image_generation_model?: string | null;
+            /**
+             * Video Generation Model
+             * @description Optional dedicated model for video generation.
+             */
+            video_generation_model?: string | null;
+            /**
+             * Chat Fast Label
+             * @default Fast
+             */
+            chat_fast_label: string;
+            /**
+             * Chat Fast Model
+             * @description Optional model exposed as the Fast Chat tier.
+             */
+            chat_fast_model?: string | null;
+            /**
+             * Chat Balanced Label
+             * @default Balanced
+             */
+            chat_balanced_label: string;
+            /**
+             * Chat Balanced Model
+             * @description Optional Balanced model; the primary model is used when unset.
+             */
+            chat_balanced_model?: string | null;
+            /**
+             * Chat Pro Label
+             * @default Pro
+             */
+            chat_pro_label: string;
+            /**
+             * Chat Pro Model
+             * @description Optional model exposed as the Pro Chat tier.
+             */
+            chat_pro_model?: string | null;
+            chat_fast_capabilities?: components["schemas"]["ModelCapabilities"] | null;
+            chat_balanced_capabilities?: components["schemas"]["ModelCapabilities"] | null;
+            chat_pro_capabilities?: components["schemas"]["ModelCapabilities"] | null;
         };
         /**
          * LLMConfigResponse
@@ -17883,7 +18690,7 @@ export interface components {
              * Provider
              * @enum {string}
              */
-            provider: "openai" | "anthropic";
+            provider: "openai" | "anthropic" | "google";
             /** Model */
             model: string;
             /** Endpoint */
@@ -17899,6 +18706,34 @@ export interface components {
             summarization_model?: string | null;
             /** Tuning Model */
             tuning_model?: string | null;
+            /** Image Generation Model */
+            image_generation_model?: string | null;
+            /** Video Generation Model */
+            video_generation_model?: string | null;
+            /**
+             * Chat Fast Label
+             * @default Fast
+             */
+            chat_fast_label: string;
+            /** Chat Fast Model */
+            chat_fast_model?: string | null;
+            /**
+             * Chat Balanced Label
+             * @default Balanced
+             */
+            chat_balanced_label: string;
+            /** Chat Balanced Model */
+            chat_balanced_model?: string | null;
+            /**
+             * Chat Pro Label
+             * @default Pro
+             */
+            chat_pro_label: string;
+            /** Chat Pro Model */
+            chat_pro_model?: string | null;
+            chat_fast_capabilities?: components["schemas"]["ModelCapabilities"] | null;
+            chat_balanced_capabilities?: components["schemas"]["ModelCapabilities"] | null;
+            chat_pro_capabilities?: components["schemas"]["ModelCapabilities"] | null;
             /**
              * Is Configured
              * @default true
@@ -17919,6 +18754,8 @@ export interface components {
             id: string;
             /** Display Name */
             display_name: string;
+            /** Output Modalities */
+            output_modalities?: string[] | null;
         };
         /**
          * LLMModelsResponse
@@ -17940,7 +18777,7 @@ export interface components {
              * @description LLM provider type
              * @enum {string}
              */
-            provider: "openai" | "anthropic";
+            provider: "openai" | "anthropic" | "google";
             /**
              * Model
              * @description Model identifier
@@ -18461,9 +19298,9 @@ export interface components {
             };
             /**
              * Async
-             * @default false
+             * @description Override the capability's default execution mode. When omitted, delegations run asynchronously and other tools run synchronously.
              */
-            async: boolean;
+            async?: boolean | null;
         };
         /**
          * MCPGatewayExecuteResponse
@@ -18492,6 +19329,8 @@ export interface components {
             async: boolean;
             /** Execution Id */
             execution_id?: string | null;
+            /** Execution Type */
+            execution_type?: ("workflow" | "agent_run") | null;
             /** Status */
             status?: string | null;
             /** Result */
@@ -18504,10 +19343,19 @@ export interface components {
         MCPGatewayExecutionResponse: {
             /** Execution Id */
             execution_id: string;
+            /**
+             * Execution Type
+             * @enum {string}
+             */
+            execution_type: "workflow" | "agent_run";
             /** Workflow Id */
             workflow_id?: string | null;
             /** Workflow Name */
             workflow_name?: string | null;
+            /** Agent Id */
+            agent_id?: string | null;
+            /** Agent Name */
+            agent_name?: string | null;
             /** Status */
             status: string;
             /** Created At */
@@ -18542,6 +19390,10 @@ export interface components {
             description: string;
             /** Source */
             source: string;
+            /** Supports Async */
+            supports_async: boolean;
+            /** Default Async */
+            default_async: boolean;
             /** Input Schema */
             input_schema?: {
                 [key: string]: unknown;
@@ -19059,6 +19911,8 @@ export interface components {
             role: components["schemas"]["MessageRole"];
             /** Content */
             content?: string | null;
+            /** Attachments */
+            attachments?: components["schemas"]["AttachmentPublic"][];
             /** Tool Calls */
             tool_calls?: components["schemas"]["ToolCall"][] | null;
             /** Tool Call Id */
@@ -19147,6 +20001,84 @@ export interface components {
              * @default common
              */
             tenant_id: string;
+        };
+        /**
+         * ModelCapabilities
+         * @description Persisted, fingerprinted model features used by Chat at runtime.
+         */
+        ModelCapabilities: {
+            /**
+             * Image Input
+             * @default false
+             */
+            image_input: boolean;
+            /**
+             * Pdf Input
+             * @default false
+             */
+            pdf_input: boolean;
+            /**
+             * Tool Calling
+             * @default false
+             */
+            tool_calling: boolean;
+            /**
+             * Source
+             * @default unknown
+             * @enum {string}
+             */
+            source: "openrouter" | "verified" | "manual" | "unknown";
+            /** Checked At */
+            checked_at?: string | null;
+            /**
+             * Fingerprint
+             * @default
+             */
+            fingerprint: string;
+        };
+        /**
+         * ModelCapabilityLookupRequest
+         * @description Identify a configured model for deterministic catalog lookup.
+         */
+        ModelCapabilityLookupRequest: {
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "openai" | "anthropic" | "google";
+            /** Model */
+            model: string;
+            /** Endpoint */
+            endpoint?: string | null;
+        };
+        /**
+         * ModelCapabilityLookupResponse
+         * @description Capability lookup result plus an explanation suitable for settings UI.
+         */
+        ModelCapabilityLookupResponse: {
+            capabilities: components["schemas"]["ModelCapabilities"];
+            /** Message */
+            message: string;
+        };
+        /**
+         * ModelCapabilityVerifyRequest
+         * @description Run a one-time conformance check against the configured provider.
+         */
+        ModelCapabilityVerifyRequest: {
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "openai" | "anthropic" | "google";
+            /** Model */
+            model: string;
+            /** Endpoint */
+            endpoint?: string | null;
+            /**
+             * Api Key
+             * @description New unsaved API key; omit to use the saved provider key.
+             */
+            api_key?: string | null;
         };
         /**
          * NotificationCategory
@@ -22897,6 +23829,10 @@ export interface components {
              */
             status: string;
             entity_counts?: components["schemas"]["SolutionEntityCounts"];
+            /** Logo Url */
+            logo_url?: string | null;
+            /** Logo Version */
+            logo_version?: string | null;
             /**
              * Scope
              * @enum {string}
@@ -23425,6 +24361,10 @@ export interface components {
             is_active?: boolean | null;
             /** Logo */
             logo?: string | null;
+            /** Logo Url */
+            logo_url?: string | null;
+            /** Logo Version */
+            logo_version?: string | null;
             /** Source Table */
             source_table?: string | null;
             /** Select */
@@ -23769,6 +24709,41 @@ export interface components {
             solutions?: components["schemas"]["Solution"][];
         };
         /**
+         * SpreadsheetArtifactSpec
+         * @description Schema-first payload for an XLSX workbook.
+         */
+        SpreadsheetArtifactSpec: {
+            /**
+             * Filename
+             * @description A short, descriptive filename; Bifrost applies proper casing and the extension.
+             */
+            filename: string;
+            /** Sheets */
+            sheets: components["schemas"]["SpreadsheetSheetSpec"][];
+        };
+        /**
+         * SpreadsheetSheetSpec
+         * @description One worksheet with a header row and tabular data.
+         */
+        SpreadsheetSheetSpec: {
+            /** Name */
+            name: string;
+            /** Columns */
+            columns: string[];
+            /** Rows */
+            rows?: unknown[][];
+            /**
+             * Freeze Header
+             * @default true
+             */
+            freeze_header: boolean;
+            /**
+             * Auto Filter
+             * @default true
+             */
+            auto_filter: boolean;
+        };
+        /**
          * StuckExecutionsResponse
          * @description Response model for stuck executions query
          */
@@ -24003,6 +24978,24 @@ export interface components {
             } | null;
             /** @description Optional row-level access policies. See docs/superpowers/specs/2026-04-30-table-policies-design.md. */
             policies?: components["schemas"]["TablePolicies"] | null;
+        };
+        /**
+         * TextArtifactSpec
+         * @description Schema-first payload for a text, HTML, CSV, Markdown, or JSON file.
+         */
+        TextArtifactSpec: {
+            /**
+             * Filename
+             * @description A short, descriptive filename; Bifrost applies proper casing and the extension.
+             */
+            filename: string;
+            /**
+             * Format
+             * @enum {string}
+             */
+            format: "csv" | "html" | "markdown" | "text" | "json";
+            /** Content */
+            content: string;
         };
         /**
          * Token
@@ -24793,12 +25786,27 @@ export interface components {
         VersionResponse: {
             /** Version */
             version: string;
+            /** Min Cli Version */
+            min_cli_version: string;
             /** Contract Version */
             contract_version: number;
             /** Sdk Fingerprint */
             sdk_fingerprint: string;
             /** Sdk Contract Version */
             sdk_contract_version: number;
+        };
+        /**
+         * VideoArtifactSpec
+         * @description Prompt for a durable provider-generated video job.
+         */
+        VideoArtifactSpec: {
+            /**
+             * Filename
+             * @description A short, descriptive filename; Bifrost applies proper casing and the extension.
+             */
+            filename: string;
+            /** Prompt */
+            prompt: string;
         };
         /**
          * WatchSessionRequest
@@ -27267,7 +28275,10 @@ export interface operations {
     };
     list_organizations_api_organizations_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Include inactive (disabled) organizations */
+                include_inactive?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -27281,6 +28292,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrganizationPublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -33600,6 +34620,313 @@ export interface operations {
             };
         };
     };
+    sdk_list_artifacts_api_sdk_artifacts_get: {
+        parameters: {
+            query: {
+                workspace_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactRef"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_store_artifact_api_sdk_artifacts_post: {
+        parameters: {
+            query?: {
+                workspace_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_sdk_store_artifact_api_sdk_artifacts_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactRef"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_render_document_artifact_api_sdk_artifacts_document_post: {
+        parameters: {
+            query?: {
+                workspace_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DocumentArtifactSpec"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactRef"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_render_spreadsheet_artifact_api_sdk_artifacts_spreadsheet_post: {
+        parameters: {
+            query?: {
+                workspace_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SpreadsheetArtifactSpec"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactRef"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_render_text_artifact_api_sdk_artifacts_text_post: {
+        parameters: {
+            query?: {
+                workspace_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TextArtifactSpec"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactRef"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_generate_image_artifact_api_sdk_artifacts_image_post: {
+        parameters: {
+            query?: {
+                workspace_id?: string | null;
+                execution_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImageArtifactSpec"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactRef"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_generate_video_artifact_api_sdk_artifacts_video_post: {
+        parameters: {
+            query?: {
+                workspace_id?: string | null;
+                execution_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["VideoArtifactSpec"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_read_artifact_api_sdk_artifacts__artifact_id__content_get: {
+        parameters: {
+            query?: {
+                preview?: boolean;
+            };
+            header?: never;
+            path: {
+                artifact_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_artifact_download_url_api_sdk_artifacts__artifact_id__download_url_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                artifact_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactDownloadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     cli_ai_complete_api_sdk_ai_complete_post: {
         parameters: {
             query?: never;
@@ -34026,6 +35353,57 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                };
+            };
+        };
+    };
+    download_cli_alias_api_cli_download_bifrost_cli_tar_gz_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    download_cli_artifact_api_cli_artifacts__filename__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                filename: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -34683,6 +36061,8 @@ export interface operations {
                 scope?: string | null;
                 category?: string | null;
                 active_only?: boolean;
+                /** @description Include per-agent run stats in the list response. */
+                include_stats?: boolean;
             };
             header?: never;
             path?: never;
@@ -35059,6 +36439,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                    "image/webp": unknown;
                     "image/png": unknown;
                     "image/jpeg": unknown;
                     "image/svg+xml": unknown;
@@ -35850,6 +37231,26 @@ export interface operations {
             };
         };
     };
+    get_model_tiers_api_chat_model_tiers_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatModelTiersResponse"];
+                };
+            };
+        };
+    };
     list_conversations_api_chat_conversations_get: {
         parameters: {
             query?: {
@@ -35965,6 +37366,201 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_chat_artifacts_api_chat_artifacts_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatArtifactPublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_chat_artifact_api_chat_artifacts__attachment_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    rename_chat_artifact_api_chat_artifacts__attachment_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatArtifactUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatArtifactPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_attachments_api_chat_conversations__conversation_id__attachments_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_attachments_api_chat_conversations__conversation_id__attachments_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AttachmentUploadResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_unbound_attachment_api_chat_conversations__conversation_id__attachments__attachment_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                conversation_id: string;
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_attachment_content_api_chat_conversations__conversation_id__attachments__attachment_id__content_get: {
+        parameters: {
+            query?: {
+                download?: boolean;
+                preview?: boolean;
+            };
+            header?: never;
+            path: {
+                conversation_id: string;
+                attachment_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
             };
             /** @description Validation Error */
             422: {
@@ -36114,6 +37710,72 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+        };
+    };
+    discover_model_capabilities_api_admin_llm_model_capabilities_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelCapabilityLookupRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelCapabilityLookupResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verify_model_capability_support_api_admin_llm_model_capabilities_verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ModelCapabilityVerifyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ModelCapabilityLookupResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
             };
         };
     };
@@ -37157,6 +38819,79 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_artifact_retention_settings_api_maintenance_artifact_retention_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactRetentionSettings"];
+                };
+            };
+        };
+    };
+    update_artifact_retention_settings_api_maintenance_artifact_retention_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArtifactRetentionSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactRetentionSettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cleanup_artifact_retention_api_maintenance_artifact_retention_cleanup_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
                 };
             };
         };
@@ -39680,6 +41415,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                    "image/webp": unknown;
                     "image/png": unknown;
                     "image/jpeg": unknown;
                     "image/svg+xml": unknown;
@@ -41423,6 +43159,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": unknown;
+                    "image/webp": unknown;
                     "image/png": unknown;
                     "image/jpeg": unknown;
                     "image/svg+xml": unknown;

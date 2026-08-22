@@ -31,7 +31,11 @@ beforeEach(() => {
   MockWebSocket.instances = [];
   vi.stubGlobal("WebSocket", MockWebSocket);
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 describe("subscribeToExecution", () => {
   it("subscribes to the execution channel on open", () => {
@@ -138,11 +142,58 @@ describe("subscribeToExecution", () => {
 
   it("dedupes onSocketDown when error is followed by close", () => {
     const down = vi.fn();
-    subscribeToExecution("abc-123", () => {}, down);
+    const unsubscribe = subscribeToExecution("abc-123", () => {}, down);
     const ws = MockWebSocket.instances[0];
     ws.emit("error", {});
     ws.emit("close", { code: 1000 });
     expect(down).toHaveBeenCalledTimes(1);
+    unsubscribe();
+  });
+
+  it("reconnects after a deployment close and re-emits ready after acknowledgement", () => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const events: ExecutionStreamEvent[] = [];
+    const down = vi.fn();
+    const unsubscribe = subscribeToExecution(
+      "abc-123",
+      (event) => events.push(event),
+      down,
+    );
+
+    const first = MockWebSocket.instances[0];
+    first.emit("open", {});
+    first.emit("message", {
+      data: JSON.stringify({ type: "subscribed", channel: "execution:abc-123" }),
+    });
+    first.emit("close", { code: 1012 });
+
+    expect(down).toHaveBeenCalledTimes(1);
+    expect(MockWebSocket.instances).toHaveLength(1);
+    vi.advanceTimersByTime(500);
+
+    const second = MockWebSocket.instances[1];
+    second.emit("open", {});
+    second.emit("message", {
+      data: JSON.stringify({ type: "subscribed", channel: "execution:abc-123" }),
+    });
+
+    expect(JSON.parse(second.sent[0])).toEqual({
+      type: "subscribe",
+      channels: [{ name: "execution:abc-123" }],
+    });
+    expect(events).toEqual([{ type: "ready" }, { type: "ready" }]);
+    unsubscribe();
+  });
+
+  it("does not retry authentication and policy close codes", () => {
+    vi.useFakeTimers();
+    const unsubscribe = subscribeToExecution("abc-123", () => {});
+    MockWebSocket.instances[0].emit("close", { code: 4001 });
+
+    vi.advanceTimersByTime(60_000);
+    expect(MockWebSocket.instances).toHaveLength(1);
+    unsubscribe();
   });
 
   it("ignores unparseable frames", () => {

@@ -122,10 +122,10 @@ def test_build_subprocesses_have_timeouts(monkeypatch, tmp_path):
     write lock — without a timeout, a hanging npm postinstall wedges the install
     until process restart (every deploy 409s). Both calls must carry one."""
 
-    calls: list[dict] = []
+    calls: list[tuple[list[str], dict]] = []
 
     def _fake_run(argv, **kwargs):
-        calls.append(kwargs)
+        calls.append((list(argv), kwargs))
         return subprocess.CompletedProcess(argv, 0)
 
     monkeypatch.setattr(ab.subprocess, "run", _fake_run)
@@ -136,7 +136,14 @@ def test_build_subprocesses_have_timeouts(monkeypatch, tmp_path):
 
     assert out == {}
     assert len(calls) == 2
-    for kwargs in calls:
+    assert calls[0][0] == [
+        "npm",
+        "install",
+        "--no-audit",
+        "--no-fund",
+        "--package-lock=false",
+    ]
+    for _argv, kwargs in calls:
         assert kwargs.get("timeout") == ab._BUILD_STEP_TIMEOUT_S
 
 

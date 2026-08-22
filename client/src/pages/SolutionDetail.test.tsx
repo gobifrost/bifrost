@@ -8,6 +8,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen, waitFor } from "@/test-utils";
 import { SolutionDetail } from "./SolutionDetail";
 
+const APP_LOGO_DATA_URL =
+	"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciLz4=";
+
 const mockNavigate = vi.fn();
 vi.mock("react-router-dom", async () => {
 	const actual =
@@ -132,7 +135,7 @@ function makeEntities(statusOverride = "active") {
 					app_model: "standalone_v2",
 					is_published: true,
 					has_unpublished_changes: false,
-					logo: "data:image/svg+xml;base64,PHN2Zy8+",
+					logo_url: APP_LOGO_DATA_URL,
 				},
 			],
 			forms: [
@@ -591,7 +594,7 @@ describe("SolutionDetail", () => {
 			expect(screen.queryByText(/open published/i)).not.toBeInTheDocument();
 			expect(screen.getByTestId("entity-logo")).toHaveAttribute(
 				"src",
-				"data:image/svg+xml;base64,PHN2Zy8+",
+				APP_LOGO_DATA_URL,
 			);
 			await user.click(screen.getByRole("button", { name: /solution app/i }));
 

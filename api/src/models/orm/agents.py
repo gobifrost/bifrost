@@ -16,6 +16,7 @@ from src.models.enums import AgentAccessLevel, MessageRole
 from src.models.orm.base import Base
 
 if TYPE_CHECKING:
+    from src.models.orm.artifacts import Artifact
     from src.models.orm.ai_usage import AIUsage
     from src.models.orm.organizations import Organization
     from src.models.orm.users import Role, User
@@ -34,6 +35,9 @@ class Agent(Base):
     description: Mapped[str | None] = mapped_column(Text, default=None)
     logo_data: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
     logo_content_type: Mapped[str | None] = mapped_column(String(50), default=None)
+    logo_thumbnail_data: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
+    logo_thumbnail_content_type: Mapped[str | None] = mapped_column(String(50), default=None)
+    logo_thumbnail_version: Mapped[str | None] = mapped_column(String(64), default=None)
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     channels: Mapped[list] = mapped_column(JSONB, default=["chat"])
     access_level: Mapped[AgentAccessLevel] = mapped_column(
@@ -71,8 +75,8 @@ class Agent(Base):
     # LLM configuration overrides (null = use global config)
     llm_model: Mapped[str | None] = mapped_column(String(100), default=None)
     llm_max_tokens: Mapped[int | None] = mapped_column(Integer, default=None)
-    max_iterations: Mapped[int | None] = mapped_column(Integer, default=50)
-    max_token_budget: Mapped[int | None] = mapped_column(Integer, default=100000)
+    max_iterations: Mapped[int | None] = mapped_column(Integer, default=None)
+    max_token_budget: Mapped[int | None] = mapped_column(Integer, default=None)
     max_run_timeout: Mapped[int | None] = mapped_column(Integer, default=None)
     created_by: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -223,6 +227,10 @@ class Conversation(Base):
         cascade="all, delete-orphan",
         order_by="Message.sequence",
     )
+    attachments: Mapped[list["MessageAttachment"]] = relationship(
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+    )
     ai_usages: Mapped[list["AIUsage"]] = relationship(back_populates="conversation")
 
     __table_args__ = (
@@ -277,7 +285,49 @@ class Message(Base):
 
     # Relationships
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")
+    attachments: Mapped[list["MessageAttachment"]] = relationship(
+        back_populates="message",
+        cascade="all, delete-orphan",
+        order_by="MessageAttachment.created_at",
+    )
 
     __table_args__ = (
         Index("ix_messages_conversation_sequence", "conversation_id", "sequence"),
+    )
+
+
+class MessageAttachment(Base):
+    """User-uploaded file bound to a chat message."""
+
+    __tablename__ = "message_attachments"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    artifact_id: Mapped[UUID] = mapped_column(
+        ForeignKey("artifacts.id", ondelete="CASCADE"), nullable=False
+    )
+    message_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="CASCADE"), nullable=True, default=None
+    )
+    conversation_id: Mapped[UUID] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"), nullable=False
+    )
+    s3_key: Mapped[str] = mapped_column(String(1024), nullable=False)
+    filename: Mapped[str] = mapped_column(String(500), nullable=False)
+    content_type: Mapped[str] = mapped_column(String(255), nullable=False)
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    extracted_text: Mapped[str | None] = mapped_column(Text, default=None)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=text("NOW()"),
+    )
+
+    message: Mapped["Message | None"] = relationship(back_populates="attachments")
+    conversation: Mapped["Conversation"] = relationship(back_populates="attachments")
+    artifact: Mapped["Artifact"] = relationship(back_populates="chat_bindings")
+
+    __table_args__ = (
+        Index("ix_message_attachments_artifact_id", "artifact_id"),
+        Index("ix_message_attachments_message_id", "message_id"),
+        Index("ix_message_attachments_conversation_id", "conversation_id"),
     )

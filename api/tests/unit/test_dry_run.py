@@ -14,6 +14,7 @@ from sqlalchemy import delete, select
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.ai_usage import AIUsage
 from src.services.execution.dry_run import evaluate_against_prompt
+from src.services.llm import LLMResponse
 
 
 @pytest_asyncio.fixture
@@ -48,13 +49,13 @@ def _build_mock_llm_response(
     output_tokens: int = 60,
     model: str = "claude-sonnet-4-6",
 ):
-    """Construct a mock that quacks like an LLMResponse."""
-    response = MagicMock()
-    response.content = content
-    response.input_tokens = input_tokens
-    response.output_tokens = output_tokens
-    response.model = model
-    return response
+    """Construct the real stable response contract used by all providers."""
+    return LLMResponse(
+        content=content,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        model=model,
+    )
 
 
 def _build_mock_client(response):

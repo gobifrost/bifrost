@@ -1,6 +1,24 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 
-from src.services.model_registry import normalize_model_name
+from src.services.model_registry import _fetch_model_mapping, normalize_model_name
+
+
+@pytest.mark.asyncio
+async def test_google_model_mapping_uses_native_model_list() -> None:
+    model = MagicMock()
+    model.name = "models/gemini-2.5-flash"
+    model.display_name = "Gemini 2.5 Flash"
+    google_client = MagicMock()
+    google_client.aio.models.list = AsyncMock(return_value=MagicMock(page=[model]))
+    google_client.aio.aclose = AsyncMock()
+
+    with patch("google.genai.Client", return_value=google_client):
+        mapping = await _fetch_model_mapping("google", "test-key")
+
+    assert mapping == {"gemini-2.5-flash": "Gemini 2.5 Flash"}
+    google_client.aio.aclose.assert_awaited_once()
 
 
 class TestNormalizeModelName:

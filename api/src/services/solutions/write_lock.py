@@ -78,40 +78,47 @@ async def solution_write_lock(solution_id: UUID) -> AsyncIterator[None]:
     deploy never loses the lock; the ``finally`` cancels the watchdog and deletes
     the key (compare-by-token).
     """
-    from src.core.redis_client import get_redis_client
+    from src.core.cache.redis_client import get_redis
 
-    redis = await get_redis_client()._get_redis()
-    key = _lock_key(solution_id)
-    token = uuid4().hex  # per-holder fencing token
-    renew = redis.register_script(_RENEW_LUA)
-    release = redis.register_script(_RELEASE_LUA)
+    # Own the Redis connection for exactly the lock's async context. Reusing the
+    # process-wide execution client couples this lock to whichever event loop
+    # first touched that unrelated singleton and can make later callers fail
+    # with a closed-loop error.
+    async with get_redis() as redis:
+        key = _lock_key(solution_id)
+        token = uuid4().hex  # per-holder fencing token
+        renew = redis.register_script(_RENEW_LUA)
+        release = redis.register_script(_RELEASE_LUA)
 
-    acquired = await redis.set(key, token, nx=True, ex=_LOCK_TTL_S)
-    if not acquired:
-        raise SolutionWriteLockHeld(str(solution_id))
+        acquired = await redis.set(key, token, nx=True, ex=_LOCK_TTL_S)
+        if not acquired:
+            raise SolutionWriteLockHeld(str(solution_id))
 
-    async def _renew() -> None:
-        # Keep renewing for the lifetime of the context. A transient redis error
-        # must NOT end the loop (that would silently stop renewal and let the
-        # lock expire under a live holder — Codex #13); log and try again next tick.
-        while True:
-            await asyncio.sleep(_RENEW_INTERVAL_S)
+        async def _renew() -> None:
+            # Keep renewing for the lifetime of the context. A transient redis error
+            # must NOT end the loop (that would silently stop renewal and let the
+            # lock expire under a live holder — Codex #13); log and try again next tick.
+            while True:
+                await asyncio.sleep(_RENEW_INTERVAL_S)
+                try:
+                    await renew(keys=[key], args=[token, _LOCK_TTL_S])
+                except asyncio.CancelledError:
+                    raise
+                except Exception:  # noqa: BLE001 - renewal is best-effort; keep trying
+                    logger.warning(
+                        "write-lock renewal failed for %s (will retry)",
+                        log_safe(solution_id),
+                    )
+
+        watchdog = asyncio.create_task(_renew())
+        try:
+            yield
+        finally:
+            watchdog.cancel()
             try:
-                await renew(keys=[key], args=[token, _LOCK_TTL_S])
+                await watchdog
             except asyncio.CancelledError:
-                raise
-            except Exception:  # noqa: BLE001 - renewal is best-effort; keep trying
-                logger.warning(
-                    "write-lock renewal failed for %s (will retry)", log_safe(solution_id)
-                )
-
-    watchdog = asyncio.create_task(_renew())
-    try:
-        yield
-    finally:
-        watchdog.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await watchdog
-        with contextlib.suppress(Exception):
-            # Release only if still ours — never delete a successor's lock.
-            await release(keys=[key], args=[token])
+                pass
+            with contextlib.suppress(Exception):
+                # Release only if still ours — never delete a successor's lock.
+                await release(keys=[key], args=[token])

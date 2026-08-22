@@ -378,6 +378,21 @@
 		}
 	}
 
+	@keyframes routeReadyReveal {
+		from {
+			opacity: 0.72;
+			filter: blur(2px);
+			clip-path: inset(0 0 6px 0 round 8px);
+			transform: translateY(4px);
+		}
+		to {
+			opacity: 1;
+			filter: blur(0);
+			clip-path: inset(0 round 0);
+			transform: translateY(0);
+		}
+	}
+
 	.route-transition-progress-track {
 		background: oklch(from var(--primary) l c h / 0.12);
 	}
@@ -392,13 +407,14 @@
 		transform-origin: left center;
 	}
 
-	.route-transition-progress-fill[data-state="finishing"] {
-		transform: translateX(0) scaleX(1);
+	.route-ready-reveal {
+		animation: routeReadyReveal 220ms cubic-bezier(0.16, 1, 0.3, 1);
 	}
 
-	/* Apply fade-in animation to main content */
-	main > * {
-		animation: fadeIn 0.3s ease-out;
+	@media (prefers-reduced-motion: reduce) {
+		.route-ready-reveal {
+			animation: none;
+		}
 	}
 
 	/* Button press effect */
@@ -588,6 +604,39 @@
 	}
 	.scrollbar-hide::-webkit-scrollbar {
 		display: none;
+	}
+}
+
+@keyframes chat-activity-sweep {
+	0%,
+	20% {
+		background-position: 120% 0;
+	}
+	80%,
+	100% {
+		background-position: -20% 0;
+	}
+}
+
+.chat-activity-shimmer {
+	color: transparent;
+	background-image: linear-gradient(
+		100deg,
+		var(--muted-foreground) 35%,
+		var(--foreground) 50%,
+		var(--muted-foreground) 65%
+	);
+	background-size: 240% 100%;
+	background-clip: text;
+	-webkit-background-clip: text;
+	animation: chat-activity-sweep 1.8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.chat-activity-shimmer {
+		color: var(--muted-foreground);
+		background: none;
+		animation: none;
 	}
 }
 

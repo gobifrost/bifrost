@@ -16,7 +16,10 @@ export default defineConfig({
 	testDir: "./e2e",
 	fullyParallel: true,
 	forbidOnly: !!process.env.CI,
-	retries: process.env.CI ? 2 : 0,
+	// A browser failure is a result to diagnose, not an invitation to mutate the
+	// same shared test state and try again. Keep first-failure diagnostics below,
+	// but never convert a later attempt into a green workflow.
+	retries: 0,
 	workers: process.env.CI ? 1 : 4,
 	timeout: 30000,
 
@@ -29,7 +32,7 @@ export default defineConfig({
 	use: {
 		// Use environment variable for Docker, fallback to localhost for local dev
 		baseURL: process.env.TEST_BASE_URL || "http://localhost:3000",
-		trace: "on-first-retry",
+		trace: "retain-on-failure",
 		// PLAYWRIGHT_SCREENSHOT_ALL=1 (set by `./test.sh client e2e --screenshots`)
 		// captures a screenshot for every test instead of only on failure.
 		// Used by the bifrost-testing skill's UX review workflow.
@@ -37,7 +40,7 @@ export default defineConfig({
 			process.env.PLAYWRIGHT_SCREENSHOT_ALL === "1"
 				? "on"
 				: "only-on-failure",
-		video: "on-first-retry",
+		video: "retain-on-failure",
 	},
 
 	projects: [

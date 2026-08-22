@@ -14,7 +14,6 @@ confused with the agent's own reasoning.
 import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import select
@@ -22,7 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.log_safety import log_safe
 from src.models.orm.agent_runs import AgentRun, AgentRunStep
-from src.models.orm.ai_usage import AIUsage
+from src.core.cache import get_shared_redis
+from src.services.ai_usage_service import record_ai_usage
 from src.services.execution.model_selection import get_tuning_client
 from src.services.llm import LLMMessage
 
@@ -145,18 +145,19 @@ async def evaluate_against_prompt(
 
     # Phase 3: persist AIUsage row
     async with session_factory() as db:
-        db.add(
-            AIUsage(
-                agent_run_id=run_id,
-                organization_id=org_id,
-                provider=getattr(llm_client, "provider_name", "unknown"),
-                model=getattr(response, "model", None) or resolved_model,
-                input_tokens=getattr(response, "input_tokens", 0) or 0,
-                output_tokens=getattr(response, "output_tokens", 0) or 0,
-                cost=None,
-                timestamp=datetime.now(timezone.utc),
-                sequence=8000,
-            )
+        await record_ai_usage(
+            session=db,
+            redis_client=await get_shared_redis(),
+            agent_run_id=run_id,
+            organization_id=org_id,
+            provider=llm_client.provider_name,
+            model=response.model or resolved_model,
+            input_tokens=response.input_tokens or 0,
+            output_tokens=response.output_tokens or 0,
+            cache_read_tokens=response.cache_read_tokens,
+            cache_write_tokens=response.cache_write_tokens,
+            provider_cost=response.provider_cost,
+            sequence=8000,
         )
         await db.commit()
 

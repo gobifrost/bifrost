@@ -7,13 +7,17 @@ Platform admin resource - no org scoping.
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.auth import Context, CurrentSuperuser
 from src.core.database import get_db
+from src.jobs.platform.system_maintenance import (
+    ARTIFACT_RETENTION_CLEANUP_DEFINITION,
+    EmptyMaintenancePayload,
+)
 from src.models import (
     CleanupOrphanedResponse,
     DocsIndexResponse,
@@ -23,22 +27,112 @@ from src.models import (
     PreflightResponse,
     ReimportJobResponse,
 )
+from src.models.contracts.artifact_retention import (
+    ArtifactRetentionSettings,
+    ArtifactRetentionSettingsUpdate,
+)
 from src.models.contracts.notifications import (
     NotificationCategory,
     NotificationCreate,
     NotificationStatus,
 )
+from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.models.orm import (
     Application,
     Workflow,
 )
 from src.models.orm.file_index import FileIndex
 from src.services.app_dependencies import parse_dependencies
+from src.services.artifact_retention import ArtifactRetentionSettingsService
 from src.services.notification_service import get_notification_service
+from src.services.platform_jobs import (
+    ensure_platform_job_notification,
+    enqueue_platform_job,
+    publish_platform_job_update,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/maintenance", tags=["Maintenance"])
+
+
+@router.get(
+    "/artifact-retention/settings",
+    response_model=ArtifactRetentionSettings,
+    summary="Get artifact retention settings",
+)
+async def get_artifact_retention_settings(
+    user: CurrentSuperuser,
+    db: AsyncSession = Depends(get_db),
+) -> ArtifactRetentionSettings:
+    return await ArtifactRetentionSettingsService(db).get_settings()
+
+
+@router.put(
+    "/artifact-retention/settings",
+    response_model=ArtifactRetentionSettings,
+    summary="Update artifact retention settings",
+)
+async def update_artifact_retention_settings(
+    request: ArtifactRetentionSettingsUpdate,
+    user: CurrentSuperuser,
+    db: AsyncSession = Depends(get_db),
+) -> ArtifactRetentionSettings:
+    service = ArtifactRetentionSettingsService(db)
+    settings = await service.update_settings(
+        ArtifactRetentionSettings.model_validate(request.model_dump()),
+        updated_by=user.email,
+    )
+    await db.commit()
+    return settings
+
+
+@router.post(
+    "/artifact-retention/cleanup",
+    response_model=PlatformJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Clean up expired artifacts",
+)
+async def cleanup_artifact_retention(
+    response: Response,
+    user: CurrentSuperuser,
+    db: AsyncSession = Depends(get_db),
+) -> PlatformJobAccepted:
+    job, reused = await enqueue_platform_job(
+        db,
+        ARTIFACT_RETENTION_CLEANUP_DEFINITION,
+        EmptyMaintenancePayload(),
+        dedupe_key="manual",
+        resource_lock_key=ARTIFACT_RETENTION_CLEANUP_DEFINITION.job_type,
+        priority=500,
+        organization_id=None,
+        requested_by_user_id=user.user_id,
+        requested_by_email=user.email,
+        requested_by_name=user.name or user.email or "Unknown",
+        resource_type="system",
+        resource_id=ARTIFACT_RETENTION_CLEANUP_DEFINITION.job_type,
+        title="Clean up expired artifacts",
+        action_url="/settings/maintenance",
+    )
+    if job.notification_id is None:
+        try:
+            await ensure_platform_job_notification(db, job)
+        except Exception:
+            logger.warning(
+                "Artifact retention cleanup queued without a progress notification",
+                extra={"platform_job_id": str(job.id)},
+                exc_info=True,
+            )
+    await db.commit()
+    await db.refresh(job)
+    await publish_platform_job_update(job)
+    response.headers["Location"] = f"/api/platform-jobs/{job.id}"
+    return PlatformJobAccepted(
+        job_id=job.id,
+        notification_id=job.notification_id,
+        status=job.status,
+        reused=reused,
+    )
 
 
 @router.get(

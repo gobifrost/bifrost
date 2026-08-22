@@ -140,6 +140,37 @@ class TestLLMConfigurationCRUD:
         assert data["is_configured"] is True
         assert data["api_key_set"] is True
 
+    def test_generation_models_round_trip(
+        self,
+        e2e_client,
+        platform_admin,
+        llm_config_cleanup,
+    ):
+        """Dedicated image and video model selections persist independently."""
+        response = e2e_client.post(
+            "/api/admin/llm/config",
+            json={
+                "provider": "openai",
+                "model": "fixture-chat",
+                "api_key": "fixture-key",
+                "endpoint": "http://scheduler-fixtures:8080/v1",
+                "image_generation_model": "fixture-image",
+                "video_generation_model": "fixture-video",
+            },
+            headers=platform_admin.headers,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["image_generation_model"] == "fixture-image"
+        assert response.json()["video_generation_model"] == "fixture-video"
+
+        response = e2e_client.get(
+            "/api/admin/llm/config",
+            headers=platform_admin.headers,
+        )
+        assert response.status_code == 200
+        assert response.json()["image_generation_model"] == "fixture-image"
+        assert response.json()["video_generation_model"] == "fixture-video"
+
     def test_update_config_overwrites(
         self,
         e2e_client,

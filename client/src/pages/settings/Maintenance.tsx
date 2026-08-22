@@ -33,6 +33,7 @@ import { toast } from "sonner";
 import { authFetch } from "@/lib/api-client";
 import { exportAll } from "@/services/exportImport";
 import { ImportDialog } from "@/components/ImportDialog";
+import { ArtifactRetentionSettings } from "@/pages/settings/ArtifactRetentionSettings";
 
 interface DocsIndexResponse {
 	status: string;
@@ -314,6 +315,8 @@ export function Maintenance() {
 
 	return (
 		<div className="space-y-6">
+			<ArtifactRetentionSettings />
+
 			{/* Export/Import Card */}
 			<Card>
 				<CardHeader>

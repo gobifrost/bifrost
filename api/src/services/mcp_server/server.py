@@ -570,10 +570,84 @@ if HAS_FASTMCP:
                         # Plain string result - return as success
                         return success_result(result, {"result": result})
 
+                from pydantic import BaseModel
+
+                if isinstance(result, BaseModel):
+                    result = result.model_dump(mode="json")
+
                 # Auto-wrap dict results
                 if isinstance(result, dict):
                     if result.get("error"):
                         return error_result(str(result["error"]), result)
+                    from src.services.chat_artifacts import find_artifact_refs
+
+                    artifact_refs = find_artifact_refs(result)
+                    if artifact_refs:
+                        import base64
+
+                        from mcp.types import ImageContent, ResourceLink, TextContent
+
+                        from src.core.database import get_db_context
+                        from src.services.artifacts import (
+                            ArtifactAccessError,
+                            ArtifactService,
+                        )
+                        from src.services.file_storage.service import (
+                            get_file_storage_service,
+                        )
+
+                        content_blocks: list[Any] = [
+                            TextContent(
+                                type="text",
+                                text=f"Created {len(artifact_refs)} artifact(s).",
+                            )
+                        ]
+                        async with get_db_context() as db:
+                            storage = get_file_storage_service(db)
+                            artifact_service = ArtifactService(db)
+                            for ref in artifact_refs:
+                                try:
+                                    artifact = await artifact_service.get_authorized(
+                                        UUID(ref.id),
+                                        user_id=UUID(str(context.user_id)),
+                                        organization_id=(
+                                            UUID(str(context.org_id))
+                                            if context.org_id
+                                            else None
+                                        ),
+                                        is_platform_admin=context.is_platform_admin,
+                                    )
+                                except (ArtifactAccessError, ValueError):
+                                    return error_result(
+                                        "ArtifactRef output was not found or is outside this MCP scope.",
+                                        result,
+                                    )
+                                if ref.content_type.startswith("image/"):
+                                    data = await artifact_service.read(artifact)
+                                    content_blocks.append(
+                                        ImageContent(
+                                            type="image",
+                                            data=base64.b64encode(data).decode("ascii"),
+                                            mimeType=ref.content_type,
+                                        )
+                                    )
+                                else:
+                                    url = await storage.generate_presigned_download_url(
+                                        artifact.s3_key
+                                    )
+                                    content_blocks.append(
+                                        ResourceLink(
+                                            type="resource_link",
+                                            name=ref.filename,
+                                            uri=url,
+                                            mimeType=ref.content_type,
+                                            size=ref.size_bytes,
+                                        )
+                                    )
+                        return ToolResult(
+                            content=content_blocks,
+                            structured_content=result,
+                        )
                     # Format as pretty JSON for display
                     display = json.dumps(result, indent=2, default=str)
                     return success_result(display, result)

@@ -168,14 +168,9 @@ async def isolate_s3(request) -> AsyncGenerator[None, None]:
         repo = RepoStorage(settings)
         paths = await repo.list(".bifrost/")
         for path in paths:
-            try:
-                await repo.delete(path)
-            except Exception as e:
-                # Best-effort per-path cleanup — failure logged at debug, sweep continues
-                logger.debug(f"isolate_s3_manifest could not delete {path}: {e}")
+            await repo.delete(path)
     except Exception as e:
-        # S3 not configured / unreachable — fixture is best-effort, skip cleanup
-        logger.debug(f"isolate_s3_manifest sweep skipped: {e}")
+        raise RuntimeError("Configured S3 test isolation failed") from e
 
     yield
 
@@ -192,20 +187,23 @@ async def isolate_redis_module_cache(request) -> AsyncGenerator[None, None]:
         return
 
     try:
-        from src.core.redis_client import get_redis_client
+        import redis.asyncio as async_redis
 
-        redis = get_redis_client()
-        # Delete only module-cache keys, not session/rate-limit/pubsub keys
-        cursor = 0
-        while True:
-            cursor, keys = await redis.scan(cursor, match="bifrost:module:*", count=100)
-            if keys:
-                await redis.delete(*keys)
-            if cursor == 0:
-                break
+        from tests.helpers.isolation import clear_redis_module_cache
+
+        # The application's cached RedisClient may have been created by a
+        # previous pytest-asyncio event loop. Use a throwaway client owned by
+        # this fixture's loop, just as the database isolation fixture uses a
+        # throwaway NullPool engine.
+        redis = async_redis.from_url(TEST_REDIS_URL, decode_responses=True)
+        try:
+            # Delete only module-cache keys, not sessions, rate limits, or
+            # pubsub state used by the test currently being set up.
+            await clear_redis_module_cache(redis)
+        finally:
+            await redis.aclose()
     except Exception as e:
-        # Redis not reachable — fixture is best-effort
-        logger.debug(f"isolate_redis_module_cache sweep skipped: {e}")
+        raise RuntimeError("Configured Redis module-cache isolation failed") from e
 
     yield
 
@@ -218,7 +216,7 @@ async def isolate_file_policies(request) -> AsyncGenerator[None, None]:
     test that grants a broad/root-prefix policy (e.g. a `workspace` root grant
     for a CLI write) would otherwise leak an allow-everything rule into later
     tests — flipping a sibling's default-deny assertion from 403 to 404. Mirror
-    the S3/redis isolation fixtures: best-effort sweep, skipped for unit tests.
+    the S3/redis isolation fixtures: fail closed for E2E tests, skipped for unit tests.
 
     NOTE: this intentionally does NOT sweep Table/PolicyRule rows. Global
     PolicyRule rows include seeded built-ins (`admin_bypass`) that every test
@@ -252,8 +250,7 @@ async def isolate_file_policies(request) -> AsyncGenerator[None, None]:
         finally:
             await engine.dispose()
     except Exception as e:
-        # DB not reachable / models unavailable — fixture is best-effort
-        logger.debug(f"isolate_file_policies sweep skipped: {e}")
+        raise RuntimeError("Configured file-policy test isolation failed") from e
 
     yield
 

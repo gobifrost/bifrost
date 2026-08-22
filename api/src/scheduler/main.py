@@ -266,6 +266,22 @@ class Scheduler:
         )
         logger.info("Deferred execution promoter scheduled (every 60s)")
 
+        # Legacy entity-logo normalization — bounded batches, immediate at startup.
+        from src.jobs.schedulers.logo_thumbnail_backfill import (
+            backfill_logo_thumbnails,
+        )
+
+        scheduler.add_job(
+            backfill_logo_thumbnails,
+            IntervalTrigger(minutes=1),
+            id="logo_thumbnail_backfill",
+            name="Backfill bounded entity-logo thumbnails",
+            replace_existing=True,
+            next_run_time=datetime.now(timezone.utc),
+            **misfire_options,
+        )
+        logger.info("Logo thumbnail backfill scheduled (every 60s)")
+
         # Execution cleanup - every 5 minutes (run immediately at startup)
         scheduler.add_job(
             self._run_scheduled_task,
@@ -408,6 +424,28 @@ class Scheduler:
             logger.info("Solution export artifact cleanup scheduled (hourly)")
         except ImportError:
             logger.warning("Solution export artifact cleanup not available")
+
+        # Artifact retention cleanup - daily at 3:30 AM UTC
+        try:
+            from src.jobs.schedulers.artifact_retention import (
+                cleanup_expired_chat_artifacts_schedule,
+            )
+
+            scheduler.add_job(
+                self._run_scheduled_task,
+                CronTrigger(hour=3, minute=30),
+                id="artifact_retention_cleanup",
+                name="Cleanup expired artifacts",
+                replace_existing=True,
+                args=[
+                    "artifact_retention_cleanup",
+                    cleanup_expired_chat_artifacts_schedule,
+                ],
+                **misfire_options,
+            )
+            logger.info("Artifact retention cleanup scheduled (daily at 3:30 AM)")
+        except ImportError:
+            logger.warning("Artifact retention cleanup not available")
 
         # Event cleanup - daily at 3:00 AM UTC (30-day retention)
         try:

@@ -10,6 +10,7 @@ import { PanelLeftClose, PanelLeft, Cpu, DollarSign } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ChatSidebar } from "./ChatSidebar";
 import { ChatWindow } from "./ChatWindow";
+import { ArtifactsLibrary } from "./ArtifactsLibrary";
 import { useChatStore } from "@/stores/chatStore";
 import { useConversation, useConversationStats } from "@/hooks/useChat";
 import { useUserPermissions } from "@/hooks/useUserPermissions";
@@ -18,10 +19,12 @@ import { cn } from "@/lib/utils";
 
 interface ChatLayoutProps {
 	initialConversationId?: string;
+	view?: "chat" | "artifacts";
 }
 
 export function ChatLayout({
 	initialConversationId,
+	view = "chat",
 }: ChatLayoutProps) {
 	const isDesktop = useMediaQuery("(min-width: 1024px)");
 	const [sidebarState, setSidebarState] = useState<"auto" | "open" | "closed">(
@@ -127,13 +130,28 @@ export function ChatLayout({
 
 			{/* Main Content */}
 			<div className="flex-1 min-h-0 flex flex-col min-w-0 overflow-hidden">
+				{view === "artifacts" && !isSidebarOpen && (
+					<header className="flex h-14 shrink-0 items-center gap-3 border-b px-4 lg:hidden">
+						<Button
+							variant="ghost"
+							size="icon-sm"
+							className="-ml-2 size-11"
+							aria-label="Open chat sidebar"
+							onClick={() => setSidebarState("open")}
+						>
+							<PanelLeft className="h-4 w-4" />
+						</Button>
+						<span className="text-sm font-medium">Chat</span>
+					</header>
+				)}
 				{/* Header - always show when sidebar is closed or conversation is active */}
-				{(!isSidebarOpen || activeConversationId) && (
-					<header className="h-14 border-b flex items-center px-4 gap-4 relative z-10">
+				{view === "chat" && (!isSidebarOpen || activeConversationId) && (
+					<header className="h-14 border-b flex items-center px-4 gap-3 relative z-10 sm:gap-4">
 						{!isSidebarOpen && (
 							<Button
 								variant="ghost"
 								size="icon-sm"
+								className="-ml-2 size-11 sm:ml-0 sm:size-7"
 								aria-label="Open chat sidebar"
 								onClick={() => setSidebarState("open")}
 							>
@@ -210,11 +228,14 @@ export function ChatLayout({
 					</header>
 				)}
 
-				{/* Chat Window */}
-				<ChatWindow
-					conversationId={activeConversationId ?? undefined}
-					agentName={conversation?.agent_name}
-				/>
+				{view === "artifacts" ? (
+					<ArtifactsLibrary />
+				) : (
+					<ChatWindow
+						conversationId={activeConversationId ?? undefined}
+						agentName={conversation?.agent_name}
+					/>
+				)}
 			</div>
 		</div>
 	);

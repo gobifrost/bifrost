@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import select, text
+from sqlalchemy.orm import defer
 
 from src.core.log_safety import log_safe
 from src.core.org_filter import OrgFilterType
@@ -53,7 +54,10 @@ class ApplicationRepository(OrgScopedRepository[Application]):
             List of Application ORM objects
         """
         # Build base query with cascade scoping
-        query = select(self.model)
+        query = select(self.model).options(
+            defer(self.model.logo_data),
+            defer(self.model.logo_thumbnail_data),
+        )
         query = self._apply_cascade_scope(query)
         query = query.order_by(self.model.name)
 
@@ -90,7 +94,10 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         Returns:
             List of Application ORM objects
         """
-        query = select(self.model)
+        query = select(self.model).options(
+            defer(self.model.logo_data),
+            defer(self.model.logo_thumbnail_data),
+        )
 
         # Apply org filtering based on filter type
         if filter_type == OrgFilterType.ALL:

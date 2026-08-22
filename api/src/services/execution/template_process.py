@@ -135,6 +135,7 @@ def _template_main(
     # ----- Load heavy dependencies -----
     # These imports pull in the full transitive closure of each library.
     # After fork, children share these pages via COW.
+    install_virtual_import_hook = None
     try:
         # Core bifrost SDK and execution engine
         try:
@@ -182,8 +183,10 @@ def _template_main(
                 sys.path.insert(0, user_site)
                 logger.info(f"Added user site-packages to sys.path: {user_site}")
 
-            # Install virtual import hook for workspace modules
-            install_virtual_import_hook()
+            # Keep the hook callable loaded, but do not activate it until all
+            # platform modules have been primed below. Once active, intentional
+            # workspace/package-name collisions must be resolved in execution
+            # scope, which the template does not have.
         except ImportError as e:
             logger.warning(f"Execution infrastructure not available: {e} — continuing without it")
 
@@ -272,6 +275,12 @@ def _template_main(
     import src.sdk.context  # noqa: F401
     import src.services.execution.engine  # noqa: F401
     import src.services.execution.worker  # noqa: F401
+
+    # Platform priming must finish before the virtual finder is activated.
+    # Forked children inherit the hook and provide the execution-scoped module
+    # resolver needed for workspace and Solution imports.
+    if install_virtual_import_hook is not None:
+        install_virtual_import_hook()
 
     logger.info("Template process ready — all dependencies loaded")
     pipe.send({"status": "ready", "pid": os.getpid()})

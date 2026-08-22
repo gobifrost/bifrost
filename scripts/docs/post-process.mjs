@@ -9,9 +9,9 @@
  *   2. Applies `capture.crop` (if defined) to extract a sub-region.
  *   3. Overlays `capture.callouts` rectangles + labels.
  *   4. Compares the result to the committed PNG at `<docs>/<entry.image>`.
- *      If pixel diff exceeds threshold, replaces the committed PNG and
- *      marks the entry's `captured_at` with the current bifrost SHA.
- *      Otherwise discards the temp file silently.
+ *      If pixel diff exceeds threshold, replaces the committed PNG.
+ *      Every successful capture marks the entry's `captured_at` with the
+ *      current bifrost SHA, including visual no-ops below the threshold.
  *
  * Inputs:
  *   --docs-repo <path>     required
@@ -206,8 +206,13 @@ async function main() {
         const targetTmp = `${targetPath}.tmp-${process.pid}-${Date.now()}`;
         writeFileSync(targetTmp, finalBuf);
         renameSync(targetTmp, targetPath);
-        entry.captured_at = { bifrost_sha: sha, timestamp: new Date().toISOString() };
       }
+
+      // The watermark records what was successfully exercised, not whether
+      // the resulting pixels changed enough to replace the committed image.
+      // Leaving visual no-ops on their old SHA makes diff mode select them
+      // forever and prevents the manifest's minimum SHA from advancing.
+      entry.captured_at = { bifrost_sha: sha, timestamp: new Date().toISOString() };
 
       try {
         unlinkSync(hostTempPath);

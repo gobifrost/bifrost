@@ -42,17 +42,16 @@ Note: File operations have been moved to /api/files router.
 """
 
 import asyncio
-import io
 import json
 import logging
-import tarfile
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import Response, StreamingResponse
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -102,6 +101,16 @@ from src.models.contracts.cli import (
     SDKTableListRequest,
     SDKTableInfo,
 )
+from src.models.contracts.artifacts import (
+    ArtifactDownloadResponse,
+    ArtifactRef,
+    DocumentArtifactSpec,
+    ImageArtifactSpec,
+    SpreadsheetArtifactSpec,
+    TextArtifactSpec,
+    VideoArtifactSpec,
+)
+from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.core.pubsub import publish_cli_session_update, publish_execution_log, publish_execution_update, publish_history_update
 from src.repositories.cli_sessions import CLISessionRepository
 
@@ -109,13 +118,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sdk", tags=["SDK"])
 
-# /api/cli/download is the permanent home for the CLI install
-# endpoint. It lives at /api/cli/ (not /api/sdk/) because users type
-# the URL — `pip install <SERVER_URL>/api/cli/download` — so the path
-# is intentionally "the CLI." Not a legacy shim; not a compat carve-out.
+# /api/cli/download/bifrost-cli.tar.gz is the permanent, installer-compatible
+# home for the CLI install endpoint. The extensionless /api/cli/download path
+# remains a compatibility redirect for clients that actually make the request.
+# These live at /api/cli/ (not /api/sdk/) because users type the URL.
 # The rest of /api/cli/* moved to /api/sdk/* in the 2026-05 overhaul
 # because those endpoints are the SDK execution surface, not the CLI.
 install_router = APIRouter(prefix="/api/cli", tags=["CLI Install"])
+
+CLI_DOWNLOAD_ALIAS = "bifrost-cli.tar.gz"
+CLI_ARTIFACT_DIR = Path(os.environ.get("BIFROST_CLI_ARTIFACT_DIR", "/app/artifacts"))
 
 
 # =============================================================================
@@ -1980,6 +1992,330 @@ async def post_cli_result(
 # =============================================================================
 
 
+@router.post("/artifacts")
+async def sdk_store_artifact(
+    current_user: CurrentUser,
+    file: UploadFile = File(...),
+    workspace_id: UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> ArtifactRef:
+    """Validate and store workflow-produced bytes behind an opaque identity."""
+    from shared.artifact_generation import validate_artifact_content
+    from src.services.artifacts import ArtifactService, artifact_ref
+
+    filename = file.filename or "Artifact"
+    content_type = file.content_type or "application/octet-stream"
+    content = await file.read()
+    validate_artifact_content(
+        filename=filename,
+        content_type=content_type,
+        content=content,
+    )
+    artifact = await ArtifactService(db).store(
+        filename=filename,
+        content_type=content_type,
+        content=content,
+        created_by_user_id=current_user.user_id,
+        organization_id=current_user.organization_id,
+        workspace_id=workspace_id,
+        logical_path=filename,
+    )
+    return artifact_ref(artifact)
+
+
+@router.get("/artifacts", response_model=list[ArtifactRef])
+async def sdk_list_artifacts(
+    current_user: CurrentUser,
+    workspace_id: UUID,
+    db: AsyncSession = Depends(get_db),
+) -> list[ArtifactRef]:
+    """List the latest logical files in one authorized execution workspace."""
+    from src.services.artifacts import ArtifactService, artifact_ref
+
+    stored = await ArtifactService(db).list_workspace(
+        workspace_id,
+        user_id=current_user.user_id,
+        organization_id=current_user.organization_id,
+        is_platform_admin=current_user.is_platform_admin,
+    )
+    return [artifact_ref(item) for item in stored]
+
+
+@router.post("/artifacts/document")
+async def sdk_render_document_artifact(
+    request: DocumentArtifactSpec,
+    current_user: CurrentUser,
+    workspace_id: UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> ArtifactRef:
+    """Render and store a trusted PDF or DOCX artifact."""
+
+    from shared.artifact_generation import (
+        generate_document,
+        generate_document_with_images,
+    )
+    from src.services.artifacts import ArtifactService, artifact_ref
+
+    service = ArtifactService(db)
+    image_content: dict[str, bytes] = {}
+    if workspace_id is not None:
+        for image in (image for section in request.sections for image in section.images):
+            stored_image = await service.resolve_workspace_path(
+                workspace_id,
+                image.path,
+                user_id=current_user.user_id,
+                organization_id=current_user.organization_id,
+                is_platform_admin=current_user.is_platform_admin,
+            )
+            if not stored_image.content_type.startswith("image/"):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=f"{image.path} is not an image artifact.",
+                )
+            image_content[image.path] = await service.read(stored_image)
+    generated = await asyncio.to_thread(
+        generate_document_with_images if image_content else generate_document,
+        request,
+        *([image_content] if image_content else []),
+    )
+    artifact = await service.store(
+        filename=generated.filename,
+        content_type=generated.content_type,
+        content=generated.content,
+        created_by_user_id=current_user.user_id,
+        organization_id=current_user.organization_id,
+        workspace_id=workspace_id,
+        logical_path=generated.filename,
+    )
+    return artifact_ref(artifact)
+
+
+@router.post("/artifacts/spreadsheet")
+async def sdk_render_spreadsheet_artifact(
+    request: SpreadsheetArtifactSpec,
+    current_user: CurrentUser,
+    workspace_id: UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> ArtifactRef:
+    """Render and store a trusted XLSX artifact."""
+
+    from shared.artifact_generation import generate_spreadsheet
+    from src.services.artifacts import ArtifactService, artifact_ref
+
+    generated = await asyncio.to_thread(generate_spreadsheet, request)
+    artifact = await ArtifactService(db).store(
+        filename=generated.filename,
+        content_type=generated.content_type,
+        content=generated.content,
+        created_by_user_id=current_user.user_id,
+        organization_id=current_user.organization_id,
+        workspace_id=workspace_id,
+        logical_path=generated.filename,
+    )
+    return artifact_ref(artifact)
+
+
+@router.post("/artifacts/text")
+async def sdk_render_text_artifact(
+    request: TextArtifactSpec,
+    current_user: CurrentUser,
+    workspace_id: UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> ArtifactRef:
+    """Render and store a trusted text-family artifact."""
+
+    from shared.artifact_generation import generate_text
+    from src.services.artifacts import ArtifactService, artifact_ref
+
+    generated = await asyncio.to_thread(generate_text, request)
+    artifact = await ArtifactService(db).store(
+        filename=generated.filename,
+        content_type=generated.content_type,
+        content=generated.content,
+        created_by_user_id=current_user.user_id,
+        organization_id=current_user.organization_id,
+        workspace_id=workspace_id,
+        logical_path=generated.filename,
+    )
+    return artifact_ref(artifact)
+
+
+@router.post("/artifacts/image")
+async def sdk_generate_image_artifact(
+    request: ImageArtifactSpec,
+    current_user: CurrentUser,
+    workspace_id: UUID | None = None,
+    execution_id: UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> ArtifactRef:
+    """Generate and store an image with the configured provider."""
+
+    from src.services.artifacts import ArtifactService, artifact_ref
+    from src.services.media_generation import generate_image, record_media_usage
+
+    generated = await generate_image(
+        db,
+        filename=request.filename,
+        prompt=request.prompt,
+    )
+    artifact = await ArtifactService(db).store(
+        filename=generated.filename,
+        content_type=generated.content_type,
+        content=generated.content,
+        created_by_user_id=current_user.user_id,
+        organization_id=current_user.organization_id,
+        workspace_id=workspace_id,
+        logical_path=generated.filename,
+    )
+    await record_media_usage(
+        db,
+        generated,
+        execution_id=execution_id,
+        organization_id=current_user.organization_id,
+        user_id=current_user.user_id,
+    )
+    return artifact_ref(artifact)
+
+
+@router.post(
+    "/artifacts/video",
+    response_model=PlatformJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def sdk_generate_video_artifact(
+    request: VideoArtifactSpec,
+    current_user: CurrentUser,
+    response: Response,
+    workspace_id: UUID | None = None,
+    execution_id: UUID | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> PlatformJobAccepted:
+    """Queue durable video generation into canonical artifact storage."""
+    from src.jobs.platform.video_generation import (
+        SDK_VIDEO_GENERATION_DEFINITION,
+        SDKVideoGenerationPayload,
+    )
+    from src.services.platform_jobs import (
+        enqueue_platform_job,
+        ensure_platform_job_notification,
+        publish_platform_job_update,
+    )
+
+    job, reused = await enqueue_platform_job(
+        db,
+        SDK_VIDEO_GENERATION_DEFINITION,
+        SDKVideoGenerationPayload(
+            filename=request.filename,
+            prompt=request.prompt,
+            workspace_id=workspace_id,
+            execution_id=execution_id,
+        ),
+        dedupe_key=None,
+        organization_id=current_user.organization_id,
+        requested_by_user_id=current_user.user_id,
+        requested_by_email=current_user.email,
+        requested_by_name=current_user.name or current_user.email,
+        resource_type="artifact",
+        resource_id=request.filename,
+        title=f"Generating {request.filename}",
+        action_url=None,
+    )
+    try:
+        await ensure_platform_job_notification(db, job)
+    except Exception:
+        logger.warning(
+            "SDK video generation queued without a progress notification",
+            extra={"platform_job_id": str(job.id)},
+            exc_info=True,
+        )
+    await db.commit()
+    await db.refresh(job)
+    await publish_platform_job_update(job)
+    response.headers["Location"] = f"/api/platform-jobs/{job.id}"
+    return PlatformJobAccepted(
+        job_id=job.id,
+        notification_id=job.notification_id,
+        status=job.status,
+        reused=reused,
+    )
+
+
+@router.get("/artifacts/{artifact_id}/content")
+async def sdk_read_artifact(
+    artifact_id: UUID,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+    preview: bool = False,
+) -> Response:
+    """Read an opaque artifact after enforcing caller scope."""
+    from src.services.artifacts import ArtifactAccessError, ArtifactService
+
+    service = ArtifactService(db)
+    try:
+        artifact = await service.get_authorized(
+            artifact_id,
+            user_id=current_user.user_id,
+            organization_id=current_user.organization_id,
+            is_platform_admin=current_user.is_platform_admin,
+        )
+    except ArtifactAccessError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    content = await service.read(artifact)
+    if preview:
+        from shared.artifact_preview import preview_office_artifact
+
+        preview_html = await asyncio.to_thread(
+            preview_office_artifact,
+            content,
+            artifact.content_type,
+        )
+        if preview_html is not None:
+            return Response(
+                content=preview_html,
+                media_type="text/html",
+                headers={
+                    "Content-Security-Policy": (
+                        "default-src 'none'; style-src 'unsafe-inline'; img-src data:"
+                    ),
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
+    return Response(
+        content=content,
+        media_type=artifact.content_type,
+        headers={"X-Content-Type-Options": "nosniff"},
+    )
+
+
+@router.get("/artifacts/{artifact_id}/download-url")
+async def sdk_artifact_download_url(
+    artifact_id: UUID,
+    current_user: CurrentUser,
+    db: AsyncSession = Depends(get_db),
+) -> ArtifactDownloadResponse:
+    """Create a short-lived download URL for an opaque artifact."""
+    from src.services.artifacts import ArtifactAccessError, ArtifactService
+    from src.services.file_storage.service import get_file_storage_service
+
+    try:
+        artifact = await ArtifactService(db).get_authorized(
+            artifact_id,
+            user_id=current_user.user_id,
+            organization_id=current_user.organization_id,
+            is_platform_admin=current_user.is_platform_admin,
+        )
+    except ArtifactAccessError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)
+        ) from exc
+    url = await get_file_storage_service(db).generate_presigned_download_url(
+        artifact.s3_key
+    )
+    return ArtifactDownloadResponse(url=url)
+
+
 @router.post(
     "/ai/complete",
     summary="Generate AI completion",
@@ -1991,7 +2327,9 @@ async def cli_ai_complete(
 ) -> "CLIAICompleteResponse":
     """Generate an AI completion using platform-configured LLM."""
     from src.models.contracts.cli import CLIAICompleteResponse
-    from src.services.llm import get_llm_client, LLMMessage
+    import base64
+
+    from src.services.llm import LLMInputFile, LLMMessage, get_llm_client
 
     try:
         client = await get_llm_client(db)
@@ -2001,6 +2339,21 @@ async def cli_ai_complete(
             LLMMessage(role=msg["role"], content=msg["content"])  # type: ignore[arg-type]
             for msg in request.messages
         ]
+        if request.input_files:
+            user_message = next(
+                (message for message in reversed(llm_messages) if message.role == "user"),
+                None,
+            )
+            if user_message is None:
+                raise ValueError("AI file inputs require a user message.")
+            user_message.input_files = [
+                LLMInputFile(
+                    filename=item.filename,
+                    media_type=item.content_type,
+                    data=base64.b64decode(item.data_base64, validate=True),
+                )
+                for item in request.input_files
+            ]
 
         response = await client.complete(
             messages=llm_messages,
@@ -2024,6 +2377,9 @@ async def cli_ai_complete(
                 model=response.model or client.model_name,
                 input_tokens=response.input_tokens or 0,
                 output_tokens=response.output_tokens or 0,
+                cache_read_tokens=response.cache_read_tokens,
+                cache_write_tokens=response.cache_write_tokens,
+                provider_cost=response.provider_cost,
                 execution_id=UUID(request.execution_id) if request.execution_id else None,
                 organization_id=UUID(org_id) if org_id else None,
                 user_id=current_user.user_id,
@@ -2070,7 +2426,9 @@ async def cli_ai_stream(
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """Generate a streaming AI completion using SSE."""
-    from src.services.llm import get_llm_client, LLMMessage
+    import base64
+
+    from src.services.llm import LLMInputFile, LLMMessage, get_llm_client
 
     # Capture context for usage recording. Resolve scope upfront against
     # the authenticated user so the streaming closure doesn't have to
@@ -2088,6 +2446,21 @@ async def cli_ai_stream(
                 LLMMessage(role=msg["role"], content=msg["content"])  # type: ignore[arg-type]
                 for msg in request.messages
             ]
+            if request.input_files:
+                user_message = next(
+                    (message for message in reversed(llm_messages) if message.role == "user"),
+                    None,
+                )
+                if user_message is None:
+                    raise ValueError("AI file inputs require a user message.")
+                user_message.input_files = [
+                    LLMInputFile(
+                        filename=item.filename,
+                        media_type=item.content_type,
+                        data=base64.b64decode(item.data_base64, validate=True),
+                    )
+                    for item in request.input_files
+                ]
 
             async for chunk in client.stream(
                 messages=llm_messages,
@@ -2113,6 +2486,9 @@ async def cli_ai_stream(
                             model=client.model_name,
                             input_tokens=chunk.input_tokens or 0,
                             output_tokens=chunk.output_tokens or 0,
+                            cache_read_tokens=chunk.cache_read_tokens,
+                            cache_write_tokens=chunk.cache_write_tokens,
+                            provider_cost=chunk.provider_cost,
                             execution_id=UUID(execution_id_str) if execution_id_str else None,
                             organization_id=UUID(resolved_org_id) if resolved_org_id else None,
                             user_id=user_id,
@@ -2568,159 +2944,65 @@ async def cli_knowledge_get(
 # =============================================================================
 
 
-def _to_pep440(version: str) -> str:
-    """Coerce `git describe --tags --always --dirty` output to a PEP 440 version.
-
-    Examples:
-        "v0.6-219-g24b8acb9-dirty" -> "0.6.post219+g24b8acb9.dirty"
-        "v1.2.3"                   -> "1.2.3"
-        "v1.2.3-dirty"             -> "1.2.3+dirty"
-        "abc1234"                  -> "0.0.0+gabc1234"   (no-tag fallback)
-        "unknown"                  -> "0.0.0"
-    """
-    import re as _re
-
-    if not version or version == "unknown":
-        return "0.0.0"
-
-    # Strip leading 'v' from tag prefix
-    v = version[1:] if version.startswith("v") else version
-
-    dirty = v.endswith("-dirty")
-    if dirty:
-        v = v[: -len("-dirty")]
-
-    # Bifrost release tags use a semver-ish dev release shape
-    # (e.g. "1.0.8-dev.11"). Preserve the actual release instead of treating it
-    # as a no-tag git hash fallback, which makes package tools report
-    # "0.0.0+g1.0.8.dev.11".
-    m = _re.match(r"^(\d+(?:\.\d+)*)-dev\.(\d+)$", v)
-    if m:
-        base, n = m.group(1), m.group(2)
-        pep = f"{base}.dev{n}"
-        return f"{pep}+dirty" if dirty else pep
-
-    # Shape: <tag>-<N>-g<sha>
-    m = _re.match(r"^(.+)-(\d+)-(g[0-9a-f]+)$", v)
-    if m:
-        tag, n, sha = m.group(1), m.group(2), m.group(3)
-        local = f"{sha}.dirty" if dirty else sha
-        return f"{tag}.post{n}+{local}"
-
-    # Clean tag (e.g. "1.2.3")
-    if _re.match(r"^\d+(\.\d+)*$", v):
-        return f"{v}+dirty" if dirty else v
-
-    # No-tag fallback: bare sha from `git describe --always`
-    local = f"g{v}.dirty" if dirty else f"g{v}"
-    return f"0.0.0+{local}"
+@install_router.get(
+    "/download",
+    summary="Legacy CLI download URL",
+    description="Redirect to the installer-compatible CLI download URL",
+)
+async def download_cli() -> RedirectResponse:
+    """Preserve the historical URL for HTTP clients that follow redirects."""
+    return RedirectResponse(
+        url=f"/api/cli/download/{CLI_DOWNLOAD_ALIAS}",
+        status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+    )
 
 
 @install_router.get(
-    "/download",
+    f"/download/{CLI_DOWNLOAD_ALIAS}",
     summary="Download CLI package",
-    description="Download the Bifrost CLI as a pip-installable tarball",
+    description="Redirect to the versioned, pip-installable CLI artifact",
 )
-async def download_cli() -> Response:
-    """
-    Serve CLI as installable package.
-
-    Returns a tarball that can be installed with:
-    pip install https://your-bifrost-instance.com/api/cli/download
-    """
+async def download_cli_alias() -> RedirectResponse:
+    """Give uv/pipx a suffix-bearing URL before any network request occurs."""
+    from shared.cli_artifact import cli_artifact_filename
     from shared.version import get_version
 
-    package_dir = Path(__file__).parent.parent.parent / "bifrost"
+    filename = cli_artifact_filename(get_version())
+    return RedirectResponse(
+        url=f"/api/cli/artifacts/{filename}",
+        status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+    )
 
-    if not package_dir.exists():
+
+@install_router.get(
+    "/artifacts/{filename}",
+    summary="Serve a versioned CLI artifact",
+    description="Serve the immutable CLI artifact bundled into the API image",
+)
+async def download_cli_artifact(filename: str) -> FileResponse:
+    """Serve only the artifact matching this API build."""
+    from shared.cli_artifact import cli_artifact_filename
+    from shared.version import get_version
+
+    expected_filename = cli_artifact_filename(get_version())
+    if filename != expected_filename:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="CLI package not found",
+            detail="CLI artifact not found",
         )
 
-    buffer = io.BytesIO()
+    artifact_path = CLI_ARTIFACT_DIR / expected_filename
+    if not artifact_path.is_file():
+        logger.error("Bundled CLI artifact is missing: %s", artifact_path)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="CLI artifact unavailable",
+        )
 
-    # Files to exclude (platform-only internal files)
-    exclude_files = {
-        "_internal.py",     # Platform-only permission checks
-        "_write_buffer.py", # Platform-only, requires Redis
-        "_logging.py",      # Platform-only logging
-        "_sync.py",         # Platform-only sync utilities
-    }
-
-    def _generate_tarball():
-        """Generate tarball synchronously in thread."""
-        import re as _re
-        import io as _io
-        live_version = get_version()
-        pep440_version = _to_pep440(live_version)
-
-        with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
-            # Add pyproject.toml at root level with PEP 440 version stamped
-            # (setuptools validates project.version against PEP 440; git describe
-            # output like "v0.6-219-gabc1234-dirty" must be coerced first)
-            pyproject_path = package_dir / "pyproject.toml"
-            if pyproject_path.exists():
-                content = pyproject_path.read_text()
-                content = _re.sub(
-                    r'^version\s*=\s*"[^"]*"',
-                    f'version = "{pep440_version}"',
-                    content,
-                    flags=_re.MULTILINE,
-                )
-                data = content.encode()
-                info = tarfile.TarInfo(name="pyproject.toml")
-                info.size = len(data)
-                tar.addfile(info, fileobj=_io.BytesIO(data))
-
-            # Add all Python files from bifrost/
-            for file_path in package_dir.rglob("*"):
-                if not file_path.is_file():
-                    continue
-                if "__pycache__" in str(file_path):
-                    continue
-                if file_path.name in exclude_files:
-                    continue
-                # Ship .py + .toml, PLUS the data files the CLI reads at runtime.
-                # lucide_icon_names.json is the snapshot `bifrost migrate-imports`
-                # uses to classify lucide icons; excluding it ships a CLI that
-                # silently leaves icon imports in "bifrost" and breaks a v1→v2
-                # app migration (battle-test 2026-06-13).
-                _data_files = {"lucide_icon_names.json"}
-                if file_path.suffix not in (".py", ".toml") and file_path.name not in _data_files:
-                    continue
-                if file_path.name == "pyproject.toml":
-                    continue  # Already added above
-
-                arcname = f"bifrost/{file_path.relative_to(package_dir)}"
-
-                # Stamp __version__ in __init__.py
-                if file_path.name == "__init__.py" and file_path.parent == package_dir:
-                    content = file_path.read_text()
-                    content = _re.sub(
-                        r"^__version__\s*=\s*_compute_version\(\)",
-                        f'__version__ = "{live_version}"',
-                        content,
-                        flags=_re.MULTILINE,
-                    )
-                    data = content.encode()
-                    info = tarfile.TarInfo(name=arcname)
-                    info.size = len(data)
-                    tar.addfile(info, fileobj=_io.BytesIO(data))
-                else:
-                    tar.add(file_path, arcname=arcname)
-
-    await asyncio.to_thread(_generate_tarball)
-
-    # Get the complete tarball content after it's fully finalized
-    tarball_content = buffer.getvalue()
-
-    return Response(
-        content=tarball_content,
+    return FileResponse(
+        path=artifact_path,
         media_type="application/gzip",
-        headers={
-            "Content-Disposition": f"attachment; filename=bifrost-cli-{get_version()}.tar.gz",
-        },
+        filename=expected_filename,
     )
 
 
@@ -2728,18 +3010,18 @@ async def download_cli() -> Response:
     "/download",
     summary="Download the bifrost web SDK package",
     description=(
-        "Serve the `bifrost` web SDK as an npm-installable tarball. A "
-        "standalone_v2 app declares `\"bifrost\": \"<instance>/api/sdk/download\"` "
-        "and resolves it identically on a dev laptop (`npm run dev`) and in the "
-        "platform's server-side build."
+        "Serve the `bifrost` web SDK as an npm-installable tarball. The Solution "
+        "CLI installs it transiently from the selected instance for local "
+        "development; the platform vendors its local SDK into server-side builds."
     ),
 )
 async def download_sdk() -> Response:
     """Build + serve the installable ``bifrost`` SDK package (npm tarball).
 
-    Mirrors ``/api/cli/download`` (the Python CLI tarball): the package is built
-    on the fly from the SDK source shipped in the api image and version-stamped
-    to the running instance, so dev and deploy use one resolution mechanism.
+    Like ``/api/cli/download/bifrost-cli.tar.gz`` (the Python CLI tarball), this
+    package is tied to the API build. The web SDK remains bundled on demand from
+    source shipped in the image, while the Python CLI artifact is built into the
+    image ahead of time.
     """
     from shared.version import get_version
     from src.services.sdk_package import build_sdk_tarball

@@ -8,8 +8,8 @@
  */
 
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { Plus, MessageSquare, Trash2, Search, X } from "lucide-react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { Files, Plus, MessageSquare, Trash2, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -40,6 +40,7 @@ export function ChatSidebar({
 	onConversationSelected,
 }: ChatSidebarProps) {
 	const navigate = useNavigate();
+	const location = useLocation();
 	const [searchTerm, setSearchTerm] = useState("");
 	const [deleteTarget, setDeleteTarget] =
 		useState<ConversationSummary | null>(null);
@@ -120,14 +121,14 @@ export function ChatSidebar({
 			)}
 		>
 			{/* Header */}
-			<div className="p-4 border-b space-y-3">
+			<div className="p-3 border-b space-y-2">
 				<div className="flex items-center justify-between">
 					<h2 className="font-semibold text-lg">Chat</h2>
 					{onClose && (
 						<Button
 							variant="ghost"
 							size="icon-sm"
-							className="lg:hidden"
+							className="size-11 lg:hidden"
 							onClick={onClose}
 							aria-label="Close chat sidebar"
 						>
@@ -136,11 +137,26 @@ export function ChatSidebar({
 					)}
 				</div>
 				<Button
-					className="w-full gap-2"
+					variant="ghost"
+					className="min-h-11 w-full justify-start gap-2 sm:min-h-8"
 					onClick={handleNewChat}
 				>
 					<Plus className="h-4 w-4" />
 					New Chat
+				</Button>
+				<Button
+					variant="ghost"
+					className={cn(
+						"min-h-11 w-full justify-start gap-2 sm:min-h-8",
+						location.pathname === "/chat/artifacts" && "bg-accent",
+					)}
+					onClick={() => {
+						navigate("/chat/artifacts");
+						onConversationSelected?.();
+					}}
+				>
+					<Files className="h-4 w-4" />
+					Artifacts
 				</Button>
 				<div className="relative">
 					<Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -172,41 +188,42 @@ export function ChatSidebar({
 								<div
 									key={conv.id}
 									className={cn(
-										"group flex items-start gap-2 p-2 rounded-lg cursor-pointer hover:bg-accent transition-colors",
+										"group flex items-start rounded-lg transition-colors hover:bg-accent",
 										activeConversationId === conv.id &&
 											"bg-accent",
 									)}
-									onClick={() =>
-										handleSelectConversation(conv)
-									}
 								>
-									<MessageSquare className="h-4 w-4 mt-1 text-muted-foreground shrink-0" />
-									<div className="flex-1 min-w-0">
-										<div className="flex items-center justify-between gap-2">
-											<span className="font-medium text-sm truncate">
-												{conv.title ||
-													conv.agent_name ||
-													"Untitled"}
-											</span>
-											<span className="text-xs text-muted-foreground shrink-0">
-												{formatTime(conv.updated_at)}
-											</span>
+									<button
+										type="button"
+										aria-label={`Open ${conv.title || conv.agent_name || "Untitled"}`}
+										className="flex min-h-11 min-w-0 flex-1 items-start gap-2 rounded-lg p-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+										onClick={() => handleSelectConversation(conv)}
+									>
+										<MessageSquare className="h-4 w-4 mt-1 text-muted-foreground shrink-0" />
+										<div className="flex-1 min-w-0">
+											<div className="flex items-center justify-between gap-2">
+												<span className="font-medium text-sm truncate">
+													{conv.title ||
+														conv.agent_name ||
+														"Untitled"}
+												</span>
+												<span className="text-xs text-muted-foreground shrink-0">
+													{formatTime(conv.updated_at)}
+												</span>
+											</div>
+											{conv.last_message_preview && (
+												<p className="text-xs text-muted-foreground truncate">
+													{conv.last_message_preview}
+												</p>
+											)}
 										</div>
-										{conv.last_message_preview && (
-											<p className="text-xs text-muted-foreground truncate">
-												{conv.last_message_preview}
-											</p>
-										)}
-									</div>
+									</button>
 									<Button
 										variant="ghost"
 										size="icon-sm"
-										className="opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity shrink-0"
+										className="mr-1 mt-1 size-11 shrink-0 opacity-100 transition-opacity sm:size-7 sm:opacity-0 sm:group-hover:opacity-100"
 										aria-label={`Delete ${conv.title || conv.agent_name || "Untitled"}`}
-										onClick={(e) => {
-											e.stopPropagation();
-											setDeleteTarget(conv);
-										}}
+										onClick={() => setDeleteTarget(conv)}
 									>
 										<Trash2 className="h-3 w-3" />
 									</Button>
