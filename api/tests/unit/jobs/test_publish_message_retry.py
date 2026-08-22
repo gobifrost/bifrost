@@ -58,9 +58,16 @@ class TestPublishMessageRetry:
                 None,
             ]
         )
-        with patch.object(rabbitmq_module, "_publish_once", attempts):
+        with (
+            patch.object(rabbitmq_module, "_publish_once", attempts),
+            patch.object(
+                rabbitmq_module.rabbitmq,
+                "invalidate_publish_topology",
+            ) as invalidate,
+        ):
             await publish_message("q", {"k": "v"})
         assert attempts.await_count == 2
+        invalidate.assert_called_once_with("q")
 
     @pytest.mark.asyncio
     async def test_exhausts_retries_then_raises(self):
@@ -80,3 +87,27 @@ class TestPublishMessageRetry:
             with pytest.raises(aio_pika.exceptions.AuthenticationError):
                 await publish_message("q", {"k": "v"})
         assert attempts.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_publish_topology_is_declared_once_per_queue():
+    manager = rabbitmq_module.rabbitmq
+    manager._publish_topology_ready.clear()
+    manager._publish_topology_locks.clear()
+
+    channel = AsyncMock()
+    exchange = AsyncMock()
+    poison_queue = AsyncMock()
+    main_queue = AsyncMock()
+    channel.declare_exchange.return_value = exchange
+    channel.declare_queue.side_effect = [poison_queue, main_queue]
+
+    await manager.ensure_publish_topology(channel, "workflow-executions")
+    await manager.ensure_publish_topology(channel, "workflow-executions")
+
+    channel.declare_exchange.assert_awaited_once()
+    assert channel.declare_queue.await_count == 2
+    poison_queue.bind.assert_awaited_once_with(
+        exchange,
+        routing_key="workflow-executions",
+    )

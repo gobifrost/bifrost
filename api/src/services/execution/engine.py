@@ -321,7 +321,7 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
     cache_expires_at_str: str | None = None  # For data providers
 
     # Note: SDK authentication is handled by authenticate_engine() in worker.py
-    # which creates credentials in ~/.bifrost/credentials.json before each execution.
+    # which installs process-scoped SDK credentials for this one-shot child.
     # The SDK's get_client() finds these credentials automatically.
 
     try:

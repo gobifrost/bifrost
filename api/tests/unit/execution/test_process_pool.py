@@ -1,9 +1,9 @@
 """
-Unit tests for ProcessPoolManager (on-demand / one-shot workers).
+Unit tests for ProcessPoolManager (pre-forked / one-shot workers).
 
-Each route_execution call forks a fresh worker; the worker exits after
-returning its single result. The pool's only throttles are
-`max_workers` (concurrency cap) and the cgroup memory-pressure check.
+Each child handles at most one execution and exits. A bounded number may wait
+pre-forked so bursts do not serialize on the template process; `max_workers`
+and the cgroup memory-pressure check remain hard caps.
 
 NOTE: These tests use mocks to avoid spawning real processes.
 """
@@ -33,6 +33,7 @@ class TestProcessState:
 
     def test_all_states_defined(self):
         """Should have all required states."""
+        assert ProcessState.IDLE.value == "idle"
         assert ProcessState.BUSY.value == "busy"
         assert ProcessState.KILLED.value == "killed"
 
@@ -192,6 +193,7 @@ class TestProcessPoolManagerInit:
         pool = ProcessPoolManager()
 
         assert pool.max_workers == 10
+        assert pool.warm_workers == 0
         assert pool.execution_timeout_seconds == 300
         assert pool.graceful_shutdown_seconds == 5
         assert pool.heartbeat_interval_seconds == 10
@@ -207,6 +209,7 @@ class TestProcessPoolManagerInit:
 
         pool = ProcessPoolManager(
             max_workers=20,
+            warm_workers=4,
             execution_timeout_seconds=600,
             graceful_shutdown_seconds=10,
             heartbeat_interval_seconds=30,
@@ -215,6 +218,7 @@ class TestProcessPoolManagerInit:
         )
 
         assert pool.max_workers == 20
+        assert pool.warm_workers == 4
         assert pool.execution_timeout_seconds == 600
         assert pool.graceful_shutdown_seconds == 10
         assert pool.heartbeat_interval_seconds == 30
@@ -265,6 +269,63 @@ class TestProcessPoolManagerStart:
                     # Expected — we just cancelled the task during cleanup
                     pass
 
+    @pytest.mark.asyncio
+    async def test_pool_preforks_configured_one_shot_workers(self):
+        """Warm workers should exist before the consumer accepts messages."""
+        pool = ProcessPoolManager(max_workers=5, warm_workers=2)
+
+        def mock_spawn() -> ProcessHandle:
+            process_id = f"process-{len(pool.processes) + 1}"
+            process = MagicMock()
+            process.is_alive.return_value = True
+            handle = ProcessHandle(
+                id=process_id,
+                process=process,
+                pid=1000 + len(pool.processes),
+                state=ProcessState.IDLE,
+                work_queue=MagicMock(),
+                result_queue=MagicMock(),
+                started_at=datetime.now(timezone.utc),
+            )
+            pool.processes[process_id] = handle
+            return handle
+
+        pool._fork_process = mock_spawn
+
+        with patch.object(pool, "_start_template", new_callable=AsyncMock), \
+             patch.object(pool, "_register_worker", new_callable=AsyncMock), \
+             patch.object(pool, "_monitor_loop", new_callable=AsyncMock), \
+             patch.object(pool, "_heartbeat_loop", new_callable=AsyncMock), \
+             patch.object(pool, "_cancel_listener_loop", new_callable=AsyncMock), \
+             patch.object(pool, "_command_listener_loop", new_callable=AsyncMock), \
+             patch("src.services.execution.process_pool.install_requirements"), \
+             patch(
+                 "src.services.execution.process_pool.has_sufficient_memory_cgroup",
+                 return_value=True,
+             ):
+            await pool.start()
+
+        assert len(pool.processes) == 2
+        assert all(
+            handle.state == ProcessState.IDLE
+            for handle in pool.processes.values()
+        )
+
+        pool._shutdown = True
+        for task in [
+            pool._monitor_task,
+            pool._heartbeat_task,
+            pool._cancel_task,
+            pool._command_task,
+            *pool._result_tasks,
+        ]:
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
 
 class TestProcessPoolManagerRouting:
     """Tests for execution routing."""
@@ -306,7 +367,88 @@ class TestProcessPoolManagerRouting:
         assert h.state == ProcessState.BUSY
         assert h.current_execution is not None
         assert h.current_execution.execution_id == "exec-123"
-        h.work_queue.put_nowait.assert_called_once_with("exec-123")
+        h.work_queue.put_nowait.assert_called_once_with(
+            ("exec-123", {"timeout_seconds": 300})
+        )
+
+    @pytest.mark.asyncio
+    async def test_route_claims_preforked_one_shot_without_forking(self):
+        pool = ProcessPoolManager(max_workers=5, warm_workers=1)
+        process = MagicMock()
+        process.is_alive.return_value = True
+        handle = ProcessHandle(
+            id="process-1",
+            process=process,
+            pid=12345,
+            state=ProcessState.IDLE,
+            work_queue=MagicMock(),
+            result_queue=MagicMock(),
+            started_at=datetime.now(timezone.utc),
+        )
+        pool.processes[handle.id] = handle
+
+        with patch.object(pool, "_write_context_to_redis", new_callable=AsyncMock), \
+             patch.object(pool, "_register_result_reader"), \
+             patch.object(pool, "_fork_process") as fork_process, \
+             patch(
+                 "src.services.execution.process_pool.has_sufficient_memory_cgroup",
+                 return_value=True,
+             ):
+            await pool.route_execution("exec-preforked", {"timeout_seconds": 300})
+
+        fork_process.assert_not_called()
+        assert handle.state == ProcessState.BUSY
+        assert handle.current_execution is not None
+        assert handle.current_execution.execution_id == "exec-preforked"
+        handle.work_queue.put_nowait.assert_called_once_with(
+            ("exec-preforked", {"timeout_seconds": 300})
+        )
+
+    @pytest.mark.asyncio
+    async def test_restart_cannot_begin_between_context_write_and_dispatch(self):
+        """A template restart must stay exclusive through child dispatch."""
+        pool = ProcessPoolManager(max_workers=1, warm_workers=1)
+        process = MagicMock()
+        process.is_alive.return_value = True
+        handle = ProcessHandle(
+            id="process-1",
+            process=process,
+            pid=12345,
+            state=ProcessState.IDLE,
+            work_queue=MagicMock(),
+            result_queue=MagicMock(),
+            started_at=datetime.now(timezone.utc),
+        )
+        pool.processes[handle.id] = handle
+
+        context_write_started = asyncio.Event()
+        finish_context_write = asyncio.Event()
+
+        async def write_context(*_args, **_kwargs):
+            context_write_started.set()
+            await finish_context_write.wait()
+
+        with patch.object(pool, "_write_context_to_redis", side_effect=write_context), \
+             patch.object(pool, "_register_result_reader"), \
+             patch(
+                 "src.services.execution.process_pool.has_sufficient_memory_cgroup",
+                 return_value=True,
+             ):
+            route_task = asyncio.create_task(
+                pool.route_execution("exec-during-restart", {"timeout_seconds": 300})
+            )
+            await context_write_started.wait()
+
+            await pool._restart_lock.acquire()
+            finish_context_write.set()
+            await asyncio.sleep(0)
+            assert not route_task.done()
+            handle.work_queue.put_nowait.assert_not_called()
+
+            pool._restart_lock.release()
+            await asyncio.wait_for(route_task, timeout=1.0)
+
+        handle.work_queue.put_nowait.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_route_waits_for_slot_when_saturated(self):
@@ -538,9 +680,7 @@ class TestProcessPoolManagerHeartbeat:
         assert heartbeat["type"] == "worker_heartbeat"
         assert heartbeat["worker_id"] == "test-worker-123"
         assert heartbeat["pool_size"] == 2
-        # In on-demand mode every running handle is BUSY; KILLED handles
-        # (process-1 above) are pending removal and never counted as busy.
-        # idle_count is always reported as 0 in this mode.
+        # KILLED handles are pending removal and never counted as idle/busy.
         assert heartbeat["idle_count"] == 0
         assert heartbeat["busy_count"] == 1
         assert len(heartbeat["processes"]) == 2
@@ -783,7 +923,9 @@ class TestProcessPoolManagerIntegration:
 
         handle = pool.processes["process-1"]
         assert handle.state == ProcessState.BUSY
-        mock_work_queue.put_nowait.assert_called_once_with("exec-123")
+        mock_work_queue.put_nowait.assert_called_once_with(
+            ("exec-123", {"timeout_seconds": 300})
+        )
 
         result_data = {
             "type": "result",

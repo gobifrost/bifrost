@@ -86,6 +86,12 @@ class Worker:
             # Initialize database connection
             logger.info("Initializing database connection...")
             await init_db()
+            # Configure the ORM before accepting queue messages. Lazy mapper
+            # setup otherwise lands on the first execution-row insert and can
+            # add hundreds of milliseconds to the first workflow after start.
+            from sqlalchemy.orm import configure_mappers
+
+            configure_mappers()
             logger.info("Database connection established")
 
             # Initialize and start RabbitMQ consumers

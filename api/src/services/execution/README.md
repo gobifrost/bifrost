@@ -33,9 +33,9 @@ Distributed, process-pooled execution system with Redis-first architecture for r
                                               v
 +------------------------------------------------------------------+
 |                    process_pool.py (ProcessPoolManager)           |
-|  - Manage pool of worker processes (min_workers to max_workers)   |
-|  - Route executions to idle processes                             |
-|  - Monitor timeouts, crashes, scale up/down                       |
+|  - Keep a bounded warm floor of one-shot children                 |
+|  - Fork on demand up to max_workers                               |
+|  - Monitor timeouts and crashes                                   |
 |  - Heartbeat publishing for UI visibility                         |
 +------------------------------------------------------------------+
                                               |
@@ -51,10 +51,10 @@ Distributed, process-pooled execution system with Redis-first architecture for r
 +------------------------------------------------------------------+
 |                     simple_worker.py                              |
 |  - Isolated subprocess for user code                              |
-|  - Read context from Redis                                        |
+|  - Receive context from the parent's private pipe                 |
 |  - Clear workspace modules (pick up code changes)                 |
 |  - Execute via engine.py                                          |
-|  - Return result via queue                                        |
+|  - Return one result, then exit                                   |
 +------------------------------------------------------------------+
                         |
                         v
@@ -89,8 +89,8 @@ Distributed, process-pooled execution system with Redis-first architecture for r
 | `service.py` | High-level orchestration. Workflow lookup by ID, metadata caching (Redis-first), sync/async dispatch routing. Entry point for `run_workflow()` and `run_code()`. |
 | `engine.py` | Unified execution engine. Handles workflows, inline scripts, and data providers. Sets up SDK context, captures variables via `sys.settrace()`, streams logs to Redis, handles data provider caching. |
 | `async_executor.py` | Queue management. Stores pending execution in Redis, publishes minimal message to RabbitMQ, returns execution ID immediately (<100ms target). |
-| `process_pool.py` | Worker process lifecycle management. Spawns/recycles processes, routes executions to idle workers, handles timeouts (SIGTERM -> SIGKILL), detects crashes, scales pool dynamically, publishes heartbeats. |
-| `simple_worker.py` | Isolated subprocess entry point. Long-lived process that runs executions one at a time. Reads context from Redis, clears workspace modules before each execution, delegates to `engine.py`, returns results via multiprocessing queue. |
+| `process_pool.py` | One-shot child lifecycle management. Maintains a bounded pre-forked floor, expands on demand up to `max_workers`, handles timeouts (SIGTERM -> SIGKILL), detects crashes, and publishes heartbeats. |
+| `simple_worker.py` | Isolated subprocess entry point. Receives one parent-assembled context over a private pipe, clears workspace modules, delegates to `engine.py`, returns one result, and exits. |
 | `workflow_execution.py` | RabbitMQ consumer. Creates PostgreSQL records, pre-warms SDK cache, routes to process pool, handles results (success/failure), flushes data to Postgres, publishes WebSocket updates. |
 
 ## Execution States
@@ -197,7 +197,8 @@ if elapsed > exec_info.timeout_seconds:
 
 ### Process Crashes
 
-Pool detects crashed processes and replaces them:
+Pool detects crashed processes, reports any interrupted execution, and
+replenishes the configured one-shot warm floor after cleanup:
 
 ```python
 # process_pool.py
@@ -206,8 +207,8 @@ if not handle.is_alive and handle.state != ProcessState.KILLED:
     if handle.current_execution:
         await _report_crash(handle.current_execution)
 
-    # Spawn replacement to maintain min_workers
-    self._fork_process()
+    # Refill pre-forked one-shot children outside request latency
+    self._schedule_warm_pool_fill()
 ```
 
 ### Cancellation
@@ -226,34 +227,25 @@ await _handle_cancel_request(execution_id)
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `min_workers` | 2 | Minimum worker processes to maintain |
+| `warm_workers` | 4 | Pre-forked one-shot children waiting for one execution |
 | `max_workers` | 10 | Maximum worker processes |
 | `execution_timeout_seconds` | 300 | Default timeout per execution |
 | `graceful_shutdown_seconds` | 5 | Time between SIGTERM and SIGKILL |
-| `recycle_after_executions` | 0 | Recycle process after N executions (0 = never) |
 | `worker_heartbeat_interval_seconds` | 10 | Heartbeat publish interval |
 | `worker_registration_ttl_seconds` | 30 | Redis registration TTL |
 
 Environment variables:
 ```bash
-BIFROST_MIN_WORKERS=2
+BIFROST_WARM_WORKERS=4
 BIFROST_MAX_WORKERS=10
 BIFROST_EXECUTION_TIMEOUT_SECONDS=300
 ```
 
-## Process Recycling
+## Template Recycling
 
-Workers are long-lived but can be recycled:
-
-1. **After package install**: `mark_for_recycle()` flags all processes
-2. **Execution count threshold**: Automatic recycling after N executions
-3. **Manual API request**: Recycle specific process by PID
-
-```python
-# Idle processes recycled immediately
-# Busy processes recycled after current execution completes
-pool.mark_for_recycle()
-```
+Execution children are never reused. After a package install or manual recycle
+request, the pool retires untouched warm children, lets busy one-shot children
+drain, restarts the long-lived import template, and restores the warm floor.
 
 ## Redis Keys
 

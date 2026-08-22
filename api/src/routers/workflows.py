@@ -742,6 +742,7 @@ async def execute_workflow(
     from uuid import uuid4
     from src.sdk.context import ExecutionContext as SharedContext, Organization
     from src.services.execution.service import (
+        get_workflow_for_execution,
         run_workflow,
         run_code,
         WorkflowNotFoundError,
@@ -980,6 +981,14 @@ async def execute_workflow(
                         is_transient=True,
                     )
 
+            # Reuse one hardened dispatch snapshot for the queue boundary. It
+            # includes the active-Solution gate and global-repo policy, so the
+            # worker does not repeat this query after RabbitMQ delivery.
+            dispatch_metadata = await get_workflow_for_execution(
+                str(workflow.id),
+                db=db,
+            )
+
             # Data providers always run sync (small payloads, no UI poll flow),
             # but honor the caller's transient flag: dropdown-options pass
             # transient=True for the fast path, the manual Execute page passes
@@ -990,6 +999,7 @@ async def execute_workflow(
                 input_data=request.input_data,
                 transient=request.transient,
                 sync=True,
+                dispatch_metadata=dispatch_metadata,
             )
             return WorkflowExecutionResponse(
                 execution_id=result.execution_id,
@@ -1001,6 +1011,10 @@ async def execute_workflow(
             )
         elif workflow:
             # Execute workflow by ID
+            dispatch_metadata = await get_workflow_for_execution(
+                str(workflow.id),
+                db=db,
+            )
             result = await run_workflow(
                 context=shared_ctx,
                 workflow_id=str(workflow.id),
@@ -1008,6 +1022,7 @@ async def execute_workflow(
                 form_id=request.form_id,
                 transient=request.transient,
                 sync=request.sync or False,
+                dispatch_metadata=dispatch_metadata,
             )
         else:
             # This shouldn't happen due to earlier validation

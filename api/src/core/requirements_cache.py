@@ -105,18 +105,23 @@ def get_requirements_sync() -> str | None:
 
         # Redis miss — try API endpoint first (Phase 2: no S3 env required)
         logger.info("[requirements] Redis cache empty, trying API endpoint")
-        api_content = _fetch_requirements_from_api()
-        if api_content:
+        api_authoritative, api_content = _fetch_requirements_from_api()
+        if api_authoritative:
             try:
-                content_hash = hashlib.sha256(api_content.encode()).hexdigest()
-                cached_data = CachedRequirements(content=api_content, hash=content_hash)
+                normalized_content = api_content or ""
+                content_hash = hashlib.sha256(normalized_content.encode()).hexdigest()
+                cached_data = CachedRequirements(
+                    content=normalized_content,
+                    hash=content_hash,
+                )
                 client.setex(REQUIREMENTS_KEY, REQUIREMENTS_CACHE_TTL, json.dumps(cached_data))
-                logger.info("[requirements] Re-cached requirements from API to Redis")
+                logger.info("[requirements] Cached authoritative API response in Redis")
             except Exception as e:
                 logger.warning(f"[requirements] Failed to re-cache to Redis: {e}")
-            return api_content
+            return api_content if api_content and api_content.strip() else None
 
-        # API not available — fall back to direct S3 (legacy path)
+        # Only a genuine API failure may use the legacy direct-S3 path. A 404
+        # above means the API authoritatively checked Redis/S3 and found no file.
         logger.info("[requirements] API unavailable, falling back to S3")
         content = _read_requirements_from_s3(_get_s3_client)
         if not content:

@@ -185,6 +185,31 @@ class TestTemplateProcessFork:
                     pass
             template.shutdown()
 
+    def test_idle_one_shot_child_accepts_shutdown_sentinel(self):
+        """A pre-forked child can retire without executing user code."""
+        template = TemplateProcess()
+        template.start()
+        child_pid = None
+        work_queue = None
+        result_queue = None
+        try:
+            child_pid, work_queue, result_queue = template.fork()
+            work_queue.put(None)
+
+            _wait_for_pid_to_disappear(child_pid)
+            assert template.collect_child_exit_statuses()[child_pid] == 0
+        finally:
+            if work_queue is not None:
+                work_queue.close()
+            if result_queue is not None:
+                result_queue.close()
+            if child_pid is not None:
+                try:
+                    os.kill(child_pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            template.shutdown()
+
     def test_forked_child_can_execute_and_return_result(self):
         """Forked child should be able to receive work and return results."""
         template = TemplateProcess()
@@ -192,18 +217,15 @@ class TestTemplateProcessFork:
         try:
             child_pid, work_queue, result_queue = template.fork()
 
-            # Send a simple test execution ID
-            work_queue.put("test-exec-id")
+            # A malformed context is sufficient to verify that the complete
+            # work item crosses the private pipe and a structured failure comes
+            # back. Full successful execution coverage lives in E2E.
+            work_queue.put(("test-exec-id", {}))
 
-            # Child should process and return result (or we just verify
-            # the queue is functional by checking the child is alive)
-            # Full execution tests are in E2E — here we verify the plumbing
-            time.sleep(0.5)
-            os.kill(child_pid, 0)  # Still alive, waiting for work or processing
-
-            # Clean up (grandchild of test runner — cannot waitpid)
-            os.kill(child_pid, signal.SIGTERM)
-            _wait_for_pid_to_die(child_pid)
+            result = result_queue.get(timeout=5.0)
+            assert result["execution_id"] == "test-exec-id"
+            assert result["success"] is False
+            _wait_for_pid_to_disappear(child_pid)
         finally:
             template.shutdown()
 

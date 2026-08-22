@@ -413,9 +413,9 @@ def mint_engine_token() -> tuple[str, str]:
 
     Called by the consumer (which legitimately holds SECRET_KEY) before
     dispatching an execution.  The returned token and expiry ISO string are
-    placed in context_data and handed to the child via Redis; the child writes
-    them to the credentials file with save_credentials() — no SECRET_KEY
-    required in the child process.
+    placed in context_data and handed to the child over its private work pipe;
+    the child installs the token as process-scoped SDK credentials — no
+    SECRET_KEY or persistent credential write is required there.
 
     Returns:
         (token, expires_at_iso): JWT string and ISO-8601 expiry timestamp.

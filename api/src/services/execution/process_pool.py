@@ -1,13 +1,13 @@
 """
 Process Pool Manager for Execution Isolation.
 
-Each execution forks a fresh worker process from a long-lived template
-and the worker exits after returning its result. There is no warm pool;
-the only throttles are `max_workers` (concurrency cap) and a cgroup
-memory-pressure check on the way in.
+Each execution gets a fresh worker process forked from a long-lived template
+and the worker exits after returning its result. A bounded set of one-shot
+children waits pre-forked so a burst does not serialize on ``os.fork()``;
+``max_workers`` and the cgroup memory-pressure check remain hard caps.
 
 Key features:
-- One-shot worker processes (fork → run one execution → exit)
+- One-shot worker processes (fork → wait → run one execution → exit)
 - Cap concurrent forks at `max_workers`; queued executions wait on a
   condition variable that is notified when a worker exits
 - Memory-pressure admission control (cgroup working-set)
@@ -134,10 +134,11 @@ class ProcessState(Enum):
     """
     State of a worker process in the pool.
 
-    Workers are one-shot — they only ever exist in BUSY (running their
-    single execution) or KILLED (terminating).
+    Workers are one-shot. IDLE means pre-forked and waiting for the one
+    execution it will ever run; BUSY means that execution is in progress.
     """
 
+    IDLE = "idle"
     BUSY = "busy"
     KILLED = "killed"
 
@@ -285,10 +286,9 @@ class ProcessPoolManager:
     """
     Manages a pool of one-shot worker processes for execution isolation.
 
-    Each execution forks a fresh child from the template process and the
-    child exits after returning its result. There is no warm pool — the
-    `max_workers` cap is the only throttle, plus a memory-pressure check
-    on the way in.
+    Each execution uses a fresh child from the template process and the child
+    exits after returning its result. ``warm_workers`` only moves that child's
+    fork before request arrival; it never reuses a child across executions.
 
     Usage:
         pool = ProcessPoolManager(
@@ -307,6 +307,7 @@ class ProcessPoolManager:
     def __init__(
         self,
         max_workers: int = 10,
+        warm_workers: int = 0,
         execution_timeout_seconds: int = 300,
         graceful_shutdown_seconds: int = 5,
         heartbeat_interval_seconds: int = 10,
@@ -318,6 +319,7 @@ class ProcessPoolManager:
 
         Args:
             max_workers: Maximum number of concurrent worker processes
+            warm_workers: Number of one-shot children to keep pre-forked
             execution_timeout_seconds: Default execution timeout in seconds
             graceful_shutdown_seconds: Seconds to wait between SIGTERM and SIGKILL
             heartbeat_interval_seconds: Interval for heartbeat publications
@@ -325,6 +327,7 @@ class ProcessPoolManager:
             on_result: Async callback for handling execution results
         """
         self.max_workers = max_workers
+        self.warm_workers = min(max(warm_workers, 0), max_workers)
         self.execution_timeout_seconds = execution_timeout_seconds
         self.graceful_shutdown_seconds = graceful_shutdown_seconds
         self.heartbeat_interval_seconds = heartbeat_interval_seconds
@@ -351,6 +354,7 @@ class ProcessPoolManager:
         self._heartbeat_task: asyncio.Task[None] | None = None
         self._cancel_task: asyncio.Task[None] | None = None
         self._command_task: asyncio.Task[None] | None = None
+        self._warm_task: asyncio.Task[None] | None = None
 
         # Redis connection
         self._redis: redis.Redis | None = None  # type: ignore[type-arg]
@@ -423,10 +427,27 @@ class ProcessPoolManager:
         wait for the previous restart to complete rather than racing.
         """
         async with self._restart_lock:
+            # Idle children have no execution to drain. Retire them promptly
+            # through their private pipe before waiting on busy executions.
+            idle_handles = [
+                handle
+                for handle in self.processes.values()
+                if handle.state == ProcessState.IDLE
+            ]
+            for handle in idle_handles:
+                self.processes.pop(handle.id, None)
+            if idle_handles:
+                await asyncio.gather(
+                    *(self._retire_idle_process(handle) for handle in idle_handles)
+                )
+
             # Wait for in-flight one-shot workers to finish (bounded).
             deadline = time.monotonic() + drain_timeout
             while time.monotonic() < deadline:
-                if not self.processes:
+                if not any(
+                    handle.state == ProcessState.BUSY
+                    for handle in self.processes.values()
+                ):
                     break
                 await asyncio.sleep(0.2)
 
@@ -444,6 +465,7 @@ class ProcessPoolManager:
             # Restart template with fresh sys.modules — future forks
             # (driven by route_execution) will see newly installed packages.
             await self.restart_template()
+            await self._fill_warm_pool(allow_during_restart=True)
 
     def _fork_process(self) -> ProcessHandle:
         """
@@ -454,9 +476,8 @@ class ProcessPoolManager:
         has completed) before invoking this method.
 
         Returns:
-            ProcessHandle for the new forked worker. State starts at BUSY
-            because every fork is claimed by the routing caller (there is
-            no warm pool / idle state).
+            ProcessHandle for the new forked worker. State starts at IDLE;
+            routing atomically claims it before sending an execution ID.
 
         Raises:
             RuntimeError: If the template process is not alive.
@@ -481,7 +502,7 @@ class ProcessPoolManager:
             id=process_id,
             process=_PidWrapper(child_pid),
             pid=child_pid,
-            state=ProcessState.BUSY,
+            state=ProcessState.IDLE,
             work_queue=work_queue,
             result_queue=result_queue,
             started_at=datetime.now(timezone.utc),
@@ -492,6 +513,83 @@ class ProcessPoolManager:
         self.processes[process_id] = handle
         logger.info(f"Created worker {process_id} (PID={handle.pid})")
         return handle
+
+    def _get_idle_process(self) -> ProcessHandle | None:
+        """Return a live pre-forked child that has never run user code."""
+        for handle in self.processes.values():
+            if handle.state == ProcessState.IDLE and handle.is_alive:
+                return handle
+        return None
+
+    async def _fill_warm_pool(self, *, allow_during_restart: bool = False) -> None:
+        """Restore the bounded set of waiting one-shot children.
+
+        Forking remains serialized in the template process. This method runs
+        before RabbitMQ consumption at startup and, after results, from one
+        debounced task so that serialization stays outside request latency.
+        """
+        if self.warm_workers <= 0 or self._shutdown:
+            return
+        if self._restart_lock.locked() and not allow_during_restart:
+            return
+
+        settings = get_settings()
+        while (
+            len(self.processes) < self.max_workers
+            and sum(
+                handle.state == ProcessState.IDLE
+                for handle in self.processes.values()
+            ) < self.warm_workers
+        ):
+            if not has_sufficient_memory_cgroup(
+                threshold=settings.memory_pressure_threshold
+            ):
+                logger.info(
+                    "Warm one-shot pool stopped at %d/%d due to memory pressure",
+                    sum(
+                        handle.state == ProcessState.IDLE
+                        for handle in self.processes.values()
+                    ),
+                    self.warm_workers,
+                )
+                break
+            self._fork_process()
+            # Give result/consumer tasks a scheduling point between forks.
+            await asyncio.sleep(0)
+
+        await self._notify_slot_free()
+
+    async def _delayed_fill_warm_pool(self) -> None:
+        """Replenish only after the just-finished result path has settled."""
+        await asyncio.sleep(0.05)
+        await self._fill_warm_pool()
+
+    def _schedule_warm_pool_fill(self) -> None:
+        if self.warm_workers <= 0 or self._shutdown:
+            return
+        if self._warm_task is not None and not self._warm_task.done():
+            return
+        self._warm_task = asyncio.create_task(
+            self._delayed_fill_warm_pool(),
+            name="pool-warm-fill",
+        )
+
+    async def _retire_idle_process(self, handle: ProcessHandle) -> None:
+        """Stop a child that has never received user work."""
+        handle.state = ProcessState.KILLED
+        handle.killed_at = datetime.now(timezone.utc)
+        try:
+            handle.work_queue.put_nowait(None)
+        except (BrokenPipeError, EOFError, OSError):
+            pass
+
+        await asyncio.to_thread(handle.process.join, 1.5)
+        if handle.process.is_alive() and handle.pid is not None:
+            try:
+                os.kill(handle.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            await asyncio.to_thread(handle.process.join, 1.0)
 
     async def start(self) -> None:
         """
@@ -523,6 +621,11 @@ class ProcessPoolManager:
 
         # Start template process (loads deps, ready to fork)
         await self._start_template()
+
+        # Fork waiting one-shot children before RabbitMQ consumption starts.
+        # They have no execution context or platform secrets and each exits
+        # after exactly one execution.
+        await self._fill_warm_pool()
 
         # Register in Redis
         await self._register_worker()
@@ -569,6 +672,7 @@ class ProcessPoolManager:
             self._heartbeat_task,
             self._cancel_task,
             self._command_task,
+            self._warm_task,
             *self._result_tasks,
         ]
         for task in tasks:
@@ -580,9 +684,16 @@ class ProcessPoolManager:
                     # Expected — we just cancelled the task; no log needed
                     pass
 
-        # Terminate all processes
-        for handle in list(self.processes.values()):
-            await self._terminate_process(handle)
+        # Retire idle children immediately; terminate busy children through
+        # the established graceful cancellation path.
+        await asyncio.gather(
+            *(
+                self._retire_idle_process(handle)
+                if handle.state == ProcessState.IDLE
+                else self._terminate_process(handle)
+                for handle in list(self.processes.values())
+            )
+        )
 
         # Shutdown template process
         if self._template is not None:
@@ -646,7 +757,7 @@ class ProcessPoolManager:
 
     async def _wait_for_slot(self, timeout: float = 30.0) -> bool:
         """
-        Wait until `len(self.processes) < self.max_workers`.
+        Wait until a waiting child or capacity for a new fork is available.
 
         Used by route_execution when the pool is saturated. Returns True
         as soon as a slot opens (a worker exited and notified the
@@ -656,7 +767,10 @@ class ProcessPoolManager:
             try:
                 await asyncio.wait_for(
                     self._slot_condition.wait_for(
-                        lambda: len(self.processes) < self.max_workers
+                        lambda: (
+                            self._get_idle_process() is not None
+                            or len(self.processes) < self.max_workers
+                        )
                     ),
                     timeout=timeout,
                 )
@@ -673,19 +787,14 @@ class ProcessPoolManager:
         Fork a one-shot worker for this execution.
 
         Waits for a free slot under the `max_workers` cap if the pool is
-        saturated. The context is written to Redis, and the execution_id
-        is sent to the forked child via the work queue.
+        saturated. The context is retained in Redis for durability and
+        diagnostics, then sent with the execution ID to the forked child over
+        its private work pipe.
 
         Args:
             execution_id: Unique identifier for the execution
-            context: Execution context data (written to Redis)
+            context: Execution context sent to the child and retained in Redis
         """
-        # Wait for any in-progress drain+restart to complete before routing.
-        # Without this, executions arriving during a package-install restart
-        # would hit a dead template and fail with ConnectionResetError.
-        async with self._restart_lock:
-            pass
-
         # Write context to Redis
         await self._write_context_to_redis(execution_id, context)
 
@@ -700,18 +809,35 @@ class ProcessPoolManager:
                 f"exceeds {settings.memory_pressure_threshold:.0%} threshold"
             )
 
-        # Wait for a slot under the max_workers cap. Worker exits notify
-        # _slot_condition, so this wakes immediately once a slot frees.
-        if len(self.processes) >= self.max_workers:
-            if not await self._wait_for_slot():
-                raise RuntimeError("No worker slot available after timeout")
-
-        # Fork the worker. _fork_process returns a handle already in BUSY.
-        handle = self._fork_process()
-
         # Get timeout from context or use default
         timeout = context.get("timeout_seconds", self.execution_timeout_seconds)
 
+        # Keep template drain/restart mutually exclusive with claiming or
+        # forking a child. Merely waiting for an active restart is insufficient:
+        # a restart could otherwise begin during the Redis write above and
+        # retire the child just before this route sends it work.
+        async with self._restart_lock:
+            await self._dispatch_to_child(execution_id, context, timeout)
+
+    async def _dispatch_to_child(
+        self,
+        execution_id: str,
+        context: dict[str, Any],
+        timeout: int,
+    ) -> None:
+        """Claim or fork one child and send its sole execution."""
+        # Prefer a child forked before this request arrived. If every slot is
+        # busy, wait until a result frees one (or a replenisher provides one).
+        handle = self._get_idle_process()
+        if handle is None and len(self.processes) >= self.max_workers:
+            if not await self._wait_for_slot():
+                raise RuntimeError("No worker slot available after timeout")
+
+        handle = self._get_idle_process()
+        if handle is None:
+            handle = self._fork_process()
+
+        handle.state = ProcessState.BUSY
         handle.current_execution = ExecutionInfo(
             execution_id=execution_id,
             started_at=datetime.now(timezone.utc),
@@ -721,14 +847,17 @@ class ProcessPoolManager:
 
         self._register_result_reader(handle)
 
-        # Send execution_id to the child. If the pipe is already closed, undo
-        # the readiness watch and release the one-shot handle immediately.
+        # Send the already-assembled context directly over the private pipe.
+        # Redis remains the durable handoff/diagnostic record, but the child
+        # should not open a fresh Redis connection just to retrieve data this
+        # parent already owns.
         try:
-            handle.work_queue.put_nowait(execution_id)
+            handle.work_queue.put_nowait((execution_id, context))
         except Exception:
             self._unregister_result_reader(handle)
             self.processes.pop(handle.id, None)
             await self._notify_slot_free()
+            self._schedule_warm_pool_fill()
             raise
 
         logger.info(
@@ -742,7 +871,7 @@ class ProcessPoolManager:
         context: dict[str, Any],
     ) -> None:
         """
-        Write execution context to Redis for worker to read.
+        Retain execution context in Redis for durability and diagnostics.
 
         Args:
             execution_id: Execution ID
@@ -758,9 +887,8 @@ class ProcessPoolManager:
 
         Runs every 1 second to:
         1. Check for timed-out executions and kill processes
-        2. Check for crashed processes and replace them
-        3. Scale down excess idle processes
-        4. Periodically clean stale queue entries (every 60s)
+        2. Check for crashed processes and restore the warm floor
+        3. Periodically clean stale queue entries (every 60s)
         """
         import time as _time
 
@@ -831,12 +959,12 @@ class ProcessPoolManager:
                 # Report timeout
                 await self._report_timeout(handle)
 
-                # Remove from pool — one-shot workers don't get replaced;
-                # the next execution's route_execution will fork on demand.
+                # Remove from the pool and restore the configured warm floor.
                 # pop() not del: a peer (_handle_result) may have removed it
                 # during the _kill_process / _report_timeout awaits above.
                 self.processes.pop(handle.id, None)
                 await self._notify_slot_free()
+                self._schedule_warm_pool_fill()
 
     async def _kill_process(self, handle: ProcessHandle) -> None:
         """
@@ -1090,11 +1218,12 @@ class ProcessPoolManager:
                 # Report cancellation
                 await self._report_cancellation(handle)
 
-                # Remove from pool — one-shot worker, no replacement.
+                # Remove from the pool and restore the configured warm floor.
                 # pop() not del: a peer (_handle_result) may have removed it
                 # during the _kill_process / _report_cancellation awaits.
                 self.processes.pop(handle.id, None)
                 await self._notify_slot_free()
+                self._schedule_warm_pool_fill()
 
                 return
 
@@ -1130,7 +1259,7 @@ class ProcessPoolManager:
 
     async def _check_process_health(self) -> None:
         """
-        Check for crashed processes and replace them.
+        Check for crashed processes and restore the configured warm floor.
 
         Case A: Process is dead and state is NOT KILLED — unexpected crash
         (SIGSEGV, worker exit, etc.). Report crash if not already reported.
@@ -1197,8 +1326,7 @@ class ProcessPoolManager:
                     await self._report_orphan(handle)
                 to_remove.append(process_id)
 
-        # Remove crashed/orphaned processes. One-shot workers don't get
-        # replaced — the next execution's route_execution will fork.
+        # Remove crashed/orphaned processes and restore the warm floor.
         # Use pop() not del because a peer (e.g. _handle_result) may have
         # already removed the id during one of the awaits above. We still
         # notify slot waiters if anything was removed here, since the
@@ -1213,6 +1341,7 @@ class ProcessPoolManager:
                     removed_any = True
             if removed_any:
                 await self._notify_slot_free()
+                self._schedule_warm_pool_fill()
 
     def _collect_child_exit_statuses(self) -> None:
         """Apply exit statuses gathered by the template that owns the children."""
@@ -1379,6 +1508,7 @@ class ProcessPoolManager:
                 await self.on_result(result)
             except Exception as e:
                 logger.exception(f"Error in result callback: {e}")
+        self._schedule_warm_pool_fill()
 
     async def _notify_slot_free(self) -> None:
         """Wake any tasks blocked in `_wait_for_slot`."""
@@ -1562,9 +1692,9 @@ class ProcessPoolManager:
                 }
             processes.append(info)
 
-        # In on-demand mode every handle is BUSY or KILLED — no idle pool.
-        # Keep `idle_count` in the heartbeat shape for back-compat (always 0).
-        idle_count = 0
+        idle_count = len([
+            p for p in self.processes.values() if p.state == ProcessState.IDLE
+        ])
         busy_count = len([p for p in self.processes.values() if p.state == ProcessState.BUSY])
 
         memory_current, memory_max = get_cgroup_memory()
@@ -1660,6 +1790,7 @@ def get_process_pool() -> ProcessPoolManager:
         settings = get_settings()
         _pool = ProcessPoolManager(
             max_workers=settings.max_workers,
+            warm_workers=settings.warm_workers,
             execution_timeout_seconds=settings.execution_timeout_seconds,
             graceful_shutdown_seconds=settings.graceful_shutdown_seconds,
             heartbeat_interval_seconds=settings.worker_heartbeat_interval_seconds,

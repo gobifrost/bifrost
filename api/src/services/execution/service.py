@@ -348,6 +348,7 @@ async def run_workflow(
     form_id: str | None = None,
     transient: bool = False,
     sync: bool = False,
+    dispatch_metadata: dict[str, Any] | None = None,
 ) -> WorkflowExecutionResponse:
     """
     Execute a workflow by ID.
@@ -372,30 +373,39 @@ async def run_workflow(
     """
     parameters = input_data or {}
 
-    # Validate workflow exists using metadata-only lookup (Redis-first, no module loading)
-    try:
-        workflow_metadata = await get_workflow_metadata_only(workflow_id)
-        logger.debug(
-            f"Validated workflow by ID: {workflow_id} -> {workflow_metadata.name}"
-        )
-    except WorkflowNotFoundError:
-        raise
-    except Exception as e:
-        logger.error(f"Failed to validate workflow {workflow_id}: {e}", exc_info=True)
-        raise WorkflowNotFoundError(
-            f"Failed to validate workflow '{workflow_id}': {str(e)}"
-        )
+    if dispatch_metadata is None:
+        # Callers that did not already resolve the workflow still use the
+        # metadata cache for validation. The main HTTP execution route passes
+        # its authorization-time metadata through instead of reading it again.
+        try:
+            workflow_metadata = await get_workflow_metadata_only(workflow_id)
+            workflow_name = workflow_metadata.name
+            timeout_seconds = workflow_metadata.timeout_seconds
+            logger.debug(
+                f"Validated workflow by ID: {workflow_id} -> {workflow_name}"
+            )
+        except WorkflowNotFoundError:
+            raise
+        except Exception as e:
+            logger.error(f"Failed to validate workflow {workflow_id}: {e}", exc_info=True)
+            raise WorkflowNotFoundError(
+                f"Failed to validate workflow '{workflow_id}': {str(e)}"
+            )
+    else:
+        workflow_name = dispatch_metadata["name"]
+        timeout_seconds = dispatch_metadata["timeout_seconds"]
 
     # Enqueue for execution via worker
     # sync is only True when explicitly passed by the caller (e.g. endpoints.py)
     return await _enqueue_workflow_async(
         context=context,
         workflow_id=workflow_id,
-        workflow_name=workflow_metadata.name,
+        workflow_name=workflow_name,
         parameters=parameters,
         form_id=form_id,
         sync=sync,
-        timeout_seconds=workflow_metadata.timeout_seconds,
+        timeout_seconds=timeout_seconds,
+        dispatch_metadata=dispatch_metadata,
     )
 
 
@@ -439,6 +449,7 @@ async def _enqueue_workflow_async(
     form_id: str | None = None,
     sync: bool = False,
     timeout_seconds: int | None = None,
+    dispatch_metadata: dict[str, Any] | None = None,
 ) -> WorkflowExecutionResponse:
     """
     Enqueue workflow for execution via RabbitMQ.
@@ -456,6 +467,7 @@ async def _enqueue_workflow_async(
         form_id=form_id,
         execution_id=context.execution_id,  # Pass through for log streaming
         sync=sync,
+        dispatch_metadata=dispatch_metadata,
     )
 
     if not sync:

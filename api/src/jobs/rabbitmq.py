@@ -31,10 +31,14 @@ class RabbitMQConnection:
     _instance: "RabbitMQConnection | None" = None
     _connection_pool: Pool | None = None
     _channel_pool: Pool | None = None
+    _publish_topology_ready: set[str]
+    _publish_topology_locks: dict[str, asyncio.Lock]
 
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
+            cls._instance._publish_topology_ready = set()
+            cls._instance._publish_topology_locks = {}
         return cls._instance
 
     def get_connection(self):
@@ -48,6 +52,48 @@ class RabbitMQConnection:
         if self._channel_pool is None:
             raise RuntimeError("Channel pool not initialized. Call init_pools() first.")
         return self._channel_pool.acquire()
+
+    async def ensure_publish_topology(
+        self,
+        channel: AbstractRobustChannel,
+        queue_name: str,
+    ) -> None:
+        """Declare a durable queue topology once per publisher process.
+
+        Robust channels restore declared topology after reconnects. A
+        per-queue lock prevents concurrent first publishes from repeating the
+        same exchange/queue/binding round trips.
+        """
+        if queue_name in self._publish_topology_ready:
+            return
+        lock = self._publish_topology_locks.setdefault(queue_name, asyncio.Lock())
+        async with lock:
+            if queue_name in self._publish_topology_ready:
+                return
+            dead_letter_exchange = f"{queue_name}-dlx"
+            exchange = await channel.declare_exchange(
+                dead_letter_exchange,
+                aio_pika.ExchangeType.DIRECT,
+                durable=True,
+            )
+            dlq = await channel.declare_queue(
+                f"{queue_name}-poison",
+                durable=True,
+            )
+            await dlq.bind(exchange, routing_key=queue_name)
+            await channel.declare_queue(
+                queue_name,
+                durable=True,
+                arguments={
+                    "x-dead-letter-exchange": dead_letter_exchange,
+                    "x-dead-letter-routing-key": queue_name,
+                },
+            )
+            self._publish_topology_ready.add(queue_name)
+
+    def invalidate_publish_topology(self, queue_name: str) -> None:
+        """Force the next retry to redeclare topology on its channel."""
+        self._publish_topology_ready.discard(queue_name)
 
     async def init_pools(self) -> None:
         """Initialize connection and channel pools. Must be called before using the connection."""
@@ -80,6 +126,10 @@ class RabbitMQConnection:
             await self._channel_pool.close()
         if self._connection_pool:
             await self._connection_pool.close()
+        self._channel_pool = None
+        self._connection_pool = None
+        self._publish_topology_ready.clear()
+        self._publish_topology_locks.clear()
         logger.info("RabbitMQ connections closed")
 
     def reset_pools(self) -> None:
@@ -97,6 +147,8 @@ class RabbitMQConnection:
         """
         self._connection_pool = None
         self._channel_pool = None
+        self._publish_topology_ready.clear()
+        self._publish_topology_locks.clear()
 
 
 # Global connection manager
@@ -587,44 +639,18 @@ async def _publish_once(
     message: dict[str, Any],
     priority: int,
 ) -> None:
-    async with rabbitmq.get_connection() as connection:
-        channel = await connection.channel()
-        try:
-            dead_letter_exchange = f"{queue_name}-dlx"
+    async with rabbitmq.get_channel() as channel:
+        await rabbitmq.ensure_publish_topology(channel, queue_name)
+        await channel.default_exchange.publish(
+            aio_pika.Message(
+                body=json.dumps(message).encode(),
+                delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
+                priority=priority,
+            ),
+            routing_key=queue_name,
+        )
 
-            await channel.declare_exchange(
-                dead_letter_exchange,
-                aio_pika.ExchangeType.DIRECT,
-                durable=True,
-            )
-
-            dlq = await channel.declare_queue(
-                f"{queue_name}-poison",
-                durable=True,
-            )
-            await dlq.bind(dead_letter_exchange, routing_key=queue_name)
-
-            await channel.declare_queue(
-                queue_name,
-                durable=True,
-                arguments={
-                    "x-dead-letter-exchange": dead_letter_exchange,
-                    "x-dead-letter-routing-key": queue_name,
-                },
-            )
-
-            await channel.default_exchange.publish(
-                aio_pika.Message(
-                    body=json.dumps(message).encode(),
-                    delivery_mode=aio_pika.DeliveryMode.PERSISTENT,
-                    priority=priority,
-                ),
-                routing_key=queue_name,
-            )
-
-            logger.debug(f"Published message to {queue_name}")
-        finally:
-            await channel.close()
+        logger.debug(f"Published message to {queue_name}")
 
 
 async def publish_message(
@@ -654,6 +680,7 @@ async def publish_message(
         except Exception as exc:
             if not _is_transient_publish_error(exc):
                 raise
+            rabbitmq.invalidate_publish_topology(queue_name)
             last_exc = exc
             if delay is None:
                 break

@@ -125,8 +125,7 @@ async def test_execute_async_sets_solution_context_before_clearing_modules(monke
     sid = str(uuid.uuid4())
     calls: list[tuple[str, object]] = []
 
-    async def _fake_read_context(_eid):
-        return {"solution_id": sid, "solution_global_repo_access": False}
+    context = {"solution_id": sid, "solution_global_repo_access": False}
 
     def _fake_set_ctx(solution_id, global_repo_access=False):
         calls.append(("set_context", solution_id))
@@ -141,7 +140,6 @@ async def test_execute_async_sets_solution_context_before_clearing_modules(monke
         calls.append(("run", None))
         return {"status": "Success", "result": {}, "metrics": {}}
 
-    monkeypatch.setattr(sw, "_read_context_from_redis", _fake_read_context)
     monkeypatch.setattr(mcs, "set_solution_context", _fake_set_ctx)
     monkeypatch.setattr(mcs, "clear_solution_context", _fake_clear_ctx)
     monkeypatch.setattr(sw, "_clear_workspace_modules", _fake_clear)
@@ -150,7 +148,7 @@ async def test_execute_async_sets_solution_context_before_clearing_modules(monke
     import src.services.execution.worker as worker_mod
     monkeypatch.setattr(worker_mod, "_run_execution", _fake_run)
 
-    await sw._execute_async("exec-1", "worker-1")
+    await sw._execute_async("exec-1", "worker-1", context)
 
     order = [name for name, _ in calls]
     assert order.index("set_context") < order.index("clear_modules"), (

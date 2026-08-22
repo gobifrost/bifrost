@@ -2,10 +2,10 @@
 Worker process entry point for isolated execution.
 
 This module runs in a separate process and:
-1. Reads execution context from Redis
+1. Receives execution context from its parent (legacy entry points use Redis)
 2. Runs the workflow/script
 3. Writes logs to Redis Stream (already handled by engine)
-4. Writes result to Redis (including resource metrics)
+4. Returns a result with resource metrics
 5. Exits cleanly (or gets killed on timeout)
 
 The worker imports minimal dependencies to keep memory footprint low.
@@ -35,6 +35,25 @@ from src.services.execution.virtual_import import install_virtual_import_hook
 install_virtual_import_hook()
 
 logger = logging.getLogger(__name__)
+
+
+def _set_process_engine_credentials(context_data: dict[str, Any]) -> bool:
+    """Install the handed-down engine token for this one-shot process."""
+    engine_token = context_data.get("engine_token")
+    if not engine_token:
+        return False
+
+    import os
+
+    api_url = os.getenv("BIFROST_API_URL", "http://api:8000")
+    # The SDK's process backend takes precedence over keyring or JSON
+    # persistence and supports refresh-on-401 by updating this tuple. Avoiding
+    # persistence also prevents headless keyring probes from importing optional
+    # DBus/desktop modules through the virtual importer on every execution.
+    os.environ["BIFROST_API_URL"] = api_url
+    os.environ["BIFROST_ACCESS_TOKEN"] = engine_token
+    os.environ["BIFROST_REFRESH_TOKEN"] = engine_token
+    return True
 
 
 @dataclass
@@ -124,25 +143,16 @@ async def _run_execution(execution_id: str, context_data: dict[str, Any]) -> dic
     from src.sdk.context import Caller, Organization
     from src.services.execution.engine import ExecutionRequest, execute
     from src.models.enums import ExecutionStatus
-    from bifrost.credentials import is_token_expired, save_credentials
+    from bifrost.credentials import is_token_expired
 
     # Engine credentials: prefer the pre-minted token handed down from the
     # consumer via context_data["engine_token"].  This keeps SECRET_KEY out of
     # the child process entirely.
     # Fall back to authenticate_engine() only for callers (e.g. direct engine
     # tests) that bypass the consumer and do not supply a pre-minted token.
-    engine_token = context_data.get("engine_token")
-    if engine_token:
-        import os
-        api_url = os.getenv("BIFROST_API_URL", "http://api:8000")
-        expires_at = context_data.get("engine_token_expires_at", "")
-        save_credentials(
-            api_url=api_url,
-            access_token=engine_token,
-            refresh_token=engine_token,  # Not used but required by schema
-            expires_at=expires_at,
-        )
-    elif is_token_expired(buffer_seconds=3600):
+    if not _set_process_engine_credentials(context_data) and is_token_expired(
+        buffer_seconds=3600
+    ):
         from src.core.security import authenticate_engine
         authenticate_engine()
 
@@ -353,8 +363,8 @@ async def _run_execution(execution_id: str, context_data: dict[str, Any]) -> dic
         }
 
     finally:
-        # Always clear the solution import root — a forked worker is reused for
-        # later executions and must not inherit this one's root.
+        # Always clear the solution import root before any final cleanup in this
+        # execution process. Current pool children are one-shot.
         clear_solution_context()
 
 

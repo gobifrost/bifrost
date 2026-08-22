@@ -2,7 +2,7 @@
 
 import hashlib
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -12,10 +12,59 @@ from src.core.requirements_cache import (
     CachedRequirements,
     append_package_to_requirements,
     get_requirements,
+    get_requirements_sync,
     save_requirements,
     set_requirements,
     warm_requirements_cache,
 )
+
+
+class TestGetRequirementsSync:
+    """Tests for the worker's synchronous requirements lookup."""
+
+    def test_caches_authoritative_absence_without_s3_fallback(self):
+        redis_client = MagicMock()
+        redis_client.get.return_value = None
+
+        with (
+            patch(
+                "src.core.module_cache_sync._get_sync_redis",
+                return_value=redis_client,
+            ),
+            patch(
+                "src.core.module_cache_sync._fetch_requirements_from_api",
+                return_value=(True, None),
+            ),
+            patch("src.core.requirements_cache._read_requirements_from_s3") as read_s3,
+        ):
+            assert get_requirements_sync() is None
+
+        read_s3.assert_not_called()
+        cached = json.loads(redis_client.setex.call_args.args[2])
+        assert cached["content"] == ""
+        assert cached["hash"] == hashlib.sha256(b"").hexdigest()
+
+    def test_api_failure_preserves_legacy_s3_fallback(self):
+        redis_client = MagicMock()
+        redis_client.get.return_value = None
+
+        with (
+            patch(
+                "src.core.module_cache_sync._get_sync_redis",
+                return_value=redis_client,
+            ),
+            patch(
+                "src.core.module_cache_sync._fetch_requirements_from_api",
+                return_value=(False, None),
+            ),
+            patch(
+                "src.core.requirements_cache._read_requirements_from_s3",
+                return_value="requests==2.32.0\n",
+            ) as read_s3,
+        ):
+            assert get_requirements_sync() == "requests==2.32.0\n"
+
+        read_s3.assert_called_once()
 
 
 class TestGetRequirements:

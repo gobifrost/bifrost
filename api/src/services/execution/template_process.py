@@ -228,6 +228,10 @@ def _template_main(
         "BIFROST_S3_ENDPOINT_URL",
         "BIFROST_S3_BUCKET",
         "BIFROST_S3_REGION",
+        # Execution children receive a freshly minted process-scoped SDK token
+        # only after fork. Never let ambient API credentials cross the template.
+        "BIFROST_ACCESS_TOKEN",
+        "BIFROST_REFRESH_TOKEN",
     ]
     scrubbed = []
     for key in _SCRUB_KEYS:
@@ -383,14 +387,15 @@ def _run_forked_child(
     """
     Entry point for a forked child process.
 
-    The child inherits all loaded modules from the template via COW.
-    It creates its own event loop and Redis connection fresh.
+    The child inherits all loaded modules from the template via COW and creates
+    its own event loop. Its execution context arrives on the private work pipe;
+    SDK/module access may still use network clients during the workflow.
 
     Communication uses raw Connection objects (Pipe ends) that were
     inherited via fork — no pickling required.
 
     Args:
-        work_recv: Read end of work pipe; receives execution_ids via .recv().
+        work_recv: Read end of work pipe; receives ``(execution_id, context)``.
         result_send: Write end of result pipe; sends result dicts via .send().
         worker_id: Identifier for logging.
         persistent: If True, loop for multiple executions. If False, run once.
@@ -423,10 +428,16 @@ def _run_forked_child(
             if not work_recv.poll(timeout=1.0):
                 continue
 
-            execution_id = work_recv.recv()
+            work_item = work_recv.recv()
 
-            if execution_id is None:
-                continue
+            if work_item is None:
+                # A pre-forked one-shot child can be retired without ever
+                # receiving user work (pool shutdown, template recycle, or
+                # memory-pressure scale-down). None is its private shutdown
+                # sentinel; no execution result is expected.
+                break
+
+            execution_id, context = work_item
 
             logger.info(f"Worker {worker_id} processing execution: {execution_id[:8]}...")
 
@@ -439,7 +450,7 @@ def _run_forked_child(
             # Execute
             try:
                 from src.services.execution.simple_worker import _execute_sync
-                result = _execute_sync(execution_id, worker_id)
+                result = _execute_sync(execution_id, worker_id, context)
             except ImportError:
                 result = {
                     "execution_id": execution_id,

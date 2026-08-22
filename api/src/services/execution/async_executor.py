@@ -48,6 +48,7 @@ async def _publish_pending(
     file_path: str | None,
     event: dict[str, Any] | None = None,
     execution_record_exists: bool = False,
+    dispatch_metadata: dict[str, Any] | None = None,
 ) -> None:
     """
     Write a pending-execution blob to Redis, register with the queue tracker,
@@ -84,13 +85,15 @@ async def _publish_pending(
     if not sync:
         await add_to_queue(execution_id)
 
-    # Prepare queue message (minimal - worker reads full context from Redis)
+    # Prepare queue message (the consumer reads full context from Redis)
     message: dict[str, Any] = {
         "execution_id": execution_id,
         "workflow_id": workflow_id,
         "sync": sync,
         "execution_record_exists": execution_record_exists,
     }
+    if dispatch_metadata is not None:
+        message["dispatch_metadata"] = dispatch_metadata
 
     # Include file_path for fast direct loading (avoids filesystem scan)
     if file_path:
@@ -109,6 +112,7 @@ async def enqueue_workflow_execution(
     sync: bool = False,
     api_key_id: str | None = None,
     file_path: str | None = None,
+    dispatch_metadata: dict[str, Any] | None = None,
 ) -> str:
     """
     Enqueue a workflow for async execution.
@@ -158,6 +162,7 @@ async def enqueue_workflow_execution(
         is_platform_admin=context.is_platform_admin,
         file_path=file_path,
         event=event_payload,
+        dispatch_metadata=dispatch_metadata,
     )
 
     logger.info(

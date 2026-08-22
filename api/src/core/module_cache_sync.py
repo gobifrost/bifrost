@@ -419,21 +419,23 @@ def resolve_module_sync(name: str) -> ModuleResolution:
     return resolution
 
 
-def _fetch_requirements_from_api() -> str | None:
+def _fetch_requirements_from_api() -> tuple[bool, str | None]:
     """
     Fetch requirements.txt via GET /api/sdk/requirements (synchronous).
 
-    Returns the requirements content string, or None on any error / 404.
+    Returns ``(authoritative, content)``. A 404 is authoritative absence, while
+    connection/auth/server failures return ``(False, None)`` so the caller can
+    distinguish them from a workspace that intentionally has no requirements.
     Used as the primary cold-cache fallback in get_requirements_sync() when
     BIFROST_S3_* are absent from the child environment (Phase 2 hardening).
     """
     creds = _get_engine_credentials()
     if not creds:
-        return None
+        return False, None
     creds_url, token = creds
     api_url = creds_url or os.environ.get("BIFROST_API_URL", "").rstrip("/")
     if not api_url:
-        return None
+        return False, None
 
     try:
         resp = _get_http_client().get(
@@ -441,16 +443,16 @@ def _fetch_requirements_from_api() -> str | None:
             headers={"Authorization": f"Bearer {token}"},
         )
         if resp.status_code == 404:
-            return None
+            return True, None
         if resp.status_code != 200:
             logger.warning(f"API requirements-fetch returned {resp.status_code}")
-            return None
+            return False, None
 
         data = resp.json()
-        return data.get("content")
+        return True, data.get("content")
     except Exception as e:
         logger.warning(f"API requirements-fetch error: {e}")
-        return None
+        return False, None
 
 
 def _get_s3_client() -> Any:

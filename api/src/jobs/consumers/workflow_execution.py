@@ -27,14 +27,22 @@ import time
 from datetime import datetime, timezone
 from typing import Any
 
+from src.core.database import get_db_context
 from src.core.pubsub import publish_execution_update, publish_history_update
 from src.core.redis_client import get_redis_client
 from src.jobs.rabbitmq import BaseConsumer
+from src.models.enums import ExecutionStatus
+from src.repositories.executions import create_execution, update_execution
 
 logger = logging.getLogger(__name__)
 
 # Queue name
 QUEUE_NAME = "workflow-executions"
+
+# Sync callers are already awake when derived terminal work begins. A short
+# grace lets sibling authoritative result commits finish before shared daily
+# and ROI aggregate rows are updated.
+_SYNC_DERIVED_WORK_GRACE_SECONDS = 0.025
 
 
 class WorkflowExecutionConsumer(BaseConsumer):
@@ -192,8 +200,6 @@ class WorkflowExecutionConsumer(BaseConsumer):
         DB sessions are short-lived — Redis and pub/sub happen outside sessions.
         """
         from src.core.database import get_session_factory
-        from src.models.enums import ExecutionStatus
-        from src.repositories.executions import update_execution
 
         completion_started = time.perf_counter()
         workflow_result = result.get("result")
@@ -298,6 +304,9 @@ class WorkflowExecutionConsumer(BaseConsumer):
             )
         result_ready_ms = (time.perf_counter() - completion_started) * 1000
 
+        if is_sync:
+            await asyncio.sleep(_SYNC_DERIVED_WORK_GRACE_SECONDS)
+
         metrics_data = result.get("metrics") or {}
         await self._record_completion_metrics(
             workflow_id=workflow_id,
@@ -381,8 +390,6 @@ class WorkflowExecutionConsumer(BaseConsumer):
         DB sessions are short-lived — Redis and pub/sub happen outside sessions.
         """
         from src.core.database import get_session_factory
-        from src.models.enums import ExecutionStatus
-        from src.repositories.executions import update_execution
 
         error = result.get("error", "Unknown error")
         error_type = result.get("error_type", "ExecutionError")
@@ -472,6 +479,8 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 duration_ms=duration_ms,
             )
 
+            await asyncio.sleep(_SYNC_DERIVED_WORK_GRACE_SECONDS)
+
         await self._record_completion_metrics(
             workflow_id=workflow_id,
             org_id=org_id,
@@ -537,7 +546,6 @@ class WorkflowExecutionConsumer(BaseConsumer):
 
     async def process_message(self, message_data: dict[str, Any]) -> None:
         """Process a workflow execution message."""
-        from src.core.database import get_db_context
         from src.services.execution.queue_tracker import remove_from_queue
 
         dispatch_started = time.perf_counter()
@@ -549,6 +557,7 @@ class WorkflowExecutionConsumer(BaseConsumer):
         execution_record_exists = bool(
             message_data.get("execution_record_exists", False)
         )
+        dispatch_metadata = message_data.get("dispatch_metadata")
         file_path: str | None = None  # Will be set from workflow metadata lookup
         start_time = datetime.now(timezone.utc)
 
@@ -600,12 +609,6 @@ class WorkflowExecutionConsumer(BaseConsumer):
                     "org_id": org_id,
                     "execution_model": "process",
                 },
-            )
-
-            from src.models.enums import ExecutionStatus
-            from src.repositories.executions import (
-                create_execution,
-                update_execution,
             )
 
             # Check if execution was cancelled in Redis before we started
@@ -666,10 +669,18 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 from src.services.execution.service import get_workflow_for_execution, WorkflowNotFoundError
 
                 try:
-                    # Get workflow metadata (no code — worker loads via Redis→S3)
-                    # Brief DB session for metadata read
-                    async with get_db_context() as db:
-                        workflow_data = await get_workflow_for_execution(workflow_id, db=db)
+                    if dispatch_metadata is None:
+                        # Non-HTTP producers may only carry an ID. Preserve the
+                        # hardened active-Solution lookup for those paths.
+                        async with get_db_context() as db:
+                            workflow_data = await get_workflow_for_execution(
+                                workflow_id,
+                                db=db,
+                            )
+                    else:
+                        # The HTTP route already performed this same hardened
+                        # lookup after authorization and before enqueueing.
+                        workflow_data = dispatch_metadata
                     workflow_name = workflow_data["name"]
                     workflow_function_name = workflow_data["function_name"]
                     file_path = workflow_data["path"]  # Used for __file__ injection and Redis/S3 loading
@@ -812,10 +823,11 @@ class WorkflowExecutionConsumer(BaseConsumer):
                     }
 
             # Mint engine token parent-side (consumer holds SECRET_KEY legitimately).
-            # The child receives the token via context_data and writes it to the
-            # credentials file directly — no SECRET_KEY needed in the child.
+            # The child receives it through context_data and installs it only in
+            # its one-shot process environment — no SECRET_KEY or persistent
+            # credential write is needed in the child.
             from src.core.security import mint_engine_token
-            engine_token, engine_token_expires_at = mint_engine_token()
+            engine_token, _ = mint_engine_token()
 
             # Build context for worker process
             context_data = {
@@ -848,10 +860,9 @@ class WorkflowExecutionConsumer(BaseConsumer):
                 "event": event_data,  # EventContext dict (None if not event-triggered)
                 "solution_id": solution_id,  # Install id if solution-managed (else None)
                 "solution_global_repo_access": solution_global_repo_access,
-                # Pre-minted engine token: child writes directly to credentials file,
-                # no SECRET_KEY required in child env.
+                # Pre-minted engine token: child uses process-scoped SDK
+                # credentials, with no SECRET_KEY in its environment.
                 "engine_token": engine_token,
-                "engine_token_expires_at": engine_token_expires_at,
             }
 
             # Route to process pool
@@ -895,9 +906,6 @@ class WorkflowExecutionConsumer(BaseConsumer):
             completed_at = datetime.now(timezone.utc)
             error_msg = str(e)
             error_type = type(e).__name__
-
-            from src.models.enums import ExecutionStatus
-            from src.repositories.executions import update_execution
 
             await update_execution(
                 execution_id=execution_id,
