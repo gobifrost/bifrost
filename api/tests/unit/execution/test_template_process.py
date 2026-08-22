@@ -194,8 +194,13 @@ class TestTemplateProcessFork:
 
             # A malformed context is sufficient to verify that the complete
             # work item crosses the private pipe and a structured failure comes
-            # back. Full successful execution coverage lives in E2E.
-            work_queue.put(("test-exec-id", {}))
+            # back. Include the one-shot token every queued production item
+            # carries so this test cannot activate the legacy direct-engine
+            # credential-persistence path in the shared test filesystem.
+            work_queue.put((
+                "test-exec-id",
+                {"engine_token": "one-shot-test-token"},
+            ))
 
             result = result_queue.get(timeout=5.0)
             assert result["execution_id"] == "test-exec-id"

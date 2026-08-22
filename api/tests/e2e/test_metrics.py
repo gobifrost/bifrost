@@ -20,6 +20,8 @@ from src.models.enums import ExecutionStatus
 from src.core.metrics import _upsert_daily_metrics
 from src.core.database import get_session_factory
 
+METRICS_TEST_DATE = date(2000, 1, 1)
+
 
 @pytest_asyncio.fixture
 async def test_organization(db_session: AsyncSession) -> Organization:
@@ -39,7 +41,7 @@ async def test_organization(db_session: AsyncSession) -> Organization:
 @pytest_asyncio.fixture
 async def clean_metrics(db_session: AsyncSession):
     """Clean up metrics table before and after test."""
-    today = date.today()
+    today = METRICS_TEST_DATE
     # Clean before test
     await db_session.execute(
         delete(ExecutionMetricsDaily).where(ExecutionMetricsDaily.date == today)
@@ -71,7 +73,7 @@ class TestDailyMetricsUpsert:
             db_session.bind.sync_engine.url
         )
 
-        today = date.today()
+        today = METRICS_TEST_DATE
 
         # First update - success
         await _upsert_daily_metrics(
@@ -152,7 +154,7 @@ class TestDailyMetricsUpsert:
         Multiple updates for an org on the same day should result in
         exactly one row with accumulated values.
         """
-        today = date.today()
+        today = METRICS_TEST_DATE
 
         # First update
         await _upsert_daily_metrics(
@@ -217,7 +219,7 @@ class TestDailyMetricsUpsert:
         """
         Org-specific and global metrics should be tracked separately.
         """
-        today = date.today()
+        today = METRICS_TEST_DATE
 
         # Update org-specific metrics
         await _upsert_daily_metrics(
@@ -275,7 +277,7 @@ class TestDailyMetricsUpsert:
         """
         Average duration should be calculated as total_duration_ms / execution_count.
         """
-        today = date.today()
+        today = METRICS_TEST_DATE
 
         # Three updates with different durations
         await _upsert_daily_metrics(
@@ -334,7 +336,7 @@ class TestDailyMetricsUpsert:
         self, db_session: AsyncSession, clean_metrics
     ):
         """Concurrent completions atomically update the shared global row."""
-        today = date.today()
+        today = METRICS_TEST_DATE
         durations = [101, 202, 303, 404]
         session_factory = get_session_factory()
 
