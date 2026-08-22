@@ -15,7 +15,6 @@ from pydantic_ai.usage import RequestUsage
 from src.models.contracts.agents import ToolResult
 from src.models.contracts.artifacts import ModelCapabilities
 from src.services.agent_executor import AgentExecutor
-from src.services.agent_runtime.budgets import RequireFirstTool
 from src.services.llm import LLMMessage, ToolDefinition
 from src.services.llm.base import LLMConfig
 from src.services.llm.pydantic_client import PydanticAIClient
@@ -206,7 +205,6 @@ async def test_unknown_capabilities_still_offer_agent_tools(
     class FakePydanticAgent:
         def __init__(self, model, **kwargs):
             captured["toolsets"] = kwargs["toolsets"]
-            captured["capabilities"] = kwargs["capabilities"]
 
         def run_stream_events(self, *args, **kwargs):
             return FakeRunStreamEvents()
@@ -226,7 +224,6 @@ async def test_unknown_capabilities_still_offer_agent_tools(
     agent.max_iterations = None
     agent.max_token_budget = None
     agent.llm_max_tokens = None
-    agent.knowledge_sources = ["docs"]
 
     executor._save_message = AsyncMock(side_effect=_saved_message)
     executor._record_ai_usage = AsyncMock()
@@ -242,12 +239,7 @@ async def test_unknown_capabilities_still_offer_agent_tools(
                 name="wf_test",
                 description="Test",
                 parameters={"type": "object"},
-            ),
-            ToolDefinition(
-                name="search_knowledge",
-                description="Search knowledge",
-                parameters={"type": "object"},
-            ),
+            )
         ]
     )
 
@@ -287,13 +279,6 @@ async def test_unknown_capabilities_still_offer_agent_tools(
     toolsets = captured["toolsets"]
     assert len(toolsets) == 1
     assert toolsets[0]._definitions[0].name == "wf_test"
-    assert toolsets[0]._definitions[1].name == "search_knowledge"
-    required = next(
-        capability
-        for capability in captured["capabilities"]
-        if isinstance(capability, RequireFirstTool)
-    )
-    assert required.tool_name == "search_knowledge"
 
 
 @pytest.mark.asyncio

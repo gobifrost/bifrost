@@ -15,7 +15,6 @@ from pydantic_ai.usage import RunUsage
 from src.services.agent_runtime.budgets import (
     AgentRunBudget,
     BudgetWindDown,
-    RequireFirstTool,
 )
 
 
@@ -102,30 +101,3 @@ async def test_wind_down_uses_fallback_when_provider_returns_only_a_tool_call() 
     assert "configured run budget" in result.parts[0].content
     assert "Not completed: Update Ticket." in result.parts[0].content
     assert result.finish_reason == "stop"
-
-
-def test_required_first_tool_is_limited_to_the_first_model_request() -> None:
-    capability = RequireFirstTool(
-        "search_knowledge",
-        AgentRunBudget(max_requests=6),
-    )
-    settings = capability.get_model_settings()
-
-    assert settings(MagicMock(usage=RunUsage(requests=0))) == {
-        "tool_choice": ["search_knowledge"]
-    }
-    assert settings(MagicMock(usage=RunUsage(requests=1))) == {
-        "tool_choice": "auto"
-    }
-
-
-def test_required_first_tool_does_not_override_budget_wind_down() -> None:
-    capability = RequireFirstTool(
-        "search_knowledge",
-        AgentRunBudget(max_requests=0),
-    )
-    settings = capability.get_model_settings()
-
-    assert settings(MagicMock(usage=RunUsage(requests=0))) == {
-        "tool_choice": "auto"
-    }
