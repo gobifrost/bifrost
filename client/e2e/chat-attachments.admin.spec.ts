@@ -72,6 +72,7 @@ test.describe("Chat attachments and model tiers", () => {
 		);
 
 		let resolveChat!: (payload: Record<string, unknown>) => void;
+		let finishChat!: () => void;
 		const chatPayload = new Promise<Record<string, unknown>>((resolve) => {
 			resolveChat = resolve;
 		});
@@ -179,7 +180,7 @@ test.describe("Chat attachments and model tiers", () => {
 							}),
 						);
 					}, 1_800);
-					setTimeout(() => {
+					finishChat = () => {
 						socket.send(
 							JSON.stringify({
 								type: "done",
@@ -188,7 +189,7 @@ test.describe("Chat attachments and model tiers", () => {
 								duration_ms: 1_240,
 							}),
 						);
-					}, 2_300);
+					};
 				}
 				if (payload.type === "ping")
 					socket.send(JSON.stringify({ type: "pong" }));
@@ -255,6 +256,7 @@ test.describe("Chat attachments and model tiers", () => {
 		expect(payload.message).toBe("Summarize this file");
 		expect(payload.model_tier).toBe("pro");
 		expect(payload.attachment_ids).toEqual([expect.any(String)]);
+		finishChat();
 
 		await expect(
 			page.getByRole("button", { name: "Download notes.txt" }),
