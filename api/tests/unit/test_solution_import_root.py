@@ -61,21 +61,3 @@ def test_clear_restores_repo_only() -> None:
     mcs.clear_solution_context()
     assert mcs.get_solution_context() is None
     assert mcs._candidate_storage_paths("a.py") == ["a.py"]
-
-
-def test_index_prefixes_track_the_same_rule() -> None:
-    """Namespace-package detection scans the index with the same rooted-first,
-    fallback-only-when-global rule (so `from modules.x import y` works inside a
-    solution but a bare _repo/ namespace stays blocked when global is off)."""
-    # No context → bare prefix only.
-    assert mcs.candidate_index_prefixes("modules") == ["modules/"]
-
-    sid = uuid.uuid4()
-    mcs.set_solution_context(sid, global_repo_access=False)
-    assert mcs.candidate_index_prefixes("modules") == [f"_solutions/{sid}/modules/"]
-
-    mcs.set_solution_context(sid, global_repo_access=True)
-    assert mcs.candidate_index_prefixes("modules") == [
-        f"_solutions/{sid}/modules/",
-        "modules/",
-    ]

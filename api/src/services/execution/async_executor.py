@@ -47,6 +47,7 @@ async def _publish_pending(
     is_platform_admin: bool,
     file_path: str | None,
     event: dict[str, Any] | None = None,
+    execution_record_exists: bool = False,
 ) -> None:
     """
     Write a pending-execution blob to Redis, register with the queue tracker,
@@ -77,14 +78,18 @@ async def _publish_pending(
         event=event,
     )
 
-    # Add to queue tracking (publishes position updates to all queued executions)
-    await add_to_queue(execution_id)
+    # Sync callers wait on their private result list and cannot consume queue
+    # position events. RabbitMQ and the worker pool still provide admission and
+    # resource protection; avoid the extra sorted-set write and N broadcasts.
+    if not sync:
+        await add_to_queue(execution_id)
 
     # Prepare queue message (minimal - worker reads full context from Redis)
     message: dict[str, Any] = {
         "execution_id": execution_id,
         "workflow_id": workflow_id,
         "sync": sync,
+        "execution_record_exists": execution_record_exists,
     }
 
     # Include file_path for fast direct loading (avoids filesystem scan)

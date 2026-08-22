@@ -228,6 +228,17 @@ class RepoStorage:
         except Exception:
             return False
 
+    async def prefix_exists(self, prefix: str) -> bool:
+        """Check if any object exists under a _repo/ prefix."""
+        async with self._get_client() as client:
+            key_prefix = self._repo_key(prefix.rstrip("/") + "/")
+            response = await client.list_objects_v2(
+                Bucket=self._bucket,
+                Prefix=key_prefix,
+                MaxKeys=1,
+            )
+            return response.get("KeyCount", 0) > 0 or bool(response.get("Contents"))
+
     @staticmethod
     def compute_hash(content: bytes) -> str:
         """Compute SHA-256 hash of content."""

@@ -19,7 +19,12 @@ import pytest
 pytestmark = pytest.mark.e2e
 
 
-def _fake_solution_module(name: str, rel_path: str, content_hash: str):
+def _fake_solution_module(
+    name: str,
+    rel_path: str,
+    content_hash: str,
+    storage_path: str,
+):
     """A module object as VirtualModuleLoader ACTUALLY creates it: __file__ is the
     BARE relative path (e.g. 'modules/foo.py'), NOT a _solutions/{id}/-rooted one.
     (An earlier version of this fixture used a fictional _solutions/-rooted
@@ -31,6 +36,7 @@ def _fake_solution_module(name: str, rel_path: str, content_hash: str):
     m = types.ModuleType(name)
     m.__file__ = rel_path
     m.__content_hash__ = content_hash  # type: ignore[attr-defined]  # dynamic attr the loader sets
+    m.__storage_path__ = storage_path  # type: ignore[attr-defined]
     # A minimal loader instance of the right type (only isinstance is checked).
     m.__loader__ = VirtualModuleLoader.__new__(VirtualModuleLoader)
     return m
@@ -50,14 +56,21 @@ def test_switching_solution_evicts_other_solutions_module(_clean_sys_modules, mo
 
     sid_b = str(uuid.uuid4())
 
-    # Solution A imported modules.foo (bare __file__, as the loader produces).
-    sys.modules["modules.foo"] = _fake_solution_module("modules.foo", "modules/foo.py", "hashA")
-
-    # The module index is _repo/-keyed and doesn't know solution module paths, so
-    # name_to_path can't map modules.foo → the eviction's "can't map a name to a
-    # file path → clear to be safe" branch fires. THIS is the real isolation
-    # mechanism (not the removed _solutions/-prefix block). Stub an empty index.
-    monkeypatch.setattr(mcs, "get_module_index_sync", lambda: [])
+    sid_a = str(uuid.uuid4())
+    sys.modules["modules.foo"] = _fake_solution_module(
+        "modules.foo",
+        "modules/foo.py",
+        "same-hash",
+        f"_solutions/{sid_a}/modules/foo.py",
+    )
+    monkeypatch.setattr(
+        mcs,
+        "get_module_sync",
+        lambda _p: {
+            "hash": "same-hash",
+            "storage_path": f"_solutions/{sid_b}/modules/foo.py",
+        },
+    )
 
     # Now Solution B is the active execution.
     mcs.set_solution_context(sid_b, global_repo_access=False)
@@ -77,13 +90,18 @@ def test_same_solution_keeps_its_module(_clean_sys_modules, monkeypatch):
     import src.services.execution.simple_worker as sw
 
     sid = str(uuid.uuid4())
-    sys.modules["modules.foo"] = _fake_solution_module("modules.foo", "modules/foo.py", "hashA")
-    # Index maps the name to its path AND the cached hash MATCHES → the
-    # content-change sweep KEEPS it (unchanged content isn't re-exec'd). This is
-    # the perf path: a module the index knows and whose content is unchanged
-    # survives, so the next import is a no-op.
-    monkeypatch.setattr(mcs, "get_module_index_sync", lambda: ["modules/foo.py"])
-    monkeypatch.setattr(mcs, "get_module_sync", lambda _p: {"hash": "hashA"})
+    storage_path = f"_solutions/{sid}/modules/foo.py"
+    sys.modules["modules.foo"] = _fake_solution_module(
+        "modules.foo",
+        "modules/foo.py",
+        "hashA",
+        storage_path,
+    )
+    monkeypatch.setattr(
+        mcs,
+        "get_module_sync",
+        lambda _p: {"hash": "hashA", "storage_path": storage_path},
+    )
 
     mcs.set_solution_context(sid, global_repo_access=False)
     try:

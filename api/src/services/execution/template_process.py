@@ -78,6 +78,10 @@ class _RecvQueue:
         """Receive an item without blocking."""
         return self.get(block=False)
 
+    def fileno(self) -> int:
+        """Return the result pipe descriptor for event-loop readiness watches."""
+        return self._conn.fileno()
+
     def close(self) -> None:
         try:
             self._conn.close()
@@ -142,6 +146,11 @@ def _template_main(
             import httpx  # noqa: F401
         except ImportError:
             logger.warning("httpx not available — skipping preload")
+
+        try:
+            import requests  # noqa: F401
+        except ImportError:
+            logger.warning("requests not available — skipping preload")
 
         try:
             import pydantic  # noqa: F401
@@ -386,8 +395,6 @@ def _run_forked_child(
         worker_id: Identifier for logging.
         persistent: If True, loop for multiple executions. If False, run once.
     """
-    import gc
-
     # Reconfigure logging for this child
     logging.basicConfig(
         level=logging.INFO,
@@ -451,10 +458,10 @@ def _run_forked_child(
                 # bifrost._logging may not be importable; counter cleanup is best-effort
                 logger.debug(f"clear_sequence_counter failed for {execution_id}: {e}")
 
-            # Force GC before measuring RSS
-            gc.collect()
-
-            # Report current RSS
+            # Report current RSS without a full collection. This child is
+            # one-shot and exits immediately after sending the result, so a
+            # stop-the-world collection adds response latency but cannot
+            # reclaim memory for reuse.
             try:
                 from src.services.execution.simple_worker import _get_process_rss
                 process_rss = _get_process_rss()

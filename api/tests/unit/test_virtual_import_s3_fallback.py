@@ -1,9 +1,11 @@
 """Tests for virtual import S3 fallback."""
 import json
 import logging
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
+
+from src.core.module_cache_sync import ModuleResolution
 
 
 def test_s3_fallback_on_redis_miss():
@@ -69,104 +71,195 @@ def test_s3_miss_returns_none():
         assert result is None
 
 
-class TestModuleIndexS3Fallback:
-    """Tests for get_module_index_sync S3 fallback when Redis index is empty."""
+def test_targeted_resolution_is_cached_per_execution_and_skips_index_endpoint():
+    from src.core import module_cache_sync as mcs
 
-    def test_empty_redis_index_falls_back_to_s3(self):
-        """When Redis index is empty, should list S3 and return paths."""
-        from src.core.module_cache_sync import get_module_index_sync
-        from src.core.module_cache import MODULE_INDEX_KEY
+    calls: list[str] = []
 
-        s3_paths = {
-            "features/spotify_journal/services/spotify_api.py",
-            "features/spotify_journal/__init__.py",
-        }
+    def fake_resolve(name: str):
+        calls.append(name)
+        return mcs.ModuleResolution(kind="not_found", path=name.replace(".", "/"))
 
-        with patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory, \
-             patch("src.core.module_cache_sync._list_s3_modules", return_value=s3_paths) as mock_list:
+    mcs.clear_solution_context()
+    try:
+        with (
+            patch("src.core.module_cache_sync._get_cached_module_resolution", return_value=None),
+            patch("src.core.module_cache_sync._get_exact_scoped_module", return_value=None),
+            patch("src.core.module_cache_sync._fetch_module_resolution_from_api", side_effect=fake_resolve),
+        ):
+            assert mcs.resolve_module_sync("missing.shared").kind == "not_found"
+            assert mcs.resolve_module_sync("missing.shared").kind == "not_found"
+            assert mcs.resolve_module_sync("missing.other").kind == "not_found"
 
-            mock_redis = MagicMock()
-            mock_redis.smembers.return_value = set()  # Redis index empty
-            mock_redis_factory.return_value = mock_redis
+        assert calls == ["missing.shared", "missing.other"]
+    finally:
+        mcs.clear_solution_context()
 
-            result = get_module_index_sync()
 
-            mock_list.assert_called_once()
-            assert result == s3_paths
-            # Should have repopulated Redis
-            mock_redis.sadd.assert_called_once()
-            assert mock_redis.sadd.call_args[0][0] == MODULE_INDEX_KEY
+def test_targeted_resolution_threads_solution_scope_params():
+    from src.core import module_cache_sync as mcs
 
-    def test_populated_redis_index_skips_s3(self):
-        """When Redis index has entries, should not touch S3."""
-        from src.core.module_cache_sync import get_module_index_sync
+    response = MagicMock()
+    response.status_code = 200
+    response.json.return_value = {
+        "kind": "module",
+        "path": "modules/helpers.py",
+        "storage_path": "_solutions/sol-1/modules/helpers.py",
+        "content": "VALUE = 1",
+        "hash": "abc",
+    }
+    client = MagicMock()
+    client.get.return_value = response
 
-        with patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory, \
-             patch("src.core.module_cache_sync._list_s3_modules") as mock_list:
-
-            mock_redis = MagicMock()
-            mock_redis.smembers.return_value = {"features/spotify_journal/services/spotify_api.py"}
-            mock_redis_factory.return_value = mock_redis
-
-            result = get_module_index_sync()
-
-            mock_list.assert_not_called()
-            assert "features/spotify_journal/services/spotify_api.py" in result
-
-    def test_empty_redis_and_empty_s3_returns_empty_set(self):
-        """When both Redis and S3 are empty, should return empty set."""
-        from src.core.module_cache_sync import get_module_index_sync
-
-        with patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory, \
-             patch("src.core.module_cache_sync._list_s3_modules", return_value=set()):
-
-            mock_redis = MagicMock()
-            mock_redis.smembers.return_value = set()
-            mock_redis_factory.return_value = mock_redis
-
-            result = get_module_index_sync()
-
-            assert result == set()
-            # Should not try to sadd empty set
-            mock_redis.sadd.assert_not_called()
-
-    def test_api_index_fetch_sends_solution_id_param(self):
-        """Solution-scoped child index fetches ask the server for that install."""
-        from src.core.module_cache_sync import _fetch_module_index_from_api
-
-        response = MagicMock()
-        response.status_code = 200
-        response.json.return_value = {"paths": ["_solutions/sol-1/modules/helpers.py"]}
-
+    mcs.set_solution_context("sol-1", global_repo_access=True)
+    try:
         with (
             patch("src.core.module_cache_sync._get_engine_credentials", return_value=("http://api", "token")),
-            patch("httpx.get", return_value=response) as mock_get,
+            patch("src.core.module_cache_sync._get_cached_module_resolution", return_value=None),
+            patch("src.core.module_cache_sync._get_exact_scoped_module", return_value=None),
+            patch("httpx.Client", return_value=client) as client_cls,
         ):
-            result = _fetch_module_index_from_api(solution_id="sol-1")
+            result = mcs.resolve_module_sync("modules.helpers")
+            result_again = mcs.resolve_module_sync("modules.helpers")
 
-        assert result == {"_solutions/sol-1/modules/helpers.py"}
-        mock_get.assert_called_once_with(
-            "http://api/api/sdk/modules-index",
+        assert result.kind == "module"
+        assert result_again is result
+        assert result.content == "VALUE = 1"
+        client_cls.assert_called_once_with(timeout=10.0)
+        client.get.assert_called_once_with(
+            "http://api/api/sdk/modules-resolve",
             headers={"Authorization": "Bearer token"},
-            params={"solution_id": "sol-1"},
-            timeout=10.0,
+            params={
+                "name": "modules.helpers",
+                "solution_id": "sol-1",
+                "global_repo_access": True,
+            },
         )
+    finally:
+        mcs.clear_solution_context()
 
-    def test_namespace_package_resolves_via_s3_index_fallback(self):
-        """Integration: namespace package lookup succeeds when Redis index is cold but S3 has modules."""
+
+def test_targeted_resolution_hydrates_resolver_metadata_from_redis_without_http():
+    from src.core import module_cache_sync as mcs
+
+    redis_client = MagicMock()
+    redis_client.get.side_effect = [
+        json.dumps(
+            {
+                "kind": "module",
+                "path": "modules/tickets.py",
+                "storage_path": "_solutions/sol-1/modules/tickets.py",
+            }
+        ),
+        json.dumps(
+            {
+                "content": "VALUE = 42",
+                "path": "_solutions/sol-1/modules/tickets.py",
+                "hash": "abc",
+            }
+        ),
+    ]
+    mcs.set_solution_context("sol-1", global_repo_access=True)
+    try:
+        with (
+            patch("src.core.module_cache_sync._get_sync_redis", return_value=redis_client),
+            patch("src.core.module_cache_sync._fetch_module_resolution_from_api") as api,
+        ):
+            result = mcs.resolve_module_sync("modules.tickets")
+
+        assert result == mcs.ModuleResolution(
+            kind="module",
+            path="modules/tickets.py",
+            content="VALUE = 42",
+            hash="abc",
+            storage_path="_solutions/sol-1/modules/tickets.py",
+        )
+        api.assert_not_called()
+    finally:
+        mcs.clear_solution_context()
+
+
+def test_targeted_resolution_reads_exact_workspace_module_without_http():
+    from src.core import module_cache_sync as mcs
+
+    redis_client = MagicMock()
+    redis_client.get.side_effect = [
+        None,
+        json.dumps(
+            {
+                "content": "VALUE = 7",
+                "path": "modules/tickets.py",
+                "hash": "def",
+            }
+        ),
+    ]
+    mcs.clear_solution_context()
+    try:
+        with (
+            patch("src.core.module_cache_sync._get_sync_redis", return_value=redis_client),
+            patch("src.core.module_cache_sync._fetch_module_resolution_from_api") as api,
+        ):
+            result = mcs.resolve_module_sync("modules.tickets")
+
+        assert result.kind == "module"
+        assert result.content == "VALUE = 7"
+        assert result.storage_path == "modules/tickets.py"
+        api.assert_not_called()
+    finally:
+        mcs.clear_solution_context()
+
+
+def test_solution_global_fallback_uses_api_when_primary_scope_has_no_exact_match():
+    """The child must not let a global module bypass a Solution namespace."""
+    from src.core import module_cache_sync as mcs
+
+    redis_client = MagicMock()
+    redis_client.get.return_value = None
+    api_result = mcs.ModuleResolution(
+        kind="namespace",
+        path="modules",
+    )
+    mcs.set_solution_context("sol-1", global_repo_access=True)
+    try:
+        with (
+            patch("src.core.module_cache_sync._get_sync_redis", return_value=redis_client),
+            patch(
+                "src.core.module_cache_sync._fetch_module_resolution_from_api",
+                return_value=api_result,
+            ) as api,
+        ):
+            result = mcs.resolve_module_sync("modules")
+
+        assert result is api_result
+        api.assert_called_once_with("modules")
+        assert redis_client.get.call_args_list == [
+            # Resolver metadata, then Solution module and package candidates.
+            call("bifrost:module:resolution:sol-1:1:modules"),
+            call("bifrost:module:_solutions/sol-1/modules.py"),
+            call("bifrost:module:_solutions/sol-1/modules/__init__.py"),
+        ]
+    finally:
+        mcs.clear_solution_context()
+
+
+class TestTargetedResolver:
+    """Tests for targeted resolver import behavior."""
+
+    def test_namespace_package_resolves_via_targeted_s3_prefix_fallback(self):
+        """Namespace package lookup uses bounded prefix detection, not module index."""
         from src.services.execution.virtual_import import VirtualModuleFinder
 
         finder = VirtualModuleFinder()
 
-        s3_paths = {"features/spotify_journal/services/spotify_api.py"}
-
-        def mock_get_module(path: str):
-            if path == "features/spotify_journal/services/spotify_api.py":
-                return {"content": "API = True", "path": path, "hash": "abc"}
-            return None
-
-        with patch("src.services.execution.virtual_import.get_module_sync", side_effect=mock_get_module), \
-             patch("src.services.execution.virtual_import.get_module_index_sync", return_value=s3_paths):
+        with (
+            patch(
+                "src.services.execution.virtual_import.resolve_module_sync",
+                return_value=ModuleResolution(
+                    kind="namespace",
+                    path="features",
+                ),
+            ) as mock_resolve,
+        ):
 
             # "features" should be recognized as a namespace package
             spec = finder.find_spec("features")
@@ -174,27 +267,7 @@ class TestModuleIndexS3Fallback:
             assert spec is not None
             assert spec.origin is None  # namespace package
             assert spec.submodule_search_locations == ["features"]
-
-    def test_solution_submodule_detection_uses_api_index_when_s3_scrubbed(self):
-        """Solution namespace detection should not require direct S3 credentials."""
-        from src.core import module_cache_sync as mcs
-
-        solution_id = "12345678-1234-5678-1234-567812345678"
-        api_paths = {f"_solutions/{solution_id}/modules/helpers.py"}
-
-        mcs.set_solution_context(solution_id, global_repo_access=False)
-        try:
-            with (
-                patch("src.core.module_cache_sync._fetch_module_index_from_api", return_value=api_paths) as mock_api_index,
-                patch("src.core.module_cache_sync._get_s3_client") as mock_s3_client,
-                patch.dict("os.environ", {}, clear=True),
-            ):
-                assert mcs.solution_has_submodules("modules") is True
-
-            mock_api_index.assert_called_once_with(solution_id=solution_id)
-            mock_s3_client.assert_not_called()
-        finally:
-            mcs.clear_solution_context()
+            mock_resolve.assert_called_once_with("features")
 
 
 class TestS3ClientCaching:

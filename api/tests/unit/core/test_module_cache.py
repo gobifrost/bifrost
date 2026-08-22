@@ -187,31 +187,6 @@ class TestModuleCacheAsync:
             mock_client.delete.assert_called_once_with("bifrost:module:shared/test.py")
             mock_redis.srem.assert_called_once_with("bifrost:module:index", "shared/test.py")
 
-    async def test_get_all_module_paths(self, mock_redis_client):
-        """Test getting all cached module paths."""
-        mock_client, mock_redis = mock_redis_client
-        mock_redis.smembers.return_value = {"shared/a.py", "shared/b.py", "modules/c.py"}
-
-        with patch("src.core.module_cache.get_redis_client", return_value=mock_client):
-            from src.core.module_cache import get_all_module_paths
-
-            result = await get_all_module_paths()
-
-            assert result == {"shared/a.py", "shared/b.py", "modules/c.py"}
-            mock_redis.smembers.assert_called_once_with("bifrost:module:index")
-
-    async def test_get_all_module_paths_empty(self, mock_redis_client):
-        """Test getting module paths when cache is empty."""
-        mock_client, mock_redis = mock_redis_client
-        mock_redis.smembers.return_value = set()
-
-        with patch("src.core.module_cache.get_redis_client", return_value=mock_client):
-            from src.core.module_cache import get_all_module_paths
-
-            result = await get_all_module_paths()
-
-            assert result == set()
-
     async def test_clear_module_cache(self, mock_redis_client):
         """Test clearing all modules from cache."""
         mock_client, mock_redis = mock_redis_client
@@ -287,48 +262,6 @@ class TestModuleCacheSync:
 
             assert result is None
 
-    def test_get_module_index_sync(self, mock_sync_redis):
-        """Test getting module index synchronously."""
-        mock_sync_redis.smembers.return_value = {"shared/a.py", "modules/b.py"}
-
-        with patch("src.core.module_cache_sync._get_sync_redis", return_value=mock_sync_redis):
-            from src.core.module_cache_sync import get_module_index_sync
-
-            result = get_module_index_sync()
-
-            assert result == {"shared/a.py", "modules/b.py"}
-            mock_sync_redis.smembers.assert_called_once_with("bifrost:module:index")
-
-    def test_get_module_index_sync_empty(self, mock_sync_redis):
-        """Test getting empty module index.
-
-        When Redis returns an empty set, the function falls back to listing S3.
-        Patch the S3 helper to return empty too, otherwise this test would hit
-        the real S3 client (populated by other tests in the shared test stack).
-        """
-        mock_sync_redis.smembers.return_value = set()
-
-        with patch("src.core.module_cache_sync._get_sync_redis", return_value=mock_sync_redis), \
-             patch("src.core.module_cache_sync._list_s3_modules", return_value=set()):
-            from src.core.module_cache_sync import get_module_index_sync
-
-            result = get_module_index_sync()
-
-            assert result == set()
-
-    def test_get_module_index_sync_handles_redis_error(self, mock_sync_redis):
-        """Test that Redis errors return empty set."""
-        import redis
-
-        mock_sync_redis.smembers.side_effect = redis.RedisError("Connection failed")
-
-        with patch("src.core.module_cache_sync._get_sync_redis", return_value=mock_sync_redis):
-            from src.core.module_cache_sync import get_module_index_sync
-
-            result = get_module_index_sync()
-
-            assert result == set()
-
     def test_reset_sync_redis(self):
         """Test resetting the sync Redis client."""
         from src.core.module_cache_sync import reset_sync_redis
@@ -370,6 +303,44 @@ class TestKeyPatterns:
         from src.core.module_cache import MODULE_INDEX_KEY
 
         assert MODULE_INDEX_KEY == "bifrost:module:index"
+
+
+@pytest.mark.asyncio
+async def test_set_module_invalidates_resolution_cache_for_exact_and_ancestors():
+    from src.core.module_cache import set_module
+
+    class FakeRedisConn:
+        async def sadd(self, *_args):
+            return 1
+
+        async def scan_iter(self, pattern):
+            patterns.append(pattern)
+            for key in [f"cached:{pattern}"]:
+                yield key
+
+        async def delete(self, *keys):
+            deleted.extend(keys)
+            return len(keys)
+
+    class FakeRedis:
+        async def setex(self, *_args):
+            return True
+
+        async def _get_redis(self):
+            return FakeRedisConn()
+
+    patterns: list[str] = []
+    deleted: list[str] = []
+
+    with patch("src.core.module_cache.get_redis_client", return_value=FakeRedis()):
+        await set_module("modules/helpers/tool.py", "VALUE = 1", "hash")
+
+    assert patterns == [
+        "bifrost:module:resolution:*:modules",
+        "bifrost:module:resolution:*:modules.helpers",
+        "bifrost:module:resolution:*:modules.helpers.tool",
+    ]
+    assert deleted == [f"cached:{pattern}" for pattern in patterns]
 
     def test_key_patterns_consistent(self):
         """Verify async and sync modules use same key patterns."""

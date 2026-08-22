@@ -395,6 +395,7 @@ async def run_workflow(
         parameters=parameters,
         form_id=form_id,
         sync=sync,
+        timeout_seconds=workflow_metadata.timeout_seconds,
     )
 
 
@@ -437,6 +438,7 @@ async def _enqueue_workflow_async(
     parameters: dict[str, Any],
     form_id: str | None = None,
     sync: bool = False,
+    timeout_seconds: int | None = None,
 ) -> WorkflowExecutionResponse:
     """
     Enqueue workflow for execution via RabbitMQ.
@@ -468,9 +470,10 @@ async def _enqueue_workflow_async(
     # Wait for result via Redis BLPOP — use actual workflow timeout (+ 60s buffer)
     # 0 = no timeout: cap at 86400 (24h) to prevent infinite BLPOP hang
     redis_client = get_redis_client()
-    workflow_meta = await get_workflow_metadata_only(workflow_id)
-    if workflow_meta.timeout_seconds > 0:
-        wait_timeout = workflow_meta.timeout_seconds + 60
+    if timeout_seconds is None:
+        timeout_seconds = (await get_workflow_metadata_only(workflow_id)).timeout_seconds
+    if timeout_seconds > 0:
+        wait_timeout = timeout_seconds + 60
     else:
         wait_timeout = 86400
     result = await redis_client.wait_for_result(execution_id, timeout_seconds=wait_timeout)

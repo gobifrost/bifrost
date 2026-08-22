@@ -22,15 +22,22 @@ import hashlib
 import json
 import logging
 import os
+import sys
 import threading
 from dataclasses import dataclass
 from functools import lru_cache
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import redis
 
-from src.core.module_cache import MODULE_INDEX_KEY, MODULE_KEY_PREFIX, CachedModule
+from src.core.module_cache import (
+    MODULE_INDEX_KEY,
+    MODULE_KEY_PREFIX,
+    MODULE_RESOLUTION_KEY_PREFIX,
+    CachedModule,
+    module_resolution_cache_key,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,21 +69,68 @@ class SolutionContext:
     global_repo_access: bool
 
 
+@dataclass(frozen=True)
+class ModuleResolution:
+    """Targeted resolver result for a logical import name."""
+
+    kind: str
+    path: str
+    content: str | None = None
+    hash: str = ""
+    storage_path: str | None = None
+
+
+class ModuleResolutionError(RuntimeError):
+    """Raised when targeted module resolution cannot reach the API."""
+
+
 def set_solution_context(solution_id: UUID | str, global_repo_access: bool) -> None:
     """Activate the solution import root for the current thread/execution."""
+    _close_http_client()
     _solution_ctx.value = SolutionContext(
         solution_id=str(solution_id), global_repo_access=bool(global_repo_access)
     )
+    _solution_ctx.resolution_cache = {}
 
 
 def clear_solution_context() -> None:
     """Deactivate the solution import root (restore plain _repo/ behavior)."""
+    _close_http_client()
     _solution_ctx.value = None
+    _solution_ctx.resolution_cache = {}
 
 
 def get_solution_context() -> SolutionContext | None:
     """Return the active solution context for this thread, or None."""
     return getattr(_solution_ctx, "value", None)
+
+
+def _get_resolution_cache() -> dict[tuple[str, str | None, bool], ModuleResolution]:
+    cache = getattr(_solution_ctx, "resolution_cache", None)
+    if cache is None:
+        cache = {}
+        _solution_ctx.resolution_cache = cache
+    return cache
+
+
+def _get_http_client() -> Any:
+    client = getattr(_solution_ctx, "http_client", None)
+    if client is None:
+        import httpx
+
+        client = httpx.Client(timeout=10.0)
+        _solution_ctx.http_client = client
+    return client
+
+
+def _close_http_client() -> None:
+    client = getattr(_solution_ctx, "http_client", None)
+    if client is not None:
+        try:
+            client.close()
+        except Exception:
+            pass
+        _solution_ctx.http_client = None
 
 
 def _candidate_storage_paths(path: str) -> list[str]:
@@ -98,28 +152,6 @@ def _candidate_storage_paths(path: str) -> list[str]:
         return [rooted, path]
     return [rooted]
 
-
-def candidate_module_paths(path: str) -> list[str]:
-    """Storage paths that may contain a concrete module file."""
-    return _candidate_storage_paths(path)
-
-
-def candidate_index_prefixes(base_path: str) -> list[str]:
-    """Storage-path prefixes to scan the module index with, for namespace-package
-    (PEP 420) detection of ``base_path`` (e.g. "modules").
-
-    Mirrors :func:`_candidate_storage_paths`: solution-rooted prefix first, with
-    the bare prefix only when global_repo_access is on; bare prefix only when no
-    solution is active. The finder tests ``index_entry.startswith(prefix)``.
-    """
-    base = base_path.rstrip("/")
-    ctx = get_solution_context()
-    if ctx is None:
-        return [f"{base}/"]
-    rooted = f"{SOLUTIONS_ROOT}/{ctx.solution_id}/{base}/"
-    if ctx.global_repo_access:
-        return [rooted, f"{base}/"]
-    return [rooted]
 
 # Cached S3 client — reused across calls to avoid repeated setup
 _s3_client: Any = None
@@ -187,13 +219,10 @@ def _fetch_module_from_api(path: str) -> CachedModule | None:
         return None
 
     try:
-        import httpx
-
         url = f"{api_url}/api/sdk/modules/{path}"
-        resp = httpx.get(
+        resp = _get_http_client().get(
             url,
             headers={"Authorization": f"Bearer {token}"},
-            timeout=10.0,
         )
         if resp.status_code == 404:
             return None
@@ -210,36 +239,184 @@ def _fetch_module_from_api(path: str) -> CachedModule | None:
         return None
 
 
-def _fetch_module_index_from_api(solution_id: str | None = None) -> set[str]:
+def _fetch_module_resolution_from_api(name: str) -> ModuleResolution | None:
     """
-    Fetch the module index via GET /api/sdk/modules-index (synchronous).
+    Resolve one import name via GET /api/sdk/modules-resolve.
 
-    Returns the set of known workspace module paths from the API server,
-    used when the Redis index is cold.  Returns empty set on any error.
+    This is the targeted replacement for fetching the whole module index during
+    child import resolution. The API owns Redis→S3 module lookup and bounded
+    namespace prefix probing; the child memoizes each result for the active
+    execution.
     """
     creds = _get_engine_credentials()
     if not creds:
-        return set()
+        return None
     creds_url, token = creds
     api_url = creds_url or os.environ.get("BIFROST_API_URL", "").rstrip("/")
     if not api_url:
-        return set()
+        return None
+
+    ctx = get_solution_context()
+    params: dict[str, object] = {"name": name}
+    if ctx is not None:
+        params["solution_id"] = ctx.solution_id
+        params["global_repo_access"] = ctx.global_repo_access
 
     try:
-        import httpx
-
-        resp = httpx.get(
-            f"{api_url}/api/sdk/modules-index",
+        resp = _get_http_client().get(
+            f"{api_url}/api/sdk/modules-resolve",
             headers={"Authorization": f"Bearer {token}"},
-            params={"solution_id": solution_id} if solution_id else None,
-            timeout=10.0,
+            params=params,
         )
         if resp.status_code != 200:
-            return set()
-        return set(resp.json().get("paths", []))
+            logger.warning(
+                f"API module-resolve returned {resp.status_code} for {name}"
+            )
+            return None
+
+        data = resp.json()
+        kind = data.get("kind")
+        if kind not in {"module", "package", "namespace", "not_found"}:
+            logger.warning(f"API module-resolve returned invalid kind for {name}")
+            return None
+        return ModuleResolution(
+            kind=kind,
+            path=data.get("path") or name.replace(".", "/"),
+            content=data.get("content"),
+            hash=data.get("hash") or "",
+            storage_path=data.get("storage_path"),
+        )
     except Exception as e:
-        logger.warning(f"API module-index fetch error: {e}")
-        return set()
+        logger.warning(f"API module-resolve error for {name}: {e}")
+        return None
+
+
+def _resolution_redis_key(name: str) -> str:
+    ctx = get_solution_context()
+    cache_key = module_resolution_cache_key(
+        name,
+        solution_id=ctx.solution_id if ctx is not None else None,
+        global_repo_access=ctx.global_repo_access if ctx is not None else False,
+    )
+    return f"{MODULE_RESOLUTION_KEY_PREFIX}{cache_key}"
+
+
+def _module_resolution_from_cached_source(
+    *,
+    kind: str,
+    path: str,
+    storage_path: str,
+    raw_module: str,
+) -> ModuleResolution | None:
+    try:
+        module = json.loads(raw_module)
+        content = module["content"]
+        content_hash = module.get("hash") or ""
+        if not isinstance(content, str) or not isinstance(content_hash, str):
+            return None
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return None
+    return ModuleResolution(
+        kind=kind,
+        path=path,
+        content=content,
+        hash=content_hash,
+        storage_path=storage_path,
+    )
+
+
+def _get_cached_module_resolution(name: str) -> ModuleResolution | None:
+    """Hydrate resolver metadata and source directly from worker-visible Redis."""
+    try:
+        client = _get_sync_redis()
+        raw_resolution = client.get(_resolution_redis_key(name))
+        if not raw_resolution:
+            return None
+        data = json.loads(raw_resolution)
+        kind = data.get("kind")
+        path = data.get("path") or name.replace(".", "/")
+        if kind in {"namespace", "not_found"}:
+            return ModuleResolution(kind=kind, path=path)
+        if kind not in {"module", "package"}:
+            return None
+        storage_path = data.get("storage_path")
+        if not isinstance(storage_path, str):
+            return None
+        raw_module = client.get(f"{MODULE_KEY_PREFIX}{storage_path}")
+        if not raw_module:
+            return None
+        return _module_resolution_from_cached_source(
+            kind=kind,
+            path=path,
+            storage_path=storage_path,
+            raw_module=raw_module,
+        )
+    except (redis.RedisError, json.JSONDecodeError, TypeError) as exc:
+        logger.debug("Cached module resolution unavailable for %s: %s", name, exc)
+        return None
+
+
+def _get_exact_scoped_module(name: str) -> ModuleResolution | None:
+    """Resolve a concrete module in the primary scope without an HTTP hop.
+
+    This intentionally does not probe namespaces or a Solution's optional
+    workspace fallback. Those cases require the API resolver to preserve the
+    rule that a Solution namespace shadows a concrete workspace module.
+    """
+    base_path = name.replace(".", "/")
+    ctx = get_solution_context()
+    scope_prefix = f"{SOLUTIONS_ROOT}/{ctx.solution_id}/" if ctx else ""
+    try:
+        client = _get_sync_redis()
+        for relative_path, kind in (
+            (f"{base_path}.py", "module"),
+            (f"{base_path}/__init__.py", "package"),
+        ):
+            storage_path = f"{scope_prefix}{relative_path}"
+            raw_module = client.get(f"{MODULE_KEY_PREFIX}{storage_path}")
+            if not raw_module:
+                continue
+            return _module_resolution_from_cached_source(
+                kind=kind,
+                path=relative_path,
+                storage_path=storage_path,
+                raw_module=raw_module,
+            )
+    except redis.RedisError as exc:
+        logger.debug("Direct module cache unavailable for %s: %s", name, exc)
+    return None
+
+
+def resolve_module_sync(name: str) -> ModuleResolution:
+    """Resolve one logical import name, cached for the active execution."""
+    top_level = name.split(".", 1)[0]
+    if (
+        top_level in sys.builtin_module_names
+        or top_level in getattr(sys, "stdlib_module_names", set())
+    ):
+        return ModuleResolution(kind="not_found", path=name.replace(".", "/"))
+
+    ctx = get_solution_context()
+    cache_key = (
+        name,
+        ctx.solution_id if ctx is not None else None,
+        ctx.global_repo_access if ctx is not None else False,
+    )
+    cache = _get_resolution_cache()
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    resolution = _get_cached_module_resolution(name)
+    if resolution is None:
+        resolution = _get_exact_scoped_module(name)
+    if resolution is None:
+        resolution = _fetch_module_resolution_from_api(name)
+    if resolution is None:
+        raise ModuleResolutionError(f"Module resolver unavailable for {name}")
+
+    cache[cache_key] = resolution
+    return resolution
 
 
 def _fetch_requirements_from_api() -> str | None:
@@ -259,12 +436,9 @@ def _fetch_requirements_from_api() -> str | None:
         return None
 
     try:
-        import httpx
-
-        resp = httpx.get(
+        resp = _get_http_client().get(
             f"{api_url}/api/sdk/requirements",
             headers={"Authorization": f"Bearer {token}"},
-            timeout=10.0,
         )
         if resp.status_code == 404:
             return None
@@ -397,7 +571,9 @@ def get_module_sync(path: str) -> CachedModule | None:
             key = f"{MODULE_KEY_PREFIX}{storage_path}"
             data = client.get(key)
             if data:
-                return json.loads(data)
+                cached = cast(CachedModule, json.loads(data))
+                cached["storage_path"] = storage_path
+                return cached
 
             # --- Cold-cache fallback 1: API endpoint ---
             api_module = _fetch_module_from_api(storage_path)
@@ -407,6 +583,7 @@ def get_module_sync(path: str) -> CachedModule | None:
                     client.sadd(MODULE_INDEX_KEY, storage_path)
                 except redis.RedisError as e:
                     logger.warning(f"Failed to re-cache API module to Redis: {e}")
+                api_module["storage_path"] = storage_path
                 return api_module
 
             # --- Cold-cache fallback 2: direct S3 (legacy; not needed post-scrub) ---
@@ -424,6 +601,7 @@ def get_module_sync(path: str) -> CachedModule | None:
                 "content": content_str,
                 "path": path,
                 "hash": content_hash,
+                "storage_path": storage_path,
             }
 
             # Cache back to Redis under the storage-path key + index.
@@ -441,122 +619,6 @@ def get_module_sync(path: str) -> CachedModule | None:
     except redis.RedisError as e:
         logger.warning(f"Redis error fetching module {path}: {e}")
         return None
-
-
-def _list_s3_modules() -> set[str]:
-    """
-    List all Python module paths in S3 _repo/ (synchronous).
-
-    Used as a fallback when the Redis module index is empty, which can happen
-    after Redis restarts or cache eviction. Returns paths relative to _repo/
-    (e.g. "features/spotify_journal/services/spotify_api.py").
-    """
-    bucket = os.environ.get("BIFROST_S3_BUCKET")
-    if not bucket:
-        return set()
-
-    client = _get_s3_client()
-    if client is None:
-        return set()
-
-    paths: set[str] = set()
-    try:
-        paginator = client.get_paginator("list_objects_v2")
-        for page in paginator.paginate(Bucket=bucket, Prefix=REPO_PREFIX):
-            for obj in page.get("Contents", []):
-                key: str = obj["Key"]
-                if key.endswith(".py"):
-                    # Strip the _repo/ prefix to get the relative path
-                    paths.add(key[len(REPO_PREFIX):])
-    except Exception as e:
-        logger.warning(f"S3 list error when rebuilding module index: {e}")
-
-    return paths
-
-
-def get_module_index_sync() -> set[str]:
-    """
-    Get all cached module paths (synchronous).
-
-    When the Redis index is empty (cold cache after restart or eviction),
-    falls back via two paths (tried in order):
-    1. API endpoint GET /api/sdk/modules-index — preferred (no S3 env needed)
-    2. Direct S3 listing — legacy fallback when BIFROST_S3_* are present
-
-    On any successful fallback hit, Redis is repopulated so subsequent calls
-    take the fast path.
-    """
-    try:
-        client = _get_sync_redis()
-        paths = client.smembers(MODULE_INDEX_KEY)
-        if paths:
-            return {p if isinstance(p, str) else p.decode() for p in paths}
-
-        # Redis index is empty — try API first
-        logger.debug("Module index empty in Redis, falling back to API listing")
-        ctx = get_solution_context()
-        api_paths = _fetch_module_index_from_api(
-            solution_id=ctx.solution_id if ctx is not None else None
-        )
-        if api_paths:
-            try:
-                client.sadd(MODULE_INDEX_KEY, *api_paths)
-                client.expire(MODULE_INDEX_KEY, MODULE_CACHE_TTL)
-            except redis.RedisError as e:
-                logger.warning(f"Failed to repopulate module index from API: {e}")
-            return api_paths
-
-        # API not available — try direct S3 (legacy path)
-        logger.debug("API index unavailable, falling back to S3 listing")
-        s3_paths = _list_s3_modules()
-        if s3_paths:
-            try:
-                client.sadd(MODULE_INDEX_KEY, *s3_paths)
-                client.expire(MODULE_INDEX_KEY, MODULE_CACHE_TTL)
-            except redis.RedisError as e:
-                logger.warning(f"Failed to repopulate module index in Redis: {e}")
-            return s3_paths
-
-        return set()
-    except redis.RedisError as e:
-        logger.warning(f"Redis error fetching module index: {e}")
-        return set()
-
-
-def solution_has_submodules(base_path: str) -> bool:
-    """True if the active solution has any module under ``{base_path}/``.
-
-    Namespace-package (PEP 420) detection for solution code can't rely on the
-    Redis module index alone: a freshly-deployed module is only indexed once
-    it's first loaded, but it can't load until its parent package resolves as a
-    namespace — a chicken-and-egg. So when a solution is active we check the
-    API-backed module index under ``_solutions/{id}/{base_path}/`` first, then
-    direct S3 as the legacy fallback when the child still has S3 credentials.
-
-    Returns False when no solution is active (the _repo/ index path already handles
-    that case) or neither fallback can prove a submodule exists.
-    """
-    ctx = get_solution_context()
-    if ctx is None:
-        return False
-    prefix = f"{SOLUTIONS_ROOT}/{ctx.solution_id}/{base_path.rstrip('/')}/"
-
-    api_paths = _fetch_module_index_from_api(solution_id=ctx.solution_id)
-    if any(path.startswith(prefix) for path in api_paths):
-        return True
-
-    bucket = os.environ.get("BIFROST_S3_BUCKET")
-    if not bucket:
-        return False
-    client = _get_s3_client()
-    if client is None:
-        return False
-    try:
-        resp = client.list_objects_v2(Bucket=bucket, Prefix=prefix, MaxKeys=1)
-        return resp.get("KeyCount", 0) > 0 or bool(resp.get("Contents"))
-    except Exception as e:
-        logger.debug(f"S3 submodule check failed for {prefix}: {e}")
-        return False
 
 
 def reset_sync_redis() -> None:

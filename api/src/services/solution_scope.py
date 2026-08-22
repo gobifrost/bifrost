@@ -47,8 +47,13 @@ async def get_active_solution(db: AsyncSession, solution_id: UUID) -> Solution |
 
 
 async def solution_allows_global(db: AsyncSession, solution_id: UUID) -> bool:
-    solution = await db.get(Solution, solution_id)
-    return bool(solution and solution.global_repo_access)
+    # Select only the scalar needed at this request boundary. Loading the
+    # Solution ORM also selectin-loads its file locations and connection schema,
+    # turning this boolean check into three queries on every execution.
+    result = await db.execute(
+        select(Solution.global_repo_access).where(Solution.id == solution_id)
+    )
+    return bool(result.scalar_one_or_none())
 
 
 async def solution_declares_file_location(

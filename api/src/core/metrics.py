@@ -9,7 +9,7 @@ import logging
 from datetime import datetime, date, timezone
 from uuid import UUID
 
-from sqlalchemy import select, update, func, text, exists
+from sqlalchemy import Integer, select, func, text, exists
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -164,6 +164,13 @@ async def _upsert_daily_metrics(
 
     # PostgreSQL upsert
     stmt = insert(ExecutionMetricsDaily).values(**insert_values)
+    new_execution_count = ExecutionMetricsDaily.execution_count + 1
+    new_total_duration = (
+        ExecutionMetricsDaily.total_duration_ms + (duration_ms or 0)
+    )
+    new_avg_duration = func.floor(
+        new_total_duration / new_execution_count
+    ).cast(Integer)
 
     # On conflict, increment counters
     # Use different conflict target based on whether this is org-specific or global:
@@ -185,6 +192,7 @@ async def _upsert_daily_metrics(
                 + (1 if is_cancelled else 0),
                 "total_duration_ms": ExecutionMetricsDaily.total_duration_ms
                 + (duration_ms or 0),
+                "avg_duration_ms": new_avg_duration,
                 "max_duration_ms": func.greatest(
                     ExecutionMetricsDaily.max_duration_ms, duration_ms or 0
                 ),
@@ -222,6 +230,7 @@ async def _upsert_daily_metrics(
                 + (1 if is_cancelled else 0),
                 "total_duration_ms": ExecutionMetricsDaily.total_duration_ms
                 + (duration_ms or 0),
+                "avg_duration_ms": new_avg_duration,
                 "max_duration_ms": func.greatest(
                     ExecutionMetricsDaily.max_duration_ms, duration_ms or 0
                 ),
@@ -242,33 +251,10 @@ async def _upsert_daily_metrics(
             },
         )
 
+    # The average is derived atomically in the conflict update above. Keeping
+    # this to one statement minimizes the time the shared daily row is locked
+    # when many executions finish together.
     await db.execute(stmt)
-
-    # Recalculate average duration
-    # (We do this separately to get the new count)
-    # Build org filter correctly for NULL handling
-    if org_id is not None:
-        org_filter = ExecutionMetricsDaily.organization_id == org_id
-    else:
-        org_filter = ExecutionMetricsDaily.organization_id.is_(None)
-
-    result = await db.execute(
-        select(
-            ExecutionMetricsDaily.execution_count,
-            ExecutionMetricsDaily.total_duration_ms,
-        )
-        .where(ExecutionMetricsDaily.date == today)
-        .where(org_filter)
-    )
-    row = result.one_or_none()
-    if row and row.execution_count > 0:
-        avg_duration = row.total_duration_ms // row.execution_count
-        await db.execute(
-            update(ExecutionMetricsDaily)
-            .where(ExecutionMetricsDaily.date == today)
-            .where(org_filter)
-            .values(avg_duration_ms=avg_duration)
-        )
 
 
 async def update_workflow_roi_daily(

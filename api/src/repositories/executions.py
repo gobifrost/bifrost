@@ -76,6 +76,7 @@ class ExecutionRepository(BaseRepository[Execution]):
         is_local_execution: bool = False,
         execution_model: str | None = None,
         workflow_id: str | None = None,
+        check_existing: bool = True,
     ) -> Execution:
         """
         Create a new execution record.
@@ -122,7 +123,11 @@ class ExecutionRepository(BaseRepository[Execution]):
         # A scheduled execution has a pre-existing row (inserted at schedule
         # time as SCHEDULED, promoted to PENDING by the scheduler). In that
         # case update-in-place instead of inserting a duplicate PK.
-        existing = await self.session.get(Execution, UUID(execution_id))
+        existing = (
+            await self.session.get(Execution, UUID(execution_id))
+            if check_existing
+            else None
+        )
         if existing is not None:
             existing.workflow_name = workflow_name
             existing.workflow_id = parsed_workflow_id
@@ -162,7 +167,12 @@ class ExecutionRepository(BaseRepository[Execution]):
 
         self.session.add(execution)
         await self.session.flush()
-        await self.session.refresh(execution)
+        if check_existing:
+            # Preserve the historical repository contract for callers that do
+            # not know whether the row already exists. Immediate workflow
+            # dispatches pass check_existing=False and do not need DB-generated
+            # values before committing the known-new row.
+            await self.session.refresh(execution)
 
         logger.info(f"Created execution record: {execution_id} (status={status.value})")
         return execution
@@ -667,6 +677,7 @@ async def create_execution(
     execution_model: str | None = None,
     workflow_id: str | None = None,
     session: "AsyncSession | None" = None,
+    check_existing: bool = True,
 ) -> None:
     """
     Create a new execution record in PostgreSQL.
@@ -697,6 +708,7 @@ async def create_execution(
             is_local_execution=is_local_execution,
             execution_model=execution_model,
             workflow_id=workflow_id,
+            check_existing=check_existing,
         )
 
     if session is not None:

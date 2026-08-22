@@ -25,17 +25,13 @@ import logging
 import sys
 import threading
 from importlib.abc import Loader, MetaPathFinder
-from importlib.machinery import ModuleSpec
+from importlib.machinery import ModuleSpec, PathFinder
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 from src.core.module_cache_sync import (
-    candidate_index_prefixes,
-    candidate_module_paths,
-    get_module_index_sync,
-    get_module_sync,
-    solution_has_submodules,
+    resolve_module_sync,
 )
 
 logger = logging.getLogger(__name__)
@@ -211,7 +207,14 @@ class VirtualModuleLoader(Loader):
     setting __file__ to the relative path for meaningful tracebacks.
     """
 
-    def __init__(self, path: str, content: str, is_package: bool = False, content_hash: str = ""):
+    def __init__(
+        self,
+        path: str,
+        content: str,
+        is_package: bool = False,
+        content_hash: str = "",
+        storage_path: str | None = None,
+    ):
         """
         Initialize loader with module content.
 
@@ -220,11 +223,13 @@ class VirtualModuleLoader(Loader):
             content: Python source code
             is_package: True if this is a package (__init__.py)
             content_hash: SHA-256 hash of content for change detection
+            storage_path: Exact Solution or global repository cache path
         """
         self.path = path
         self.content = content
         self.is_package = is_package
         self.content_hash = content_hash
+        self.storage_path = storage_path or path
 
     def create_module(self, spec: ModuleSpec) -> ModuleType | None:
         """Return None to use default module creation semantics."""
@@ -237,6 +242,7 @@ class VirtualModuleLoader(Loader):
         module.__file__ = self.path
         module.__loader__ = self
         module.__content_hash__ = self.content_hash
+        module.__storage_path__ = self.storage_path
 
         if self.is_package:
             # Packages need __path__ for submodule imports
@@ -259,11 +265,12 @@ class VirtualModuleFinder(MetaPathFinder):
     """
     Meta path finder that loads workspace modules from Redis cache.
 
-    Converts Python module names to file paths, confirms they are workspace
-    modules via the module index, then fetches the source from Redis/API/S3.
+    Converts Python module names to file paths and asks the API-backed targeted
+    resolver whether the name is a workspace module, package, namespace, or miss.
 
     Key design points:
-    - Module index is the source of truth for workspace module ownership
+    - Locally installed modules get first refusal through PathFinder
+    - The targeted resolver is the source of truth for workspace ownership
     - Non-workspace third-party imports fall through to normal import handling
     - Supports both modules (.py) and packages (__init__.py)
     """
@@ -310,114 +317,56 @@ class VirtualModuleFinder(MetaPathFinder):
         # Set recursion guard
         _thread_local.in_find_spec = True
         try:
-            return self._find_spec_impl(fullname)
+            return self._find_spec_impl(fullname, path)
         finally:
             _thread_local.in_find_spec = False
 
-    def _find_spec_impl(self, fullname: str) -> ModuleSpec | None:
+    def _find_spec_impl(self, fullname: str, path: Any | None = None) -> ModuleSpec | None:
         """
         Internal implementation of find_spec.
 
         Separated from find_spec to keep the recursion guard clean.
 
-        The module index determines whether a name belongs to workspace code
-        before we attempt any module fetch. This avoids probing third-party
-        dependency imports through Redis/API/S3 during import resolution.
+        Locally installed modules are allowed to resolve before workspace code.
+        Only unresolved names are sent to the targeted resolver, which avoids
+        the old repeated whole-index lookup path for misses.
         """
-        possible_paths = self._module_name_to_paths(fullname)
-        module_index = get_module_index_sync()
+        local_spec = PathFinder.find_spec(fullname, path)
+        if local_spec is not None:
+            return None
 
-        for file_path, is_package in possible_paths:
-            if not self._module_path_is_indexed(file_path, module_index):
-                continue
-
-            cached = get_module_sync(file_path)
-            if not cached:
-                continue
-
-            # Create loader and spec
-            loader = VirtualModuleLoader(file_path, cached["content"], is_package, cached.get("hash", ""))
+        resolution = resolve_module_sync(fullname)
+        if resolution.kind in {"module", "package"} and resolution.content is not None:
+            is_package = resolution.kind == "package"
+            loader = VirtualModuleLoader(
+                resolution.path,
+                resolution.content,
+                is_package,
+                resolution.hash,
+                resolution.storage_path,
+            )
             spec = ModuleSpec(
                 fullname,
                 loader,
                 is_package=is_package,
-                origin=file_path,  # Use relative path directly
+                origin=resolution.path,
             )
-
-            logger.debug(f"Virtual import: {fullname} -> {file_path}")
+            logger.debug(f"Virtual import: {fullname} -> {resolution.path}")
             return spec
 
-        # Check for namespace package (directory with submodules but no __init__.py)
-        # This enables `from modules.foo import bar` without requiring modules/__init__.py
-        # PEP 420: https://peps.python.org/pep-0420/
-        base_path = "/".join(fullname.split("."))
-
-        # Scan the module index for submodules under the candidate prefixes.
-        # When a Solution is active these are _solutions/{id}/-rooted (with the
-        # bare prefix only if global_repo_access is on), so a solution's
-        # namespace packages are detected without colliding with _repo/.
-        prefixes = candidate_index_prefixes(base_path)
-        has_submodules = any(
-            entry.startswith(p) for entry in module_index for p in prefixes
-        )
-        # The index only knows a solution module once it has been loaded, but a
-        # parent package must resolve as a namespace BEFORE its first submodule
-        # can load. Fall back to a direct S3 check under the solution prefix.
-        if not has_submodules:
-            has_submodules = solution_has_submodules(base_path)
-
-        if has_submodules:
-            # Create a namespace package spec (empty module with __path__)
-            loader = NamespacePackageLoader(base_path)
+        if resolution.kind == "namespace":
+            loader = NamespacePackageLoader(resolution.path)
             spec = ModuleSpec(
                 fullname,
                 loader,
                 is_package=True,
-                origin=None,  # Namespace packages have no origin
+                origin=None,
             )
-            spec.submodule_search_locations = [base_path]
-            logger.debug(f"Virtual namespace package: {fullname} -> {base_path}/")
+            spec.submodule_search_locations = [resolution.path]
+            logger.debug(f"Virtual namespace package: {fullname} -> {resolution.path}/")
             return spec
 
-        # Not in our cache - let filesystem finder handle it
         return None
-
-    def _module_path_is_indexed(self, file_path: str, module_index: set[str]) -> bool:
-        """Return True when the module index says this concrete file is workspace code."""
-        return any(path in module_index for path in candidate_module_paths(file_path))
-
-    def _module_name_to_paths(self, fullname: str) -> list[tuple[str, bool]]:
-        """
-        Convert module name to potential file paths.
-
-        Examples:
-            "shared.halopsa" -> [
-                ("shared/halopsa.py", False),
-                ("shared/halopsa/__init__.py", True)
-            ]
-            "shared" -> [
-                ("shared.py", False),
-                ("shared/__init__.py", True)
-            ]
-
-        Args:
-            fullname: Fully qualified module name
-
-        Returns:
-            List of (path, is_package) tuples to try
-        """
-        parts = fullname.split(".")
-        base_path = "/".join(parts)
-
-        return [
-            (f"{base_path}.py", False),  # Module file
-            (f"{base_path}/__init__.py", True),  # Package __init__
-        ]
-
-    def invalidate_index(self) -> None:
-        """No-op for API compatibility. Index reads are delegated to module_cache_sync."""
-        pass
-
 
 # Global finder instance (for invalidation access)
 _finder: VirtualModuleFinder | None = None
@@ -508,18 +457,6 @@ def remove_virtual_import_hook() -> None:
         sys.meta_path = [f for f in sys.meta_path if f is not _finder]
         _finder = None
         logger.info("Virtual import hook removed")
-
-
-def invalidate_module_index() -> None:
-    """
-    Force the finder to refresh its module index.
-
-    Call this after modules are added/removed from cache
-    to ensure the finder picks up the changes.
-    """
-    if _finder is not None:
-        _finder.invalidate_index()
-        logger.debug("Module index invalidated")
 
 
 def get_virtual_finder() -> VirtualModuleFinder | None:

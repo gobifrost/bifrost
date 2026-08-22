@@ -100,7 +100,7 @@ class TestConsumerStartupOrder:
 
 
 class TestSuccessfulExecutionCompletionOrder:
-    """Sync callers should not wait for non-critical completion fan-out."""
+    """Sync callers should not wait for derived aggregates or terminal fan-out."""
 
     @pytest.mark.asyncio
     async def test_sync_result_is_pushed_before_terminal_fan_out(self):
@@ -115,11 +115,23 @@ class TestSuccessfulExecutionCompletionOrder:
         from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
 
         call_order: list[str] = []
-        session = AsyncMock()
-        session.commit.side_effect = lambda: call_order.append("commit")
+        durable_session = AsyncMock()
+        durable_session.commit.side_effect = lambda: call_order.append(
+            "durable_commit"
+        )
+        metrics_session = AsyncMock()
+        metrics_session.commit.side_effect = lambda: call_order.append(
+            "metrics_commit"
+        )
+
+        durable_context = MagicMock()
+        durable_context.__aenter__ = AsyncMock(return_value=durable_session)
+        durable_context.__aexit__ = AsyncMock(return_value=None)
+        metrics_context = MagicMock()
+        metrics_context.__aenter__ = AsyncMock(return_value=metrics_session)
+        metrics_context.__aexit__ = AsyncMock(return_value=None)
         session_factory = MagicMock()
-        session_factory.return_value.__aenter__ = AsyncMock(return_value=session)
-        session_factory.return_value.__aexit__ = AsyncMock(return_value=None)
+        session_factory.side_effect = [durable_context, metrics_context]
 
         with patch.object(WorkflowExecutionConsumer, "__init__", lambda self: None):
             consumer = WorkflowExecutionConsumer()
@@ -150,6 +162,9 @@ class TestSuccessfulExecutionCompletionOrder:
             cleanup_cache = AsyncMock(
                 side_effect=lambda _execution_id: call_order.append("cleanup_cache")
             )
+            flush_logs = AsyncMock(return_value=0)
+
+            update_delivery = AsyncMock()
 
             with (
                 patch(
@@ -162,7 +177,7 @@ class TestSuccessfulExecutionCompletionOrder:
                 ),
                 patch(
                     "src.services.events.processor.update_delivery_from_execution",
-                    new_callable=AsyncMock,
+                    new=update_delivery,
                 ),
                 patch(
                     "bifrost._sync.flush_pending_changes",
@@ -171,16 +186,23 @@ class TestSuccessfulExecutionCompletionOrder:
                 ),
                 patch(
                     "bifrost._logging.flush_logs_to_postgres",
-                    new_callable=AsyncMock,
-                    return_value=0,
+                    new=flush_logs,
                 ),
                 patch(
                     "src.core.metrics.update_daily_metrics",
-                    new_callable=AsyncMock,
+                    new=AsyncMock(
+                        side_effect=lambda **_kwargs: call_order.append(
+                            "daily_metrics"
+                        )
+                    ),
                 ),
                 patch(
                     "src.core.metrics.update_workflow_roi_daily",
-                    new_callable=AsyncMock,
+                    new=AsyncMock(
+                        side_effect=lambda **_kwargs: call_order.append(
+                            "workflow_metrics"
+                        )
+                    ),
                 ),
                 patch(
                     "src.jobs.consumers.workflow_execution.publish_execution_update",
@@ -202,11 +224,239 @@ class TestSuccessfulExecutionCompletionOrder:
                     },
                 )
 
-        assert call_order[:2] == ["commit", "push_result"]
+        assert call_order[:2] == ["durable_commit", "push_result"]
+        assert call_order.index("push_result") < call_order.index("daily_metrics")
+        assert call_order.index("push_result") < call_order.index("workflow_metrics")
+        assert call_order.index("push_result") < call_order.index("metrics_commit")
         assert call_order.index("push_result") < call_order.index("publish_execution")
         assert call_order.index("push_result") < call_order.index("publish_history")
         assert call_order.index("push_result") < call_order.index("cleanup_cache")
         assert call_order.index("push_result") < call_order.index("delete_pending")
+        update_delivery.assert_not_awaited()
+        flush_logs.assert_not_awaited()
 
         terminal_data = publish_execution.await_args.args[2]
         assert terminal_data == {"duration_ms": 123}
+
+
+class TestFailedExecutionCompletionOrder:
+    """Failure responses follow the same durable-first ordering as successes."""
+
+    @pytest.mark.asyncio
+    async def test_sync_failure_is_pushed_before_metrics_and_terminal_fan_out(self):
+        from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
+
+        call_order: list[str] = []
+        durable_session = AsyncMock()
+        durable_session.commit.side_effect = lambda: call_order.append(
+            "durable_commit"
+        )
+        metrics_session = AsyncMock()
+        metrics_session.commit.side_effect = lambda: call_order.append(
+            "metrics_commit"
+        )
+
+        durable_context = MagicMock()
+        durable_context.__aenter__ = AsyncMock(return_value=durable_session)
+        durable_context.__aexit__ = AsyncMock(return_value=None)
+        metrics_context = MagicMock()
+        metrics_context.__aenter__ = AsyncMock(return_value=metrics_session)
+        metrics_context.__aexit__ = AsyncMock(return_value=None)
+        session_factory = MagicMock(side_effect=[durable_context, metrics_context])
+
+        with patch.object(WorkflowExecutionConsumer, "__init__", lambda self: None):
+            consumer = WorkflowExecutionConsumer()
+            consumer._redis_client = AsyncMock()
+            consumer._redis_client.get_pending_execution.return_value = {
+                "workflow_id": "00000000-0000-0000-0000-000000000001",
+                "workflow_name": "failed_workflow",
+                "org_id": "00000000-0000-0000-0000-000000000002",
+                "user_id": "00000000-0000-0000-0000-000000000003",
+                "user_email": "test@example.com",
+                "user_name": "Test User",
+                "sync": True,
+            }
+            consumer._redis_client.push_result.side_effect = (
+                lambda **_kwargs: call_order.append("push_result")
+            )
+            consumer._redis_client.delete_pending_execution.side_effect = (
+                lambda _execution_id: call_order.append("delete_pending")
+            )
+
+            update_delivery = AsyncMock()
+            flush_logs = AsyncMock(return_value=0)
+
+            with (
+                patch(
+                    "src.core.database.get_session_factory",
+                    return_value=session_factory,
+                ),
+                patch(
+                    "src.repositories.executions.update_execution",
+                    new_callable=AsyncMock,
+                ),
+                patch(
+                    "src.services.events.processor.update_delivery_from_execution",
+                    new=update_delivery,
+                ),
+                patch(
+                    "bifrost._sync.flush_pending_changes",
+                    new_callable=AsyncMock,
+                    return_value=0,
+                ),
+                patch(
+                    "bifrost._logging.flush_logs_to_postgres",
+                    new=flush_logs,
+                ),
+                patch(
+                    "src.core.metrics.update_daily_metrics",
+                    new=AsyncMock(
+                        side_effect=lambda **_kwargs: call_order.append(
+                            "daily_metrics"
+                        )
+                    ),
+                ),
+                patch(
+                    "src.jobs.consumers.workflow_execution.publish_execution_update",
+                    new=AsyncMock(
+                        side_effect=lambda *_args, **_kwargs: call_order.append(
+                            "publish_execution"
+                        )
+                    ),
+                ),
+                patch(
+                    "src.jobs.consumers.workflow_execution.publish_history_update",
+                    new=AsyncMock(
+                        side_effect=lambda **_kwargs: call_order.append(
+                            "publish_history"
+                        )
+                    ),
+                ),
+                patch(
+                    "src.core.cache.cleanup_execution_cache",
+                    new=AsyncMock(
+                        side_effect=lambda _execution_id: call_order.append(
+                            "cleanup_cache"
+                        )
+                    ),
+                ),
+                patch(
+                    "src.services.events.builtins.emit_workflow_failure_events",
+                    new_callable=AsyncMock,
+                ),
+            ):
+                await consumer._process_failure(
+                    "00000000-0000-0000-0000-000000000004",
+                    {
+                        "success": False,
+                        "status": "Failed",
+                        "error": "boom",
+                        "error_type": "RuntimeError",
+                        "duration_ms": 123,
+                    },
+                )
+
+        assert call_order[:2] == ["durable_commit", "push_result"]
+        assert call_order.index("push_result") < call_order.index("daily_metrics")
+        assert call_order.index("push_result") < call_order.index("metrics_commit")
+        assert call_order.index("push_result") < call_order.index("publish_execution")
+        assert call_order.index("push_result") < call_order.index("publish_history")
+        assert call_order.index("push_result") < call_order.index("cleanup_cache")
+        assert call_order.index("push_result") < call_order.index("delete_pending")
+        update_delivery.assert_not_awaited()
+        flush_logs.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_event_failure_updates_its_delivery(self):
+        """The non-event fast path must not weaken event completion tracking."""
+        from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
+
+        session = AsyncMock()
+        context = MagicMock()
+        context.__aenter__ = AsyncMock(return_value=session)
+        context.__aexit__ = AsyncMock(return_value=None)
+        metrics_context = MagicMock()
+        metrics_context.__aenter__ = AsyncMock(return_value=AsyncMock())
+        metrics_context.__aexit__ = AsyncMock(return_value=None)
+        session_factory = MagicMock(side_effect=[context, metrics_context])
+        update_delivery = AsyncMock()
+        flush_logs = AsyncMock(return_value=1)
+
+        with patch.object(WorkflowExecutionConsumer, "__init__", lambda self: None):
+            consumer = WorkflowExecutionConsumer()
+            consumer._redis_client = AsyncMock()
+            consumer._redis_client.get_pending_execution.return_value = {
+                "workflow_id": "00000000-0000-0000-0000-000000000001",
+                "workflow_name": "event_workflow",
+                "org_id": "00000000-0000-0000-0000-000000000002",
+                "user_id": "00000000-0000-0000-0000-000000000003",
+                "user_email": "test@example.com",
+                "user_name": "Test User",
+                "sync": False,
+                "event": {"event_id": "event-1"},
+            }
+
+            with (
+                patch(
+                    "src.core.database.get_session_factory",
+                    return_value=session_factory,
+                ),
+                patch(
+                    "src.repositories.executions.update_execution",
+                    new_callable=AsyncMock,
+                ),
+                patch(
+                    "src.services.events.processor.update_delivery_from_execution",
+                    new=update_delivery,
+                ),
+                patch(
+                    "bifrost._sync.flush_pending_changes",
+                    new_callable=AsyncMock,
+                    return_value=0,
+                ),
+                patch(
+                    "bifrost._logging.flush_logs_to_postgres",
+                    new=flush_logs,
+                ),
+                patch(
+                    "src.core.metrics.update_daily_metrics",
+                    new_callable=AsyncMock,
+                ),
+                patch(
+                    "src.jobs.consumers.workflow_execution.publish_execution_update",
+                    new_callable=AsyncMock,
+                ),
+                patch(
+                    "src.jobs.consumers.workflow_execution.publish_history_update",
+                    new_callable=AsyncMock,
+                ),
+                patch(
+                    "src.core.cache.cleanup_execution_cache",
+                    new_callable=AsyncMock,
+                ),
+                patch(
+                    "src.services.events.builtins.emit_workflow_failure_events",
+                    new_callable=AsyncMock,
+                ),
+            ):
+                await consumer._process_failure(
+                    "00000000-0000-0000-0000-000000000004",
+                    {
+                        "success": False,
+                        "error": "boom",
+                        "error_type": "RuntimeError",
+                        "duration_ms": 123,
+                        "logs": [{"message": "captured failure log"}],
+                    },
+                )
+
+        update_delivery.assert_awaited_once_with(
+            "00000000-0000-0000-0000-000000000004",
+            "Failed",
+            error_message="boom",
+            session=session,
+        )
+        flush_logs.assert_awaited_once_with(
+            "00000000-0000-0000-0000-000000000004",
+            session=session,
+        )

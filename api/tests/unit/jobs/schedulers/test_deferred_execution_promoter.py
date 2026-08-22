@@ -61,6 +61,7 @@ async def test_promotes_due_rows(db_session):
     assert promoted == 1
     assert failed == 0
     pub.assert_awaited_once()
+    assert pub.await_args.kwargs["execution_record_exists"] is True
 
     await db_session.refresh(due)
     assert due.status == ExecutionStatus.PENDING

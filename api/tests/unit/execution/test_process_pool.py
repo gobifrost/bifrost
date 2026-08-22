@@ -243,7 +243,6 @@ class TestProcessPoolManagerStart:
             with patch.object(pool, "_start_template", new_callable=AsyncMock), \
                  patch.object(pool, "_register_worker", new_callable=AsyncMock), \
                  patch.object(pool, "_monitor_loop", new_callable=AsyncMock), \
-                 patch.object(pool, "_result_loop", new_callable=AsyncMock), \
                  patch.object(pool, "_heartbeat_loop", new_callable=AsyncMock), \
                  patch.object(pool, "_cancel_listener_loop", new_callable=AsyncMock), \
                  patch.object(pool, "_command_listener_loop", new_callable=AsyncMock), \
@@ -256,8 +255,8 @@ class TestProcessPoolManagerStart:
 
         # Cleanup
         pool._shutdown = True
-        for task in [pool._monitor_task, pool._result_task, pool._heartbeat_task,
-                     pool._cancel_task, pool._command_task]:
+        for task in [pool._monitor_task, pool._heartbeat_task,
+                     pool._cancel_task, pool._command_task, *pool._result_tasks]:
             if task:
                 task.cancel()
                 try:
@@ -298,6 +297,7 @@ class TestProcessPoolManagerRouting:
         pool._fork_process = mock_spawn
 
         with patch.object(pool, "_write_context_to_redis", new_callable=AsyncMock), \
+             patch.object(pool, "_register_result_reader"), \
              patch("src.services.execution.process_pool.has_sufficient_memory_cgroup", return_value=True):
             await pool.route_execution("exec-123", {"timeout_seconds": 300})
 
@@ -349,6 +349,7 @@ class TestProcessPoolManagerRouting:
         pool._fork_process = mock_spawn
 
         with patch.object(pool, "_write_context_to_redis", new_callable=AsyncMock), \
+             patch.object(pool, "_register_result_reader"), \
              patch("src.services.execution.process_pool.has_sufficient_memory_cgroup", return_value=True):
             # Kick off the route — it should park on _slot_condition.
             route_task = asyncio.create_task(
@@ -367,6 +368,7 @@ class TestProcessPoolManagerRouting:
         assert len(forked) == 1
         assert forked[0].current_execution is not None
         assert forked[0].current_execution.execution_id == "exec-456"
+
 
 
 class TestProcessPoolManagerTimeouts:
@@ -553,6 +555,55 @@ class TestProcessPoolManagerHeartbeat:
 class TestProcessPoolManagerResultHandling:
     """Tests for result handling."""
 
+    def test_register_result_reader_watches_child_pipe(self):
+        """Result delivery should use fd readiness instead of interval polling."""
+        pool = ProcessPoolManager()
+        result_queue = MagicMock()
+        result_queue.fileno.return_value = 42
+        handle = ProcessHandle(
+            id="process-1",
+            process=MagicMock(),
+            pid=12345,
+            state=ProcessState.BUSY,
+            work_queue=MagicMock(),
+            result_queue=result_queue,
+            started_at=datetime.now(timezone.utc),
+        )
+        loop = MagicMock()
+
+        with patch(
+            "src.services.execution.process_pool.asyncio.get_running_loop",
+            return_value=loop,
+        ):
+            pool._register_result_reader(handle)
+
+        assert handle.result_reader_fd == 42
+        loop.add_reader.assert_called_once_with(
+            42, pool._on_result_ready, "process-1", 42
+        )
+
+    @pytest.mark.asyncio
+    async def test_consume_ready_result_forwards_immediately(self):
+        pool = ProcessPoolManager()
+        result = {"type": "result", "execution_id": "exec-123", "success": True}
+        result_queue = MagicMock()
+        result_queue.get_nowait.return_value = result
+        handle = ProcessHandle(
+            id="process-1",
+            process=MagicMock(),
+            pid=12345,
+            state=ProcessState.BUSY,
+            work_queue=MagicMock(),
+            result_queue=result_queue,
+            started_at=datetime.now(timezone.utc),
+        )
+        pool.processes[handle.id] = handle
+
+        with patch.object(pool, "_handle_result", new_callable=AsyncMock) as handler:
+            await pool._consume_ready_result(handle.id)
+
+        handler.assert_awaited_once_with(handle, result)
+
     @pytest.mark.asyncio
     async def test_handle_result_removes_handle(self):
         """Should remove the handle (one-shot worker) after result."""
@@ -726,6 +777,7 @@ class TestProcessPoolManagerIntegration:
         pool._fork_process = mock_spawn
 
         with patch.object(pool, "_write_context_to_redis", new_callable=AsyncMock), \
+             patch.object(pool, "_register_result_reader"), \
              patch("src.services.execution.process_pool.has_sufficient_memory_cgroup", return_value=True):
             await pool.route_execution("exec-123", {"timeout_seconds": 300})
 
@@ -789,7 +841,8 @@ class TestAdmissionControl:
             return_value=True,
         ):
             with patch.object(pool, '_write_context_to_redis', new_callable=AsyncMock):
-                with patch.object(pool, '_fork_process', side_effect=mock_spawn):
+                with patch.object(pool, '_fork_process', side_effect=mock_spawn), \
+                     patch.object(pool, "_register_result_reader"):
                     await pool.route_execution("exec-123", {"timeout_seconds": 300})
                     assert mock_handle.state == ProcessState.BUSY
                     assert mock_handle.current_execution is not None

@@ -81,12 +81,67 @@ class TestVirtualImportIntegration:
             await clear_module_cache()
 
     @pytest.mark.asyncio
+    async def test_sdk_module_resolver_endpoint_resolves_module_namespace_and_miss(
+        self,
+        e2e_client,
+        platform_admin,
+    ):
+        """The resolver endpoint classifies one logical import without whole-index lookup."""
+        from src.core.module_cache import clear_module_cache, set_module
+        from src.services.repo_storage import RepoStorage
+
+        storage = RepoStorage()
+        await clear_module_cache()
+        await storage.write("resolver_live/pkg/helper.py", b"VALUE = 42")
+        await set_module(
+            path="resolver_live/pkg/helper.py",
+            content="VALUE = 42",
+            content_hash="resolver-live-hash",
+        )
+
+        try:
+            module_resp = e2e_client.get(
+                "/api/sdk/modules-resolve",
+                params={"name": "resolver_live.pkg.helper"},
+                headers=platform_admin.headers,
+            )
+            assert module_resp.status_code == 200
+            module_body = module_resp.json()
+            assert module_body["kind"] == "module"
+            assert module_body["path"] == "resolver_live/pkg/helper.py"
+            assert module_body["content"] == "VALUE = 42"
+
+            namespace_resp = e2e_client.get(
+                "/api/sdk/modules-resolve",
+                params={"name": "resolver_live"},
+                headers=platform_admin.headers,
+            )
+            assert namespace_resp.status_code == 200
+            assert namespace_resp.json() == {
+                "kind": "namespace",
+                "path": "resolver_live",
+            }
+
+            miss_resp = e2e_client.get(
+                "/api/sdk/modules-resolve",
+                params={"name": "resolver_live.missing"},
+                headers=platform_admin.headers,
+            )
+            assert miss_resp.status_code == 200
+            assert miss_resp.json() == {
+                "kind": "not_found",
+                "path": "resolver_live/missing",
+            }
+        finally:
+            await clear_module_cache()
+            await storage.delete("resolver_live/pkg/helper.py")
+
+    @pytest.mark.asyncio
     async def test_virtual_import_package_with_submodule(self, db_session: AsyncSession):
         """Test importing a package with submodules from Redis cache."""
         from src.core.module_cache import clear_module_cache, set_module
         from src.services.execution.virtual_import import (
             install_virtual_import_hook,
-            invalidate_module_index,
             remove_virtual_import_hook,
         )
 
@@ -105,7 +160,6 @@ class TestVirtualImportIntegration:
 
         # Install virtual import hook
         install_virtual_import_hook()
-        invalidate_module_index()  # Force refresh of index
 
         try:
             # Import package and submodule
@@ -199,7 +253,6 @@ class TestEndToEndModuleLoading:
         from src.core.module_cache import clear_module_cache, set_module
         from src.services.execution.virtual_import import (
             install_virtual_import_hook,
-            invalidate_module_index,
             remove_virtual_import_hook,
         )
 
@@ -221,7 +274,6 @@ def run_workflow(params):
 
             # Step 2: Install virtual import hook
             install_virtual_import_hook()
-            invalidate_module_index()
 
             # Step 3: Import and use the module
             import e2e_test_workflow  # type: ignore[import-not-found]

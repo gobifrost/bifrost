@@ -192,21 +192,7 @@ def _clear_workspace_modules() -> None:
     This avoids re-exec'ing large unchanged modules on every execution.
     """
     from src.services.execution.virtual_import import VirtualModuleLoader, NamespacePackageLoader
-    from src.core.module_cache_sync import get_module_index_sync, get_module_sync
-
-    # Build set of known workspace module names from the Redis module index.
-    module_index = get_module_index_sync()
-    workspace_names: set[str] = set()
-    # Also build a map from module name -> file path for hash checking
-    name_to_path: dict[str, str] = {}
-    for path in module_index:
-        mod_name = path.replace("/", ".").removesuffix(".py").removesuffix(".__init__")
-        parts = mod_name.split(".")
-        for i in range(1, len(parts) + 1):
-            prefix = ".".join(parts[:i])
-            workspace_names.add(prefix)
-        # Map the full module name to its file path
-        name_to_path[mod_name] = path
+    from src.core.module_cache_sync import get_module_sync
 
     # Find workspace modules currently loaded
     workspace_modules = [
@@ -215,19 +201,8 @@ def _clear_workspace_modules() -> None:
             (hasattr(module, '__loader__') and isinstance(
                 module.__loader__, (VirtualModuleLoader, NamespacePackageLoader)
             ))
-            or name in workspace_names
         )
     ]
-
-    # Cross-solution isolation note: a VirtualModuleLoader module records its
-    # __file__ as the BARE relative path (modules/foo.py), NOT a _solutions/{id}/-
-    # rooted path — so two installs' same-named modules both cache under the bare
-    # name. The eviction below handles this via the hash check: a solution
-    # module's name maps (through the _repo/-keyed index) to either no path or a
-    # DIFFERENT (_repo/) content hash than the one it loaded with, so it is
-    # cleared and the next import re-resolves within the now-active solution
-    # context. (An earlier _solutions/-prefix force-evict block was dead code —
-    # the prefix never matched — and was removed; this is the real mechanism.)
 
     # Check each module's hash — only clear if content changed
     modules_to_clear: list[str] = []
@@ -247,8 +222,8 @@ def _clear_workspace_modules() -> None:
             modules_to_clear.append(name)
             continue
 
-        # Look up current hash in Redis
-        file_path = name_to_path.get(name)
+        # Look up current hash using the exact file path loaded by the virtual loader.
+        file_path = getattr(module, "__file__", None)
         if not file_path:
             # Can't map to a file path — clear to be safe
             modules_to_clear.append(name)
@@ -257,6 +232,15 @@ def _clear_workspace_modules() -> None:
         cached = get_module_sync(file_path)
         if not cached:
             # Module removed from cache — clear
+            modules_to_clear.append(name)
+            continue
+
+        loaded_storage_path = getattr(module, "__storage_path__", file_path)
+        if cached.get("storage_path", cached.get("path")) != loaded_storage_path:
+            # The same logical import now resolves from a different Solution or
+            # from a different Solution/global scope. Equal bytes are not enough
+            # to reuse a module object whose mutable globals belong to another
+            # execution boundary.
             modules_to_clear.append(name)
             continue
 

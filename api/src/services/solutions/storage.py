@@ -80,6 +80,17 @@ class SolutionStorage:
         async with self._get_client() as client:
             return await self._list_from_s3(client, prefix)
 
+    async def prefix_exists(self, prefix: str) -> bool:
+        """Check if any object exists under this install's prefix."""
+        async with self._get_client() as client:
+            key_prefix = self._key(prefix.rstrip("/") + "/")
+            response = await client.list_objects_v2(
+                Bucket=self._bucket,
+                Prefix=key_prefix,
+                MaxKeys=1,
+            )
+            return response.get("KeyCount", 0) > 0 or bool(response.get("Contents"))
+
     async def _list_from_s3(self, client, prefix: str = "") -> list[str]:
         full_prefix = self._key(prefix)
         strip = len(self.prefix)
