@@ -301,10 +301,22 @@ def embedding_config_for_scope_tests(
     if not embeddings_test_key:
         pytest.skip("EMBEDDINGS_AI_TEST_KEY not configured - skipping knowledge tests")
 
+    connection_response = e2e_client.post(
+        "/api/admin/ai/connections",
+        json={
+            "name": "Scope Embeddings",
+            "provider": "openai",
+            "api_key": embeddings_test_key,
+        },
+        headers=platform_admin.headers,
+    )
+    assert connection_response.status_code == 201, (
+        f"Failed to configure embedding connection: {connection_response.text}"
+    )
+    connection = connection_response.json()
     config = {
-        "provider": "openai",
+        "connection_id": connection["id"],
         "model": "text-embedding-3-small",
-        "api_key": embeddings_test_key,
     }
 
     # Configure embedding provider
@@ -324,6 +336,10 @@ def embedding_config_for_scope_tests(
     try:
         e2e_client.delete(
             "/api/admin/llm/embedding-config",
+            headers=platform_admin.headers,
+        )
+        e2e_client.delete(
+            f"/api/admin/ai/connections/{connection['id']}",
             headers=platform_admin.headers,
         )
         logger.info("Cleaned up embedding config")

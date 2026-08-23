@@ -43,8 +43,8 @@ def mock_runtime_config():
             model="test-model",
             api_key="test-key",
         ),
-    ):
-        yield
+    ) as mock_get_config:
+        yield mock_get_config
 
 
 @pytest.fixture
@@ -83,7 +83,7 @@ def mock_agent():
     agent.delegated_agents = []
     agent.max_iterations = 10
     agent.max_token_budget = 50000
-    agent.llm_model = None
+    agent.llm_profile_id = None
     agent.llm_max_tokens = None
     agent.organization_id = uuid4()
     return agent
@@ -148,7 +148,7 @@ class TestAutonomousAgentExecutor:
     @pytest.mark.asyncio
     @patch("src.services.execution.autonomous_agent_executor.create_agent_model")
     @patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools")
-    async def test_run_returns_structured_result(self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent):
+    async def test_run_returns_structured_result(self, mock_resolve_tools, mock_get_llm, mock_session, mock_agent, mock_runtime_config):
         """Run returns output, iterations_used, tokens_used, status."""
         mock_resolve_tools.return_value = ([], {})
 
@@ -173,6 +173,10 @@ class TestAutonomousAgentExecutor:
         assert result["output"] == "Hello world"
         assert result["iterations_used"] == 1
         assert result["tokens_used"] == 150
+        mock_runtime_config.assert_awaited_with(
+            mock_session._mock_session,
+            profile_id=mock_agent.llm_profile_id,
+        )
 
     @pytest.mark.asyncio
     async def test_run_delegation_persists_chat_child_and_caller(
@@ -190,7 +194,7 @@ class TestAutonomousAgentExecutor:
         delegated.delegated_agents = []
         delegated.max_iterations = 5
         delegated.max_token_budget = 1000
-        delegated.llm_model = "cheap-model"
+        delegated.llm_profile_id = uuid4()
         delegated.llm_max_tokens = 200
         # Global specialists remain valid delegates for an org-scoped parent.
         delegated.organization_id = None
@@ -1050,7 +1054,7 @@ class TestAutonomousAgentExecutor:
         delegated.delegated_agents = []
         delegated.max_iterations = 5
         delegated.max_token_budget = 10000
-        delegated.llm_model = None
+        delegated.llm_profile_id = None
         delegated.llm_max_tokens = None
         delegated.organization_id = mock_agent.organization_id
 
@@ -1138,7 +1142,7 @@ class TestAutonomousAgentExecutor:
         delegated.delegated_agents = []
         delegated.max_iterations = 5
         delegated.max_token_budget = 10000
-        delegated.llm_model = None
+        delegated.llm_profile_id = None
         delegated.llm_max_tokens = None
         delegated.organization_id = mock_agent.organization_id
 
@@ -1160,7 +1164,7 @@ class TestAutonomousAgentExecutor:
         refetched_agent.delegated_agents = []
         refetched_agent.max_iterations = 5
         refetched_agent.max_token_budget = 10000
-        refetched_agent.llm_model = None
+        refetched_agent.llm_profile_id = None
         refetched_agent.llm_max_tokens = None
         refetched_agent.organization_id = mock_agent.organization_id
 
@@ -1229,7 +1233,7 @@ class TestAutonomousAgentExecutor:
         delegated.delegated_agents = []
         delegated.max_iterations = 5
         delegated.max_token_budget = 10000
-        delegated.llm_model = None
+        delegated.llm_profile_id = None
         delegated.llm_max_tokens = None
         delegated.organization_id = mock_agent.organization_id
 
@@ -1361,7 +1365,7 @@ class TestAutonomousAgentExecutor:
         delegated.delegated_agents = []
         delegated.max_iterations = 5
         delegated.max_token_budget = 10000
-        delegated.llm_model = None
+        delegated.llm_profile_id = None
         delegated.llm_max_tokens = None
         delegated.organization_id = mock_agent.organization_id
 
@@ -1480,7 +1484,7 @@ class TestAutonomousAgentExecutor:
         delegated.delegated_agents = []
         delegated.max_iterations = 5
         delegated.max_token_budget = 10000
-        delegated.llm_model = None
+        delegated.llm_profile_id = None
         delegated.llm_max_tokens = None
         delegated.organization_id = mock_agent.organization_id
 

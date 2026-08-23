@@ -27,22 +27,11 @@ async function expectNoHorizontalOverflow(page: Page) {
 	expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
 }
 
-test.describe("Chat attachments and model tiers", () => {
-	test("uploads a file with the selected tier and previews it", async ({
+test.describe("Chat attachments and model profiles", () => {
+	test("uploads a file with the selected profile and previews it", async ({
 		page,
 	}) => {
-		await page.route("**/api/admin/llm/config", async (route) => {
-			await route.fulfill({
-				json: {
-					provider: "openai",
-					model: "balanced-model",
-					max_tokens: 16384,
-					is_configured: true,
-					api_key_set: true,
-				},
-			});
-		});
-		await page.route("**/api/chat/model-tiers", async (route) => {
+		await page.route("**/api/chat/model-profiles", async (route) => {
 			const capabilities = {
 				image_input: true,
 				pdf_input: true,
@@ -52,12 +41,27 @@ test.describe("Chat attachments and model tiers", () => {
 			};
 			await route.fulfill({
 				json: {
-					tiers: [
-						{ id: "fast", label: "Fast", capabilities },
-						{ id: "balanced", label: "Balanced", capabilities },
-						{ id: "pro", label: "Pro", capabilities },
+					profiles: [
+						{
+							id: "profile-fast",
+							name: "Fast",
+							label: "Fast",
+							capabilities,
+						},
+						{
+							id: "profile-balanced",
+							name: "Balanced",
+							label: "Balanced",
+							capabilities,
+						},
+						{
+							id: "profile-pro",
+							name: "Pro",
+							label: "Pro",
+							capabilities,
+						},
 					],
-					default_tier: "balanced",
+					default_profile_id: "profile-pro",
 				},
 			});
 		});
@@ -254,7 +258,7 @@ test.describe("Chat attachments and model tiers", () => {
 
 		const payload = await chatPayload;
 		expect(payload.message).toBe("Summarize this file");
-		expect(payload.model_tier).toBe("pro");
+		expect(payload.model_profile_id).toBe("profile-pro");
 		expect(payload.attachment_ids).toEqual([expect.any(String)]);
 		finishChat();
 

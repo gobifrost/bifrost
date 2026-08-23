@@ -14,10 +14,47 @@ import logging
 import os
 from collections.abc import Generator
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
 logger = logging.getLogger(__name__)
+
+
+def _configure_model_profile(e2e_client, platform_admin, config: dict[str, Any]) -> None:
+    """Create a saved provider connection and reusable profile for live-LLM tests."""
+    suffix = uuid4().hex[:8]
+    connection_response = e2e_client.post(
+        "/api/admin/ai/connections",
+        json={
+            "name": f"E2E {config['provider']} {suffix}",
+            "provider": config["provider"],
+            "api_key": config["api_key"],
+            "endpoint": config.get("endpoint"),
+        },
+        headers=platform_admin.headers,
+    )
+    assert connection_response.status_code == 201, connection_response.text
+    profile_response = e2e_client.post(
+        "/api/admin/ai/profiles",
+        json={
+            "name": f"E2E Chat {suffix}",
+            "connection_id": connection_response.json()["id"],
+            "model": config["model"],
+            "max_tokens": config["max_tokens"],
+            "enabled_for_chat": True,
+        },
+        headers=platform_admin.headers,
+    )
+    assert profile_response.status_code == 201, profile_response.text
+    profile_id = profile_response.json()["id"]
+    for assignment in ("primary", "chat_default"):
+        response = e2e_client.put(
+            f"/api/admin/ai/assignments/{assignment}",
+            json={"profile_id": profile_id},
+            headers=platform_admin.headers,
+        )
+        assert response.status_code == 200, response.text
 
 
 @pytest.fixture(scope="session")
@@ -51,26 +88,8 @@ def llm_config_cleanup(e2e_client, platform_admin) -> Generator[None, None, None
     This fixture ensures tests start with a clean state and
     cleans up any configuration created during the test.
     """
-    # Clean up any existing config before test
-    try:
-        e2e_client.delete(
-            "/api/admin/llm/config",
-            headers=platform_admin.headers,
-        )
-    except Exception:
-        pass  # Ignore if no config exists
-
+    del e2e_client, platform_admin
     yield
-
-    # Clean up after test
-    try:
-        e2e_client.delete(
-            "/api/admin/llm/config",
-            headers=platform_admin.headers,
-        )
-        logger.info("Cleaned up LLM config after test")
-    except Exception:
-        pass  # Ignore cleanup failures
 
 
 @pytest.fixture(scope="function")
@@ -97,27 +116,11 @@ def llm_anthropic_configured(
         "max_tokens": 1024,
     }
 
-    response = e2e_client.post(
-        "/api/admin/llm/config",
-        json=config,
-        headers=platform_admin.headers,
-    )
-    assert response.status_code == 200, (
-        f"Failed to configure Anthropic: {response.text}"
-    )
+    _configure_model_profile(e2e_client, platform_admin, config)
 
     logger.info("Configured Anthropic LLM provider")
     yield config
 
-    # Cleanup
-    try:
-        e2e_client.delete(
-            "/api/admin/llm/config",
-            headers=platform_admin.headers,
-        )
-        logger.info("Cleaned up Anthropic config")
-    except Exception as e:
-        logger.warning(f"Failed to cleanup Anthropic config: {e}")
 
 
 @pytest.fixture(scope="function")
@@ -144,22 +147,7 @@ def llm_openai_configured(
         "max_tokens": 1024,
     }
 
-    response = e2e_client.post(
-        "/api/admin/llm/config",
-        json=config,
-        headers=platform_admin.headers,
-    )
-    assert response.status_code == 200, f"Failed to configure OpenAI: {response.text}"
+    _configure_model_profile(e2e_client, platform_admin, config)
 
     logger.info("Configured OpenAI LLM provider")
     yield config
-
-    # Cleanup
-    try:
-        e2e_client.delete(
-            "/api/admin/llm/config",
-            headers=platform_admin.headers,
-        )
-        logger.info("Cleaned up OpenAI config")
-    except Exception as e:
-        logger.warning(f"Failed to cleanup OpenAI config: {e}")

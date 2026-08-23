@@ -40,6 +40,7 @@ from src.models.orm import (
     AgentMCPConnection,
     AgentRole,
     AgentTool,
+    AIModelProfile,
     MCPConnection,
     Role,
     Workflow,
@@ -182,6 +183,23 @@ async def _validate_user_tool_access(
             raise HTTPException(403, f"You do not have role access to tool '{workflow.name}'")
 
 
+async def _validate_llm_profile_id(
+    db: DbSession,
+    llm_profile_id: UUID | None,
+) -> None:
+    """Validate that a referenced model profile exists."""
+    if llm_profile_id is None:
+        return
+    exists = await db.scalar(
+        select(AIModelProfile.id).where(AIModelProfile.id == llm_profile_id)
+    )
+    if exists is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"llm_profile_id '{llm_profile_id}' does not reference an existing model profile",
+        )
+
+
 async def _user_has_permission(
     db: DbSession,
     user_id: UUID,
@@ -246,7 +264,7 @@ def _agent_to_public(agent: Agent) -> AgentPublic:
         knowledge_sources=agent.knowledge_sources or [],
         system_tools=[t for t in (agent.system_tools or []) if t in valid_system_tool_ids],
         mcp_connection_ids=sorted(str(c.id) for c in (agent.mcp_connections or [])),
-        llm_model=agent.llm_model,
+        llm_profile_id=agent.llm_profile_id,
         llm_max_tokens=agent.llm_max_tokens,
         max_iterations=agent.max_iterations,
         max_token_budget=agent.max_token_budget,
@@ -415,6 +433,7 @@ async def create_agent(
         delegated_agent_ids=agent_data.delegated_agent_ids,
         agent_id=None,
     )
+    await _validate_llm_profile_id(db, agent_data.llm_profile_id)
 
     agent_id = uuid4()
     now = datetime.now(timezone.utc)
@@ -437,7 +456,7 @@ async def create_agent(
         is_active=True,
         knowledge_sources=agent_data.knowledge_sources or [],
         system_tools=agent_data.system_tools or [],
-        llm_model=agent_data.llm_model,
+        llm_profile_id=agent_data.llm_profile_id,
         llm_max_tokens=agent_data.llm_max_tokens,
         max_iterations=agent_data.max_iterations,
         max_token_budget=agent_data.max_token_budget,
@@ -536,6 +555,7 @@ async def create_agent(
             selectinload(Agent.roles),
             selectinload(Agent.owner),
             selectinload(Agent.mcp_connections),
+            selectinload(Agent.llm_profile),
         )
         .where(Agent.id == agent_id)
     )
@@ -671,6 +691,7 @@ async def update_agent(
             selectinload(Agent.roles),
             selectinload(Agent.owner),
             selectinload(Agent.mcp_connections),
+            selectinload(Agent.llm_profile),
         )
         .where(Agent.id == agent_id)
     )
@@ -730,6 +751,8 @@ async def update_agent(
         delegated_agent_ids=agent_data.delegated_agent_ids,
         agent_id=agent_id,  # For self-delegation check
     )
+    if "llm_profile_id" in agent_data.model_fields_set:
+        await _validate_llm_profile_id(db, agent_data.llm_profile_id)
 
     # Update fields
     if agent_data.name is not None:
@@ -751,8 +774,8 @@ async def update_agent(
         agent.knowledge_sources = agent_data.knowledge_sources
     if agent_data.system_tools is not None:
         agent.system_tools = agent_data.system_tools
-    if agent_data.llm_model is not None:
-        agent.llm_model = agent_data.llm_model if agent_data.llm_model else None
+    if "llm_profile_id" in agent_data.model_fields_set:
+        agent.llm_profile_id = agent_data.llm_profile_id
     if agent_data.llm_max_tokens is not None:
         agent.llm_max_tokens = agent_data.llm_max_tokens if agent_data.llm_max_tokens else None
     if "max_iterations" in agent_data.model_fields_set:
@@ -864,6 +887,7 @@ async def update_agent(
             selectinload(Agent.delegated_agents),
             selectinload(Agent.roles),
             selectinload(Agent.owner),
+            selectinload(Agent.llm_profile),
             selectinload(Agent.mcp_connections),
         )
         .where(Agent.id == agent_id)
@@ -928,6 +952,7 @@ async def promote_agent(
             selectinload(Agent.delegated_agents),
             selectinload(Agent.roles),
             selectinload(Agent.owner),
+            selectinload(Agent.llm_profile),
         )
         .where(Agent.id == agent_id)
     )

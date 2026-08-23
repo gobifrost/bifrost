@@ -70,7 +70,8 @@ def _mock_agent(agent_id=AGENT_ID, name="det_agent"):
     agent.channels = []
     agent.knowledge_sources = []
     agent.system_tools = []
-    agent.llm_model = None
+    agent.llm_profile_id = None
+    agent.llm_profile = None
     agent.llm_max_tokens = None
     agent.max_iterations = None
     agent.max_token_budget = None

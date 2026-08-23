@@ -1,7 +1,7 @@
 """Durable delegation lifecycle coverage across chat and autonomous surfaces."""
 
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -27,7 +27,6 @@ from src.services.execution.agent_helpers import agent_delegation_slug
 from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
 from src.services.llm.base import LLMConfig, ToolCallRequest
 from src.services.llm.pydantic_client import PydanticAIClient
-from src.services.llm_config_service import LLMProviderConfig
 from src.services.model_capabilities import manual_capabilities
 
 
@@ -296,6 +295,15 @@ async def test_chat_executor_receives_durable_child_callback(
     parent_llm = PydanticAIClient(
         LLMConfig(provider="openai", model="test-parent", api_key="test-key")
     )
+    chat_profile = MagicMock(id=uuid4(), name="Test parent")
+    chat_capabilities = manual_capabilities(
+        provider="openai",
+        model="test-parent",
+        endpoint=None,
+        image_input=False,
+        pdf_input=False,
+        tool_calling=True,
+    )
 
     try:
         with (
@@ -305,19 +313,12 @@ async def test_chat_executor_receives_durable_child_callback(
                 return_value=parent_llm,
             ),
             patch(
-                "src.services.llm_config_service.LLMConfigService.get_config",
+                "src.services.agent_executor.AIModelService.resolve_chat_profile",
                 new=AsyncMock(
-                    return_value=LLMProviderConfig(
-                        provider="openai",
-                        model="test-parent",
-                        chat_balanced_capabilities=manual_capabilities(
-                            provider="openai",
-                            model="test-parent",
-                            endpoint=None,
-                            image_input=False,
-                            pdf_input=False,
-                            tool_calling=True,
-                        ),
+                    return_value=(
+                        chat_profile,
+                        LLMConfig(provider="openai", model="test-parent", api_key="test-key"),
+                        chat_capabilities,
                     )
                 ),
             ),

@@ -86,7 +86,7 @@ def mock_agent():
     agent.max_iterations = 5
     agent.max_token_budget = 50000
     agent.max_run_timeout = 60
-    agent.llm_model = None
+    agent.llm_profile_id = None
     agent.llm_max_tokens = None
     agent.is_active = True
     agent.organization_id = uuid4()

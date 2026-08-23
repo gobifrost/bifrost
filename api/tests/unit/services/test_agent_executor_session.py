@@ -63,7 +63,7 @@ def _make_mock_agent():
     agent.max_iterations = 5
     agent.max_token_budget = 10000
     agent.max_run_timeout = 60
-    agent.llm_model = "test-model"
+    agent.llm_profile_id = uuid4()
     agent.llm_max_tokens = 4096
     agent.tools = []
     agent.delegated_agents = []

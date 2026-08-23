@@ -8,7 +8,7 @@
     "kb_partition"
   ],
   "llm_max_tokens": 1024,
-  "llm_model": "claude-haiku-4-5",
+  "llm_profile": "<volatile>",
   "max_iterations": 5,
   "max_token_budget": 10000,
   "mcp_connection_ids": [

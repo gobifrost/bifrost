@@ -60,7 +60,7 @@ describe("ChatInput — send behavior", () => {
 		// Press Enter to submit.
 		await user.type(textarea, "{Enter}");
 
-		expect(onSend).toHaveBeenCalledWith("hello world", [], "balanced");
+		expect(onSend).toHaveBeenCalledWith("hello world", [], null);
 		// Textarea is cleared post-send.
 		expect(textarea.value).toBe("");
 	});
@@ -139,7 +139,7 @@ describe("ChatInput — @ mentions", () => {
 		await user.click(textarea);
 		await user.keyboard("{Enter}");
 
-		expect(onSend).toHaveBeenCalledWith("@[SupportBot]", [], "balanced");
+		expect(onSend).toHaveBeenCalledWith("@[SupportBot]", [], null);
 	});
 
 	it("keeps focus in the composer and selects the highlighted mention on Tab", async () => {
@@ -160,7 +160,7 @@ describe("ChatInput — @ mentions", () => {
 	});
 });
 
-describe("ChatInput — attachments and model tier", () => {
+describe("ChatInput — attachments and model profile", () => {
 	it("keeps primary composer controls touch-sized on phones", () => {
 		const { container } = renderWithProviders(
 			<ChatInput onSend={vi.fn()} />,
@@ -190,7 +190,54 @@ describe("ChatInput — attachments and model tier", () => {
 
 		expect(screen.getByText("notes.txt")).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: /send message/i }));
-		expect(onSend).toHaveBeenCalledWith("", [file], "balanced");
+		expect(onSend).toHaveBeenCalledWith("", [file], null);
+	});
+
+	it("sends the selected model profile id", async () => {
+		const onSend = vi.fn();
+		const { user } = renderWithProviders(
+			<ChatInput
+				onSend={onSend}
+				modelProfiles={[
+					{
+						id: "profile-balanced",
+						name: "Balanced",
+						label: "Balanced",
+						capabilities: {
+							image_input: false,
+							pdf_input: false,
+							tool_calling: false,
+							source: "unknown",
+							fingerprint: "",
+						},
+					},
+					{
+						id: "profile-pro",
+						name: "Research",
+						label: "Research",
+						capabilities: {
+							image_input: false,
+							pdf_input: false,
+							tool_calling: true,
+							source: "unknown",
+							fingerprint: "",
+						},
+					},
+				]}
+				modelProfileId="profile-balanced"
+			/>,
+		);
+
+		fireEvent.change(screen.getByPlaceholderText(/reply/i), {
+			target: { value: "use the chosen profile" },
+		});
+		await user.click(screen.getByRole("button", { name: /send message/i }));
+
+		expect(onSend).toHaveBeenCalledWith(
+			"use the chosen profile",
+			[],
+			"profile-balanced",
+		);
 	});
 });
 

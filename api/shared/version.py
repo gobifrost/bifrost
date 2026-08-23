@@ -6,7 +6,7 @@ from functools import lru_cache
 # Old CLIs below this release do not implement the portable Solution targeting
 # contract. The API exposes this floor at /api/version and compatible CLIs hard-
 # block command dispatch until they are upgraded.
-MIN_CLI_VERSION = "1.2.2"
+MIN_CLI_VERSION = "1.2.3"
 
 
 @lru_cache(maxsize=1)

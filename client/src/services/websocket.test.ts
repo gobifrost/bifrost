@@ -54,7 +54,7 @@ describe("platform-job WebSocket contract", () => {
 });
 
 describe("chat WebSocket contract", () => {
-	it("sends attachment ids and the governed model tier", () => {
+	it("sends attachment ids and the governed model profile", () => {
 		const send = vi.fn();
 		const service = webSocketService as unknown as {
 			ws: { readyState: number; send: typeof send } | null;
@@ -67,7 +67,7 @@ describe("chat WebSocket contract", () => {
 				"Summarize this",
 				"local-1",
 				["attachment-1"],
-				"pro",
+				"profile-pro",
 			),
 		).toBe(true);
 		expect(JSON.parse(send.mock.calls[0][0])).toEqual({
@@ -76,7 +76,7 @@ describe("chat WebSocket contract", () => {
 			message: "Summarize this",
 			local_id: "local-1",
 			attachment_ids: ["attachment-1"],
-			model_tier: "pro",
+			model_profile_id: "profile-pro",
 		});
 
 		service.ws = null;

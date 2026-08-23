@@ -1550,7 +1550,7 @@ class WebSocketService {
 		message: string,
 		localId?: string,
 		attachmentIds: string[] = [],
-		modelTier: "fast" | "balanced" | "pro" = "balanced",
+		modelProfileId: string | null = null,
 	): boolean {
 		if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
 			return false;
@@ -1563,7 +1563,7 @@ class WebSocketService {
 				message,
 				local_id: localId,
 				attachment_ids: attachmentIds,
-				model_tier: modelTier,
+				model_profile_id: modelProfileId,
 			}),
 		);
 		return true;

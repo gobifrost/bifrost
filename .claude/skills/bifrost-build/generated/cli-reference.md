@@ -54,7 +54,7 @@ Options:
   --system-tools TEXT             system_tools (repeat for multiple).
   --mcp-connection-ids TEXT       mcp_connection_ids (repeat for multiple;
                                   comma-split also accepted).
-  --llm-model TEXT                llm_model
+  --llm-profile-id TEXT           llm_profile_id (UUID).
   --llm-max-tokens INTEGER        llm_max_tokens
   --max-iterations INTEGER        max_iterations
   --max-token-budget INTEGER      max_token_budget
@@ -144,7 +144,7 @@ Options:
   --clear-roles / --no-clear-roles
                                   clear_roles (tri-state; omit to leave
                                   unchanged).
-  --llm-model TEXT                llm_model
+  --llm-profile-id TEXT           llm_profile_id (UUID).
   --llm-max-tokens INTEGER        llm_max_tokens
   --max-iterations INTEGER        max_iterations
   --max-token-budget INTEGER      max_token_budget

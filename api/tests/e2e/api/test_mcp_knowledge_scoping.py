@@ -128,10 +128,20 @@ def _embedding_config(e2e_client, platform_admin):
     if not EMBEDDINGS_AVAILABLE:
         pytest.skip("EMBEDDINGS_AI_TEST_KEY not set")
 
+    connection_resp = e2e_client.post(
+        "/api/admin/ai/connections",
+        json={
+            "name": "MCP Knowledge Embeddings",
+            "provider": "openai",
+            "api_key": os.environ["EMBEDDINGS_AI_TEST_KEY"],
+        },
+        headers=platform_admin.headers,
+    )
+    assert connection_resp.status_code == 201, f"Embedding connection failed: {connection_resp.text}"
+    connection = connection_resp.json()
     config = {
-        "provider": "openai",
+        "connection_id": connection["id"],
         "model": "text-embedding-3-small",
-        "api_key": os.environ["EMBEDDINGS_AI_TEST_KEY"],
     }
     resp = e2e_client.post(
         "/api/admin/llm/embedding-config",
@@ -145,6 +155,10 @@ def _embedding_config(e2e_client, platform_admin):
     try:
         e2e_client.delete(
             "/api/admin/llm/embedding-config",
+            headers=platform_admin.headers,
+        )
+        e2e_client.delete(
+            f"/api/admin/ai/connections/{connection['id']}",
             headers=platform_admin.headers,
         )
     except Exception as e:

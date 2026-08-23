@@ -214,7 +214,11 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     #
     # SDK AI completion requests gained optional file inputs (2026-08-15).
     # ADDITIVE: old SDK clients omit the field and keep text-only behavior.
-    "aedcecc04849f529fb42278841f5ff3edea769d40b8ba39c131162033dc96ceb"
+    #
+    # Agent create/update replaced the raw llm_model field with llm_profile_id
+    # (2026-08-22). BREAKING: older CLIs cannot express reusable model profiles,
+    # so MIN_CLI_VERSION was raised to 1.2.3.
+    "d36e04acbb92f424b2931612dde64da427ebbad908f1edeb1e33321a9e423a3c"
 )
 
 

@@ -336,7 +336,7 @@ async def seed_solution_agent(db: AsyncSession, sol: Solution) -> tuple[str, int
         access_level=AgentAccessLevel.AUTHENTICATED,
         knowledge_sources=["kb-alpha"],
         system_tools=["search_knowledge"],
-        llm_model="claude-test",
+        llm_profile_id=None,
         llm_max_tokens=2048,
         max_iterations=11,
         max_token_budget=22222,

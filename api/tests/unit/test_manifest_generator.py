@@ -62,7 +62,8 @@ def _mock_agent(name="test_agent", org_id=None, access_level=None):
     agent.channels = []
     agent.knowledge_sources = []
     agent.system_tools = []
-    agent.llm_model = None
+    agent.llm_profile_id = None
+    agent.llm_profile = None
     agent.llm_max_tokens = None
     agent.max_iterations = None
     agent.max_token_budget = None

@@ -7,6 +7,7 @@
  */
 
 import { Link, useLocation } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import {
 	Activity,
 	AlertTriangle,
@@ -35,6 +36,7 @@ import { useAgent } from "@/hooks/useAgents";
 import { useAgentRunUpdates } from "@/hooks/useAgentRunUpdates";
 import { useAgentRuns } from "@/services/agentRuns";
 import { useAgentStats } from "@/services/agents";
+import { listModelProfiles } from "@/services/aiModels";
 import {
 	createAgentRunNavigationState,
 	getLocationHref,
@@ -52,6 +54,10 @@ export interface AgentOverviewTabProps {
 export function AgentOverviewTab({ agentId }: AgentOverviewTabProps) {
 	const location = useLocation();
 	const { data: agent } = useAgent(agentId);
+	const { data: modelProfiles } = useQuery({
+		queryKey: ["ai", "model-profiles"],
+		queryFn: listModelProfiles,
+	});
 	const { data: stats, isLoading: statsLoading } = useAgentStats(agentId);
 	const { data: runsList, isLoading: runsLoading } = useAgentRuns({
 		agentId,
@@ -69,6 +75,12 @@ export function AgentOverviewTab({ agentId }: AgentOverviewTabProps) {
 		href: getLocationHref(location),
 		label: `Back to ${agent?.name ?? "agent"} overview`,
 	};
+	const selectedModelProfile = modelProfiles?.find(
+		(profile) => profile.id === agent?.llm_profile_id,
+	);
+	const modelProfileLabel = agent?.llm_profile_id
+		? (selectedModelProfile?.name ?? "Selected profile")
+		: "Primary profile assignment";
 
 	return (
 		<div
@@ -303,9 +315,9 @@ export function AgentOverviewTab({ agentId }: AgentOverviewTabProps) {
 							CARD_BODY,
 						)}
 					>
-						<dt className={TONE_MUTED}>Model</dt>
+						<dt className={TONE_MUTED}>Model profile</dt>
 						<dd className={TYPE_MONO}>
-							{agent?.llm_model ?? "default"}
+							{modelProfileLabel}
 						</dd>
 						<dt className={TONE_MUTED}>Channels</dt>
 						<dd>{(agent?.channels ?? []).join(", ") || "—"}</dd>

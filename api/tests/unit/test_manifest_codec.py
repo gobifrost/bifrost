@@ -1306,6 +1306,7 @@ async def test_agent_git_sync_parity(db_session):
     """
     import uuid
     from sqlalchemy import delete
+    from src.models.orm.ai_models import AIModelProfile, AIProviderConnection
     from src.models.orm.agents import Agent
     from src.models.orm.users import Role
     from src.models.orm.agents import AgentRole
@@ -1316,6 +1317,20 @@ async def test_agent_git_sync_parity(db_session):
     agent_id = uuid.uuid4()
     role_id = uuid.uuid4()
     mcp_conn_id = uuid.uuid4()
+    connection = AIProviderConnection(
+        name=f"rt_agent_git_provider_{agent_id.hex[:8]}",
+        provider="openrouter",
+        encrypted_api_key="encrypted-test-key",
+    )
+    db_session.add(connection)
+    await db_session.flush()
+    profile = AIModelProfile(
+        name=f"Manifest Codec Sonnet {agent_id.hex[:8]}",
+        connection_id=connection.id,
+        model="claude-sonnet-4-5",
+    )
+    db_session.add(profile)
+    await db_session.flush()
 
     agent = Agent(
         id=agent_id,
@@ -1325,7 +1340,7 @@ async def test_agent_git_sync_parity(db_session):
         channels=["chat"],
         knowledge_sources=["kb1"],
         system_tools=["execute_workflow"],
-        llm_model="claude-sonnet-4-5",
+        llm_profile_id=profile.id,
         llm_max_tokens=4096,
         max_iterations=10,
         max_token_budget=50000,
@@ -1364,12 +1379,14 @@ async def test_agent_git_sync_parity(db_session):
         assert_golden(
             produced,
             "agent_git_sync",
-            volatile_keys={"id", "organization_id", "roles", "mcp_connection_ids"},
+            volatile_keys={"id", "organization_id", "roles", "mcp_connection_ids", "llm_profile"},
         )
     finally:
         await db_session.execute(delete(AgentRole).where(AgentRole.agent_id == agent_id))
         await db_session.execute(delete(Agent).where(Agent.id == agent_id))
         await db_session.execute(delete(Role).where(Role.id == role_id))
+        await db_session.execute(delete(AIModelProfile).where(AIModelProfile.id == profile.id))
+        await db_session.execute(delete(AIProviderConnection).where(AIProviderConnection.id == connection.id))
         await db_session.commit()
 
 
@@ -1400,7 +1417,8 @@ def test_agent_from_row_coerces_uuid_junction_ids():
         access_level = None
         knowledge_sources = []
         system_tools = []
-        llm_model = None
+        llm_profile_id = None
+        llm_profile = None
         llm_max_tokens = None
         max_iterations = None
         max_token_budget = None
@@ -1456,7 +1474,7 @@ async def test_agent_install_parity(db_session):
         channels=["chat", "email"],
         knowledge_sources=[],
         system_tools=["execute_workflow"],
-        llm_model=None,
+        llm_profile_id=None,
         llm_max_tokens=None,
         max_iterations=20,
         max_token_budget=None,
@@ -1526,6 +1544,7 @@ async def test_agent_to_orm_values_partition(db_session):
     import uuid
     from sqlalchemy import delete
     from src.models.orm.agents import Agent
+    from src.models.orm.ai_models import AIModelProfile, AIProviderConnection
     from src.models.orm.organizations import Organization
     from bifrost.manifest import ManifestAgent
     from bifrost.manifest_codec import Destination
@@ -1534,6 +1553,20 @@ async def test_agent_to_orm_values_partition(db_session):
     agent_id = uuid.uuid4()
     org_id = uuid.uuid4()
     mcp_id = uuid.uuid4()
+    connection = AIProviderConnection(
+        name=f"rt_agent_partition_provider_{agent_id.hex[:8]}",
+        provider="openrouter",
+        encrypted_api_key="encrypted-test-key",
+    )
+    db_session.add(connection)
+    await db_session.flush()
+    profile = AIModelProfile(
+        name=f"Manifest Codec Haiku {agent_id.hex[:8]}",
+        connection_id=connection.id,
+        model="claude-haiku-4-5",
+    )
+    db_session.add(profile)
+    await db_session.flush()
 
     org = Organization(id=org_id, name=f"rt-agent-partition-org-{org_id.hex[:8]}", created_by="test")
     db_session.add(org)
@@ -1547,7 +1580,7 @@ async def test_agent_to_orm_values_partition(db_session):
         channels=["chat"],
         knowledge_sources=["kb_partition"],
         system_tools=["execute_workflow"],
-        llm_model="claude-haiku-4-5",
+        llm_profile_id=profile.id,
         llm_max_tokens=1024,
         max_iterations=5,
         max_token_budget=10000,
@@ -1585,10 +1618,16 @@ async def test_agent_to_orm_values_partition(db_session):
         )
 
         # Lock the indexer_content shape to a committed golden.
-        assert_golden(parts.indexer_content, "agent_indexer_content", volatile_keys={"id", "mcp_connection_ids", "tool_ids"})
+        assert_golden(
+            parts.indexer_content,
+            "agent_indexer_content",
+            volatile_keys={"id", "mcp_connection_ids", "tool_ids", "llm_profile"},
+        )
     finally:
         await db_session.execute(delete(Agent).where(Agent.id == agent_id))
         await db_session.execute(delete(Organization).where(Organization.id == org_id))
+        await db_session.execute(delete(AIModelProfile).where(AIModelProfile.id == profile.id))
+        await db_session.execute(delete(AIProviderConnection).where(AIProviderConnection.id == connection.id))
         await db_session.commit()
 
 

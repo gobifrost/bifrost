@@ -61,7 +61,8 @@ def make_agent(
     agent.roles = []
     agent.knowledge_sources = []
     agent.system_tools = []
-    agent.llm_model = None
+    agent.llm_profile_id = None
+    agent.llm_profile = None
     agent.llm_max_tokens = None
     agent.created_by = "admin@test.com"
     agent.created_at = datetime.now(timezone.utc)

@@ -42,11 +42,12 @@ vi.mock("@/hooks/useChat", () => ({
 		isLoading: messagesRef.isLoading,
 	}),
 	useCreateConversation: () => createConversationRef,
-	useChatModelTiers: () => ({
+	useChatModelProfiles: () => ({
 		data: {
-			tiers: [
+			profiles: [
 				{
-					id: "balanced",
+					id: "profile-balanced",
+					name: "Balanced",
 					label: "Balanced",
 					capabilities: {
 						image_input: false,
@@ -57,7 +58,7 @@ vi.mock("@/hooks/useChat", () => ({
 					},
 				},
 			],
-			default_tier: "balanced",
+			default_profile_id: "profile-balanced",
 		},
 	}),
 }));
@@ -103,9 +104,11 @@ vi.mock("./ChatInput", () => ({
 	ChatInput: ({
 		onSend,
 		placeholder,
+		modelProfileId,
 	}: {
-		onSend: (m: string, files: File[], tier: "balanced") => void;
+		onSend: (m: string, files: File[], profileId: string | null) => void;
 		placeholder?: string;
+		modelProfileId?: string | null;
 	}) => (
 		<div>
 			<input
@@ -116,7 +119,7 @@ vi.mock("./ChatInput", () => ({
 						onSend(
 							(e.target as HTMLInputElement).value,
 							[],
-							"balanced",
+							modelProfileId ?? null,
 						);
 					}
 				}}
@@ -367,7 +370,7 @@ describe("ChatWindow — messages render & send", () => {
 				"hello",
 				"c-1",
 				[],
-				"balanced",
+				"profile-balanced",
 			),
 		);
 	});
@@ -398,7 +401,7 @@ describe("ChatWindow — messages render & send", () => {
 			"hello from draft",
 			"new-conversation-id",
 			[],
-			"balanced",
+			"profile-balanced",
 		);
 	});
 });
