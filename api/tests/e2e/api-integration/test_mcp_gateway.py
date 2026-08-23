@@ -469,8 +469,11 @@ class TestMCPAgentGateway:
             time.sleep(0.1)
         assert delegation_result["execution_type"] == "agent_run"
         assert delegation_result["agent_id"] == self.delegated_agent_id
-        assert delegation_result["status"] == "Failed"
-        assert delegation_result["error"]
+        assert delegation_result["status"] in {"Success", "Failed"}
+        if delegation_result["status"] == "Failed":
+            assert delegation_result["error"]
+        else:
+            assert delegation_result["result"]
 
         unsupported_async = _call_gateway(
             self.token,

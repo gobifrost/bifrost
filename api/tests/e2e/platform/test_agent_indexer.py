@@ -45,7 +45,6 @@ class TestAgentIndexer:
             name=f"Indexer Profile {uuid4().hex[:8]}",
             connection_id=connection.id,
             model="anthropic/claude-3-5-sonnet-20241022",
-            max_tokens=8192,
         )
         db_session.add(profile)
         await db_session.flush()

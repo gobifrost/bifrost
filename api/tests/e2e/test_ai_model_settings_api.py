@@ -22,6 +22,13 @@ def test_failed_provider_verification_does_not_save(e2e_client, platform_admin):
 
 
 def test_ai_model_settings_crud_and_assignment(e2e_client, platform_admin):
+    existing_profiles_resp = e2e_client.get(
+        "/api/admin/ai/profiles",
+        headers=platform_admin.headers,
+    )
+    assert existing_profiles_resp.status_code == 200, existing_profiles_resp.text
+    is_first_profile = not existing_profiles_resp.json()
+
     connection_resp = e2e_client.post(
         "/api/admin/ai/connections",
         headers=platform_admin.headers,
@@ -62,18 +69,22 @@ def test_ai_model_settings_crud_and_assignment(e2e_client, platform_admin):
         headers=platform_admin.headers,
     )
     assert initial_assignments_resp.status_code == 200, initial_assignments_resp.text
-    assert {
+    seeded_assignment_keys = {
         assignment["assignment_key"]
         for assignment in initial_assignments_resp.json()
         if assignment["profile_id"] == previous_profile_resp.json()["id"]
-    } == {
-        "primary",
-        "summarization",
-        "tuning",
-        "image_generation",
-        "video_generation",
-        "chat_default",
     }
+    if is_first_profile:
+        assert seeded_assignment_keys == {
+            "primary",
+            "summarization",
+            "tuning",
+            "image_generation",
+            "video_generation",
+            "chat_default",
+        }
+    else:
+        assert seeded_assignment_keys == set()
     previous_assignment_resp = e2e_client.put(
         "/api/admin/ai/assignments/chat_default",
         headers=platform_admin.headers,
