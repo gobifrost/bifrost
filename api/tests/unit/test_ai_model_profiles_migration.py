@@ -104,3 +104,113 @@ def test_missing_legacy_assignments_use_primary_profile():
     }
     assert all("ON CONFLICT (assignment_key) DO NOTHING" in sql for sql, _ in executed)
     assert {params["profile_id"] for _, params in executed} == {profile_id}
+
+
+def test_legacy_provider_config_preserves_profiles_and_assignments(monkeypatch):
+    migration = _load_migration()
+    config = {
+        "provider": "openai",
+        "endpoint": "https://openrouter.ai/api/v1/",
+        "encrypted_api_key": "encrypted-key",
+        "model": "openai/gpt-5",
+        "max_tokens": 32000,
+        "chat_fast_label": "Quick",
+        "chat_fast_model": "openai/gpt-5-mini",
+        "chat_fast_capabilities": {"reasoning": False},
+        "chat_balanced_label": "Everyday",
+        "chat_balanced_model": "anthropic/claude-sonnet-4",
+        "chat_balanced_capabilities": {"reasoning": True},
+        "chat_pro_label": "Deep",
+        "chat_pro_model": "openai/o3",
+        "chat_pro_capabilities": {"reasoning": True},
+        "summarization_model": "openai/gpt-5-nano",
+        "tuning_model": "openai/gpt-5-mini",
+        "image_generation_model": "openai/gpt-image-1",
+        "video_generation_model": "openai/sora-2",
+    }
+
+    class Bind:
+        def execute(self, statement, params=None):
+            sql = " ".join(str(statement).split())
+            assert "FROM system_configs" in sql
+            return _Result(first={"value_json": config})
+
+    connection_id = uuid4()
+    profiles: list[dict] = []
+    assignments: dict[str, UUID] = {}
+    default_assignments: dict[str, UUID] = {}
+
+    def create_connection(bind, provider, endpoint, encrypted_key, now):
+        assert isinstance(bind, Bind)
+        assert provider == "openrouter"
+        assert endpoint == migration.OPENROUTER_DEFAULT_ENDPOINT
+        assert encrypted_key == "encrypted-key"
+        return connection_id
+
+    def create_profile(bind, **values):
+        assert isinstance(bind, Bind)
+        assert values["connection_id"] == connection_id
+        profile_id = uuid4()
+        profiles.append({"id": profile_id, **values})
+        return profile_id
+
+    monkeypatch.setattr(migration.op, "get_bind", Bind)
+    monkeypatch.setattr(migration, "_get_or_create_connection", create_connection)
+    monkeypatch.setattr(migration, "_get_or_create_profile", create_profile)
+    monkeypatch.setattr(
+        migration,
+        "_find_matching_profile",
+        lambda _bind, _connection_id, model: next(
+            (profile["id"] for profile in profiles if profile["model"] == model),
+            None,
+        ),
+    )
+    monkeypatch.setattr(
+        migration,
+        "_upsert_assignment",
+        lambda _bind, key, profile_id, _now: assignments.__setitem__(key, profile_id),
+    )
+    monkeypatch.setattr(
+        migration,
+        "_insert_assignment_if_missing",
+        lambda _bind, key, profile_id, _now: default_assignments.__setitem__(
+            key, profile_id
+        ),
+    )
+
+    migration._migrate_legacy_llm_config()
+
+    by_name = {profile["name"]: profile for profile in profiles}
+    assert set(by_name) == {
+        "Default",
+        "Quick",
+        "Everyday",
+        "Deep",
+        "Summarization",
+        "Image Generation",
+        "Video Generation",
+    }
+    assert by_name["Default"]["model"] == "openai/gpt-5"
+    assert by_name["Default"]["enabled_for_chat"] is False
+    assert by_name["Quick"]["model"] == "openai/gpt-5-mini"
+    assert by_name["Quick"]["enabled_for_chat"] is True
+    assert by_name["Quick"]["capabilities"] == {"reasoning": False}
+    assert by_name["Everyday"]["model"] == "anthropic/claude-sonnet-4"
+    assert by_name["Everyday"]["enabled_for_chat"] is True
+    assert by_name["Everyday"]["capabilities"] == {"reasoning": True}
+    assert by_name["Deep"]["model"] == "openai/o3"
+    assert by_name["Deep"]["enabled_for_chat"] is True
+    assert assignments == {
+        "primary": by_name["Default"]["id"],
+        "chat_default": by_name["Everyday"]["id"],
+        "summarization": by_name["Summarization"]["id"],
+        "tuning": by_name["Quick"]["id"],
+        "image_generation": by_name["Image Generation"]["id"],
+        "video_generation": by_name["Video Generation"]["id"],
+    }
+    assert default_assignments == {
+        "summarization": by_name["Default"]["id"],
+        "tuning": by_name["Default"]["id"],
+        "image_generation": by_name["Default"]["id"],
+        "video_generation": by_name["Default"]["id"],
+    }

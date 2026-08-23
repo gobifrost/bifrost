@@ -137,7 +137,7 @@ async def test_encode_input_files_resolves_artifact_refs(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_complete_sends_optional_profile_name(monkeypatch):
-    import bifrost.ai as ai_module
+    from bifrost.ai import ai
 
     client = AsyncMock()
     client.post.return_value = httpx.Response(
@@ -149,9 +149,9 @@ async def test_complete_sends_optional_profile_name(monkeypatch):
             "model": "gpt-5",
         },
     )
-    monkeypatch.setattr(ai_module, "get_client", lambda: client)
+    monkeypatch.setattr("bifrost.ai.get_client", lambda: client)
 
-    response = await ai_module.ai.complete("Hello", profile="Reasoning")
+    response = await ai.complete("Hello", profile="Reasoning")
 
     assert response.content == "Done"
     assert client.post.await_args.kwargs["json"]["profile"] == "Reasoning"
