@@ -1,6 +1,13 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Bot, Check, MessageSquareText, Plus, Sparkles } from "lucide-react";
+import {
+	Bot,
+	Check,
+	Loader2,
+	MessageSquareText,
+	Plus,
+	Sparkles,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -40,6 +47,7 @@ export interface ModelProfileSelectorProps {
 	placeholder?: string;
 	disabled?: boolean;
 	chatOnly?: boolean;
+	isSaving?: boolean;
 }
 
 function profileDescription(profile: AIModelProfile): string {
@@ -54,6 +62,7 @@ export function ModelProfileSelector({
 	placeholder = "Select a profile",
 	disabled = false,
 	chatOnly = false,
+	isSaving = false,
 }: ModelProfileSelectorProps) {
 	const [creating, setCreating] = useState(false);
 	const [newName, setNewName] = useState("");
@@ -116,7 +125,9 @@ export function ModelProfileSelector({
 		newName.trim() ||
 		[selectedConnection?.name, newModel.trim()].filter(Boolean).join(" · ");
 	const formReady =
-		Boolean(newConnectionId) && Boolean(newModel.trim()) && Boolean(inferredName);
+		Boolean(newConnectionId) &&
+		Boolean(newModel.trim()) &&
+		Boolean(inferredName);
 
 	const submitCreate = () => {
 		if (!formReady) return;
@@ -133,17 +144,27 @@ export function ModelProfileSelector({
 		<div className="space-y-2">
 			<div className="flex items-center justify-between gap-3">
 				<Label htmlFor={id}>{label}</Label>
-				<Button
-					type="button"
-					variant="ghost"
-					size="sm"
-					className="h-7 gap-1.5 px-2 text-xs"
-					onClick={() => setCreating(true)}
-					disabled={disabled || connectionsQuery.isLoading}
-				>
-					<Plus className="h-3.5 w-3.5" />
-					Create profile
-				</Button>
+				{isSaving ? (
+					<span
+						className="flex animate-in items-center gap-1.5 text-xs text-muted-foreground fade-in-0 motion-reduce:animate-none"
+						role="status"
+					>
+						<Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
+						Saving assignment…
+					</span>
+				) : (
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						className="h-7 gap-1.5 px-2 text-xs"
+						onClick={() => setCreating(true)}
+						disabled={disabled || connectionsQuery.isLoading}
+					>
+						<Plus className="h-3.5 w-3.5" />
+						Create profile
+					</Button>
+				)}
 			</div>
 			<Combobox
 				id={id}
@@ -160,7 +181,7 @@ export function ModelProfileSelector({
 						: "No profiles found."
 				}
 				isLoading={profilesQuery.isLoading}
-				disabled={disabled}
+				disabled={disabled || isSaving}
 			/>
 
 			<Dialog open={creating} onOpenChange={setCreating}>
@@ -171,15 +192,17 @@ export function ModelProfileSelector({
 						</div>
 						<DialogTitle>Create Model Profile</DialogTitle>
 						<DialogDescription>
-							Profiles are reusable model choices. Assign this profile wherever
-							Bifrost needs a model.
+							Profiles are reusable model choices. Assign this
+							profile wherever Bifrost needs a model.
 						</DialogDescription>
 					</DialogHeader>
 
 					{canCreate ? (
 						<div className="grid gap-4 py-2">
 							<div className="space-y-2">
-								<Label htmlFor="model-profile-name">Profile Name</Label>
+								<Label htmlFor="model-profile-name">
+									Profile Name
+								</Label>
 								<Input
 									id="model-profile-name"
 									value={newName}
@@ -209,14 +232,17 @@ export function ModelProfileSelector({
 												key={connection.id}
 												value={connection.id}
 											>
-												{connection.name} · {connection.provider}
+												{connection.name} ·{" "}
+												{connection.provider}
 											</SelectItem>
 										))}
 									</SelectContent>
 								</Select>
 							</div>
 							<div className="space-y-2">
-								<Label htmlFor="model-profile-model">Model</Label>
+								<Label htmlFor="model-profile-model">
+									Model
+								</Label>
 								<Input
 									id="model-profile-model"
 									value={newModel}
@@ -230,7 +256,8 @@ export function ModelProfileSelector({
 								<div className="flex items-start gap-2 rounded-lg bg-muted/60 p-3 text-sm">
 									<MessageSquareText className="mt-0.5 h-4 w-4 text-primary" />
 									<p className="text-muted-foreground">
-										New profiles created here are enabled for chat.
+										New profiles created here are enabled
+										for chat.
 									</p>
 								</div>
 							)}
@@ -243,8 +270,8 @@ export function ModelProfileSelector({
 									Create a provider connection first
 								</p>
 								<p className="mt-1 text-sm text-muted-foreground">
-									Profiles need a saved provider connection before they can be
-									reused.
+									Profiles need a saved provider connection
+									before they can be reused.
 								</p>
 							</div>
 						</div>
@@ -263,8 +290,12 @@ export function ModelProfileSelector({
 							onClick={submitCreate}
 							disabled={!formReady || createMutation.isPending}
 						>
-							<Check className="h-4 w-4" />
-							Create
+							{createMutation.isPending ? (
+								<Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+							) : (
+								<Check className="h-4 w-4" />
+							)}
+							{createMutation.isPending ? "Creating…" : "Create"}
 						</Button>
 					</DialogFooter>
 				</DialogContent>

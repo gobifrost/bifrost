@@ -56,6 +56,24 @@ def test_ai_model_settings_crud_and_assignment(e2e_client, platform_admin):
         },
     )
     assert previous_profile_resp.status_code == 201, previous_profile_resp.text
+    assert previous_profile_resp.json()["enabled_for_chat"] is True
+    initial_assignments_resp = e2e_client.get(
+        "/api/admin/ai/assignments",
+        headers=platform_admin.headers,
+    )
+    assert initial_assignments_resp.status_code == 200, initial_assignments_resp.text
+    assert {
+        assignment["assignment_key"]
+        for assignment in initial_assignments_resp.json()
+        if assignment["profile_id"] == previous_profile_resp.json()["id"]
+    } == {
+        "primary",
+        "summarization",
+        "tuning",
+        "image_generation",
+        "video_generation",
+        "chat_default",
+    }
     previous_assignment_resp = e2e_client.put(
         "/api/admin/ai/assignments/chat_default",
         headers=platform_admin.headers,

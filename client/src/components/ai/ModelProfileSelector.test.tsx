@@ -86,6 +86,21 @@ describe("ModelProfileSelector", () => {
 		).not.toBeInTheDocument();
 	});
 
+	it("shows and locks the selector while an assignment is saving", async () => {
+		renderWithProviders(
+			<ModelProfileSelector
+				value="profile-1"
+				onValueChange={vi.fn()}
+				isSaving
+			/>,
+		);
+
+		expect(await screen.findByRole("status")).toHaveTextContent(
+			"Saving assignment…",
+		);
+		expect(screen.getByRole("combobox")).toBeDisabled();
+	});
+
 	it("creates a profile from the inline dialog and selects it", async () => {
 		const onValueChange = vi.fn();
 		const { user } = renderWithProviders(
@@ -109,7 +124,10 @@ describe("ModelProfileSelector", () => {
 			screen.getByRole("combobox", { name: "Provider Connection" }),
 		);
 		await user.click(screen.getByRole("option", { name: /OpenRouter/ }));
-		await user.type(screen.getByRole("textbox", { name: "Model" }), "gpt-5");
+		await user.type(
+			screen.getByRole("textbox", { name: "Model" }),
+			"gpt-5",
+		);
 		await user.click(screen.getByRole("button", { name: "Create" }));
 
 		await waitFor(() =>

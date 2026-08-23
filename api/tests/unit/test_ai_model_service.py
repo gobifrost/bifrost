@@ -19,6 +19,15 @@ async def _connection(service: AIModelService):
 
 
 async def _profile(service: AIModelService, *, enabled_for_chat: bool = False):
+    if not await service.list_profiles():
+        seed_connection = await _connection(service)
+        await service.create_profile(
+            name=f"Initial {uuid4().hex[:8]}",
+            connection_id=seed_connection.id,
+            model="openai/gpt-4o-mini",
+            capabilities=None,
+            enabled_for_chat=True,
+        )
     connection = await _connection(service)
     return await service.create_profile(
         name=f"Balanced {uuid4().hex[:8]}",
@@ -27,6 +36,32 @@ async def _profile(service: AIModelService, *, enabled_for_chat: bool = False):
         capabilities=None,
         enabled_for_chat=enabled_for_chat,
     )
+
+
+@pytest.mark.asyncio
+async def test_first_profile_bootstraps_every_assignment(db_session):
+    service = AIModelService(db_session)
+    connection = await _connection(service)
+
+    profile = await service.create_profile(
+        name="First Profile",
+        connection_id=connection.id,
+        model="openai/gpt-4o-mini",
+        capabilities=None,
+        enabled_for_chat=False,
+    )
+    assignments = await service.list_assignments()
+
+    assert profile.enabled_for_chat is True
+    assert {assignment.assignment_key for assignment in assignments} == {
+        "primary",
+        "summarization",
+        "tuning",
+        "image_generation",
+        "video_generation",
+        "chat_default",
+    }
+    assert {assignment.profile_id for assignment in assignments} == {profile.id}
 
 
 @pytest.mark.asyncio

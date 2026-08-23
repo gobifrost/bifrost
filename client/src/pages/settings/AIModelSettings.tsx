@@ -62,6 +62,7 @@ import {
 	updateModelProfile,
 	verifyProviderConnection,
 	type AIModelAssignmentKey,
+	type AIModelAssignment,
 	type AIModelProfile,
 	type AIProviderKind,
 } from "@/services/aiModels";
@@ -166,6 +167,35 @@ function assignmentLabel(key: AIModelAssignmentKey): string {
 	return (
 		ASSIGNMENTS.find((assignment) => assignment.key === key)?.label ?? key
 	);
+}
+
+function replaceAssignment(
+	assignments: AIModelAssignment[],
+	nextAssignment: AIModelAssignment,
+): AIModelAssignment[] {
+	const remaining = assignments.filter(
+		(assignment) =>
+			assignment.assignment_key !== nextAssignment.assignment_key,
+	);
+	return [...remaining, nextAssignment].sort((left, right) =>
+		left.assignment_key.localeCompare(right.assignment_key),
+	);
+}
+
+function reflectAssignmentOnProfiles(
+	profiles: AIModelProfile[],
+	assignmentKey: AIModelAssignmentKey,
+	profileId: string,
+): AIModelProfile[] {
+	return profiles.map((profile) => ({
+		...profile,
+		assignment_keys: [
+			...(profile.assignment_keys ?? []).filter(
+				(key) => key !== assignmentKey,
+			),
+			...(profile.id === profileId ? [assignmentKey] : []),
+		],
+	}));
 }
 
 function ProviderModelField({
@@ -323,6 +353,7 @@ export function AIModelSettings() {
 			return;
 		}
 		setProfileConnectionId((current) => current || providers[0].id);
+		if (profiles.length === 0) setProfileChatEnabled(true);
 		setProfileCreateOpen(true);
 	};
 
@@ -414,6 +445,7 @@ export function AIModelSettings() {
 	const createProfileMutation = useMutation({
 		mutationFn: createModelProfile,
 		onSuccess: (profile) => {
+			const isFirstProfile = profiles.length === 0;
 			setProfileCreateOpen(false);
 			resetProfileCreate();
 			queryClient.setQueryData(
@@ -424,7 +456,11 @@ export function AIModelSettings() {
 				],
 			);
 			invalidateAI();
-			toast.success("Model profile created");
+			toast.success(
+				isFirstProfile
+					? "First profile created and assigned everywhere"
+					: "Model profile created",
+			);
 		},
 		onError: (error) =>
 			toast.error("Could not create profile", {
@@ -444,7 +480,10 @@ export function AIModelSettings() {
 			enabledForChat: boolean;
 		}) =>
 			updateModelProfile(profileId, { enabled_for_chat: enabledForChat }),
-		onSuccess: invalidateAI,
+		onSuccess: () => {
+			invalidateAI();
+			toast.success("Chat availability updated");
+		},
 		onError: (error) =>
 			toast.error("Could not update profile", {
 				description:
@@ -482,14 +521,86 @@ export function AIModelSettings() {
 			assignmentKey: AIModelAssignmentKey;
 			profileId: string;
 		}) => setModelAssignment(assignmentKey, profileId),
-		onSuccess: invalidateAI,
-		onError: (error) =>
+		onMutate: async ({ assignmentKey, profileId }) => {
+			await Promise.all([
+				queryClient.cancelQueries({ queryKey: ASSIGNMENT_QUERY_KEY }),
+				queryClient.cancelQueries({ queryKey: PROFILE_QUERY_KEY }),
+			]);
+			const previousAssignments =
+				queryClient.getQueryData<AIModelAssignment[]>(
+					ASSIGNMENT_QUERY_KEY,
+				) ?? [];
+			const previousProfiles =
+				queryClient.getQueryData<AIModelProfile[]>(PROFILE_QUERY_KEY) ??
+				[];
+			const profile = previousProfiles.find(
+				(candidate) => candidate.id === profileId,
+			);
+			if (profile) {
+				const previous = previousAssignments.find(
+					(assignment) => assignment.assignment_key === assignmentKey,
+				);
+				const now = new Date().toISOString();
+				queryClient.setQueryData<AIModelAssignment[]>(
+					ASSIGNMENT_QUERY_KEY,
+					replaceAssignment(previousAssignments, {
+						assignment_key: assignmentKey,
+						profile_id: profileId,
+						profile,
+						created_at: previous?.created_at ?? now,
+						updated_at: now,
+					}),
+				);
+				queryClient.setQueryData<AIModelProfile[]>(
+					PROFILE_QUERY_KEY,
+					reflectAssignmentOnProfiles(
+						previousProfiles,
+						assignmentKey,
+						profileId,
+					),
+				);
+			}
+			return { previousAssignments, previousProfiles };
+		},
+		onSuccess: (assignment) => {
+			queryClient.setQueryData<AIModelAssignment[]>(
+				ASSIGNMENT_QUERY_KEY,
+				(existing = []) => replaceAssignment(existing, assignment),
+			);
+			queryClient.setQueryData<AIModelProfile[]>(
+				PROFILE_QUERY_KEY,
+				(existing = []) =>
+					reflectAssignmentOnProfiles(
+						existing,
+						assignment.assignment_key,
+						assignment.profile_id,
+					),
+			);
+			toast.success(
+				assignment.assignment_key === "chat_default"
+					? "Default chat profile updated"
+					: `${assignmentLabel(assignment.assignment_key)} assignment updated`,
+			);
+		},
+		onError: (error, _variables, context) => {
+			if (context) {
+				queryClient.setQueryData(
+					ASSIGNMENT_QUERY_KEY,
+					context.previousAssignments,
+				);
+				queryClient.setQueryData(
+					PROFILE_QUERY_KEY,
+					context.previousProfiles,
+				);
+			}
 			toast.error("Could not update assignment", {
 				description:
 					error instanceof Error
 						? error.message
 						: "Try another profile.",
-			}),
+			});
+		},
+		onSettled: invalidateAI,
 	});
 
 	const deleteProviderMutation = useMutation({
@@ -625,13 +736,20 @@ export function AIModelSettings() {
 										variant="ghost"
 										size="icon"
 										aria-label={`Test ${provider.name}`}
+										disabled={
+											testProviderMutation.isPending &&
+											testProviderMutation.variables ===
+												provider.id
+										}
 										onClick={() =>
 											testProviderMutation.mutate(
 												provider.id,
 											)
 										}
 									>
-										<RefreshCw className="h-4 w-4" />
+										<RefreshCw
+											className={`h-4 w-4 ${testProviderMutation.isPending && testProviderMutation.variables === provider.id ? "animate-spin motion-reduce:animate-none" : ""}`}
+										/>
 									</Button>
 									<Button
 										type="button"
@@ -711,7 +829,11 @@ export function AIModelSettings() {
 						</button>
 					)}
 					{profiles.map((profile) => (
-						<Card key={profile.id} className="rounded-xl" size="sm">
+						<Card
+							key={profile.id}
+							className="rounded-xl transition-[background-color,box-shadow] duration-200 motion-reduce:transition-none"
+							size="sm"
+						>
 							<CardHeader>
 								<CardTitle className="flex flex-wrap items-center gap-2">
 									{profile.name}
@@ -722,7 +844,7 @@ export function AIModelSettings() {
 										</Badge>
 									)}
 									{chatDefaultId === profile.id && (
-										<Badge>
+										<Badge className="animate-in fade-in-0 zoom-in-95 duration-200 motion-reduce:animate-none">
 											<CheckCircle2 className="h-3 w-3" />
 											Default
 										</Badge>
@@ -741,10 +863,10 @@ export function AIModelSettings() {
 											setProfileEdit({
 												id: profile.id,
 												name: profile.name,
-								connectionId:
-									profile.connection_id,
-								model: profile.model,
-							})
+												connectionId:
+													profile.connection_id,
+												model: profile.model,
+											})
 										}
 									>
 										<Pencil className="h-4 w-4" />
@@ -764,9 +886,9 @@ export function AIModelSettings() {
 									</Button>
 								</CardAction>
 							</CardHeader>
-						<CardContent className="flex flex-wrap items-center justify-between gap-3">
-							<div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-								{(profile.assignment_keys ?? []).map(
+							<CardContent className="flex flex-wrap items-center justify-between gap-3">
+								<div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+									{(profile.assignment_keys ?? []).map(
 										(key) => (
 											<Badge key={key} variant="outline">
 												{assignmentLabel(key)}
@@ -780,6 +902,11 @@ export function AIModelSettings() {
 									<Switch
 										size="sm"
 										checked={profile.enabled_for_chat}
+										disabled={
+											updateProfileMutation.isPending &&
+											updateProfileMutation.variables
+												?.profileId === profile.id
+										}
 										onCheckedChange={(enabledForChat) =>
 											updateProfileMutation.mutate({
 												profileId: profile.id,
@@ -791,7 +918,11 @@ export function AIModelSettings() {
 										type="button"
 										variant="outline"
 										size="sm"
-										disabled={!profile.enabled_for_chat}
+										disabled={
+											!profile.enabled_for_chat ||
+											chatDefaultId === profile.id ||
+											assignMutation.isPending
+										}
 										onClick={() =>
 											assignMutation.mutate({
 												assignmentKey: "chat_default",
@@ -799,7 +930,24 @@ export function AIModelSettings() {
 											})
 										}
 									>
-										Set Default
+										{assignMutation.isPending &&
+										assignMutation.variables
+											?.assignmentKey ===
+											"chat_default" &&
+										assignMutation.variables.profileId ===
+											profile.id ? (
+											<>
+												<Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+												Saving…
+											</>
+										) : chatDefaultId === profile.id ? (
+											<>
+												<CheckCircle2 className="h-4 w-4" />
+												Default
+											</>
+										) : (
+											"Set Default"
+										)}
 									</Button>
 								</div>
 							</CardContent>
@@ -820,10 +968,14 @@ export function AIModelSettings() {
 					{ASSIGNMENTS.map((assignment) => {
 						const Icon = assignment.icon;
 						const current = assignmentsByKey.get(assignment.key);
+						const isSaving =
+							assignMutation.isPending &&
+							assignMutation.variables?.assignmentKey ===
+								assignment.key;
 						return (
 							<Card
 								key={assignment.key}
-								className="rounded-xl"
+								className={`rounded-xl transition-[background-color,box-shadow] duration-200 motion-reduce:transition-none ${isSaving ? "bg-muted/40 shadow-sm" : ""}`}
 								size="sm"
 							>
 								<CardHeader>
@@ -849,6 +1001,7 @@ export function AIModelSettings() {
 										chatOnly={
 											assignment.key === "chat_default"
 										}
+										isSaving={isSaving}
 									/>
 								</CardContent>
 							</Card>
@@ -1055,13 +1208,22 @@ export function AIModelSettings() {
 							/>
 						</div>
 						<label className="flex items-center justify-between gap-4 rounded-lg border px-3 py-2.5 text-sm">
-							<span className="flex items-center gap-2">
-								<MessageSquareText className="h-4 w-4 text-primary" />
-								Enable for Chat
+							<span>
+								<span className="flex items-center gap-2">
+									<MessageSquareText className="h-4 w-4 text-primary" />
+									Enable for Chat
+								</span>
+								{profiles.length === 0 && (
+									<span className="mt-1 block text-xs text-muted-foreground">
+										Your first profile starts as the default
+										for every assignment.
+									</span>
+								)}
 							</span>
 							<Switch
 								size="sm"
 								checked={profileChatEnabled}
+								disabled={profiles.length === 0}
 								onCheckedChange={setProfileChatEnabled}
 							/>
 						</label>
@@ -1090,7 +1252,14 @@ export function AIModelSettings() {
 								})
 							}
 						>
-							Add Profile
+							{createProfileMutation.isPending ? (
+								<>
+									<Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+									Creating…
+								</>
+							) : (
+								"Add Profile"
+							)}
 						</Button>
 					</DialogFooter>
 				</DialogContent>
@@ -1221,7 +1390,14 @@ export function AIModelSettings() {
 								updateProviderMutation.mutate(providerEdit)
 							}
 						>
-							Save Provider
+							{updateProviderMutation.isPending ? (
+								<>
+									<Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+									Saving…
+								</>
+							) : (
+								"Save Provider"
+							)}
 						</Button>
 					</DialogFooter>
 				</DialogContent>
@@ -1318,7 +1494,14 @@ export function AIModelSettings() {
 								editProfileMutation.mutate(profileEdit)
 							}
 						>
-							Save Profile
+							{editProfileMutation.isPending ? (
+								<>
+									<Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+									Saving…
+								</>
+							) : (
+								"Save Profile"
+							)}
 						</Button>
 					</DialogFooter>
 				</DialogContent>

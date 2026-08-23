@@ -31,20 +31,27 @@ vi.mock("@/services/aiModels", async () => {
 vi.mock("@/components/ai/ModelProfileSelector", () => ({
 	ModelProfileSelector: ({
 		label,
+		value,
 		onValueChange,
 		chatOnly,
+		isSaving,
 	}: {
 		label: string;
+		value?: string | null;
 		onValueChange: (value: string) => void;
 		chatOnly?: boolean;
+		isSaving?: boolean;
 	}) => (
 		<button
 			type="button"
+			disabled={isSaving}
 			onClick={() =>
 				onValueChange(chatOnly ? "profile-chat" : "profile-1")
 			}
 		>
 			{label}
+			{value ? `: ${value}` : ""}
+			{isSaving ? " · Saving assignment…" : ""}
 		</button>
 	),
 }));
@@ -150,7 +157,11 @@ describe("AIModelSettings", () => {
 		).toBeInTheDocument();
 		expect(await screen.findByText("Balanced")).toBeInTheDocument();
 		expect(screen.getAllByText("Chat")[0]).toBeInTheDocument();
-		expect(screen.getByText("Default Chat Profile")).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", {
+				name: "Default Chat Profile: profile-1",
+			}),
+		).toBeInTheDocument();
 		expect(
 			screen.getAllByText("Profiles required for assignments")[0],
 		).toBeInTheDocument();
@@ -195,7 +206,9 @@ describe("AIModelSettings", () => {
 
 		await user.click(screen.getByRole("button", { name: "Add Profile" }));
 		dialog = screen.getByRole("dialog");
-		expect(within(dialog).queryByLabelText("Max Tokens")).not.toBeInTheDocument();
+		expect(
+			within(dialog).queryByLabelText("Max Tokens"),
+		).not.toBeInTheDocument();
 		await user.type(
 			within(dialog).getByRole("textbox", { name: "Profile Name" }),
 			"Fast",
@@ -203,9 +216,7 @@ describe("AIModelSettings", () => {
 		await user.click(
 			within(dialog).getByRole("combobox", { name: "Model" }),
 		);
-		await user.click(
-			screen.getByRole("option", { name: "GPT-5 gpt-5" }),
-		);
+		await user.click(screen.getByRole("option", { name: "GPT-5 gpt-5" }));
 		await user.click(
 			within(dialog).getByRole("button", { name: "Add Profile" }),
 		);
@@ -283,16 +294,76 @@ describe("AIModelSettings", () => {
 		).toBeInTheDocument();
 	});
 
-	it("assigns a selected reusable profile to a runtime slot", async () => {
+	it("explains that the first profile becomes every assignment default", async () => {
+		aiModels.listModelProfiles.mockResolvedValue([]);
+		aiModels.listModelAssignments.mockResolvedValue([]);
 		const { user } = renderWithProviders(<AIModelSettings />);
 
-		await user.click(await screen.findByText("Primary Profile"));
+		await user.click(
+			await screen.findByRole("button", { name: "Add Profile" }),
+		);
+		const dialog = screen.getByRole("dialog");
+
+		expect(
+			within(dialog).getByText(
+				"Your first profile starts as the default for every assignment.",
+			),
+		).toBeInTheDocument();
+		expect(within(dialog).getByRole("switch")).toBeChecked();
+		expect(within(dialog).getByRole("switch")).toBeDisabled();
+	});
+
+	it("assigns a selected reusable profile to a runtime slot", async () => {
+		let finishAssignment: () => void = () => undefined;
+		aiModels.setModelAssignment.mockReturnValue(
+			new Promise((resolve) => {
+				finishAssignment = () => {
+					const assignment = {
+						assignment_key: "primary",
+						profile_id: "profile-1",
+						profile,
+						created_at: "2026-08-22T00:00:00Z",
+						updated_at: "2026-08-22T00:00:00Z",
+					} as const;
+					aiModels.listModelAssignments.mockResolvedValue([
+						{
+							assignment_key: "chat_default",
+							profile_id: "profile-1",
+							profile,
+							created_at: "2026-08-22T00:00:00Z",
+							updated_at: "2026-08-22T00:00:00Z",
+						},
+						assignment,
+					]);
+					resolve(assignment);
+				};
+			}),
+		);
+		const { user } = renderWithProviders(<AIModelSettings />);
+
+		await user.click(
+			await screen.findByRole("button", { name: "Primary Profile" }),
+		);
 
 		await waitFor(() =>
 			expect(aiModels.setModelAssignment).toHaveBeenCalledWith(
 				"primary",
 				"profile-1",
 			),
+		);
+		expect(
+			screen.getByRole("button", {
+				name: "Primary Profile: profile-1 · Saving assignment…",
+			}),
+		).toBeDisabled();
+
+		finishAssignment();
+		await waitFor(() =>
+			expect(
+				screen.getByRole("button", {
+					name: "Primary Profile: profile-1",
+				}),
+			).toBeEnabled(),
 		);
 	});
 

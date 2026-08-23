@@ -193,11 +193,27 @@ test.describe("AI model settings", () => {
 		await page
 			.getByRole("option", { name: "GPT-5.1 mini gpt-5.1-mini" })
 			.click();
+		await profileDialog.getByText("Enable for Chat").click();
 		await profileDialog
 			.getByRole("button", { name: "Add Profile", exact: true })
 			.click();
+		await expect
+			.poll(() =>
+				profiles.some((profile) => profile.name === "Support Chat"),
+			)
+			.toBe(true);
 		await expect(
-			page.getByText("Support Chat", { exact: true }),
+			page.getByRole("button", { name: "Edit Support Chat" }),
+		).toBeVisible();
+		const supportProfileCard = page
+			.locator('[data-slot="card"]')
+			.filter({ hasText: "Support Chat" })
+			.first();
+		await supportProfileCard
+			.getByRole("button", { name: "Set Default" })
+			.click();
+		await expect(
+			supportProfileCard.getByRole("button", { name: "Default" }),
 		).toBeVisible();
 
 		const primary = page.getByLabel("Primary Profile");

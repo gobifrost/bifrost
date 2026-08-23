@@ -360,16 +360,30 @@ class AIModelService:
             raise ValueError("Model id is required")
         await self._ensure_unique_profile_name(trimmed_name)
         await self.get_connection(connection_id)
+        is_first_profile = (
+            await self.session.execute(select(AIModelProfile.id).limit(1))
+        ).scalar_one_or_none() is None
         profile = AIModelProfile(
             name=trimmed_name,
             connection_id=connection_id,
             model=trimmed_model,
             capabilities=capabilities.model_dump(mode="json") if capabilities else None,
-            enabled_for_chat=enabled_for_chat,
+            enabled_for_chat=enabled_for_chat or is_first_profile,
         )
         self.session.add(profile)
         await self.session.flush()
-        if enabled_for_chat and not await self.has_assignment("chat_default"):
+        if is_first_profile:
+            self.session.add_all(
+                [
+                    AIModelAssignment(
+                        assignment_key=assignment_key,
+                        profile_id=profile.id,
+                    )
+                    for assignment_key in ASSIGNMENT_KEYS
+                ]
+            )
+            await self.session.flush()
+        elif enabled_for_chat and not await self.has_assignment("chat_default"):
             assignment = AIModelAssignment(
                 assignment_key="chat_default",
                 profile_id=profile.id,
@@ -431,7 +445,20 @@ class AIModelService:
 
     async def list_assignments(self) -> list[AIModelAssignment]:
         return list(
-            (await self.session.execute(select(AIModelAssignment).order_by(AIModelAssignment.assignment_key)))
+            (
+                await self.session.execute(
+                    select(AIModelAssignment)
+                    .options(
+                        joinedload(AIModelAssignment.profile).joinedload(
+                            AIModelProfile.connection
+                        ),
+                        joinedload(AIModelAssignment.profile).selectinload(
+                            AIModelProfile.assignments
+                        ),
+                    )
+                    .order_by(AIModelAssignment.assignment_key)
+                )
+            )
             .unique()
             .scalars()
             .all()
