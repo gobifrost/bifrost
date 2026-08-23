@@ -192,14 +192,16 @@ class TestCliAgents:
             f"/api/agents/{created_id}", headers=platform_admin.headers
         )
         assert get_deleted_resp.status_code == 404
-        assert e2e_client.delete(
+        delete_profile_resp = e2e_client.delete(
             f"/api/admin/ai/profiles/{profile_id}",
             headers=platform_admin.headers,
-        ).status_code == 204
-        assert e2e_client.delete(
+        )
+        assert delete_profile_resp.status_code == 204
+        delete_connection_resp = e2e_client.delete(
             f"/api/admin/ai/connections/{connection_id}",
             headers=platform_admin.headers,
-        ).status_code == 204
+        )
+        assert delete_connection_resp.status_code == 204
 
     def test_update_tool_ids_persists_exact_set(
         self,
