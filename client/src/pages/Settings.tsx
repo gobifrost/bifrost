@@ -1,4 +1,11 @@
-import { createElement, type ComponentType, useEffect, useMemo, useState } from "react";
+import {
+	createElement,
+	type ComponentType,
+	useEffect,
+	useMemo,
+	useRef,
+	useState,
+} from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { WorkflowKeys } from "@/pages/settings/WorkflowKeys";
 import { Branding } from "@/pages/settings/Branding";
@@ -53,15 +60,40 @@ const settingsSections: SettingsSection[] = [
 		items: [
 			{
 				value: "ai",
-				label: "Models & assignments",
+				label: "Models",
 				icon: Layers3,
 				content: AIModelSettings,
 			},
-			{ value: "ai-embeddings", label: "Embeddings", icon: Database, content: AIEmbeddingSettings },
-			{ value: "ai-chat", label: "Chat instructions", icon: MessageSquareText, content: AIBehaviorSettings },
-			{ value: "ai-memory", label: "Memory", icon: BrainCircuit, content: MemorySettings },
-			{ value: "ai-instructions", label: "Required instructions", icon: ScrollText, content: RequiredInstructionsSettings },
-			{ value: "ai-usage", label: "Usage & pricing", icon: DollarSign, content: AIUsageSettings },
+			{
+				value: "ai-embeddings",
+				label: "Embeddings",
+				icon: Database,
+				content: AIEmbeddingSettings,
+			},
+			{
+				value: "ai-chat",
+				label: "Chat Instructions",
+				icon: MessageSquareText,
+				content: AIBehaviorSettings,
+			},
+			{
+				value: "ai-memory",
+				label: "Memory",
+				icon: BrainCircuit,
+				content: MemorySettings,
+			},
+			{
+				value: "ai-instructions",
+				label: "Default MCP Instructions",
+				icon: ScrollText,
+				content: RequiredInstructionsSettings,
+			},
+			{
+				value: "ai-usage",
+				label: "Usage & Pricing",
+				icon: DollarSign,
+				content: AIUsageSettings,
+			},
 		],
 	},
 	{
@@ -78,7 +110,12 @@ const settingsSections: SettingsSection[] = [
 		label: "Security",
 		icon: Shield,
 		items: [
-			{ value: "sso", label: "Authentication", icon: Shield, content: OAuth },
+			{
+				value: "sso",
+				label: "Authentication",
+				icon: Shield,
+				content: OAuth,
+			},
 			{
 				value: "workflow-keys",
 				label: "Workflow Keys",
@@ -92,7 +129,12 @@ const settingsSections: SettingsSection[] = [
 		label: "Platform",
 		icon: Palette,
 		items: [
-			{ value: "branding", label: "Branding", icon: Palette, content: Branding },
+			{
+				value: "branding",
+				label: "Branding",
+				icon: Palette,
+				content: Branding,
+			},
 			{
 				value: "maintenance",
 				label: "Maintenance",
@@ -115,7 +157,8 @@ function findActiveContent(currentTab: string) {
 	return (
 		settingsSections
 			.flatMap((section) => section.items)
-			.find((item) => item.value === currentTab)?.content ?? AIModelSettings
+			.find((item) => item.value === currentTab)?.content ??
+		AIModelSettings
 	);
 }
 
@@ -130,6 +173,7 @@ export function Settings() {
 	const [expandedSections, setExpandedSections] = useState<string[]>(() => [
 		activeSectionId,
 	]);
+	const contentRef = useRef<HTMLElement>(null);
 
 	const sectionState = useMemo(
 		() => new Set(expandedSections),
@@ -138,9 +182,11 @@ export function Settings() {
 
 	const handleRouteChange = (value: string) => {
 		const destinationSection = findActiveSectionId(value);
-		setExpandedSections((sections) => sections.includes(destinationSection)
-			? sections
-			: [...sections, destinationSection]);
+		setExpandedSections((sections) =>
+			sections.includes(destinationSection)
+				? sections
+				: [...sections, destinationSection],
+		);
 		navigate(`/settings/${value}`);
 	};
 
@@ -158,6 +204,10 @@ export function Settings() {
 			navigate("/settings/ai", { replace: true });
 		}
 	}, [location.pathname, navigate]);
+
+	useEffect(() => {
+		if (contentRef.current) contentRef.current.scrollTop = 0;
+	}, [currentTab]);
 
 	return (
 		<div className="mx-auto flex h-full min-h-0 w-full max-w-7xl flex-col space-y-6 px-4 sm:px-6 lg:px-8">
@@ -190,11 +240,14 @@ export function Settings() {
 									className={cn(
 										"flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
 										containsActive && "text-foreground",
-										!containsActive && "text-muted-foreground",
+										!containsActive &&
+											"text-muted-foreground",
 									)}
 								>
 									<SectionIcon className="h-4 w-4 shrink-0" />
-									<span className="flex-1">{section.label}</span>
+									<span className="flex-1">
+										{section.label}
+									</span>
 									<ChevronDown
 										className={cn(
 											"h-4 w-4 shrink-0 transition-transform",
@@ -211,14 +264,23 @@ export function Settings() {
 									>
 										{section.items.map((item) => {
 											const ItemIcon = item.icon;
-											const isActive = item.value === currentTab;
+											const isActive =
+												item.value === currentTab;
 
 											return (
 												<button
 													key={item.value}
 													type="button"
-													aria-current={isActive ? "page" : undefined}
-													onClick={() => handleRouteChange(item.value)}
+													aria-current={
+														isActive
+															? "page"
+															: undefined
+													}
+													onClick={() =>
+														handleRouteChange(
+															item.value,
+														)
+													}
 													className={cn(
 														"flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
 														isActive
@@ -238,7 +300,10 @@ export function Settings() {
 					})}
 				</nav>
 
-				<section className="min-h-0 overflow-auto pb-6">
+				<section
+					ref={contentRef}
+					className="min-h-0 overflow-auto px-1 pb-6 pr-3 sm:px-2 sm:pr-4"
+				>
 					{createElement(ActiveContent)}
 				</section>
 			</div>

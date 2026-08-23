@@ -18,11 +18,21 @@ vi.mock("@/pages/settings/GitHub", () => ({
 vi.mock("@/pages/settings/AIModelSettings", () => ({
 	AIModelSettings: () => <h2>Models Panel</h2>,
 }));
-vi.mock("@/pages/settings/AIEmbeddingSettings", () => ({ AIEmbeddingSettings: () => <h2>Embeddings Panel</h2> }));
-vi.mock("@/pages/settings/AIBehaviorSettings", () => ({ AIBehaviorSettings: () => <h2>Chat Instructions Panel</h2> }));
-vi.mock("@/pages/settings/AIUsageSettings", () => ({ AIUsageSettings: () => <h2>Usage Panel</h2> }));
-vi.mock("@/pages/settings/MemorySettings", () => ({ MemorySettings: () => <h2>Memory Panel</h2> }));
-vi.mock("@/pages/settings/RequiredInstructionsSettings", () => ({ RequiredInstructionsSettings: () => <h2>Required Instructions Panel</h2> }));
+vi.mock("@/pages/settings/AIEmbeddingSettings", () => ({
+	AIEmbeddingSettings: () => <h2>Embeddings Panel</h2>,
+}));
+vi.mock("@/pages/settings/AIBehaviorSettings", () => ({
+	AIBehaviorSettings: () => <h2>Chat Instructions Panel</h2>,
+}));
+vi.mock("@/pages/settings/AIUsageSettings", () => ({
+	AIUsageSettings: () => <h2>Usage Panel</h2>,
+}));
+vi.mock("@/pages/settings/MemorySettings", () => ({
+	MemorySettings: () => <h2>Memory Panel</h2>,
+}));
+vi.mock("@/pages/settings/RequiredInstructionsSettings", () => ({
+	RequiredInstructionsSettings: () => <h2>Required Instructions Panel</h2>,
+}));
 vi.mock("@/pages/settings/MCP", () => ({
 	MCP: () => <h2>MCP Panel</h2>,
 }));
@@ -36,10 +46,9 @@ describe("Settings", () => {
 			initialEntries: ["/settings/sso"],
 		});
 
-		expect(screen.getByRole("button", { name: /^security$/i })).toHaveAttribute(
-			"aria-expanded",
-			"true",
-		);
+		expect(
+			screen.getByRole("button", { name: /^security$/i }),
+		).toHaveAttribute("aria-expanded", "true");
 		expect(
 			screen.getByRole("button", { name: /authentication/i }),
 		).toHaveAttribute("aria-current", "page");
@@ -54,16 +63,36 @@ describe("Settings", () => {
 			initialEntries: ["/settings/sso"],
 		});
 
-		await user.click(screen.getByRole("button", { name: /^connections$/i }));
+		await user.click(
+			screen.getByRole("button", { name: /^connections$/i }),
+		);
 		await user.click(screen.getByRole("button", { name: /^github$/i }));
 
-		expect(screen.getByRole("button", { name: /^github$/i })).toHaveAttribute(
-			"aria-current",
-			"page",
-		);
+		expect(
+			screen.getByRole("button", { name: /^github$/i }),
+		).toHaveAttribute("aria-current", "page");
 		expect(
 			screen.getByRole("heading", { name: /github panel/i }),
 		).toBeVisible();
+	});
+
+	it("preserves expanded sections across subsection navigation", async () => {
+		const user = userEvent.setup();
+		renderWithProviders(<Settings />, {
+			initialEntries: ["/settings/sso"],
+		});
+
+		await user.click(
+			screen.getByRole("button", { name: /^connections$/i }),
+		);
+		await user.click(screen.getByRole("button", { name: /^github$/i }));
+
+		expect(
+			screen.getByRole("button", { name: /^security$/i }),
+		).toHaveAttribute("aria-expanded", "true");
+		expect(
+			screen.getByRole("button", { name: /^connections$/i }),
+		).toHaveAttribute("aria-expanded", "true");
 	});
 
 	it("collapses and expands primary sections", async () => {
@@ -72,7 +101,9 @@ describe("Settings", () => {
 			initialEntries: ["/settings/mcp"],
 		});
 
-		const connections = screen.getByRole("button", { name: /^connections$/i });
+		const connections = screen.getByRole("button", {
+			name: /^connections$/i,
+		});
 		expect(connections).toHaveAttribute("aria-expanded", "true");
 		expect(screen.getByRole("button", { name: /^github$/i })).toBeVisible();
 

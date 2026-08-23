@@ -2,7 +2,11 @@ from uuid import uuid4
 
 import pytest
 
-from src.services.ai_model_service import AIModelService, OPENROUTER_DEFAULT_ENDPOINT
+from src.services.ai_model_service import (
+    AIModelService,
+    OPENROUTER_DEFAULT_ENDPOINT,
+    PROVIDER_DEFAULT_ENDPOINTS,
+)
 
 
 async def _connection(service: AIModelService):
@@ -48,6 +52,34 @@ async def test_create_connection_requires_key_and_defaults_openrouter_endpoint(d
     assert connection.endpoint == OPENROUTER_DEFAULT_ENDPOINT
     assert connection.encrypted_api_key != "sk-test"
     assert service.decrypt_api_key(connection.encrypted_api_key) == "sk-test"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["openai", "openrouter", "google", "anthropic"])
+async def test_create_connection_defaults_builtin_provider_endpoints(db_session, provider):
+    service = AIModelService(db_session)
+
+    connection = await service.create_connection(
+        name=f"{provider} {uuid4().hex[:8]}",
+        provider=provider,
+        api_key="sk-test",
+        endpoint=None,
+    )
+
+    assert connection.endpoint == PROVIDER_DEFAULT_ENDPOINTS[provider]
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_connection_requires_endpoint(db_session):
+    service = AIModelService(db_session)
+
+    with pytest.raises(ValueError, match="Endpoint is required"):
+        await service.create_connection(
+            name="Compatible",
+            provider="openai_compatible",
+            api_key="sk-test",
+            endpoint=None,
+        )
 
 
 @pytest.mark.asyncio

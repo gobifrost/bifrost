@@ -126,7 +126,7 @@ test.describe("AI model settings", () => {
 
 		await page.goto("/settings/ai");
 		await expect(
-			page.getByRole("heading", { name: "AI Model Settings" }),
+			page.getByRole("heading", { name: "Models" }),
 		).toBeVisible();
 		await expect(
 			page.getByText("Profiles required for assignments"),
@@ -134,19 +134,29 @@ test.describe("AI model settings", () => {
 		await expect(
 			page.getByText("Default", { exact: true }).first(),
 		).toBeVisible();
-		await page.getByLabel("Provider Name").fill("Additional Provider");
-		await page.getByLabel("API Key").fill("sk-test");
 		await page.getByRole("button", { name: "Add Provider" }).click();
+		const providerDialog = page.getByRole("dialog");
+		await providerDialog
+			.getByLabel("Connection Name")
+			.fill("Additional Provider");
+		await providerDialog.getByLabel("API Key").fill("sk-test");
+		await providerDialog
+			.getByRole("button", { name: "Add Provider" })
+			.click();
 		await expect
 			.poll(() => createdProviderName)
 			.toBe("Additional Provider");
 
-		await page.getByLabel("Profile Name").fill("Support Chat");
-		await page.getByLabel("Provider Connection").click();
+		await page.getByRole("button", { name: "Add Profile" }).click();
+		const profileDialog = page.getByRole("dialog");
+		await profileDialog.getByLabel("Profile Name").fill("Support Chat");
+		await profileDialog.getByLabel("Provider Connection").click();
 		await page.getByRole("option", { name: /Default/ }).click();
-		await page.getByLabel("Model", { exact: true }).fill("gpt-5.1-mini");
-		await page
-			.getByRole("button", { name: "Create Profile", exact: true })
+		await profileDialog
+			.getByLabel("Model", { exact: true })
+			.fill("gpt-5.1-mini");
+		await profileDialog
+			.getByRole("button", { name: "Add Profile", exact: true })
 			.click();
 		await expect(
 			page.getByText("Support Chat", { exact: true }),
@@ -159,6 +169,7 @@ test.describe("AI model settings", () => {
 		await expect(primary).toContainText("Support Chat");
 
 		await page.setViewportSize({ width: 1440, height: 1000 });
+		await page.getByRole("heading", { name: "Models" }).scrollIntoViewIfNeeded();
 		await testInfo.attach("AI settings — reusable profiles", {
 			body: await page.screenshot({ fullPage: true }),
 			contentType: "image/png",

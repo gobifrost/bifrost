@@ -38,7 +38,9 @@ vi.mock("@/components/ai/ModelProfileSelector", () => ({
 	}) => (
 		<button
 			type="button"
-			onClick={() => onValueChange(chatOnly ? "profile-chat" : "profile-1")}
+			onClick={() =>
+				onValueChange(chatOnly ? "profile-chat" : "profile-1")
+			}
 		>
 			{label}
 		</button>
@@ -119,7 +121,7 @@ describe("AIModelSettings", () => {
 		renderWithProviders(<AIModelSettings />);
 
 		expect(
-			await screen.findByRole("heading", { name: "AI Model Settings" }),
+			await screen.findByRole("heading", { name: "Models" }),
 		).toBeInTheDocument();
 		expect(
 			await screen.findByRole("button", { name: "Test Default" }),
@@ -135,12 +137,24 @@ describe("AIModelSettings", () => {
 	it("creates provider connections and model profiles", async () => {
 		const { user } = renderWithProviders(<AIModelSettings />);
 
-		await user.type(
-			await screen.findByRole("textbox", { name: "Provider Name" }),
-			"OpenRouter",
+		await user.click(
+			await screen.findByRole("button", { name: "Add Provider" }),
 		);
-		await user.type(screen.getByLabelText("API Key"), "sk-provider");
-		await user.click(screen.getByRole("button", { name: "Add Provider" }));
+		let dialog = screen.getByRole("dialog");
+		await user.click(
+			within(dialog).getByRole("combobox", { name: "Provider" }),
+		);
+		await user.click(screen.getByRole("option", { name: "OpenRouter" }));
+		expect(within(dialog).getByLabelText("Endpoint")).toHaveValue(
+			"https://openrouter.ai/api/v1",
+		);
+		await user.type(
+			within(dialog).getByLabelText("API Key"),
+			"sk-provider",
+		);
+		await user.click(
+			within(dialog).getByRole("button", { name: "Add Provider" }),
+		);
 
 		await waitFor(() =>
 			expect(aiModels.createProviderConnection).toHaveBeenCalled(),
@@ -148,21 +162,25 @@ describe("AIModelSettings", () => {
 		expect(aiModels.createProviderConnection.mock.calls[0][0]).toEqual(
 			expect.objectContaining({
 				name: "OpenRouter",
-				provider: "openai",
+				provider: "openrouter",
 				api_key: "sk-provider",
+				endpoint: "https://openrouter.ai/api/v1",
 			}),
 		);
 
+		await user.click(screen.getByRole("button", { name: "Add Profile" }));
+		dialog = screen.getByRole("dialog");
 		await user.type(
-			screen.getByRole("textbox", { name: "Profile Name" }),
+			within(dialog).getByRole("textbox", { name: "Profile Name" }),
 			"Fast",
 		);
-		await user.click(
-			screen.getByRole("combobox", { name: "Provider Connection" }),
+		await user.type(
+			within(dialog).getByRole("textbox", { name: "Model" }),
+			"gpt-5",
 		);
-		await user.click(screen.getByRole("option", { name: /Default/ }));
-		await user.type(screen.getByRole("textbox", { name: "Model" }), "gpt-5");
-		await user.click(screen.getByRole("button", { name: "Create Profile" }));
+		await user.click(
+			within(dialog).getByRole("button", { name: "Add Profile" }),
+		);
 
 		await waitFor(() =>
 			expect(aiModels.createModelProfile).toHaveBeenCalled(),
@@ -174,6 +192,23 @@ describe("AIModelSettings", () => {
 				model: "gpt-5",
 			}),
 		);
+	});
+
+	it("uses actionable empty states to start provider and profile setup", async () => {
+		aiModels.listProviderConnections.mockResolvedValue([]);
+		aiModels.listModelProfiles.mockResolvedValue([]);
+		const { user } = renderWithProviders(<AIModelSettings />);
+
+		await user.click(await screen.findByText("No providers"));
+		expect(
+			screen.getByRole("heading", { name: "Add Provider Connection" }),
+		).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+		await user.click(screen.getByText("No model profiles"));
+		expect(
+			screen.getByRole("heading", { name: "Add Provider Connection" }),
+		).toBeInTheDocument();
 	});
 
 	it("assigns a selected reusable profile to a runtime slot", async () => {
@@ -192,13 +227,22 @@ describe("AIModelSettings", () => {
 	it("edits provider connections and reusable profiles in place", async () => {
 		const { user } = renderWithProviders(<AIModelSettings />);
 
-		await user.click(await screen.findByRole("button", { name: "Edit Default" }));
+		await user.click(
+			await screen.findByRole("button", { name: "Edit Default" }),
+		);
 		let dialog = screen.getByRole("dialog");
-		const providerName = within(dialog).getByRole("textbox", { name: "Name" });
+		const providerName = within(dialog).getByRole("textbox", {
+			name: "Name",
+		});
 		await user.clear(providerName);
 		await user.type(providerName, "OpenAI Production");
-		await user.type(within(dialog).getByLabelText("New API Key"), "sk-rotated");
-		await user.click(within(dialog).getByRole("button", { name: "Save Provider" }));
+		await user.type(
+			within(dialog).getByLabelText("New API Key"),
+			"sk-rotated",
+		);
+		await user.click(
+			within(dialog).getByRole("button", { name: "Save Provider" }),
+		);
 
 		await waitFor(() =>
 			expect(aiModels.updateProviderConnection).toHaveBeenCalledWith(
@@ -212,10 +256,14 @@ describe("AIModelSettings", () => {
 
 		await user.click(screen.getByRole("button", { name: "Edit Balanced" }));
 		dialog = screen.getByRole("dialog");
-		const profileModel = within(dialog).getByRole("textbox", { name: "Model" });
+		const profileModel = within(dialog).getByRole("textbox", {
+			name: "Model",
+		});
 		await user.clear(profileModel);
 		await user.type(profileModel, "gpt-5.1-mini");
-		await user.click(within(dialog).getByRole("button", { name: "Save Profile" }));
+		await user.click(
+			within(dialog).getByRole("button", { name: "Save Profile" }),
+		);
 
 		await waitFor(() =>
 			expect(aiModels.updateModelProfile).toHaveBeenCalledWith(

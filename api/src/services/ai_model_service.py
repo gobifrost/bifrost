@@ -23,6 +23,12 @@ if TYPE_CHECKING:
     from src.services.provider_catalog_service import ProviderModelInfo, ProviderTestResult
 
 OPENROUTER_DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1"
+PROVIDER_DEFAULT_ENDPOINTS: dict[AIProviderKind, str] = {
+    "openai": "https://api.openai.com/v1",
+    "anthropic": "https://api.anthropic.com",
+    "google": "https://generativelanguage.googleapis.com",
+    "openrouter": OPENROUTER_DEFAULT_ENDPOINT,
+}
 ASSIGNMENT_KEYS: tuple[AIModelAssignmentKey, ...] = (
     "primary",
     "summarization",
@@ -77,9 +83,11 @@ class AIModelService:
 
     def normalize_endpoint(self, provider: AIProviderKind, endpoint: str | None) -> str | None:
         value = endpoint.strip().rstrip("/") if endpoint else None
-        if provider == "openrouter":
-            return value or OPENROUTER_DEFAULT_ENDPOINT
-        return value
+        if value:
+            return value
+        if provider == "openai_compatible":
+            raise ValueError("Endpoint is required for OpenAI-compatible providers")
+        return PROVIDER_DEFAULT_ENDPOINTS[provider]
 
     def client_provider(self, provider: AIProviderKind) -> str:
         if provider in ("openrouter", "openai_compatible"):

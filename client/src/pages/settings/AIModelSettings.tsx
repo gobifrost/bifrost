@@ -4,7 +4,6 @@ import {
 	Bot,
 	Brain,
 	CheckCircle2,
-	CircleAlert,
 	KeyRound,
 	MessageSquareText,
 	Pencil,
@@ -67,13 +66,43 @@ const PROVIDER_QUERY_KEY = ["ai", "provider-connections"] as const;
 const PROFILE_QUERY_KEY = ["ai", "model-profiles"] as const;
 const ASSIGNMENT_QUERY_KEY = ["ai", "model-assignments"] as const;
 
-const PROVIDERS: { value: AIProviderKind; label: string }[] = [
-	{ value: "openai", label: "OpenAI" },
-	{ value: "anthropic", label: "Anthropic" },
-	{ value: "google", label: "Google" },
-	{ value: "openrouter", label: "OpenRouter" },
-	{ value: "openai_compatible", label: "OpenAI-compatible" },
+const PROVIDERS: {
+	value: AIProviderKind;
+	label: string;
+	endpoint: string;
+}[] = [
+	{
+		value: "openai",
+		label: "OpenAI",
+		endpoint: "https://api.openai.com/v1",
+	},
+	{
+		value: "openrouter",
+		label: "OpenRouter",
+		endpoint: "https://openrouter.ai/api/v1",
+	},
+	{
+		value: "google",
+		label: "Google",
+		endpoint: "https://generativelanguage.googleapis.com",
+	},
+	{
+		value: "anthropic",
+		label: "Anthropic",
+		endpoint: "https://api.anthropic.com",
+	},
+	{
+		value: "openai_compatible",
+		label: "OpenAI-Compatible",
+		endpoint: "",
+	},
 ];
+
+function providerOption(provider: AIProviderKind) {
+	return (
+		PROVIDERS.find((option) => option.value === provider) ?? PROVIDERS[0]
+	);
+}
 
 const ASSIGNMENTS: {
 	key: AIModelAssignmentKey;
@@ -129,11 +158,21 @@ function profileLine(profile: AIModelProfile): string {
 	return `${profile.connection.name} · ${profile.model}`;
 }
 
+function assignmentLabel(key: AIModelAssignmentKey): string {
+	return (
+		ASSIGNMENTS.find((assignment) => assignment.key === key)?.label ?? key
+	);
+}
+
 export function AIModelSettings() {
 	const queryClient = useQueryClient();
-	const [providerName, setProviderName] = useState("");
+	const [providerCreateOpen, setProviderCreateOpen] = useState(false);
+	const [profileCreateOpen, setProfileCreateOpen] = useState(false);
+	const [providerName, setProviderName] = useState("OpenAI");
 	const [providerKind, setProviderKind] = useState<AIProviderKind>("openai");
-	const [providerEndpoint, setProviderEndpoint] = useState("");
+	const [providerEndpoint, setProviderEndpoint] = useState(
+		providerOption("openai").endpoint,
+	);
 	const [providerKey, setProviderKey] = useState("");
 	const [profileName, setProfileName] = useState("");
 	const [profileConnectionId, setProfileConnectionId] = useState("");
@@ -182,6 +221,45 @@ export function AIModelSettings() {
 	);
 	const chatDefaultId = assignmentsByKey.get("chat_default")?.profile_id;
 
+	const resetProviderCreate = () => {
+		setProviderName("OpenAI");
+		setProviderKind("openai");
+		setProviderEndpoint(providerOption("openai").endpoint);
+		setProviderKey("");
+	};
+
+	const resetProfileCreate = () => {
+		setProfileName("");
+		setProfileConnectionId("");
+		setProfileModel("");
+		setProfileMaxTokens("16384");
+		setProfileChatEnabled(false);
+	};
+
+	const changeProviderKind = (nextKind: AIProviderKind) => {
+		const previous = providerOption(providerKind);
+		const next = providerOption(nextKind);
+		setProviderKind(nextKind);
+		if (!providerName.trim() || providerName === previous.label) {
+			setProviderName(next.label);
+		}
+		if (
+			!providerEndpoint.trim() ||
+			providerEndpoint === previous.endpoint
+		) {
+			setProviderEndpoint(next.endpoint);
+		}
+	};
+
+	const openProfileCreate = () => {
+		if (providers.length === 0) {
+			setProviderCreateOpen(true);
+			return;
+		}
+		setProfileConnectionId((current) => current || providers[0].id);
+		setProfileCreateOpen(true);
+	};
+
 	const invalidateAI = () => {
 		void queryClient.invalidateQueries({ queryKey: PROVIDER_QUERY_KEY });
 		void queryClient.invalidateQueries({ queryKey: PROFILE_QUERY_KEY });
@@ -191,9 +269,8 @@ export function AIModelSettings() {
 	const createProviderMutation = useMutation({
 		mutationFn: createProviderConnection,
 		onSuccess: (connection) => {
-			setProviderName("");
-			setProviderEndpoint("");
-			setProviderKey("");
+			setProviderCreateOpen(false);
+			resetProviderCreate();
 			queryClient.setQueryData(
 				PROVIDER_QUERY_KEY,
 				(existing: typeof providers | undefined) => [
@@ -259,11 +336,8 @@ export function AIModelSettings() {
 	const createProfileMutation = useMutation({
 		mutationFn: createModelProfile,
 		onSuccess: (profile) => {
-			setProfileName("");
-			setProfileConnectionId("");
-			setProfileModel("");
-			setProfileMaxTokens("16384");
-			setProfileChatEnabled(false);
+			setProfileCreateOpen(false);
+			resetProfileCreate();
 			queryClient.setQueryData(
 				PROFILE_QUERY_KEY,
 				(existing: typeof profiles | undefined) => [
@@ -365,7 +439,8 @@ export function AIModelSettings() {
 			}),
 	});
 
-	const providerReady = providerName.trim() && providerKey.trim();
+	const providerReady =
+		providerName.trim() && providerKey.trim() && providerEndpoint.trim();
 	const profileReady =
 		profileName.trim() &&
 		profileConnectionId &&
@@ -377,9 +452,7 @@ export function AIModelSettings() {
 			<section className="space-y-3">
 				<div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
 					<div>
-						<h2 className="text-xl font-semibold">
-							AI Model Settings
-						</h2>
+						<h2 className="text-xl font-semibold">Models</h2>
 						<p className="mt-1 max-w-3xl text-sm text-muted-foreground">
 							Connect providers once, wrap models in reusable
 							profiles, then assign those profiles to Bifrost
@@ -393,126 +466,49 @@ export function AIModelSettings() {
 				</div>
 			</section>
 
-			<section className="grid gap-4 xl:grid-cols-[minmax(320px,420px)_1fr]">
-				<Card className="rounded-xl">
-					<CardHeader>
-						<CardTitle className="flex items-center gap-2">
+			<section className="space-y-3">
+				<div className="flex items-start justify-between gap-4">
+					<div>
+						<h3 className="flex items-center gap-2 text-base font-semibold">
 							<KeyRound className="h-4 w-4 text-primary" />
 							Provider Connections
-						</CardTitle>
-						<CardDescription>
-							Store each provider or compatible endpoint
-							independently.
-						</CardDescription>
-					</CardHeader>
-					<CardContent className="space-y-4">
-						<div className="space-y-2">
-							<Label htmlFor="ai-provider-name">
-								Provider Name
-							</Label>
-							<Input
-								id="ai-provider-name"
-								value={providerName}
-								onChange={(event) =>
-									setProviderName(event.target.value)
-								}
-								placeholder="OpenRouter Production"
-							/>
-						</div>
-						<div className="space-y-2">
-							<Label htmlFor="ai-provider-kind">Provider</Label>
-							<Select
-								value={providerKind}
-								onValueChange={(value) =>
-									setProviderKind(value as AIProviderKind)
-								}
-							>
-								<SelectTrigger
-									id="ai-provider-kind"
-									className="w-full rounded-lg"
-								>
-									<SelectValue />
-								</SelectTrigger>
-								<SelectContent>
-									{PROVIDERS.map((provider) => (
-										<SelectItem
-											key={provider.value}
-											value={provider.value}
-										>
-											{provider.label}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
-						</div>
-						<div className="space-y-2">
-							<Label htmlFor="ai-provider-endpoint">
-								Endpoint
-							</Label>
-							<Input
-								id="ai-provider-endpoint"
-								value={providerEndpoint}
-								onChange={(event) =>
-									setProviderEndpoint(event.target.value)
-								}
-								placeholder="Optional base URL"
-							/>
-						</div>
-						<div className="space-y-2">
-							<Label htmlFor="ai-provider-key">API Key</Label>
-							<Input
-								id="ai-provider-key"
-								type="password"
-								value={providerKey}
-								onChange={(event) =>
-									setProviderKey(event.target.value)
-								}
-								placeholder="Paste a provider key"
-							/>
-						</div>
-						<Button
-							type="button"
-							className="w-full gap-2"
-							disabled={
-								!providerReady ||
-								createProviderMutation.isPending
-							}
-							onClick={() =>
-								createProviderMutation.mutate({
-									name: providerName.trim(),
-									provider: providerKind,
-									api_key: providerKey,
-									endpoint: providerEndpoint.trim() || null,
-								})
-							}
-						>
-							<Plus className="h-4 w-4" />
-							Add Provider
-						</Button>
-					</CardContent>
-				</Card>
+						</h3>
+						<p className="mt-1 text-sm text-muted-foreground">
+							Save credentials once, then reuse the connection
+							across profiles.
+						</p>
+					</div>
+					<Button
+						type="button"
+						size="sm"
+						onClick={() => setProviderCreateOpen(true)}
+					>
+						<Plus className="h-4 w-4" />
+						Add Provider
+					</Button>
+				</div>
 
-				<div className="grid content-start gap-3">
+				<div className="grid gap-3 md:grid-cols-2">
 					{providersQuery.isLoading && (
-						<div className="rounded-xl border border-dashed p-6 text-sm text-muted-foreground">
+						<div className="col-span-full rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">
 							Loading provider connections...
 						</div>
 					)}
 					{!providersQuery.isLoading && providers.length === 0 && (
-						<div className="rounded-xl border border-dashed p-6">
-							<div className="flex items-start gap-3">
-								<CircleAlert className="mt-0.5 h-4 w-4 text-muted-foreground" />
-								<div>
-									<p className="text-sm font-medium">
-										No providers connected
-									</p>
-									<p className="mt-1 text-sm text-muted-foreground">
-										Add one provider connection before
-										creating model profiles.
-									</p>
-								</div>
-							</div>
-						</div>
+						<button
+							type="button"
+							className="col-span-full flex min-h-44 flex-col items-center justify-center rounded-xl border border-dashed p-8 text-center transition-colors hover:border-primary/40 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							onClick={() => setProviderCreateOpen(true)}
+						>
+							<KeyRound className="h-9 w-9 text-muted-foreground" />
+							<span className="mt-3 text-sm font-semibold">
+								No providers
+							</span>
+							<span className="mt-1 text-sm text-muted-foreground">
+								Click here to configure your first provider
+								connection.
+							</span>
+						</button>
 					)}
 					{providers.map((provider) => (
 						<Card
@@ -581,7 +577,10 @@ export function AIModelSettings() {
 							<CardContent>
 								<div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
 									<span>
-										{provider.profile_count} profiles
+										{provider.profile_count}{" "}
+										{provider.profile_count === 1
+											? "profile"
+											: "profiles"}
 									</span>
 									<span>
 										Key{" "}
@@ -596,117 +595,23 @@ export function AIModelSettings() {
 				</div>
 			</section>
 
-			<section className="grid gap-4 xl:grid-cols-[minmax(320px,420px)_1fr]">
-				<Card className="rounded-xl">
-					<CardHeader>
-						<CardTitle className="flex items-center gap-2">
+			<section className="space-y-3">
+				<div className="flex items-start justify-between gap-4">
+					<div>
+						<h3 className="flex items-center gap-2 text-base font-semibold">
 							<Bot className="h-4 w-4 text-primary" />
 							Model Profiles
-						</CardTitle>
-						<CardDescription>
+						</h3>
+						<p className="mt-1 text-sm text-muted-foreground">
 							Name reusable provider and model combinations for
 							later assignment.
-						</CardDescription>
-					</CardHeader>
-					<CardContent className="space-y-4">
-						<div className="space-y-2">
-							<Label htmlFor="ai-profile-name">
-								Profile Name
-							</Label>
-							<Input
-								id="ai-profile-name"
-								value={profileName}
-								onChange={(event) =>
-									setProfileName(event.target.value)
-								}
-								placeholder="Fast Support Chat"
-							/>
-						</div>
-						<div className="space-y-2">
-							<Label htmlFor="ai-profile-provider">
-								Provider Connection
-							</Label>
-							<Select
-								value={profileConnectionId}
-								onValueChange={setProfileConnectionId}
-							>
-								<SelectTrigger
-									id="ai-profile-provider"
-									className="w-full rounded-lg"
-								>
-									<SelectValue placeholder="Select provider" />
-								</SelectTrigger>
-								<SelectContent>
-									{providers.map((provider) => (
-										<SelectItem
-											key={provider.id}
-											value={provider.id}
-										>
-											{provider.name} ·{" "}
-											{providerLabel(provider.provider)}
-										</SelectItem>
-									))}
-								</SelectContent>
-							</Select>
-						</div>
-						<div className="space-y-2">
-							<Label htmlFor="ai-profile-model">Model</Label>
-							<Input
-								id="ai-profile-model"
-								value={profileModel}
-								onChange={(event) =>
-									setProfileModel(event.target.value)
-								}
-								placeholder="gpt-5-mini"
-							/>
-						</div>
-						<div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-							<div className="space-y-2">
-								<Label htmlFor="ai-profile-max-tokens">
-									Max Tokens
-								</Label>
-								<Input
-									id="ai-profile-max-tokens"
-									type="number"
-									min="1"
-									value={profileMaxTokens}
-									onChange={(event) =>
-										setProfileMaxTokens(event.target.value)
-									}
-								/>
-							</div>
-							<label className="flex min-h-9 items-center gap-2 rounded-lg border px-3 py-2 text-sm">
-								<Switch
-									size="sm"
-									checked={profileChatEnabled}
-									onCheckedChange={setProfileChatEnabled}
-								/>
-								<MessageSquareText className="h-4 w-4 text-primary" />
-								Chat
-							</label>
-						</div>
-						<Button
-							type="button"
-							className="w-full gap-2"
-							disabled={
-								!profileReady || createProfileMutation.isPending
-							}
-							onClick={() =>
-								createProfileMutation.mutate({
-									name: profileName.trim(),
-									connection_id: profileConnectionId,
-									model: profileModel.trim(),
-									max_tokens: Number(profileMaxTokens),
-									capabilities: null,
-									enabled_for_chat: profileChatEnabled,
-								})
-							}
-						>
-							<Plus className="h-4 w-4" />
-							Create Profile
-						</Button>
-					</CardContent>
-				</Card>
+						</p>
+					</div>
+					<Button type="button" size="sm" onClick={openProfileCreate}>
+						<Plus className="h-4 w-4" />
+						Add Profile
+					</Button>
+				</div>
 
 				<div className="grid content-start gap-3">
 					{profilesQuery.isLoading && (
@@ -715,15 +620,21 @@ export function AIModelSettings() {
 						</div>
 					)}
 					{!profilesQuery.isLoading && profiles.length === 0 && (
-						<div className="rounded-xl border border-dashed p-6">
-							<p className="text-sm font-medium">
-								No model profiles yet
-							</p>
-							<p className="mt-1 text-sm text-muted-foreground">
-								Create profiles for fast, balanced, pro, or any
-								other reusable model role you need.
-							</p>
-						</div>
+						<button
+							type="button"
+							className="flex min-h-44 flex-col items-center justify-center rounded-xl border border-dashed p-8 text-center transition-colors hover:border-primary/40 hover:bg-muted/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+							onClick={openProfileCreate}
+						>
+							<Bot className="h-9 w-9 text-muted-foreground" />
+							<span className="mt-3 text-sm font-semibold">
+								No model profiles
+							</span>
+							<span className="mt-1 text-sm text-muted-foreground">
+								{providers.length > 0
+									? "Click here to configure your first model profile."
+									: "Configure a provider connection before creating your first model profile."}
+							</span>
+						</button>
 					)}
 					{profiles.map((profile) => (
 						<Card key={profile.id} className="rounded-xl" size="sm">
@@ -791,7 +702,7 @@ export function AIModelSettings() {
 									{(profile.assignment_keys ?? []).map(
 										(key) => (
 											<Badge key={key} variant="outline">
-												{key.replace("_", " ")}
+												{assignmentLabel(key)}
 											</Badge>
 										),
 									)}
@@ -880,6 +791,253 @@ export function AIModelSettings() {
 			</section>
 
 			<Dialog
+				open={providerCreateOpen}
+				onOpenChange={(open) => {
+					setProviderCreateOpen(open);
+					if (!open) resetProviderCreate();
+				}}
+			>
+				<DialogContent className="sm:max-w-[560px]">
+					<DialogHeader>
+						<DialogTitle>Add Provider Connection</DialogTitle>
+						<DialogDescription>
+							Save a provider once, then reuse it across model
+							profiles.
+						</DialogDescription>
+					</DialogHeader>
+					<div className="grid gap-4 py-2">
+						<div className="grid gap-4 sm:grid-cols-2">
+							<div className="space-y-2">
+								<Label htmlFor="ai-provider-kind">
+									Provider
+								</Label>
+								<Select
+									value={providerKind}
+									onValueChange={(value) =>
+										changeProviderKind(
+											value as AIProviderKind,
+										)
+									}
+								>
+									<SelectTrigger
+										id="ai-provider-kind"
+										className="w-full"
+									>
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										{PROVIDERS.map((provider) => (
+											<SelectItem
+												key={provider.value}
+												value={provider.value}
+											>
+												{provider.label}
+											</SelectItem>
+										))}
+									</SelectContent>
+								</Select>
+							</div>
+							<div className="space-y-2">
+								<Label htmlFor="ai-provider-name">
+									Connection Name
+								</Label>
+								<Input
+									id="ai-provider-name"
+									value={providerName}
+									onChange={(event) =>
+										setProviderName(event.target.value)
+									}
+									placeholder="OpenAI Production"
+								/>
+							</div>
+						</div>
+						<div className="space-y-2">
+							<Label htmlFor="ai-provider-endpoint">
+								Endpoint
+							</Label>
+							<Input
+								id="ai-provider-endpoint"
+								value={providerEndpoint}
+								onChange={(event) =>
+									setProviderEndpoint(event.target.value)
+								}
+								placeholder="https://api.example.com/v1"
+							/>
+							<p className="text-xs text-muted-foreground">
+								{providerKind === "openai_compatible"
+									? "Required for OpenAI-Compatible providers."
+									: `Prefilled with the standard ${providerLabel(providerKind)} endpoint.`}
+							</p>
+						</div>
+						<div className="space-y-2">
+							<Label htmlFor="ai-provider-key">API Key</Label>
+							<Input
+								id="ai-provider-key"
+								type="password"
+								value={providerKey}
+								onChange={(event) =>
+									setProviderKey(event.target.value)
+								}
+								placeholder="Paste a provider key"
+							/>
+						</div>
+					</div>
+					<DialogFooter>
+						<Button
+							variant="outline"
+							onClick={() => {
+								setProviderCreateOpen(false);
+								resetProviderCreate();
+							}}
+						>
+							Cancel
+						</Button>
+						<Button
+							disabled={
+								!providerReady ||
+								createProviderMutation.isPending
+							}
+							onClick={() =>
+								createProviderMutation.mutate({
+									name: providerName.trim(),
+									provider: providerKind,
+									api_key: providerKey,
+									endpoint: providerEndpoint.trim(),
+								})
+							}
+						>
+							Add Provider
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+
+			<Dialog
+				open={profileCreateOpen}
+				onOpenChange={(open) => {
+					setProfileCreateOpen(open);
+					if (!open) resetProfileCreate();
+				}}
+			>
+				<DialogContent className="sm:max-w-[560px]">
+					<DialogHeader>
+						<DialogTitle>Add Model Profile</DialogTitle>
+						<DialogDescription>
+							Create a reusable provider and model combination.
+						</DialogDescription>
+					</DialogHeader>
+					<div className="grid gap-4 py-2">
+						<div className="space-y-2">
+							<Label htmlFor="ai-profile-name">
+								Profile Name
+							</Label>
+							<Input
+								id="ai-profile-name"
+								value={profileName}
+								onChange={(event) =>
+									setProfileName(event.target.value)
+								}
+								placeholder="Fast Support Chat"
+							/>
+						</div>
+						<div className="space-y-2">
+							<Label htmlFor="ai-profile-provider">
+								Provider Connection
+							</Label>
+							<Select
+								value={profileConnectionId}
+								onValueChange={setProfileConnectionId}
+							>
+								<SelectTrigger
+									id="ai-profile-provider"
+									className="w-full"
+								>
+									<SelectValue placeholder="Select a provider connection" />
+								</SelectTrigger>
+								<SelectContent>
+									{providers.map((provider) => (
+										<SelectItem
+											key={provider.id}
+											value={provider.id}
+										>
+											{provider.name} ·{" "}
+											{providerLabel(provider.provider)}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</div>
+						<div className="grid gap-4 sm:grid-cols-[1fr_10rem]">
+							<div className="space-y-2">
+								<Label htmlFor="ai-profile-model">Model</Label>
+								<Input
+									id="ai-profile-model"
+									value={profileModel}
+									onChange={(event) =>
+										setProfileModel(event.target.value)
+									}
+									placeholder="gpt-5-mini"
+								/>
+							</div>
+							<div className="space-y-2">
+								<Label htmlFor="ai-profile-max-tokens">
+									Max Tokens
+								</Label>
+								<Input
+									id="ai-profile-max-tokens"
+									type="number"
+									min="1"
+									value={profileMaxTokens}
+									onChange={(event) =>
+										setProfileMaxTokens(event.target.value)
+									}
+								/>
+							</div>
+						</div>
+						<label className="flex items-center justify-between gap-4 rounded-lg border px-3 py-2.5 text-sm">
+							<span className="flex items-center gap-2">
+								<MessageSquareText className="h-4 w-4 text-primary" />
+								Enable for Chat
+							</span>
+							<Switch
+								size="sm"
+								checked={profileChatEnabled}
+								onCheckedChange={setProfileChatEnabled}
+							/>
+						</label>
+					</div>
+					<DialogFooter>
+						<Button
+							variant="outline"
+							onClick={() => {
+								setProfileCreateOpen(false);
+								resetProfileCreate();
+							}}
+						>
+							Cancel
+						</Button>
+						<Button
+							disabled={
+								!profileReady || createProfileMutation.isPending
+							}
+							onClick={() =>
+								createProfileMutation.mutate({
+									name: profileName.trim(),
+									connection_id: profileConnectionId,
+									model: profileModel.trim(),
+									max_tokens: Number(profileMaxTokens),
+									capabilities: null,
+									enabled_for_chat: profileChatEnabled,
+								})
+							}
+						>
+							Add Profile
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+
+			<Dialog
 				open={providerEdit !== null}
 				onOpenChange={(open) => !open && setProviderEdit(null)}
 			>
@@ -912,13 +1070,24 @@ export function AIModelSettings() {
 								</Label>
 								<Select
 									value={providerEdit.provider}
-									onValueChange={(provider) =>
+									onValueChange={(provider) => {
+										const nextKind =
+											provider as AIProviderKind;
+										const previousDefault = providerOption(
+											providerEdit.provider,
+										).endpoint;
 										setProviderEdit({
 											...providerEdit,
-											provider:
-												provider as AIProviderKind,
-										})
-									}
+											provider: nextKind,
+											endpoint:
+												!providerEdit.endpoint ||
+												providerEdit.endpoint ===
+													previousDefault
+													? providerOption(nextKind)
+															.endpoint
+													: providerEdit.endpoint,
+										});
+									}}
 								>
 									<SelectTrigger id="edit-provider-kind">
 										<SelectValue />
@@ -948,8 +1117,14 @@ export function AIModelSettings() {
 											endpoint: event.target.value,
 										})
 									}
-									placeholder="Optional base URL"
+									placeholder="https://api.example.com/v1"
 								/>
+								<p className="text-xs text-muted-foreground">
+									{providerEdit.provider ===
+									"openai_compatible"
+										? "Required for OpenAI-Compatible providers."
+										: `Standard ${providerLabel(providerEdit.provider)} endpoint.`}
+								</p>
 							</div>
 							<div className="space-y-2">
 								<Label htmlFor="edit-provider-key">
