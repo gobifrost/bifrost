@@ -45,6 +45,24 @@ def test_ai_model_settings_crud_and_assignment(e2e_client, platform_admin):
     assert update_resp.status_code == 200, update_resp.text
     assert update_resp.json()["api_key_set"] is True
 
+    previous_profile_resp = e2e_client.post(
+        "/api/admin/ai/profiles",
+        headers=platform_admin.headers,
+        json={
+            "name": "Previous Chat E2E",
+            "connection_id": connection["id"],
+            "model": "openai/gpt-4o-mini",
+            "enabled_for_chat": True,
+        },
+    )
+    assert previous_profile_resp.status_code == 201, previous_profile_resp.text
+    previous_assignment_resp = e2e_client.put(
+        "/api/admin/ai/assignments/chat_default",
+        headers=platform_admin.headers,
+        json={"profile_id": previous_profile_resp.json()["id"]},
+    )
+    assert previous_assignment_resp.status_code == 200, previous_assignment_resp.text
+
     profile_resp = e2e_client.post(
         "/api/admin/ai/profiles",
         headers=platform_admin.headers,

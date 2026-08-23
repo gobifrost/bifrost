@@ -134,7 +134,8 @@ async def test_profile_delete_is_blocked_while_assigned(db_session):
         await service.delete_profile(profile.id)
 
     replacement = await _profile(service)
-    await service.set_assignment("primary", replacement.id)
+    reassigned = await service.set_assignment("primary", replacement.id)
+    assert reassigned.profile.id == replacement.id
     await service.delete_profile(profile.id)
 
 
