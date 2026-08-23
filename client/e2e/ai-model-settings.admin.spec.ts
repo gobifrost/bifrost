@@ -292,9 +292,6 @@ test.describe("AI model settings", () => {
 		await expect(
 			supportProfileCard.getByRole("button", { name: "Default" }),
 		).toBeVisible();
-		await expect(
-			supportProfileCard.getByLabel("Platform default profile"),
-		).toContainText("Default");
 		await expect(supportProfileCard.getByRole("switch")).not.toBeChecked();
 
 		await expect(

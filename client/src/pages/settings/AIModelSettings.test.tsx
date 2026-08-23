@@ -159,7 +159,7 @@ describe("AIModelSettings", () => {
 		expect(screen.getAllByText("Chat")[0]).toBeInTheDocument();
 		expect(
 			screen.getByRole("button", {
-				name: "Default Chat Profile: profile-1",
+				name: "Chat Profile: profile-1",
 			}),
 		).toBeInTheDocument();
 		expect(
@@ -379,25 +379,12 @@ describe("AIModelSettings", () => {
 			profile,
 			disabledProfile,
 		]);
-		const defaultAssignment = {
+		aiModels.setModelAssignment.mockResolvedValue({
 			assignment_key: "primary",
 			profile_id: disabledProfile.id,
 			profile: disabledProfile,
 			created_at: "2026-08-22T00:00:00Z",
 			updated_at: "2026-08-22T00:00:00Z",
-		} as const;
-		aiModels.setModelAssignment.mockImplementation(async () => {
-			aiModels.listModelAssignments.mockResolvedValue([
-				{
-					assignment_key: "chat_default",
-					profile_id: profile.id,
-					profile,
-					created_at: "2026-08-22T00:00:00Z",
-					updated_at: "2026-08-22T00:00:00Z",
-				},
-				defaultAssignment,
-			]);
-			return defaultAssignment;
 		});
 		const { user } = renderWithProviders(<AIModelSettings />);
 
@@ -417,11 +404,6 @@ describe("AIModelSettings", () => {
 				"profile-disabled",
 			),
 		);
-		expect(
-			await within(card as HTMLElement).findByLabelText(
-				"Platform default profile",
-			),
-		).toHaveTextContent("Default");
 		expect(within(card as HTMLElement).getByRole("switch")).not.toBeChecked();
 	});
 

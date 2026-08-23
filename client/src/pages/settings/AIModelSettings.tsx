@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	Bot,
-	Brain,
+	CheckCircle2,
 	KeyRound,
 	Loader2,
 	MessageSquareText,
@@ -14,6 +14,7 @@ import {
 	Sparkles,
 	Star,
 	Trash2,
+	type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -112,13 +113,13 @@ const ASSIGNMENTS: {
 	key: AIModelAssignmentKey;
 	label: string;
 	description: string;
-	icon: typeof Brain;
+	icon: LucideIcon;
 }[] = [
 	{
 		key: "primary",
 		label: "Default",
 		description: "Used for general AI work and SDK completions.",
-		icon: Brain,
+		icon: Star,
 	},
 	{
 		key: "summarization",
@@ -146,7 +147,7 @@ const ASSIGNMENTS: {
 	},
 	{
 		key: "chat_default",
-		label: "Default Chat",
+		label: "Chat",
 		description: "The selected profile when chat starts.",
 		icon: MessageSquareText,
 	},
@@ -767,11 +768,7 @@ export function AIModelSettings() {
 					{profiles.map((profile) => (
 						<Card
 							key={profile.id}
-							className={`rounded-xl transition-[background-color,box-shadow] duration-200 motion-reduce:transition-none ${
-								defaultProfileId === profile.id
-									? "bg-amber-500/[0.04] ring-amber-500/25 dark:bg-amber-400/[0.05] dark:ring-amber-400/25"
-									: ""
-							}`}
+							className="rounded-xl transition-[background-color,box-shadow] duration-200 motion-reduce:transition-none"
 							size="sm"
 						>
 							<CardHeader>
@@ -784,12 +781,8 @@ export function AIModelSettings() {
 										</Badge>
 									)}
 									{defaultProfileId === profile.id && (
-										<Badge
-											variant="warning"
-											aria-label="Platform default profile"
-											className="animate-in fade-in-0 zoom-in-95 duration-200 motion-reduce:animate-none"
-										>
-											<Star className="h-3 w-3 fill-current" />
+										<Badge className="animate-in fade-in-0 zoom-in-95 duration-200 motion-reduce:animate-none">
+											<CheckCircle2 className="h-3 w-3" />
 											Default
 										</Badge>
 									)}
@@ -884,7 +877,7 @@ export function AIModelSettings() {
 											</>
 										) : defaultProfileId === profile.id ? (
 											<>
-												<Star className="h-4 w-4 fill-current" />
+												<CheckCircle2 className="h-4 w-4" />
 												Default
 											</>
 										) : (
@@ -917,12 +910,22 @@ export function AIModelSettings() {
 						return (
 							<Card
 								key={assignment.key}
-								className={`rounded-xl transition-[background-color,box-shadow] duration-200 motion-reduce:transition-none ${isSaving ? "bg-muted/40 shadow-sm" : ""}`}
+								className={`rounded-xl transition-[background-color,box-shadow] duration-200 motion-reduce:transition-none ${
+									assignment.key === "primary"
+										? "bg-amber-500/[0.04] ring-amber-500/25 dark:bg-amber-400/[0.05] dark:ring-amber-400/25"
+										: ""
+								} ${isSaving ? "bg-muted/40 shadow-sm" : ""}`}
 								size="sm"
 							>
 								<CardHeader>
 									<CardTitle className="flex items-center gap-2">
-										<Icon className="h-4 w-4 text-primary" />
+										<Icon
+											className={`h-4 w-4 ${
+												assignment.key === "primary"
+													? "fill-current text-amber-600 dark:text-amber-400"
+													: "text-primary"
+											}`}
+										/>
 										{assignment.label}
 									</CardTitle>
 									<CardDescription>
