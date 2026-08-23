@@ -124,6 +124,40 @@ class TestCliAgents:
         assert get_resp.status_code == 200, get_resp.text
         assert get_resp.json()["system_prompt"] == prompt_text
 
+        profiles_resp = e2e_client.get(
+            "/api/admin/ai/profiles",
+            headers=platform_admin.headers,
+        )
+        assert profiles_resp.status_code == 200, profiles_resp.text
+        if not profiles_resp.json():
+            # The first profile becomes the required platform default and cannot
+            # be deleted. Seed that durable global state separately so the
+            # profile owned by this CRUD test remains safe to clean up.
+            bootstrap_connection_resp = e2e_client.post(
+                "/api/admin/ai/connections",
+                headers=platform_admin.headers,
+                json={
+                    "name": f"CLI Agents Default {uuid4().hex[:8]}",
+                    "provider": "openrouter",
+                    "api_key": "sk-test",
+                },
+            )
+            assert bootstrap_connection_resp.status_code == 201, (
+                bootstrap_connection_resp.text
+            )
+            bootstrap_profile_resp = e2e_client.post(
+                "/api/admin/ai/profiles",
+                headers=platform_admin.headers,
+                json={
+                    "name": f"CLI Agents Default {uuid4().hex[:8]}",
+                    "connection_id": bootstrap_connection_resp.json()["id"],
+                    "model": "anthropic/claude-3-5-sonnet-20241022",
+                },
+            )
+            assert bootstrap_profile_resp.status_code == 201, (
+                bootstrap_profile_resp.text
+            )
+
         connection_resp = e2e_client.post(
             "/api/admin/ai/connections",
             headers=platform_admin.headers,
