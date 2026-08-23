@@ -144,18 +144,15 @@ async def test_case_insensitive_unique_names(db_session):
 
 
 @pytest.mark.asyncio
-async def test_chat_default_requires_chat_enabled_profile(db_session):
+async def test_chat_default_enables_profile_for_chat(db_session):
     service = AIModelService(db_session)
     profile = await _profile(service, enabled_for_chat=False)
 
-    with pytest.raises(ValueError, match="chat-enabled"):
-        await service.set_assignment("chat_default", profile.id)
-
-    await service.update_profile(profile.id, enabled_for_chat=True)
     assignment = await service.set_assignment("chat_default", profile.id)
 
     assert assignment.assignment_key == "chat_default"
     assert assignment.profile_id == profile.id
+    assert (await service.get_profile(profile.id)).enabled_for_chat is True
 
 
 @pytest.mark.asyncio

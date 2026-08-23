@@ -219,6 +219,8 @@ def _migrate_legacy_llm_config() -> None:
 
     _upsert_assignment(bind, "primary", primary_profile_id, now)
     _upsert_assignment(bind, "chat_default", balanced_profile_id, now)
+    for assignment_key in ASSIGNMENT_KEYS - {"primary", "chat_default"}:
+        _insert_assignment_if_missing(bind, assignment_key, primary_profile_id, now)
 
     fast_model = _clean(config.get("chat_fast_model"))
     if fast_model:
@@ -677,6 +679,26 @@ def _upsert_assignment(bind, assignment_key: str, profile_id, now: datetime) -> 
             VALUES (:assignment_key, :profile_id, :created_at, :updated_at)
             ON CONFLICT (assignment_key)
             DO UPDATE SET profile_id = EXCLUDED.profile_id, updated_at = EXCLUDED.updated_at
+            """
+        ),
+        {
+            "assignment_key": assignment_key,
+            "profile_id": profile_id,
+            "created_at": now,
+            "updated_at": now,
+        },
+    )
+
+
+def _insert_assignment_if_missing(bind, assignment_key: str, profile_id, now: datetime) -> None:
+    if assignment_key not in ASSIGNMENT_KEYS:
+        return
+    bind.execute(
+        sa.text(
+            """
+            INSERT INTO ai_model_assignments (assignment_key, profile_id, created_at, updated_at)
+            VALUES (:assignment_key, :profile_id, :created_at, :updated_at)
+            ON CONFLICT (assignment_key) DO NOTHING
             """
         ),
         {

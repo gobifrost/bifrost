@@ -80,3 +80,27 @@ def test_each_distinct_agent_model_reuses_or_creates_one_profile(monkeypatch):
     assert set(updates) == {"claude-sonnet", "gpt-5"}
     assert updates["gpt-5"] == bind.existing_profile_id
     assert isinstance(updates["claude-sonnet"], UUID)
+
+
+def test_missing_legacy_assignments_use_primary_profile():
+    migration = _load_migration()
+    executed: list[tuple[str, dict]] = []
+
+    class Bind:
+        def execute(self, statement, params=None):
+            executed.append((" ".join(str(statement).split()), params or {}))
+            return _Result()
+
+    profile_id = uuid4()
+    now = migration.datetime.now(migration.timezone.utc)
+    for assignment_key in migration.ASSIGNMENT_KEYS - {"primary", "chat_default"}:
+        migration._insert_assignment_if_missing(Bind(), assignment_key, profile_id, now)
+
+    assert {params["assignment_key"] for _, params in executed} == {
+        "summarization",
+        "tuning",
+        "image_generation",
+        "video_generation",
+    }
+    assert all("ON CONFLICT (assignment_key) DO NOTHING" in sql for sql, _ in executed)
+    assert {params["profile_id"] for _, params in executed} == {profile_id}

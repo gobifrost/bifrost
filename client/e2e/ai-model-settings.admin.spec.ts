@@ -3,6 +3,84 @@ import { expect, test } from "@playwright/test";
 const now = "2026-08-22T12:00:00Z";
 
 test.describe("AI model settings", () => {
+	test("selects an embedding model from the chosen provider", async ({
+		page,
+	}) => {
+		let savedEmbedding:
+			{ connection_id: string; model: string } | undefined;
+		await page.route("**/api/admin/ai/connections", async (route) => {
+			await route.fulfill({
+				json: [
+					{
+						id: "connection-default",
+						name: "Default",
+						provider: "openai",
+						endpoint: "https://api.openai.com/v1",
+						api_key_set: true,
+						profile_count: 0,
+						created_at: now,
+						updated_at: now,
+					},
+				],
+			});
+		});
+		await page.route(
+			"**/api/admin/ai/connections/*/models",
+			async (route) => {
+				await route.fulfill({
+					json: {
+						provider: "openai",
+						models: [
+							{
+								id: "text-embedding-3-large",
+								display_name: "Text Embedding 3 Large",
+								output_modalities: ["text"],
+							},
+						],
+					},
+				});
+			},
+		);
+		await page.route("**/api/admin/llm/embedding-config", async (route) => {
+			if (route.request().method() === "POST") {
+				const body = route.request().postDataJSON();
+				savedEmbedding = {
+					connection_id: body.connection_id,
+					model: body.model,
+				};
+				await route.fulfill({
+					json: {
+						saved: true,
+						needs_reindex_confirmation: false,
+						notification_id: null,
+					},
+				});
+				return;
+			}
+			await route.fulfill({ json: null });
+		});
+
+		await page.goto("/settings/ai-embeddings");
+		await expect(
+			page.getByRole("heading", { name: "Embeddings" }),
+		).toBeVisible();
+		await expect(page.getByLabel("Model")).toBeDisabled();
+		await page.getByLabel("Provider connection").click();
+		await page.getByRole("option", { name: /Default/ }).click();
+		await page.getByLabel("Model").click();
+		await page
+			.getByRole("option", { name: /Text Embedding 3 Large/ })
+			.click();
+		await page.getByRole("button", { name: "Save embeddings" }).click();
+
+		await expect
+			.poll(() => savedEmbedding)
+			.toEqual({
+				connection_id: "connection-default",
+				model: "text-embedding-3-large",
+			});
+	});
+
 	test("creates reusable provider and model profiles and assigns them", async ({
 		page,
 	}, testInfo) => {
@@ -142,6 +220,7 @@ test.describe("AI model settings", () => {
 				const profile = profiles.find(
 					(item) => item.id === body.profile_id,
 				)!;
+				if (key === "chat_default") profile.enabled_for_chat = true;
 				const assignment = {
 					assignment_key: key,
 					profile_id: profile.id,
@@ -193,7 +272,6 @@ test.describe("AI model settings", () => {
 		await page
 			.getByRole("option", { name: "GPT-5.1 mini gpt-5.1-mini" })
 			.click();
-		await profileDialog.getByText("Enable for Chat").click();
 		await profileDialog
 			.getByRole("button", { name: "Add Profile", exact: true })
 			.click();
@@ -215,6 +293,7 @@ test.describe("AI model settings", () => {
 		await expect(
 			supportProfileCard.getByRole("button", { name: "Default" }),
 		).toBeVisible();
+		await expect(supportProfileCard.getByRole("switch")).toBeChecked();
 
 		const primary = page.getByLabel("Primary Profile");
 		await primary.click();

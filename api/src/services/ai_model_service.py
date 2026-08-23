@@ -469,7 +469,8 @@ class AIModelService:
             raise ValueError("Unknown model assignment")
         profile = await self.get_profile(profile_id)
         if assignment_key == "chat_default" and not profile.enabled_for_chat:
-            raise ValueError("Default chat assignment requires a chat-enabled profile")
+            profile.enabled_for_chat = True
+            profile.updated_at = datetime.now(timezone.utc)
         assignment = await self.session.get(AIModelAssignment, assignment_key)
         if assignment:
             assignment.profile = profile

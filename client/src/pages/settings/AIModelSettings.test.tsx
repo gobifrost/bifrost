@@ -367,6 +367,45 @@ describe("AIModelSettings", () => {
 		);
 	});
 
+	it("allows a profile to become the Chat default and enables Chat automatically", async () => {
+		const disabledProfile = {
+			...profile,
+			id: "profile-disabled",
+			name: "Agent Only",
+			enabled_for_chat: false,
+			assignment_keys: [],
+		};
+		aiModels.listModelProfiles.mockResolvedValue([
+			profile,
+			disabledProfile,
+		]);
+		aiModels.setModelAssignment.mockResolvedValue({
+			assignment_key: "chat_default",
+			profile_id: disabledProfile.id,
+			profile: { ...disabledProfile, enabled_for_chat: true },
+			created_at: "2026-08-22T00:00:00Z",
+			updated_at: "2026-08-22T00:00:00Z",
+		});
+		const { user } = renderWithProviders(<AIModelSettings />);
+
+		const card = (await screen.findByText("Agent Only")).closest(
+			'[data-slot="card"]',
+		);
+		expect(card).not.toBeNull();
+		const button = within(card as HTMLElement).getByRole("button", {
+			name: "Set Default",
+		});
+		expect(button).toBeEnabled();
+		await user.click(button);
+
+		await waitFor(() =>
+			expect(aiModels.setModelAssignment).toHaveBeenCalledWith(
+				"chat_default",
+				"profile-disabled",
+			),
+		);
+	});
+
 	it("edits provider connections and reusable profiles in place", async () => {
 		const { user } = renderWithProviders(<AIModelSettings />);
 

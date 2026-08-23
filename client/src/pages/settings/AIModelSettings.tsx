@@ -18,9 +18,9 @@ import {
 import { toast } from "sonner";
 
 import { ModelProfileSelector } from "@/components/ai/ModelProfileSelector";
+import { ProviderModelField } from "@/components/ai/ProviderModelField";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Combobox } from "@/components/ui/combobox";
 import {
 	Card,
 	CardAction,
@@ -54,7 +54,6 @@ import {
 	deleteProviderConnection,
 	listModelAssignments,
 	listModelProfiles,
-	listProviderModels,
 	listProviderConnections,
 	setModelAssignment,
 	testProviderConnection,
@@ -196,69 +195,6 @@ function reflectAssignmentOnProfiles(
 			...(profile.id === profileId ? [assignmentKey] : []),
 		],
 	}));
-}
-
-function ProviderModelField({
-	id,
-	connectionId,
-	value,
-	onValueChange,
-}: {
-	id: string;
-	connectionId: string;
-	value: string;
-	onValueChange: (value: string) => void;
-}) {
-	const modelsQuery = useQuery({
-		queryKey: ["ai", "provider-models", connectionId],
-		queryFn: () => listProviderModels(connectionId),
-		enabled: Boolean(connectionId),
-	});
-	const options = (modelsQuery.data?.models ?? []).map((model) => ({
-		value: model.id,
-		label: model.display_name,
-		description: model.id !== model.display_name ? model.id : undefined,
-	}));
-	if (value && !options.some((option) => option.value === value)) {
-		options.unshift({ value, label: value, description: undefined });
-	}
-
-	return (
-		<div className="space-y-2">
-			<Label htmlFor={id}>Model</Label>
-			{!modelsQuery.isError &&
-			(!connectionId || modelsQuery.isLoading || options.length > 0) ? (
-				<Combobox
-					id={id}
-					value={value}
-					onValueChange={onValueChange}
-					options={options}
-					placeholder={
-						connectionId
-							? "Select a model"
-							: "Select a provider first"
-					}
-					searchPlaceholder="Search models..."
-					emptyText="No models reported by this provider."
-					disabled={!connectionId}
-					isLoading={modelsQuery.isLoading}
-				/>
-			) : (
-				<>
-					<Input
-						id={id}
-						value={value}
-						onChange={(event) => onValueChange(event.target.value)}
-						placeholder="Enter a model ID"
-					/>
-					<p className="text-xs text-muted-foreground">
-						This provider did not return a model catalog. Enter the
-						model ID manually.
-					</p>
-				</>
-			)}
-		</div>
-	);
 }
 
 class ProviderVerificationError extends Error {}
@@ -569,12 +505,20 @@ export function AIModelSettings() {
 			);
 			queryClient.setQueryData<AIModelProfile[]>(
 				PROFILE_QUERY_KEY,
-				(existing = []) =>
-					reflectAssignmentOnProfiles(
+				(existing = []) => {
+					const reflected = reflectAssignmentOnProfiles(
 						existing,
 						assignment.assignment_key,
 						assignment.profile_id,
-					),
+					);
+					return assignment.assignment_key === "chat_default"
+						? reflected.map((profile) =>
+								profile.id === assignment.profile_id
+									? { ...profile, enabled_for_chat: true }
+									: profile,
+							)
+						: reflected;
+				},
 			);
 			toast.success(
 				assignment.assignment_key === "chat_default"
@@ -919,7 +863,6 @@ export function AIModelSettings() {
 										variant="outline"
 										size="sm"
 										disabled={
-											!profile.enabled_for_chat ||
 											chatDefaultId === profile.id ||
 											assignMutation.isPending
 										}
