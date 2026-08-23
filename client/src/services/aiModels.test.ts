@@ -13,10 +13,12 @@ vi.mock("@/lib/api-client", () => ({ apiClient }));
 import {
 	createModelProfile,
 	createProviderConnection,
+	listProviderModels,
 	listModelAssignments,
 	listModelProfiles,
 	listProviderConnections,
 	setModelAssignment,
+	verifyProviderConnection,
 } from "./aiModels";
 
 describe("aiModels service", () => {
@@ -29,8 +31,7 @@ describe("aiModels service", () => {
 	});
 
 	it("lists provider connections, profiles, and assignments", async () => {
-		apiClient.GET
-			.mockResolvedValueOnce({ data: [{ id: "provider-1" }] })
+		apiClient.GET.mockResolvedValueOnce({ data: [{ id: "provider-1" }] })
 			.mockResolvedValueOnce({ data: [{ id: "profile-1" }] })
 			.mockResolvedValueOnce({ data: [{ assignment_key: "primary" }] });
 
@@ -59,9 +60,9 @@ describe("aiModels service", () => {
 	});
 
 	it("creates provider connections and profiles with generated paths", async () => {
-		apiClient.POST
-			.mockResolvedValueOnce({ data: { id: "provider-1" } })
-			.mockResolvedValueOnce({ data: { id: "profile-1" } });
+		apiClient.POST.mockResolvedValueOnce({
+			data: { id: "provider-1" },
+		}).mockResolvedValueOnce({ data: { id: "profile-1" } });
 
 		await createProviderConnection({
 			name: "Default",
@@ -94,6 +95,36 @@ describe("aiModels service", () => {
 		);
 	});
 
+	it("verifies unsaved credentials and lists models for a saved provider", async () => {
+		apiClient.POST.mockResolvedValueOnce({
+			data: { success: true, message: "Connected" },
+		});
+		apiClient.GET.mockResolvedValueOnce({
+			data: { provider: "openai", models: [{ id: "gpt-5-mini" }] },
+		});
+
+		await verifyProviderConnection({
+			name: "OpenAI",
+			provider: "openai",
+			api_key: "secret",
+			endpoint: "https://api.openai.com/v1",
+		});
+		await listProviderModels("provider-1");
+
+		expect(apiClient.POST).toHaveBeenCalledWith(
+			"/api/admin/ai/connections/verify",
+			expect.objectContaining({
+				body: expect.objectContaining({ api_key: "secret" }),
+			}),
+		);
+		expect(apiClient.GET).toHaveBeenCalledWith(
+			"/api/admin/ai/connections/{connection_id}/models",
+			expect.objectContaining({
+				params: { path: { connection_id: "provider-1" } },
+			}),
+		);
+	});
+
 	it("assigns profiles by assignment key", async () => {
 		apiClient.PUT.mockResolvedValueOnce({
 			data: { assignment_key: "primary", profile_id: "profile-1" },
@@ -115,6 +146,8 @@ describe("aiModels service", () => {
 			error: { detail: "Profile is assigned" },
 		});
 
-		await expect(listModelProfiles()).rejects.toThrow("Profile is assigned");
+		await expect(listModelProfiles()).rejects.toThrow(
+			"Profile is assigned",
+		);
 	});
 });

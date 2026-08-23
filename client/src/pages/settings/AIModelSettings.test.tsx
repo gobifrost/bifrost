@@ -6,6 +6,7 @@ const aiModels = vi.hoisted(() => ({
 	listProviderConnections: vi.fn(),
 	listModelProfiles: vi.fn(),
 	listModelAssignments: vi.fn(),
+	listProviderModels: vi.fn(),
 	createProviderConnection: vi.fn(),
 	updateProviderConnection: vi.fn(),
 	createModelProfile: vi.fn(),
@@ -14,6 +15,7 @@ const aiModels = vi.hoisted(() => ({
 	deleteProviderConnection: vi.fn(),
 	deleteModelProfile: vi.fn(),
 	testProviderConnection: vi.fn(),
+	verifyProviderConnection: vi.fn(),
 }));
 
 vi.mock("@/services/aiModels", async () => {
@@ -86,6 +88,7 @@ const profile = {
 
 describe("AIModelSettings", () => {
 	beforeEach(() => {
+		vi.clearAllMocks();
 		aiModels.listProviderConnections.mockResolvedValue([provider]);
 		aiModels.listModelProfiles.mockResolvedValue([profile]);
 		aiModels.listModelAssignments.mockResolvedValue([
@@ -97,6 +100,26 @@ describe("AIModelSettings", () => {
 				updated_at: "2026-08-22T00:00:00Z",
 			},
 		]);
+		aiModels.listProviderModels.mockResolvedValue({
+			provider: "openai",
+			models: [
+				{
+					id: "gpt-5",
+					display_name: "GPT-5",
+					output_modalities: ["text"],
+				},
+				{
+					id: "gpt-5.1-mini",
+					display_name: "GPT-5.1 mini",
+					output_modalities: ["text"],
+				},
+			],
+		});
+		aiModels.verifyProviderConnection.mockResolvedValue({
+			success: true,
+			message: "Connected",
+			models: [],
+		});
 		aiModels.createProviderConnection.mockResolvedValue(provider);
 		aiModels.updateProviderConnection.mockResolvedValue(provider);
 		aiModels.createModelProfile.mockResolvedValue(profile);
@@ -157,6 +180,9 @@ describe("AIModelSettings", () => {
 		);
 
 		await waitFor(() =>
+			expect(aiModels.verifyProviderConnection).toHaveBeenCalled(),
+		);
+		await waitFor(() =>
 			expect(aiModels.createProviderConnection).toHaveBeenCalled(),
 		);
 		expect(aiModels.createProviderConnection.mock.calls[0][0]).toEqual(
@@ -174,9 +200,11 @@ describe("AIModelSettings", () => {
 			within(dialog).getByRole("textbox", { name: "Profile Name" }),
 			"Fast",
 		);
-		await user.type(
-			within(dialog).getByRole("textbox", { name: "Model" }),
-			"gpt-5",
+		await user.click(
+			within(dialog).getByRole("combobox", { name: "Model" }),
+		);
+		await user.click(
+			screen.getByRole("option", { name: "GPT-5 gpt-5" }),
 		);
 		await user.click(
 			within(dialog).getByRole("button", { name: "Add Profile" }),
@@ -192,6 +220,47 @@ describe("AIModelSettings", () => {
 				model: "gpt-5",
 			}),
 		);
+	});
+
+	it("keeps an unverified provider unsaved and the dialog open", async () => {
+		let finishVerification: (result: {
+			success: boolean;
+			message: string;
+			models: never[];
+		}) => void = () => undefined;
+		aiModels.verifyProviderConnection.mockReturnValue(
+			new Promise((resolve) => {
+				finishVerification = resolve;
+			}),
+		);
+		const { user } = renderWithProviders(<AIModelSettings />);
+
+		await user.click(
+			await screen.findByRole("button", { name: "Add Provider" }),
+		);
+		const dialog = screen.getByRole("dialog");
+		await user.type(within(dialog).getByLabelText("API Key"), "bad-key");
+		await user.click(
+			within(dialog).getByRole("button", { name: "Add Provider" }),
+		);
+
+		expect(
+			within(dialog).getByRole("button", { name: "Verifying..." }),
+		).toBeDisabled();
+		expect(aiModels.createProviderConnection).not.toHaveBeenCalled();
+
+		finishVerification({
+			success: false,
+			message: "Authentication failed",
+			models: [],
+		});
+		await waitFor(() =>
+			expect(
+				within(dialog).getByRole("button", { name: "Add Provider" }),
+			).toBeEnabled(),
+		);
+		expect(aiModels.createProviderConnection).not.toHaveBeenCalled();
+		expect(screen.getByRole("dialog")).toBeInTheDocument();
 	});
 
 	it("uses actionable empty states to start provider and profile setup", async () => {
@@ -256,11 +325,14 @@ describe("AIModelSettings", () => {
 
 		await user.click(screen.getByRole("button", { name: "Edit Balanced" }));
 		dialog = screen.getByRole("dialog");
-		const profileModel = within(dialog).getByRole("textbox", {
-			name: "Model",
-		});
-		await user.clear(profileModel);
-		await user.type(profileModel, "gpt-5.1-mini");
+		await user.click(
+			within(dialog).getByRole("combobox", { name: "Model" }),
+		);
+		await user.click(
+			screen.getByRole("option", {
+				name: "GPT-5.1 mini gpt-5.1-mini",
+			}),
+		);
 		await user.click(
 			within(dialog).getByRole("button", { name: "Save Profile" }),
 		);

@@ -25,7 +25,7 @@ from src.models.contracts.ai_behavior import AIBehaviorResponse, AIBehaviorUpdat
 from src.models.contracts.artifacts import ModelCapabilities
 from src.models.contracts.llm import LLMModelInfo
 from src.models.orm.ai_models import AIModelAssignment, AIModelProfile, AIProviderConnection
-from src.services.ai_model_service import AIModelService
+from src.services.ai_model_service import AIModelService, ProviderConnectionTestConfig
 from src.services.ai_behavior_service import AIBehaviorService
 
 router = APIRouter(
@@ -139,6 +139,39 @@ async def create_provider_connection(
     except (LookupError, ValueError) as error:
         await db.rollback()
         _raise_service_error(error)
+
+
+@router.post("/connections/verify")
+async def verify_provider_connection(
+    request: AIProviderConnectionCreate,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> AIConnectionTestResponse:
+    del user
+    try:
+        result = await AIModelService(db).test_connection_config(
+            ProviderConnectionTestConfig(
+                provider=request.provider,
+                api_key=request.api_key,
+                endpoint=request.endpoint,
+            )
+        )
+    except ValueError as error:
+        _raise_service_error(error)
+    return AIConnectionTestResponse(
+        success=result.success,
+        message=result.message,
+        models=[
+            LLMModelInfo(
+                id=model.id,
+                display_name=model.display_name,
+                output_modalities=model.output_modalities,
+            )
+            for model in result.models
+        ]
+        if result.models
+        else None,
+    )
 
 
 @router.patch("/connections/{connection_id}")

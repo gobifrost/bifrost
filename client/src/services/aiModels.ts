@@ -52,6 +52,17 @@ export async function createProviderConnection(
 	return responseData as AIProviderConnection;
 }
 
+export async function verifyProviderConnection(
+	data: AIProviderConnectionCreate,
+): Promise<AIConnectionTestResponse> {
+	const { data: responseData, error } = await apiClient.POST(
+		"/api/admin/ai/connections/verify",
+		{ body: data },
+	);
+	if (error) throwApiError("verify provider connection", error);
+	return responseData as AIConnectionTestResponse;
+}
+
 export async function updateProviderConnection(
 	id: string,
 	data: AIProviderConnectionUpdate,

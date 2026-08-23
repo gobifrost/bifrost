@@ -6390,6 +6390,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/ai/connections/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify Provider Connection */
+        post: operations["verify_provider_connection_api_admin_ai_connections_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/ai/connections/{connection_id}": {
         parameters: {
             query?: never;
@@ -37983,6 +38000,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AIProviderConnectionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verify_provider_connection_api_admin_ai_connections_verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIProviderConnectionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIConnectionTestResponse"];
                 };
             };
             /** @description Validation Error */

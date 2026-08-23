@@ -1,3 +1,26 @@
+def test_failed_provider_verification_does_not_save(e2e_client, platform_admin):
+    response = e2e_client.post(
+        "/api/admin/ai/connections/verify",
+        headers=platform_admin.headers,
+        json={
+            "name": "Unsaved Provider",
+            "provider": "openai",
+            "api_key": "sk-test",
+            "endpoint": "https://api.openai.com/v1",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["success"] is False
+    assert "failed" in response.json()["message"].lower()
+
+    connections = e2e_client.get(
+        "/api/admin/ai/connections",
+        headers=platform_admin.headers,
+    ).json()
+    assert all(connection["name"] != "Unsaved Provider" for connection in connections)
+
+
 def test_ai_model_settings_crud_and_assignment(e2e_client, platform_admin):
     connection_resp = e2e_client.post(
         "/api/admin/ai/connections",

@@ -5,6 +5,7 @@ import {
 	Brain,
 	CheckCircle2,
 	KeyRound,
+	Loader2,
 	MessageSquareText,
 	Pencil,
 	Plus,
@@ -19,6 +20,7 @@ import { toast } from "sonner";
 import { ModelProfileSelector } from "@/components/ai/ModelProfileSelector";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Combobox } from "@/components/ui/combobox";
 import {
 	Card,
 	CardAction,
@@ -52,11 +54,13 @@ import {
 	deleteProviderConnection,
 	listModelAssignments,
 	listModelProfiles,
+	listProviderModels,
 	listProviderConnections,
 	setModelAssignment,
 	testProviderConnection,
 	updateProviderConnection,
 	updateModelProfile,
+	verifyProviderConnection,
 	type AIModelAssignmentKey,
 	type AIModelProfile,
 	type AIProviderKind,
@@ -164,6 +168,71 @@ function assignmentLabel(key: AIModelAssignmentKey): string {
 	);
 }
 
+function ProviderModelField({
+	id,
+	connectionId,
+	value,
+	onValueChange,
+}: {
+	id: string;
+	connectionId: string;
+	value: string;
+	onValueChange: (value: string) => void;
+}) {
+	const modelsQuery = useQuery({
+		queryKey: ["ai", "provider-models", connectionId],
+		queryFn: () => listProviderModels(connectionId),
+		enabled: Boolean(connectionId),
+	});
+	const options = (modelsQuery.data?.models ?? []).map((model) => ({
+		value: model.id,
+		label: model.display_name,
+		description: model.id !== model.display_name ? model.id : undefined,
+	}));
+	if (value && !options.some((option) => option.value === value)) {
+		options.unshift({ value, label: value, description: undefined });
+	}
+
+	return (
+		<div className="space-y-2">
+			<Label htmlFor={id}>Model</Label>
+			{!modelsQuery.isError &&
+			(!connectionId || modelsQuery.isLoading || options.length > 0) ? (
+				<Combobox
+					id={id}
+					value={value}
+					onValueChange={onValueChange}
+					options={options}
+					placeholder={
+						connectionId
+							? "Select a model"
+							: "Select a provider first"
+					}
+					searchPlaceholder="Search models..."
+					emptyText="No models reported by this provider."
+					disabled={!connectionId}
+					isLoading={modelsQuery.isLoading}
+				/>
+			) : (
+				<>
+					<Input
+						id={id}
+						value={value}
+						onChange={(event) => onValueChange(event.target.value)}
+						placeholder="Enter a model ID"
+					/>
+					<p className="text-xs text-muted-foreground">
+						This provider did not return a model catalog. Enter the
+						model ID manually.
+					</p>
+				</>
+			)}
+		</div>
+	);
+}
+
+class ProviderVerificationError extends Error {}
+
 export function AIModelSettings() {
 	const queryClient = useQueryClient();
 	const [providerCreateOpen, setProviderCreateOpen] = useState(false);
@@ -267,7 +336,14 @@ export function AIModelSettings() {
 	};
 
 	const createProviderMutation = useMutation({
-		mutationFn: createProviderConnection,
+		mutationFn: async (
+			connection: Parameters<typeof createProviderConnection>[0],
+		) => {
+			const result = await verifyProviderConnection(connection);
+			if (!result.success)
+				throw new ProviderVerificationError(result.message);
+			return createProviderConnection(connection);
+		},
 		onSuccess: (connection) => {
 			setProviderCreateOpen(false);
 			resetProviderCreate();
@@ -282,12 +358,17 @@ export function AIModelSettings() {
 			toast.success("Provider connection saved");
 		},
 		onError: (error) =>
-			toast.error("Could not save provider", {
-				description:
-					error instanceof Error
-						? error.message
-						: "Check the fields and try again.",
-			}),
+			toast.error(
+				error instanceof ProviderVerificationError
+					? "Provider verification failed"
+					: "Could not save provider",
+				{
+					description:
+						error instanceof Error
+							? error.message
+							: "Check the fields and try again.",
+				},
+			),
 	});
 
 	const testProviderMutation = useMutation({
@@ -793,6 +874,7 @@ export function AIModelSettings() {
 			<Dialog
 				open={providerCreateOpen}
 				onOpenChange={(open) => {
+					if (createProviderMutation.isPending) return;
 					setProviderCreateOpen(open);
 					if (!open) resetProviderCreate();
 				}}
@@ -885,6 +967,7 @@ export function AIModelSettings() {
 					<DialogFooter>
 						<Button
 							variant="outline"
+							disabled={createProviderMutation.isPending}
 							onClick={() => {
 								setProviderCreateOpen(false);
 								resetProviderCreate();
@@ -906,7 +989,14 @@ export function AIModelSettings() {
 								})
 							}
 						>
-							Add Provider
+							{createProviderMutation.isPending ? (
+								<>
+									<Loader2 className="h-4 w-4 animate-spin" />
+									Verifying...
+								</>
+							) : (
+								"Add Provider"
+							)}
 						</Button>
 					</DialogFooter>
 				</DialogContent>
@@ -946,7 +1036,10 @@ export function AIModelSettings() {
 							</Label>
 							<Select
 								value={profileConnectionId}
-								onValueChange={setProfileConnectionId}
+								onValueChange={(connectionId) => {
+									setProfileConnectionId(connectionId);
+									setProfileModel("");
+								}}
 							>
 								<SelectTrigger
 									id="ai-profile-provider"
@@ -968,17 +1061,12 @@ export function AIModelSettings() {
 							</Select>
 						</div>
 						<div className="grid gap-4 sm:grid-cols-[1fr_10rem]">
-							<div className="space-y-2">
-								<Label htmlFor="ai-profile-model">Model</Label>
-								<Input
-									id="ai-profile-model"
-									value={profileModel}
-									onChange={(event) =>
-										setProfileModel(event.target.value)
-									}
-									placeholder="gpt-5-mini"
-								/>
-							</div>
+							<ProviderModelField
+								id="ai-profile-model"
+								connectionId={profileConnectionId}
+								value={profileModel}
+								onValueChange={setProfileModel}
+							/>
 							<div className="space-y-2">
 								<Label htmlFor="ai-profile-max-tokens">
 									Max Tokens
@@ -1205,6 +1293,7 @@ export function AIModelSettings() {
 										setProfileEdit({
 											...profileEdit,
 											connectionId,
+											model: "",
 										})
 									}
 								>
@@ -1226,21 +1315,17 @@ export function AIModelSettings() {
 									</SelectContent>
 								</Select>
 							</div>
-							<div className="space-y-2">
-								<Label htmlFor="edit-profile-model">
-									Model
-								</Label>
-								<Input
-									id="edit-profile-model"
-									value={profileEdit.model}
-									onChange={(event) =>
-										setProfileEdit({
-											...profileEdit,
-											model: event.target.value,
-										})
-									}
-								/>
-							</div>
+							<ProviderModelField
+								id="edit-profile-model"
+								connectionId={profileEdit.connectionId}
+								value={profileEdit.model}
+								onValueChange={(model) =>
+									setProfileEdit({
+										...profileEdit,
+										model,
+									})
+								}
+							/>
 							<div className="space-y-2">
 								<Label htmlFor="edit-profile-tokens">
 									Max Tokens
