@@ -177,9 +177,22 @@ cmd_stack() {
 }
 
 stack_up() {
+    local api_container_id api_fixture_source expected_fixture_source
     print_project
 
     if stack_is_up "$COMPOSE_PROJECT_NAME" "$COMPOSE_FILE"; then
+        # Reconcile long-lived containers with the current Compose definition
+        # before declaring the stack ready. Without this, an already-running
+        # API can retain stale bind mounts or environment after the harness
+        # changes, while one-off test runners use the new configuration.
+        docker compose -f "$COMPOSE_FILE" --profile e2e up -d --no-build
+        api_container_id="$(docker compose -f "$COMPOSE_FILE" ps -q api)"
+        expected_fixture_source="$LOG_DIR/solution-repo-fixtures"
+        api_fixture_source="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/tmp/bifrost/solution-repo-fixtures"}}{{.Source}}{{end}}{{end}}' "$api_container_id")"
+        if [ "$api_fixture_source" != "$expected_fixture_source" ]; then
+            echo "API fixture mount is stale — recreating API with the worktree-specific mount."
+            docker compose -f "$COMPOSE_FILE" up -d --no-build --force-recreate api
+        fi
         # Idempotent: still confirm API is serving traffic before returning
         # success. A previous `stack up` may have exited before the API
         # finished booting; without this, the next test command would race.

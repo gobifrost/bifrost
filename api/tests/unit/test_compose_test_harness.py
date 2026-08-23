@@ -107,6 +107,21 @@ def test_api_shares_fixture_subdir_for_install_from_repo():
     )
 
 
+def test_stack_up_reconciles_running_containers_with_current_compose_config():
+    """A healthy long-lived stack may still have stale mounts or environment."""
+    script = _find_repo_file("test.sh").read_text()
+    already_running = script.split(
+        'if stack_is_up "$COMPOSE_PROJECT_NAME" "$COMPOSE_FILE"; then', 1
+    )[1].split('echo "Stack already up."', 1)[0]
+
+    assert (
+        'docker compose -f "$COMPOSE_FILE" --profile e2e up -d --no-build'
+        in already_running
+    ), "stack up must reconcile healthy containers before returning"
+    assert 'expected_fixture_source="$LOG_DIR/solution-repo-fixtures"' in already_running
+    assert "--force-recreate api" in already_running
+
+
 def test_test_runner_mounts_pyright_inputs():
     """The Dockerized quality lane needs the same API config CI uses."""
     compose = yaml.safe_load(_COMPOSE.read_text())
