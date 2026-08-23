@@ -292,11 +292,14 @@ test.describe("AI model settings", () => {
 		await expect(
 			supportProfileCard.getByRole("button", { name: "Default" }),
 		).toBeVisible();
+		await expect(
+			supportProfileCard.getByLabel("Platform default profile"),
+		).toContainText("Default");
 		await expect(supportProfileCard.getByRole("switch")).not.toBeChecked();
 
-		await expect(page.getByLabel("Default Profile")).toContainText(
-			"Support Chat",
-		);
+		await expect(
+			page.getByLabel("Default Profile", { exact: true }),
+		).toContainText("Support Chat");
 
 		await page.setViewportSize({ width: 1440, height: 1000 });
 		await page

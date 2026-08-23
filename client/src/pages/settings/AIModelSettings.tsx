@@ -3,7 +3,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	Bot,
 	Brain,
-	CheckCircle2,
 	KeyRound,
 	Loader2,
 	MessageSquareText,
@@ -13,6 +12,7 @@ import {
 	Settings2,
 	ShieldCheck,
 	Sparkles,
+	Star,
 	Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -767,7 +767,11 @@ export function AIModelSettings() {
 					{profiles.map((profile) => (
 						<Card
 							key={profile.id}
-							className="rounded-xl transition-[background-color,box-shadow] duration-200 motion-reduce:transition-none"
+							className={`rounded-xl transition-[background-color,box-shadow] duration-200 motion-reduce:transition-none ${
+								defaultProfileId === profile.id
+									? "bg-amber-500/[0.04] ring-amber-500/25 dark:bg-amber-400/[0.05] dark:ring-amber-400/25"
+									: ""
+							}`}
 							size="sm"
 						>
 							<CardHeader>
@@ -780,8 +784,12 @@ export function AIModelSettings() {
 										</Badge>
 									)}
 									{defaultProfileId === profile.id && (
-										<Badge className="animate-in fade-in-0 zoom-in-95 duration-200 motion-reduce:animate-none">
-											<CheckCircle2 className="h-3 w-3" />
+										<Badge
+											variant="warning"
+											aria-label="Platform default profile"
+											className="animate-in fade-in-0 zoom-in-95 duration-200 motion-reduce:animate-none"
+										>
+											<Star className="h-3 w-3 fill-current" />
 											Default
 										</Badge>
 									)}
@@ -824,13 +832,13 @@ export function AIModelSettings() {
 							</CardHeader>
 							<CardContent className="flex flex-wrap items-center justify-between gap-3">
 								<div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-									{(profile.assignment_keys ?? []).map(
-										(key) => (
+									{(profile.assignment_keys ?? [])
+										.filter((key) => key !== "primary")
+										.map((key) => (
 											<Badge key={key} variant="outline">
 												{assignmentLabel(key)}
 											</Badge>
-										),
-									)}
+										))}
 								</div>
 								<div className="flex items-center gap-2 text-sm">
 									<MessageSquareText className="h-4 w-4 text-primary" />
@@ -854,30 +862,29 @@ export function AIModelSettings() {
 										type="button"
 										variant="outline"
 										size="sm"
-									disabled={
-										defaultProfileId === profile.id ||
-										assignMutation.isPending
+										disabled={
+											defaultProfileId === profile.id ||
+											assignMutation.isPending
 										}
 										onClick={() =>
-										assignMutation.mutate({
-											assignmentKey: "primary",
+											assignMutation.mutate({
+												assignmentKey: "primary",
 												profileId: profile.id,
 											})
 										}
 									>
 										{assignMutation.isPending &&
-									assignMutation.variables
-										?.assignmentKey ===
-										"primary" &&
-										assignMutation.variables.profileId ===
-											profile.id ? (
+										assignMutation.variables
+											?.assignmentKey === "primary" &&
+											assignMutation.variables.profileId ===
+												profile.id ? (
 											<>
 												<Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
 												Saving…
 											</>
-									) : defaultProfileId === profile.id ? (
+										) : defaultProfileId === profile.id ? (
 											<>
-												<CheckCircle2 className="h-4 w-4" />
+												<Star className="h-4 w-4 fill-current" />
 												Default
 											</>
 										) : (
