@@ -625,7 +625,7 @@ class AgentExecutor:
                 capabilities=build_runtime_capabilities(budget),
                 model_settings=agent_model_settings(
                     llm_client.config,
-                    max_tokens=max_tokens_override or llm_client.config.max_tokens,
+                    max_tokens=max_tokens_override,
                     session_id=str(conversation.id),
                 ),
                 # Permit one schema/tool-name correction. It is charged to the

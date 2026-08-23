@@ -22,8 +22,6 @@ DEFAULT_PROVIDER: Literal["openai", "anthropic", "google"] = "openai"
 DEFAULT_OPENAI_MODEL = "gpt-4o"
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
 DEFAULT_GOOGLE_MODEL = "gemini-2.5-flash"
-DEFAULT_MAX_TOKENS = 16384
-
 async def get_llm_config(
     session: AsyncSession,
     *,
@@ -87,7 +85,6 @@ def create_llm_client(
     api_key: str,
     model: str | None = None,
     endpoint: str | None = None,
-    max_tokens: int = DEFAULT_MAX_TOKENS,
 ) -> BaseLLMClient:
     """
     Create an LLM client with explicit configuration.
@@ -99,8 +96,6 @@ def create_llm_client(
         api_key: API key for the provider
         model: Model identifier (uses defaults if not provided)
         endpoint: Custom API endpoint URL
-        max_tokens: Maximum tokens for completion
-
     Returns:
         Configured LLM client
     """
@@ -116,7 +111,6 @@ def create_llm_client(
         model=model,
         api_key=api_key,
         endpoint=endpoint,
-        max_tokens=max_tokens,
     )
 
     from src.services.llm.pydantic_client import PydanticAIClient

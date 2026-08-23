@@ -27,7 +27,6 @@ async def _seed_profile_assignment(
         name=f"Profile {uuid4().hex[:8]}",
         connection_id=connection.id,
         model=model,
-        max_tokens=12000,
         capabilities=None,
         enabled_for_chat=assignment_key == "chat_default",
     )

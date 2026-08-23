@@ -64,7 +64,6 @@ class AIModelProfile(Base):
         nullable=False,
     )
     model: Mapped[str] = mapped_column(String(200), nullable=False)
-    max_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=16384, server_default="16384")
     capabilities: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     enabled_for_chat: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
     created_at: Mapped[datetime] = mapped_column(
@@ -84,7 +83,6 @@ class AIModelProfile(Base):
     agents: Mapped[list["Agent"]] = relationship(back_populates="llm_profile", lazy="selectin")
 
     __table_args__ = (
-        CheckConstraint("max_tokens > 0", name="ck_ai_model_profiles_max_tokens_positive"),
         Index("uq_ai_model_profiles_name_ci", text("lower(name)"), unique=True),
         Index("ix_ai_model_profiles_connection_id", "connection_id"),
         Index("ix_ai_model_profiles_enabled_for_chat", "enabled_for_chat"),

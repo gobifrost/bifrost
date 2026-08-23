@@ -382,7 +382,7 @@ class AutonomousAgentExecutor:
             capabilities=build_runtime_capabilities(budget),
             model_settings=agent_model_settings(
                 llm_config,
-                max_tokens=agent.llm_max_tokens or llm_config.max_tokens,
+                max_tokens=agent.llm_max_tokens,
                 session_id=run_id,
             ),
             # One bounded correction for malformed tool names/arguments. The

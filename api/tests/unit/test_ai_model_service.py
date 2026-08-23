@@ -24,7 +24,6 @@ async def _profile(service: AIModelService, *, enabled_for_chat: bool = False):
         name=f"Balanced {uuid4().hex[:8]}",
         connection_id=connection.id,
         model="openai/gpt-4o-mini",
-        max_tokens=16384,
         capabilities=None,
         enabled_for_chat=enabled_for_chat,
     )
@@ -152,7 +151,6 @@ async def test_resolve_config_from_assignment_decrypts_runtime_config(db_session
         name="Primary",
         connection_id=connection.id,
         model="custom/model",
-        max_tokens=4096,
         capabilities=None,
         enabled_for_chat=False,
     )
@@ -164,7 +162,6 @@ async def test_resolve_config_from_assignment_decrypts_runtime_config(db_session
     assert config.endpoint == "https://llm.example.test/v1"
     assert config.api_key == "compatible-key"
     assert config.model == "custom/model"
-    assert config.max_tokens == 4096
 
 
 @pytest.mark.asyncio

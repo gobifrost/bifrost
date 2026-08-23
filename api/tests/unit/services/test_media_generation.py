@@ -36,7 +36,6 @@ async def _seed_media_assignment(db_session, *, assignment_key: str, provider: s
         name=f"Media Profile {uuid4().hex[:8]}",
         connection_id=connection.id,
         model=model,
-        max_tokens=16384,
         capabilities=None,
         enabled_for_chat=False,
     )

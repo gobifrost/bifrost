@@ -58,7 +58,6 @@ class AIModelProfileCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     connection_id: UUID
     model: str = Field(..., min_length=1, max_length=200)
-    max_tokens: int = Field(default=16384, ge=1, le=128000)
     capabilities: ModelCapabilities | None = None
     enabled_for_chat: bool = False
 
@@ -67,7 +66,6 @@ class AIModelProfileUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=100)
     connection_id: UUID | None = None
     model: str | None = Field(default=None, min_length=1, max_length=200)
-    max_tokens: int | None = Field(default=None, ge=1, le=128000)
     capabilities: ModelCapabilities | None = None
     enabled_for_chat: bool | None = None
 
@@ -77,7 +75,6 @@ class AIModelProfileResponse(BaseModel):
     name: str
     connection_id: UUID
     model: str
-    max_tokens: int
     capabilities: ModelCapabilities | None = None
     enabled_for_chat: bool
     connection: AIProviderConnectionSummary
@@ -112,4 +109,3 @@ class AIConnectionTestResponse(BaseModel):
 class AIModelsResponse(BaseModel):
     provider: AIProviderKind
     models: list[LLMModelInfo]
-

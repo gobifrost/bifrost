@@ -25,7 +25,6 @@ async def _seed_profile(
         name=name,
         connection_id=connection.id,
         model=model,
-        max_tokens=16384,
         capabilities=None,
         enabled_for_chat=enabled_for_chat,
     )

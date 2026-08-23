@@ -74,7 +74,6 @@ describe("aiModels service", () => {
 			name: "Fast",
 			connection_id: "provider-1",
 			model: "gpt-5-mini",
-			max_tokens: 16384,
 			capabilities: null,
 			enabled_for_chat: true,
 		});

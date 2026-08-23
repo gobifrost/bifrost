@@ -62,12 +62,10 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("model", sa.String(length=200), nullable=False),
-        sa.Column("max_tokens", sa.Integer(), nullable=False, server_default="16384"),
         sa.Column("capabilities", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("enabled_for_chat", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("NOW()")),
         sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("NOW()")),
-        sa.CheckConstraint("max_tokens > 0", name="ck_ai_model_profiles_max_tokens_positive"),
     )
     op.create_index("uq_ai_model_profiles_name_ci", "ai_model_profiles", [sa.text("lower(name)")], unique=True)
     op.create_index("ix_ai_model_profiles_connection_id", "ai_model_profiles", ["connection_id"])
@@ -182,7 +180,6 @@ def _migrate_legacy_llm_config() -> None:
     now = datetime.now(timezone.utc)
     provider = _provider_kind(config.get("provider"), config.get("endpoint"))
     endpoint = _endpoint(provider, config.get("endpoint"))
-    max_tokens = int(config.get("max_tokens") or 16384)
     connection_id = _get_or_create_connection(bind, provider, endpoint, encrypted_key, now)
 
     balanced_override = _clean(config.get("chat_balanced_model"))
@@ -192,7 +189,6 @@ def _migrate_legacy_llm_config() -> None:
             name="Default",
             connection_id=connection_id,
             model=primary_model,
-            max_tokens=max_tokens,
             capabilities=None,
             enabled_for_chat=False,
             now=now,
@@ -203,7 +199,6 @@ def _migrate_legacy_llm_config() -> None:
             name=_clean(config.get("chat_balanced_label")) or "Balanced",
             connection_id=connection_id,
             model=balanced_override,
-            max_tokens=max_tokens,
             capabilities=config.get("chat_balanced_capabilities"),
             enabled_for_chat=True,
             now=now,
@@ -215,7 +210,6 @@ def _migrate_legacy_llm_config() -> None:
             name=_clean(config.get("chat_balanced_label")) or "Balanced",
             connection_id=connection_id,
             model=primary_model,
-            max_tokens=max_tokens,
             capabilities=config.get("chat_balanced_capabilities"),
             enabled_for_chat=True,
             now=now,
@@ -233,7 +227,6 @@ def _migrate_legacy_llm_config() -> None:
             name=_clean(config.get("chat_fast_label")) or "Fast",
             connection_id=connection_id,
             model=fast_model,
-            max_tokens=max_tokens,
             capabilities=config.get("chat_fast_capabilities"),
             enabled_for_chat=True,
             now=now,
@@ -247,7 +240,6 @@ def _migrate_legacy_llm_config() -> None:
             name=_clean(config.get("chat_pro_label")) or "Pro",
             connection_id=connection_id,
             model=pro_model,
-            max_tokens=max_tokens,
             capabilities=config.get("chat_pro_capabilities"),
             enabled_for_chat=True,
             now=now,
@@ -263,12 +255,11 @@ def _migrate_legacy_llm_config() -> None:
         model = _clean(config.get(config_key))
         if not model:
             continue
-        profile_id = _find_matching_profile(bind, connection_id, model, max_tokens) or _get_or_create_profile(
+        profile_id = _find_matching_profile(bind, connection_id, model) or _get_or_create_profile(
             bind,
             name=label,
             connection_id=connection_id,
             model=model,
-            max_tokens=max_tokens,
             capabilities=None,
             enabled_for_chat=False,
             now=now,
@@ -486,7 +477,7 @@ def _migrate_agent_profiles() -> None:
     primary = bind.execute(
         sa.text(
             """
-            SELECT profile.connection_id, profile.max_tokens
+            SELECT profile.connection_id
             FROM ai_model_assignments AS assignment
             JOIN ai_model_profiles AS profile ON profile.id = assignment.profile_id
             WHERE assignment.assignment_key = 'primary'
@@ -518,7 +509,6 @@ def _migrate_agent_profiles() -> None:
                 name=f"Migrated · {model}",
                 connection_id=primary["connection_id"],
                 model=model,
-                max_tokens=primary["max_tokens"],
                 capabilities=None,
                 enabled_for_chat=False,
                 now=now,
@@ -613,14 +603,13 @@ def _get_or_create_profile(
     name: str,
     connection_id,
     model: str,
-    max_tokens: int,
     capabilities: dict | None,
     enabled_for_chat: bool,
     now: datetime,
     reuse_matching: bool = True,
 ):
     if reuse_matching:
-        existing = _find_matching_profile(bind, connection_id, model, max_tokens)
+        existing = _find_matching_profile(bind, connection_id, model)
         if existing:
             return existing
     profile_name = _available_profile_name(bind, name)
@@ -629,10 +618,10 @@ def _get_or_create_profile(
         sa.text(
             """
             INSERT INTO ai_model_profiles (
-                id, name, connection_id, model, max_tokens, capabilities, enabled_for_chat, created_at, updated_at
+                id, name, connection_id, model, capabilities, enabled_for_chat, created_at, updated_at
             )
             VALUES (
-                :id, :name, :connection_id, :model, :max_tokens, CAST(:capabilities AS jsonb), :enabled_for_chat, :created_at, :updated_at
+                :id, :name, :connection_id, :model, CAST(:capabilities AS jsonb), :enabled_for_chat, :created_at, :updated_at
             )
             """
         ),
@@ -641,7 +630,6 @@ def _get_or_create_profile(
             "name": profile_name,
             "connection_id": connection_id,
             "model": model,
-            "max_tokens": max_tokens,
             "capabilities": json.dumps(capabilities) if capabilities is not None else None,
             "enabled_for_chat": enabled_for_chat,
             "created_at": now,
@@ -651,7 +639,7 @@ def _get_or_create_profile(
     return profile_id
 
 
-def _find_matching_profile(bind, connection_id, model: str, max_tokens: int):
+def _find_matching_profile(bind, connection_id, model: str):
     return bind.execute(
         sa.text(
             """
@@ -659,11 +647,10 @@ def _find_matching_profile(bind, connection_id, model: str, max_tokens: int):
             FROM ai_model_profiles
             WHERE connection_id = :connection_id
               AND model = :model
-              AND max_tokens = :max_tokens
             LIMIT 1
             """
         ),
-        {"connection_id": connection_id, "model": model, "max_tokens": max_tokens},
+        {"connection_id": connection_id, "model": model},
     ).scalar()
 
 

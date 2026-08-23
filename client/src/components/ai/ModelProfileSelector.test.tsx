@@ -42,7 +42,6 @@ const profile = {
 	name: "Balanced Chat",
 	connection_id: provider.id,
 	model: "openai/gpt-5-mini",
-	max_tokens: 16384,
 	capabilities: null,
 	enabled_for_chat: true,
 	connection: {
@@ -101,6 +100,7 @@ describe("ModelProfileSelector", () => {
 		await user.click(
 			await screen.findByRole("button", { name: /create profile/i }),
 		);
+		expect(screen.queryByLabelText("Max Tokens")).not.toBeInTheDocument();
 		await user.type(
 			screen.getByRole("textbox", { name: "Profile Name" }),
 			"New Chat",
@@ -122,6 +122,9 @@ describe("ModelProfileSelector", () => {
 				model: "gpt-5",
 				enabled_for_chat: true,
 			}),
+		);
+		expect(aiModels.createModelProfile.mock.calls[0][0]).not.toHaveProperty(
+			"max_tokens",
 		);
 		expect(onValueChange).toHaveBeenCalledWith("profile-2");
 	});

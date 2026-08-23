@@ -100,7 +100,6 @@ beforeEach(() => {
 			name: "Support profile",
 			connection_id: "connection-1",
 			model: "gpt-5-mini",
-			max_tokens: 16384,
 			capabilities: null,
 			enabled_for_chat: true,
 			connection: {

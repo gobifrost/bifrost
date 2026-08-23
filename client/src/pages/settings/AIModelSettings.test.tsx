@@ -71,7 +71,6 @@ const profile = {
 	name: "Balanced",
 	connection_id: provider.id,
 	model: "gpt-5-mini",
-	max_tokens: 16384,
 	capabilities: null,
 	enabled_for_chat: true,
 	connection: {
@@ -196,6 +195,7 @@ describe("AIModelSettings", () => {
 
 		await user.click(screen.getByRole("button", { name: "Add Profile" }));
 		dialog = screen.getByRole("dialog");
+		expect(within(dialog).queryByLabelText("Max Tokens")).not.toBeInTheDocument();
 		await user.type(
 			within(dialog).getByRole("textbox", { name: "Profile Name" }),
 			"Fast",
@@ -219,6 +219,9 @@ describe("AIModelSettings", () => {
 				connection_id: "provider-1",
 				model: "gpt-5",
 			}),
+		);
+		expect(aiModels.createModelProfile.mock.calls[0][0]).not.toHaveProperty(
+			"max_tokens",
 		);
 	});
 

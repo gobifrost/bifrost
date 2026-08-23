@@ -26,7 +26,6 @@ test.describe("AI model settings", () => {
 				name: "Balanced",
 				connection_id: "connection-default",
 				model: "openai/gpt-5-mini",
-				max_tokens: 16384,
 				capabilities: null,
 				enabled_for_chat: true,
 				connection: {
@@ -118,7 +117,6 @@ test.describe("AI model settings", () => {
 					name: body.name,
 					connection_id: body.connection_id,
 					model: body.model,
-					max_tokens: body.max_tokens,
 					capabilities: null,
 					enabled_for_chat: body.enabled_for_chat,
 					connection: {

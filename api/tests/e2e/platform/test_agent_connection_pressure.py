@@ -47,7 +47,6 @@ def _llm_configured(e2e_client, platform_admin):
             "name": f"Connection pressure {suffix}",
             "connection_id": response.json()["id"],
             "model": "claude-haiku-4-5-20251001",
-            "max_tokens": 1024,
             "enabled_for_chat": False,
         },
         headers=platform_admin.headers,

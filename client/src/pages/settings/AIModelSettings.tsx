@@ -246,7 +246,6 @@ export function AIModelSettings() {
 	const [profileName, setProfileName] = useState("");
 	const [profileConnectionId, setProfileConnectionId] = useState("");
 	const [profileModel, setProfileModel] = useState("");
-	const [profileMaxTokens, setProfileMaxTokens] = useState("16384");
 	const [profileChatEnabled, setProfileChatEnabled] = useState(false);
 	const [providerEdit, setProviderEdit] = useState<{
 		id: string;
@@ -260,7 +259,6 @@ export function AIModelSettings() {
 		name: string;
 		connectionId: string;
 		model: string;
-		maxTokens: string;
 	} | null>(null);
 
 	const providersQuery = useQuery({
@@ -301,7 +299,6 @@ export function AIModelSettings() {
 		setProfileName("");
 		setProfileConnectionId("");
 		setProfileModel("");
-		setProfileMaxTokens("16384");
 		setProfileChatEnabled(false);
 	};
 
@@ -462,7 +459,6 @@ export function AIModelSettings() {
 				name: edit.name.trim(),
 				connection_id: edit.connectionId,
 				model: edit.model.trim(),
-				max_tokens: Number(edit.maxTokens),
 			}),
 		onSuccess: () => {
 			setProfileEdit(null);
@@ -523,10 +519,7 @@ export function AIModelSettings() {
 	const providerReady =
 		providerName.trim() && providerKey.trim() && providerEndpoint.trim();
 	const profileReady =
-		profileName.trim() &&
-		profileConnectionId &&
-		profileModel.trim() &&
-		Number(profileMaxTokens) > 0;
+		profileName.trim() && profileConnectionId && profileModel.trim();
 
 	return (
 		<div className="space-y-8">
@@ -748,13 +741,10 @@ export function AIModelSettings() {
 											setProfileEdit({
 												id: profile.id,
 												name: profile.name,
-												connectionId:
-													profile.connection_id,
-												model: profile.model,
-												maxTokens: String(
-													profile.max_tokens,
-												),
-											})
+								connectionId:
+									profile.connection_id,
+								model: profile.model,
+							})
 										}
 									>
 										<Pencil className="h-4 w-4" />
@@ -774,13 +764,9 @@ export function AIModelSettings() {
 									</Button>
 								</CardAction>
 							</CardHeader>
-							<CardContent className="flex flex-wrap items-center justify-between gap-3">
-								<div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-									<span>
-										{profile.max_tokens.toLocaleString()}{" "}
-										max tokens
-									</span>
-									{(profile.assignment_keys ?? []).map(
+						<CardContent className="flex flex-wrap items-center justify-between gap-3">
+							<div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+								{(profile.assignment_keys ?? []).map(
 										(key) => (
 											<Badge key={key} variant="outline">
 												{assignmentLabel(key)}
@@ -1060,27 +1046,13 @@ export function AIModelSettings() {
 								</SelectContent>
 							</Select>
 						</div>
-						<div className="grid gap-4 sm:grid-cols-[1fr_10rem]">
+						<div>
 							<ProviderModelField
 								id="ai-profile-model"
 								connectionId={profileConnectionId}
 								value={profileModel}
 								onValueChange={setProfileModel}
 							/>
-							<div className="space-y-2">
-								<Label htmlFor="ai-profile-max-tokens">
-									Max Tokens
-								</Label>
-								<Input
-									id="ai-profile-max-tokens"
-									type="number"
-									min="1"
-									value={profileMaxTokens}
-									onChange={(event) =>
-										setProfileMaxTokens(event.target.value)
-									}
-								/>
-							</div>
 						</div>
 						<label className="flex items-center justify-between gap-4 rounded-lg border px-3 py-2.5 text-sm">
 							<span className="flex items-center gap-2">
@@ -1113,7 +1085,6 @@ export function AIModelSettings() {
 									name: profileName.trim(),
 									connection_id: profileConnectionId,
 									model: profileModel.trim(),
-									max_tokens: Number(profileMaxTokens),
 									capabilities: null,
 									enabled_for_chat: profileChatEnabled,
 								})
@@ -1326,23 +1297,6 @@ export function AIModelSettings() {
 									})
 								}
 							/>
-							<div className="space-y-2">
-								<Label htmlFor="edit-profile-tokens">
-									Max Tokens
-								</Label>
-								<Input
-									id="edit-profile-tokens"
-									type="number"
-									min="1"
-									value={profileEdit.maxTokens}
-									onChange={(event) =>
-										setProfileEdit({
-											...profileEdit,
-											maxTokens: event.target.value,
-										})
-									}
-								/>
-							</div>
 						</div>
 					)}
 					<DialogFooter>
@@ -1357,7 +1311,6 @@ export function AIModelSettings() {
 								!profileEdit?.name.trim() ||
 								!profileEdit?.model.trim() ||
 								!profileEdit?.connectionId ||
-								Number(profileEdit?.maxTokens) < 1 ||
 								editProfileMutation.isPending
 							}
 							onClick={() =>

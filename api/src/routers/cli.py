@@ -2542,7 +2542,6 @@ async def cli_ai_info(
         return CLIAIInfoResponse(
             provider=config.provider,
             model=config.model,
-            max_tokens=config.max_tokens,
         )
     except ValueError as e:
         raise HTTPException(

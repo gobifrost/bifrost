@@ -217,8 +217,9 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     #
     # Agent create/update replaced the raw llm_model field with llm_profile_id
     # (2026-08-22). BREAKING: older CLIs cannot express reusable model profiles,
-    # so MIN_CLI_VERSION was raised to 1.2.3.
-    "d36e04acbb92f424b2931612dde64da427ebbad908f1edeb1e33321a9e423a3c"
+    # and SDK AI model info no longer reports the removed profile max_tokens
+    # value. Both ship behind the same unreleased 1.2.3 minimum CLI boundary.
+    "450ee9fe3db085a752f1a7e5b96fea6479aff2ea3a8526343a2aead2766652cd"
 )
 
 

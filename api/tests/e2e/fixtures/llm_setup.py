@@ -41,7 +41,6 @@ def _configure_model_profile(e2e_client, platform_admin, config: dict[str, Any])
             "name": f"E2E Chat {suffix}",
             "connection_id": connection_response.json()["id"],
             "model": config["model"],
-            "max_tokens": config["max_tokens"],
             "enabled_for_chat": True,
         },
         headers=platform_admin.headers,
@@ -113,7 +112,6 @@ def llm_anthropic_configured(
         "provider": "anthropic",
         "model": "claude-haiku-4-5-20251001",
         "api_key": llm_test_anthropic_key,
-        "max_tokens": 1024,
     }
 
     _configure_model_profile(e2e_client, platform_admin, config)
@@ -144,7 +142,6 @@ def llm_openai_configured(
         "provider": "openai",
         "model": "gpt-4o-mini",
         "api_key": llm_test_openai_key,
-        "max_tokens": 1024,
     }
 
     _configure_model_profile(e2e_client, platform_admin, config)

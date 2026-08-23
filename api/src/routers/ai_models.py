@@ -92,7 +92,6 @@ def _profile_response(profile: AIModelProfile) -> AIModelProfileResponse:
         name=profile.name,
         connection_id=profile.connection_id,
         model=profile.model,
-        max_tokens=profile.max_tokens,
         capabilities=capabilities,
         enabled_for_chat=profile.enabled_for_chat,
         connection=_connection_summary(profile.connection),
@@ -262,7 +261,6 @@ async def create_model_profile(
             name=request.name,
             connection_id=request.connection_id,
             model=request.model,
-            max_tokens=request.max_tokens,
             capabilities=request.capabilities,
             enabled_for_chat=request.enabled_for_chat,
         )
@@ -288,7 +286,6 @@ async def update_model_profile(
             name=request.name,
             connection_id=request.connection_id,
             model=request.model,
-            max_tokens=request.max_tokens,
             capabilities=request.capabilities,
             capabilities_provided="capabilities" in request.model_fields_set,
             enabled_for_chat=request.enabled_for_chat,

@@ -10656,11 +10656,6 @@ export interface components {
             connection_id: string;
             /** Model */
             model: string;
-            /**
-             * Max Tokens
-             * @default 16384
-             */
-            max_tokens: number;
             capabilities?: components["schemas"]["ModelCapabilities"] | null;
             /**
              * Enabled For Chat
@@ -10684,8 +10679,6 @@ export interface components {
             connection_id: string;
             /** Model */
             model: string;
-            /** Max Tokens */
-            max_tokens: number;
             capabilities?: components["schemas"]["ModelCapabilities"] | null;
             /** Enabled For Chat */
             enabled_for_chat: boolean;
@@ -10716,8 +10709,6 @@ export interface components {
             connection_id?: string | null;
             /** Model */
             model?: string | null;
-            /** Max Tokens */
-            max_tokens?: number | null;
             capabilities?: components["schemas"]["ModelCapabilities"] | null;
             /** Enabled For Chat */
             enabled_for_chat?: boolean | null;
@@ -12857,11 +12848,6 @@ export interface components {
              * @description Model identifier
              */
             model: string;
-            /**
-             * Max Tokens
-             * @description Default max tokens
-             */
-            max_tokens: number;
         };
         /**
          * CLIAIInputFile

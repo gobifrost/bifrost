@@ -124,7 +124,6 @@ export function ModelProfileSelector({
 			name: inferredName,
 			connection_id: newConnectionId,
 			model: newModel.trim(),
-			max_tokens: 16384,
 			capabilities: null,
 			enabled_for_chat: chatOnly,
 		});
