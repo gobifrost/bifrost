@@ -20,6 +20,7 @@
 | POST | `/api/admin/ai/connections/{connection_id}/test` |
 | GET | `/api/admin/ai/profiles` |
 | POST | `/api/admin/ai/profiles` |
+| POST | `/api/admin/ai/profiles/merge` |
 | DELETE | `/api/admin/ai/profiles/{profile_id}` |
 | PATCH | `/api/admin/ai/profiles/{profile_id}` |
 | DELETE | `/api/admin/llm/embedding-config` |

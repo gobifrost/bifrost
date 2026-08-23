@@ -79,6 +79,12 @@ async def test_disabled_model_profiles_are_hidden(db_session):
 
 @pytest.mark.asyncio
 async def test_explicit_disabled_chat_profile_is_rejected(db_session):
+    await _seed_profile(
+        db_session,
+        name="Visible",
+        enabled_for_chat=True,
+        model="visible-model",
+    )
     disabled = await _seed_profile(
         db_session,
         name="Hidden",
