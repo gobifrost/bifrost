@@ -13,6 +13,7 @@
 | PUT | `/api/admin/ai/behavior` |
 | GET | `/api/admin/ai/connections` |
 | POST | `/api/admin/ai/connections` |
+| POST | `/api/admin/ai/connections/verify` |
 | DELETE | `/api/admin/ai/connections/{connection_id}` |
 | PATCH | `/api/admin/ai/connections/{connection_id}` |
 | GET | `/api/admin/ai/connections/{connection_id}/models` |
