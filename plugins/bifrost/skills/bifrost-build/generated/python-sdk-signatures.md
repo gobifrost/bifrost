@@ -13,7 +13,7 @@ Agent execution operations.
 
 
 
-**`ai.complete(prompt: str | None = None, messages: list[dict[str, str]] | None = None, system: str | None = None, response_format: type[T] | None = None, knowledge: list[str] | None = None, max_tokens: int | None = None, org_id: str | None = None, model: str | None = None, timeout: float | None = None, files: list[AIInputFile | ArtifactRef | dict[str, Any]] | None = None) -> AIResponse | T`**
+**`ai.complete(prompt: str | None = None, messages: list[dict[str, str]] | None = None, system: str | None = None, response_format: type[T] | None = None, knowledge: list[str] | None = None, max_tokens: int | None = None, org_id: str | None = None, profile: str | None = None, model: str | None = None, timeout: float | None = None, files: list[AIInputFile | ArtifactRef | dict[str, Any]] | None = None) -> AIResponse | T`**
 
 **`ai.create_image(prompt: str, filename: str | None = None) -> ArtifactRef`**
   Generate an image and return one portable artifact reference.

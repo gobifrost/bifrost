@@ -88,13 +88,13 @@ def test_ai_model_settings_crud_and_assignment(e2e_client, platform_admin):
             "name": "Balanced E2E",
             "connection_id": connection["id"],
             "model": "openai/gpt-4o-mini",
-            "enabled_for_chat": False,
+            "enabled_for_chat": True,
         },
     )
     assert profile_resp.status_code == 201, profile_resp.text
     profile = profile_resp.json()
     assert profile["connection"]["name"] == "Default E2E Renamed"
-    assert profile["enabled_for_chat"] is False
+    assert profile["enabled_for_chat"] is True
 
     assignment_resp = e2e_client.put(
         "/api/admin/ai/assignments/chat_default",
@@ -103,7 +103,6 @@ def test_ai_model_settings_crud_and_assignment(e2e_client, platform_admin):
     )
     assert assignment_resp.status_code == 200, assignment_resp.text
     assert assignment_resp.json()["profile"]["id"] == profile["id"]
-    assert assignment_resp.json()["profile"]["enabled_for_chat"] is True
 
     delete_profile_resp = e2e_client.delete(
         f"/api/admin/ai/profiles/{profile['id']}",

@@ -12795,6 +12795,11 @@ export interface components {
              */
             org_id?: string | null;
             /**
+             * Profile
+             * @description Model profile name (null = platform default profile)
+             */
+            profile?: string | null;
+            /**
              * Model
              * @description Override model (e.g., 'gpt-4o', 'claude-sonnet-4-20250514')
              */

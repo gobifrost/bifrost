@@ -65,7 +65,9 @@ async def test_first_profile_bootstraps_every_assignment(db_session):
 
 
 @pytest.mark.asyncio
-async def test_create_connection_requires_key_and_defaults_openrouter_endpoint(db_session):
+async def test_create_connection_requires_key_and_defaults_openrouter_endpoint(
+    db_session,
+):
     service = AIModelService(db_session)
 
     with pytest.raises(ValueError, match="API key is required"):
@@ -90,7 +92,9 @@ async def test_create_connection_requires_key_and_defaults_openrouter_endpoint(d
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider", ["openai", "openrouter", "google", "anthropic"])
-async def test_create_connection_defaults_builtin_provider_endpoints(db_session, provider):
+async def test_create_connection_defaults_builtin_provider_endpoints(
+    db_session, provider
+):
     service = AIModelService(db_session)
 
     connection = await service.create_connection(
@@ -137,22 +141,29 @@ async def test_connection_update_preserves_stored_key_when_omitted(db_session):
 @pytest.mark.asyncio
 async def test_case_insensitive_unique_names(db_session):
     service = AIModelService(db_session)
-    await service.create_connection(name="Default", provider="openai", api_key="sk-test", endpoint=None)
+    await service.create_connection(
+        name="Default", provider="openai", api_key="sk-test", endpoint=None
+    )
 
     with pytest.raises(ValueError, match="Provider connection name already exists"):
-        await service.create_connection(name="default", provider="openai", api_key="sk-test", endpoint=None)
+        await service.create_connection(
+            name="default", provider="openai", api_key="sk-test", endpoint=None
+        )
 
 
 @pytest.mark.asyncio
-async def test_chat_default_enables_profile_for_chat(db_session):
+async def test_chat_default_requires_chat_enabled_profile(db_session):
     service = AIModelService(db_session)
     profile = await _profile(service, enabled_for_chat=False)
 
+    with pytest.raises(ValueError, match="chat-enabled"):
+        await service.set_assignment("chat_default", profile.id)
+
+    await service.update_profile(profile.id, enabled_for_chat=True)
     assignment = await service.set_assignment("chat_default", profile.id)
 
     assert assignment.assignment_key == "chat_default"
     assert assignment.profile_id == profile.id
-    assert (await service.get_profile(profile.id)).enabled_for_chat is True
 
 
 @pytest.mark.asyncio
@@ -171,7 +182,7 @@ async def test_profile_delete_is_blocked_while_assigned(db_session):
 
 
 @pytest.mark.asyncio
-async def test_resolve_config_from_assignment_decrypts_runtime_config(db_session):
+async def test_resolve_config_defaults_to_platform_default_assignment(db_session):
     service = AIModelService(db_session)
     connection = await service.create_connection(
         name="OpenAI Compatible",
@@ -188,7 +199,7 @@ async def test_resolve_config_from_assignment_decrypts_runtime_config(db_session
     )
     await service.set_assignment("primary", profile.id)
 
-    config = await service.resolve_config(assignment_key="primary")
+    config = await service.resolve_config()
 
     assert config.provider == "openai"
     assert config.endpoint == "https://llm.example.test/v1"
@@ -206,6 +217,26 @@ async def test_resolve_config_from_explicit_profile_uuid(db_session):
     assert config.provider == "openai"
     assert config.endpoint == "https://openrouter.ai/api/v1"
     assert config.model == "openai/gpt-4o-mini"
+
+
+@pytest.mark.asyncio
+async def test_resolve_config_from_case_insensitive_profile_name(db_session):
+    service = AIModelService(db_session)
+    profile = await _profile(service)
+
+    config = await service.resolve_config(profile_name=profile.name.swapcase())
+
+    assert config.provider == "openai"
+    assert config.endpoint == "https://openrouter.ai/api/v1"
+    assert config.model == "openai/gpt-4o-mini"
+
+
+@pytest.mark.asyncio
+async def test_resolve_config_rejects_unknown_profile_name(db_session):
+    service = AIModelService(db_session)
+
+    with pytest.raises(ValueError, match="Model profile 'Missing' was not found"):
+        await service.resolve_config(profile_name="Missing")
 
 
 @pytest.mark.asyncio

@@ -220,7 +220,6 @@ test.describe("AI model settings", () => {
 				const profile = profiles.find(
 					(item) => item.id === body.profile_id,
 				)!;
-				if (key === "chat_default") profile.enabled_for_chat = true;
 				const assignment = {
 					assignment_key: key,
 					profile_id: profile.id,
@@ -293,13 +292,11 @@ test.describe("AI model settings", () => {
 		await expect(
 			supportProfileCard.getByRole("button", { name: "Default" }),
 		).toBeVisible();
-		await expect(supportProfileCard.getByRole("switch")).toBeChecked();
+		await expect(supportProfileCard.getByRole("switch")).not.toBeChecked();
 
-		const primary = page.getByLabel("Primary Profile");
-		await primary.click();
-		await page.getByPlaceholder("Search profiles...").fill("Support Chat");
-		await page.getByRole("option", { name: /Support Chat/ }).click();
-		await expect(primary).toContainText("Support Chat");
+		await expect(page.getByLabel("Default Profile")).toContainText(
+			"Support Chat",
+		);
 
 		await page.setViewportSize({ width: 1440, height: 1000 });
 		await page

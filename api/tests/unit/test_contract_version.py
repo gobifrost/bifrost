@@ -219,7 +219,10 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # (2026-08-22). BREAKING: older CLIs cannot express reusable model profiles,
     # and SDK AI model info no longer reports the removed profile max_tokens
     # value. Both ship behind the same unreleased 1.2.3 minimum CLI boundary.
-    "450ee9fe3db085a752f1a7e5b96fea6479aff2ea3a8526343a2aead2766652cd"
+    #
+    # SDK AI completion requests gained optional `profile` (2026-08-23).
+    # ADDITIVE: older SDKs omit it and continue using the Primary assignment.
+    "88a3b3adc1ab0b7940729212336f928a49c0372b25937df939c074990ce8cf48"
 )
 
 

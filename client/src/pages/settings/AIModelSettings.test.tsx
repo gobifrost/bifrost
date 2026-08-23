@@ -342,7 +342,7 @@ describe("AIModelSettings", () => {
 		const { user } = renderWithProviders(<AIModelSettings />);
 
 		await user.click(
-			await screen.findByRole("button", { name: "Primary Profile" }),
+			await screen.findByRole("button", { name: "Default Profile" }),
 		);
 
 		await waitFor(() =>
@@ -353,7 +353,7 @@ describe("AIModelSettings", () => {
 		);
 		expect(
 			screen.getByRole("button", {
-				name: "Primary Profile: profile-1 · Saving assignment…",
+				name: "Default Profile: profile-1 · Saving assignment…",
 			}),
 		).toBeDisabled();
 
@@ -361,13 +361,13 @@ describe("AIModelSettings", () => {
 		await waitFor(() =>
 			expect(
 				screen.getByRole("button", {
-					name: "Primary Profile: profile-1",
+					name: "Default Profile: profile-1",
 				}),
 			).toBeEnabled(),
 		);
 	});
 
-	it("allows a profile to become the Chat default and enables Chat automatically", async () => {
+	it("allows a non-Chat profile to become the platform default", async () => {
 		const disabledProfile = {
 			...profile,
 			id: "profile-disabled",
@@ -380,9 +380,9 @@ describe("AIModelSettings", () => {
 			disabledProfile,
 		]);
 		aiModels.setModelAssignment.mockResolvedValue({
-			assignment_key: "chat_default",
+			assignment_key: "primary",
 			profile_id: disabledProfile.id,
-			profile: { ...disabledProfile, enabled_for_chat: true },
+			profile: disabledProfile,
 			created_at: "2026-08-22T00:00:00Z",
 			updated_at: "2026-08-22T00:00:00Z",
 		});
@@ -400,10 +400,11 @@ describe("AIModelSettings", () => {
 
 		await waitFor(() =>
 			expect(aiModels.setModelAssignment).toHaveBeenCalledWith(
-				"chat_default",
+				"primary",
 				"profile-disabled",
 			),
 		);
+		expect(within(card as HTMLElement).getByRole("switch")).not.toBeChecked();
 	});
 
 	it("edits provider connections and reusable profiles in place", async () => {

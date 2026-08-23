@@ -16,11 +16,20 @@ from sqlalchemy.orm import joinedload, selectinload
 from src.config import get_settings
 from src.models.contracts.ai_models import AIModelAssignmentKey, AIProviderKind
 from src.models.contracts.artifacts import ModelCapabilities
-from src.models.orm.ai_models import AIEmbeddingConfig, AIModelAssignment, AIModelProfile, AIProviderConnection
+from src.models.orm.ai_models import (
+    AIEmbeddingConfig,
+    AIModelAssignment,
+    AIModelProfile,
+    AIProviderConnection,
+)
+
 if TYPE_CHECKING:
     from src.services.embeddings.base import EmbeddingConfig
     from src.services.llm.base import LLMConfig
-    from src.services.provider_catalog_service import ProviderModelInfo, ProviderTestResult
+    from src.services.provider_catalog_service import (
+        ProviderModelInfo,
+        ProviderTestResult,
+    )
 
 OPENROUTER_DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1"
 PROVIDER_DEFAULT_ENDPOINTS: dict[AIProviderKind, str] = {
@@ -65,23 +74,33 @@ class AIModelService:
     def decrypt_api_key(self, encrypted_api_key: str) -> str:
         return self._get_fernet().decrypt(encrypted_api_key.encode()).decode()
 
-    async def _ensure_unique_connection_name(self, name: str, *, exclude_id: UUID | None = None) -> None:
-        statement = select(AIProviderConnection).where(func.lower(AIProviderConnection.name) == name.casefold())
+    async def _ensure_unique_connection_name(
+        self, name: str, *, exclude_id: UUID | None = None
+    ) -> None:
+        statement = select(AIProviderConnection).where(
+            func.lower(AIProviderConnection.name) == name.casefold()
+        )
         if exclude_id:
             statement = statement.where(AIProviderConnection.id != exclude_id)
         existing = (await self.session.execute(statement)).scalars().first()
         if existing:
             raise ValueError("Provider connection name already exists")
 
-    async def _ensure_unique_profile_name(self, name: str, *, exclude_id: UUID | None = None) -> None:
-        statement = select(AIModelProfile).where(func.lower(AIModelProfile.name) == name.casefold())
+    async def _ensure_unique_profile_name(
+        self, name: str, *, exclude_id: UUID | None = None
+    ) -> None:
+        statement = select(AIModelProfile).where(
+            func.lower(AIModelProfile.name) == name.casefold()
+        )
         if exclude_id:
             statement = statement.where(AIModelProfile.id != exclude_id)
         existing = (await self.session.execute(statement)).scalars().first()
         if existing:
             raise ValueError("Model profile name already exists")
 
-    def normalize_endpoint(self, provider: AIProviderKind, endpoint: str | None) -> str | None:
+    def normalize_endpoint(
+        self, provider: AIProviderKind, endpoint: str | None
+    ) -> str | None:
         value = endpoint.strip().rstrip("/") if endpoint else None
         if value:
             return value
@@ -94,7 +113,9 @@ class AIModelService:
             return "openai"
         return provider
 
-    def embedding_client_endpoint(self, provider: AIProviderKind, endpoint: str | None) -> str | None:
+    def embedding_client_endpoint(
+        self, provider: AIProviderKind, endpoint: str | None
+    ) -> str | None:
         if provider == "openai" and endpoint in (None, "https://api.openai.com/v1"):
             return None
         return endpoint
@@ -103,33 +124,66 @@ class AIModelService:
         self,
         *,
         profile_id: UUID | None = None,
+        profile_name: str | None = None,
         assignment_key: AIModelAssignmentKey = "primary",
     ) -> LLMConfig:
         """Resolve a profile UUID or assignment key into decrypted runtime LLM config."""
         from src.services.llm.base import LLMConfig
 
+        if profile_id is not None and profile_name is not None:
+            raise ValueError("Specify either a model profile id or name, not both")
         if profile_id is not None:
             profile = (
-                await self.session.execute(
-                    select(AIModelProfile)
-                    .options(joinedload(AIModelProfile.connection))
-                    .where(AIModelProfile.id == profile_id)
+                (
+                    await self.session.execute(
+                        select(AIModelProfile)
+                        .options(joinedload(AIModelProfile.connection))
+                        .where(AIModelProfile.id == profile_id)
+                    )
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
             if profile is None:
                 raise LookupError("Model profile not found")
-        else:
-            assignment = (
-                await self.session.execute(
-                    select(AIModelAssignment)
-                    .options(
-                        joinedload(AIModelAssignment.profile).joinedload(
-                            AIModelProfile.connection
+        elif profile_name is not None:
+            trimmed_profile_name = profile_name.strip()
+            if not trimmed_profile_name:
+                raise ValueError("Model profile name cannot be blank")
+            profile = (
+                (
+                    await self.session.execute(
+                        select(AIModelProfile)
+                        .options(joinedload(AIModelProfile.connection))
+                        .where(
+                            func.lower(AIModelProfile.name)
+                            == trimmed_profile_name.casefold()
                         )
                     )
-                    .where(AIModelAssignment.assignment_key == assignment_key)
                 )
-            ).scalars().first()
+                .scalars()
+                .first()
+            )
+            if profile is None:
+                raise ValueError(
+                    f"Model profile '{trimmed_profile_name}' was not found"
+                )
+        else:
+            assignment = (
+                (
+                    await self.session.execute(
+                        select(AIModelAssignment)
+                        .options(
+                            joinedload(AIModelAssignment.profile).joinedload(
+                                AIModelProfile.connection
+                            )
+                        )
+                        .where(AIModelAssignment.assignment_key == assignment_key)
+                    )
+                )
+                .scalars()
+                .first()
+            )
             if not assignment:
                 raise ValueError(
                     f"LLM model assignment '{assignment_key}' is not configured. "
@@ -175,22 +229,30 @@ class AIModelService:
             .all()
         )
         assignment = (
-            await self.session.execute(
-                select(AIModelAssignment).where(
-                    AIModelAssignment.assignment_key == "chat_default"
+            (
+                await self.session.execute(
+                    select(AIModelAssignment).where(
+                        AIModelAssignment.assignment_key == "chat_default"
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
         return profiles, assignment.profile_id if assignment else None
 
-    def normalized_profile_capabilities(self, profile: AIModelProfile) -> ModelCapabilities:
+    def normalized_profile_capabilities(
+        self, profile: AIModelProfile
+    ) -> ModelCapabilities:
         """Normalize a profile's stored capability metadata without exposing model ids."""
         # Keep capability discovery lazy: that module imports the LLM package,
         # whose public factory resolves profiles through this service.
         from src.services.model_capabilities import normalize_capabilities
 
         return normalize_capabilities(
-            ModelCapabilities.model_validate(profile.capabilities) if profile.capabilities else None,
+            ModelCapabilities.model_validate(profile.capabilities)
+            if profile.capabilities
+            else None,
             provider=profile.connection.provider,
             model=profile.model,
             endpoint=profile.connection.endpoint,
@@ -205,19 +267,24 @@ class AIModelService:
             profile = await self.get_profile(profile_id)
         else:
             assignment = (
-                await self.session.execute(
-                    select(AIModelAssignment)
-                    .options(
-                        joinedload(AIModelAssignment.profile).joinedload(
-                            AIModelProfile.connection
-                        ),
-                        joinedload(AIModelAssignment.profile).selectinload(
-                            AIModelProfile.assignments
-                        ),
+                (
+                    await self.session.execute(
+                        select(AIModelAssignment)
+                        .options(
+                            joinedload(AIModelAssignment.profile).joinedload(
+                                AIModelProfile.connection
+                            ),
+                            joinedload(AIModelAssignment.profile).selectinload(
+                                AIModelProfile.assignments
+                            ),
+                        )
+                        .where(AIModelAssignment.assignment_key == "chat_default")
                     )
-                    .where(AIModelAssignment.assignment_key == "chat_default")
                 )
-            ).unique().scalars().first()
+                .unique()
+                .scalars()
+                .first()
+            )
             if not assignment:
                 raise ValueError(
                     "Default Chat model profile is not configured. "
@@ -233,7 +300,13 @@ class AIModelService:
 
     async def list_connections(self) -> list[AIProviderConnection]:
         return list(
-            (await self.session.execute(select(AIProviderConnection).order_by(func.lower(AIProviderConnection.name))))
+            (
+                await self.session.execute(
+                    select(AIProviderConnection).order_by(
+                        func.lower(AIProviderConnection.name)
+                    )
+                )
+            )
             .unique()
             .scalars()
             .all()
@@ -241,12 +314,17 @@ class AIModelService:
 
     async def get_connection(self, connection_id: UUID) -> AIProviderConnection:
         connection = (
-            await self.session.execute(
-                select(AIProviderConnection)
-                .options(selectinload(AIProviderConnection.profiles))
-                .where(AIProviderConnection.id == connection_id)
+            (
+                await self.session.execute(
+                    select(AIProviderConnection)
+                    .options(selectinload(AIProviderConnection.profiles))
+                    .where(AIProviderConnection.id == connection_id)
+                )
             )
-        ).unique().scalars().first()
+            .unique()
+            .scalars()
+            .first()
+        )
         if not connection:
             raise LookupError("Provider connection not found")
         return connection
@@ -288,7 +366,9 @@ class AIModelService:
             trimmed_name = name.strip()
             if not trimmed_name:
                 raise ValueError("Provider connection name is required")
-            await self._ensure_unique_connection_name(trimmed_name, exclude_id=connection.id)
+            await self._ensure_unique_connection_name(
+                trimmed_name, exclude_id=connection.id
+            )
             connection.name = trimmed_name
         if provider is not None:
             connection.provider = provider
@@ -304,24 +384,34 @@ class AIModelService:
         connection = await self.get_connection(connection_id)
         profile_count = (
             await self.session.execute(
-                select(func.count()).select_from(AIModelProfile).where(AIModelProfile.connection_id == connection.id)
+                select(func.count())
+                .select_from(AIModelProfile)
+                .where(AIModelProfile.connection_id == connection.id)
             )
         ).scalar_one()
         if profile_count:
             raise ValueError("Provider connection is used by model profiles")
         embedding_count = (
             await self.session.execute(
-                select(func.count()).select_from(AIEmbeddingConfig).where(AIEmbeddingConfig.connection_id == connection.id)
+                select(func.count())
+                .select_from(AIEmbeddingConfig)
+                .where(AIEmbeddingConfig.connection_id == connection.id)
             )
         ).scalar_one()
         if embedding_count:
-            raise ValueError("Provider connection is used by the embedding configuration")
+            raise ValueError(
+                "Provider connection is used by the embedding configuration"
+            )
         await self.session.delete(connection)
         await self.session.flush()
 
     async def list_profiles(self) -> list[AIModelProfile]:
         return list(
-            (await self.session.execute(select(AIModelProfile).order_by(func.lower(AIModelProfile.name))))
+            (
+                await self.session.execute(
+                    select(AIModelProfile).order_by(func.lower(AIModelProfile.name))
+                )
+            )
             .unique()
             .scalars()
             .all()
@@ -329,16 +419,21 @@ class AIModelService:
 
     async def get_profile(self, profile_id: UUID) -> AIModelProfile:
         profile = (
-            await self.session.execute(
-                select(AIModelProfile)
-                .options(
-                    joinedload(AIModelProfile.connection),
-                    selectinload(AIModelProfile.assignments),
+            (
+                await self.session.execute(
+                    select(AIModelProfile)
+                    .options(
+                        joinedload(AIModelProfile.connection),
+                        selectinload(AIModelProfile.assignments),
+                    )
+                    .where(AIModelProfile.id == profile_id)
+                    .execution_options(populate_existing=True)
                 )
-                .where(AIModelProfile.id == profile_id)
-                .execution_options(populate_existing=True)
             )
-        ).unique().scalars().first()
+            .unique()
+            .scalars()
+            .first()
+        )
         if not profile:
             raise LookupError("Model profile not found")
         return profile
@@ -419,9 +514,13 @@ class AIModelService:
                 raise ValueError("Model id is required")
             profile.model = trimmed_model
         if capabilities_provided:
-            profile.capabilities = capabilities.model_dump(mode="json") if capabilities else None
+            profile.capabilities = (
+                capabilities.model_dump(mode="json") if capabilities else None
+            )
         if enabled_for_chat is not None:
-            if not enabled_for_chat and await self._profile_has_assignment(profile.id, "chat_default"):
+            if not enabled_for_chat and await self._profile_has_assignment(
+                profile.id, "chat_default"
+            ):
                 raise ValueError("The default chat profile must stay enabled for chat")
             profile.enabled_for_chat = enabled_for_chat
             if enabled_for_chat and not await self.has_assignment("chat_default"):
@@ -464,19 +563,22 @@ class AIModelService:
             .all()
         )
 
-    async def set_assignment(self, assignment_key: AIModelAssignmentKey, profile_id: UUID) -> AIModelAssignment:
+    async def set_assignment(
+        self, assignment_key: AIModelAssignmentKey, profile_id: UUID
+    ) -> AIModelAssignment:
         if assignment_key not in ASSIGNMENT_KEYS:
             raise ValueError("Unknown model assignment")
         profile = await self.get_profile(profile_id)
         if assignment_key == "chat_default" and not profile.enabled_for_chat:
-            profile.enabled_for_chat = True
-            profile.updated_at = datetime.now(timezone.utc)
+            raise ValueError("Default chat assignment requires a chat-enabled profile")
         assignment = await self.session.get(AIModelAssignment, assignment_key)
         if assignment:
             assignment.profile = profile
             assignment.updated_at = datetime.now(timezone.utc)
         else:
-            assignment = AIModelAssignment(assignment_key=assignment_key, profile_id=profile.id)
+            assignment = AIModelAssignment(
+                assignment_key=assignment_key, profile_id=profile.id
+            )
             self.session.add(assignment)
         await self.session.flush()
         return assignment
@@ -485,7 +587,9 @@ class AIModelService:
         if assignment_key in ("primary", "chat_default"):
             raise ValueError(f"The '{assignment_key}' assignment is required")
         result = await self.session.execute(
-            delete(AIModelAssignment).where(AIModelAssignment.assignment_key == assignment_key)
+            delete(AIModelAssignment).where(
+                AIModelAssignment.assignment_key == assignment_key
+            )
         )
         await self.session.flush()
         return bool(result.rowcount)
@@ -501,8 +605,13 @@ class AIModelService:
             ).first()
         )
 
-    async def test_connection_config(self, config: ProviderConnectionTestConfig) -> ProviderTestResult:
-        from src.services.provider_catalog_service import ProviderCatalogService, ProviderTestResult
+    async def test_connection_config(
+        self, config: ProviderConnectionTestConfig
+    ) -> ProviderTestResult:
+        from src.services.provider_catalog_service import (
+            ProviderCatalogService,
+            ProviderTestResult,
+        )
 
         service = ProviderCatalogService()
         provider = self.client_provider(config.provider)
@@ -513,7 +622,9 @@ class AIModelService:
             return await service.list_anthropic(config.api_key, endpoint)
         if provider == "google":
             return await service.list_google(config.api_key, endpoint)
-        return ProviderTestResult(success=False, message=f"Unknown provider: {config.provider}")
+        return ProviderTestResult(
+            success=False, message=f"Unknown provider: {config.provider}"
+        )
 
     async def test_saved_connection(self, connection_id: UUID) -> ProviderTestResult:
         connection = await self.get_connection(connection_id)
@@ -601,19 +712,25 @@ class AIModelService:
             api_key=self.decrypt_api_key(connection.encrypted_api_key),
             model=config.model,
             dimensions=config.dimensions,
-            endpoint=self.embedding_client_endpoint(connection.provider, connection.endpoint),
+            endpoint=self.embedding_client_endpoint(
+                connection.provider, connection.endpoint
+            ),
         )
 
     async def _profile_has_any_assignment(self, profile_id: UUID) -> bool:
         return bool(
             (
                 await self.session.execute(
-                    select(AIModelAssignment.assignment_key).where(AIModelAssignment.profile_id == profile_id).limit(1)
+                    select(AIModelAssignment.assignment_key)
+                    .where(AIModelAssignment.profile_id == profile_id)
+                    .limit(1)
                 )
             ).first()
         )
 
-    async def _profile_has_assignment(self, profile_id: UUID, assignment_key: AIModelAssignmentKey) -> bool:
+    async def _profile_has_assignment(
+        self, profile_id: UUID, assignment_key: AIModelAssignmentKey
+    ) -> bool:
         return bool(
             (
                 await self.session.execute(

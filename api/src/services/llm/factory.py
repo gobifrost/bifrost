@@ -22,10 +22,13 @@ DEFAULT_PROVIDER: Literal["openai", "anthropic", "google"] = "openai"
 DEFAULT_OPENAI_MODEL = "gpt-4o"
 DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
 DEFAULT_GOOGLE_MODEL = "gemini-2.5-flash"
+
+
 async def get_llm_config(
     session: AsyncSession,
     *,
     profile_id: UUID | None = None,
+    profile_name: str | None = None,
     assignment_key: AIModelAssignmentKey = "primary",
 ) -> LLMConfig:
     """
@@ -40,6 +43,7 @@ async def get_llm_config(
     try:
         return await AIModelService(session).resolve_config(
             profile_id=profile_id,
+            profile_name=profile_name,
             assignment_key=assignment_key,
         )
     except ValueError:
@@ -53,6 +57,7 @@ async def get_llm_client(
     session: AsyncSession,
     *,
     profile_id: UUID | None = None,
+    profile_name: str | None = None,
     assignment_key: AIModelAssignmentKey = "primary",
 ) -> BaseLLMClient:
     """
@@ -70,6 +75,7 @@ async def get_llm_client(
     config = await get_llm_config(
         session,
         profile_id=profile_id,
+        profile_name=profile_name,
         assignment_key=assignment_key,
     )
 

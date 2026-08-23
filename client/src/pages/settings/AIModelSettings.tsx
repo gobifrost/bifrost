@@ -116,8 +116,8 @@ const ASSIGNMENTS: {
 }[] = [
 	{
 		key: "primary",
-		label: "Primary",
-		description: "Default model for general AI work.",
+		label: "Default",
+		description: "Used for general AI work and SDK completions.",
 		icon: Brain,
 	},
 	{
@@ -252,7 +252,7 @@ export function AIModelSettings() {
 			),
 		[assignmentsQuery.data],
 	);
-	const chatDefaultId = assignmentsByKey.get("chat_default")?.profile_id;
+	const defaultProfileId = assignmentsByKey.get("primary")?.profile_id;
 
 	const resetProviderCreate = () => {
 		setProviderName("OpenAI");
@@ -505,24 +505,16 @@ export function AIModelSettings() {
 			);
 			queryClient.setQueryData<AIModelProfile[]>(
 				PROFILE_QUERY_KEY,
-				(existing = []) => {
-					const reflected = reflectAssignmentOnProfiles(
+				(existing = []) =>
+					reflectAssignmentOnProfiles(
 						existing,
 						assignment.assignment_key,
 						assignment.profile_id,
-					);
-					return assignment.assignment_key === "chat_default"
-						? reflected.map((profile) =>
-								profile.id === assignment.profile_id
-									? { ...profile, enabled_for_chat: true }
-									: profile,
-							)
-						: reflected;
-				},
+					),
 			);
 			toast.success(
-				assignment.assignment_key === "chat_default"
-					? "Default chat profile updated"
+				assignment.assignment_key === "primary"
+					? "Default model profile updated"
 					: `${assignmentLabel(assignment.assignment_key)} assignment updated`,
 			);
 		},
@@ -787,7 +779,7 @@ export function AIModelSettings() {
 											Chat
 										</Badge>
 									)}
-									{chatDefaultId === profile.id && (
+									{defaultProfileId === profile.id && (
 										<Badge className="animate-in fade-in-0 zoom-in-95 duration-200 motion-reduce:animate-none">
 											<CheckCircle2 className="h-3 w-3" />
 											Default
@@ -862,28 +854,28 @@ export function AIModelSettings() {
 										type="button"
 										variant="outline"
 										size="sm"
-										disabled={
-											chatDefaultId === profile.id ||
-											assignMutation.isPending
+									disabled={
+										defaultProfileId === profile.id ||
+										assignMutation.isPending
 										}
 										onClick={() =>
-											assignMutation.mutate({
-												assignmentKey: "chat_default",
+										assignMutation.mutate({
+											assignmentKey: "primary",
 												profileId: profile.id,
 											})
 										}
 									>
 										{assignMutation.isPending &&
-										assignMutation.variables
-											?.assignmentKey ===
-											"chat_default" &&
+									assignMutation.variables
+										?.assignmentKey ===
+										"primary" &&
 										assignMutation.variables.profileId ===
 											profile.id ? (
 											<>
 												<Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
 												Saving…
 											</>
-										) : chatDefaultId === profile.id ? (
+									) : defaultProfileId === profile.id ? (
 											<>
 												<CheckCircle2 className="h-4 w-4" />
 												Default
