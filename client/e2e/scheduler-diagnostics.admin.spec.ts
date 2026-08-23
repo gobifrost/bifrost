@@ -13,12 +13,17 @@ test.describe("Scheduler diagnostics (platform admin)", () => {
 		await expect(
 			diagnostics.getByText(/Leader healthy|No leader/),
 		).toBeVisible();
-		await expect(diagnostics.getByText("Scheduler replicas")).toBeVisible();
+		await expect(diagnostics.getByText("Scheduler Replicas")).toBeVisible();
 		const platformJobs = diagnostics.getByRole("region", {
-			name: "Platform jobs",
+			name: "Platform Jobs",
 		});
 		await expect(platformJobs).toBeVisible();
-		await expect(diagnostics.getByText("System schedules")).toBeVisible();
+		await expect(
+			diagnostics.getByRole("tab", { name: "System Schedules" }),
+		).toBeVisible();
+		await diagnostics
+			.getByRole("tab", { name: "System Schedules" })
+			.click();
 		await expect(
 			diagnostics.getByText("Refresh Expiring OAuth Tokens", {
 				exact: true,
@@ -41,6 +46,7 @@ test.describe("Scheduler diagnostics (platform admin)", () => {
 			page.getByRole("button", { name: "Copy run ID" }),
 		).toBeVisible();
 		await page.getByRole("button", { name: "Close" }).click();
+		await diagnostics.getByRole("tab", { name: "Platform Jobs" }).click();
 
 		const platformJobRow = platformJobs
 			.getByRole("row", { name: /View .* platform job/ })

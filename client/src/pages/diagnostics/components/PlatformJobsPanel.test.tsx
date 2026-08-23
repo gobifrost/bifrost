@@ -106,6 +106,18 @@ describe("PlatformJobsPanel", () => {
 		expect(
 			screen.getByText("Waiting for scheduler memory"),
 		).toBeInTheDocument();
+		expect(
+			screen
+				.getAllByRole("columnheader")
+				.map((header) => header.textContent),
+		).toEqual([
+			"Name",
+			"Status",
+			"Execution",
+			"Timing",
+			"Memory",
+			"Attempts",
+		]);
 
 		await user.click(
 			screen.getByRole("row", {

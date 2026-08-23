@@ -232,7 +232,9 @@ export function PlatformJobsPanel({
 
 	const jobs = query.data ?? [];
 	const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? null;
-	const activeCount = jobs.filter((job) => ACTIVE_STATUSES.has(job.status)).length;
+	const activeCount = jobs.filter((job) =>
+		ACTIVE_STATUSES.has(job.status),
+	).length;
 	const cancelMutation = useMutation({
 		mutationFn: cancelPlatformJob,
 		onSuccess: (response) => {
@@ -265,7 +267,7 @@ export function PlatformJobsPanel({
 									id="platform-jobs-heading"
 									className="text-base"
 								>
-									Platform jobs
+									Platform Jobs
 								</CardTitle>
 								<Badge
 									variant={
@@ -308,7 +310,7 @@ export function PlatformJobsPanel({
 							<div className="rounded-lg border border-dashed px-5 py-10 text-center">
 								<CheckCircle2 className="mx-auto h-6 w-6 text-green-600" />
 								<p className="mt-3 font-medium">
-									No platform jobs yet
+									No Platform Jobs Yet
 								</p>
 								<p className="mt-1 text-sm text-muted-foreground">
 									Builds, deploys, maintenance, and other
@@ -320,11 +322,10 @@ export function PlatformJobsPanel({
 								<Table className="min-w-[940px]">
 									<TableHeader className="sticky top-0 z-10 bg-card">
 										<TableRow>
+											<TableHead>Name</TableHead>
 											<TableHead>Status</TableHead>
-											<TableHead>Job</TableHead>
-											<TableHead>Phase</TableHead>
-											<TableHead>Requester</TableHead>
-											<TableHead>Age / runtime</TableHead>
+											<TableHead>Execution</TableHead>
+											<TableHead>Timing</TableHead>
 											<TableHead>Memory</TableHead>
 											<TableHead>Attempts</TableHead>
 										</TableRow>
@@ -352,6 +353,25 @@ export function PlatformJobsPanel({
 												}}
 											>
 												<TableCell>
+													<p
+														className="max-w-[240px] truncate font-medium"
+														title={job.title}
+													>
+														{job.title}
+													</p>
+													<p className="font-mono text-xs text-muted-foreground">
+														{job.job_type}
+													</p>
+													<p
+														className="max-w-[240px] truncate text-xs text-muted-foreground"
+														title={
+															job.requested_by_name
+														}
+													>
+														{job.requested_by_name}
+													</p>
+												</TableCell>
+												<TableCell>
 													<Badge
 														variant="outline"
 														className={`gap-1 ${statusClassName(job.status)}`}
@@ -363,17 +383,6 @@ export function PlatformJobsPanel({
 															job.status,
 														)}
 													</Badge>
-												</TableCell>
-												<TableCell>
-													<p
-														className="max-w-[240px] truncate font-medium"
-														title={job.title}
-													>
-														{job.title}
-													</p>
-													<p className="font-mono text-xs text-muted-foreground">
-														{job.job_type}
-													</p>
 												</TableCell>
 												<TableCell>
 													<p
@@ -420,14 +429,6 @@ export function PlatformJobsPanel({
 														</p>
 													) : null}
 												</TableCell>
-												<TableCell
-													className="max-w-[180px] truncate"
-													title={
-														job.requested_by_name
-													}
-												>
-													{job.requested_by_name}
-												</TableCell>
 												<TableCell>
 													<p>{elapsed(job)}</p>
 													<p className="text-xs text-muted-foreground">
@@ -472,7 +473,7 @@ export function PlatformJobsPanel({
 				>
 					<SheetHeader className="border-b px-5 py-4 pr-14">
 						<SheetTitle>
-							{selectedJob?.title ?? "Platform job"}
+							{selectedJob?.title ?? "Platform Job"}
 						</SheetTitle>
 						<SheetDescription>
 							Durable status, admission details, and execution
@@ -520,7 +521,7 @@ export function PlatformJobsPanel({
 
 							<section className="mt-6">
 								<h3 className="text-sm font-semibold">
-									Current phase
+									Current Phase
 								</h3>
 								<p className="mt-2 text-sm">
 									{selectedJob.progress.phase ??
@@ -589,23 +590,23 @@ export function PlatformJobsPanel({
 									mono={selectedJob.resource_id != null}
 								/>
 								<Detail
-									label="Admission requirement"
+									label="Admission Requirement"
 									value={formatBytes(
 										selectedJob.memory_required_bytes,
 									)}
 								/>
 								<Detail
-									label="Available scheduler headroom"
+									label="Available Scheduler Headroom"
 									value={formatBytes(availableMemoryBytes)}
 								/>
 								<Detail
-									label="Container at start"
+									label="Container at Start"
 									value={formatBytes(
 										selectedJob.memory_start_bytes,
 									)}
 								/>
 								<Detail
-									label="Observed container peak"
+									label="Observed Container Peak"
 									value={formatBytes(
 										selectedJob.memory_peak_bytes,
 									)}
