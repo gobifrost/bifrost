@@ -93,6 +93,7 @@ from src.jobs.platform.solution_deploy import (
     SolutionDeployPayload,
 )
 from src.services.platform_jobs import enqueue_platform_job, publish_platform_job_update
+from src.services.platform_job_memory_profiles import build_solution_memory_profile_key
 from src.services.solutions.deploy_job_storage import SolutionDeployJobStorage
 from src.services.solutions.deploy import (
     SolutionDeployConflict,
@@ -155,6 +156,7 @@ async def _enqueue_solution_deploy_job(
     requested_by_name: str,
     input_path: Path | None = None,
     input_bytes: bytes | None = None,
+    memory_profile_key: str | None = None,
 ) -> SolutionDeployJob:
     """Stage one validated input and atomically expose its central job row."""
     if (input_path is None) == (input_bytes is None):
@@ -196,6 +198,7 @@ async def _enqueue_solution_deploy_job(
             title=f"Solution {kind.replace('_', ' ')}",
             action_url=(f"/solutions/{install_id}" if install_id else "/solutions"),
             job_id=job_id,
+            memory_profile_key=memory_profile_key,
         )
         await db.commit()
         await db.refresh(projection)
@@ -1734,6 +1737,7 @@ async def deploy_solution(
                 ),
             )
 
+    memory_profile_key = build_solution_memory_profile_key(preview)
     try:
         job = await _enqueue_solution_deploy_job(
             ctx.db,
@@ -1745,6 +1749,7 @@ async def deploy_solution(
             requested_by_email=user.email,
             requested_by_name=user.name or user.email or "Unknown",
             input_path=zip_path,
+            memory_profile_key=memory_profile_key,
         )
     finally:
         _cleanup_file(zip_path)
@@ -2150,6 +2155,7 @@ async def install_from_repo(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail="Repo has no valid bifrost.solution.yaml (missing slug)",
             )
+        memory_profile_key = build_solution_memory_profile_key(parsed)
 
         # Install kind comes from the REQUEST (unified --org standard), not the
         # descriptor: HOME (organization_id absent) => the caller's own org;
@@ -2216,6 +2222,7 @@ async def install_from_repo(
             requested_by_email=user.email,
             requested_by_name=user.name or user.email or "Unknown",
             input_bytes=archive,
+            memory_profile_key=memory_profile_key,
         )
         return SolutionDeployEnqueued(deploy_job_id=job.id)
     finally:
@@ -2336,6 +2343,7 @@ async def install_solution(
                 },
             )
 
+    memory_profile_key = build_solution_memory_profile_key(preview)
     try:
         job = await _enqueue_solution_deploy_job(
             ctx.db,
@@ -2356,6 +2364,7 @@ async def install_solution(
             requested_by_email=user.email,
             requested_by_name=user.name or user.email or "Unknown",
             input_path=zip_path,
+            memory_profile_key=memory_profile_key,
         )
     finally:
         _cleanup_file(zip_path)

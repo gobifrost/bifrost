@@ -10204,7 +10204,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/sdk/modules-index": {
+    "/api/sdk/modules-resolve": {
         parameters: {
             query?: never;
             header?: never;
@@ -10212,14 +10212,21 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Fetch Module Index
-         * @description Fetch the set of all known workspace module paths.
+         * Resolve Module
+         * @description Resolve one logical Python import name or module path.
          *
-         *     Returns JSON: {"paths": ["features/api.py", ...]}.
-         *     Used by the child's VirtualModuleFinder to rebuild the module index when
-         *     the Redis SET is cold.
+         *     Returns one of:
+         *     - {"kind": "module", "content": ..., "hash": ...}
+         *     - {"kind": "package", "content": ..., "hash": ...}
+         *     - {"kind": "namespace"}
+         *     - {"kind": "not_found"}
+         *
+         *     The API performs concrete module/package lookup through get_module(), so it
+         *     keeps the existing Redis→S3 self-healing cache behavior. Namespace detection
+         *     uses a bounded prefix existence check instead of listing the whole module
+         *     index.
          */
-        get: operations["fetch_module_index_api_sdk_modules_index_get"];
+        get: operations["resolve_module_api_sdk_modules_resolve_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -21389,6 +21396,8 @@ export interface components {
             error?: components["schemas"]["PlatformJobError"] | null;
             /** Notification Id */
             notification_id?: string | null;
+            /** Memory Required Bytes */
+            memory_required_bytes?: number | null;
             /** Memory Start Bytes */
             memory_start_bytes?: number | null;
             /** Memory Peak Bytes */
@@ -45023,10 +45032,12 @@ export interface operations {
             };
         };
     };
-    fetch_module_index_api_sdk_modules_index_get: {
+    resolve_module_api_sdk_modules_resolve_get: {
         parameters: {
-            query?: {
+            query: {
+                name: string;
                 solution_id?: string | null;
+                global_repo_access?: boolean;
             };
             header?: never;
             path?: never;

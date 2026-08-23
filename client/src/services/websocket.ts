@@ -644,6 +644,8 @@ class WebSocketService {
 		string,
 		Set<PlatformJobUpdateCallback>
 	>();
+	private allPlatformJobUpdateCallbacks =
+		new Set<PlatformJobUpdateCallback>();
 	private poolMessageCallbacks = new Set<PoolMessageCallback>();
 	private fileActivityCallbacks = new Set<FileActivityCallback>();
 	private agentRunUpdateCallbacks: Set<AgentRunUpdateCallback> = new Set();
@@ -883,6 +885,9 @@ class WebSocketService {
 				this.platformJobUpdateCallbacks
 					.get(message.job.id)
 					?.forEach((callback) => callback(message.job));
+				this.allPlatformJobUpdateCallbacks.forEach((callback) =>
+					callback(message.job),
+				);
 				break;
 
 			case "progress":
@@ -1724,6 +1729,14 @@ class WebSocketService {
 			if (this.platformJobUpdateCallbacks.get(jobId)?.size === 0) {
 				this.platformJobUpdateCallbacks.delete(jobId);
 			}
+		};
+	}
+
+	/** Observe every visible platform-job update on subscribed channels. */
+	onAnyPlatformJobUpdate(callback: PlatformJobUpdateCallback): () => void {
+		this.allPlatformJobUpdateCallbacks.add(callback);
+		return () => {
+			this.allPlatformJobUpdateCallbacks.delete(callback);
 		};
 	}
 

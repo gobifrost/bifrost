@@ -17,6 +17,7 @@ from src.models.orm.ai_usage import AIModelPricing, AIUsage
 from src.models.orm.app_embed_secrets import AppEmbedSecret
 from src.models.orm.artifacts import Artifact
 from src.models.orm.platform_jobs import PlatformJob
+from src.models.orm.platform_job_memory_profiles import PlatformJobMemoryProfile
 from src.models.orm.scheduler_leases import SchedulerLease
 from src.models.orm.scheduler_diagnostics import (
     SchedulerReplica,
@@ -86,6 +87,7 @@ __all__ = [
     "Application",
     "Artifact",
     "PlatformJob",
+    "PlatformJobMemoryProfile",
     "SchedulerLease",
     "SchedulerReplica",
     "SchedulerTaskRun",

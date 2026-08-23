@@ -35,7 +35,9 @@ class PlatformJob(Base):
     payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     encrypted_payload: Mapped[str | None] = mapped_column(Text, nullable=True)
     dedupe_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    resource_lock_key: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    resource_lock_key: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, index=True
+    )
     priority: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
 
     organization_id: Mapped[UUID | None] = mapped_column(
@@ -54,6 +56,7 @@ class PlatformJob(Base):
     notification_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), nullable=True
     )
+    memory_profile_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     status: Mapped[str] = mapped_column(
         String(30), nullable=False, default="queued", index=True
@@ -73,6 +76,9 @@ class PlatformJob(Base):
     max_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
     timeout_seconds: Mapped[int] = mapped_column(
         Integer, nullable=False, default=20 * 60
+    )
+    memory_required_bytes: Mapped[int] = mapped_column(
+        BigInteger, nullable=False, default=256 * 1024 * 1024
     )
     retry_on_runner_loss: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=True

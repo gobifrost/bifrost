@@ -114,6 +114,12 @@ duration, include operational margin, and exercise low-memory deferral and
 timeout behavior in tests. These measurements inform policy and deployment
 guidance; they are not per-job CPU or memory reservations.
 
+Solution deploy jobs also persist an explainable `memory_required_bytes` plus a
+stable workload fingerprint. The fingerprint keys an environment-local learned
+profile record, so future deploys of the same source or prebuilt workload can
+reuse the observed requirement. Unknown solution workloads floor at 512 MiB;
+generic jobs keep using their static policy floor.
+
 The kernel persists the cgroup working set at job start, the peak observed while
 the attempt runs, and the cgroup limit. The difference between start and peak is
 shown in Scheduler Diagnostics as a practical sizing sample. It includes the

@@ -214,7 +214,10 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     #
     # SDK AI completion requests gained optional file inputs (2026-08-15).
     # ADDITIVE: old SDK clients omit the field and keep text-only behavior.
-    "aedcecc04849f529fb42278841f5ff3edea769d40b8ba39c131162033dc96ceb"
+    #
+    # PlatformJobPublic gained optional memory_required_bytes (2026-08-23).
+    # ADDITIVE: old clients ignore the scheduler admission detail.
+    "bd32112b6b7c8642ef5db539490ba2c7fa1c62cee7766ccf56faa8926cbbf5a9"
 )
 
 

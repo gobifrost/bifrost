@@ -122,7 +122,7 @@ SOLUTION_DEPLOY_DEFINITION = PlatformJobDefinition(
     policy=PlatformJobPolicy(
         timeout_seconds=60 * 60,
         max_attempts=2,
-        min_memory_headroom_mb=768,
+        min_memory_headroom_mb=512,
     ),
     encrypt_payload=True,
 )

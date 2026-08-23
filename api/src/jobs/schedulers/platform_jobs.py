@@ -20,6 +20,9 @@ from src.jobs.platform.base import PlatformJobPolicy
 from src.jobs.platform.registry import get_platform_job_definition
 from src.models.orm.platform_jobs import PlatformJob
 from src.services.execution.memory_monitor import get_cgroup_memory
+from src.services.platform_job_memory_profiles import (
+    record_platform_job_memory_profile,
+)
 from src.services.platform_jobs import (
     publish_platform_job_update,
 )
@@ -48,14 +51,18 @@ def _clear_lease(job: PlatformJob) -> None:
     job.lease_expires_at = None
 
 
-def _memory_allows_start(policy: PlatformJobPolicy) -> bool:
+def _memory_allows_start(
+    policy: PlatformJobPolicy,
+    *,
+    memory_required_bytes: int,
+) -> bool:
     current, limit = get_cgroup_memory()
     if current < 0 or limit <= 0:
         return True
-    headroom_mb = (limit - current) // (1024 * 1024)
+    headroom_bytes = max(limit - current, 0)
     return (
         current / limit <= policy.admission_memory_ratio
-        and headroom_mb >= policy.min_memory_headroom_mb
+        and headroom_bytes >= memory_required_bytes
     )
 
 
@@ -70,19 +77,23 @@ async def recover_expired_platform_jobs() -> tuple[int, int]:
     recovered: list[PlatformJob] = []
     async with get_db_context() as db:
         jobs = (
-            await db.execute(
-                select(PlatformJob)
-                .where(
-                    PlatformJob.status.in_(("running", "cancel_requested")),
-                    or_(
-                        PlatformJob.lease_expires_at.is_(None),
-                        PlatformJob.lease_expires_at <= now,
-                    ),
+            (
+                await db.execute(
+                    select(PlatformJob)
+                    .where(
+                        PlatformJob.status.in_(("running", "cancel_requested")),
+                        or_(
+                            PlatformJob.lease_expires_at.is_(None),
+                            PlatformJob.lease_expires_at <= now,
+                        ),
+                    )
+                    .order_by(PlatformJob.lease_expires_at.asc())
+                    .with_for_update(skip_locked=True)
                 )
-                .order_by(PlatformJob.lease_expires_at.asc())
-                .with_for_update(skip_locked=True)
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         failed = 0
         for job in jobs:
             if job.status == "cancel_requested":
@@ -103,6 +114,7 @@ async def recover_expired_platform_jobs() -> tuple[int, int]:
                 job.error_retryable = False
                 job.completed_at = now
                 failed += 1
+            await record_platform_job_memory_profile(db, job)
             _clear_lease(job)
             job.revision += 1
             recovered.append(job)
@@ -126,15 +138,19 @@ async def claim_platform_job() -> ClaimedPlatformJob | None:
     updated: list[PlatformJob] = []
     async with get_db_context() as db:
         candidate_ids = (
-            await db.execute(
-                select(PlatformJob.id)
-                .where(
-                    PlatformJob.status == "queued",
-                    PlatformJob.available_at <= _now(),
+            (
+                await db.execute(
+                    select(PlatformJob.id)
+                    .where(
+                        PlatformJob.status == "queued",
+                        PlatformJob.available_at <= _now(),
+                    )
+                    .order_by(PlatformJob.priority.desc(), PlatformJob.created_at.asc())
                 )
-                .order_by(PlatformJob.priority.desc(), PlatformJob.created_at.asc())
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         for candidate_id in candidate_ids:
             job = (
                 await db.execute(
@@ -183,7 +199,9 @@ async def claim_platform_job() -> ClaimedPlatformJob | None:
                 resource_lock = (
                     await db.execute(
                         text("SELECT pg_try_advisory_xact_lock(hashtext(:key))"),
-                        {"key": f"bifrost:platform-job-resource:{job.resource_lock_key}"},
+                        {
+                            "key": f"bifrost:platform-job-resource:{job.resource_lock_key}"
+                        },
                     )
                 ).scalar_one()
                 if not resource_lock:
@@ -198,7 +216,10 @@ async def claim_platform_job() -> ClaimedPlatformJob | None:
                 ).scalar_one()
                 if resource_busy:
                     continue
-            if not _memory_allows_start(definition.policy):
+            if not _memory_allows_start(
+                definition.policy,
+                memory_required_bytes=job.memory_required_bytes,
+            ):
                 if job.phase != "Waiting for scheduler memory":
                     job.phase = "Waiting for scheduler memory"
                     job.revision += 1
@@ -333,6 +354,7 @@ async def _handle_runner_loss(
             job.error_message = error_message
             job.error_retryable = False
             job.completed_at = now
+        await record_platform_job_memory_profile(db, job)
         _clear_lease(job)
         job.revision += 1
         await db.commit()

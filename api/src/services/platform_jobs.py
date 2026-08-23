@@ -27,6 +27,10 @@ from src.models.contracts.platform_jobs import (
     PlatformJobStatus,
 )
 from src.models.orm.platform_jobs import PlatformJob
+from src.services.platform_job_memory_profiles import (
+    resolve_platform_job_memory_required_bytes,
+    record_platform_job_memory_profile,
+)
 from src.services.notification_service import get_notification_service
 
 logger = logging.getLogger(__name__)
@@ -81,6 +85,7 @@ def platform_job_to_public(job: PlatformJob) -> PlatformJobPublic:
         result=job.result,
         error=error,
         notification_id=job.notification_id,
+        memory_required_bytes=job.memory_required_bytes,
         memory_start_bytes=job.memory_start_bytes,
         memory_peak_bytes=job.memory_peak_bytes,
         memory_limit_bytes=job.memory_limit_bytes,
@@ -106,20 +111,19 @@ def _notification_status(status: str) -> NotificationStatus:
 async def publish_platform_job_update(job: PlatformJob) -> None:
     """Broadcast the exact HTTP contract and update the notification projection."""
     public = platform_job_to_public(job)
-    try:
-        await pubsub_manager.broadcast(
-            f"notification:{job.requested_by_user_id}",
-            {
-                "type": "platform_job_updated",
-                "job": public.model_dump(mode="json"),
-            },
-        )
-    except Exception:
-        logger.warning(
-            "Failed to broadcast platform job update",
-            extra={"platform_job_id": str(job.id)},
-            exc_info=True,
-        )
+    message = {
+        "type": "platform_job_updated",
+        "job": public.model_dump(mode="json"),
+    }
+    for channel in (f"notification:{job.requested_by_user_id}", "notification:admins"):
+        try:
+            await pubsub_manager.broadcast(channel, message)
+        except Exception:
+            logger.warning(
+                "Failed to broadcast platform job update",
+                extra={"platform_job_id": str(job.id), "channel": channel},
+                exc_info=True,
+            )
 
     if job.notification_id is None:
         return
@@ -164,6 +168,7 @@ async def enqueue_platform_job(
     title: str,
     action_url: str | None,
     job_id: UUID | None = None,
+    memory_profile_key: str | None = None,
 ) -> tuple[PlatformJob, bool]:
     """Create or reuse one active job under a durable deduplication key."""
     parsed_payload = definition.payload_model.model_validate(payload)
@@ -198,6 +203,12 @@ async def enqueue_platform_job(
         encrypted_payload = encrypt_secret(parsed_payload.model_dump_json())
         payload_json = {"protected": True}
 
+    memory_required_bytes = await resolve_platform_job_memory_required_bytes(
+        db,
+        definition,
+        memory_profile_key=memory_profile_key,
+    )
+
     job = PlatformJob(
         id=job_id or uuid4(),
         job_type=definition.job_type,
@@ -220,6 +231,8 @@ async def enqueue_platform_job(
         progress_percent=0,
         max_attempts=definition.policy.max_attempts,
         timeout_seconds=definition.policy.timeout_seconds,
+        memory_profile_key=memory_profile_key,
+        memory_required_bytes=memory_required_bytes,
         retry_on_runner_loss=definition.policy.retry_on_runner_loss,
     )
     db.add(job)
@@ -340,6 +353,7 @@ async def finish_platform_job(
         job.error_message = error_message.strip()[:4000] if error_message else None
         job.error_retryable = error_retryable if error_message else None
         job.completed_at = _now()
+        await record_platform_job_memory_profile(db, job)
         job.lease_owner = None
         job.lease_token = None
         job.heartbeat_at = None
@@ -406,12 +420,17 @@ async def finish_deferred_platform_job(
         if job is None:
             return False
         job.status = status
-        job.phase = {"succeeded": "Completed", "failed": "Failed", "cancelled": "Cancelled"}[status]
+        job.phase = {
+            "succeeded": "Completed",
+            "failed": "Failed",
+            "cancelled": "Cancelled",
+        }[status]
         job.progress_percent = 100 if status == "succeeded" else job.progress_percent
         job.result = result
         job.error_code = "child_work_failed" if error_message else None
         job.error_message = error_message[:4000] if error_message else None
         job.completed_at = _now()
+        await record_platform_job_memory_profile(db, job)
         job.revision += 1
         await db.commit()
     await publish_platform_job_update(job)

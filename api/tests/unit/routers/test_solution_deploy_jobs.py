@@ -21,7 +21,7 @@ async def test_deploy_job_is_staged_as_encrypted_central_job(
     tmp_path,
     monkeypatch,
 ):
-    sol = Solution(slug="demo", name="Demo")
+    sol = Solution(slug="demo-memory-profile", name="Demo memory profile")
     db_session.add(sol)
     await db_session.flush()
     path = tmp_path / "deploy.zip"
@@ -53,6 +53,46 @@ async def test_deploy_job_is_staged_as_encrypted_central_job(
     assert central.encrypted_payload is not None
     assert "not-plaintext" not in central.encrypted_payload
     assert central.resource_lock_key == f"solution:{sol.id}"
+
+
+@pytest.mark.asyncio
+async def test_deploy_job_passes_memory_profile_key_to_platform_job(
+    db_session,
+    tmp_path,
+    monkeypatch,
+):
+    sol = Solution(slug="demo", name="Demo")
+    db_session.add(sol)
+    await db_session.flush()
+    path = tmp_path / "deploy.zip"
+    path.write_bytes(b"validated")
+    enqueue = AsyncMock(return_value=(PlatformJob(id=uuid4(), status="queued"), False))
+    monkeypatch.setattr("src.routers.solutions.enqueue_platform_job", enqueue)
+    monkeypatch.setattr(
+        "src.routers.solutions.SolutionDeployJobStorage.write_path",
+        AsyncMock(return_value=("a" * 64, len(b"validated"))),
+    )
+    monkeypatch.setattr(
+        "src.routers.solutions.publish_platform_job_update", AsyncMock()
+    )
+
+    await _enqueue_solution_deploy_job(
+        db_session,
+        kind="deploy",
+        install_id=sol.id,
+        organization_id=None,
+        options={"force": True},
+        requested_by_user_id=uuid4(),
+        requested_by_email="admin@example.com",
+        requested_by_name="Admin",
+        input_path=path,
+        memory_profile_key="solution.deploy.memory.v1:test",
+    )
+
+    assert (
+        enqueue.await_args.kwargs["memory_profile_key"]
+        == "solution.deploy.memory.v1:test"
+    )
 
 
 @pytest.mark.asyncio

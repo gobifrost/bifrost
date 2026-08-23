@@ -24,6 +24,16 @@ vi.mock("@/services/schedulerDiagnostics", async () => {
 		}),
 	};
 });
+vi.mock("@/services/platformJobs", () => ({
+	getPlatformJobs: vi.fn().mockResolvedValue([]),
+	cancelPlatformJob: vi.fn(),
+}));
+
+vi.mock("@/services/websocket", () => ({
+	webSocketService: {
+		onAnyPlatformJobUpdate: vi.fn(() => vi.fn()),
+	},
+}));
 
 import { SchedulerTab } from "./SchedulerTab";
 
@@ -34,6 +44,7 @@ describe("SchedulerTab", () => {
 		render(<QueryClientProvider client={client}><SchedulerTab /></QueryClientProvider>);
 
 		expect(await screen.findByText("Refresh Expiring OAuth Tokens")).toBeInTheDocument();
+		expect(screen.getByText("Platform jobs")).toBeInTheDocument();
 		expect(screen.getByText(/waiting for memory/i)).toBeInTheDocument();
 		expect(screen.getByText(/Add scheduler replicas/i)).toBeInTheDocument();
 		expect(screen.getByText("Succeeded")).toHaveClass("text-green-700");

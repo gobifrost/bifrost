@@ -208,6 +208,26 @@ async def test_memory_admission_defers_without_claiming(
 
 
 @pytest.mark.asyncio
+async def test_memory_admission_uses_persisted_requirement(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = await _queued_job(db_session)
+    mib = 1024 * 1024
+    job.memory_required_bytes = 128 * mib
+    monkeypatch.setattr(
+        scheduler,
+        "get_cgroup_memory",
+        lambda: (850 * mib, 1024 * mib),
+    )
+
+    claim = await scheduler.claim_platform_job()
+
+    assert claim is not None
+    assert claim.id == job.id
+
+
+@pytest.mark.asyncio
 async def test_claims_highest_priority_first(db_session: AsyncSession) -> None:
     low = await _queued_job(db_session)
     low.priority = 10

@@ -28,6 +28,7 @@ import {
 	type SchedulerDiagnosticsResponse,
 	type SchedulerTaskStatus,
 } from "@/services/schedulerDiagnostics";
+import { PlatformJobsPanel } from "./PlatformJobsPanel";
 import { SchedulerRunDrawer } from "./SchedulerRunDrawer";
 
 function formatBytes(value: number | null | undefined) {
@@ -41,7 +42,6 @@ function formatBytes(value: number | null | undefined) {
 	}
 	return `${amount >= 10 || unit === 0 ? amount.toFixed(0) : amount.toFixed(1)} ${units[unit]}`;
 }
-
 function relativeTime(value: string | null | undefined) {
 	if (!value) return "Never";
 	return formatDistanceToNow(new Date(value), { addSuffix: true });
@@ -93,7 +93,7 @@ export function schedulerRecommendations(data: SchedulerDiagnosticsResponse): st
 	const recommendations: string[] = [];
 	if (capacity.jobs_waiting_for_memory > 0) {
 		recommendations.push(
-			`${capacity.jobs_waiting_for_memory} queued job${capacity.jobs_waiting_for_memory === 1 ? " is" : "s are"} waiting for memory. Increase the scheduler container memory limit.`,
+			`${capacity.jobs_waiting_for_memory} queued job${capacity.jobs_waiting_for_memory === 1 ? " is" : "s are"} waiting for memory admission. Compare available and required headroom in Platform jobs below.`,
 		);
 	} else if (
 		capacity.max_memory_utilization_percent != null &&
@@ -166,6 +166,11 @@ export function SchedulerTab() {
 
 	const recommendations = schedulerRecommendations(data);
 	const memory = data.capacity.max_memory_utilization_percent;
+	const availableMemory = data.replicas.reduce<number | null>((largest, replica) => {
+		if (!replica.online || replica.memory_current_bytes == null || replica.memory_limit_bytes == null) return largest;
+		const headroom = Math.max(0, replica.memory_limit_bytes - replica.memory_current_bytes);
+		return largest == null ? headroom : Math.max(largest, headroom);
+	}, null);
 
 	return (
 		<>
@@ -205,21 +210,23 @@ export function SchedulerTab() {
 			<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
 				<StatCard title="Replicas" value={`${data.capacity.replicas_online}`} detail={`${data.capacity.slots_running} of ${data.capacity.slots_total} job slots busy`} icon={Server} />
 				<StatCard title="Queue" value={`${data.capacity.jobs_queued}`} detail={data.capacity.oldest_queued_seconds == null ? "No jobs waiting" : `Oldest waiting ${Math.round(data.capacity.oldest_queued_seconds)}s`} icon={Clock3} />
-				<StatCard title="Memory waits" value={`${data.capacity.jobs_waiting_for_memory}`} detail="Increase memory when this persists" icon={HardDrive} />
-				<StatCard title="Peak replica memory" value={memory == null ? "Unbounded" : `${memory.toFixed(0)}%`} detail="Scale vertically near 85%" icon={Cpu} />
+				<StatCard title="Memory waits" value={`${data.capacity.jobs_waiting_for_memory}`} detail="See required headroom below" icon={HardDrive} />
+				<StatCard title="Highest replica use" value={memory == null ? "Unbounded" : `${memory.toFixed(0)}%`} detail="Current scheduler snapshot" icon={Cpu} />
 			</div>
+
+			<PlatformJobsPanel availableMemoryBytes={availableMemory} />
 
 			<Card>
 				<CardHeader><CardTitle className="text-base">Scheduler replicas</CardTitle></CardHeader>
 				<CardContent>
-					<Table><TableHeader><TableRow><TableHead>Replica</TableHead><TableHead>Role</TableHead><TableHead>Status</TableHead><TableHead>Memory</TableHead><TableHead>Slots</TableHead><TableHead>Active jobs</TableHead></TableRow></TableHeader>
+					<Table><TableHeader><TableRow><TableHead>Replica</TableHead><TableHead>Role</TableHead><TableHead>Status</TableHead><TableHead>Memory</TableHead><TableHead>Slots</TableHead><TableHead>Workload</TableHead></TableRow></TableHeader>
 						<TableBody>{data.replicas.map((replica) => <TableRow key={replica.id}>
 							<TableCell><div className="font-medium">{replica.hostname}</div><div className="max-w-[220px] truncate text-xs text-muted-foreground" title={replica.id}>{replica.id}</div></TableCell>
 							<TableCell><Badge variant="outline" className={replica.is_leader ? "border-violet-500/30 bg-violet-500/15 text-violet-700 dark:text-violet-400" : "border-blue-500/30 bg-blue-500/15 text-blue-700 dark:text-blue-400"}>{replica.is_leader ? "Trigger Leader" : "Job Runner"}</Badge></TableCell>
 							<TableCell><Badge variant={replica.online ? "outline" : "destructive"} className={replica.online ? "border-green-500/30 bg-green-500/15 text-green-700 dark:text-green-400" : undefined}>{replica.online ? "Online" : "Stale"}</Badge><div className="mt-1 text-xs text-muted-foreground">{relativeTime(replica.last_heartbeat_at)}</div></TableCell>
 							<TableCell>{formatBytes(replica.memory_current_bytes)} / {formatBytes(replica.memory_limit_bytes)}</TableCell>
 							<TableCell>{replica.active_platform_jobs} / {replica.job_slots}</TableCell>
-							<TableCell className="font-mono text-xs">{replica.active_platform_job_ids.length === 0 ? "Idle" : replica.active_platform_job_ids.map((jobId) => <div key={jobId}>{jobId}</div>)}</TableCell>
+							<TableCell>{replica.active_platform_jobs === 0 ? "Idle" : `${replica.active_platform_jobs} running`}</TableCell>
 						</TableRow>)}</TableBody></Table>
 					{data.replicas.length === 0 && <p className="py-8 text-center text-sm text-muted-foreground">No scheduler replicas have reported a heartbeat.</p>}
 				</CardContent>

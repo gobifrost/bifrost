@@ -126,14 +126,20 @@ async def test_websocket_event_matches_public_http_contract_and_hides_payload(
 
     await service.publish_platform_job_update(job)
 
-    channel, event = broadcast.await_args.args
-    assert channel == f"notification:{job.requested_by_user_id}"
-    assert event["type"] == "platform_job_updated"
-    assert event["job"] == service.platform_job_to_public(job).model_dump(
-        mode="json"
-    )
-    assert "payload" not in event["job"]
-    assert "requested_by_email" not in event["job"]
+    assert broadcast.await_count == 2
+    channels = {call.args[0] for call in broadcast.await_args_list}
+    assert channels == {
+        f"notification:{job.requested_by_user_id}",
+        "notification:admins",
+    }
+    for call in broadcast.await_args_list:
+        event = call.args[1]
+        assert event["type"] == "platform_job_updated"
+        assert event["job"] == service.platform_job_to_public(job).model_dump(
+            mode="json"
+        )
+        assert "payload" not in event["job"]
+        assert "requested_by_email" not in event["job"]
 
 
 @pytest.mark.asyncio
