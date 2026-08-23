@@ -213,6 +213,46 @@ test.describe("AI model settings", () => {
 			}
 			await route.fulfill({ json: profiles });
 		});
+		await page.route("**/api/admin/ai/profiles/merge", async (route) => {
+			const body = route.request().postDataJSON();
+			const target = profiles.find(
+				(profile) => profile.id === body.target_profile_id,
+			)!;
+			const sourceIds = body.profile_ids.filter(
+				(profileId: string) => profileId !== target.id,
+			);
+			const selected = profiles.filter((profile) =>
+				body.profile_ids.includes(profile.id),
+			);
+			target.enabled_for_chat = selected.some(
+				(profile) => profile.enabled_for_chat,
+			);
+			const reassignedAssignmentKeys = assignments
+				.filter((assignment) =>
+					sourceIds.includes(assignment.profile_id),
+				)
+				.map((assignment) => assignment.assignment_key);
+			for (const assignment of assignments) {
+				if (!sourceIds.includes(assignment.profile_id)) continue;
+				assignment.profile_id = target.id;
+				assignment.profile = target;
+			}
+			target.assignment_keys = assignments
+				.filter((assignment) => assignment.profile_id === target.id)
+				.map((assignment) => assignment.assignment_key);
+			for (let index = profiles.length - 1; index >= 0; index -= 1) {
+				if (sourceIds.includes(profiles[index].id))
+					profiles.splice(index, 1);
+			}
+			await route.fulfill({
+				json: {
+					profile: target,
+					merged_profile_ids: sourceIds,
+					reassigned_agent_count: 0,
+					reassigned_assignment_keys: reassignedAssignmentKeys,
+				},
+			});
+		});
 		await page.route("**/api/admin/ai/assignments**", async (route) => {
 			if (route.request().method() === "PUT") {
 				const body = route.request().postDataJSON();
@@ -297,6 +337,30 @@ test.describe("AI model settings", () => {
 		await expect(
 			page.getByLabel("Default Profile", { exact: true }),
 		).toContainText("Support Chat");
+
+		await page.getByRole("button", { name: "Merge Profiles" }).click();
+		await page.getByRole("checkbox", { name: "Select Balanced" }).check();
+		await page
+			.getByRole("checkbox", { name: "Select Support Chat" })
+			.check();
+		await page.getByRole("button", { name: "Merge Profiles" }).click();
+		const mergeDialog = page.getByRole("dialog");
+		await expect(
+			mergeDialog.getByRole("heading", { name: "Merge Model Profiles" }),
+		).toBeVisible();
+		await expect(
+			mergeDialog.getByText("0 agents and 1 assignment will move to it."),
+		).toBeVisible();
+		await mergeDialog
+			.getByRole("button", { name: "Merge Profiles" })
+			.click();
+		await expect(
+			page.getByRole("button", { name: "Edit Balanced" }),
+		).not.toBeVisible();
+		await expect(
+			page.getByRole("button", { name: "Edit Support Chat" }),
+		).toBeVisible();
+		await expect(supportProfileCard.getByRole("switch")).toBeChecked();
 
 		await page.setViewportSize({ width: 1440, height: 1000 });
 		await page

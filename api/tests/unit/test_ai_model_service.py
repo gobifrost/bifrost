@@ -2,6 +2,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.models.orm.agents import Agent
 from src.services.ai_model_service import (
     AIModelService,
     OPENROUTER_DEFAULT_ENDPOINT,
@@ -179,6 +180,68 @@ async def test_profile_delete_is_blocked_while_assigned(db_session):
     reassigned = await service.set_assignment("primary", replacement.id)
     assert reassigned.profile.id == replacement.id
     await service.delete_profile(profile.id)
+
+
+@pytest.mark.asyncio
+async def test_merge_profiles_reassigns_agents_assignments_and_chat(db_session):
+    service = AIModelService(db_session)
+    target = await _profile(service, enabled_for_chat=False)
+    source = await _profile(service, enabled_for_chat=True)
+    second_source = await _profile(service, enabled_for_chat=False)
+    await service.set_assignment("primary", source.id)
+    await service.set_assignment("chat_default", source.id)
+    await service.set_assignment("summarization", second_source.id)
+    agent = Agent(
+        name="Merged Profile Agent",
+        system_prompt="Use the selected profile.",
+        created_by="test",
+        llm_profile=source,
+    )
+    db_session.add(agent)
+    await db_session.flush()
+
+    result = await service.merge_profiles(
+        profile_ids=[target.id, source.id, second_source.id],
+        target_profile_id=target.id,
+    )
+
+    assert result.profile.id == target.id
+    assert result.profile.enabled_for_chat is True
+    assert set(result.merged_profile_ids) == {source.id, second_source.id}
+    assert result.reassigned_agent_count == 1
+    assert set(result.reassigned_assignment_keys) == {
+        "primary",
+        "summarization",
+        "chat_default",
+    }
+    assert agent.llm_profile_id == target.id
+    assert {
+        assignment.profile_id
+        for assignment in await service.list_assignments()
+        if assignment.assignment_key in {"primary", "summarization", "chat_default"}
+    } == {target.id}
+    assert {profile.id for profile in await service.list_profiles()}.isdisjoint(
+        {source.id, second_source.id}
+    )
+
+
+@pytest.mark.asyncio
+async def test_merge_profiles_requires_target_in_unique_selection(db_session):
+    service = AIModelService(db_session)
+    target = await _profile(service)
+    source = await _profile(service)
+
+    with pytest.raises(ValueError, match="duplicates"):
+        await service.merge_profiles(
+            profile_ids=[source.id, source.id],
+            target_profile_id=source.id,
+        )
+
+    with pytest.raises(ValueError, match="included"):
+        await service.merge_profiles(
+            profile_ids=[source.id, target.id],
+            target_profile_id=uuid4(),
+        )
 
 
 @pytest.mark.asyncio

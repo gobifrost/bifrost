@@ -13,6 +13,8 @@ from src.models.contracts.ai_models import (
     AIModelAssignmentResponse,
     AIModelAssignmentUpdate,
     AIModelProfileCreate,
+    AIModelProfileMergeRequest,
+    AIModelProfileMergeResponse,
     AIModelProfileResponse,
     AIModelProfileUpdate,
     AIModelsResponse,
@@ -266,6 +268,32 @@ async def create_model_profile(
         )
         await db.commit()
         return _profile_response(await service.get_profile(profile.id))
+    except (LookupError, ValueError) as error:
+        await db.rollback()
+        _raise_service_error(error)
+
+
+@router.post("/profiles/merge")
+async def merge_model_profiles(
+    request: AIModelProfileMergeRequest,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> AIModelProfileMergeResponse:
+    del user
+    service = AIModelService(db)
+    try:
+        result = await service.merge_profiles(
+            profile_ids=request.profile_ids,
+            target_profile_id=request.target_profile_id,
+        )
+        target_profile_id = result.profile.id
+        await db.commit()
+        return AIModelProfileMergeResponse(
+            profile=_profile_response(await service.get_profile(target_profile_id)),
+            merged_profile_ids=list(result.merged_profile_ids),
+            reassigned_agent_count=result.reassigned_agent_count,
+            reassigned_assignment_keys=list(result.reassigned_assignment_keys),
+        )
     except (LookupError, ValueError) as error:
         await db.rollback()
         _raise_service_error(error)

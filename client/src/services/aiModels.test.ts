@@ -17,6 +17,7 @@ import {
 	listModelAssignments,
 	listModelProfiles,
 	listProviderConnections,
+	mergeModelProfiles,
 	setModelAssignment,
 	verifyProviderConnection,
 } from "./aiModels";
@@ -137,6 +138,32 @@ describe("aiModels service", () => {
 				params: { path: { assignment_key: "primary" } },
 				body: { profile_id: "profile-1" },
 			}),
+		);
+	});
+
+	it("merges selected profiles into a target", async () => {
+		apiClient.POST.mockResolvedValueOnce({
+			data: {
+				profile: { id: "profile-target" },
+				merged_profile_ids: ["profile-source"],
+				reassigned_agent_count: 2,
+				reassigned_assignment_keys: ["primary"],
+			},
+		});
+
+		await mergeModelProfiles({
+			profile_ids: ["profile-source", "profile-target"],
+			target_profile_id: "profile-target",
+		});
+
+		expect(apiClient.POST).toHaveBeenCalledWith(
+			"/api/admin/ai/profiles/merge",
+			{
+				body: {
+					profile_ids: ["profile-source", "profile-target"],
+					target_profile_id: "profile-target",
+				},
+			},
 		);
 	});
 

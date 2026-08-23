@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from src.models.contracts.artifacts import ModelCapabilities
 from src.models.contracts.llm import LLMModelInfo
@@ -70,6 +70,19 @@ class AIModelProfileUpdate(BaseModel):
     enabled_for_chat: bool | None = None
 
 
+class AIModelProfileMergeRequest(BaseModel):
+    profile_ids: list[UUID] = Field(..., min_length=2)
+    target_profile_id: UUID
+
+    @model_validator(mode="after")
+    def validate_profile_selection(self) -> "AIModelProfileMergeRequest":
+        if len(set(self.profile_ids)) != len(self.profile_ids):
+            raise ValueError("Profile selection must not contain duplicates")
+        if self.target_profile_id not in self.profile_ids:
+            raise ValueError("Target profile must be included in the profile selection")
+        return self
+
+
 class AIModelProfileResponse(BaseModel):
     id: UUID
     name: str
@@ -84,6 +97,13 @@ class AIModelProfileResponse(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class AIModelProfileMergeResponse(BaseModel):
+    profile: AIModelProfileResponse
+    merged_profile_ids: list[UUID]
+    reassigned_agent_count: int
+    reassigned_assignment_keys: list[AIModelAssignmentKey]
 
 
 class AIModelAssignmentUpdate(BaseModel):

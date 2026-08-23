@@ -16,6 +16,7 @@ from sqlalchemy.orm import joinedload, selectinload
 from src.config import get_settings
 from src.models.contracts.ai_models import AIModelAssignmentKey, AIProviderKind
 from src.models.contracts.artifacts import ModelCapabilities
+from src.models.orm.agents import Agent
 from src.models.orm.ai_models import (
     AIEmbeddingConfig,
     AIModelAssignment,
@@ -53,6 +54,14 @@ class ProviderConnectionTestConfig:
     provider: AIProviderKind
     api_key: str
     endpoint: str | None
+
+
+@dataclass(frozen=True)
+class ModelProfileMergeResult:
+    profile: AIModelProfile
+    merged_profile_ids: tuple[UUID, ...]
+    reassigned_agent_count: int
+    reassigned_assignment_keys: tuple[AIModelAssignmentKey, ...]
 
 
 class AIModelService:
@@ -541,6 +550,89 @@ class AIModelService:
             raise ValueError("Model profile is used by agents")
         await self.session.delete(profile)
         await self.session.flush()
+
+    async def merge_profiles(
+        self,
+        *,
+        profile_ids: list[UUID],
+        target_profile_id: UUID,
+    ) -> ModelProfileMergeResult:
+        selected_ids = set(profile_ids)
+        if len(selected_ids) != len(profile_ids):
+            raise ValueError("Profile selection must not contain duplicates")
+        if len(selected_ids) < 2:
+            raise ValueError("Select at least two model profiles to merge")
+        if target_profile_id not in selected_ids:
+            raise ValueError("Target profile must be included in the profile selection")
+
+        profiles = list(
+            (
+                await self.session.execute(
+                    select(AIModelProfile)
+                    .where(AIModelProfile.id.in_(selected_ids))
+                    .with_for_update(of=AIModelProfile)
+                )
+            )
+            .unique()
+            .scalars()
+            .all()
+        )
+        if len(profiles) != len(selected_ids):
+            raise LookupError("One or more model profiles were not found")
+
+        target = next(
+            profile for profile in profiles if profile.id == target_profile_id
+        )
+        source_ids = selected_ids - {target_profile_id}
+        preserve_chat = any(profile.enabled_for_chat for profile in profiles)
+
+        assignments = list(
+            (
+                await self.session.execute(
+                    select(AIModelAssignment)
+                    .where(AIModelAssignment.profile_id.in_(source_ids))
+                    .with_for_update(of=AIModelAssignment)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for assignment in assignments:
+            assignment.profile = target
+
+        agents = list(
+            (
+                await self.session.execute(
+                    select(Agent)
+                    .where(Agent.llm_profile_id.in_(source_ids))
+                    .with_for_update(of=Agent)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for agent in agents:
+            agent.llm_profile = target
+
+        target.enabled_for_chat = preserve_chat
+        target.updated_at = datetime.now(timezone.utc)
+        for profile in profiles:
+            if profile.id in source_ids:
+                await self.session.delete(profile)
+        await self.session.flush()
+
+        merged_profile_ids = tuple(sorted(source_ids, key=str))
+        assignment_keys = tuple(
+            sorted(
+                (assignment.assignment_key for assignment in assignments),
+            )
+        )
+        return ModelProfileMergeResult(
+            profile=await self.get_profile(target.id),
+            merged_profile_ids=merged_profile_ids,
+            reassigned_agent_count=len(agents),
+            reassigned_assignment_keys=assignment_keys,
+        )
 
     async def list_assignments(self) -> list[AIModelAssignment]:
         return list(

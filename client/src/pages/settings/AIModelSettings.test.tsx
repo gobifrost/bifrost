@@ -14,6 +14,7 @@ const aiModels = vi.hoisted(() => ({
 	setModelAssignment: vi.fn(),
 	deleteProviderConnection: vi.fn(),
 	deleteModelProfile: vi.fn(),
+	mergeModelProfiles: vi.fn(),
 	testProviderConnection: vi.fn(),
 	verifyProviderConnection: vi.fn(),
 }));
@@ -139,6 +140,12 @@ describe("AIModelSettings", () => {
 		});
 		aiModels.deleteProviderConnection.mockResolvedValue(undefined);
 		aiModels.deleteModelProfile.mockResolvedValue(undefined);
+		aiModels.mergeModelProfiles.mockResolvedValue({
+			profile,
+			merged_profile_ids: ["profile-disabled"],
+			reassigned_agent_count: 2,
+			reassigned_assignment_keys: ["summarization"],
+		});
 		aiModels.testProviderConnection.mockResolvedValue({
 			success: true,
 			message: "Connection ok",
@@ -404,7 +411,61 @@ describe("AIModelSettings", () => {
 				"profile-disabled",
 			),
 		);
-		expect(within(card as HTMLElement).getByRole("switch")).not.toBeChecked();
+		expect(
+			within(card as HTMLElement).getByRole("switch"),
+		).not.toBeChecked();
+	});
+
+	it("merges selected profiles into a chosen reusable target", async () => {
+		const agentProfile = {
+			...profile,
+			id: "profile-disabled",
+			name: "Agent Only",
+			model: "gpt-5",
+			enabled_for_chat: false,
+			assignment_keys: ["summarization" as const],
+			referenced_agent_count: 2,
+		};
+		aiModels.listModelProfiles.mockResolvedValue([profile, agentProfile]);
+		const { user } = renderWithProviders(<AIModelSettings />);
+
+		await user.click(
+			await screen.findByRole("button", { name: "Merge Profiles" }),
+		);
+		await user.click(
+			screen.getByRole("checkbox", { name: "Select Balanced" }),
+		);
+		await user.click(
+			screen.getByRole("checkbox", { name: "Select Agent Only" }),
+		);
+		await user.click(
+			screen.getByRole("button", { name: "Merge Profiles" }),
+		);
+
+		const dialog = screen.getByRole("dialog");
+		expect(
+			within(dialog).getByRole("heading", {
+				name: "Merge Model Profiles",
+			}),
+		).toBeInTheDocument();
+		expect(
+			within(dialog).getByText(
+				"2 agents and 1 assignment will move to it.",
+			),
+		).toBeInTheDocument();
+		await user.click(
+			within(dialog).getByRole("radio", { name: /Agent Only/ }),
+		);
+		await user.click(
+			within(dialog).getByRole("button", { name: "Merge Profiles" }),
+		);
+
+		await waitFor(() =>
+			expect(aiModels.mergeModelProfiles).toHaveBeenCalledWith({
+				profile_ids: ["profile-1", "profile-disabled"],
+				target_profile_id: "profile-disabled",
+			}),
+		);
 	});
 
 	it("edits provider connections and reusable profiles in place", async () => {

@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
 	Bot,
 	CheckCircle2,
+	GitMerge,
 	KeyRound,
 	Loader2,
 	MessageSquareText,
@@ -22,6 +23,7 @@ import { ModelProfileSelector } from "@/components/ai/ModelProfileSelector";
 import { ProviderModelField } from "@/components/ai/ProviderModelField";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
 	Card,
 	CardAction,
@@ -40,6 +42,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import {
 	Select,
 	SelectContent,
@@ -56,6 +59,7 @@ import {
 	listModelAssignments,
 	listModelProfiles,
 	listProviderConnections,
+	mergeModelProfiles,
 	setModelAssignment,
 	testProviderConnection,
 	updateProviderConnection,
@@ -214,6 +218,12 @@ export function AIModelSettings() {
 	const [profileConnectionId, setProfileConnectionId] = useState("");
 	const [profileModel, setProfileModel] = useState("");
 	const [profileChatEnabled, setProfileChatEnabled] = useState(false);
+	const [profileSelectionMode, setProfileSelectionMode] = useState(false);
+	const [selectedProfileIds, setSelectedProfileIds] = useState<Set<string>>(
+		() => new Set(),
+	);
+	const [profileMergeOpen, setProfileMergeOpen] = useState(false);
+	const [mergeTargetProfileId, setMergeTargetProfileId] = useState("");
 	const [providerEdit, setProviderEdit] = useState<{
 		id: string;
 		name: string;
@@ -254,6 +264,27 @@ export function AIModelSettings() {
 		[assignmentsQuery.data],
 	);
 	const defaultProfileId = assignmentsByKey.get("primary")?.profile_id;
+	const selectedProfiles = useMemo(
+		() => profiles.filter((profile) => selectedProfileIds.has(profile.id)),
+		[profiles, selectedProfileIds],
+	);
+	const mergeTargetProfile = selectedProfiles.find(
+		(profile) => profile.id === mergeTargetProfileId,
+	);
+	const mergeSourceProfiles = selectedProfiles.filter(
+		(profile) => profile.id !== mergeTargetProfileId,
+	);
+	const mergeAgentCount = mergeSourceProfiles.reduce(
+		(total, profile) => total + profile.referenced_agent_count,
+		0,
+	);
+	const mergeAssignmentCount = new Set(
+		mergeSourceProfiles.flatMap((profile) => profile.assignment_keys ?? []),
+	).size;
+	const mergeEnablesChat =
+		mergeTargetProfile !== undefined &&
+		!mergeTargetProfile.enabled_for_chat &&
+		selectedProfiles.some((profile) => profile.enabled_for_chat);
 
 	const resetProviderCreate = () => {
 		setProviderName("OpenAI");
@@ -292,6 +323,30 @@ export function AIModelSettings() {
 		setProfileConnectionId((current) => current || providers[0].id);
 		if (profiles.length === 0) setProfileChatEnabled(true);
 		setProfileCreateOpen(true);
+	};
+
+	const cancelProfileSelection = () => {
+		setProfileSelectionMode(false);
+		setSelectedProfileIds(new Set());
+		setMergeTargetProfileId("");
+	};
+
+	const toggleProfileSelection = (profileId: string, selected: boolean) => {
+		setSelectedProfileIds((current) => {
+			const next = new Set(current);
+			if (selected) next.add(profileId);
+			else next.delete(profileId);
+			return next;
+		});
+	};
+
+	const openProfileMerge = () => {
+		if (selectedProfiles.length < 2) return;
+		const selectedDefault = selectedProfiles.find(
+			(profile) => profile.id === defaultProfileId,
+		);
+		setMergeTargetProfileId(selectedDefault?.id ?? selectedProfiles[0].id);
+		setProfileMergeOpen(true);
 	};
 
 	const invalidateAI = () => {
@@ -564,6 +619,39 @@ export function AIModelSettings() {
 			}),
 	});
 
+	const mergeProfilesMutation = useMutation({
+		mutationFn: (request: Parameters<typeof mergeModelProfiles>[0]) =>
+			mergeModelProfiles(request),
+		onSuccess: (result) => {
+			setProfileMergeOpen(false);
+			cancelProfileSelection();
+			invalidateAI();
+			const movedItems =
+				result.reassigned_agent_count +
+				result.reassigned_assignment_keys.length;
+			toast.success(
+				`${result.merged_profile_ids.length} ${
+					result.merged_profile_ids.length === 1
+						? "profile"
+						: "profiles"
+				} merged into ${result.profile.name}`,
+				{
+					description:
+						movedItems > 0
+							? `${movedItems} ${movedItems === 1 ? "reference was" : "references were"} reassigned.`
+							: "No assignments or agents needed reassignment.",
+				},
+			);
+		},
+		onError: (error) =>
+			toast.error("Could not merge profiles", {
+				description:
+					error instanceof Error
+						? error.message
+						: "The profiles were not changed. Try again.",
+			}),
+	});
+
 	const providerReady =
 		providerName.trim() && providerKey.trim() && providerEndpoint.trim();
 	const profileReady =
@@ -736,10 +824,59 @@ export function AIModelSettings() {
 							later assignment.
 						</p>
 					</div>
-					<Button type="button" size="sm" onClick={openProfileCreate}>
-						<Plus className="h-4 w-4" />
-						Add Profile
-					</Button>
+					<div className="flex flex-wrap items-center justify-end gap-2">
+						{profileSelectionMode ? (
+							<>
+								<span
+									className="text-sm text-muted-foreground"
+									aria-live="polite"
+								>
+									{selectedProfiles.length} selected
+								</span>
+								<Button
+									type="button"
+									variant="outline"
+									size="sm"
+									onClick={cancelProfileSelection}
+								>
+									Cancel
+								</Button>
+								<Button
+									type="button"
+									size="sm"
+									disabled={selectedProfiles.length < 2}
+									onClick={openProfileMerge}
+								>
+									<GitMerge className="h-4 w-4" />
+									Merge Profiles
+								</Button>
+							</>
+						) : (
+							<>
+								{profiles.length >= 2 && (
+									<Button
+										type="button"
+										variant="outline"
+										size="sm"
+										onClick={() =>
+											setProfileSelectionMode(true)
+										}
+									>
+										<GitMerge className="h-4 w-4" />
+										Merge Profiles
+									</Button>
+								)}
+								<Button
+									type="button"
+									size="sm"
+									onClick={openProfileCreate}
+								>
+									<Plus className="h-4 w-4" />
+									Add Profile
+								</Button>
+							</>
+						)}
+					</div>
 				</div>
 
 				<div className="grid content-start gap-3">
@@ -768,11 +905,29 @@ export function AIModelSettings() {
 					{profiles.map((profile) => (
 						<Card
 							key={profile.id}
-							className="rounded-xl transition-[background-color,box-shadow] duration-200 motion-reduce:transition-none"
+							className={`rounded-xl transition-[background-color,box-shadow] duration-200 motion-reduce:transition-none ${
+								selectedProfileIds.has(profile.id)
+									? "bg-primary/[0.03] ring-primary/25"
+									: ""
+							}`}
 							size="sm"
 						>
 							<CardHeader>
 								<CardTitle className="flex flex-wrap items-center gap-2">
+									{profileSelectionMode && (
+										<Checkbox
+											checked={selectedProfileIds.has(
+												profile.id,
+											)}
+											onCheckedChange={(checked) =>
+												toggleProfileSelection(
+													profile.id,
+													checked === true,
+												)
+											}
+											aria-label={`Select ${profile.name}`}
+										/>
+									)}
 									{profile.name}
 									{profile.enabled_for_chat && (
 										<Badge variant="secondary">
@@ -790,38 +945,40 @@ export function AIModelSettings() {
 								<CardDescription>
 									{profileLine(profile)}
 								</CardDescription>
-								<CardAction className="flex items-center gap-1">
-									<Button
-										type="button"
-										variant="ghost"
-										size="icon"
-										aria-label={`Edit ${profile.name}`}
-										onClick={() =>
-											setProfileEdit({
-												id: profile.id,
-												name: profile.name,
-												connectionId:
-													profile.connection_id,
-												model: profile.model,
-											})
-										}
-									>
-										<Pencil className="h-4 w-4" />
-									</Button>
-									<Button
-										type="button"
-										variant="ghost"
-										size="icon"
-										aria-label={`Delete ${profile.name}`}
-										onClick={() =>
-											deleteProfileMutation.mutate(
-												profile.id,
-											)
-										}
-									>
-										<Trash2 className="h-4 w-4" />
-									</Button>
-								</CardAction>
+								{!profileSelectionMode && (
+									<CardAction className="flex items-center gap-1">
+										<Button
+											type="button"
+											variant="ghost"
+											size="icon"
+											aria-label={`Edit ${profile.name}`}
+											onClick={() =>
+												setProfileEdit({
+													id: profile.id,
+													name: profile.name,
+													connectionId:
+														profile.connection_id,
+													model: profile.model,
+												})
+											}
+										>
+											<Pencil className="h-4 w-4" />
+										</Button>
+										<Button
+											type="button"
+											variant="ghost"
+											size="icon"
+											aria-label={`Delete ${profile.name}`}
+											onClick={() =>
+												deleteProfileMutation.mutate(
+													profile.id,
+												)
+											}
+										>
+											<Trash2 className="h-4 w-4" />
+										</Button>
+									</CardAction>
+								)}
 							</CardHeader>
 							<CardContent className="flex flex-wrap items-center justify-between gap-3">
 								<div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
@@ -840,9 +997,10 @@ export function AIModelSettings() {
 										size="sm"
 										checked={profile.enabled_for_chat}
 										disabled={
-											updateProfileMutation.isPending &&
-											updateProfileMutation.variables
-												?.profileId === profile.id
+											profileSelectionMode ||
+											(updateProfileMutation.isPending &&
+												updateProfileMutation.variables
+													?.profileId === profile.id)
 										}
 										onCheckedChange={(enabledForChat) =>
 											updateProfileMutation.mutate({
@@ -856,6 +1014,7 @@ export function AIModelSettings() {
 										variant="outline"
 										size="sm"
 										disabled={
+											profileSelectionMode ||
 											defaultProfileId === profile.id ||
 											assignMutation.isPending
 										}
@@ -869,8 +1028,8 @@ export function AIModelSettings() {
 										{assignMutation.isPending &&
 										assignMutation.variables
 											?.assignmentKey === "primary" &&
-											assignMutation.variables.profileId ===
-												profile.id ? (
+										assignMutation.variables.profileId ===
+											profile.id ? (
 											<>
 												<Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
 												Saving…
@@ -1204,6 +1363,138 @@ export function AIModelSettings() {
 								</>
 							) : (
 								"Add Profile"
+							)}
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
+
+			<Dialog
+				open={profileMergeOpen}
+				onOpenChange={(open) => {
+					if (mergeProfilesMutation.isPending) return;
+					setProfileMergeOpen(open);
+					if (!open) setMergeTargetProfileId("");
+				}}
+			>
+				<DialogContent>
+					<DialogHeader>
+						<DialogTitle>Merge Model Profiles</DialogTitle>
+						<DialogDescription>
+							Choose the profile to keep. Every assignment and
+							agent using the others will switch to it.
+						</DialogDescription>
+					</DialogHeader>
+					<div className="grid gap-4 py-2">
+						<RadioGroup
+							value={mergeTargetProfileId}
+							onValueChange={setMergeTargetProfileId}
+							aria-label="Profile to keep"
+							className="gap-2"
+						>
+							{selectedProfiles.map((profile) => {
+								const selected =
+									profile.id === mergeTargetProfileId;
+								return (
+									<Label
+										key={profile.id}
+										htmlFor={`merge-target-${profile.id}`}
+										className={`flex cursor-pointer items-center gap-3 rounded-xl border p-3 transition-[background-color,border-color,box-shadow] duration-150 motion-reduce:transition-none ${
+											selected
+												? "border-primary/50 bg-primary/[0.04] ring-2 ring-primary/15"
+												: "hover:bg-muted/50"
+										}`}
+									>
+										<RadioGroupItem
+											id={`merge-target-${profile.id}`}
+											value={profile.id}
+										/>
+										<span className="min-w-0 flex-1">
+											<span className="block font-medium">
+												{profile.name}
+											</span>
+											<span className="block truncate text-xs font-normal text-muted-foreground">
+												{profileLine(profile)}
+											</span>
+										</span>
+										{selected && (
+											<Badge variant="secondary">
+												Keep
+											</Badge>
+										)}
+									</Label>
+								);
+							})}
+						</RadioGroup>
+
+						{mergeTargetProfile && (
+							<div
+								className="rounded-xl bg-muted/50 p-4 text-sm"
+								aria-live="polite"
+							>
+								<p className="font-medium">
+									Keep {mergeTargetProfile.name} and remove{" "}
+									{mergeSourceProfiles.length} other{" "}
+									{mergeSourceProfiles.length === 1
+										? "profile"
+										: "profiles"}
+									.
+								</p>
+								<p className="mt-1 text-muted-foreground">
+									{mergeAgentCount}{" "}
+									{mergeAgentCount === 1 ? "agent" : "agents"}{" "}
+									and {mergeAssignmentCount}{" "}
+									{mergeAssignmentCount === 1
+										? "assignment"
+										: "assignments"}{" "}
+									will move to it.
+								</p>
+								{mergeEnablesChat && (
+									<p className="mt-1 text-muted-foreground">
+										{mergeTargetProfile.name} will also be
+										enabled for Chat.
+									</p>
+								)}
+								<p className="mt-3 text-xs font-medium text-destructive">
+									This can’t be undone.
+								</p>
+							</div>
+						)}
+					</div>
+					<DialogFooter>
+						<Button
+							variant="outline"
+							disabled={mergeProfilesMutation.isPending}
+							onClick={() => setProfileMergeOpen(false)}
+						>
+							Cancel
+						</Button>
+						<Button
+							variant="destructive"
+							disabled={
+								!mergeTargetProfileId ||
+								selectedProfiles.length < 2 ||
+								mergeProfilesMutation.isPending
+							}
+							onClick={() =>
+								mergeProfilesMutation.mutate({
+									profile_ids: selectedProfiles.map(
+										(profile) => profile.id,
+									),
+									target_profile_id: mergeTargetProfileId,
+								})
+							}
+						>
+							{mergeProfilesMutation.isPending ? (
+								<>
+									<Loader2 className="h-4 w-4 animate-spin motion-reduce:animate-none" />
+									Merging…
+								</>
+							) : (
+								<>
+									<GitMerge className="h-4 w-4" />
+									Merge Profiles
+								</>
 							)}
 						</Button>
 					</DialogFooter>

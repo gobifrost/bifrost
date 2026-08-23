@@ -21,6 +21,10 @@ export type AIModelProfileCreate =
 	components["schemas"]["AIModelProfileCreate"];
 export type AIModelProfileUpdate =
 	components["schemas"]["AIModelProfileUpdate"];
+export type AIModelProfileMergeRequest =
+	components["schemas"]["AIModelProfileMergeRequest"];
+export type AIModelProfileMergeResponse =
+	components["schemas"]["AIModelProfileMergeResponse"];
 export type AIConnectionTestResponse =
 	components["schemas"]["AIConnectionTestResponse"];
 export type AIModelsResponse = components["schemas"]["AIModelsResponse"];
@@ -154,6 +158,17 @@ export async function deleteModelProfile(id: string): Promise<void> {
 		},
 	);
 	if (error) throwApiError("delete model profile", error);
+}
+
+export async function mergeModelProfiles(
+	data: AIModelProfileMergeRequest,
+): Promise<AIModelProfileMergeResponse> {
+	const { data: responseData, error } = await apiClient.POST(
+		"/api/admin/ai/profiles/merge",
+		{ body: data },
+	);
+	if (error) throwApiError("merge model profiles", error);
+	return responseData as AIModelProfileMergeResponse;
 }
 
 export async function listModelAssignments(): Promise<AIModelAssignment[]> {

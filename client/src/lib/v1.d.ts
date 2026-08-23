@@ -6477,6 +6477,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/ai/profiles/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Merge Model Profiles */
+        post: operations["merge_model_profiles_api_admin_ai_profiles_merge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/ai/profiles/{profile_id}": {
         parameters: {
             query?: never;
@@ -10662,6 +10679,26 @@ export interface components {
              * @default false
              */
             enabled_for_chat: boolean;
+        };
+        /** AIModelProfileMergeRequest */
+        AIModelProfileMergeRequest: {
+            /** Profile Ids */
+            profile_ids: string[];
+            /**
+             * Target Profile Id
+             * Format: uuid
+             */
+            target_profile_id: string;
+        };
+        /** AIModelProfileMergeResponse */
+        AIModelProfileMergeResponse: {
+            profile: components["schemas"]["AIModelProfileResponse"];
+            /** Merged Profile Ids */
+            merged_profile_ids: string[];
+            /** Reassigned Agent Count */
+            reassigned_agent_count: number;
+            /** Reassigned Assignment Keys */
+            reassigned_assignment_keys: ("primary" | "summarization" | "tuning" | "image_generation" | "video_generation" | "chat_default")[];
         };
         /** AIModelProfileResponse */
         AIModelProfileResponse: {
@@ -38203,6 +38240,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AIModelProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    merge_model_profiles_api_admin_ai_profiles_merge_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIModelProfileMergeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIModelProfileMergeResponse"];
                 };
             };
             /** @description Validation Error */
