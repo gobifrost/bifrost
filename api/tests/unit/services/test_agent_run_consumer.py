@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from src.jobs.consumers.agent_run import AgentRunConsumer
+from src.models.orm.agent_runs import AgentRun
 
 
 class FakeRedisCtx:
@@ -140,3 +141,5 @@ async def test_pre_cancel_updates_existing_queued_run(consumer):
     assert queued_run.status == "cancelled"
     assert queued_run.completed_at is not None
     mock_session.add.assert_not_called()
+    _, get_kwargs = mock_session.get.call_args
+    assert get_kwargs["with_for_update"] == {"of": AgentRun}

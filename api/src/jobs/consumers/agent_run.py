@@ -95,7 +95,11 @@ class AgentRunConsumer(BaseConsumer):
                 agent_run = await db.get(
                     AgentRun,
                     UUID(run_id),
-                    with_for_update=True,
+                    # AgentRun.agent is joined-eager, so an unrestricted
+                    # FOR UPDATE would also target the nullable side of that
+                    # outer join, which PostgreSQL rejects. Lock only the run
+                    # row that participates in the claim/cancel race.
+                    with_for_update={"of": AgentRun},
                 )
                 if agent_run is None:
                     logger.error(f"Agent run {run_id}: queued record not found")
