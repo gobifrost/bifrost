@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useIsFetching, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow } from "date-fns";
 import {
 	Activity,
@@ -24,6 +24,11 @@ import {
 	TableRow,
 } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "@/components/ui/tooltip";
 import {
 	getSchedulerDiagnostics,
 	type SchedulerDiagnosticsResponse,
@@ -169,6 +174,7 @@ function StatCard({
 }
 
 export function SchedulerTab() {
+	const queryClient = useQueryClient();
 	const [selectedTask, setSelectedTask] =
 		useState<SchedulerTaskStatus | null>(null);
 	const query = useQuery({
@@ -176,6 +182,8 @@ export function SchedulerTab() {
 		queryFn: ({ signal }) => getSchedulerDiagnostics({ signal }),
 		refetchInterval: 10_000,
 	});
+	const platformJobsFetching = useIsFetching({ queryKey: ["platform-jobs"] });
+	const isRefreshing = query.isFetching || platformJobsFetching > 0;
 	const data = query.data;
 
 	if (query.isLoading && !data) {
@@ -247,17 +255,27 @@ export function SchedulerTab() {
 							capacity.
 						</p>
 					</div>
-					<Button
-						variant="outline"
-						size="sm"
-						onClick={() => query.refetch()}
-						disabled={query.isFetching}
-					>
-						<RefreshCw
-							className={`mr-2 h-4 w-4 ${query.isFetching ? "animate-spin" : ""}`}
-						/>
-						Refresh
-					</Button>
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<Button
+								variant="outline"
+								size="icon"
+								aria-label="Refresh scheduler diagnostics"
+								onClick={() => {
+									void query.refetch();
+									void queryClient.invalidateQueries({
+										queryKey: ["platform-jobs"],
+									});
+								}}
+								disabled={isRefreshing}
+							>
+								<RefreshCw
+									className={`h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`}
+								/>
+							</Button>
+						</TooltipTrigger>
+						<TooltipContent>Refresh</TooltipContent>
+					</Tooltip>
 				</div>
 
 				{recommendations.length > 0 ? (
@@ -443,13 +461,13 @@ export function SchedulerTab() {
 									<TableHeader>
 										<TableRow>
 											<TableHead>Name</TableHead>
-											<TableHead>Status</TableHead>
-											<TableHead>Execution</TableHead>
-											<TableHead>Timing</TableHead>
+											<TableHead>State</TableHead>
+											<TableHead>Schedule</TableHead>
+											<TableHead>Next Run</TableHead>
+											<TableHead>Last Run</TableHead>
 											<TableHead title="Change in the shared scheduler container working set while this job ran">
 												Memory
 											</TableHead>
-											<TableHead>Recent Run</TableHead>
 										</TableRow>
 									</TableHeader>
 									<TableBody>
@@ -477,7 +495,10 @@ export function SchedulerTab() {
 														{task.name}
 													</div>
 													<div className="text-xs text-muted-foreground">
-														{task.task_id}
+														{task.execution_mode ===
+														"durable_job"
+															? "Distributed Job"
+															: "Leader Trigger"}
 													</div>
 												</TableCell>
 												<TableCell>
@@ -519,36 +540,11 @@ export function SchedulerTab() {
 													)}
 												</TableCell>
 												<TableCell>
-													<Badge
-														variant="outline"
-														className={
-															task.execution_mode ===
-															"durable_job"
-																? "border-blue-500/30 bg-blue-500/15 text-blue-700 dark:text-blue-400"
-																: "border-violet-500/30 bg-violet-500/15 text-violet-700 dark:text-violet-400"
-														}
-													>
-														{task.execution_mode ===
-														"durable_job"
-															? "Distributed Job"
-															: "Leader Trigger"}
-													</Badge>
-												</TableCell>
-												<TableCell>
 													<div>{task.schedule}</div>
-													<div className="text-xs text-muted-foreground">
-														Next{" "}
-														{relativeTime(
-															task.next_run_at,
-														)}
-													</div>
 												</TableCell>
 												<TableCell>
-													{formatContainerMemoryChange(
-														task.last_run
-															?.platform_job_memory_start_bytes,
-														task.last_run
-															?.platform_job_memory_peak_bytes,
+													{relativeTime(
+														task.next_run_at,
 													)}
 												</TableCell>
 												<TableCell>
@@ -560,8 +556,19 @@ export function SchedulerTab() {
 															: `${task.last_run.duration_ms} ms`}
 													</div>
 													<div className="text-xs text-muted-foreground">
-														View runs
+														{relativeTime(
+															task.last_run
+																?.completed_at,
+														)}
 													</div>
+												</TableCell>
+												<TableCell>
+													{formatContainerMemoryChange(
+														task.last_run
+															?.platform_job_memory_start_bytes,
+														task.last_run
+															?.platform_job_memory_peak_bytes,
+													)}
 												</TableCell>
 											</TableRow>
 										))}

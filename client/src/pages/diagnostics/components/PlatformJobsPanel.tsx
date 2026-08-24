@@ -9,7 +9,6 @@ import {
 	Clock3,
 	Copy,
 	Loader2,
-	RefreshCw,
 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
@@ -260,7 +259,7 @@ export function PlatformJobsPanel({
 		<>
 			<section aria-labelledby="platform-jobs-heading">
 				<Card>
-					<CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
+					<CardHeader>
 						<div>
 							<div className="flex flex-wrap items-center gap-2">
 								<CardTitle
@@ -282,17 +281,6 @@ export function PlatformJobsPanel({
 								live.
 							</p>
 						</div>
-						<Button
-							variant="outline"
-							size="sm"
-							onClick={() => query.refetch()}
-							disabled={query.isFetching}
-						>
-							<RefreshCw
-								className={`mr-2 h-4 w-4 ${query.isFetching ? "animate-spin" : ""}`}
-							/>
-							Refresh jobs
-						</Button>
 					</CardHeader>
 					<CardContent>
 						{query.isLoading ? (
@@ -302,8 +290,8 @@ export function PlatformJobsPanel({
 						) : query.error ? (
 							<Alert variant="destructive">
 								<AlertDescription>
-									Platform jobs could not be loaded. Refresh
-									this section to try again.
+									Platform jobs could not be loaded. Use
+									Refresh above to try again.
 								</AlertDescription>
 							</Alert>
 						) : jobs.length === 0 ? (
@@ -319,15 +307,13 @@ export function PlatformJobsPanel({
 							</div>
 						) : (
 							<div className="max-h-[min(56vh,620px)] overflow-auto rounded-lg border">
-								<Table className="min-w-[940px]">
+								<Table className="min-w-[760px]">
 									<TableHeader className="sticky top-0 z-10 bg-card">
 										<TableRow>
 											<TableHead>Name</TableHead>
-											<TableHead>Status</TableHead>
-											<TableHead>Execution</TableHead>
-											<TableHead>Timing</TableHead>
+											<TableHead>State</TableHead>
+											<TableHead>Elapsed</TableHead>
 											<TableHead>Memory</TableHead>
-											<TableHead>Attempts</TableHead>
 										</TableRow>
 									</TableHeader>
 									<TableBody>
@@ -383,10 +369,8 @@ export function PlatformJobsPanel({
 															job.status,
 														)}
 													</Badge>
-												</TableCell>
-												<TableCell>
 													<p
-														className="max-w-[260px] truncate"
+														className="mt-1 max-w-[260px] truncate text-xs text-muted-foreground"
 														title={
 															job.progress
 																.phase ??
@@ -401,7 +385,7 @@ export function PlatformJobsPanel({
 													ACTIVE_STATUSES.has(
 														job.status,
 													) ? (
-														<div className="mt-2 flex items-center gap-2">
+														<div className="mt-1.5 flex items-center gap-2">
 															<Progress
 																className="h-1.5 w-24"
 																value={
@@ -448,10 +432,6 @@ export function PlatformJobsPanel({
 															availableMemoryBytes
 														}
 													/>
-												</TableCell>
-												<TableCell>
-													{job.attempt} /{" "}
-													{job.max_attempts}
 												</TableCell>
 											</TableRow>
 										))}

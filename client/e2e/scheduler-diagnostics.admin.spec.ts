@@ -19,11 +19,34 @@ test.describe("Scheduler diagnostics (platform admin)", () => {
 		});
 		await expect(platformJobs).toBeVisible();
 		await expect(
+			diagnostics.getByRole("button", {
+				name: "Refresh scheduler diagnostics",
+			}),
+		).toBeVisible();
+		await expect(platformJobs.getByRole("columnheader")).toHaveText([
+			"Name",
+			"State",
+			"Elapsed",
+			"Memory",
+		]);
+		await expect(
 			diagnostics.getByRole("tab", { name: "System Schedules" }),
 		).toBeVisible();
 		await diagnostics
 			.getByRole("tab", { name: "System Schedules" })
 			.click();
+		await expect(
+			diagnostics
+				.getByRole("tabpanel", { name: "System Schedules" })
+				.getByRole("columnheader"),
+		).toHaveText([
+			"Name",
+			"State",
+			"Schedule",
+			"Next Run",
+			"Last Run",
+			"Memory",
+		]);
 		await expect(
 			diagnostics.getByText("Refresh Expiring OAuth Tokens", {
 				exact: true,

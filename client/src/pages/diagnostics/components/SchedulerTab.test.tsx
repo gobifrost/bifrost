@@ -132,12 +132,7 @@ describe("SchedulerTab", () => {
 		).toBeInTheDocument();
 		expect(screen.getByText("Succeeded")).toHaveClass("text-green-700");
 		expect(screen.getByText("Waiting")).toHaveClass("text-amber-700");
-		expect(screen.getByText("Trigger Leader")).toHaveClass(
-			"text-violet-700",
-		);
-		expect(screen.getAllByText("Distributed Job")[0]).toHaveClass(
-			"text-blue-700",
-		);
+		expect(screen.getAllByText("Distributed Job")[0]).toBeInTheDocument();
 		const scheduleRow = screen.getByRole("row", {
 			name: "View recent runs for Refresh Expiring OAuth Tokens",
 		});
@@ -149,12 +144,17 @@ describe("SchedulerTab", () => {
 				.map((header) => header.textContent),
 		).toEqual([
 			"Name",
-			"Status",
-			"Execution",
-			"Timing",
+			"State",
+			"Schedule",
+			"Next Run",
+			"Last Run",
 			"Memory",
-			"Recent Run",
 		]);
+		expect(
+			screen.getByRole("button", {
+				name: "Refresh scheduler diagnostics",
+			}),
+		).toBeInTheDocument();
 		expect(within(scheduleRow).getByText("—")).toBeInTheDocument();
 
 		await user.click(scheduleRow);

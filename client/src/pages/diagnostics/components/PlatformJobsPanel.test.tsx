@@ -110,14 +110,10 @@ describe("PlatformJobsPanel", () => {
 			screen
 				.getAllByRole("columnheader")
 				.map((header) => header.textContent),
-		).toEqual([
-			"Name",
-			"Status",
-			"Execution",
-			"Timing",
-			"Memory",
-			"Attempts",
-		]);
+		).toEqual(["Name", "State", "Elapsed", "Memory"]);
+		expect(
+			screen.queryByRole("columnheader", { name: "Attempts" }),
+		).not.toBeInTheDocument();
 
 		await user.click(
 			screen.getByRole("row", {
