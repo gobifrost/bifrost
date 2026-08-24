@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import pytest
 from pydantic import BaseModel
+from sqlalchemy.exc import MissingGreenlet
 
 from src.models.contracts.agents import ToolResult
 from src.repositories.knowledge import KnowledgeDocument
@@ -414,16 +415,33 @@ class TestWorkflowToolIdResolution:
 
     @pytest.mark.asyncio
     async def test_execute_tool_uses_id_lookup_for_normalized_names(self, executor, mock_session):
-        """_execute_tool looks up workflows by ID when name is in _tool_workflow_id_map."""
+        """Workflow identity is captured before session exit and executed as an agent."""
         from src.services.llm.base import ToolCallRequest
 
         workflow_id = uuid4()
         executor._tool_workflow_id_map["wf_execute_halopsa_sql"] = workflow_id
 
-        # Mock the DB query to return a workflow
-        mock_workflow = MagicMock()
-        mock_workflow.id = workflow_id
-        mock_workflow.name = "Execute HaloPSA SQL"
+        class ExpiringWorkflow:
+            expired = False
+
+            @property
+            def id(self):
+                if self.expired:
+                    raise MissingGreenlet("workflow.id accessed after session exit")
+                return workflow_id
+
+            @property
+            def name(self):
+                if self.expired:
+                    raise MissingGreenlet("workflow.name accessed after session exit")
+                return "Execute HaloPSA SQL"
+
+        mock_workflow = ExpiringWorkflow()
+
+        async def expire_workflow_on_commit():
+            mock_workflow.expired = True
+
+        mock_session.commit.side_effect = expire_workflow_on_commit
 
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_workflow
@@ -453,6 +471,12 @@ class TestWorkflowToolIdResolution:
             await executor._execute_tool(
                 tool_call, agent=mock_agent, conversation=mock_conversation
             )
+
+        execution_kwargs = mock_exec.await_args.kwargs
+        assert mock_workflow.expired is True
+        assert execution_kwargs["workflow_id"] == str(workflow_id)
+        assert execution_kwargs["workflow_name"] == "Execute HaloPSA SQL"
+        assert execution_kwargs["is_agent"] is True
 
         # Verify the DB query used Workflow.id, not Workflow.name
         call_args = mock_session.execute.call_args
