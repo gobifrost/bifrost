@@ -27,7 +27,7 @@ from src.core.database import get_db_context
 from src.core.log_safety import log_safe
 from src.core.pubsub import manager
 from src.models import Conversation, Execution
-from src.models.contracts.agents import ChatModelTierId, ChatRequest
+from src.models.contracts.agents import ChatRequest
 from src.models.contracts.policies import Expr, TablePolicies
 from src.models.contracts.policies import FileAction
 from src.models.orm import Agent
@@ -953,7 +953,7 @@ async def websocket_connect(
     # Track active chat tasks per conversation so they can be cancelled
     active_chat_tasks: dict[str, asyncio.Task] = {}
     pending_messages: dict[
-        str, tuple[str, str | None, list[UUID], ChatModelTierId]
+        str, tuple[str, str | None, list[UUID], UUID | None]
     ] = {}
 
     # Per-connection state for policy-driven table subscriptions.
@@ -1229,7 +1229,7 @@ async def websocket_connect(
                     request = ChatRequest.model_validate({
                         "message": message_text,
                         "attachment_ids": data.get("attachment_ids", []),
-                        "model_tier": data.get("model_tier", "balanced"),
+                        "model_profile_id": data.get("model_profile_id"),
                     })
                 except ValueError as exc:
                     await websocket.send_json({
@@ -1263,7 +1263,7 @@ async def websocket_connect(
                         request.message,
                         local_id,
                         request.attachment_ids,
-                        request.model_tier,
+                        request.model_profile_id,
                     )
                     continue
 
@@ -1273,7 +1273,7 @@ async def websocket_connect(
                     msg: str,
                     lid: str | None,
                     attachment_ids: list[UUID],
-                    model_tier: ChatModelTierId,
+                    model_profile_id: UUID | None,
                 ) -> asyncio.Task:
                     t = asyncio.create_task(
                         _process_chat_message(
@@ -1283,7 +1283,7 @@ async def websocket_connect(
                             message=msg,
                             local_id=lid,
                             attachment_ids=attachment_ids,
-                            model_tier=model_tier,
+                            model_profile_id=model_profile_id,
                         )
                     )
                     active_chat_tasks[cid] = t
@@ -1292,9 +1292,9 @@ async def websocket_connect(
                         active_chat_tasks.pop(_cid, None)
                         queued = pending_messages.pop(_cid, None)
                         if queued:
-                            q_msg, q_lid, q_attachments, q_tier = queued
+                            q_msg, q_lid, q_attachments, q_profile_id = queued
                             _start_chat_task(
-                                _cid, q_msg, q_lid, q_attachments, q_tier
+                                _cid, q_msg, q_lid, q_attachments, q_profile_id
                             )
 
                     t.add_done_callback(_on_task_done)
@@ -1305,7 +1305,7 @@ async def websocket_connect(
                     request.message,
                     local_id,
                     request.attachment_ids,
-                    request.model_tier,
+                    request.model_profile_id,
                 )
 
             elif data.get("type") == "chat_stop":
@@ -1434,7 +1434,7 @@ async def _process_chat_message(
     message: str,
     local_id: str | None = None,
     attachment_ids: list[UUID] | None = None,
-    model_tier: ChatModelTierId = "balanced",
+    model_profile_id: UUID | None = None,
 ) -> None:
     """
     Process a chat message and stream the response.
@@ -1518,7 +1518,7 @@ async def _process_chat_message(
                 local_id=local_id,
                 user=user,
                 attachment_ids=attachment_ids or [],
-                model_tier=model_tier,
+                model_profile_id=model_profile_id,
             ):
                 # Track partial content from deltas
                 if chunk.type == "delta" and chunk.content:

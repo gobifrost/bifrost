@@ -33,6 +33,11 @@ vi.mock("@/hooks/useAgents", () => ({
 	useAgent: (id: string | undefined) => mockUseAgent(id),
 }));
 
+const mockListModelProfiles = vi.fn();
+vi.mock("@/services/aiModels", () => ({
+	listModelProfiles: () => mockListModelProfiles(),
+}));
+
 const baseStats = {
 	agent_id: "agent-1",
 	runs_7d: 42,
@@ -82,13 +87,32 @@ beforeEach(() => {
 			channels: ["chat"],
 			access_level: "authenticated",
 			created_by: "admin",
-			llm_model: null,
+			llm_profile_id: null,
 			max_iterations: 15,
 			max_token_budget: 50000,
 			is_active: true,
 		},
 		isLoading: false,
 	});
+	mockListModelProfiles.mockResolvedValue([
+		{
+			id: "profile-support",
+			name: "Support profile",
+			connection_id: "connection-1",
+			model: "gpt-5-mini",
+			capabilities: null,
+			enabled_for_chat: true,
+			connection: {
+				id: "connection-1",
+				name: "Default",
+				provider: "openai",
+				endpoint: null,
+			},
+			assignment_keys: [],
+			created_at: "2026-08-22T00:00:00Z",
+			updated_at: "2026-08-22T00:00:00Z",
+		},
+	]);
 });
 
 async function renderTab(agentId = "agent-1") {
@@ -101,6 +125,27 @@ describe("AgentOverviewTab", () => {
 		await renderTab();
 		expect(screen.getByText("42")).toBeInTheDocument(); // runs
 		expect(screen.getByText("95%")).toBeInTheDocument(); // success rate
+	});
+
+	it("shows the governed model profile setting", async () => {
+		mockUseAgent.mockReturnValue({
+			data: {
+				id: "agent-1",
+				name: "Triage",
+				description: "Test",
+				channels: ["chat"],
+				access_level: "authenticated",
+				created_by: "admin",
+				llm_profile_id: "profile-support",
+				max_iterations: 15,
+				max_token_budget: 50000,
+				is_active: true,
+			},
+			isLoading: false,
+		});
+		await renderTab();
+		expect(await screen.findByText("Support profile")).toBeInTheDocument();
+		expect(screen.getByText("Model profile")).toBeInTheDocument();
 	});
 
 	it("renders the recent runs list", async () => {

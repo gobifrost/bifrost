@@ -100,7 +100,6 @@ ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
     # delete_document); this entry now covers only the BULK scope-update
     # conflict check.
     ('routers/knowledge_sources.py', 'KnowledgeStore.organization_id == target_org_id,', 'bulk scope-update conflict check; phase 6 migrates'),
-    ('routers/llm_config.py', 'SystemConfig.organization_id.is_(None),', 'SystemConfig admin lookup; pre-repo pattern (permanent)'),
     ('routers/mcp_connections.py', 'query = query.where(MCPConnection.organization_id == scope_org)', 'MCP connection org filter; phase 6 migrates'),
     ('routers/metrics.py', 'query = query.where(ExecutionMetricsDaily.organization_id == org_uuid)', 'ExecutionMetricsDaily identity-entity filter (permanent)'),
     ('routers/metrics.py', 'query = query.where(ExecutionMetricsDaily.organization_id.is_(None))', 'ExecutionMetricsDaily identity-entity filter (permanent)'),

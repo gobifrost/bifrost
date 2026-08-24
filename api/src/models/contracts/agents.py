@@ -76,7 +76,7 @@ class AgentCreate(BaseModel):
             "agent's organization must own each listed connection."
         ),
     )
-    llm_model: str | None = Field(default=None, description="Override model (null=use global config)")
+    llm_profile_id: UUID | None = Field(default=None, description="Model profile UUID (null=use default profile assignment)")
     llm_max_tokens: int | None = Field(default=None, ge=1, le=200000, description="Override max tokens")
     max_iterations: int | None = Field(default=None, ge=1, le=200, description="Max LLM iterations for autonomous runs")
     max_token_budget: int | None = Field(default=None, ge=1000, le=1000000, description="Max token budget for autonomous runs")
@@ -107,7 +107,7 @@ class AgentUpdate(BaseModel):
         ),
     )
     clear_roles: bool = Field(default=False, description="If true, clear all role assignments (sets to role_based with no roles)")
-    llm_model: str | None = Field(default=None, description="Override model (null=use global config)")
+    llm_profile_id: UUID | None = Field(default=None, description="Model profile UUID (null=use default profile assignment)")
     llm_max_tokens: int | None = Field(default=None, ge=1, le=200000, description="Override max tokens")
     max_iterations: int | None = Field(default=None, ge=1, le=200, description="Max LLM iterations for autonomous runs")
     max_token_budget: int | None = Field(default=None, ge=1000, le=1000000, description="Max token budget for autonomous runs")
@@ -169,7 +169,7 @@ class AgentPublic(BaseModel):
         default_factory=list,
         description="MCP connection UUIDs this agent is granted access to.",
     )
-    llm_model: str | None = None
+    llm_profile_id: UUID | None = None
     llm_max_tokens: int | None = None
     max_iterations: int | None = None
     max_token_budget: int | None = None
@@ -187,7 +187,7 @@ class AgentPublic(BaseModel):
     def serialize_id(self, v: UUID) -> str:
         return str(v)
 
-    @field_serializer("organization_id", "owner_user_id")
+    @field_serializer("organization_id", "owner_user_id", "llm_profile_id")
     def serialize_nullable_uuid(self, v: UUID | None) -> str | None:
         return str(v) if v else None
 
@@ -209,7 +209,7 @@ class AgentSummary(BaseModel):
     organization_id: UUID | None = None
     owner_user_id: UUID | None = None
     created_at: datetime
-    llm_model: str | None = None
+    llm_profile_id: UUID | None = None
     dependency_count: int = Field(default=0, description="Number of tool dependencies this agent uses")
     mcp_connection_count: int = Field(
         default=0,
@@ -251,7 +251,7 @@ class AgentSummary(BaseModel):
     def serialize_id(self, v: UUID) -> str:
         return str(v)
 
-    @field_serializer("organization_id", "owner_user_id", "solution_id")
+    @field_serializer("organization_id", "owner_user_id", "solution_id", "llm_profile_id")
     def serialize_nullable_uuid(self, v: UUID | None) -> str | None:
         return str(v) if v else None
 
@@ -380,22 +380,28 @@ class ChatArtifactUpdate(BaseModel):
         return cleaned
 
 
-ChatModelTierId = Literal["fast", "balanced", "pro"]
+class ChatModelProfilePublic(BaseModel):
+    """One administrator-governed reusable model profile exposed in Chat."""
 
-
-class ChatModelTierPublic(BaseModel):
-    """One administrator-governed model choice exposed in Chat."""
-
-    id: ChatModelTierId
+    id: UUID
+    name: str
     label: str
     capabilities: ModelCapabilities
 
+    @field_serializer("id")
+    def serialize_id(self, value: UUID) -> str:
+        return str(value)
 
-class ChatModelTiersResponse(BaseModel):
-    """Enabled Chat model tiers and the default selection."""
 
-    tiers: list[ChatModelTierPublic]
-    default_tier: ChatModelTierId
+class ChatModelProfilesResponse(BaseModel):
+    """Enabled Chat model profiles and the default selection."""
+
+    profiles: list[ChatModelProfilePublic]
+    default_profile_id: UUID | None = None
+
+    @field_serializer("default_profile_id")
+    def serialize_default_profile_id(self, value: UUID | None) -> str | None:
+        return str(value) if value else None
 
 
 class MessagePublic(BaseModel):
@@ -439,7 +445,7 @@ class ChatRequest(BaseModel):
     message: str = Field(default="", max_length=100000)
     stream: bool = Field(default=True, description="Whether to stream the response")
     attachment_ids: list[UUID] = Field(default_factory=list, max_length=5)
-    model_tier: ChatModelTierId = "balanced"
+    model_profile_id: UUID | None = None
 
     @model_validator(mode="after")
     def require_content(self):

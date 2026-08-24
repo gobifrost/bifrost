@@ -26,8 +26,8 @@ from src.core.db_deps import DbSession
 from src.models.contracts.agents import (
     ChatRequest,
     ChatResponse,
-    ChatModelTierPublic,
-    ChatModelTiersResponse,
+    ChatModelProfilePublic,
+    ChatModelProfilesResponse,
     ConversationCreate,
     ConversationPublic,
     ConversationSummary,
@@ -41,6 +41,7 @@ from src.models.contracts.agents import (
 from src.models.enums import MessageRole
 from src.models.orm import Artifact, Agent, Conversation, Message, MessageAttachment
 from src.services.agent_executor import AgentExecutor
+from src.services.ai_model_service import AIModelService
 from src.services.chat_attachments import (
     MAX_FILES_PER_MESSAGE,
     ChatAttachmentError,
@@ -59,43 +60,24 @@ def _chat_file_kind(
     return "attachment" if message_role in {None, MessageRole.USER} else "artifact"
 
 
-@router.get("/model-tiers")
-async def get_model_tiers(db: DbSession, user: CurrentActiveUser) -> ChatModelTiersResponse:
-    """Return only the administrator-governed model choices available in Chat."""
-    from src.services.llm_config_service import LLMConfigService
-
-    config = await LLMConfigService(db).get_config()
-    if config is None:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="LLM provider is not configured",
-        )
-
-    tiers: list[ChatModelTierPublic] = []
-    if config.chat_fast_model:
-        tiers.append(
-            ChatModelTierPublic(
-                id="fast",
-                label=config.chat_fast_label,
-                capabilities=config.resolve_chat_capabilities("fast"),
+@router.get("/model-profiles")
+async def get_model_profiles(db: DbSession, user: CurrentActiveUser) -> ChatModelProfilesResponse:
+    """Return administrator-governed reusable model profiles available in Chat."""
+    del user
+    service = AIModelService(db)
+    profiles, default_profile_id = await service.list_chat_profiles()
+    return ChatModelProfilesResponse(
+        profiles=[
+            ChatModelProfilePublic(
+                id=profile.id,
+                name=profile.name,
+                label=profile.name,
+                capabilities=service.normalized_profile_capabilities(profile),
             )
-        )
-    tiers.append(
-        ChatModelTierPublic(
-            id="balanced",
-            label=config.chat_balanced_label,
-            capabilities=config.resolve_chat_capabilities("balanced"),
-        )
+            for profile in profiles
+        ],
+        default_profile_id=default_profile_id,
     )
-    if config.chat_pro_model:
-        tiers.append(
-            ChatModelTierPublic(
-                id="pro",
-                label=config.chat_pro_label,
-                capabilities=config.resolve_chat_capabilities("pro"),
-            )
-        )
-    return ChatModelTiersResponse(tiers=tiers, default_tier="balanced")
 
 
 # =============================================================================
@@ -739,7 +721,7 @@ async def send_message(
         stream=False,
         user=user,
         attachment_ids=request.attachment_ids,
-        model_tier=request.model_tier,
+        model_profile_id=request.model_profile_id,
     ):
         if chunk.type == "delta" and chunk.content:
             final_content += chunk.content

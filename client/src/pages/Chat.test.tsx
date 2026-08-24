@@ -22,8 +22,8 @@ vi.mock("@/stores/chatStore", () => ({
 	useChatStore: () => storeState,
 }));
 
-vi.mock("@/hooks/useLLMConfig", () => ({
-	useLLMConfig: () => ({
+vi.mock("@/hooks/useChatAvailability", () => ({
+	useChatAvailability: () => ({
 		isConfigured: true,
 		isPlatformAdmin: true,
 		isLoading: false,

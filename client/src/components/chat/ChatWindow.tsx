@@ -21,7 +21,7 @@ import { NeedsReauthCard, extractNeedsReauth } from "./NeedsReauthCard";
 import { TodoList } from "./TodoList";
 import { useChatStore, useTodos } from "@/stores/chatStore";
 import {
-	useChatModelTiers,
+	useChatModelProfiles,
 	useCreateConversation,
 	useMessages,
 } from "@/hooks/useChat";
@@ -34,7 +34,7 @@ import {
 	uploadChatAttachments,
 	type AttachmentPublic,
 } from "@/services/chatAttachments";
-import type { ChatModelTierId } from "@/services/chatModels";
+import type { ChatModelProfileId } from "@/services/chatModels";
 import { toast } from "sonner";
 
 type MessagePublic = components["schemas"]["MessagePublic"];
@@ -229,27 +229,15 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 	);
 	const setActiveAgent = useChatStore((state) => state.setActiveAgent);
 	const createConversation = useCreateConversation();
-	const { data: modelTierData } = useChatModelTiers();
-	const [selectedModelTier, setSelectedModelTier] =
-		useState<ChatModelTierId>("balanced");
-	const modelTiers = modelTierData?.tiers ?? [
-		{
-			id: "balanced" as const,
-			label: "Balanced",
-			capabilities: {
-				image_input: false,
-				pdf_input: false,
-				tool_calling: false,
-				source: "unknown" as const,
-				fingerprint: "",
-			},
-		},
-	];
-	const effectiveModelTier = modelTiers.some(
-		(tier) => tier.id === selectedModelTier,
+	const { data: modelProfileData } = useChatModelProfiles();
+	const [selectedModelProfileId, setSelectedModelProfileId] =
+		useState<ChatModelProfileId | null>(null);
+	const modelProfiles = modelProfileData?.profiles ?? [];
+	const effectiveModelProfileId = modelProfiles.some(
+		(profile) => profile.id === selectedModelProfileId,
 	)
-		? selectedModelTier
-		: (modelTierData?.default_tier ?? "balanced");
+		? selectedModelProfileId
+		: (modelProfileData?.default_profile_id ?? modelProfiles[0]?.id ?? null);
 
 	// Use WebSocket streaming
 	const {
@@ -374,7 +362,7 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 	const handleSendMessage = async (
 		message: string,
 		files: File[],
-		modelTier: ChatModelTierId,
+		modelProfileId: ChatModelProfileId | null,
 	) => {
 		let uploaded: AttachmentPublic[] = [];
 		let targetConversationId = conversationId;
@@ -398,7 +386,7 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 				message,
 				targetConversationId,
 				uploaded,
-				modelTier,
+				modelProfileId,
 			);
 		} catch (error) {
 			if (targetConversationId && uploaded.length > 0) {
@@ -440,9 +428,9 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 					onSend={handleSendMessage}
 					disabled={createConversation.isPending}
 					placeholder="Send a message..."
-					modelTiers={modelTiers}
-					modelTier={effectiveModelTier}
-					onModelTierChange={setSelectedModelTier}
+					modelProfiles={modelProfiles}
+					modelProfileId={effectiveModelProfileId}
+					onModelProfileChange={setSelectedModelProfileId}
 				/>
 			</div>
 		);
@@ -466,9 +454,9 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 				<ChatInput
 					onSend={handleSendMessage}
 					disabled
-					modelTiers={modelTiers}
-					modelTier={effectiveModelTier}
-					onModelTierChange={setSelectedModelTier}
+					modelProfiles={modelProfiles}
+					modelProfileId={effectiveModelProfileId}
+					onModelProfileChange={setSelectedModelProfileId}
 				/>
 			</div>
 		);
@@ -495,9 +483,9 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 				<ChatInput
 					onSend={handleSendMessage}
 					placeholder="Send a message..."
-					modelTiers={modelTiers}
-					modelTier={effectiveModelTier}
-					onModelTierChange={setSelectedModelTier}
+					modelProfiles={modelProfiles}
+					modelProfileId={effectiveModelProfileId}
+					onModelProfileChange={setSelectedModelProfileId}
 				/>
 			</div>
 		);
@@ -756,9 +744,9 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 				placeholder={
 					agentName ? `Message ${agentName}...` : "Send a message..."
 				}
-				modelTiers={modelTiers}
-				modelTier={effectiveModelTier}
-				onModelTierChange={setSelectedModelTier}
+				modelProfiles={modelProfiles}
+				modelProfileId={effectiveModelProfileId}
+				onModelProfileChange={setSelectedModelProfileId}
 			/>
 		</div>
 	);

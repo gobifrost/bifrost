@@ -14,11 +14,11 @@ from pydantic_ai.usage import RequestUsage
 
 from src.models.contracts.agents import ToolResult
 from src.models.contracts.artifacts import ModelCapabilities
+from src.models.orm.ai_models import AIModelProfile
 from src.services.agent_executor import AgentExecutor
 from src.services.llm import LLMMessage, ToolDefinition
 from src.services.llm.base import LLMConfig
 from src.services.llm.pydantic_client import PydanticAIClient
-from src.services.llm_config_service import LLMProviderConfig
 from src.services.model_capabilities import manual_capabilities
 
 
@@ -58,21 +58,27 @@ def executor() -> AgentExecutor:
 @pytest.fixture(autouse=True)
 def configured_chat_model():
     """Keep these runtime-contract tests focused on the Pydantic event loop."""
-    config = LLMProviderConfig(
+    profile = MagicMock(spec=AIModelProfile)
+    profile.id = uuid4()
+    profile.name = "Everyday"
+    config = LLMConfig(provider="openai", model="test-model", api_key="test-key")
+    capabilities = manual_capabilities(
         provider="openai",
         model="test-model",
-        chat_balanced_capabilities=manual_capabilities(
-            provider="openai",
-            model="test-model",
-            endpoint=None,
-            image_input=False,
-            pdf_input=False,
-            tool_calling=True,
-        ),
+        endpoint=None,
+        image_input=False,
+        pdf_input=False,
+        tool_calling=True,
     )
-    with patch(
-        "src.services.llm_config_service.LLMConfigService.get_config",
-        new=AsyncMock(return_value=config),
+    with (
+        patch(
+            "src.services.agent_executor.AIModelService.resolve_chat_profile",
+            new=AsyncMock(return_value=(profile, config, capabilities)),
+        ),
+        patch(
+            "src.services.agent_executor.AIModelService.has_assignment",
+            new=AsyncMock(return_value=False),
+        ),
     ):
         yield
 
@@ -131,6 +137,110 @@ async def test_chat_stream_contract_is_driven_by_pydantic_runtime(
     done = next(chunk for chunk in chunks if chunk.type == "done")
     assert done.content == "Hello from Pydantic"
     executor._record_ai_usage.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_chat_resolves_explicit_model_profile_id(
+    executor: AgentExecutor,
+    conversation,
+) -> None:
+    profile_id = uuid4()
+    profile = MagicMock(spec=AIModelProfile)
+    profile.id = profile_id
+    profile.name = "Pro"
+    resolver = AsyncMock(
+        return_value=(
+            profile,
+            LLMConfig(provider="openai", model="pro-model", api_key="test-key"),
+            manual_capabilities(
+                provider="openai",
+                model="pro-model",
+                endpoint=None,
+                image_input=False,
+                pdf_input=False,
+                tool_calling=True,
+            ),
+        )
+    )
+    executor._save_message = AsyncMock(side_effect=_saved_message)
+    executor._record_ai_usage = AsyncMock()
+    executor._build_message_history = AsyncMock(return_value=[LLMMessage(role="user", content="Hello")])
+    client = PydanticAIClient(LLMConfig(provider="openai", model="pro-model", api_key="test-key"))
+
+    with (
+        patch("src.services.agent_executor.AIModelService.resolve_chat_profile", resolver),
+        patch("src.services.agent_executor.get_llm_client", new=AsyncMock(return_value=client)) as client_factory,
+        patch(
+            "src.services.agent_executor.create_agent_model",
+            return_value=CountingTestModel(custom_output_text="Hello"),
+        ),
+    ):
+        _ = [
+            chunk
+            async for chunk in executor.chat(
+                None,
+                conversation,
+                "Hello",
+                stream=False,
+                enable_routing=False,
+                model_profile_id=profile_id,
+            )
+        ]
+
+    resolver.assert_awaited_once_with(profile_id)
+    client_factory.assert_awaited_once()
+    assert client_factory.await_args.kwargs["profile_id"] == profile_id
+
+
+@pytest.mark.asyncio
+async def test_chat_omitted_model_profile_uses_default_resolution(
+    executor: AgentExecutor,
+    conversation,
+) -> None:
+    profile = MagicMock(spec=AIModelProfile)
+    profile.id = uuid4()
+    profile.name = "Default"
+    resolver = AsyncMock(
+        return_value=(
+            profile,
+            LLMConfig(provider="openai", model="test-model", api_key="test-key"),
+            manual_capabilities(
+                provider="openai",
+                model="test-model",
+                endpoint=None,
+                image_input=False,
+                pdf_input=False,
+                tool_calling=True,
+            ),
+        )
+    )
+    executor._save_message = AsyncMock(side_effect=_saved_message)
+    executor._record_ai_usage = AsyncMock()
+    executor._build_message_history = AsyncMock(return_value=[LLMMessage(role="user", content="Hello")])
+    client = PydanticAIClient(LLMConfig(provider="openai", model="test-model", api_key="test-key"))
+
+    with patch(
+        "src.services.agent_executor.AIModelService.resolve_chat_profile",
+        resolver,
+    ), patch(
+        "src.services.agent_executor.get_llm_client",
+        new=AsyncMock(return_value=client),
+    ), patch(
+        "src.services.agent_executor.create_agent_model",
+        return_value=CountingTestModel(custom_output_text="Hello"),
+    ):
+        _ = [
+            chunk
+            async for chunk in executor.chat(
+                None,
+                conversation,
+                "Hello",
+                stream=False,
+                enable_routing=False,
+            )
+        ]
+
+    resolver.assert_awaited_once_with(None)
 
 
 @pytest.mark.asyncio
@@ -209,14 +319,11 @@ async def test_unknown_capabilities_still_offer_agent_tools(
         def run_stream_events(self, *args, **kwargs):
             return FakeRunStreamEvents()
 
-    config = LLMProviderConfig(
-        provider="openai",
-        model="test-model",
-        chat_balanced_capabilities=ModelCapabilities(
-            source="unknown",
-            tool_calling=False,
-        ),
-    )
+    profile = MagicMock(spec=AIModelProfile)
+    profile.id = uuid4()
+    profile.name = "Unknown"
+    config = LLMConfig(provider="openai", model="test-model", api_key="test-key")
+    capabilities = ModelCapabilities(source="unknown", tool_calling=False)
     agent = MagicMock()
     agent.id = uuid4()
     agent.name = "Test Agent"
@@ -252,8 +359,8 @@ async def test_unknown_capabilities_still_offer_agent_tools(
     llm_client.provider_name = "openrouter"
 
     with patch(
-        "src.services.llm_config_service.LLMConfigService.get_config",
-        new=AsyncMock(return_value=config),
+        "src.services.agent_executor.AIModelService.resolve_chat_profile",
+        new=AsyncMock(return_value=(profile, config, capabilities)),
     ), patch(
         "src.services.agent_executor.get_llm_client",
         new=AsyncMock(return_value=llm_client),

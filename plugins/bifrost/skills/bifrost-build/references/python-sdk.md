@@ -94,13 +94,14 @@ Use `agents.run()` when workflow orchestration needs a configured Bifrost agent.
 
 ### `ai`
 
-Use the configured model provider for completion, structured output, or streaming. Prefer structured output for machine-consumed results and validate it before side effects.
+Use the configured model provider for completion, structured output, or streaming. `ai.complete()` uses the profile marked Default unless `profile=` names another reusable profile. Prefer structured output for machine-consumed results and validate it before side effects.
 
 ```python
 from bifrost import ai
 
 response = await ai.complete(
     prompt="Summarize the incident in three bullets.",
+    profile="Summarization",  # Omit to use the platform default profile.
     max_tokens=250,
 )
 summary = response.content

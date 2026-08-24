@@ -38,7 +38,6 @@ from sqlalchemy.orm import selectinload
 from src.core.principal import UserPrincipal
 from src.models.contracts.agents import (
     AgentSwitch,
-    ChatModelTierId,
     ChatStreamChunk,
     ContextWarning,
     ToolCall,
@@ -48,6 +47,7 @@ from src.models.contracts.agents import (
 from src.models.enums import MessageRole
 from src.models.orm import Agent, Conversation, Message, MessageAttachment, Workflow
 from src.repositories.agents import AgentRepository
+from src.services.ai_model_service import AIModelService
 from src.services.llm import (
     LLMMessage,
     LLMInputFile,
@@ -229,7 +229,7 @@ class AgentExecutor:
         local_id: str | None = None,
         user: UserPrincipal | None = None,
         attachment_ids: list[UUID] | None = None,
-        model_tier: ChatModelTierId = "balanced",
+        model_profile_id: UUID | None = None,
     ) -> AsyncIterator[ChatStreamChunk]:
         """
         Process a user message and generate a response.
@@ -249,7 +249,6 @@ class AgentExecutor:
             ChatStreamChunk objects with response content, tool calls, etc.
         """
         from src.services.agent_router import AgentRouter
-        from src.services.llm_config_service import LLMConfigService
 
         start_time = time.time()
         self._knowledge_search_budget.reset()
@@ -263,11 +262,13 @@ class AgentExecutor:
 
         try:
             async with self._db() as session:
-                llm_config = await LLMConfigService(session).get_config()
-            if llm_config is None:
-                raise ValueError("LLM provider is not configured.")
-            model_override = llm_config.resolve_chat_model(model_tier)
-            model_capabilities = llm_config.resolve_chat_capabilities(model_tier)
+                model_service = AIModelService(session)
+                chat_profile, resolved_config, model_capabilities = await model_service.resolve_chat_profile(
+                    model_profile_id
+                )
+                image_generation_enabled = await model_service.has_assignment("image_generation")
+                video_generation_enabled = await model_service.has_assignment("video_generation")
+            model_override = resolved_config.model
 
             if attachment_ids:
                 from src.services.chat_attachments import (
@@ -287,16 +288,16 @@ class AgentExecutor:
                     for attachment in selected_attachments
                 ) and not model_capabilities.image_input:
                     raise ValueError(
-                        f"The {model_tier} Chat model is not configured for image input. "
-                        "Choose another model tier or ask an administrator to verify its capabilities."
+                        f"Model profile '{chat_profile.name}' is not configured for image input. "
+                        "Choose another model profile or ask an administrator to verify its capabilities."
                     )
                 if any(
                     attachment.content_type in PDF_CONTENT_TYPES
                     for attachment in selected_attachments
                 ) and not model_capabilities.pdf_input:
                     raise ValueError(
-                        f"The {model_tier} Chat model is not configured for PDF input. "
-                        "Choose another model tier or ask an administrator to verify its capabilities."
+                        f"Model profile '{chat_profile.name}' is not configured for PDF input. "
+                        "Choose another model profile or ask an administrator to verify its capabilities."
                     )
 
             # 1. Check for @mention agent switching
@@ -396,12 +397,8 @@ class AgentExecutor:
                 tool_definitions.extend(
                     definition
                     for definition in artifact_tool_definitions(
-                        image_generation_enabled=bool(
-                            llm_config.image_generation_model
-                        ),
-                        video_generation_enabled=bool(
-                            llm_config.video_generation_model
-                        ),
+                        image_generation_enabled=image_generation_enabled,
+                        video_generation_enabled=video_generation_enabled,
                     )
                     if definition.name not in existing_tool_names
                 )
@@ -418,7 +415,7 @@ class AgentExecutor:
 
             # 6. Get LLM client
             async with self._db() as session:
-                llm_client = await get_llm_client(session)
+                llm_client = await get_llm_client(session, profile_id=chat_profile.id)
 
             # 7. Hand the full loop to Pydantic AI. Bifrost remains responsible
             # for authorization, persistence, and its stable stream contract;
@@ -628,7 +625,7 @@ class AgentExecutor:
                 capabilities=build_runtime_capabilities(budget),
                 model_settings=agent_model_settings(
                     llm_client.config,
-                    max_tokens=max_tokens_override or llm_client.config.max_tokens,
+                    max_tokens=max_tokens_override,
                     session_id=str(conversation.id),
                 ),
                 # Permit one schema/tool-name correction. It is charged to the
@@ -1530,20 +1527,16 @@ class AgentExecutor:
             )
 
     async def _get_default_system_prompt(self) -> str:
-        """
-        Get the default system prompt from LLM config or use fallback.
-        """
-        from src.services.llm_config_service import LLMConfigService
+        """Get the profile-independent Chat instructions or use the fallback."""
+        from src.services.ai_behavior_service import AIBehaviorService
 
         try:
             async with self._db() as session:
-                config_service = LLMConfigService(session)
-                config = await config_service.get_config()
-
-            if config and config.default_system_prompt:
-                return config.default_system_prompt
+                prompt = await AIBehaviorService(session).get_default_system_prompt()
+            if prompt:
+                return prompt
         except Exception as e:
-            logger.warning(f"Failed to get default system prompt from config: {e}")
+            logger.warning(f"Failed to get default AI instructions: {e}")
 
         return FALLBACK_SYSTEM_PROMPT
 

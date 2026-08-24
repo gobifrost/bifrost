@@ -349,12 +349,10 @@ async def summarize_run(
     ]
 
     # Phase 2: call LLM (no DB connection held)
-    # We intentionally don't cap max_tokens here — the LLM client falls back to
-    # the admin-configured budget (LLMConfig.max_tokens, default 4096). A local
-    # cap had been causing silent mid-object truncation for reasoning models
-    # that spend tokens on hidden thinking, and "summarizer ran out of budget"
-    # isn't ours to decide — the admin already sized their config for the model
-    # they picked.
+    # We intentionally don't cap max_tokens here. Providers that support an
+    # omitted limit use their model default; Anthropic receives the adapter's
+    # required ceiling. A local cap had been causing silent mid-object
+    # truncation for reasoning models that spend tokens on hidden thinking.
     response = None
     try:
         response = await _complete_with_retry(
@@ -399,7 +397,7 @@ async def summarize_run(
             raw_preview,
         )
         # Detect the "truncated mid-object" case so the error message is
-        # actionable ("raise max_tokens") rather than generic "invalid JSON".
+        # distinguishable from a generic "invalid JSON" response.
         looks_truncated = (
             raw_preview
             and raw_preview != "<no response>"

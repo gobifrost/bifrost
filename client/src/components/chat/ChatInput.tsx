@@ -35,8 +35,8 @@ import {
 	validateAttachment,
 } from "@/services/chatAttachments";
 import type {
-	ChatModelTierId,
-	ChatModelTierOption,
+	ChatModelProfileId,
+	ChatModelProfileOption,
 } from "@/services/chatModels";
 import { MentionPicker } from "./MentionPicker";
 
@@ -54,15 +54,15 @@ interface ChatInputProps {
 	onSend: (
 		message: string,
 		files: File[],
-		modelTier: ChatModelTierId,
+		modelProfileId: ChatModelProfileId | null,
 	) => void | Promise<void>;
 	disabled?: boolean;
 	isLoading?: boolean;
 	placeholder?: string;
 	onStop?: () => void;
-	modelTiers?: ChatModelTierOption[];
-	modelTier?: ChatModelTierId;
-	onModelTierChange?: (tier: ChatModelTierId) => void;
+	modelProfiles?: ChatModelProfileOption[];
+	modelProfileId?: ChatModelProfileId | null;
+	onModelProfileChange?: (profileId: ChatModelProfileId) => void;
 }
 
 export function ChatInput({
@@ -71,21 +71,9 @@ export function ChatInput({
 	isLoading = false,
 	placeholder = "Reply…",
 	onStop,
-	modelTiers = [
-		{
-			id: "balanced",
-			label: "Balanced",
-			capabilities: {
-				image_input: false,
-				pdf_input: false,
-				tool_calling: false,
-				source: "unknown",
-				fingerprint: "",
-			},
-		},
-	],
-	modelTier = "balanced",
-	onModelTierChange,
+	modelProfiles = [],
+	modelProfileId = null,
+	onModelProfileChange,
 }: ChatInputProps) {
 	const [message, setMessage] = useState("");
 	const [mentions, setMentions] = useState<MentionChip[]>([]);
@@ -95,9 +83,10 @@ export function ChatInput({
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 	const attachmentsRef = useRef(attachments);
-	const selectedCapabilities = modelTiers.find(
-		(tier) => tier.id === modelTier,
-	)?.capabilities;
+	const selectedProfile = modelProfiles.find(
+		(profile) => profile.id === modelProfileId,
+	);
+	const selectedCapabilities = selectedProfile?.capabilities;
 
 	const [mentionOpen, setMentionOpen] = useState(false);
 	const [mentionSearch, setMentionSearch] = useState("");
@@ -131,7 +120,7 @@ export function ChatInput({
 						!selectedCapabilities?.image_input
 					) {
 						toast.error(
-							`${modelTiers.find((tier) => tier.id === modelTier)?.label ?? "This model"} cannot inspect images.`,
+							`${selectedProfile?.label ?? "This profile"} cannot inspect images.`,
 						);
 						continue;
 					}
@@ -140,7 +129,7 @@ export function ChatInput({
 						!selectedCapabilities?.pdf_input
 					) {
 						toast.error(
-							`${modelTiers.find((tier) => tier.id === modelTier)?.label ?? "This model"} cannot inspect PDFs.`,
+							`${selectedProfile?.label ?? "This profile"} cannot inspect PDFs.`,
 						);
 						continue;
 					}
@@ -159,7 +148,7 @@ export function ChatInput({
 				return [...current, ...accepted];
 			});
 		},
-		[modelTier, modelTiers, selectedCapabilities],
+		[selectedCapabilities, selectedProfile],
 	);
 
 	const removeAttachment = useCallback((index: number) => {
@@ -192,7 +181,7 @@ export function ChatInput({
 			await onSend(
 				finalMessage,
 				attachments.map((draft) => draft.file),
-				modelTier,
+				modelProfileId,
 			);
 			for (const draft of attachments) {
 				if (draft.previewUrl) URL.revokeObjectURL(draft.previewUrl);
@@ -211,7 +200,7 @@ export function ChatInput({
 		isSubmitting,
 		mentions,
 		message,
-		modelTier,
+		modelProfileId,
 		onSend,
 	]);
 
@@ -458,12 +447,12 @@ export function ChatInput({
 							>
 								<Paperclip className="h-4 w-4" />
 							</Button>
-							{modelTiers.length > 0 && (
+							{modelProfiles.length > 0 && modelProfileId && (
 								<Select
-									value={modelTier}
+									value={modelProfileId}
 									onValueChange={(value) =>
-										onModelTierChange?.(
-											value as ChatModelTierId,
+										onModelProfileChange?.(
+											value as ChatModelProfileId,
 										)
 									}
 									disabled={busy}
@@ -475,12 +464,12 @@ export function ChatInput({
 										<SelectValue />
 									</SelectTrigger>
 									<SelectContent>
-										{modelTiers.map((tier) => (
+										{modelProfiles.map((profile) => (
 											<SelectItem
-												key={tier.id}
-												value={tier.id}
+												key={profile.id}
+												value={profile.id}
 											>
-												{tier.label}
+												{profile.label}
 											</SelectItem>
 										))}
 									</SelectContent>

@@ -13,6 +13,7 @@ import concurrent.futures
 import logging
 import os
 import time
+from uuid import uuid4
 
 import pytest
 
@@ -33,24 +34,31 @@ def _llm_configured(e2e_client, platform_admin):
     if not api_key:
         pytest.skip("ANTHROPIC_API_TEST_KEY not configured")
 
-    config = {
-        "provider": "anthropic",
-        "model": "claude-haiku-4-5-20251001",
-        "api_key": api_key,
-        "max_tokens": 1024,
-    }
+    suffix = uuid4().hex[:8]
     response = e2e_client.post(
-        "/api/admin/llm/config",
-        json=config,
+        "/api/admin/ai/connections",
+        json={"name": f"Connection pressure {suffix}", "provider": "anthropic", "api_key": api_key},
         headers=platform_admin.headers,
     )
-    assert response.status_code == 200, f"Failed to configure LLM: {response.text}"
-    yield config
-    try:
-        e2e_client.delete("/api/admin/llm/config", headers=platform_admin.headers)
-    except Exception as e:
-        # Best-effort fixture cleanup; teardown shouldn't fail the test
-        logger.debug(f"LLM config fixture cleanup error: {e}")
+    assert response.status_code == 201, f"Failed to configure provider: {response.text}"
+    profile_response = e2e_client.post(
+        "/api/admin/ai/profiles",
+        json={
+            "name": f"Connection pressure {suffix}",
+            "connection_id": response.json()["id"],
+            "model": "claude-haiku-4-5-20251001",
+            "enabled_for_chat": False,
+        },
+        headers=platform_admin.headers,
+    )
+    assert profile_response.status_code == 201, profile_response.text
+    assignment_response = e2e_client.put(
+        "/api/admin/ai/assignments/primary",
+        json={"profile_id": profile_response.json()["id"]},
+        headers=platform_admin.headers,
+    )
+    assert assignment_response.status_code == 200, assignment_response.text
+    yield profile_response.json()
 
 
 @pytest.fixture(scope="module")

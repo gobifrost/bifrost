@@ -2083,7 +2083,7 @@ class TestInlineAgentContent:
             delegated_agent_ids=[delegate_id],
             knowledge_sources=["faq", "runbooks"],
             system_tools=["execute_workflow", "search_knowledge"],
-            llm_model="claude-sonnet-4",
+            llm_profile="Fast Chat",
             llm_max_tokens=8000,
             max_iterations=15,
             max_token_budget=120000,
@@ -2100,7 +2100,7 @@ class TestInlineAgentContent:
         assert rt.delegated_agent_ids == [delegate_id]
         assert rt.knowledge_sources == ["faq", "runbooks"]
         assert rt.system_tools == ["execute_workflow", "search_knowledge"]
-        assert rt.llm_model == "claude-sonnet-4"
+        assert rt.llm_profile == "Fast Chat"
         assert rt.llm_max_tokens == 8000
         assert rt.max_iterations == 15
         assert rt.max_token_budget == 120000

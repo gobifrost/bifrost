@@ -17,6 +17,7 @@ from src.models.orm.base import Base
 
 if TYPE_CHECKING:
     from src.models.orm.artifacts import Artifact
+    from src.models.orm.ai_models import AIModelProfile
     from src.models.orm.ai_usage import AIUsage
     from src.models.orm.organizations import Organization
     from src.models.orm.users import Role, User
@@ -72,8 +73,10 @@ class Agent(Base):
     system_tools: Mapped[list[str]] = mapped_column(
         ARRAY(String), nullable=False, default=list, server_default='{}'
     )
-    # LLM configuration overrides (null = use global config)
-    llm_model: Mapped[str | None] = mapped_column(String(100), default=None)
+    # LLM profile override (null = use global/default profile assignment)
+    llm_profile_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("ai_model_profiles.id", ondelete="RESTRICT"), default=None
+    )
     llm_max_tokens: Mapped[int | None] = mapped_column(Integer, default=None)
     max_iterations: Mapped[int | None] = mapped_column(Integer, default=None)
     max_token_budget: Mapped[int | None] = mapped_column(Integer, default=None)
@@ -91,6 +94,10 @@ class Agent(Base):
 
     # Relationships
     organization: Mapped["Organization | None"] = relationship(back_populates="agents")
+    llm_profile: Mapped["AIModelProfile | None"] = relationship(
+        back_populates="agents",
+        lazy="selectin",
+    )
     owner: Mapped["User | None"] = relationship(foreign_keys=[owner_user_id])
     conversations: Mapped[list["Conversation"]] = relationship(
         back_populates="agent", cascade="all, delete-orphan"
@@ -130,6 +137,7 @@ class Agent(Base):
         Index("ix_agents_organization_id", "organization_id"),
         Index("ix_agents_is_active", "is_active"),
         Index("ix_agents_owner_user_id", "owner_user_id"),
+        Index("ix_agents_llm_profile_id", "llm_profile_id"),
     )
 
     # Computed properties for Pydantic from_attributes compatibility

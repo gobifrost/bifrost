@@ -40,7 +40,6 @@ async def verify_model_capabilities(
         api_key,
         model=model,
         endpoint=endpoint,
-        max_tokens=16,
     )
     async with asyncio.timeout(45):
         await client.complete(

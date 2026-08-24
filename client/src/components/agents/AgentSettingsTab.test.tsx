@@ -44,8 +44,27 @@ vi.mock("@/hooks/useRoles", () => ({
 vi.mock("@/hooks/useKnowledge", () => ({
 	useKnowledgeNamespaces: () => ({ data: [] }),
 }));
-vi.mock("@/hooks/useLLMConfig", () => ({
-	useLLMModels: () => ({ models: [] }),
+vi.mock("@/components/ai/ModelProfileSelector", () => ({
+	ModelProfileSelector: ({
+		label,
+		value,
+		onValueChange,
+	}: {
+		label?: string;
+		value?: string | null;
+		onValueChange: (value: string) => void;
+	}) => (
+		<label>
+			{label ?? "Model profile"}
+			<select
+				value={value ?? ""}
+				onChange={(event) => onValueChange(event.target.value)}
+			>
+				<option value="">Use primary profile assignment</option>
+				<option value="profile-support">Support profile</option>
+			</select>
+		</label>
+	),
 }));
 
 beforeEach(() => {
@@ -92,6 +111,7 @@ const existingAgent = {
 	max_iterations: null,
 	max_token_budget: null,
 	llm_max_tokens: null,
+	llm_profile_id: null,
 };
 
 describe("AgentSettingsTab — edit mode", () => {
@@ -121,7 +141,28 @@ describe("AgentSettingsTab — edit mode", () => {
 		const args = mockUpdateMutation.mock.calls[0][0];
 		expect(args.params.path.agent_id).toBe("agent-1");
 		expect(args.body.name).toBe("Tier-1 Triage");
+		expect(args.body.llm_profile_id).toBeNull();
 		expect(mockCreateMutation).not.toHaveBeenCalled();
+	});
+
+	it("submits the selected reusable model profile", async () => {
+		const { user } = await renderTab({
+			mode: "edit",
+			agent: existingAgent,
+		});
+		await user.selectOptions(
+			screen.getByLabelText(/model profile/i),
+			"profile-support",
+		);
+		await user.click(
+			screen.getByRole("button", { name: /save changes/i }),
+		);
+		await waitFor(() => {
+			expect(mockUpdateMutation).toHaveBeenCalledTimes(1);
+		});
+		expect(mockUpdateMutation.mock.calls[0][0].body.llm_profile_id).toBe(
+			"profile-support",
+		);
 	});
 
 	it("hides the Budgets section for non-admin users", async () => {
@@ -189,6 +230,7 @@ describe("AgentSettingsTab — create mode", () => {
 		expect(mockCreateMutation.mock.calls[0][0].body.name).toBe(
 			"Sales Bot",
 		);
+		expect(mockCreateMutation.mock.calls[0][0].body.llm_profile_id).toBeNull();
 		expect(onCreated).toHaveBeenCalledWith("new-agent-id");
 	});
 });

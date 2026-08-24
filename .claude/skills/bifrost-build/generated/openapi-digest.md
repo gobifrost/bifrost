@@ -6,9 +6,23 @@
 | Method | Path |
 |---|---|
 | GET | `/` |
-| DELETE | `/api/admin/llm/config` |
-| GET | `/api/admin/llm/config` |
-| POST | `/api/admin/llm/config` |
+| GET | `/api/admin/ai/assignments` |
+| DELETE | `/api/admin/ai/assignments/{assignment_key}` |
+| PUT | `/api/admin/ai/assignments/{assignment_key}` |
+| GET | `/api/admin/ai/behavior` |
+| PUT | `/api/admin/ai/behavior` |
+| GET | `/api/admin/ai/connections` |
+| POST | `/api/admin/ai/connections` |
+| POST | `/api/admin/ai/connections/verify` |
+| DELETE | `/api/admin/ai/connections/{connection_id}` |
+| PATCH | `/api/admin/ai/connections/{connection_id}` |
+| GET | `/api/admin/ai/connections/{connection_id}/models` |
+| POST | `/api/admin/ai/connections/{connection_id}/test` |
+| GET | `/api/admin/ai/profiles` |
+| POST | `/api/admin/ai/profiles` |
+| POST | `/api/admin/ai/profiles/merge` |
+| DELETE | `/api/admin/ai/profiles/{profile_id}` |
+| PATCH | `/api/admin/ai/profiles/{profile_id}` |
 | DELETE | `/api/admin/llm/embedding-config` |
 | GET | `/api/admin/llm/embedding-config` |
 | POST | `/api/admin/llm/embedding-config` |
@@ -16,9 +30,6 @@
 | POST | `/api/admin/llm/embedding-test` |
 | POST | `/api/admin/llm/model-capabilities` |
 | POST | `/api/admin/llm/model-capabilities/verify` |
-| GET | `/api/admin/llm/models` |
-| POST | `/api/admin/llm/test` |
-| POST | `/api/admin/llm/test-saved` |
 | GET | `/api/admin/memory/settings` |
 | PUT | `/api/admin/memory/settings` |
 | GET | `/api/admin/required-instructions` |
@@ -114,7 +125,7 @@
 | GET | `/api/chat/conversations/{conversation_id}/attachments/{attachment_id}/content` |
 | GET | `/api/chat/conversations/{conversation_id}/messages` |
 | POST | `/api/chat/conversations/{conversation_id}/messages` |
-| GET | `/api/chat/model-tiers` |
+| GET | `/api/chat/model-profiles` |
 | GET | `/api/claims` |
 | POST | `/api/claims` |
 | DELETE | `/api/claims/{name}` |

@@ -9,12 +9,12 @@ from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 import yaml
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import Workflow
-from src.models.orm import Agent, AgentTool, AgentDelegation
+from src.models.orm import Agent, AgentTool, AgentDelegation, AIModelProfile
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +110,21 @@ class AgentIndexer:
         if not isinstance(knowledge_sources, list):
             knowledge_sources = []
 
+        llm_profile_id: UUID | None = None
+        llm_profile = agent_data.get("llm_profile")
+        if llm_profile:
+            if not isinstance(llm_profile, str):
+                raise ValueError(f"llm_profile must be a profile name (file: {path})")
+            llm_profile_id = await self.db.scalar(
+                select(AIModelProfile.id).where(
+                    func.lower(AIModelProfile.name) == llm_profile.lower()
+                )
+            )
+            if llm_profile_id is None:
+                raise ValueError(
+                    f"llm_profile '{llm_profile}' does not reference an existing model profile (file: {path})"
+                )
+
         now = datetime.now(timezone.utc)
 
         # Upsert agent - updates definition but NOT organization_id or access_level
@@ -122,7 +137,7 @@ class AgentIndexer:
             channels=channels,
             knowledge_sources=knowledge_sources,
             is_active=agent_data.get("is_active", True),
-            llm_model=agent_data.get("llm_model"),
+            llm_profile_id=llm_profile_id,
             llm_max_tokens=agent_data.get("llm_max_tokens"),
             # Autonomous-run limits are portable agent CONTENT (ManifestAgent
             # fields). Persist configured values, but omit absent values so a
@@ -150,7 +165,7 @@ class AgentIndexer:
                 "channels": channels,
                 "knowledge_sources": knowledge_sources,
                 "is_active": agent_data.get("is_active", True),
-                "llm_model": agent_data.get("llm_model"),
+                "llm_profile_id": llm_profile_id,
                 "llm_max_tokens": agent_data.get("llm_max_tokens"),
                 # Limits are portable content; persist them on update too, but
                 # ONLY when the manifest carries them (same omit-when-absent rule

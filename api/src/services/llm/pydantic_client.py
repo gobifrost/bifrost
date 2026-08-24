@@ -41,6 +41,7 @@ from src.services.llm.base import (
     LLMStreamChunk,
     ToolCallRequest,
     ToolDefinition,
+    request_max_tokens,
 )
 
 logger = logging.getLogger(__name__)
@@ -126,7 +127,10 @@ class PydanticAIClient(BaseLLMClient):
             yield LLMStreamChunk(type="error", error=str(exc))
 
     def _model_settings(self, max_tokens: int | None) -> ModelSettings:
-        return ModelSettings(max_tokens=max_tokens or self.config.max_tokens)
+        resolved_max_tokens = request_max_tokens(self.config, max_tokens)
+        if resolved_max_tokens is None:
+            return ModelSettings()
+        return ModelSettings(max_tokens=resolved_max_tokens)
 
     @staticmethod
     def _request_parameters(

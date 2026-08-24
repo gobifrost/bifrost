@@ -9,7 +9,7 @@ from decimal import Decimal, InvalidOperation
 from pydantic_ai.models import Model
 from pydantic_ai.usage import RequestUsage
 
-from src.services.llm.base import LLMConfig
+from src.services.llm.base import LLMConfig, request_max_tokens
 from src.services.model_pricing import is_openrouter_endpoint
 
 
@@ -22,12 +22,15 @@ def provider_name_for_config(config: LLMConfig) -> str:
 def agent_model_settings(
     config: LLMConfig,
     *,
-    max_tokens: int,
+    max_tokens: int | None,
     session_id: str,
 ) -> dict[str, object]:
     """Build per-run settings, including OpenRouter sticky cache routing."""
 
-    settings: dict[str, object] = {"max_tokens": max_tokens}
+    settings: dict[str, object] = {}
+    resolved_max_tokens = request_max_tokens(config, max_tokens)
+    if resolved_max_tokens is not None:
+        settings["max_tokens"] = resolved_max_tokens
     if is_openrouter_endpoint(config.endpoint):
         settings["extra_body"] = {"session_id": session_id[:256]}
     return settings

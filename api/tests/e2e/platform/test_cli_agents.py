@@ -4,7 +4,7 @@ Covers the CRUD surface from Task 5e of the CLI mutation surface plan:
 
 * ``bifrost agents create --name foo --system-prompt @prompt.md`` — POSTs a
   new agent with the prompt loaded from disk.
-* ``bifrost agents update <ref> --llm-model ...`` — PUTs (the audit
+* ``bifrost agents update <ref> --llm-profile-id ...`` — PUTs (the audit
   correction — **not** PATCH) by UUID or name ref.
 * ``bifrost agents update <ref> --no-is-active`` — deactivates the agent.
 * ``bifrost agents delete <ref>`` — permanently deletes the agent.
@@ -124,15 +124,71 @@ class TestCliAgents:
         assert get_resp.status_code == 200, get_resp.text
         assert get_resp.json()["system_prompt"] == prompt_text
 
-        # --- update (by name ref) — changes the llm-model ---
-        new_model = "claude-3-5-sonnet-20241022"
+        profiles_resp = e2e_client.get(
+            "/api/admin/ai/profiles",
+            headers=platform_admin.headers,
+        )
+        assert profiles_resp.status_code == 200, profiles_resp.text
+        if not profiles_resp.json():
+            # The first profile becomes the required platform default and cannot
+            # be deleted. Seed that durable global state separately so the
+            # profile owned by this CRUD test remains safe to clean up.
+            bootstrap_connection_resp = e2e_client.post(
+                "/api/admin/ai/connections",
+                headers=platform_admin.headers,
+                json={
+                    "name": f"CLI Agents Default {uuid4().hex[:8]}",
+                    "provider": "openrouter",
+                    "api_key": "sk-test",
+                },
+            )
+            assert bootstrap_connection_resp.status_code == 201, (
+                bootstrap_connection_resp.text
+            )
+            bootstrap_profile_resp = e2e_client.post(
+                "/api/admin/ai/profiles",
+                headers=platform_admin.headers,
+                json={
+                    "name": f"CLI Agents Default {uuid4().hex[:8]}",
+                    "connection_id": bootstrap_connection_resp.json()["id"],
+                    "model": "anthropic/claude-3-5-sonnet-20241022",
+                },
+            )
+            assert bootstrap_profile_resp.status_code == 201, (
+                bootstrap_profile_resp.text
+            )
+
+        connection_resp = e2e_client.post(
+            "/api/admin/ai/connections",
+            headers=platform_admin.headers,
+            json={
+                "name": f"CLI Agents {uuid4().hex[:8]}",
+                "provider": "openrouter",
+                "api_key": "sk-test",
+            },
+        )
+        assert connection_resp.status_code == 201, connection_resp.text
+        connection_id = connection_resp.json()["id"]
+        profile_resp = e2e_client.post(
+            "/api/admin/ai/profiles",
+            headers=platform_admin.headers,
+            json={
+                "name": f"CLI Agent Profile {uuid4().hex[:8]}",
+                "connection_id": connection_id,
+                "model": "anthropic/claude-3-5-sonnet-20241022",
+            },
+        )
+        assert profile_resp.status_code == 201, profile_resp.text
+        profile_id = profile_resp.json()["id"]
+
+        # --- update (by name ref) — changes the profile assignment ---
         update_result = _invoke(
-            ["--json", "update", name, "--llm-model", new_model]
+            ["--json", "update", name, "--llm-profile-id", profile_id]
         )
         assert update_result.exit_code == 0, update_result.output
         updated = json.loads(update_result.output)
         assert str(updated["id"]) == created_id
-        assert updated["llm_model"] == new_model
+        assert updated["llm_profile_id"] == profile_id
         # The unrelated prompt should be left untouched (default-omit for unset flags).
         assert updated["system_prompt"] == prompt_text
 
@@ -170,6 +226,16 @@ class TestCliAgents:
             f"/api/agents/{created_id}", headers=platform_admin.headers
         )
         assert get_deleted_resp.status_code == 404
+        delete_profile_resp = e2e_client.delete(
+            f"/api/admin/ai/profiles/{profile_id}",
+            headers=platform_admin.headers,
+        )
+        assert delete_profile_resp.status_code == 204
+        delete_connection_resp = e2e_client.delete(
+            f"/api/admin/ai/connections/{connection_id}",
+            headers=platform_admin.headers,
+        )
+        assert delete_connection_resp.status_code == 204
 
     def test_update_tool_ids_persists_exact_set(
         self,

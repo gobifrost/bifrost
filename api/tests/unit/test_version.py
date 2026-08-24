@@ -43,4 +43,4 @@ def test_get_version_accepts_semver_dev_format(monkeypatch):
 def test_min_cli_version_is_release_floor():
     import shared.version as version
 
-    assert version.MIN_CLI_VERSION == "1.2.2"
+    assert version.MIN_CLI_VERSION == "1.2.3"

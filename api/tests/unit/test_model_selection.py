@@ -1,151 +1,103 @@
-"""Dynamic model resolution from system settings.
+"""Dynamic model resolution from reusable AI model assignments."""
 
-Tests that summarization and tuning calls honor optional per-purpose model
-overrides stored on the LLM provider config, while always reusing the primary
-provider + API key.
-"""
-import base64
-from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
-import pytest_asyncio
-from cryptography.fernet import Fernet
-from sqlalchemy import delete
 
-from src.config import get_settings
-from src.models.orm.config import SystemConfig
+from src.services.ai_model_service import AIModelService
 
 
-def _encrypt_api_key(api_key: str) -> str:
-    """Mirror LLMConfigService's Fernet encryption so get_llm_client can decrypt."""
-    settings = get_settings()
-    key_bytes = settings.secret_key.encode()[:32].ljust(32, b"0")
-    fernet = Fernet(base64.urlsafe_b64encode(key_bytes))
-    return fernet.encrypt(api_key.encode()).decode()
-
-
-async def _seed_llm_config(
+async def _seed_profile_assignment(
     db_session,
     *,
+    assignment_key: str,
     provider: str = "anthropic",
+    endpoint: str | None = None,
     model: str = "claude-sonnet-4-6",
-    summarization_model: str | None = None,
-    tuning_model: str | None = None,
     api_key: str = "test-key",
-) -> None:
-    """Insert a SystemConfig row carrying the LLM config; clear any prior row first."""
-    await db_session.execute(
-        delete(SystemConfig).where(
-            SystemConfig.category == "llm",
-            SystemConfig.key == "provider_config",
-        )
+):
+    service = AIModelService(db_session)
+    connection = await service.create_connection(
+        name=f"Connection {uuid4().hex[:8]}",
+        provider=provider,
+        api_key=api_key,
+        endpoint=endpoint,
     )
-    value_json: dict = {
-        "provider": provider,
-        "model": model,
-        "encrypted_api_key": _encrypt_api_key(api_key),
-        "endpoint": None,
-        "max_tokens": 16384,
-    }
-    if summarization_model is not None:
-        value_json["summarization_model"] = summarization_model
-    if tuning_model is not None:
-        value_json["tuning_model"] = tuning_model
-
-    db_session.add(
-        SystemConfig(
-            id=uuid4(),
-            category="llm",
-            key="provider_config",
-            value_json=value_json,
-            organization_id=None,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
-        )
+    profile = await service.create_profile(
+        name=f"Profile {uuid4().hex[:8]}",
+        connection_id=connection.id,
+        model=model,
+        capabilities=None,
+        enabled_for_chat=assignment_key == "chat_default",
     )
-    await db_session.flush()
-
-
-@pytest_asyncio.fixture
-async def llm_config_cleanup(db_session):
-    """Ensure each test starts/ends with no LLM config row."""
-    await db_session.execute(
-        delete(SystemConfig).where(
-            SystemConfig.category == "llm",
-            SystemConfig.key == "provider_config",
-        )
-    )
-    await db_session.flush()
-    yield
-    await db_session.execute(
-        delete(SystemConfig).where(
-            SystemConfig.category == "llm",
-            SystemConfig.key == "provider_config",
-        )
-    )
-    await db_session.flush()
+    await service.set_assignment(assignment_key, profile.id)
+    return profile
 
 
 @pytest.mark.asyncio
-async def test_summarization_falls_back_to_default_model(db_session, llm_config_cleanup):
-    from src.services.execution.model_selection import get_summarization_client
-
-    await _seed_llm_config(db_session, model="claude-sonnet-4-6")
-    _client, resolved = await get_summarization_client(db_session)
-    assert resolved == "claude-sonnet-4-6"
-
-
-@pytest.mark.asyncio
-async def test_summarization_uses_override_when_set(db_session, llm_config_cleanup):
-    from src.services.execution.model_selection import get_summarization_client
-
-    await _seed_llm_config(
-        db_session,
-        model="claude-sonnet-4-6",
-        summarization_model="claude-haiku-4-5",
-    )
-    _client, resolved = await get_summarization_client(db_session)
-    assert resolved == "claude-haiku-4-5"
-
-
-@pytest.mark.asyncio
-async def test_tuning_falls_back_to_default_model(db_session, llm_config_cleanup):
-    from src.services.execution.model_selection import get_tuning_client
-
-    await _seed_llm_config(db_session, model="claude-sonnet-4-6")
-    _client, resolved = await get_tuning_client(db_session)
-    assert resolved == "claude-sonnet-4-6"
-
-
-@pytest.mark.asyncio
-async def test_tuning_uses_override_when_set(db_session, llm_config_cleanup):
-    from src.services.execution.model_selection import get_tuning_client
-
-    await _seed_llm_config(
-        db_session,
-        model="claude-sonnet-4-6",
-        tuning_model="claude-opus-4-7",
-    )
-    _client, resolved = await get_tuning_client(db_session)
-    assert resolved == "claude-opus-4-7"
-
-
-@pytest.mark.asyncio
-async def test_provider_always_comes_from_default_config(db_session, llm_config_cleanup):
-    """Override only affects model name, not provider or API key."""
+async def test_summarization_uses_summarization_assignment(db_session):
     from src.services.execution.model_selection import get_summarization_client
     from src.services.llm.pydantic_client import PydanticAIClient
 
-    await _seed_llm_config(
+    await _seed_profile_assignment(
         db_session,
+        assignment_key="summarization",
         provider="anthropic",
-        model="claude-sonnet-4-6",
-        summarization_model="claude-haiku-4-5",
+        model="claude-haiku-4-5",
     )
+
     client, resolved = await get_summarization_client(db_session)
+
     assert isinstance(client, PydanticAIClient)
     assert client.provider_name == "anthropic"
     assert client.config.api_key == "test-key"
-    assert client.model_name == "claude-sonnet-4-6"
+    assert client.config.model == "claude-haiku-4-5"
     assert resolved == "claude-haiku-4-5"
+
+
+@pytest.mark.asyncio
+async def test_tuning_uses_tuning_assignment(db_session):
+    from src.services.execution.model_selection import get_tuning_client
+
+    await _seed_profile_assignment(
+        db_session,
+        assignment_key="tuning",
+        provider="google",
+        model="gemini-2.5-flash",
+        api_key="google-key",
+    )
+
+    client, resolved = await get_tuning_client(db_session)
+
+    assert client.provider_name == "google"
+    assert client.config.api_key == "google-key"
+    assert resolved == "gemini-2.5-flash"
+
+
+@pytest.mark.asyncio
+async def test_openrouter_assignment_runs_as_openai_with_endpoint(db_session):
+    from src.services.execution.model_selection import get_summarization_client
+
+    await _seed_profile_assignment(
+        db_session,
+        assignment_key="summarization",
+        provider="openrouter",
+        model="openai/gpt-4o-mini",
+        api_key="openrouter-key",
+    )
+
+    client, resolved = await get_summarization_client(db_session)
+
+    assert client.provider_name == "openrouter"
+    assert client.config.provider == "openai"
+    assert client.config.endpoint == "https://openrouter.ai/api/v1"
+    assert client.config.api_key == "openrouter-key"
+    assert resolved == "openai/gpt-4o-mini"
+
+
+@pytest.mark.asyncio
+async def test_missing_summarization_assignment_reports_clear_error(db_session):
+    from src.services.execution.model_selection import get_summarization_client
+
+    with pytest.raises(RuntimeError, match="summarization.*not configured"):
+        await get_summarization_client(db_session)

@@ -270,7 +270,7 @@ def _agent_has_inline_content(magent) -> bool:
             "knowledge_sources",
             "system_tools",
             "mcp_connection_ids",
-            "llm_model",
+            "llm_profile",
             "llm_max_tokens",
         )
     )

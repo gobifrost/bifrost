@@ -9,11 +9,14 @@
  */
 
 import { useMemo } from "react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { $api, apiClient } from "@/lib/api-client";
 import { toast } from "sonner";
 import type { components } from "@/lib/v1";
-import type { ChatModelTierId } from "@/services/chatModels";
+import {
+	getChatModelProfiles,
+	type ChatModelProfileId,
+} from "@/services/chatModels";
 import { useChatStore } from "@/stores/chatStore";
 
 // Re-export types for convenience
@@ -131,18 +134,19 @@ export async function sendMessage(
 	conversationId: string,
 	message: string,
 	attachmentIds: string[] = [],
-	modelTier: ChatModelTierId = "balanced",
+	modelProfileId?: ChatModelProfileId | null,
 ): Promise<ChatResponse> {
+	const body = {
+		message,
+		stream: false,
+		attachment_ids: attachmentIds,
+		model_profile_id: modelProfileId ?? null,
+	} as never;
 	const { data, error } = await apiClient.POST(
 		"/api/chat/conversations/{conversation_id}/messages",
 		{
 			params: { path: { conversation_id: conversationId } },
-			body: {
-				message,
-				stream: false,
-				attachment_ids: attachmentIds,
-				model_tier: modelTier,
-			},
+			body,
 		},
 	);
 	if (error)
@@ -192,9 +196,11 @@ export function useMessages(conversationId: string | undefined) {
 	);
 }
 
-/** Hook to fetch the administrator-governed Chat model choices. */
-export function useChatModelTiers() {
-	return $api.useQuery("get", "/api/chat/model-tiers", undefined, {
+/** Hook to fetch the administrator-governed Chat model profiles. */
+export function useChatModelProfiles() {
+	return useQuery({
+		queryKey: ["chat-model-profiles"],
+		queryFn: getChatModelProfiles,
 		staleTime: 5 * 60 * 1000,
 	});
 }

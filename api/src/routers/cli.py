@@ -51,7 +51,12 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
-from fastapi.responses import FileResponse, RedirectResponse, Response, StreamingResponse
+from fastapi.responses import (
+    FileResponse,
+    RedirectResponse,
+    Response,
+    StreamingResponse,
+)
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -111,7 +116,12 @@ from src.models.contracts.artifacts import (
     VideoArtifactSpec,
 )
 from src.models.contracts.platform_jobs import PlatformJobAccepted
-from src.core.pubsub import publish_cli_session_update, publish_execution_log, publish_execution_update, publish_history_update
+from src.core.pubsub import (
+    publish_cli_session_update,
+    publish_execution_log,
+    publish_execution_update,
+    publish_history_update,
+)
 from src.repositories.cli_sessions import CLISessionRepository
 
 logger = logging.getLogger(__name__)
@@ -188,8 +198,12 @@ class DeveloperContextResponse(BaseModel):
 
     user: dict = Field(description="User information")
     organization: dict | None = Field(description="Default organization")
-    default_parameters: dict = Field(default={}, description="Default workflow parameters")
-    track_executions: bool = Field(default=True, description="Whether to track executions in history")
+    default_parameters: dict = Field(
+        default={}, description="Default workflow parameters"
+    )
+    track_executions: bool = Field(
+        default=True, description="Whether to track executions in history"
+    )
 
 
 # =============================================================================
@@ -208,24 +222,32 @@ def _session_to_response(
     # Use SQLAlchemy inspect to check if executions were eagerly loaded
     # This avoids triggering a lazy load which would fail in async context
     state = sa_inspect(session)
-    if 'executions' in state.dict and state.dict['executions']:
-        for ex in sorted(state.dict['executions'], key=lambda e: e.created_at, reverse=True)[:10]:
-            executions.append(CLISessionExecutionSummary(
-                id=str(ex.id),
-                workflow_name=ex.workflow_name,
-                status=ex.status.value if hasattr(ex.status, 'value') else str(ex.status),
-                created_at=ex.created_at,
-                duration_ms=ex.duration_ms,
-            ))
+    if "executions" in state.dict and state.dict["executions"]:
+        for ex in sorted(
+            state.dict["executions"], key=lambda e: e.created_at, reverse=True
+        )[:10]:
+            executions.append(
+                CLISessionExecutionSummary(
+                    id=str(ex.id),
+                    workflow_name=ex.workflow_name,
+                    status=ex.status.value
+                    if hasattr(ex.status, "value")
+                    else str(ex.status),
+                    created_at=ex.created_at,
+                    duration_ms=ex.duration_ms,
+                )
+            )
 
     workflows = []
     if session.workflows:
         for w in session.workflows:
-            workflows.append(CLIRegisteredWorkflow(
-                name=w.get("name", ""),
-                description=w.get("description", ""),
-                parameters=w.get("parameters", []),
-            ))
+            workflows.append(
+                CLIRegisteredWorkflow(
+                    name=w.get("name", ""),
+                    description=w.get("description", ""),
+                    parameters=w.get("parameters", []),
+                )
+            )
 
     return CLISessionResponse(
         id=str(session.id),
@@ -440,6 +462,7 @@ async def cli_get_config(
 
     if config_type == "secret" and raw_value:
         from src.core.security import decrypt_secret
+
         try:
             raw_value = decrypt_secret(raw_value)
         except Exception:
@@ -449,15 +472,23 @@ async def cli_get_config(
             raw_value = json.loads(raw_value)
         except json.JSONDecodeError as e:
             # Stored value is not valid JSON — return raw string as fallback
-            logger.debug(f"config {log_safe(request.key)} stored as json but failed to parse, returning raw: {log_safe(e)}")
+            logger.debug(
+                f"config {log_safe(request.key)} stored as json but failed to parse, returning raw: {log_safe(e)}"
+            )
     elif config_type == "bool":
-        raw_value = str(raw_value).lower() == "true" if isinstance(raw_value, str) else bool(raw_value)
+        raw_value = (
+            str(raw_value).lower() == "true"
+            if isinstance(raw_value, str)
+            else bool(raw_value)
+        )
     elif config_type == "int":
         try:
             raw_value = int(raw_value)
         except (ValueError, TypeError) as e:
             # Stored value isn't coercible to int — return raw value
-            logger.debug(f"config {log_safe(request.key)} stored as int but failed to coerce, returning raw: {log_safe(e)}")
+            logger.debug(
+                f"config {log_safe(request.key)} stored as int but failed to coerce, returning raw: {log_safe(e)}"
+            )
 
     return CLIConfigValue(
         key=request.key,
@@ -486,6 +517,7 @@ async def cli_set_config(
 
     if request.is_secret:
         from src.core.security import encrypt_secret
+
         config_type = ConfigTypeEnum.SECRET
         stored_value = await asyncio.to_thread(encrypt_secret, str(request.value))
     elif isinstance(request.value, dict) or isinstance(request.value, list):
@@ -531,6 +563,7 @@ async def cli_set_config(
 
     try:
         from src.core.cache import upsert_config
+
         config_type_str = config_type.value
         await upsert_config(org_id, request.key, stored_value, config_type_str)
     except ImportError as e:
@@ -575,7 +608,11 @@ async def cli_list_config(
             except json.JSONDecodeError:
                 config_dict[config_key] = raw_value
         elif config_type == "bool":
-            config_dict[config_key] = str(raw_value).lower() == "true" if isinstance(raw_value, str) else bool(raw_value)
+            config_dict[config_key] = (
+                str(raw_value).lower() == "true"
+                if isinstance(raw_value, str)
+                else bool(raw_value)
+            )
         elif config_type == "int":
             try:
                 config_dict[config_key] = int(raw_value)
@@ -617,12 +654,15 @@ async def cli_delete_config(
 
     try:
         from src.core.cache import invalidate_config
+
         await invalidate_config(org_id, request.key)
     except ImportError as e:
         # cache module is optional; DB delete already committed
         logger.debug(f"cache module unavailable, skipping config cache invalidate: {e}")
 
-    logger.info(f"CLI deleted config {log_safe(request.key)} for user {current_user.email}")
+    logger.info(
+        f"CLI deleted config {log_safe(request.key)} for user {current_user.email}"
+    )
     return True
 
 
@@ -631,7 +671,9 @@ async def cli_delete_config(
 # =============================================================================
 
 
-async def _connection_is_declared(db: AsyncSession, solution_id: str, name: str) -> bool:
+async def _connection_is_declared(
+    db: AsyncSession, solution_id: str, name: str
+) -> bool:
     """True if ``solution_id`` declares an integration named ``name`` via a
     SolutionConnectionSchema row. Drives the RequiredConnectionUnset 424."""
     from src.models.orm.solution_connection_schema import SolutionConnectionSchema
@@ -692,9 +734,15 @@ async def sdk_integrations_get(
                 mapping.integration_id, org_uuid, external=current_user.is_external
             )
             integration = mapping.integration
-            entity_id = mapping.entity_id or (integration.default_entity_id if integration else None)
+            entity_id = mapping.entity_id or (
+                integration.default_entity_id if integration else None
+            )
 
-            secret_keys = [s.key for s in integration.config_schema if s.type == "secret"] if integration else []
+            secret_keys = (
+                [s.key for s in integration.config_schema if s.type == "secret"]
+                if integration
+                else []
+            )
             response_data: dict[str, Any] = {
                 "integration_id": str(mapping.integration_id),
                 "entity_id": entity_id,
@@ -721,12 +769,18 @@ async def sdk_integrations_get(
                         integration.oauth_provider.id
                     )
                 response_data["oauth"] = await _build_oauth_data(
-                    integration.oauth_provider, token, entity_id, resolve_url_template, decrypt_secret,
+                    integration.oauth_provider,
+                    token,
+                    entity_id,
+                    resolve_url_template,
+                    decrypt_secret,
                     oauth_scope=request.oauth_scope,
                     external=current_user.is_external,
                 )
 
-            logger.info(f"SDK retrieved integration '{log_safe(request.name)}' (org mapping) for user {current_user.email}")
+            logger.info(
+                f"SDK retrieved integration '{log_safe(request.name)}' (org mapping) for user {current_user.email}"
+            )
             return SDKIntegrationsGetResponse(**response_data)
 
         # Fall back to integration defaults
@@ -747,7 +801,9 @@ async def sdk_integrations_get(
                         f"solution's Setup tab."
                     ),
                 )
-            logger.debug(f"SDK integrations.get('{log_safe(request.name)}'): integration not found")
+            logger.debug(
+                f"SDK integrations.get('{log_safe(request.name)}'): integration not found"
+            )
             return None
 
         entity_id = integration.default_entity_id or integration.entity_id
@@ -783,11 +839,17 @@ async def sdk_integrations_get(
                 integration.oauth_provider.id
             )
             response_data["oauth"] = await _build_oauth_data(
-                integration.oauth_provider, token, entity_id, resolve_url_template, decrypt_secret,
+                integration.oauth_provider,
+                token,
+                entity_id,
+                resolve_url_template,
+                decrypt_secret,
                 oauth_scope=request.oauth_scope,
             )
 
-        logger.info(f"SDK retrieved integration '{log_safe(request.name)}' (defaults) for user {current_user.email}")
+        logger.info(
+            f"SDK retrieved integration '{log_safe(request.name)}' (defaults) for user {current_user.email}"
+        )
         return SDKIntegrationsGetResponse(**response_data)
 
     except HTTPException:
@@ -850,7 +912,11 @@ async def _build_oauth_data(
 
     # Check if we should auto-fetch a fresh token
     if should_auto_refresh_token(provider, entity_id, oauth_scope):
-        scope_info = f"oauth_scope={log_safe(oauth_scope)}" if oauth_scope else f"entity_id={entity_id}"
+        scope_info = (
+            f"oauth_scope={log_safe(oauth_scope)}"
+            if oauth_scope
+            else f"entity_id={entity_id}"
+        )
         logger.info(f"Auto-refreshing token ({scope_info})")
 
         if client_secret and resolved_token_url:
@@ -858,8 +924,10 @@ async def _build_oauth_data(
 
             oauth_client = OAuthProviderClient()
             # Use oauth_scope override if provided, otherwise use provider's default
-            scopes = oauth_scope if oauth_scope else (
-                " ".join(provider.scopes) if provider.scopes else ""
+            scopes = (
+                oauth_scope
+                if oauth_scope
+                else (" ".join(provider.scopes) if provider.scopes else "")
             )
 
             success, result = await oauth_client.get_client_credentials_token(
@@ -881,10 +949,14 @@ async def _build_oauth_data(
                     )
                 logger.info("Auto-refresh token successful")
             else:
-                error_msg = result.get("error_description", result.get("error", "Unknown error"))
+                error_msg = result.get(
+                    "error_description", result.get("error", "Unknown error")
+                )
                 logger.error(f"Auto-refresh token failed: {log_safe(error_msg)}")
         else:
-            logger.warning("Cannot auto-refresh: missing client_secret or resolved_token_url")
+            logger.warning(
+                "Cannot auto-refresh: missing client_secret or resolved_token_url"
+            )
     elif token:
         # Use stored token (existing behavior)
         if token.encrypted_access_token:
@@ -939,7 +1011,9 @@ async def sdk_integrations_list_mappings(
         integration = await repo.get_integration_by_name(request.name)
 
         if not integration:
-            logger.warning(f"SDK integrations.list_mappings: integration '{log_safe(request.name)}' not found")
+            logger.warning(
+                f"SDK integrations.list_mappings: integration '{log_safe(request.name)}' not found"
+            )
             return None
 
         # Apply the C2 gate: explicit ``scope`` (UUID or "global") requires
@@ -958,7 +1032,9 @@ async def sdk_integrations_list_mappings(
         else:
             resolved_org_uuid = UUID(resolved_org_id)
             org_row = await db.execute(
-                select(Organization.is_provider).where(Organization.id == resolved_org_uuid)
+                select(Organization.is_provider).where(
+                    Organization.id == resolved_org_uuid
+                )
             )
             if bool(org_row.scalar_one_or_none()):
                 mappings = await repo.list_mappings(integration.id)
@@ -967,7 +1043,9 @@ async def sdk_integrations_list_mappings(
                     integration.id, organization_id=resolved_org_uuid
                 )
 
-        logger.info(f"SDK listed {len(mappings)} mappings for integration '{log_safe(request.name)}' for user {current_user.email}")
+        logger.info(
+            f"SDK listed {len(mappings)} mappings for integration '{log_safe(request.name)}' for user {current_user.email}"
+        )
 
         items = []
         for mapping in mappings:
@@ -978,17 +1056,21 @@ async def sdk_integrations_list_mappings(
                 mapping.organization_id,
                 external=current_user.is_external,
             )
-            items.append({
-                "id": str(mapping.id),
-                "integration_id": str(mapping.integration_id),
-                "organization_id": str(mapping.organization_id),
-                "entity_id": mapping.entity_id,
-                "entity_name": mapping.entity_name,
-                "oauth_token_id": str(mapping.oauth_token_id) if mapping.oauth_token_id else None,
-                "config": config,
-                "created_at": mapping.created_at.isoformat(),
-                "updated_at": mapping.updated_at.isoformat(),
-            })
+            items.append(
+                {
+                    "id": str(mapping.id),
+                    "integration_id": str(mapping.integration_id),
+                    "organization_id": str(mapping.organization_id),
+                    "entity_id": mapping.entity_id,
+                    "entity_name": mapping.entity_name,
+                    "oauth_token_id": str(mapping.oauth_token_id)
+                    if mapping.oauth_token_id
+                    else None,
+                    "config": config,
+                    "created_at": mapping.created_at.isoformat(),
+                    "updated_at": mapping.updated_at.isoformat(),
+                }
+            )
 
         return SDKIntegrationsListMappingsResponse(items=items)
 
@@ -1021,7 +1103,9 @@ async def sdk_integrations_get_mapping(
         integration = await repo.get_integration_by_name(request.name)
 
         if not integration:
-            logger.warning(f"SDK integrations.get_mapping: integration '{log_safe(request.name)}' not found")
+            logger.warning(
+                f"SDK integrations.get_mapping: integration '{log_safe(request.name)}' not found"
+            )
             return None
 
         # Apply the C2 gate. Non-bypass callers can only target their own
@@ -1060,7 +1144,9 @@ async def sdk_integrations_get_mapping(
             external=current_user.is_external,
         )
 
-        logger.info(f"SDK retrieved mapping for integration '{log_safe(request.name)}' for user {current_user.email}")
+        logger.info(
+            f"SDK retrieved mapping for integration '{log_safe(request.name)}' for user {current_user.email}"
+        )
 
         return SDKIntegrationsMappingItem(
             id=str(mapping.id),
@@ -1068,7 +1154,9 @@ async def sdk_integrations_get_mapping(
             organization_id=str(mapping.organization_id),
             entity_id=mapping.entity_id,
             entity_name=mapping.entity_name,
-            oauth_token_id=str(mapping.oauth_token_id) if mapping.oauth_token_id else None,
+            oauth_token_id=str(mapping.oauth_token_id)
+            if mapping.oauth_token_id
+            else None,
             config=config,
             created_at=mapping.created_at.isoformat(),
             updated_at=mapping.updated_at.isoformat(),
@@ -1094,7 +1182,10 @@ async def sdk_integrations_upsert_mapping(
 ) -> SDKIntegrationsMappingItem:
     """Create or update an integration mapping for an organization via SDK."""
     from src.repositories.integrations import IntegrationsRepository
-    from src.models.contracts.integrations import IntegrationMappingCreate, IntegrationMappingUpdate
+    from src.models.contracts.integrations import (
+        IntegrationMappingCreate,
+        IntegrationMappingUpdate,
+    )
 
     try:
         repo = IntegrationsRepository(db)
@@ -1135,7 +1226,9 @@ async def sdk_integrations_upsert_mapping(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail="Failed to update mapping",
                 )
-            logger.info(f"SDK updated mapping for integration '{log_safe(request.name)}', org '{log_safe(request.scope)}' by {current_user.email}")
+            logger.info(
+                f"SDK updated mapping for integration '{log_safe(request.name)}', org '{log_safe(request.scope)}' by {current_user.email}"
+            )
         else:
             # Create new mapping
             create_data = IntegrationMappingCreate(
@@ -1149,7 +1242,9 @@ async def sdk_integrations_upsert_mapping(
                 create_data,
                 updated_by=current_user.email,
             )
-            logger.info(f"SDK created mapping for integration '{log_safe(request.name)}', org '{log_safe(request.scope)}' by {current_user.email}")
+            logger.info(
+                f"SDK created mapping for integration '{log_safe(request.name)}', org '{log_safe(request.scope)}' by {current_user.email}"
+            )
 
         await db.commit()
 
@@ -1167,7 +1262,9 @@ async def sdk_integrations_upsert_mapping(
             organization_id=str(mapping.organization_id),
             entity_id=mapping.entity_id,
             entity_name=mapping.entity_name,
-            oauth_token_id=str(mapping.oauth_token_id) if mapping.oauth_token_id else None,
+            oauth_token_id=str(mapping.oauth_token_id)
+            if mapping.oauth_token_id
+            else None,
             config=config,
             created_at=mapping.created_at.isoformat(),
             updated_at=mapping.updated_at.isoformat(),
@@ -1200,7 +1297,9 @@ async def sdk_integrations_delete_mapping(
         integration = await repo.get_integration_by_name(request.name)
 
         if not integration:
-            logger.warning(f"SDK integrations.delete_mapping: integration '{log_safe(request.name)}' not found")
+            logger.warning(
+                f"SDK integrations.delete_mapping: integration '{log_safe(request.name)}' not found"
+            )
             return {"deleted": False}
 
         # Apply the C2 gate before touching another org's mapping row.
@@ -1213,14 +1312,18 @@ async def sdk_integrations_delete_mapping(
         mapping = await repo.get_mapping_by_org(integration.id, org_uuid)
 
         if not mapping:
-            logger.warning(f"SDK integrations.delete_mapping: mapping not found for org '{log_safe(request.scope)}'")
+            logger.warning(
+                f"SDK integrations.delete_mapping: mapping not found for org '{log_safe(request.scope)}'"
+            )
             return {"deleted": False}
 
         # Delete the mapping
         deleted = await repo.delete_mapping(mapping.id)
         await db.commit()
 
-        logger.info(f"SDK deleted mapping for integration '{log_safe(request.name)}', org '{log_safe(request.scope)}' by {current_user.email}")
+        logger.info(
+            f"SDK deleted mapping for integration '{log_safe(request.name)}', org '{log_safe(request.scope)}' by {current_user.email}"
+        )
 
         return {"deleted": deleted}
 
@@ -1362,7 +1465,9 @@ async def sdk_integrations_refresh_token(
                 provider_id=provider.id,
                 encrypted_access_token=outcome["encrypted_access_token"],
                 encrypted_refresh_token=outcome.get("encrypted_refresh_token"),
-                expires_at=expires_at_dt if expires_at_dt and hasattr(expires_at_dt, "isoformat") else None,
+                expires_at=expires_at_dt
+                if expires_at_dt and hasattr(expires_at_dt, "isoformat")
+                else None,
                 scopes=provider.scopes or [],
             )
             db.add(new_token)
@@ -1421,7 +1526,9 @@ async def register_cli_session(
         {
             "name": w.name,
             "description": w.description,
-            "parameters": [p.model_dump() if hasattr(p, 'model_dump') else p for p in w.parameters],
+            "parameters": [
+                p.model_dump() if hasattr(p, "model_dump") else p for p in w.parameters
+            ],
         }
         for w in request.workflows
     ]
@@ -1443,7 +1550,9 @@ async def register_cli_session(
     response = _session_to_response(session, is_connected=True)
 
     # Broadcast state update via websocket
-    await publish_cli_session_update(str(current_user.user_id), request.session_id, response.model_dump(mode="json"))
+    await publish_cli_session_update(
+        str(current_user.user_id), request.session_id, response.model_dump(mode="json")
+    )
 
     return response
 
@@ -1463,8 +1572,7 @@ async def list_cli_sessions(
 
     return CLISessionListResponse(
         sessions=[
-            _session_to_response(s, is_connected=repo.is_connected(s))
-            for s in sessions
+            _session_to_response(s, is_connected=repo.is_connected(s)) for s in sessions
         ]
     )
 
@@ -1533,7 +1641,9 @@ async def delete_cli_session(
     await repo.delete(session)
     await db.commit()
 
-    logger.info(f"CLI session deleted: {log_safe(session_id)} for user {current_user.email}")
+    logger.info(
+        f"CLI session deleted: {log_safe(session_id)} for user {current_user.email}"
+    )
 
 
 @router.post(
@@ -1585,6 +1695,7 @@ async def continue_cli_session(
 
     # Resolve workflow ID from name
     from src.models.orm.workflows import Workflow as WorkflowORM
+
     wf_result = await db.execute(
         select(WorkflowORM.id).where(WorkflowORM.name == request.workflow_name).limit(1)
     )
@@ -1599,7 +1710,9 @@ async def continue_cli_session(
         execution_id=execution_id,
         workflow_name=request.workflow_name,
         parameters=request.params,
-        org_id=str(current_user.organization_id) if current_user.organization_id else None,
+        org_id=str(current_user.organization_id)
+        if current_user.organization_id
+        else None,
         user_id=str(current_user.user_id),
         user_name=current_user.name or current_user.email,
         status=ExecutionStatus.PENDING,
@@ -1609,6 +1722,7 @@ async def continue_cli_session(
 
     # Link execution to session
     from src.models.orm import Execution
+
     stmt = select(Execution).where(Execution.id == UUID(execution_id))
     result = await db.execute(stmt)
     execution = result.scalar_one_or_none()
@@ -1632,8 +1746,12 @@ async def continue_cli_session(
     # Broadcast state update via websocket
     updated_session = await repo.get_session_with_executions(session_uuid)
     if updated_session:
-        response_data = _session_to_response(updated_session, is_connected=repo.is_connected(updated_session))
-        await publish_cli_session_update(str(current_user.user_id), session_id, response_data.model_dump(mode="json"))
+        response_data = _session_to_response(
+            updated_session, is_connected=repo.is_connected(updated_session)
+        )
+        await publish_cli_session_update(
+            str(current_user.user_id), session_id, response_data.model_dump(mode="json")
+        )
 
     return CLISessionContinueResponse(
         status="pending",
@@ -1685,10 +1803,16 @@ async def get_pending_execution(
 
     # Find the most recent pending execution for this session
     from src.models.orm import Execution
-    stmt = select(Execution).where(
-        Execution.session_id == session_uuid,
-        Execution.status == ExecutionStatus.PENDING,
-    ).order_by(Execution.created_at.desc()).limit(1)
+
+    stmt = (
+        select(Execution)
+        .where(
+            Execution.session_id == session_uuid,
+            Execution.status == ExecutionStatus.PENDING,
+        )
+        .order_by(Execution.created_at.desc())
+        .limit(1)
+    )
     result = await db.execute(stmt)
     execution = result.scalar_one_or_none()
 
@@ -1721,13 +1845,19 @@ async def get_pending_execution(
         started_at=execution.started_at,
     )
 
-    logger.info(f"CLI session pending picked up: workflow={log_safe(workflow_name)}, execution_id={execution_id}, session_id={log_safe(session_id)}")
+    logger.info(
+        f"CLI session pending picked up: workflow={log_safe(workflow_name)}, execution_id={execution_id}, session_id={log_safe(session_id)}"
+    )
 
     # Broadcast session state update
     updated_session = await repo.get_session_with_executions(session_uuid)
     if updated_session:
-        response_data = _session_to_response(updated_session, is_connected=repo.is_connected(updated_session))
-        await publish_cli_session_update(str(current_user.user_id), session_id, response_data.model_dump(mode="json"))
+        response_data = _session_to_response(
+            updated_session, is_connected=repo.is_connected(updated_session)
+        )
+        await publish_cli_session_update(
+            str(current_user.user_id), session_id, response_data.model_dump(mode="json")
+        )
 
     return CLISessionPendingResponse(
         execution_id=execution_id,
@@ -1825,7 +1955,9 @@ async def post_cli_log(
             timestamp=timestamp,
         )
     except ImportError:
-        logger.warning(f"Log streaming not available, log skipped: {log_safe(request.message)}")
+        logger.warning(
+            f"Log streaming not available, log skipped: {log_safe(request.message)}"
+        )
 
 
 @router.post(
@@ -1923,7 +2055,9 @@ async def post_cli_result(
         if logs_to_insert:
             db.add_all(logs_to_insert)
             logs_persisted = len(logs_to_insert)
-            logger.debug(f"Persisted {logs_persisted} logs directly for CLI execution {log_safe(execution_id)}")
+            logger.debug(
+                f"Persisted {logs_persisted} logs directly for CLI execution {log_safe(execution_id)}"
+            )
 
     await db.commit()
 
@@ -1932,9 +2066,12 @@ async def post_cli_result(
     if not request.logs:
         try:
             from bifrost._logging import flush_logs_to_postgres
+
             logs_flushed = await flush_logs_to_postgres(execution_id)
             if logs_flushed > 0:
-                logger.debug(f"Flushed {logs_flushed} logs from stream for CLI execution {log_safe(execution_id)}")
+                logger.debug(
+                    f"Flushed {logs_flushed} logs from stream for CLI execution {log_safe(execution_id)}"
+                )
         except ImportError as e:
             # bifrost._logging optional (CLI bundle may not include it) — skip stream flush
             logger.debug(f"bifrost._logging not available, skipping stream flush: {e}")
@@ -1970,8 +2107,12 @@ async def post_cli_result(
     session_repo = CLISessionRepository(db)
     updated_session = await session_repo.get_session_with_executions(session_uuid)
     if updated_session:
-        response_data = _session_to_response(updated_session, is_connected=session_repo.is_connected(updated_session))
-        await publish_cli_session_update(str(current_user.user_id), session_id, response_data.model_dump(mode="json"))
+        response_data = _session_to_response(
+            updated_session, is_connected=session_repo.is_connected(updated_session)
+        )
+        await publish_cli_session_update(
+            str(current_user.user_id), session_id, response_data.model_dump(mode="json")
+        )
 
     total_logs = logs_persisted + logs_flushed
     logger.info(
@@ -2059,7 +2200,9 @@ async def sdk_render_document_artifact(
     service = ArtifactService(db)
     image_content: dict[str, bytes] = {}
     if workspace_id is not None:
-        for image in (image for section in request.sections for image in section.images):
+        for image in (
+            image for section in request.sections for image in section.images
+        ):
             stored_image = await service.resolve_workspace_path(
                 workspace_id,
                 image.path,
@@ -2332,7 +2475,7 @@ async def cli_ai_complete(
     from src.services.llm import LLMInputFile, LLMMessage, get_llm_client
 
     try:
-        client = await get_llm_client(db)
+        client = await get_llm_client(db, profile_name=request.profile)
 
         # Convert to LLMMessage objects
         llm_messages = [
@@ -2341,7 +2484,11 @@ async def cli_ai_complete(
         ]
         if request.input_files:
             user_message = next(
-                (message for message in reversed(llm_messages) if message.role == "user"),
+                (
+                    message
+                    for message in reversed(llm_messages)
+                    if message.role == "user"
+                ),
                 None,
             )
             if user_message is None:
@@ -2361,7 +2508,9 @@ async def cli_ai_complete(
             model=request.model,
         )
 
-        logger.info(f"CLI AI complete: model={log_safe(response.model)}, tokens={response.input_tokens}/{response.output_tokens}")
+        logger.info(
+            f"CLI AI complete: model={log_safe(response.model)}, tokens={response.input_tokens}/{response.output_tokens}"
+        )
 
         # Record AI usage
         try:
@@ -2380,7 +2529,9 @@ async def cli_ai_complete(
                 cache_read_tokens=response.cache_read_tokens,
                 cache_write_tokens=response.cache_write_tokens,
                 provider_cost=response.provider_cost,
-                execution_id=UUID(request.execution_id) if request.execution_id else None,
+                execution_id=UUID(request.execution_id)
+                if request.execution_id
+                else None,
                 organization_id=UUID(org_id) if org_id else None,
                 user_id=current_user.user_id,
             )
@@ -2402,9 +2553,14 @@ async def cli_ai_complete(
         # Check for authentication errors from LLM providers
         error_type = type(e).__name__
         error_module = type(e).__module__
-        if error_type == "AuthenticationError" and error_module in ("anthropic", "openai"):
+        if error_type == "AuthenticationError" and error_module in (
+            "anthropic",
+            "openai",
+        ):
             provider = "Anthropic" if error_module == "anthropic" else "OpenAI"
-            logger.error(f"CLI AI complete failed: {provider} authentication error - invalid API key")
+            logger.error(
+                f"CLI AI complete failed: {provider} authentication error - invalid API key"
+            )
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail=f"{provider} API key is invalid or expired. Please update the API key in System Settings > AI Configuration.",
@@ -2448,7 +2604,11 @@ async def cli_ai_stream(
             ]
             if request.input_files:
                 user_message = next(
-                    (message for message in reversed(llm_messages) if message.role == "user"),
+                    (
+                        message
+                        for message in reversed(llm_messages)
+                        if message.role == "user"
+                    ),
                     None,
                 )
                 if user_message is None:
@@ -2489,8 +2649,12 @@ async def cli_ai_stream(
                             cache_read_tokens=chunk.cache_read_tokens,
                             cache_write_tokens=chunk.cache_write_tokens,
                             provider_cost=chunk.provider_cost,
-                            execution_id=UUID(execution_id_str) if execution_id_str else None,
-                            organization_id=UUID(resolved_org_id) if resolved_org_id else None,
+                            execution_id=UUID(execution_id_str)
+                            if execution_id_str
+                            else None,
+                            organization_id=UUID(resolved_org_id)
+                            if resolved_org_id
+                            else None,
                             user_id=user_id,
                         )
                     except Exception as e:
@@ -2505,9 +2669,14 @@ async def cli_ai_stream(
             # Check for authentication errors from LLM providers
             error_type = type(e).__name__
             error_module = type(e).__module__
-            if error_type == "AuthenticationError" and error_module in ("anthropic", "openai"):
+            if error_type == "AuthenticationError" and error_module in (
+                "anthropic",
+                "openai",
+            ):
                 provider = "Anthropic" if error_module == "anthropic" else "OpenAI"
-                logger.error(f"CLI AI stream failed: {provider} authentication error - invalid API key")
+                logger.error(
+                    f"CLI AI stream failed: {provider} authentication error - invalid API key"
+                )
                 yield f"data: {json.dumps({'error': f'{provider} API key is invalid or expired. Please update the API key in System Settings > AI Configuration.'})}\n\n"
             else:
                 logger.error(f"CLI AI stream failed: {log_safe(e)}")
@@ -2520,7 +2689,7 @@ async def cli_ai_stream(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",  # Disable nginx buffering
-        }
+        },
     )
 
 
@@ -2542,7 +2711,6 @@ async def cli_ai_info(
         return CLIAIInfoResponse(
             provider=config.provider,
             model=config.model,
-            max_tokens=config.max_tokens,
         )
     except ValueError as e:
         raise HTTPException(
@@ -2609,7 +2777,9 @@ async def cli_knowledge_store(
 
         await db.commit()
 
-        logger.info(f"CLI knowledge store: namespace={log_safe(request.namespace)}, key={log_safe(request.key)}, doc_id={doc_id}")
+        logger.info(
+            f"CLI knowledge store: namespace={log_safe(request.namespace)}, key={log_safe(request.key)}, doc_id={doc_id}"
+        )
 
         return {"id": doc_id}
     except ValueError as e:
@@ -2668,7 +2838,9 @@ async def cli_knowledge_store_many(
 
         await db.commit()
 
-        logger.info(f"CLI knowledge store-many: namespace={log_safe(request.namespace)}, count={len(doc_ids)}")
+        logger.info(
+            f"CLI knowledge store-many: namespace={log_safe(request.namespace)}, count={len(doc_ids)}"
+        )
 
         return {"ids": doc_ids}
     except ValueError as e:
@@ -2725,7 +2897,9 @@ async def cli_knowledge_search(
             fallback=request.fallback,
         )
 
-        logger.info(f"CLI knowledge search: query={log_safe(request.query[:50])}..., results={len(results)}")
+        logger.info(
+            f"CLI knowledge search: query={log_safe(request.query[:50])}..., results={len(results)}"
+        )
 
         return [
             CLIKnowledgeDocumentResponse(
@@ -2784,7 +2958,9 @@ async def cli_knowledge_delete(
 
         await db.commit()
 
-        logger.info(f"CLI knowledge delete: namespace={log_safe(request.namespace)}, key={log_safe(request.key)}, deleted={deleted}")
+        logger.info(
+            f"CLI knowledge delete: namespace={log_safe(request.namespace)}, key={log_safe(request.key)}, deleted={deleted}"
+        )
 
         return {"deleted": deleted}
     except HTTPException:
@@ -2826,7 +3002,9 @@ async def cli_knowledge_delete_namespace(
 
         await db.commit()
 
-        logger.info(f"CLI knowledge delete namespace: namespace={log_safe(namespace)}, deleted_count={deleted_count}")
+        logger.info(
+            f"CLI knowledge delete namespace: namespace={log_safe(namespace)}, deleted_count={deleted_count}"
+        )
 
         return {"deleted_count": deleted_count}
     except HTTPException:
@@ -3102,7 +3280,9 @@ async def cli_create_table(
     await db.commit()
     await db.refresh(table)
 
-    logger.info(f"CLI created table '{log_safe(request.name)}' for user {current_user.email}")
+    logger.info(
+        f"CLI created table '{log_safe(request.name)}' for user {current_user.email}"
+    )
 
     return SDKTableInfo(
         id=str(table.id),

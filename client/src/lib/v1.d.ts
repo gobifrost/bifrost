@@ -6010,7 +6010,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/chat/model-tiers": {
+    "/api/chat/model-profiles": {
         parameters: {
             query?: never;
             header?: never;
@@ -6018,10 +6018,10 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get Model Tiers
-         * @description Return only the administrator-governed model choices available in Chat.
+         * Get Model Profiles
+         * @description Return administrator-governed reusable model profiles available in Chat.
          */
-        get: operations["get_model_tiers_api_chat_model_tiers_get"];
+        get: operations["get_model_profiles_api_chat_model_profiles_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6208,42 +6208,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/admin/llm/config": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Llm Config
-         * @description Get current LLM provider configuration.
-         *
-         *     Returns the configuration without the API key (only indicates if it's set).
-         *     Requires platform admin access.
-         */
-        get: operations["get_llm_config_api_admin_llm_config_get"];
-        put?: never;
-        /**
-         * Set Llm Config
-         * @description Set LLM provider configuration.
-         *
-         *     The API key will be encrypted before storage.
-         *     Requires platform admin access.
-         */
-        post: operations["set_llm_config_api_admin_llm_config_post"];
-        /**
-         * Delete Llm Config
-         * @description Delete LLM provider configuration.
-         *
-         *     Requires platform admin access.
-         */
-        delete: operations["delete_llm_config_api_admin_llm_config_delete"];
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/admin/llm/model-capabilities": {
         parameters: {
             query?: never;
@@ -6278,78 +6242,6 @@ export interface paths {
          * @description Run a bounded, one-time provider conformance check for an unknown model.
          */
         post: operations["verify_model_capability_support_api_admin_llm_model_capabilities_verify_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/admin/llm/test": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Test Llm Connection
-         * @description Test LLM connection with provided credentials.
-         *
-         *     Tests the connection without saving the configuration.
-         *     Useful for validating API keys before committing.
-         *     Also caches the model ID -> display name mapping for AI usage tracking.
-         *     Requires platform admin access.
-         */
-        post: operations["test_llm_connection_api_admin_llm_test_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/admin/llm/test-saved": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Test Saved Llm Connection
-         * @description Test connection using saved LLM configuration.
-         *
-         *     Tests the currently saved configuration.
-         *     Also refreshes the model ID -> display name mapping cache.
-         *     Requires platform admin access.
-         */
-        post: operations["test_saved_llm_connection_api_admin_llm_test_saved_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/admin/llm/models": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * List Llm Models
-         * @description List available models from the configured LLM provider.
-         *
-         *     Works with OpenAI, Anthropic, and Google.
-         *     Requires platform admin access.
-         */
-        get: operations["list_llm_models_api_admin_llm_models_get"];
-        put?: never;
-        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -6457,6 +6349,199 @@ export interface paths {
          */
         post: operations["test_embedding_connection_api_admin_llm_embedding_test_post"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/ai/behavior": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Ai Behavior */
+        get: operations["get_ai_behavior_api_admin_ai_behavior_get"];
+        /** Update Ai Behavior */
+        put: operations["update_ai_behavior_api_admin_ai_behavior_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/ai/connections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Provider Connections */
+        get: operations["list_provider_connections_api_admin_ai_connections_get"];
+        put?: never;
+        /** Create Provider Connection */
+        post: operations["create_provider_connection_api_admin_ai_connections_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/ai/connections/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify Provider Connection */
+        post: operations["verify_provider_connection_api_admin_ai_connections_verify_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/ai/connections/{connection_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Provider Connection */
+        delete: operations["delete_provider_connection_api_admin_ai_connections__connection_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Provider Connection */
+        patch: operations["update_provider_connection_api_admin_ai_connections__connection_id__patch"];
+        trace?: never;
+    };
+    "/api/admin/ai/connections/{connection_id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Test Provider Connection */
+        post: operations["test_provider_connection_api_admin_ai_connections__connection_id__test_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/ai/connections/{connection_id}/models": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Provider Models */
+        get: operations["list_provider_models_api_admin_ai_connections__connection_id__models_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/ai/profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Model Profiles */
+        get: operations["list_model_profiles_api_admin_ai_profiles_get"];
+        put?: never;
+        /** Create Model Profile */
+        post: operations["create_model_profile_api_admin_ai_profiles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/ai/profiles/merge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Merge Model Profiles */
+        post: operations["merge_model_profiles_api_admin_ai_profiles_merge_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/ai/profiles/{profile_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Model Profile */
+        delete: operations["delete_model_profile_api_admin_ai_profiles__profile_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Model Profile */
+        patch: operations["update_model_profile_api_admin_ai_profiles__profile_id__patch"];
+        trace?: never;
+    };
+    "/api/admin/ai/assignments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Model Assignments */
+        get: operations["list_model_assignments_api_admin_ai_assignments_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/ai/assignments/{assignment_key}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Model Assignment */
+        put: operations["set_model_assignment_api_admin_ai_assignments__assignment_key__put"];
+        post?: never;
+        /** Clear Model Assignment */
+        delete: operations["clear_model_assignment_api_admin_ai_assignments__assignment_key__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -10347,6 +10432,57 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AIBehaviorResponse */
+        AIBehaviorResponse: {
+            /** Default System Prompt */
+            default_system_prompt?: string | null;
+        };
+        /** AIBehaviorUpdate */
+        AIBehaviorUpdate: {
+            /** Default System Prompt */
+            default_system_prompt?: string | null;
+        };
+        /** AIConnectionTestResponse */
+        AIConnectionTestResponse: {
+            /** Success */
+            success: boolean;
+            /** Message */
+            message: string;
+            /** Models */
+            models?: components["schemas"]["LLMModelInfo"][] | null;
+        };
+        /** AIModelAssignmentResponse */
+        AIModelAssignmentResponse: {
+            /**
+             * Assignment Key
+             * @enum {string}
+             */
+            assignment_key: "primary" | "summarization" | "tuning" | "image_generation" | "video_generation" | "chat_default";
+            /**
+             * Profile Id
+             * Format: uuid
+             */
+            profile_id: string;
+            profile: components["schemas"]["AIModelProfileResponse"];
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** AIModelAssignmentUpdate */
+        AIModelAssignmentUpdate: {
+            /**
+             * Profile Id
+             * Format: uuid
+             */
+            profile_id: string;
+        };
         /**
          * AIModelPricingCreate
          * @description Request model for creating AI model pricing.
@@ -10525,6 +10661,180 @@ export interface components {
              * @description Date pricing takes effect
              */
             effective_date?: string | null;
+        };
+        /** AIModelProfileCreate */
+        AIModelProfileCreate: {
+            /** Name */
+            name: string;
+            /**
+             * Connection Id
+             * Format: uuid
+             */
+            connection_id: string;
+            /** Model */
+            model: string;
+            capabilities?: components["schemas"]["ModelCapabilities"] | null;
+            /**
+             * Enabled For Chat
+             * @default false
+             */
+            enabled_for_chat: boolean;
+        };
+        /** AIModelProfileMergeRequest */
+        AIModelProfileMergeRequest: {
+            /** Profile Ids */
+            profile_ids: string[];
+            /**
+             * Target Profile Id
+             * Format: uuid
+             */
+            target_profile_id: string;
+        };
+        /** AIModelProfileMergeResponse */
+        AIModelProfileMergeResponse: {
+            profile: components["schemas"]["AIModelProfileResponse"];
+            /** Merged Profile Ids */
+            merged_profile_ids: string[];
+            /** Reassigned Agent Count */
+            reassigned_agent_count: number;
+            /** Reassigned Assignment Keys */
+            reassigned_assignment_keys: ("primary" | "summarization" | "tuning" | "image_generation" | "video_generation" | "chat_default")[];
+        };
+        /** AIModelProfileResponse */
+        AIModelProfileResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Connection Id
+             * Format: uuid
+             */
+            connection_id: string;
+            /** Model */
+            model: string;
+            capabilities?: components["schemas"]["ModelCapabilities"] | null;
+            /** Enabled For Chat */
+            enabled_for_chat: boolean;
+            connection: components["schemas"]["AIProviderConnectionSummary"];
+            /** Assignment Keys */
+            assignment_keys?: ("primary" | "summarization" | "tuning" | "image_generation" | "video_generation" | "chat_default")[];
+            /**
+             * Referenced Agent Count
+             * @default 0
+             */
+            referenced_agent_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** AIModelProfileUpdate */
+        AIModelProfileUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Connection Id */
+            connection_id?: string | null;
+            /** Model */
+            model?: string | null;
+            capabilities?: components["schemas"]["ModelCapabilities"] | null;
+            /** Enabled For Chat */
+            enabled_for_chat?: boolean | null;
+        };
+        /** AIModelsResponse */
+        AIModelsResponse: {
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "openai" | "anthropic" | "google" | "openrouter" | "openai_compatible";
+            /** Models */
+            models: components["schemas"]["LLMModelInfo"][];
+        };
+        /** AIProviderConnectionCreate */
+        AIProviderConnectionCreate: {
+            /** Name */
+            name: string;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "openai" | "anthropic" | "google" | "openrouter" | "openai_compatible";
+            /** Api Key */
+            api_key: string;
+            /** Endpoint */
+            endpoint?: string | null;
+        };
+        /** AIProviderConnectionResponse */
+        AIProviderConnectionResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "openai" | "anthropic" | "google" | "openrouter" | "openai_compatible";
+            /** Endpoint */
+            endpoint?: string | null;
+            /** Api Key Set */
+            api_key_set: boolean;
+            /**
+             * Profile Count
+             * @default 0
+             */
+            profile_count: number;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** AIProviderConnectionSummary */
+        AIProviderConnectionSummary: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "openai" | "anthropic" | "google" | "openrouter" | "openai_compatible";
+            /** Endpoint */
+            endpoint?: string | null;
+        };
+        /** AIProviderConnectionUpdate */
+        AIProviderConnectionUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Provider */
+            provider?: ("openai" | "anthropic" | "google" | "openrouter" | "openai_compatible") | null;
+            /** Api Key */
+            api_key?: string | null;
+            /** Endpoint */
+            endpoint?: string | null;
         };
         /**
          * AIUsagePublicSimple
@@ -10736,10 +11046,10 @@ export interface components {
              */
             mcp_connection_ids?: string[];
             /**
-             * Llm Model
-             * @description Override model (null=use global config)
+             * Llm Profile Id
+             * @description Model profile UUID (null=use default profile assignment)
              */
-            llm_model?: string | null;
+            llm_profile_id?: string | null;
             /**
              * Llm Max Tokens
              * @description Override max tokens
@@ -10828,8 +11138,8 @@ export interface components {
              * @description MCP connection UUIDs this agent is granted access to.
              */
             mcp_connection_ids?: string[];
-            /** Llm Model */
-            llm_model?: string | null;
+            /** Llm Profile Id */
+            llm_profile_id?: string | null;
             /** Llm Max Tokens */
             llm_max_tokens?: number | null;
             /** Max Iterations */
@@ -11199,8 +11509,8 @@ export interface components {
             owner_user_id?: string | null;
             /** Created At */
             created_at: string;
-            /** Llm Model */
-            llm_model?: string | null;
+            /** Llm Profile Id */
+            llm_profile_id?: string | null;
             /**
              * Dependency Count
              * @description Number of tool dependencies this agent uses
@@ -11300,10 +11610,10 @@ export interface components {
              */
             clear_roles: boolean;
             /**
-             * Llm Model
-             * @description Override model (null=use global config)
+             * Llm Profile Id
+             * @description Model profile UUID (null=use default profile assignment)
              */
-            llm_model?: string | null;
+            llm_profile_id?: string | null;
             /**
              * Llm Max Tokens
              * @description Override max tokens
@@ -12522,6 +12832,11 @@ export interface components {
              */
             org_id?: string | null;
             /**
+             * Profile
+             * @description Model profile name (null = platform default profile)
+             */
+            profile?: string | null;
+            /**
              * Model
              * @description Override model (e.g., 'gpt-4o', 'claude-sonnet-4-20250514')
              */
@@ -12575,11 +12890,6 @@ export interface components {
              * @description Model identifier
              */
             model: string;
-            /**
-             * Max Tokens
-             * @description Default max tokens
-             */
-            max_tokens: number;
         };
         /**
          * CLIAIInputFile
@@ -13113,31 +13423,27 @@ export interface components {
             filename: string;
         };
         /**
-         * ChatModelTierPublic
-         * @description One administrator-governed model choice exposed in Chat.
+         * ChatModelProfilePublic
+         * @description One administrator-governed reusable model profile exposed in Chat.
          */
-        ChatModelTierPublic: {
-            /**
-             * Id
-             * @enum {string}
-             */
-            id: "fast" | "balanced" | "pro";
+        ChatModelProfilePublic: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
             /** Label */
             label: string;
             capabilities: components["schemas"]["ModelCapabilities"];
         };
         /**
-         * ChatModelTiersResponse
-         * @description Enabled Chat model tiers and the default selection.
+         * ChatModelProfilesResponse
+         * @description Enabled Chat model profiles and the default selection.
          */
-        ChatModelTiersResponse: {
-            /** Tiers */
-            tiers: components["schemas"]["ChatModelTierPublic"][];
-            /**
-             * Default Tier
-             * @enum {string}
-             */
-            default_tier: "fast" | "balanced" | "pro";
+        ChatModelProfilesResponse: {
+            /** Profiles */
+            profiles: components["schemas"]["ChatModelProfilePublic"][];
+            /** Default Profile Id */
+            default_profile_id?: string | null;
         };
         /**
          * ChatRequest
@@ -13157,12 +13463,8 @@ export interface components {
             stream: boolean;
             /** Attachment Ids */
             attachment_ids?: string[];
-            /**
-             * Model Tier
-             * @default balanced
-             * @enum {string}
-             */
-            model_tier: "fast" | "balanced" | "pro";
+            /** Model Profile Id */
+            model_profile_id?: string | null;
         };
         /**
          * ChatResponse
@@ -14835,21 +15137,17 @@ export interface components {
          */
         EmbeddingConfigRequest: {
             /**
-             * Api Key
-             * @description API key for embeddings. Omit to preserve existing key.
+             * Connection Id
+             * Format: uuid
+             * @description Provider connection to use for embeddings.
              */
-            api_key?: string | null;
+            connection_id: string;
             /**
              * Model
              * @description Embedding model identifier
              * @default text-embedding-3-small
              */
             model: string;
-            /**
-             * Endpoint
-             * @description Custom OpenAI-compatible endpoint URL. Null/empty means OpenAI default.
-             */
-            endpoint?: string | null;
             /**
              * Confirm Reindex
              * @description When the new model's vector dimension differs from the saved one and knowledge_store has existing rows, the first POST returns needs_reindex_confirmation. Re-POST with this flag set to true to persist the new config and trigger a reindex.
@@ -14862,6 +15160,8 @@ export interface components {
          * @description Embedding configuration response (API key is never returned).
          */
         EmbeddingConfigResponse: {
+            /** Connection Id */
+            connection_id?: string | null;
             /**
              * Model
              * @default text-embedding-3-small
@@ -18598,161 +18898,6 @@ export interface components {
             size_mb: number;
         };
         /**
-         * LLMConfigRequest
-         * @description Request to set LLM configuration.
-         */
-        LLMConfigRequest: {
-            /**
-             * Provider
-             * @description LLM provider type
-             * @enum {string}
-             */
-            provider: "openai" | "anthropic" | "google";
-            /**
-             * Model
-             * @description Model identifier (for example 'gpt-4o', 'claude-sonnet-4-20250514', or 'gemini-2.5-flash')
-             */
-            model: string;
-            /**
-             * Api Key
-             * @description API key for the provider. Omit to preserve existing key.
-             */
-            api_key?: string | null;
-            /**
-             * Endpoint
-             * @description Custom API endpoint URL (e.g., for Azure OpenAI, Ollama, or other compatible providers)
-             */
-            endpoint?: string | null;
-            /**
-             * Max Tokens
-             * @description Maximum tokens for completion
-             * @default 16384
-             */
-            max_tokens: number;
-            /**
-             * Default System Prompt
-             * @description Default system prompt for agentless chat
-             */
-            default_system_prompt?: string | null;
-            /**
-             * Summarization Model
-             * @description Model override for post-run summarization. Falls back to primary model if unset.
-             */
-            summarization_model?: string | null;
-            /**
-             * Tuning Model
-             * @description Model override for tuning chat + dry-run. Falls back to primary model if unset.
-             */
-            tuning_model?: string | null;
-            /**
-             * Image Generation Model
-             * @description Optional dedicated model for image generation.
-             */
-            image_generation_model?: string | null;
-            /**
-             * Video Generation Model
-             * @description Optional dedicated model for video generation.
-             */
-            video_generation_model?: string | null;
-            /**
-             * Chat Fast Label
-             * @default Fast
-             */
-            chat_fast_label: string;
-            /**
-             * Chat Fast Model
-             * @description Optional model exposed as the Fast Chat tier.
-             */
-            chat_fast_model?: string | null;
-            /**
-             * Chat Balanced Label
-             * @default Balanced
-             */
-            chat_balanced_label: string;
-            /**
-             * Chat Balanced Model
-             * @description Optional Balanced model; the primary model is used when unset.
-             */
-            chat_balanced_model?: string | null;
-            /**
-             * Chat Pro Label
-             * @default Pro
-             */
-            chat_pro_label: string;
-            /**
-             * Chat Pro Model
-             * @description Optional model exposed as the Pro Chat tier.
-             */
-            chat_pro_model?: string | null;
-            chat_fast_capabilities?: components["schemas"]["ModelCapabilities"] | null;
-            chat_balanced_capabilities?: components["schemas"]["ModelCapabilities"] | null;
-            chat_pro_capabilities?: components["schemas"]["ModelCapabilities"] | null;
-        };
-        /**
-         * LLMConfigResponse
-         * @description LLM configuration response (API key is never returned).
-         */
-        LLMConfigResponse: {
-            /**
-             * Provider
-             * @enum {string}
-             */
-            provider: "openai" | "anthropic" | "google";
-            /** Model */
-            model: string;
-            /** Endpoint */
-            endpoint?: string | null;
-            /**
-             * Max Tokens
-             * @default 16384
-             */
-            max_tokens: number;
-            /** Default System Prompt */
-            default_system_prompt?: string | null;
-            /** Summarization Model */
-            summarization_model?: string | null;
-            /** Tuning Model */
-            tuning_model?: string | null;
-            /** Image Generation Model */
-            image_generation_model?: string | null;
-            /** Video Generation Model */
-            video_generation_model?: string | null;
-            /**
-             * Chat Fast Label
-             * @default Fast
-             */
-            chat_fast_label: string;
-            /** Chat Fast Model */
-            chat_fast_model?: string | null;
-            /**
-             * Chat Balanced Label
-             * @default Balanced
-             */
-            chat_balanced_label: string;
-            /** Chat Balanced Model */
-            chat_balanced_model?: string | null;
-            /**
-             * Chat Pro Label
-             * @default Pro
-             */
-            chat_pro_label: string;
-            /** Chat Pro Model */
-            chat_pro_model?: string | null;
-            chat_fast_capabilities?: components["schemas"]["ModelCapabilities"] | null;
-            chat_balanced_capabilities?: components["schemas"]["ModelCapabilities"] | null;
-            chat_pro_capabilities?: components["schemas"]["ModelCapabilities"] | null;
-            /**
-             * Is Configured
-             * @default true
-             */
-            is_configured: boolean;
-            /**
-             * Api Key Set
-             * @default false
-             */
-            api_key_set: boolean;
-        };
-        /**
          * LLMModelInfo
          * @description Model information with both ID and display name.
          */
@@ -18763,55 +18908,6 @@ export interface components {
             display_name: string;
             /** Output Modalities */
             output_modalities?: string[] | null;
-        };
-        /**
-         * LLMModelsResponse
-         * @description Response listing available models.
-         */
-        LLMModelsResponse: {
-            /** Models */
-            models: components["schemas"]["LLMModelInfo"][];
-            /** Provider */
-            provider: string;
-        };
-        /**
-         * LLMTestRequest
-         * @description Request to test LLM configuration before saving.
-         */
-        LLMTestRequest: {
-            /**
-             * Provider
-             * @description LLM provider type
-             * @enum {string}
-             */
-            provider: "openai" | "anthropic" | "google";
-            /**
-             * Model
-             * @description Model identifier
-             */
-            model: string;
-            /**
-             * Api Key
-             * @description API key to test
-             */
-            api_key: string;
-            /**
-             * Endpoint
-             * @description Custom API endpoint URL
-             */
-            endpoint?: string | null;
-        };
-        /**
-         * LLMTestResponse
-         * @description Response from testing LLM connection.
-         */
-        LLMTestResponse: {
-            /** Success */
-            success: boolean;
-            /** Message */
-            message: string;
-            /** Models */
-            models?: components["schemas"]["LLMModelInfo"][] | null;
         };
         /**
          * LinkedAccountResponse
@@ -37240,7 +37336,7 @@ export interface operations {
             };
         };
     };
-    get_model_tiers_api_chat_model_tiers_get: {
+    get_model_profiles_api_chat_model_profiles_get: {
         parameters: {
             query?: never;
             header?: never;
@@ -37255,7 +37351,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ChatModelTiersResponse"];
+                    "application/json": components["schemas"]["ChatModelProfilesResponse"];
                 };
             };
         };
@@ -37651,77 +37747,6 @@ export interface operations {
             };
         };
     };
-    get_llm_config_api_admin_llm_config_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LLMConfigResponse"] | null;
-                };
-            };
-        };
-    };
-    set_llm_config_api_admin_llm_config_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LLMConfigRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LLMConfigResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    delete_llm_config_api_admin_llm_config_delete: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            204: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
     discover_model_capabilities_api_admin_llm_model_capabilities_post: {
         parameters: {
             query?: never;
@@ -37784,79 +37809,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    test_llm_connection_api_admin_llm_test_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["LLMTestRequest"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LLMTestResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    test_saved_llm_connection_api_admin_llm_test_saved_post: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LLMTestResponse"];
-                };
-            };
-        };
-    };
-    list_llm_models_api_admin_llm_models_get: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LLMModelsResponse"];
                 };
             };
         };
@@ -37973,6 +37925,505 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["EmbeddingTestResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_ai_behavior_api_admin_ai_behavior_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIBehaviorResponse"];
+                };
+            };
+        };
+    };
+    update_ai_behavior_api_admin_ai_behavior_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIBehaviorUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIBehaviorResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_provider_connections_api_admin_ai_connections_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIProviderConnectionResponse"][];
+                };
+            };
+        };
+    };
+    create_provider_connection_api_admin_ai_connections_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIProviderConnectionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIProviderConnectionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verify_provider_connection_api_admin_ai_connections_verify_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIProviderConnectionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIConnectionTestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_provider_connection_api_admin_ai_connections__connection_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_provider_connection_api_admin_ai_connections__connection_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIProviderConnectionUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIProviderConnectionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    test_provider_connection_api_admin_ai_connections__connection_id__test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIConnectionTestResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_provider_models_api_admin_ai_connections__connection_id__models_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                connection_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIModelsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_model_profiles_api_admin_ai_profiles_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIModelProfileResponse"][];
+                };
+            };
+        };
+    };
+    create_model_profile_api_admin_ai_profiles_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIModelProfileCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIModelProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    merge_model_profiles_api_admin_ai_profiles_merge_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIModelProfileMergeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIModelProfileMergeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_model_profile_api_admin_ai_profiles__profile_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_model_profile_api_admin_ai_profiles__profile_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIModelProfileUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIModelProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_model_assignments_api_admin_ai_assignments_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIModelAssignmentResponse"][];
+                };
+            };
+        };
+    };
+    set_model_assignment_api_admin_ai_assignments__assignment_key__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assignment_key: "primary" | "summarization" | "tuning" | "image_generation" | "video_generation" | "chat_default";
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AIModelAssignmentUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AIModelAssignmentResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_model_assignment_api_admin_ai_assignments__assignment_key__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assignment_key: "primary" | "summarization" | "tuning" | "image_generation" | "video_generation" | "chat_default";
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

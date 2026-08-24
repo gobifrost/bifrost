@@ -9,7 +9,7 @@
  *   - Behavior       — System prompt, Channels
  *   - Tools & Knowledge — Tools (system + workflow grouped), Delegated agents,
  *                      Knowledge sources
- *   - Model          — llm_model picker, llm_max_tokens, max_iterations,
+ *   - Model          — llm_profile_id picker, llm_max_tokens, max_iterations,
  *                      max_token_budget (platform admins only)
  *
  * Two modes:
@@ -31,11 +31,11 @@ import {
 } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { ModelProfileSelector } from "@/components/ai/ModelProfileSelector";
 import { SolutionManagedBanner } from "@/components/solutions/SolutionManagedBanner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Combobox } from "@/components/ui/combobox";
 import {
 	Command,
 	CommandEmpty,
@@ -84,7 +84,6 @@ import {
 	type AgentPublic,
 } from "@/hooks/useAgents";
 import { useKnowledgeNamespaces } from "@/hooks/useKnowledge";
-import { useLLMModels } from "@/hooks/useLLMConfig";
 import { useRoles } from "@/hooks/useRoles";
 import { useToolsGrouped } from "@/hooks/useTools";
 import { $api } from "@/lib/api-client";
@@ -134,7 +133,7 @@ const formSchema = z.object({
 	role_ids: z.array(z.string()),
 	knowledge_sources: z.array(z.string()),
 	mcp_connection_ids: z.array(z.string()),
-	llm_model: z.string().nullable(),
+	llm_profile_id: z.string().nullable(),
 	llm_max_tokens: z.number().min(1).max(200_000).nullable(),
 	max_iterations: z.number().min(1).max(200).nullable(),
 	max_token_budget: z.number().min(1000).max(1_000_000).nullable(),
@@ -189,8 +188,6 @@ export function AgentSettingsTab({
 	const { data: allAgents } = useAgents();
 	const { data: toolsGrouped } = useToolsGrouped({ include_inactive: true });
 	const { data: roles } = useRoles();
-	const { models: availableModels } = useLLMModels();
-
 	const [toolsOpen, setToolsOpen] = useState(false);
 	const [delegationsOpen, setDelegationsOpen] = useState(false);
 	const [rolesOpen, setRolesOpen] = useState(false);
@@ -204,7 +201,7 @@ export function AgentSettingsTab({
 				organization_id?: string | null;
 				system_tools?: string[];
 				mcp_connection_ids?: string[];
-				llm_model?: string | null;
+				llm_profile_id?: string | null;
 				llm_max_tokens?: number | null;
 				max_iterations?: number | null;
 				max_token_budget?: number | null;
@@ -225,7 +222,7 @@ export function AgentSettingsTab({
 				role_ids: a.role_ids ?? [],
 				knowledge_sources: a.knowledge_sources ?? [],
 				mcp_connection_ids: a.mcp_connection_ids ?? [],
-				llm_model: a.llm_model ?? null,
+				llm_profile_id: a.llm_profile_id ?? null,
 				llm_max_tokens: a.llm_max_tokens ?? null,
 				max_iterations: a.max_iterations ?? null,
 				max_token_budget: a.max_token_budget ?? null,
@@ -245,7 +242,7 @@ export function AgentSettingsTab({
 			role_ids: [],
 			knowledge_sources: [],
 			mcp_connection_ids: [],
-			llm_model: null,
+			llm_profile_id: null,
 			llm_max_tokens: null,
 			max_iterations: null,
 			max_token_budget: null,
@@ -345,7 +342,7 @@ export function AgentSettingsTab({
 			role_ids: values.role_ids,
 			knowledge_sources: values.knowledge_sources,
 			mcp_connection_ids: values.mcp_connection_ids,
-			llm_model: values.llm_model,
+			llm_profile_id: values.llm_profile_id,
 			...(isPlatformAdmin
 				? {
 						llm_max_tokens: values.llm_max_tokens,
@@ -1138,43 +1135,19 @@ export function AgentSettingsTab({
 				<FormSection title="Model" testId="model-section">
 					<FormField
 						control={form.control}
-						name="llm_model"
+						name="llm_profile_id"
 						render={({ field }) => (
 							<FormItem>
-								<FormLabel>Model</FormLabel>
-								<FormControl>
-									{availableModels.length > 0 ? (
-										<Combobox
-											value={field.value ?? "__default__"}
-											onValueChange={(v) =>
-												field.onChange(v === "__default__" ? null : v)
-											}
-											placeholder="Use platform default"
-											searchPlaceholder="Search models…"
-											emptyText="No models found."
-											options={[
-												{
-													value: "__default__",
-													label: "Use platform default",
-												},
-												...availableModels.map((m) => ({
-													value: m.id,
-													label: m.display_name,
-												})),
-											]}
-										/>
-									) : (
-										<Input
-											placeholder="Enter model identifier (leave empty for default)"
-											value={field.value ?? ""}
-											onChange={(e) =>
-												field.onChange(e.target.value || null)
-											}
-										/>
-									)}
-								</FormControl>
+								<ModelProfileSelector
+									id="agent-model-profile"
+									label="Model profile"
+									value={field.value}
+									onValueChange={field.onChange}
+									placeholder="Use primary profile assignment"
+									disabled={isSolutionManaged}
+								/>
 								<FormDescription>
-									Override the platform default for this agent only.
+									Choose a reusable model profile for this agent. Leave it unset to use the primary profile assignment.
 								</FormDescription>
 								<FormMessage />
 							</FormItem>

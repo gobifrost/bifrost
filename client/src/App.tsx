@@ -37,6 +37,7 @@ import {
 	agentDetailLoader,
 	applicationDetailLoader,
 } from "@/lib/detail-route-loaders";
+import { routeRevealKey as getRouteRevealKey } from "@/lib/route-reveal-key";
 
 // Lazy load all page components for code splitting
 const Dashboard = lazyWithReload(() =>
@@ -269,7 +270,7 @@ function AppFrame() {
 	// the wildcard portion changes so inline_v1 does not detach its stylesheet
 	// and standalone_v2 does not tear down its React root. Other platform routes
 	// retain the keyed reveal animation on every completed navigation.
-	const routeRevealKey = isAppRunnerRoute ? "app-runner" : location.key;
+	const routeRevealKey = getRouteRevealKey(location.pathname, location.key);
 	useEffect(() => {
 		if (isAppRunnerRoute) return;
 		document.title = applicationName;

@@ -10,155 +10,58 @@ Focus areas:
   and graceful None on errors.
 """
 
-import base64
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 
 import pytest
-from cryptography.fernet import Fernet
 
 from src.routers.llm_config import _list_embedding_models
-from src.services.embeddings.factory import (
-    EMBEDDING_CONFIG_CATEGORY,
-    EMBEDDING_CONFIG_KEY,
-    LLM_CONFIG_CATEGORY,
-    LLM_CONFIG_KEY,
-    get_embedding_config,
-)
-
-
-@pytest.fixture
-def mock_settings():
-    settings = MagicMock()
-    settings.secret_key = "test-secret-key-for-testing-must-be-32-chars"
-    return settings
-
-
-@pytest.fixture
-def fernet_instance(mock_settings):
-    key_bytes = mock_settings.secret_key.encode()[:32].ljust(32, b"0")
-    return Fernet(base64.urlsafe_b64encode(key_bytes))
-
-
-def _system_config_row(category: str, key: str, value_json: dict) -> MagicMock:
-    row = MagicMock()
-    row.id = uuid4()
-    row.category = category
-    row.key = key
-    row.value_json = value_json
-    row.organization_id = None
-    return row
-
-
-def _make_session(rows_in_order: list) -> AsyncMock:
-    """
-    Build an AsyncMock session whose .execute() returns successive results.
-
-    The factory queries: 1) embedding config, 2) LLM config (if it falls through).
-    Each entry in rows_in_order is the .scalars().first() return for one query.
-    """
-    session = AsyncMock()
-    results = []
-    for row in rows_in_order:
-        result = MagicMock()
-        result.scalars.return_value.first.return_value = row
-        results.append(result)
-    session.execute = AsyncMock(side_effect=results)
-    return session
+from src.services.ai_model_service import AIModelService
+from src.services.embeddings.factory import get_embedding_config
 
 
 class TestEndpointPropagation:
     """Endpoint must travel from stored config rows into EmbeddingConfig."""
 
     @pytest.mark.asyncio
-    async def test_dedicated_config_passes_endpoint_through(
-        self, mock_settings, fernet_instance
-    ):
-        encrypted_key = fernet_instance.encrypt(b"sk-or-test").decode()
-        embedding_row = _system_config_row(
-            EMBEDDING_CONFIG_CATEGORY,
-            EMBEDDING_CONFIG_KEY,
-            {
-                "model": "text-embedding-3-small",
-                "encrypted_api_key": encrypted_key,
-                "endpoint": "https://openrouter.ai/api/v1",
-            },
+    async def test_explicit_config_passes_endpoint_through(self, db_session):
+        service = AIModelService(db_session)
+        connection = await service.create_connection(
+            name="Embeddings Test",
+            provider="openai_compatible",
+            api_key="sk-or-test",
+            endpoint="https://openrouter.ai/api/v1",
         )
-        session = _make_session([embedding_row])
+        await service.set_embedding_config(
+            connection_id=connection.id,
+            model="openai/text-embedding-3-small",
+            dimensions=1536,
+        )
 
-        with patch("src.services.embeddings.factory.get_settings", return_value=mock_settings):
-            config = await get_embedding_config(session)
-
+        config = await get_embedding_config(db_session)
         assert config.endpoint == "https://openrouter.ai/api/v1"
         assert config.api_key == "sk-or-test"
 
     @pytest.mark.asyncio
-    async def test_llm_fallback_refuses_custom_endpoint(self, mock_settings, fernet_instance):
-        # No dedicated embedding row, LLM has a custom endpoint (OpenRouter).
-        # Fallback must REFUSE — `text-embedding-3-small` is not a valid
-        # model id on non-OpenAI endpoints, so silently using it would just
-        # break at first embed call.
-        encrypted_key = fernet_instance.encrypt(b"sk-or-llm").decode()
-        llm_row = _system_config_row(
-            LLM_CONFIG_CATEGORY,
-            LLM_CONFIG_KEY,
-            {
-                "provider": "openai",
-                "model": "deepseek/v4-flash",
-                "encrypted_api_key": encrypted_key,
-                "endpoint": "https://openrouter.ai/api/v1",
-            },
-        )
-        session = _make_session([None, llm_row])
-
-        with patch("src.services.embeddings.factory.get_settings", return_value=mock_settings):
-            with pytest.raises(ValueError, match="custom endpoint"):
-                await get_embedding_config(session)
+    async def test_missing_embedding_config_does_not_fallback_to_llm(self, db_session):
+        with pytest.raises(ValueError, match="No embedding configuration"):
+            await get_embedding_config(db_session)
 
     @pytest.mark.asyncio
-    async def test_llm_fallback_with_no_endpoint_returns_none(
-        self, mock_settings, fernet_instance
-    ):
-        # LLM row exists but has no endpoint — config.endpoint must be None
-        # so the embedding client uses the OpenAI default.
-        encrypted_key = fernet_instance.encrypt(b"sk-openai").decode()
-        llm_row = _system_config_row(
-            LLM_CONFIG_CATEGORY,
-            LLM_CONFIG_KEY,
-            {
-                "provider": "openai",
-                "model": "gpt-4o",
-                "encrypted_api_key": encrypted_key,
-            },
+    async def test_stock_openai_connection_returns_default_endpoint_none(self, db_session):
+        service = AIModelService(db_session)
+        connection = await service.create_connection(
+            name="OpenAI Embeddings",
+            provider="openai",
+            api_key="sk-openai",
+            endpoint=None,
         )
-        session = _make_session([None, llm_row])
-
-        with patch("src.services.embeddings.factory.get_settings", return_value=mock_settings):
-            config = await get_embedding_config(session)
-
-        assert config.endpoint is None
-
-    @pytest.mark.asyncio
-    async def test_dedicated_config_without_endpoint_returns_none(
-        self, mock_settings, fernet_instance
-    ):
-        # Existing rows pre-migration won't have an `endpoint` key. They must
-        # surface as None (so the client uses the OpenAI default).
-        encrypted_key = fernet_instance.encrypt(b"sk-existing").decode()
-        embedding_row = _system_config_row(
-            EMBEDDING_CONFIG_CATEGORY,
-            EMBEDDING_CONFIG_KEY,
-            {
-                "model": "text-embedding-3-small",
-                "dimensions": 1536,
-                "encrypted_api_key": encrypted_key,
-            },
+        await service.set_embedding_config(
+            connection_id=connection.id,
+            model="text-embedding-3-small",
+            dimensions=1536,
         )
-        session = _make_session([embedding_row])
 
-        with patch("src.services.embeddings.factory.get_settings", return_value=mock_settings):
-            config = await get_embedding_config(session)
-
+        config = await get_embedding_config(db_session)
         assert config.endpoint is None
 
 

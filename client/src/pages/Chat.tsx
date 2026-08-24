@@ -10,7 +10,7 @@ import { useParams, Link } from "react-router-dom";
 import { Bot, Settings } from "lucide-react";
 import { ChatLayout } from "@/components/chat";
 import { useChatStore } from "@/stores/chatStore";
-import { useLLMConfig } from "@/hooks/useLLMConfig";
+import { useChatAvailability } from "@/hooks/useChatAvailability";
 import { Button } from "@/components/ui/button";
 import { PageLoader } from "@/components/PageLoader";
 
@@ -21,7 +21,7 @@ export function Chat() {
 		isConfigured,
 		isPlatformAdmin,
 		isLoading: configLoading,
-	} = useLLMConfig();
+	} = useChatAvailability();
 
 	// Set active conversation from URL param
 	useEffect(() => {
@@ -53,14 +53,14 @@ export function Chat() {
 							AI Chat Not Configured
 						</h1>
 						<p className="text-muted-foreground">
-							To enable AI chat, you need to configure an LLM
-							provider (OpenAI or Anthropic) with a valid API key.
+							To enable AI chat, add a provider connection and enable
+							at least one reusable model profile for Chat.
 						</p>
 					</div>
 					<Button asChild>
 						<Link to="/settings/ai">
 							<Settings className="h-4 w-4 mr-2" />
-							Configure AI Provider
+							Configure AI models
 						</Link>
 					</Button>
 				</div>

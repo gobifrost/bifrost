@@ -335,7 +335,7 @@ class ManifestAgent(EntityCodec, BaseModel):
     Import is INDEXER-ONLY (to_orm_values returns only indexer_content):
     - indexer_content: id, name (always), + description/system_prompt/channels/
       tool_ids/delegated_agent_ids/knowledge_sources/system_tools/mcp_connection_ids/
-      llm_model/llm_max_tokens (non-empty lists only, drop-none scalars) — fed to AgentIndexer.
+      llm_profile/llm_max_tokens (non-empty lists only, drop-none scalars) — fed to AgentIndexer.
     The importers resolve id/name/system_prompt on the metadata row and re-stamp
     access_level/max_iterations/max_token_budget (+ the max_run_timeout transport
     extra) directly AFTER the indexer; that direct-set + re-stamp is
@@ -380,7 +380,7 @@ class ManifestAgent(EntityCodec, BaseModel):
         # omits them (env-scoped grants deployed via _sync_agent_mcp_connections).
         **classify(FieldClass.REFERENCE, import_owner="indexer", install_view="drop"),
     )
-    llm_model: str | None = Field(default=None, description="Override LLM model (null = global default)", **classify(FieldClass.CONTENT, import_owner="indexer"))
+    llm_profile: str | None = Field(default=None, description="Model profile name (null = default profile assignment)", **classify(FieldClass.REFERENCE, import_owner="indexer"))
     llm_max_tokens: int | None = Field(default=None, description="Override LLM max tokens (null = global default)", **classify(FieldClass.CONTENT, import_owner="indexer"))
     # indexer-owned (carried in _agent_content_from_manifest / the AgentIndexer
     # YAML, per the spike's INDEXER_CONTENT_FIELDS); deploy/git-sync ALSO re-stamp
@@ -423,7 +423,7 @@ class ManifestAgent(EntityCodec, BaseModel):
             knowledge_sources=list(agent.knowledge_sources) if agent.knowledge_sources else [],
             system_tools=list(agent.system_tools) if agent.system_tools else [],
             mcp_connection_ids=[str(m) for m in (mcp_connection_ids or [])],
-            llm_model=agent.llm_model,
+            llm_profile=agent.llm_profile.name if getattr(agent, "llm_profile", None) else None,
             llm_max_tokens=agent.llm_max_tokens,
             max_iterations=agent.max_iterations,
             max_token_budget=agent.max_token_budget,
@@ -460,8 +460,8 @@ class ManifestAgent(EntityCodec, BaseModel):
             indexer["system_tools"] = list(self.system_tools)
         if self.mcp_connection_ids:
             indexer["mcp_connection_ids"] = list(self.mcp_connection_ids)
-        if self.llm_model is not None:
-            indexer["llm_model"] = self.llm_model
+        if self.llm_profile is not None:
+            indexer["llm_profile"] = self.llm_profile
         if self.llm_max_tokens is not None:
             indexer["llm_max_tokens"] = self.llm_max_tokens
         if self.max_iterations is not None:

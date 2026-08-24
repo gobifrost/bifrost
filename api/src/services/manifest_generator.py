@@ -16,6 +16,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from src.models.orm.agents import Agent, AgentDelegation, AgentRole, AgentTool
 from src.models.orm.app_roles import AppRole
@@ -299,7 +300,12 @@ async def generate_manifest(
 
     # Fetch all active agents (sorted by name)
     agent_result = await db.execute(
-        _scope(select(Agent).where(Agent.is_active == True), Agent).order_by(Agent.name)  # noqa: E712
+        _scope(
+            select(Agent)
+            .options(selectinload(Agent.llm_profile))
+            .where(Agent.is_active.is_(True)),
+            Agent,
+        ).order_by(Agent.name)
     )
     agents_list = agent_result.scalars().all()
 

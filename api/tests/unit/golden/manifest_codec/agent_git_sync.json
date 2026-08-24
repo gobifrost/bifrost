@@ -10,7 +10,7 @@
     "kb1"
   ],
   "llm_max_tokens": 4096,
-  "llm_model": "claude-sonnet-4-5",
+  "llm_profile": "<volatile>",
   "max_iterations": 10,
   "max_token_budget": 50000,
   "mcp_connection_ids": [

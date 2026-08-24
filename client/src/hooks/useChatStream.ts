@@ -17,7 +17,7 @@ import {
 } from "@/services/websocket";
 import { generateMessageId, type UnifiedMessage } from "@/lib/chat-utils";
 import type { AttachmentPublic } from "@/services/chatAttachments";
-import type { ChatModelTierId } from "@/services/chatModels";
+import type { ChatModelProfileId } from "@/services/chatModels";
 
 export interface PendingQuestion {
 	questions: AskUserQuestion[];
@@ -35,7 +35,7 @@ export interface UseChatStreamReturn {
 		message: string,
 		conversationIdOverride?: string,
 		attachments?: AttachmentPublic[],
-		modelTier?: ChatModelTierId,
+		modelProfileId?: ChatModelProfileId | null,
 	) => Promise<void>;
 	isConnected: boolean;
 	isStreaming: boolean;
@@ -621,7 +621,7 @@ export function useChatStream({
 			message: string,
 			conversationIdOverride?: string,
 			attachments: AttachmentPublic[] = [],
-			modelTier: ChatModelTierId = "balanced",
+			modelProfileId: ChatModelProfileId | null = null,
 		) => {
 			const targetConversationId =
 				conversationIdOverride ?? conversationId;
@@ -662,7 +662,7 @@ export function useChatStream({
 				message,
 				userMessageId,
 				attachments.map((attachment) => attachment.id),
-				modelTier,
+				modelProfileId,
 			);
 			if (!sent) {
 				try {
@@ -672,7 +672,7 @@ export function useChatStream({
 						message,
 						userMessageId,
 						attachments.map((attachment) => attachment.id),
-						modelTier,
+						modelProfileId,
 					);
 					if (!retried) throw new Error("WebSocket is not connected");
 				} catch (error) {

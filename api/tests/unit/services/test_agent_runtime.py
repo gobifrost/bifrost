@@ -205,6 +205,16 @@ def test_openrouter_runtime_uses_billing_identity_and_sticky_run_route() -> None
     }
 
 
+def test_runtime_uses_provider_output_defaults_except_when_api_requires_limit() -> None:
+    openai = LLMConfig(provider="openai", model="gpt-5", api_key="test-key")
+    anthropic = LLMConfig(provider="anthropic", model="claude-sonnet", api_key="test-key")
+
+    assert agent_model_settings(openai, max_tokens=None, session_id="run-123") == {}
+    assert agent_model_settings(anthropic, max_tokens=None, session_id="run-123") == {
+        "max_tokens": 16_384,
+    }
+
+
 def test_provider_reported_cost_is_preserved_exactly() -> None:
     response = ModelResponse(
         parts=[TextPart("done")],

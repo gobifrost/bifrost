@@ -188,6 +188,10 @@ class AutonomousAgentExecutor:
         self._caller_user_id = caller_user_id
         self._caller = dict(_caller) if _caller else None
 
+        async with self._session_factory() as db:
+            llm_config = await get_llm_config(db, profile_id=agent.llm_profile_id)
+        model_name = llm_config.model
+
         # Short-circuit if agent is paused. Runs already past this point continue
         # normally — this check only gates new runs at entry.
         if not agent.is_active:
@@ -198,7 +202,7 @@ class AutonomousAgentExecutor:
                 "status": "paused",
                 "accepted": False,
                 "message": f"Agent '{agent.name}' is paused. Request not processed.",
-                "llm_model": agent.llm_model,
+                "llm_model": model_name,
             }
 
         step_number = 0
@@ -229,7 +233,7 @@ class AutonomousAgentExecutor:
         self._active_usage = usage
         self._active_budget = budget
 
-        # Resolve tools and provider configuration in one short DB lease. No DB
+        # Resolve tools in one short DB lease. No DB
         # connection is held across model requests or tool execution.
         async with self._session_factory() as db:
             tool_definitions, self._tool_workflow_id_map = await resolve_agent_tools(
@@ -237,9 +241,6 @@ class AutonomousAgentExecutor:
                 db,
                 caller_user_id=caller_user_id,
             )
-            llm_config = await get_llm_config(db)
-
-        model_name = agent.llm_model or llm_config.model
         last_response_content = ""
 
         async def record_model_event(event: ModelCallEvent) -> None:
@@ -381,7 +382,7 @@ class AutonomousAgentExecutor:
             capabilities=build_runtime_capabilities(budget),
             model_settings=agent_model_settings(
                 llm_config,
-                max_tokens=agent.llm_max_tokens or llm_config.max_tokens,
+                max_tokens=agent.llm_max_tokens,
                 session_id=run_id,
             ),
             # One bounded correction for malformed tool names/arguments. The
@@ -861,6 +862,9 @@ class AutonomousAgentExecutor:
         cancellation: asyncio.CancelledError | None = None
         shared_usage = _shared_usage or self._active_usage
         shared_budget = _shared_budget or self._active_budget
+        target_profile_id = (
+            str(target_agent.llm_profile_id) if target_agent.llm_profile_id else None
+        )
         try:
             sub_result = await asyncio.wait_for(
                 sub_executor.run(
@@ -886,7 +890,7 @@ class AutonomousAgentExecutor:
                 "iterations_used": 0,
                 "tokens_used": 0,
                 "status": "timeout",
-                "llm_model": target_agent.llm_model,
+                "llm_profile_id": target_profile_id,
                 "error": (
                     f"Delegation to {target_agent.name} timed out after "
                     f"{DELEGATION_TIMEOUT_SECONDS}s"
@@ -899,7 +903,7 @@ class AutonomousAgentExecutor:
                 "iterations_used": 0,
                 "tokens_used": 0,
                 "status": "cancelled",
-                "llm_model": target_agent.llm_model,
+                "llm_profile_id": target_profile_id,
                 "error": f"Delegation to {target_agent.name} was cancelled",
             }
         except Exception as exc:
@@ -912,7 +916,7 @@ class AutonomousAgentExecutor:
                 "iterations_used": 0,
                 "tokens_used": 0,
                 "status": "failed",
-                "llm_model": target_agent.llm_model,
+                "llm_profile_id": target_profile_id,
                 "error": str(exc),
             }
 

@@ -12,14 +12,35 @@ from src.services.media_generation import (
     MediaProviderConfig,
     generate_image,
     generate_video_with_config,
+    get_media_provider_config,
     record_media_usage,
 )
+from src.services.ai_model_service import AIModelService
 
 
 PNG_1X1 = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
 MP4_BYTES = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
+
+
+async def _seed_media_assignment(db_session, *, assignment_key: str, provider: str, model: str, api_key: str):
+    service = AIModelService(db_session)
+    connection = await service.create_connection(
+        name=f"Media Connection {uuid4().hex[:8]}",
+        provider=provider,
+        api_key=api_key,
+        endpoint=None,
+    )
+    profile = await service.create_profile(
+        name=f"Media Profile {uuid4().hex[:8]}",
+        connection_id=connection.id,
+        model=model,
+        capabilities=None,
+        enabled_for_chat=False,
+    )
+    await service.set_assignment(assignment_key, profile.id)
+    return profile
 
 
 @pytest.mark.asyncio
@@ -63,6 +84,49 @@ async def test_generate_openrouter_image_returns_valid_artifact():
     assert artifact.input_tokens == 11
     assert artifact.output_tokens == 22
     assert artifact.provider_cost == Decimal("0.04")
+
+
+@pytest.mark.asyncio
+async def test_image_provider_config_uses_image_generation_assignment(db_session):
+    await _seed_media_assignment(
+        db_session,
+        assignment_key="image_generation",
+        provider="openrouter",
+        model="image/model",
+        api_key="image-key",
+    )
+
+    config = await get_media_provider_config(db_session, "image")
+
+    assert config.provider == "openai"
+    assert config.endpoint == "https://openrouter.ai/api/v1"
+    assert config.api_key == "image-key"
+    assert config.model == "image/model"
+    assert config.is_openrouter is True
+
+
+@pytest.mark.asyncio
+async def test_video_provider_config_requires_video_generation_assignment(db_session):
+    with pytest.raises(MediaGenerationError, match="Video generation is not configured"):
+        await get_media_provider_config(db_session, "video")
+
+
+@pytest.mark.asyncio
+async def test_video_provider_config_uses_video_generation_assignment(db_session):
+    await _seed_media_assignment(
+        db_session,
+        assignment_key="video_generation",
+        provider="openrouter",
+        model="video/model",
+        api_key="video-key",
+    )
+
+    config = await get_media_provider_config(db_session, "video")
+
+    assert config.endpoint == "https://openrouter.ai/api/v1"
+    assert config.api_key == "video-key"
+    assert config.model == "video/model"
+    assert config.is_openrouter is True
 
 
 @pytest.mark.asyncio

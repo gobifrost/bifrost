@@ -1,7 +1,7 @@
 """add per-job memory requirements and learned platform-job memory profiles
 
 Revision ID: 20260823_job_memory_profiles
-Revises: 20260816_artifact_workspace
+Revises: 20260822_ai_model_profiles
 """
 
 from collections.abc import Sequence
@@ -10,7 +10,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision: str = "20260823_job_memory_profiles"
-down_revision: str | Sequence[str] = "20260816_artifact_workspace"
+down_revision: str | Sequence[str] = "20260822_ai_model_profiles"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

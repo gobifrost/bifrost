@@ -85,7 +85,11 @@ async def _encode_input_files(
         if isinstance(item, AIInputFile):
             file_input = item
         else:
-            artifact = item if isinstance(item, ArtifactRef) else ArtifactRef.model_validate(item)
+            artifact = (
+                item
+                if isinstance(item, ArtifactRef)
+                else ArtifactRef.model_validate(item)
+            )
             data = await artifacts.read(artifact)
             file_input = AIInputFile(
                 filename=artifact.filename,
@@ -182,8 +186,7 @@ async def _inject_knowledge_context(
     # Find or create system message
     result = messages.copy()
     system_idx = next(
-        (i for i, m in enumerate(result) if m.get("role") == "system"),
-        None
+        (i for i, m in enumerate(result) if m.get("role") == "system"), None
     )
 
     if system_idx is not None:
@@ -191,14 +194,11 @@ async def _inject_knowledge_context(
         current = result[system_idx].get("content", "")
         result[system_idx] = {
             "role": "system",
-            "content": f"{current}\n\n{knowledge_context}"
+            "content": f"{current}\n\n{knowledge_context}",
         }
     else:
         # Prepend new system message
-        result.insert(0, {
-            "role": "system",
-            "content": knowledge_context
-        })
+        result.insert(0, {"role": "system", "content": knowledge_context})
 
     return result
 
@@ -223,21 +223,14 @@ def _build_structured_prompt(
 
     result = messages.copy()
     system_idx = next(
-        (i for i, m in enumerate(result) if m.get("role") == "system"),
-        None
+        (i for i, m in enumerate(result) if m.get("role") == "system"), None
     )
 
     if system_idx is not None:
         current = result[system_idx].get("content", "")
-        result[system_idx] = {
-            "role": "system",
-            "content": f"{current}{instruction}"
-        }
+        result[system_idx] = {"role": "system", "content": f"{current}{instruction}"}
     else:
-        result.insert(0, {
-            "role": "system",
-            "content": instruction
-        })
+        result.insert(0, {"role": "system", "content": instruction})
 
     return result
 
@@ -323,6 +316,7 @@ class ai:
         knowledge: list[str] | None = None,
         max_tokens: int | None = None,
         org_id: str | None = None,
+        profile: str | None = None,
         model: str | None = None,
         timeout: float | None = None,
         files: list[AIInputFile | ArtifactRef | dict[str, Any]] | None = None,
@@ -341,6 +335,7 @@ class ai:
             knowledge: List of knowledge namespace(s) to search for context
             max_tokens: Override default max tokens
             org_id: Organization scope for knowledge search
+            profile: Model profile name (defaults to the platform default profile)
             model: Override default model (must be compatible with configured provider)
             timeout: Override default HTTP timeout in seconds (default: 30s)
             files: Up to five binary inputs or portable ArtifactRef objects.
@@ -398,6 +393,7 @@ class ai:
                 "messages": msg_list,
                 "max_tokens": max_tokens,
                 "org_id": org_id,
+                "profile": profile,
                 "model": model,
                 "execution_id": execution_id,
                 "input_files": await _encode_input_files(files),
@@ -495,7 +491,7 @@ class ai:
                 "model": model,
                 "execution_id": execution_id,
                 "input_files": await _encode_input_files(files),
-            }
+            },
         ) as response:
             async for line in response.aiter_lines():
                 if not line or not line.startswith("data: "):

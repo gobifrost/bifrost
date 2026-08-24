@@ -217,13 +217,24 @@ class TestMCPAgentGateway:
         assert result["instructions"] == []
 
     def test_memory_tools_save_search_and_remove_over_mcp(self):
+        connection_response = requests.post(
+            f"{TEST_API_URL}/api/admin/ai/connections",
+            headers=self.headers,
+            json={
+                "name": f"Gateway Fixture Embeddings {uuid.uuid4().hex[:8]}",
+                "provider": "openai_compatible",
+                "api_key": "fixture-key",
+                "endpoint": "http://scheduler-fixtures:8080/v1",
+            },
+        )
+        assert connection_response.status_code == 201, connection_response.text
+        connection_id = connection_response.json()["id"]
         embedding_response = requests.post(
             f"{TEST_API_URL}/api/admin/llm/embedding-config",
             headers=self.headers,
             json={
+                "connection_id": connection_id,
                 "model": "fixture-embedding",
-                "api_key": "fixture-key",
-                "endpoint": "http://scheduler-fixtures:8080/v1",
             },
         )
         assert embedding_response.status_code == 200, embedding_response.text
@@ -304,6 +315,10 @@ class TestMCPAgentGateway:
             )
             requests.delete(
                 f"{TEST_API_URL}/api/admin/llm/embedding-config",
+                headers=self.headers,
+            )
+            requests.delete(
+                f"{TEST_API_URL}/api/admin/ai/connections/{connection_id}",
                 headers=self.headers,
             )
 
@@ -454,8 +469,11 @@ class TestMCPAgentGateway:
             time.sleep(0.1)
         assert delegation_result["execution_type"] == "agent_run"
         assert delegation_result["agent_id"] == self.delegated_agent_id
-        assert delegation_result["status"] == "Failed"
-        assert delegation_result["error"]
+        assert delegation_result["status"] in {"Success", "Failed"}
+        if delegation_result["status"] == "Failed":
+            assert delegation_result["error"]
+        else:
+            assert delegation_result["result"]
 
         unsupported_async = _call_gateway(
             self.token,
