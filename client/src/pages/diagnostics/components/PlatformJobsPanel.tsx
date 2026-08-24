@@ -39,7 +39,6 @@ import {
 	Pagination,
 	PaginationContent,
 	PaginationItem,
-	PaginationLink,
 	PaginationNext,
 	PaginationPrevious,
 } from "@/components/ui/pagination";
@@ -196,14 +195,15 @@ export function PlatformJobsPanel({
 	const [search, setSearch] = useState("");
 	const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 	const deferredSearch = useDeferredValue(search.trim());
+	const queryKey = [
+		"platform-jobs",
+		"scheduler-diagnostics",
+		page,
+		deferredSearch,
+		statusFilter,
+	] as const;
 	const query = useQuery({
-		queryKey: [
-			"platform-jobs",
-			"scheduler-diagnostics",
-			page,
-			deferredSearch,
-			statusFilter,
-		],
+		queryKey,
 		queryFn: ({ signal }) =>
 			getPlatformJobs({
 				activeOnly: statusFilter === "active",
@@ -218,6 +218,11 @@ export function PlatformJobsPanel({
 			}),
 		refetchOnWindowFocus: true,
 		staleTime: 30_000,
+		placeholderData: (previousData, previousQuery) =>
+			previousQuery?.queryKey[3] === deferredSearch &&
+			previousQuery.queryKey[4] === statusFilter
+				? previousData
+				: undefined,
 	});
 
 	useEffect(
@@ -238,6 +243,7 @@ export function PlatformJobsPanel({
 	const jobs = query.data?.jobs ?? [];
 	const total = query.data?.total ?? 0;
 	const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+	const displayedPage = Math.floor((query.data?.offset ?? 0) / PAGE_SIZE);
 	const hasFilters = statusFilter !== "all" || deferredSearch.length > 0;
 	const cancelMutation = useMutation({
 		mutationFn: cancelPlatformJob,
@@ -479,9 +485,12 @@ export function PlatformJobsPanel({
 									colSpan={2}
 									className="text-muted-foreground"
 								>
-									{page * PAGE_SIZE + 1}–
-									{Math.min((page + 1) * PAGE_SIZE, total)} of{" "}
-									{total}
+									{(query.data?.offset ?? 0) + 1}–
+									{Math.min(
+										(query.data?.offset ?? 0) + jobs.length,
+										total,
+									)}{" "}
+									of {total}
 								</DataTableCell>
 								<DataTableCell colSpan={2}>
 									<Pagination className="justify-end">
@@ -509,14 +518,16 @@ export function PlatformJobsPanel({
 													}
 												/>
 											</PaginationItem>
-											<PaginationItem>
-												<PaginationLink
-													isActive
-													aria-label={`Page ${page + 1}`}
-												>
-													{page + 1} of {totalPages}
-												</PaginationLink>
-											</PaginationItem>
+											<li
+												className="flex min-w-24 items-center justify-center gap-1.5 px-2 text-sm tabular-nums text-muted-foreground"
+												aria-live="polite"
+											>
+												{query.isPlaceholderData ? (
+													<Loader2 className="h-3.5 w-3.5 animate-spin" />
+												) : null}
+												Page {displayedPage + 1} of{" "}
+												{totalPages}
+											</li>
 											<PaginationItem>
 												<PaginationNext
 													onClick={(event) => {

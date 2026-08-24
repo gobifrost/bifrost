@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
@@ -142,13 +142,50 @@ describe("PlatformJobsPanel", () => {
 
 	it("pages and searches the full server-side job history", async () => {
 		const user = userEvent.setup();
-		mocks.getPlatformJobs.mockResolvedValue({
+		let resolveNextPage: (value: {
+			jobs: (typeof queuedJob)[];
+			total: number;
+			limit: number;
+			offset: number;
+		}) => void = () => undefined;
+		const firstPage = {
 			jobs: [queuedJob],
 			total: 26,
 			limit: 25,
 			offset: 0,
-		});
+		};
+		const secondPage = {
+			jobs: [
+				{
+					...queuedJob,
+					id: "10000000-0000-0000-0000-000000000002",
+					title: "Second page deploy",
+				},
+			],
+			total: 26,
+			limit: 25,
+			offset: 25,
+		};
+		mocks.getPlatformJobs
+			.mockResolvedValueOnce(firstPage)
+			.mockImplementationOnce(
+				() =>
+					new Promise((resolve) => {
+						resolveNextPage = resolve;
+					}),
+			)
+			.mockResolvedValue(firstPage);
 		renderPanel();
+
+		expect(await screen.findByText("Page 1 of 2")).toBeInTheDocument();
+		expect(
+			screen.queryByRole("link", { name: "Page 1" }),
+		).not.toBeInTheDocument();
+		const scrollContainer = screen
+			.getByRole("columnheader", { name: "Name" })
+			.closest("table")?.parentElement;
+		expect(scrollContainer).not.toBeNull();
+		if (scrollContainer) scrollContainer.scrollTop = 72;
 
 		await user.click(await screen.findByLabelText("Go to next page"));
 		await waitFor(() =>
@@ -156,8 +193,24 @@ describe("PlatformJobsPanel", () => {
 				expect.objectContaining({ offset: 25 }),
 			),
 		);
+		expect(screen.getByText("Solution deploy")).toBeInTheDocument();
+		expect(screen.getByText("Page 1 of 2")).toBeInTheDocument();
+		expect(
+			screen.getByRole("columnheader", { name: "Name" }).closest("table")
+				?.parentElement,
+		).toBe(scrollContainer);
+		expect(scrollContainer?.scrollTop).toBe(72);
 
-		await user.type(screen.getByLabelText("Search Platform Jobs"), "deploy");
+		await act(async () => resolveNextPage(secondPage));
+		expect(
+			await screen.findByText("Second page deploy"),
+		).toBeInTheDocument();
+		expect(screen.getByText("Page 2 of 2")).toBeInTheDocument();
+
+		await user.type(
+			screen.getByLabelText("Search Platform Jobs"),
+			"deploy",
+		);
 		await waitFor(() =>
 			expect(mocks.getPlatformJobs).toHaveBeenCalledWith(
 				expect.objectContaining({ offset: 0, search: "deploy" }),
