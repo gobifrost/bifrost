@@ -718,37 +718,10 @@ class MCPAgentGatewayService:
                 "result_page": None,
             }
 
-        from src.services.execution.agent_run_service import (
-            get_pending_agent_run_context,
+        raise GatewayError(
+            "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
+            "Execution not found or you do not have access.",
         )
-
-        pending_agent_run = await get_pending_agent_run_context(execution_id)
-        if pending_agent_run is None or (
-            not self.context.is_platform_admin
-            and pending_agent_run.get("caller", {}).get("user_id")
-            != str(self.context.user_id)
-        ):
-            raise GatewayError(
-                "EXECUTION_NOT_FOUND_OR_FORBIDDEN",
-                "Execution not found or you do not have access.",
-            )
-        return {
-            "execution_id": execution_id,
-            "execution_type": "agent_run",
-            "workflow_id": None,
-            "workflow_name": None,
-            "agent_id": pending_agent_run.get("agent_id"),
-            "agent_name": None,
-            "status": "Pending",
-            "created_at": None,
-            "started_at": None,
-            "completed_at": None,
-            "duration_ms": None,
-            "error": None,
-            "result_available": False,
-            "result": None,
-            "result_page": None,
-        }
 
     @staticmethod
     def _agent_run_gateway_status(status: str) -> str:

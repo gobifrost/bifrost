@@ -100,6 +100,17 @@ class AgentRunCreateRequest(BaseModel):
     timeout: int = 1800
 
 
+class AgentRunEnqueueRequest(BaseModel):
+    agent_name: str
+    input: dict | None = None
+    output_schema: dict | None = None
+
+
+class AgentRunEnqueueResponse(BaseModel):
+    run_id: UUID
+    status: Literal["queued"] = "queued"
+
+
 class AgentRunRerunResponse(BaseModel):
     run_id: UUID
 

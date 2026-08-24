@@ -29,6 +29,17 @@ DEFAULT_RUN_TIMEOUT = 1800  # 30 minutes
 CANCEL_CHECK_INTERVAL = 2  # seconds between cancel flag checks
 
 
+async def _publish_sync_result(run_id: str, result: dict) -> None:
+    """Release a synchronous caller waiting on this run."""
+    result_key = f"{REDIS_PREFIX}:{run_id}:result"
+    async with get_redis() as redis:
+        await redis.lpush(  # pyright: ignore[reportGeneralTypeIssues]
+            result_key,
+            json.dumps(result),
+        )
+        await redis.expire(result_key, 300)
+
+
 class AgentRunConsumer(BaseConsumer):
     def __init__(self):
         settings = get_settings()
@@ -53,26 +64,25 @@ class AgentRunConsumer(BaseConsumer):
 
         if not context_raw:
             logger.error(f"Agent run {run_id}: context not found in Redis")
+            async with self._session_factory() as db:
+                queued_run = await db.get(AgentRun, UUID(run_id))
+                if queued_run is not None and queued_run.status == "queued":
+                    queued_run.status = "failed"
+                    queued_run.error = "Agent run context was unavailable"
+                    queued_run.completed_at = datetime.now(timezone.utc)
+                    await db.commit()
+            if sync:
+                await _publish_sync_result(
+                    run_id,
+                    {
+                        "output": None,
+                        "status": "failed",
+                        "error": "Agent run context was unavailable",
+                    },
+                )
             return
 
         context = json.loads(context_raw)
-
-        # Pre-cancel check: if cancelled before worker picked it up, skip execution
-        if context.get("cancelled"):
-            logger.info(f"Agent run {run_id}: pre-cancelled, skipping execution")
-            async with self._session_factory() as db:
-                agent_run = AgentRun(
-                    id=UUID(run_id),
-                    agent_id=UUID(agent_id),
-                    trigger_type=trigger_type,
-                    status="cancelled",
-                    org_id=UUID(context["org_id"]) if context.get("org_id") else None,
-                    started_at=datetime.now(timezone.utc),
-                    completed_at=datetime.now(timezone.utc),
-                )
-                db.add(agent_run)
-                await db.commit()
-            return
 
         start_time = time.time()
         agent_run: AgentRun | None = None
@@ -80,8 +90,37 @@ class AgentRunConsumer(BaseConsumer):
         executor = None
 
         try:
-            # Load agent with relationships (brief DB session)
+            # Atomically claim the durable queued row and load the agent.
             async with self._session_factory() as db:
+                agent_run = await db.get(
+                    AgentRun,
+                    UUID(run_id),
+                    with_for_update=True,
+                )
+                if agent_run is None:
+                    logger.error(f"Agent run {run_id}: queued record not found")
+                    return
+                if agent_run.status != "queued":
+                    logger.info(
+                        "Agent run %s: skipping message for status %s",
+                        run_id,
+                        agent_run.status,
+                    )
+                    return
+                if context.get("cancelled"):
+                    logger.info(
+                        f"Agent run {run_id}: pre-cancelled, skipping execution"
+                    )
+                    agent_run.status = "cancelled"
+                    agent_run.completed_at = datetime.now(timezone.utc)
+                    await db.commit()
+                    if sync:
+                        await _publish_sync_result(
+                            run_id,
+                            {"output": None, "status": "cancelled", "error": None},
+                        )
+                    return
+
                 result = await db.execute(
                     select(Agent)
                     .options(
@@ -92,31 +131,27 @@ class AgentRunConsumer(BaseConsumer):
                     .where(Agent.id == UUID(agent_id))
                 )
                 agent = result.scalar_one_or_none()
+                if agent is None:
+                    logger.error(f"Agent run {run_id}: agent {agent_id} not found")
+                    agent_run.status = "failed"
+                    agent_run.error = "Agent no longer exists"
+                    agent_run.completed_at = datetime.now(timezone.utc)
+                    await db.commit()
+                    if sync:
+                        await _publish_sync_result(
+                            run_id,
+                            {
+                                "output": None,
+                                "status": "failed",
+                                "error": "Agent no longer exists",
+                            },
+                        )
+                    return
 
-            if not agent:
-                logger.error(f"Agent run {run_id}: agent {agent_id} not found")
-                return
-
-            # Create AgentRun record (brief DB session)
-            async with self._session_factory() as db:
-                agent_run = AgentRun(
-                    id=UUID(run_id),
-                    agent_id=agent.id,
-                    trigger_type=trigger_type,
-                    trigger_source=context.get("trigger_source"),
-                    event_delivery_id=UUID(context["event_delivery_id"]) if context.get("event_delivery_id") else None,
-                    input=context.get("input"),
-                    output_schema=context.get("output_schema"),
-                    status="running",
-                    org_id=UUID(context["org_id"]) if context.get("org_id") else None,
-                    caller_user_id=context["caller"].get("user_id") if context.get("caller") else None,
-                    caller_email=context["caller"].get("email") if context.get("caller") else None,
-                    caller_name=context["caller"].get("name") if context.get("caller") else None,
-                    budget_max_iterations=agent.max_iterations,
-                    budget_max_tokens=agent.max_token_budget,
-                    started_at=datetime.now(timezone.utc),
-                )
-                db.add(agent_run)
+                agent_run.status = "running"
+                agent_run.budget_max_iterations = agent.max_iterations
+                agent_run.budget_max_tokens = agent.max_token_budget
+                agent_run.started_at = datetime.now(timezone.utc)
                 await db.commit()
 
             await publish_agent_run_update(agent_run, agent.name)
@@ -250,18 +285,17 @@ class AgentRunConsumer(BaseConsumer):
 
             # If sync, push result for BLPOP waiter
             if sync:
-                result_key = f"{REDIS_PREFIX}:{run_id}:result"
-                async with get_redis() as r:
-                    # redis-py 7.x stubs type lpush as -> int, but it's async at runtime
-                    await r.lpush(result_key, json.dumps({  # pyright: ignore[reportGeneralTypeIssues]
+                await _publish_sync_result(
+                    run_id,
+                    {
                         "output": run_result.get("output"),
                         "status": run_result.get("status", "completed"),
                         "error": run_result.get("error"),
                         "iterations_used": run_result.get("iterations_used", 0),
                         "tokens_used": run_result.get("tokens_used", 0),
                         "llm_model": run_result.get("llm_model"),
-                    }))
-                    await r.expire(result_key, 300)
+                    },
+                )
 
         except Exception as e:
             logger.exception(f"Agent run {run_id} failed: {e}")
@@ -300,14 +334,14 @@ class AgentRunConsumer(BaseConsumer):
                     logger.debug(f"failed to publish agent_run failure update for {run_id}: {pub_err}")
 
             if sync:
-                result_key = f"{REDIS_PREFIX}:{run_id}:result"
-                async with get_redis() as r:
-                    await r.lpush(result_key, json.dumps({  # pyright: ignore[reportGeneralTypeIssues]
+                await _publish_sync_result(
+                    run_id,
+                    {
                         "output": None,
                         "status": "failed",
                         "error": str(e),
-                    }))
-                    await r.expire(result_key, 300)
+                    },
+                )
 
         finally:
             try:

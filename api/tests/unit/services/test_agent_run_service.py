@@ -1,26 +1,49 @@
 import json
-import logging
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
 
-from src.services.execution.agent_run_service import (
-    enqueue_agent_run,
-    get_pending_agent_run_context,
-)
+from src.services.execution import agent_run_service
+from src.services.execution.agent_run_service import enqueue_agent_run
+
+
+@pytest.fixture
+def db_session(monkeypatch):
+    session = AsyncMock()
+    session.add = MagicMock()
+    session_context = MagicMock()
+    session_context.__aenter__ = AsyncMock(return_value=session)
+    session_context.__aexit__ = AsyncMock(return_value=False)
+    session_factory = MagicMock(return_value=session_context)
+    monkeypatch.setattr(
+        agent_run_service,
+        "get_session_factory",
+        MagicMock(return_value=session_factory),
+    )
+    return session
+
+
+def _redis_context(mock_get_redis):
+    redis = AsyncMock()
+    context = MagicMock()
+    context.__aenter__ = AsyncMock(return_value=redis)
+    context.__aexit__ = AsyncMock(return_value=False)
+    mock_get_redis.return_value = context
+    return redis
 
 
 class TestEnqueueAgentRun:
     @pytest.mark.asyncio
     @patch("src.services.execution.agent_run_service.publish_message")
     @patch("src.services.execution.agent_run_service.get_redis")
-    async def test_enqueue_returns_run_id(self, mock_get_redis, mock_publish):
-        mock_redis = AsyncMock()
-        mock_ctx = AsyncMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=mock_redis)
-        mock_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_get_redis.return_value = mock_ctx
+    async def test_persists_queued_run_before_publish(
+        self, mock_get_redis, mock_publish, db_session
+    ):
+        _redis_context(mock_get_redis)
+        calls = []
+        db_session.commit.side_effect = lambda: calls.append("commit")
+        mock_publish.side_effect = lambda *_: calls.append("publish")
 
         run_id = await enqueue_agent_run(
             agent_id=str(uuid4()),
@@ -28,24 +51,22 @@ class TestEnqueueAgentRun:
             input_data={"ticket_id": 123},
         )
 
-        assert run_id is not None
-        mock_publish.assert_called_once()
-
-        # Verify queue name
-        call_args = mock_publish.call_args
-        assert call_args[0][0] == "agent-runs"
+        queued_run = db_session.add.call_args.args[0]
+        assert str(queued_run.id) == run_id
+        assert queued_run.status == "queued"
+        assert queued_run.input == {"ticket_id": 123}
+        assert calls == ["commit", "publish"]
+        assert mock_publish.call_args.args[0] == "agent-runs"
 
     @pytest.mark.asyncio
     @patch("src.services.execution.agent_run_service.publish_message")
     @patch("src.services.execution.agent_run_service.get_redis")
-    async def test_enqueue_stores_context_in_redis(self, mock_get_redis, mock_publish):
-        mock_redis = AsyncMock()
-        mock_ctx = AsyncMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=mock_redis)
-        mock_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_get_redis.return_value = mock_ctx
-
+    async def test_enqueue_stores_context_in_redis(
+        self, mock_get_redis, _mock_publish, db_session
+    ):
+        redis = _redis_context(mock_get_redis)
         org_id = str(uuid4())
+
         await enqueue_agent_run(
             agent_id=str(uuid4()),
             trigger_type="sdk",
@@ -55,21 +76,19 @@ class TestEnqueueAgentRun:
             caller_user_id=str(uuid4()),
         )
 
-        mock_redis.set.assert_called_once()
-        context = json.loads(mock_redis.set.call_args.args[1])
+        redis.set.assert_awaited_once()
+        context = json.loads(redis.set.call_args.args[1])
         assert context["caller"]["organization_id"] == org_id
 
     @pytest.mark.asyncio
     @patch("src.services.execution.agent_run_service.publish_message")
     @patch("src.services.execution.agent_run_service.get_redis")
-    async def test_enqueue_uses_provided_run_id(self, mock_get_redis, mock_publish):
-        mock_redis = AsyncMock()
-        mock_ctx = AsyncMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=mock_redis)
-        mock_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_get_redis.return_value = mock_ctx
-
+    async def test_enqueue_uses_provided_run_id(
+        self, mock_get_redis, _mock_publish, db_session
+    ):
+        _redis_context(mock_get_redis)
         expected_run_id = str(uuid4())
+
         run_id = await enqueue_agent_run(
             agent_id=str(uuid4()),
             trigger_type="sdk",
@@ -81,12 +100,10 @@ class TestEnqueueAgentRun:
     @pytest.mark.asyncio
     @patch("src.services.execution.agent_run_service.publish_message")
     @patch("src.services.execution.agent_run_service.get_redis")
-    async def test_enqueue_message_contains_sync_flag(self, mock_get_redis, mock_publish):
-        mock_redis = AsyncMock()
-        mock_ctx = AsyncMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=mock_redis)
-        mock_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_get_redis.return_value = mock_ctx
+    async def test_enqueue_message_contains_sync_flag(
+        self, mock_get_redis, mock_publish, db_session
+    ):
+        _redis_context(mock_get_redis)
 
         await enqueue_agent_run(
             agent_id=str(uuid4()),
@@ -94,53 +111,33 @@ class TestEnqueueAgentRun:
             sync=True,
         )
 
-        call_args = mock_publish.call_args
-        message = call_args[0][1]
-        assert message["sync"] is True
-
-
-class TestGetPendingAgentRunContext:
-    @pytest.mark.asyncio
-    @patch("src.services.execution.agent_run_service.get_redis")
-    async def test_returns_pending_context(self, mock_get_redis):
-        expected = {"agent_id": str(uuid4()), "caller": {"user_id": str(uuid4())}}
-        mock_redis = AsyncMock()
-        mock_redis.get.return_value = json.dumps(expected)
-        mock_ctx = AsyncMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=mock_redis)
-        mock_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_get_redis.return_value = mock_ctx
-
-        result = await get_pending_agent_run_context(str(uuid4()))
-
-        assert result == expected
+        assert mock_publish.call_args.args[1]["sync"] is True
 
     @pytest.mark.asyncio
+    @patch(
+        "src.services.execution.agent_run_service.publish_message",
+        new_callable=AsyncMock,
+    )
     @patch("src.services.execution.agent_run_service.get_redis")
-    async def test_returns_none_for_invalid_context(self, mock_get_redis):
-        mock_redis = AsyncMock()
-        mock_redis.get.return_value = "not-json"
-        mock_ctx = AsyncMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=mock_redis)
-        mock_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_get_redis.return_value = mock_ctx
+    async def test_publish_failure_marks_durable_run_failed(
+        self, mock_get_redis, mock_publish, db_session
+    ):
+        redis = _redis_context(mock_get_redis)
+        mock_publish.side_effect = RuntimeError("queue unavailable")
 
-        result = await get_pending_agent_run_context(str(uuid4()))
+        async def get_added_run(*_args, **_kwargs):
+            return db_session.add.call_args.args[0]
 
-        assert result is None
+        db_session.get.side_effect = get_added_run
 
-    @pytest.mark.asyncio
-    @patch("src.services.execution.agent_run_service.get_redis")
-    async def test_invalid_context_sanitizes_run_id_in_warning(self, mock_get_redis, caplog):
-        mock_redis = AsyncMock()
-        mock_redis.get.return_value = "not-json"
-        mock_ctx = AsyncMock()
-        mock_ctx.__aenter__ = AsyncMock(return_value=mock_redis)
-        mock_ctx.__aexit__ = AsyncMock(return_value=False)
-        mock_get_redis.return_value = mock_ctx
+        with pytest.raises(RuntimeError, match="queue unavailable"):
+            await enqueue_agent_run(
+                agent_id=str(uuid4()),
+                trigger_type="sdk",
+            )
 
-        with caplog.at_level(logging.WARNING):
-            result = await get_pending_agent_run_context("bad\nforged")
-
-        assert result is None
-        assert caplog.messages == ["Invalid pending agent-run context for bad\\nforged"]
+        failed_run = db_session.add.call_args.args[0]
+        assert failed_run.status == "failed"
+        assert failed_run.error == "Agent run could not be queued"
+        assert failed_run.completed_at is not None
+        redis.delete.assert_awaited_once()

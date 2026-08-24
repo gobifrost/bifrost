@@ -10,7 +10,7 @@ All SDK types are defined here and used consistently across:
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class Organization(BaseModel):
@@ -134,6 +134,49 @@ class WorkflowExecution(BaseModel):
     peak_memory_bytes: int | None
     process_rss_bytes: int | None
     cpu_total_seconds: float | None
+
+
+class AgentRunHandle(BaseModel):
+    """Accepted non-blocking agent run."""
+
+    run_id: str
+    status: Literal["queued"] = "queued"
+
+
+class AgentRun(BaseModel):
+    """Agent run status and result."""
+
+    id: str
+    agent_id: str
+    agent_name: str | None = None
+    trigger_type: str
+    trigger_source: str | None = None
+    conversation_id: str | None = None
+    event_delivery_id: str | None = None
+    input: dict | None = None
+    output: dict | None = None
+    status: str
+    error: str | None = None
+    org_id: str | None = None
+    caller_user_id: str | None = None
+    caller_email: str | None = None
+    caller_name: str | None = None
+    iterations_used: int = 0
+    tokens_used: int = 0
+    budget_max_iterations: int | None = None
+    budget_max_tokens: int | None = None
+    duration_ms: int | None = None
+    llm_model: str | None = None
+    asked: str | None = None
+    did: str | None = None
+    answered: str | None = None
+    metadata: dict[str, str] = Field(default_factory=dict)
+    confidence: float | None = None
+    confidence_reason: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    parent_run_id: str | None = None
 
 
 class IntegrationData(BaseModel):

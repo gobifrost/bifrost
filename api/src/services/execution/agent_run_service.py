@@ -1,13 +1,16 @@
 """Agent run enqueue and result waiting."""
 import json
 import logging
-from uuid import uuid4
+from datetime import datetime, timezone
+from uuid import UUID, uuid4
 
 import redis.asyncio as aioredis
 
 from src.core.cache.redis_client import get_redis
+from src.core.database import get_session_factory
 from src.core.log_safety import log_safe
 from src.jobs.rabbitmq import publish_message
+from src.models.orm.agent_runs import AgentRun
 
 logger = logging.getLogger(__name__)
 
@@ -30,9 +33,38 @@ async def enqueue_agent_run(
     sync: bool = False,
     run_id: str | None = None,
 ) -> str:
-    """Enqueue an agent run for worker processing. Returns run_id."""
+    """Persist and enqueue an agent run for worker processing.
+
+    The database row is committed before the queue message is published so a
+    returned run ID is immediately queryable. If Redis or RabbitMQ rejects the
+    enqueue operation, the durable row is marked failed and the exception is
+    propagated to the caller.
+    """
     if run_id is None:
         run_id = str(uuid4())
+
+    run_uuid = UUID(run_id)
+    session_factory = get_session_factory()
+    async with session_factory() as db:
+        db.add(
+            AgentRun(
+                id=run_uuid,
+                agent_id=UUID(agent_id),
+                trigger_type=trigger_type,
+                trigger_source=trigger_source,
+                event_delivery_id=(
+                    UUID(event_delivery_id) if event_delivery_id else None
+                ),
+                input=input_data,
+                output_schema=output_schema,
+                status="queued",
+                org_id=UUID(org_id) if org_id else None,
+                caller_user_id=caller_user_id,
+                caller_email=caller_email,
+                caller_name=caller_name,
+            )
+        )
+        await db.commit()
 
     context = {
         "run_id": run_id,
@@ -53,37 +85,41 @@ async def enqueue_agent_run(
         "cancelled": False,
     }
 
-    # Store full context in Redis
     redis_key = f"{REDIS_PREFIX}:{run_id}:context"
-    async with get_redis() as redis:
-        await redis.set(redis_key, json.dumps(context), ex=3600)
+    try:
+        # Store full context in Redis, then publish a lightweight queue message.
+        async with get_redis() as redis:
+            await redis.set(redis_key, json.dumps(context), ex=3600)
 
-    # Publish lightweight message to queue
-    message = {
-        "run_id": run_id,
-        "agent_id": agent_id,
-        "trigger_type": trigger_type,
-        "sync": sync,
-    }
-    await publish_message(QUEUE_NAME, message)
+        message = {
+            "run_id": run_id,
+            "agent_id": agent_id,
+            "trigger_type": trigger_type,
+            "sync": sync,
+        }
+        await publish_message(QUEUE_NAME, message)
+    except Exception:
+        logger.exception("Failed to enqueue agent run %s", log_safe(run_id))
+        async with session_factory() as db:
+            queued_run = await db.get(AgentRun, run_uuid)
+            if queued_run is not None and queued_run.status == "queued":
+                queued_run.status = "failed"
+                queued_run.error = "Agent run could not be queued"
+                queued_run.completed_at = datetime.now(timezone.utc)
+                await db.commit()
+        try:
+            async with get_redis() as redis:
+                await redis.delete(redis_key)
+        except Exception as cleanup_error:
+            logger.debug(
+                "Failed to clean up enqueue context for %s: %s",
+                log_safe(run_id),
+                log_safe(cleanup_error),
+            )
+        raise
 
     logger.info(f"Enqueued agent run {run_id} for agent {agent_id} (trigger={trigger_type})")
     return run_id
-
-
-async def get_pending_agent_run_context(run_id: str) -> dict | None:
-    """Return the short-lived enqueue context before its AgentRun row exists."""
-    redis_key = f"{REDIS_PREFIX}:{run_id}:context"
-    async with get_redis() as redis:
-        raw_context = await redis.get(redis_key)
-    if raw_context is None:
-        return None
-    try:
-        context = json.loads(raw_context)
-    except (TypeError, json.JSONDecodeError):
-        logger.warning("Invalid pending agent-run context for %s", log_safe(run_id))
-        return None
-    return context if isinstance(context, dict) else None
 
 
 async def wait_for_agent_run_result(run_id: str, timeout: int = 1800) -> dict | None:

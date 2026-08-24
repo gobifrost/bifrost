@@ -44,6 +44,7 @@
 | GET | `/api/agent-runs/backfill-jobs/{job_id}` |
 | POST | `/api/agent-runs/backfill-jobs/{job_id}/cancel` |
 | POST | `/api/agent-runs/backfill-summaries` |
+| POST | `/api/agent-runs/enqueue` |
 | POST | `/api/agent-runs/execute` |
 | GET | `/api/agent-runs/metadata-keys` |
 | GET | `/api/agent-runs/metadata-values` |

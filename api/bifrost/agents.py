@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from .client import get_client, raise_for_status_with_detail
+from .models import AgentRun, AgentRunHandle
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,46 @@ class AgentPausedError(Exception):
 
 class agents:
     """Agent execution operations."""
+
+    @staticmethod
+    async def enqueue(
+        agent_name: str,
+        input: dict[str, Any] | None = None,
+        *,
+        output_schema: dict[str, Any] | None = None,
+    ) -> AgentRunHandle:
+        """Queue an agent and return as soon as the run is accepted."""
+        client = get_client()
+        response = await client.post(
+            "/api/agent-runs/enqueue",
+            json={
+                "agent_name": agent_name,
+                "input": input or {},
+                "output_schema": output_schema,
+            },
+        )
+        raise_for_status_with_detail(response)
+        data = response.json()
+
+        if isinstance(data, dict) and data.get("status") == "paused":
+            raise AgentPausedError(
+                data.get("message") or f"Agent '{agent_name}' is paused.",
+                agent_id=data.get("agent_id"),
+            )
+
+        return AgentRunHandle.model_validate(data)
+
+    @staticmethod
+    async def get_run(run_id: str) -> AgentRun:
+        """Get the current status and result for an agent run."""
+        client = get_client()
+        response = await client.get(f"/api/agent-runs/{run_id}")
+        if response.status_code == 404:
+            raise ValueError(f"Agent run not found: {run_id}")
+        if response.status_code == 403:
+            raise PermissionError(f"Access denied to agent run: {run_id}")
+        raise_for_status_with_detail(response)
+        return AgentRun.model_validate(response.json())
 
     @staticmethod
     async def run(

@@ -10,8 +10,8 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import desc, func, literal_column, or_, select
+from fastapi import APIRouter, HTTPException, Query, Response, status
+from sqlalchemy import desc, func, literal_column, or_, select, update
 from sqlalchemy.orm import joinedload, selectinload
 
 from src.core.auth import CurrentActiveUser
@@ -28,6 +28,8 @@ from src.models.contracts.agent_runs import (
     AgentRunCreateRequest,
     AgentRunChildResponse,
     AgentRunDetailResponse,
+    AgentRunEnqueueRequest,
+    AgentRunEnqueueResponse,
     AgentRunListResponse,
     AgentRunRerunResponse,
     AgentRunResponse,
@@ -39,6 +41,7 @@ from src.models.contracts.agent_runs import (
     DryRunResponse,
     MetadataKeysResponse,
     MetadataValuesResponse,
+    PausedResponse,
     SummaryBackfillJobListResponse,
     SummaryBackfillJobResponse,
     VerdictRequest,
@@ -67,6 +70,36 @@ from src.services.execution.tuning_service import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agent-runs", tags=["Agent Runs"])
+
+
+async def _get_executable_agent(
+    db: DbSession,
+    agent_name: str,
+) -> Agent:
+    """Resolve an agent and enforce solution execution availability."""
+    result = await db.execute(select(Agent).where(Agent.name.ilike(agent_name)))
+    agent = result.scalar_one_or_none()
+
+    if agent is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Agent '{agent_name}' not found",
+        )
+
+    if agent.solution_id is not None:
+        sol_result = await db.execute(
+            select(Solution.status).where(Solution.id == agent.solution_id)
+        )
+        if sol_result.scalar_one_or_none() != "active":
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"Agent '{agent.name}' belongs to an inactive solution. "
+                    "Reinstall the solution to execute this agent."
+                ),
+            )
+
+    return agent
 
 
 def _run_to_response(run: AgentRun) -> AgentRunResponse:
@@ -707,23 +740,38 @@ async def cancel_agent_run(
     redis_client = get_redis_client()
 
     if agent_run.status == "queued":
-        # Not yet picked up by worker — cancel directly
-        agent_run.status = "cancelled"
-        agent_run.completed_at = datetime.now(timezone.utc)
-        await db.commit()
+        # Claim cancellation only while the run is still queued. If the worker
+        # wins this transition, refresh and continue through running cancel.
+        cancelled_at = datetime.now(timezone.utc)
+        cancel_result = await db.execute(
+            update(AgentRun)
+            .where(AgentRun.id == run_id, AgentRun.status == "queued")
+            .values(status="cancelled", completed_at=cancelled_at)
+            .returning(AgentRun.id)
+        )
+        if cancel_result.scalar_one_or_none() is None:
+            await db.refresh(agent_run)
+        else:
+            await db.commit()
 
-        # Also mark the Redis context so worker skips if it picks up concurrently
-        from src.core.cache.redis_client import get_redis
-        redis_key = f"bifrost:agent_run:{run_id}:context"
-        async with get_redis() as r:
-            context_raw = await r.get(redis_key)
-            if context_raw:
-                ctx = json.loads(context_raw)
-                ctx["cancelled"] = True
-                ttl = await r.ttl(redis_key)
-                await r.set(redis_key, json.dumps(ctx), ex=max(ttl, 60))
+            # Also mark the Redis context so a worker holding the message skips it.
+            from src.core.cache.redis_client import get_redis
+            redis_key = f"bifrost:agent_run:{run_id}:context"
+            async with get_redis() as r:
+                context_raw = await r.get(redis_key)
+                if context_raw:
+                    ctx = json.loads(context_raw)
+                    ctx["cancelled"] = True
+                    ttl = await r.ttl(redis_key)
+                    await r.set(redis_key, json.dumps(ctx), ex=max(ttl, 60))
 
-        return {"run_id": str(run_id), "status": "cancelled"}
+            return {"run_id": str(run_id), "status": "cancelled"}
+
+    if agent_run.status in TERMINAL_STATUSES:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot cancel agent run with status '{agent_run.status}'",
+        )
 
     # Running — set to cancelling and signal via Redis
     agent_run.status = "cancelling"
@@ -996,6 +1044,41 @@ async def dry_run_agent_run(
     )
 
 
+@router.post(
+    "/enqueue",
+    status_code=status.HTTP_202_ACCEPTED,
+    response_model=AgentRunEnqueueResponse | PausedResponse,
+)
+async def enqueue_agent_run_request(
+    request: AgentRunEnqueueRequest,
+    response: Response,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> AgentRunEnqueueResponse | PausedResponse:
+    """Queue an agent run and return without waiting for execution."""
+    agent = await _get_executable_agent(db, request.agent_name)
+
+    if not agent.is_active:
+        response.status_code = status.HTTP_200_OK
+        return PausedResponse(
+            message=f"Agent '{agent.name}' is paused. Request not processed.",
+            agent_id=agent.id,
+        )
+
+    run_id = await enqueue_agent_run(
+        agent_id=str(agent.id),
+        trigger_type="api",
+        input_data=request.input,
+        output_schema=request.output_schema,
+        org_id=str(user.organization_id) if user.organization_id else None,
+        caller_user_id=str(user.user_id),
+        caller_email=user.email,
+        caller_name=getattr(user, "name", None),
+        sync=False,
+    )
+    return AgentRunEnqueueResponse(run_id=UUID(run_id))
+
+
 @router.post("/execute")
 async def execute_agent_run(
     request: AgentRunCreateRequest,
@@ -1003,17 +1086,7 @@ async def execute_agent_run(
     user: CurrentActiveUser,
 ) -> dict:
     """Execute an agent synchronously via the SDK."""
-    # Look up agent by name (case-insensitive)
-    result = await db.execute(
-        select(Agent).where(Agent.name.ilike(request.agent_name))
-    )
-    agent = result.scalar_one_or_none()
-
-    if not agent:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Agent '{request.agent_name}' not found",
-        )
+    agent = await _get_executable_agent(db, request.agent_name)
 
     # Paused agents short-circuit gracefully — HTTP 200 with structured body.
     # Downstream consumers (webhook senders, SDK) discriminate on status="paused".
@@ -1024,22 +1097,6 @@ async def execute_agent_run(
             "message": f"Agent '{agent.name}' is paused. Request not processed.",
             "agent_id": str(agent.id),
         }
-
-    # Inactive-solution gate: an agent belonging to an inactive solution must not
-    # execute (mirrors the worker-side gate in get_workflow_for_execution).
-    if agent.solution_id is not None:
-        sol_result = await db.execute(
-            select(Solution.status).where(Solution.id == agent.solution_id)
-        )
-        sol_status = sol_result.scalar_one_or_none()
-        if sol_status != "active":
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=(
-                    f"Agent '{agent.name}' belongs to an inactive solution. "
-                    "Reinstall the solution to execute this agent."
-                ),
-            )
 
     # Enqueue the agent run for sync execution
     run_id = await enqueue_agent_run(

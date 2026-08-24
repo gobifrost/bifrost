@@ -58,6 +58,19 @@ async def paused_agent(e2e_client, platform_admin) -> AsyncGenerator[dict, None]
 
 
 class TestPauseSemantics:
+    async def test_enqueue_paused_agent_returns_200_with_paused_body(
+        self, e2e_client, platform_admin, paused_agent
+    ):
+        res = e2e_client.post(
+            "/api/agent-runs/enqueue",
+            json={"agent_name": paused_agent["name"], "input": {}},
+            headers=platform_admin.headers,
+        )
+
+        assert res.status_code == 200, res.text
+        assert res.json()["status"] == "paused"
+        assert res.json()["accepted"] is False
+
     async def test_execute_paused_agent_returns_200_with_paused_body(
         self, e2e_client, platform_admin, paused_agent
     ):

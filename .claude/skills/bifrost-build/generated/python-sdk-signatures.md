@@ -6,6 +6,12 @@
 
 Agent execution operations.
 
+**`agents.enqueue(agent_name: str, input: dict[str, Any] | None = None, output_schema: dict[str, Any] | None = None) -> AgentRunHandle`**
+  Queue an agent and return as soon as the run is accepted.
+
+**`agents.get_run(run_id: str) -> AgentRun`**
+  Get the current status and result for an agent run.
+
 **`agents.run(agent_name: str, input: dict[str, Any] | None = None, output_schema: dict[str, Any] | None = None, timeout: int = 1800) -> dict[str, Any] | str`**
   Run an agent and wait for the result.
 

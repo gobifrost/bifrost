@@ -90,7 +90,7 @@ Treat event payloads as a versioned contract. Topic-triggered execution context 
 
 ### `agents`
 
-Use `agents.run()` when workflow orchestration needs a configured Bifrost agent. The result may be structured data or text according to the agent contract. Set bounded timeouts and do not recursively delegate without a stopping condition.
+Use `agents.run()` when workflow orchestration needs to wait for a configured Bifrost agent. The result may be structured data or text according to the agent contract. Use `agents.enqueue()` to return immediately with a run ID, then call `agents.get_run()` when you need its current status or result. Set bounded timeouts for synchronous runs and do not recursively delegate without a stopping condition.
 
 ### `ai`
 

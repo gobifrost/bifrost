@@ -750,7 +750,7 @@ class EventProcessor:
             event_delivery_id=str(delivery.id),
         )
 
-        # agent_run_id will be set by the consumer after creating the AgentRun record
+        delivery.agent_run_id = uuid.UUID(run_id)
 
         logger.info(
             "Queued agent run for event delivery",

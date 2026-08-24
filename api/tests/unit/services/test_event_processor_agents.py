@@ -169,11 +169,12 @@ async def test_queue_agent_run_calls_enqueue():
 
     delivery = _make_delivery(target_type="agent", agent=agent)
     event = _make_event(data={"ticket_id": "456", "priority": "high"})
+    run_id = uuid.uuid4()
 
     with patch(
         "src.services.execution.agent_run_service.enqueue_agent_run",
         new_callable=AsyncMock,
-        return_value="run-abc-123",
+        return_value=str(run_id),
     ) as mock_enqueue:
         await processor._queue_agent_run(delivery, event)
 
@@ -185,6 +186,7 @@ async def test_queue_agent_run_calls_enqueue():
         assert "event:" in call_kwargs["trigger_source"]
         assert call_kwargs["org_id"] == str(agent.organization_id)
         assert call_kwargs["event_delivery_id"] == str(delivery.id)
+        assert delivery.agent_run_id == run_id
 
         # Verify input_data includes event data and _event context
         input_data = call_kwargs["input_data"]

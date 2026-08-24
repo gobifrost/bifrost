@@ -360,36 +360,36 @@ async def test_get_execution_hides_another_users_redis_only_receipt():
 
 
 @pytest.mark.asyncio
-async def test_get_execution_returns_owned_pending_agent_run_receipt():
+async def test_get_execution_returns_owned_queued_agent_run():
     context = _context()
     service = MCPAgentGatewayService(context)
-    execution_id = str(uuid4())
+    execution_id = uuid4()
+    workflow_result = MagicMock()
+    workflow_result.scalar_one_or_none.return_value = None
+    agent_run_result = MagicMock()
+    agent_run = MagicMock()
+    agent_run.id = execution_id
+    agent_run.agent_id = uuid4()
+    agent_run.agent.name = "Queued Agent"
+    agent_run.caller_user_id = str(context.user_id)
+    agent_run.status = "queued"
+    agent_run.output = None
+    agent_run.created_at = None
+    agent_run.started_at = None
+    agent_run.completed_at = None
+    agent_run.duration_ms = None
+    agent_run.error = None
+    agent_run_result.scalar_one_or_none.return_value = agent_run
     db = AsyncMock()
-    missing = MagicMock()
-    missing.scalar_one_or_none.return_value = None
-    db.execute.return_value = missing
+    db.execute.side_effect = [workflow_result, agent_run_result]
     db_context = MagicMock()
     db_context.__aenter__ = AsyncMock(return_value=db)
     db_context.__aexit__ = AsyncMock(return_value=None)
-    redis = MagicMock()
-    redis.get_pending_execution = AsyncMock(return_value=None)
 
-    with (
-        patch("src.core.database.get_db_context", return_value=db_context),
-        patch("src.core.redis_client.get_redis_client", return_value=redis),
-        patch(
-            "src.services.execution.agent_run_service.get_pending_agent_run_context",
-            new=AsyncMock(
-                return_value={
-                    "agent_id": str(uuid4()),
-                    "caller": {"user_id": str(context.user_id)},
-                }
-            ),
-        ),
-    ):
-        result = await service.get_execution(execution_id)
+    with patch("src.core.database.get_db_context", return_value=db_context):
+        result = await service.get_execution(str(execution_id))
 
-    assert result["execution_id"] == execution_id
+    assert result["execution_id"] == str(execution_id)
     assert result["execution_type"] == "agent_run"
     assert result["status"] == "Pending"
     assert result["result_available"] is False
