@@ -225,7 +225,11 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     #
     # SDK AI completion requests gained optional `profile` (2026-08-23).
     # ADDITIVE: older SDKs omit it and continue using the Primary assignment.
-    "e778c8be971f09d27e2600a19c152726f0b64b2c0d0785a86853aaef2da711b5"
+    #
+    # AI model assignments gained `builder` (2026-08-24). ADDITIVE: older
+    # clients ignore the new assignment while Builder reuses the shared model
+    # profile contract.
+    "8d791de997a7efa9e9358a80f13ba9b64b49b1848a9866745de26ee800bdf5d0"
 )
 
 

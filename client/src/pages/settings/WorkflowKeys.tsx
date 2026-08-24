@@ -62,7 +62,11 @@ interface CreateFormData {
 	isGlobal: boolean;
 }
 
-export function WorkflowKeys() {
+interface WorkflowKeysProps {
+	canWrite?: boolean;
+}
+
+export function WorkflowKeys({ canWrite = true }: WorkflowKeysProps) {
 	const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 	const [isRevokeDialogOpen, setIsRevokeDialogOpen] = useState(false);
 	const [isKeyDisplayDialogOpen, setIsKeyDisplayDialogOpen] = useState(false);
@@ -166,6 +170,7 @@ export function WorkflowKeys() {
 	}, [formData]);
 
 	const handleCreate = () => {
+		if (!canWrite) return;
 		setFormData({
 			workflowId: "",
 			expiresInDays: "90",
@@ -176,6 +181,7 @@ export function WorkflowKeys() {
 	};
 
 	const handleRevoke = (key: WorkflowKeyResponse) => {
+		if (!canWrite) return;
 		setSelectedKey(key);
 		setIsRevokeDialogOpen(true);
 	};
@@ -183,6 +189,7 @@ export function WorkflowKeys() {
 	const handleSubmitCreate = async (e: React.FormEvent) => {
 		e.preventDefault();
 
+		if (!canWrite) return;
 		if (!isFormValid) return;
 
 		try {
@@ -206,6 +213,7 @@ export function WorkflowKeys() {
 	};
 
 	const handleConfirmRevoke = async () => {
+		if (!canWrite) return;
 		if (!selectedKey?.id) return;
 
 		await revokeMutation.mutateAsync(selectedKey.id);
@@ -281,6 +289,7 @@ export function WorkflowKeys() {
 								variant="outline"
 								size="icon"
 								onClick={handleCreate}
+								disabled={!canWrite}
 								title="Create API Key"
 							>
 								<Plus className="h-4 w-4" />
@@ -364,6 +373,7 @@ export function WorkflowKeys() {
 												onClick={() =>
 													handleRevoke(key)
 												}
+												disabled={!canWrite}
 												title="Revoke key"
 											>
 												<Trash2 className="h-4 w-4" />
@@ -439,6 +449,7 @@ export function WorkflowKeys() {
 								variant="outline"
 								size="icon"
 								onClick={handleCreate}
+								disabled={!canWrite}
 								title="Create API Key"
 								className="mt-4"
 							>
@@ -483,6 +494,7 @@ export function WorkflowKeys() {
 									placeholder="Production API Key for CRM"
 									maxLength={32}
 									required
+									disabled={!canWrite}
 								/>
 								<p className="text-xs text-muted-foreground">
 									Brief description (max 32 characters)
@@ -504,6 +516,7 @@ export function WorkflowKeys() {
 													: formData.workflowId,
 										})
 									}
+									disabled={!canWrite}
 								/>
 								<div className="flex flex-col">
 									<Label
@@ -536,6 +549,7 @@ export function WorkflowKeys() {
 												workflowId: value,
 											})
 										}
+										disabled={!canWrite}
 										options={availableWorkflows.map(
 											(wf: WorkflowMetadata) => ({
 												value: wf.id,
@@ -566,6 +580,7 @@ export function WorkflowKeys() {
 											expiresInDays: value,
 										})
 									}
+									disabled={!canWrite}
 									options={[
 										{ value: "0", label: "Never" },
 										{ value: "30", label: "30 days" },
@@ -593,6 +608,7 @@ export function WorkflowKeys() {
 								type="submit"
 								disabled={
 									createMutation.isPending || !isFormValid
+									|| !canWrite
 								}
 							>
 								{createMutation.isPending
@@ -746,6 +762,7 @@ export function WorkflowKeys() {
 						<AlertDialogCancel>Cancel</AlertDialogCancel>
 						<AlertDialogAction
 							onClick={handleConfirmRevoke}
+							disabled={revokeMutation.isPending || !canWrite}
 							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 						>
 							{revokeMutation.isPending

@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Sequence
 from uuid import UUID
 
-from sqlalchemy import case, delete, func, select
+from sqlalchemy import case, delete, func, or_, select
 from sqlalchemy.orm import joinedload, selectinload
 
 from src.models.enums import EventDeliveryStatus, EventSourceType, EventStatus
@@ -166,6 +166,53 @@ class EventSourceRepository(BaseRepository[EventSource]):
         if source_type:
             stmt = stmt.where(EventSource.source_type == source_type)
 
+        result = await self.session.execute(stmt)
+        return result.scalar() or 0
+
+    async def get_by_organizations(
+        self,
+        organization_ids: set[UUID],
+        *,
+        source_type: EventSourceType | None = None,
+        include_global: bool = True,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> Sequence[EventSource]:
+        """Get sources across an explicit managed-Organization collection."""
+
+        conditions = [EventSource.organization_id.in_(organization_ids)]
+        if include_global:
+            conditions.append(EventSource.organization_id.is_(None))
+        stmt = (
+            select(EventSource)
+            .options(
+                joinedload(EventSource.webhook_source),
+                joinedload(EventSource.schedule_source),
+                joinedload(EventSource.organization),
+            )
+            .where(or_(*conditions))
+        )
+        if source_type:
+            stmt = stmt.where(EventSource.source_type == source_type)
+        stmt = stmt.order_by(EventSource.name).limit(limit).offset(offset)
+        result = await self.session.execute(stmt)
+        return result.unique().scalars().all()
+
+    async def count_by_organizations(
+        self,
+        organization_ids: set[UUID],
+        *,
+        source_type: EventSourceType | None = None,
+        include_global: bool = True,
+    ) -> int:
+        """Count sources across an explicit managed-Organization collection."""
+
+        conditions = [EventSource.organization_id.in_(organization_ids)]
+        if include_global:
+            conditions.append(EventSource.organization_id.is_(None))
+        stmt = select(func.count(EventSource.id)).where(or_(*conditions))
+        if source_type:
+            stmt = stmt.where(EventSource.source_type == source_type)
         result = await self.session.execute(stmt)
         return result.scalar() or 0
 

@@ -11,10 +11,15 @@ from pathlib import Path
 
 import pytest
 
+from shared.authorization_scopes import PLATFORM_SUPERUSER_SCOPE
 from src.core.auth import ExecutionContext
 from src.core.principal import UserPrincipal
 from src.models.orm.solutions import Solution
 from src.routers.solutions import export_solution
+from src.services.authorization import (
+    AuthorizationBoundary,
+    AuthorizationContext,
+)
 from src.services.solutions.deploy import SolutionBundle
 from src.services.solutions.export import (
     add_encrypted_content_to_workspace_zip,
@@ -48,6 +53,11 @@ def _bundle() -> SolutionBundle:
         python_files={
             "workflows/main.py": "def run(sdk):\n    return 'ok'\n",
             "modules/helper.py": "X = 1\n",
+        },
+        bundle_files={
+            "agents/helper/SKILL.md": b"# Helper\n",
+            "agents/helper/references/guide.md": b"Read this.",
+            "agents/helper/assets/icon.bin": b"\x00\x01",
         },
         workflows=[
             {
@@ -86,7 +96,14 @@ def _bundle() -> SolutionBundle:
             }
         ],
         forms=[{"id": FORM_ID, "name": "Intake", "fields": [{"key": "email"}]}],
-        agents=[{"id": AGENT_ID, "name": "Helper", "system_prompt": "be helpful"}],
+        agents=[
+            {
+                "id": AGENT_ID,
+                "name": "Helper",
+                "system_prompt": "be helpful",
+                "bundle_path": "agents/helper",
+            }
+        ],
         config_schemas=[
             {
                 "id": "API_KEY",
@@ -102,14 +119,20 @@ def _bundle() -> SolutionBundle:
     )
 
 
-def _admin(db) -> tuple[ExecutionContext, UserPrincipal]:
+def _admin(db) -> tuple[ExecutionContext, AuthorizationContext]:
     user = UserPrincipal(
         user_id=uuid.uuid4(),
         email="admin@example.com",
         organization_id=None,
         is_superuser=True,
     )
-    return ExecutionContext(user=user, org_id=None, db=db), user
+    return ExecutionContext(user=user, org_id=None, db=db), AuthorizationContext(
+        requester=user,
+        effective_actor=user,
+        selected_boundary=AuthorizationBoundary.platform(),
+        effective_capabilities=frozenset({PLATFORM_SUPERUSER_SCOPE}),
+        grant_sources=(),
+    )
 
 
 def _response_bytes(response) -> bytes:  # noqa: ANN001
@@ -147,6 +170,11 @@ def test_export_round_trips_through_preview() -> None:
     assert result.forms[0]["fields"] == [{"key": "email"}]
     assert [a["id"] for a in result.agents] == [AGENT_ID]
     assert result.agents[0]["system_prompt"] == "be helpful"
+    assert result.agents[0]["bundle_path"] == "agents/helper"
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        assert zf.read("agents/helper/SKILL.md") == b"# Helper\n"
+        assert zf.read("agents/helper/references/guide.md") == b"Read this."
+        assert zf.read("agents/helper/assets/icon.bin") == b"\x00\x01"
 
     assert [c["key"] for c in result.config_schemas] == ["API_KEY"]
     assert result.config_schemas[0]["required"] is True

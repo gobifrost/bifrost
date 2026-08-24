@@ -10,6 +10,25 @@
 import { test, expect } from "./fixtures/api-fixture";
 
 test.describe("User Listing", () => {
+	test("keeps the active authorization context visible and durable", async ({
+		page,
+	}) => {
+		await page.goto("/users");
+
+		const contextButton = page.getByRole("button", { name: /working in/i });
+		await expect(contextButton).toBeVisible({ timeout: 10000 });
+		await contextButton.click();
+		await page.getByRole("menuitemradio", { name: /global/i }).click();
+		await expect(
+			page.getByRole("button", { name: "Working in Global" }),
+		).toBeVisible();
+
+		await page.reload();
+		await expect(
+			page.getByRole("button", { name: "Working in Global" }),
+		).toBeVisible({ timeout: 10000 });
+	});
+
 	test("should display users page", async ({ page }) => {
 		await page.goto("/users");
 
@@ -94,6 +113,71 @@ test.describe("User Details", () => {
 
 		// Test passes if we see org info, have users, or have empty state
 		expect(hasOrgInfo || hasUsers || hasEmptyState).toBe(true);
+	});
+
+	test("assigns a Builder role with an explicit organization boundary", async ({
+		page,
+		api,
+	}) => {
+		const email = `builder-role-${crypto.randomUUID()}@playwright-e2e.com`;
+		const orgsResponse = await api.get("/api/organizations");
+		expect(orgsResponse.ok()).toBe(true);
+		const organizations = (await orgsResponse.json()) as Array<{
+			id: string;
+			name: string;
+			is_provider: boolean;
+		}>;
+		const organization = organizations.find((candidate) => !candidate.is_provider);
+		if (!organization) throw new Error("Expected a customer organization fixture");
+
+		const createResponse = await api.post("/api/users", {
+			data: {
+				email,
+				name: "Boundary Builder",
+				organization_id: organization.id,
+				is_superuser: false,
+				invite: false,
+			},
+		});
+		expect(createResponse.ok(), await createResponse.text()).toBe(true);
+		const createdUser = (await createResponse.json()) as { id: string };
+
+		try {
+			await page.goto("/users");
+			const row = page.locator("tbody tr", { hasText: email }).first();
+			await expect(row).toBeVisible({ timeout: 10000 });
+			await row.getByText("Boundary Builder", { exact: true }).click();
+
+			const dialog = page.getByRole("dialog", { name: /edit user/i });
+			await expect(dialog.getByText(/roles and access/i)).toBeVisible();
+			await dialog.getByRole("combobox", { name: /add role/i }).click();
+			await page.getByRole("option", { name: /^Builder/ }).click();
+			await expect(
+				dialog.getByText(organization.name, { exact: true }).first(),
+			).toBeVisible();
+			await dialog.getByRole("button", { name: /save changes/i }).click();
+			await expect(page.getByText(/user updated successfully/i)).toBeVisible();
+
+			const rolesResponse = await api.get(`/api/users/${createdUser.id}/roles`);
+			expect(rolesResponse.ok(), await rolesResponse.text()).toBe(true);
+			const assignments = (await rolesResponse.json()) as Array<{
+				boundaries: Array<{ boundary_kind: string; organization_id?: string }>;
+			}>;
+			expect(assignments).toEqual(
+				expect.arrayContaining([
+					expect.objectContaining({
+						boundaries: expect.arrayContaining([
+							expect.objectContaining({
+								boundary_kind: "organization",
+								organization_id: organization.id,
+							}),
+						]),
+					}),
+				]),
+			);
+		} finally {
+			await api.delete(`/api/users/${createdUser.id}`);
+		}
 	});
 });
 

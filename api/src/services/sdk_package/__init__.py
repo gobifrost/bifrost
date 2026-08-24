@@ -15,6 +15,7 @@ the consuming app provides them so React stays a singleton).
 from __future__ import annotations
 
 import functools
+import gzip
 import hashlib
 import io
 import json
@@ -134,8 +135,8 @@ def build_sdk_tarball(version: str) -> bytes:
         },
     }
 
-    buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz") as tar:
+    tar_buffer = io.BytesIO()
+    with tarfile.open(fileobj=tar_buffer, mode="w") as tar:
         def _add(name: str, data: bytes) -> None:
             info = tarfile.TarInfo(name=name)
             info.size = len(data)
@@ -145,4 +146,16 @@ def build_sdk_tarball(version: str) -> bytes:
         _add("package/package.json", json.dumps(package_json, indent=2).encode())
         _add("package/dist/index.mjs", bundle)
 
-    return buffer.getvalue()
+    # ``tarfile``'s ``w:gz`` mode stamps the gzip header with wall-clock time.
+    # The build input hash is a cross-process cache key, so identical source
+    # compiled by a Builder Worker and a later deploy child must contain the
+    # exact same SDK tarball bytes. Write gzip explicitly with the epoch mtime.
+    gzip_buffer = io.BytesIO()
+    with gzip.GzipFile(
+        fileobj=gzip_buffer,
+        mode="wb",
+        filename="",
+        mtime=0,
+    ) as compressed:
+        compressed.write(tar_buffer.getvalue())
+    return gzip_buffer.getvalue()

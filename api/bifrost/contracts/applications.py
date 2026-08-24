@@ -27,6 +27,6 @@ class ApplicationUpdate(BaseModel):
     slug: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = None
     icon: str | None = Field(default=None, max_length=50)
-    scope: str | None = Field(default=None)
+    organization_id: UUID | None = Field(default=None)
     access_level: str | None = Field(default=None)
     role_ids: list[UUID] | None = Field(default=None)

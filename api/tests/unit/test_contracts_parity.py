@@ -80,6 +80,9 @@ DTO_PAIRS: list[tuple[type, type]] = [
         cli_contracts.EventSubscriptionUpdate,
         server_events.EventSubscriptionUpdate,
     ),
+    (cli_contracts.WebhookSourceConfig, server_events.WebhookSourceConfig),
+    (cli_contracts.ScheduleSourceConfig, server_events.ScheduleSourceConfig),
+    (cli_contracts.ScheduleSourceUpdate, server_events.ScheduleSourceUpdate),
     (cli_contracts.PolicyRuleCreate, server_policy_rule.PolicyRuleCreate),
     (cli_contracts.PolicyRuleUpdate, server_policy_rule.PolicyRuleUpdate),
 ]
@@ -91,6 +94,7 @@ ENUM_PAIRS: list[tuple[type, type]] = [
     (cli_enums.AgentChannel, server_enums.AgentChannel),
     (cli_enums.ConfigType, server_enums.ConfigType),
     (cli_enums.EventSourceType, server_enums.EventSourceType),
+    (cli_enums.ScheduleOverlapPolicy, server_enums.ScheduleOverlapPolicy),
 ]
 
 

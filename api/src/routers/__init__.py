@@ -5,6 +5,7 @@ from src.routers.oauth_sso import router as oauth_router
 from src.routers.passkeys import router as passkeys_router
 from src.routers.health import router as health_router
 from src.routers.organizations import router as organizations_router
+from src.routers.organization_groups import router as organization_groups_router
 from src.routers.users import router as users_router
 from src.routers.roles import router as roles_router
 from src.routers.executions import router as executions_router
@@ -42,6 +43,7 @@ from src.routers.maintenance import router as maintenance_router
 from src.routers.roi_settings import router as roi_settings_router
 from src.routers.roi_reports import router as roi_reports_router
 from src.routers.usage_reports import router as usage_reports_router
+from src.routers.usage_limits import router as usage_limits_router
 from src.routers.ai_pricing import router as ai_pricing_router
 from src.routers.oauth_config import router as oauth_config_router
 from src.routers.tools import router as tools_router
@@ -51,7 +53,11 @@ from src.routers.hooks import router as hooks_router
 from src.routers.tables import router as tables_router
 from src.routers.claims import router as claims_router
 from src.routers.solutions import router as solutions_router
+from src.routers.solution_builder import router as solution_builder_router
+from src.routers.solution_promotions import router as solution_promotions_router
+from src.routers.solution_app_host import control_router as solution_app_launch_router
 from src.routers.knowledge_sources import router as knowledge_sources_router
+from src.routers.knowledge import router as knowledge_router
 from src.routers.app_embed_secrets import router as app_embed_secrets_router
 from src.routers.applications import router as applications_router
 from src.routers.app_code_files import router as app_code_files_router
@@ -64,6 +70,8 @@ from src.routers.docs import router as docs_router
 from src.routers.jobs import router as jobs_router
 from src.routers.platform_jobs import router as platform_jobs_router
 from src.routers.scheduler_diagnostics import router as scheduler_diagnostics_router
+from src.routers.sandbox_jobs import router as sandbox_jobs_router
+from src.routers.sandbox_runner_admin import router as sandbox_runner_admin_router
 from src.routers.platform import (
     workers_router as platform_workers_router,
     queue_router as platform_queue_router,
@@ -86,6 +94,7 @@ __all__ = [
     "passkeys_router",
     "health_router",
     "organizations_router",
+    "organization_groups_router",
     "users_router",
     "roles_router",
     "executions_router",
@@ -123,6 +132,7 @@ __all__ = [
     "roi_settings_router",
     "roi_reports_router",
     "usage_reports_router",
+    "usage_limits_router",
     "ai_pricing_router",
     "oauth_config_router",
     "tools_router",
@@ -132,7 +142,11 @@ __all__ = [
     "tables_router",
     "claims_router",
     "solutions_router",
+    "solution_builder_router",
+    "solution_promotions_router",
+    "solution_app_launch_router",
     "knowledge_sources_router",
+    "knowledge_router",
     "app_embed_secrets_router",
     "applications_router",
     "app_code_files_router",
@@ -145,6 +159,8 @@ __all__ = [
     "jobs_router",
     "platform_jobs_router",
     "scheduler_diagnostics_router",
+    "sandbox_jobs_router",
+    "sandbox_runner_admin_router",
     "platform_workers_router",
     "platform_queue_router",
     "platform_stuck_router",

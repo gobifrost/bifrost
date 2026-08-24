@@ -215,20 +215,22 @@ class TestSubgroupRegistration:
         from bifrost.commands import ENTITY_GROUPS
 
         assert set(ENTITY_GROUPS) == {
-            "orgs",
+            "organizations",
             "roles",
             "workflows",
             "forms",
             "agents",
             "apps",
             "integrations",
+            "knowledge",
             "configs",
             "tables",
             "claims",
             "events",
             "files",
             "requirements",
-            "policy-rule",
+            "policy-rules",
+            "platform-jobs",
         }
 
     def test_dispatch_unknown_subgroup_exits_1(self) -> None:

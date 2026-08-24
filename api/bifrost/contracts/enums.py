@@ -61,3 +61,11 @@ class EventSourceType(str, Enum):
     WEBHOOK = "webhook"
     SCHEDULE = "schedule"
     TOPIC = "topic"
+
+
+class ScheduleOverlapPolicy(str, Enum):
+    """Behavior when a schedule overlaps a still-running prior execution."""
+
+    SKIP = "skip"
+    QUEUE = "queue"
+    REPLACE = "replace"

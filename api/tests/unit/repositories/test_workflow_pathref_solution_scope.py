@@ -65,7 +65,7 @@ class TestPathRefSolutionScope:
             db, org_id=org, solution_id=sol.id, path="workflows/foo.py"
         )
 
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         got = await repo.resolve("workflows/foo.py::main")
         assert got is not None
         assert got.id == wf.id
@@ -86,7 +86,7 @@ class TestPathRefSolutionScope:
             db, org_id=org, solution_id=sol.id, path="workflows/foo.py", name="sol-foo"
         )
 
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         # No solution_scope → deterministic _repo/ row (never MultipleResultsFound).
         got = await repo.resolve("workflows/foo.py::main")
         assert got is not None
@@ -99,7 +99,7 @@ class TestPathRefSolutionScope:
             db, org_id=None, solution_id=None, path="workflows/bar.py", name="repo-bar"
         )
 
-        repo = WorkflowRepository(db, org_id=uuid4(), is_superuser=True)
+        repo = WorkflowRepository(db, org_id=uuid4(), bypass_resource_roles=True)
         got = await repo.resolve("workflows/bar.py::main")
         assert got is not None
         assert got.id == repo_wf.id
@@ -119,7 +119,7 @@ class TestPathRefSolutionScope:
             db, org_id=None, solution_id=sol.id, path="workflows/foo.py", name="sol-foo"
         )
 
-        repo = WorkflowRepository(db, org_id=None, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=None, bypass_resource_roles=True)
         got = await repo.resolve("workflows/foo.py::main")
         assert got is not None
         assert got.id == repo_wf.id
@@ -137,7 +137,7 @@ class TestPathRefSolutionScope:
         wf_a = await _add_workflow(db, org_id=org, solution_id=sol_a.id, path="workflows/main.py")
         wf_b = await _add_workflow(db, org_id=org, solution_id=sol_b.id, path="workflows/main.py")
 
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         got_a = await repo.resolve("workflows/main.py::main", solution_scope=sol_a.id)
         got_b = await repo.resolve("workflows/main.py::main", solution_scope=sol_b.id)
         assert got_a is not None and got_a.id == wf_a.id
@@ -156,7 +156,7 @@ class TestPathRefSolutionScope:
         # An unrelated solution workflow at a DIFFERENT path (same install).
         await _add_workflow(db, org_id=org, solution_id=sol.id, path="workflows/own.py")
 
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         got = await repo.resolve(
             "workflows/shared.py::main",
             solution_scope=sol.id,
@@ -179,7 +179,7 @@ class TestPathRefSolutionScope:
             name="repo",
         )
 
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         got = await repo.resolve(
             "workflows/shared.py::main",
             solution_scope=sol.id,
@@ -196,7 +196,7 @@ class TestPathRefSolutionScope:
         await _add_workflow(db, org_id=None, solution_id=None, path="workflows/foo.py", name="repo")
         own = await _add_workflow(db, org_id=org, solution_id=sol.id, path="workflows/foo.py", name="own")
 
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         got = await repo.resolve("workflows/foo.py::main", solution_scope=sol.id)
         assert got is not None and got.id == own.id
 
@@ -212,7 +212,7 @@ class TestPathRefSolutionScope:
         # Only install B ships workflows/main.py; install A does not.
         await _add_workflow(db, org_id=org, solution_id=sol_b.id, path="workflows/main.py")
 
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         # Caller scoped to install A: no own match, no _repo/ row → None, NOT B's.
         got = await repo.resolve("workflows/main.py::main", solution_scope=sol_a.id)
         assert got is None
@@ -227,8 +227,8 @@ class TestPathRefSolutionScope:
             db, org_id=other_org, solution_id=sol.id, path="workflows/foo.py"
         )
 
-        # Caller is a regular user in a DIFFERENT org (not superuser, so no bypass).
-        repo = WorkflowRepository(db, org_id=uuid4(), is_superuser=False)
+        # Caller is a regular user in a DIFFERENT org (no bypass).
+        repo = WorkflowRepository(db, org_id=uuid4(), bypass_resource_roles=False)
         got = await repo.resolve("workflows/foo.py::main")
         assert got is None
 
@@ -252,7 +252,7 @@ class TestBareNameSolutionScope:
             name="hello",
         )
 
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         got = await repo.resolve("hello", solution_scope=sol.id)
         assert got is not None
         assert got.id == own.id
@@ -278,7 +278,7 @@ class TestBareNameSolutionScope:
             name="hello",
         )
 
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         got = await repo.resolve("hello", solution_scope=sol.id)
         assert got is not None
         assert got.id == own.id
@@ -305,7 +305,7 @@ class TestBareNameSolutionScope:
             name="other",
         )
 
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         got = await repo.resolve(
             "shared",
             solution_scope=sol.id,
@@ -329,7 +329,7 @@ class TestBareNameSolutionScope:
             name="shared",
         )
 
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         got = await repo.resolve(
             "shared",
             solution_scope=sol.id,
@@ -359,7 +359,7 @@ class TestBareNameSolutionScope:
             name="hello",
         )
 
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         got_a = await repo.resolve("hello", solution_scope=sol_a.id)
         got_b = await repo.resolve("hello", solution_scope=sol_b.id)
         assert got_a is not None and got_a.id == wf_a.id
@@ -379,7 +379,7 @@ class TestBareNameSolutionScope:
             name="hello",
         )
 
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         got = await repo.resolve("hello")
         assert got is None
 
@@ -398,7 +398,7 @@ class TestBareNameSolutionScope:
             name="hello",
         )
 
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         got = await repo.resolve("hello", solution_scope=sol_a.id)
         assert got is None
 
@@ -416,7 +416,7 @@ class TestUuidSolutionScope:
             path="workflows/own.py",
         )
 
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         got = await repo.resolve(str(own.id), solution_scope=sol.id)
         assert got is not None and got.id == own.id
 
@@ -431,7 +431,7 @@ class TestUuidSolutionScope:
             path="workflows/shared.py",
         )
 
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         denied = await repo.resolve(
             str(shared.id),
             solution_scope=sol.id,
@@ -459,7 +459,7 @@ class TestUuidSolutionScope:
             path="workflows/sibling.py",
         )
 
-        repo = WorkflowRepository(db, org_id=org, is_superuser=True)
+        repo = WorkflowRepository(db, org_id=org, bypass_resource_roles=True)
         got = await repo.resolve(
             str(sibling.id),
             solution_scope=sol_a.id,

@@ -30,9 +30,10 @@ def _fake_response(body: dict) -> httpx.Response:
 async def test_search_posts_to_endpoint_with_defaults() -> None:
     captured: dict = {}
 
-    async def capturing_post(path, json=None):  # type: ignore[no-untyped-def]
+    async def capturing_post(path, json=None, headers=None):  # type: ignore[no-untyped-def]
         captured["path"] = path
         captured["body"] = json
+        captured["headers"] = headers
         return _fake_response({
             "query": "needle",
             "total_matches": 1,
@@ -63,6 +64,7 @@ async def test_search_posts_to_endpoint_with_defaults() -> None:
     assert captured["body"]["is_regex"] is False
     assert captured["body"]["include_pattern"] == "**/*"
     assert captured["body"]["max_results"] == 1000
+    assert captured["headers"] == {"X-Bifrost-Boundary": "platform"}
     assert result["total_matches"] == 1
     assert result["results"][0]["file_path"] == "a.py"
 
@@ -71,8 +73,9 @@ async def test_search_posts_to_endpoint_with_defaults() -> None:
 async def test_search_passes_through_options() -> None:
     captured: dict = {}
 
-    async def capturing_post(path, json=None):  # type: ignore[no-untyped-def]
+    async def capturing_post(path, json=None, headers=None):  # type: ignore[no-untyped-def]
         captured["body"] = json
+        captured["headers"] = headers
         return _fake_response({
             "query": "x",
             "total_matches": 0,

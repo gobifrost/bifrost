@@ -12,7 +12,11 @@ SolutionScope = Literal["org", "global"]
 
 
 class SolutionBase(BaseModel):
-    slug: str = Field(min_length=1, max_length=255, description="Definition identity (shared across installs)")
+    slug: str = Field(
+        min_length=1,
+        max_length=255,
+        description="Definition identity (shared across installs)",
+    )
     name: str = Field(min_length=1, max_length=255)
     global_repo_access: bool = False
     git_connected: bool = False
@@ -159,6 +163,31 @@ class SolutionAccessUserSummary(BaseModel):
     id: UUID
     name: str | None = None
     email: str
+
+
+class SolutionRoleGrantBase(BaseModel):
+    """Shared fields for a role-based Solution grant."""
+
+    role_id: UUID
+    access: Literal["view", "edit"] = "edit"
+
+
+class SolutionRoleGrantCreate(SolutionRoleGrantBase):
+    """Input for creating a role-based Solution grant."""
+
+    solution_id: UUID
+
+
+class SolutionRoleGrantPublic(SolutionRoleGrantBase):
+    """Persisted role grant on a Solution."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    solution_id: UUID
+    granted_by_user_id: UUID | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class SolutionEntitySummary(BaseModel):
@@ -367,7 +396,9 @@ class SolutionUpgradeDiff(BaseModel):
     agents: SolutionEntityDiff = Field(default_factory=SolutionEntityDiff)
     apps: SolutionEntityDiff = Field(default_factory=SolutionEntityDiff)
     claims: SolutionEntityDiff = Field(default_factory=SolutionEntityDiff)
-    config_schemas: SolutionConfigSchemaDiff = Field(default_factory=SolutionConfigSchemaDiff)
+    config_schemas: SolutionConfigSchemaDiff = Field(
+        default_factory=SolutionConfigSchemaDiff
+    )
 
 
 class SolutionExistingInstall(BaseModel):
@@ -474,7 +505,9 @@ class SolutionDeployJobStatus(BaseModel):
     updated_at: datetime
 
 
-SolutionExportJobStatus = Literal["pending", "running", "completed", "failed", "expired"]
+SolutionExportJobStatus = Literal[
+    "pending", "running", "completed", "failed", "expired"
+]
 
 
 class SolutionExportOptions(BaseModel):

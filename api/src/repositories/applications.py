@@ -13,6 +13,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from sqlalchemy import select, text
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
 from src.core.log_safety import log_safe
@@ -44,6 +45,32 @@ class ApplicationRepository(OrgScopedRepository[Application]):
     role_table = AppRole
     role_entity_id_column = "app_id"
 
+    def __init__(
+        self,
+        session: AsyncSession,
+        org_id: UUID | str | None,
+        user_id: UUID | str | None = None,
+        *,
+        bypass_resource_roles: bool = False,
+        is_external: bool = False,
+    ):
+        """Initialize Application access with explicit admission semantics.
+
+        ``bypass_resource_roles`` means the caller has already been authorized
+        to bypass Application role rows for this scope. It intentionally does
+        not mean the principal is a human superuser. ``is_superuser`` remains
+        accepted for engine/runtime compatibility until those call sites move.
+        """
+
+        self.bypass_resource_roles = bypass_resource_roles
+        super().__init__(
+            session,
+            org_id,
+            user_id=user_id,
+            bypass_resource_admission=bypass_resource_roles,
+            is_external=is_external,
+        )
+
     async def list_applications(self) -> list[Application]:
         """
         List applications with cascade scoping and role-based access.
@@ -65,7 +92,7 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         entities = list(result.scalars().all())
 
         # Filter by role access for non-superusers with role-based entities
-        if not self.is_superuser:
+        if not self.bypass_resource_roles:
             accessible = []
             for entity in entities:
                 if await self._can_access_entity(entity):
@@ -98,6 +125,7 @@ class ApplicationRepository(OrgScopedRepository[Application]):
             defer(self.model.logo_data),
             defer(self.model.logo_thumbnail_data),
         )
+        query = self._apply_solution_visibility(query)
 
         # Apply org filtering based on filter type
         if filter_type == OrgFilterType.ALL:
@@ -136,7 +164,9 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         rows = list(
             (
                 await self.session.execute(
-                    select(self.model).where(self.model.slug == slug)
+                    self._apply_solution_visibility(select(self.model)).where(
+                        self.model.slug == slug
+                    )
                 )
             ).scalars().all()
         )
@@ -211,8 +241,10 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         # Scaffold initial files via FileStorageService
         await self._scaffold_code_files(application.slug)
 
-        # Add role associations if role_based access
-        if data.access_level == "role_based" and data.role_ids:
+        # Persist assignments independently from the active access level. This
+        # matches the update and role-consumer APIs and lets an administrator
+        # stage role grants before switching the Application to role-based.
+        if data.role_ids:
             for role_id in data.role_ids:
                 app_role = AppRole(
                     app_id=application.id,
@@ -232,7 +264,7 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         app_id: UUID,
         data: ApplicationUpdate,
         updated_by: str,
-        is_platform_admin: bool = False,
+        allow_scope_change: bool = False,
     ) -> Application | None:
         """Update application metadata and access control by ID."""
         application = await self.get(id=app_id)
@@ -241,9 +273,9 @@ class ApplicationRepository(OrgScopedRepository[Application]):
 
         if data.name is not None:
             application.name = data.name
-        if data.description is not None:
+        if "description" in data.model_fields_set:
             application.description = data.description
-        if data.icon is not None:
+        if "icon" in data.model_fields_set:
             application.icon = data.icon
         if data.access_level is not None:
             application.access_level = data.access_level
@@ -256,15 +288,11 @@ class ApplicationRepository(OrgScopedRepository[Application]):
                 raise ValueError(f"Application with slug '{data.slug}' already exists")
             application.slug = data.slug
 
-        # Handle scope change (platform admin only)
-        if data.scope is not None and is_platform_admin:
-            if data.scope == "global":
-                application.organization_id = None
-            else:
-                try:
-                    application.organization_id = UUID(data.scope)
-                except ValueError:
-                    pass  # Invalid UUID, ignore
+        # The router validates authorization and target existence before the
+        # repository applies an explicit scope change. Omission preserves the
+        # current organization; explicit null moves the Application global.
+        if "organization_id" in data.model_fields_set and allow_scope_change:
+            application.organization_id = data.organization_id
 
         # Update role associations if provided
         if data.role_ids is not None:

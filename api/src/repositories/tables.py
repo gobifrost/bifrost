@@ -27,7 +27,7 @@ class TableRepository(OrgScopedRepository[Table]):
         filter_type: OrgFilterType = OrgFilterType.ORG_PLUS_GLOBAL,
     ) -> list[Table]:
         """List tables with specified filter type."""
-        query = select(self.model)
+        query = self._apply_solution_visibility(select(self.model))
 
         if filter_type == OrgFilterType.ALL:
             pass
@@ -59,7 +59,7 @@ class TableRepository(OrgScopedRepository[Table]):
         separate partial unique indexes, so the _repo create-time duplicate
         check must only see the _repo namespace.
         """
-        query = select(self.model).where(
+        query = self._apply_solution_visibility(select(self.model)).where(
             self.model.name == name,
             self.model.organization_id == self.org_id,
         )
@@ -109,18 +109,48 @@ class TableRepository(OrgScopedRepository[Table]):
         data: TableUpdate,
     ) -> Table | None:
         """Update a table by ID."""
-        query = select(self.model).where(self.model.id == table_id)
+        query = self._apply_solution_visibility(select(self.model)).where(
+            self.model.id == table_id
+        )
         result = await self.session.execute(query)
         table = result.scalar_one_or_none()
         if not table:
             return None
 
+        if {"name", "organization_id"} & data.model_fields_set:
+            target_name = data.name if data.name is not None else table.name
+            target_org_id = (
+                data.organization_id
+                if "organization_id" in data.model_fields_set
+                else table.organization_id
+            )
+            duplicate_query = select(self.model.id).where(
+                self.model.id != table.id,
+                self.model.name == target_name,
+                self.model.solution_id.is_(None),
+            )
+            if target_org_id is None:
+                duplicate_query = duplicate_query.where(
+                    self.model.organization_id.is_(None)
+                )
+            else:
+                duplicate_query = duplicate_query.where(
+                    self.model.organization_id == target_org_id
+                )
+            duplicate = await self.session.scalar(duplicate_query.limit(1))
+            if duplicate is not None:
+                raise ValueError(
+                    f"Table '{target_name}' already exists in the target scope"
+                )
+
         if data.name is not None:
             table.name = data.name
-        if data.description is not None:
+        if "description" in data.model_fields_set:
             table.description = data.description
-        if data.schema is not None:
+        if "schema" in data.model_fields_set:
             table.schema = data.schema
+        if "organization_id" in data.model_fields_set:
+            table.organization_id = data.organization_id
         if "policies" in data.model_fields_set:
             table.access = (
                 data.policies.model_dump(mode="json", by_alias=True)
@@ -136,7 +166,9 @@ class TableRepository(OrgScopedRepository[Table]):
 
     async def delete_table(self, table_id: UUID) -> bool:
         """Delete a table and all its documents by ID."""
-        query = select(self.model).where(self.model.id == table_id)
+        query = self._apply_solution_visibility(select(self.model)).where(
+            self.model.id == table_id
+        )
         result = await self.session.execute(query)
         table = result.scalar_one_or_none()
         if not table:

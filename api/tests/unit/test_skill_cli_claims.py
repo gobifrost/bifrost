@@ -33,7 +33,7 @@ def test_allows_entity_mutation_in_repo_context():
 
 
 def test_flags_unknown_flag():
-    md = "```bash\nbifrost orgs list --bogus-flag\n```\n"
+    md = "```bash\nbifrost organizations list --bogus-flag\n```\n"
     findings = lint_claims.lint_text(md, filename="references/repo.md")
     assert any("bogus-flag" in f.message for f in findings)
 

@@ -1,0 +1,479 @@
+"""Pydantic types for the private-Solution builder surface.
+
+These are deliberately separate from ``contracts/solutions.py``: that file is the
+administrator install-management contract, while these describe the owner-scoped
+private-builder surface (2026-07-25 private-solution-builder spec, Work Package
+1). A private Solution never exposes install-management fields such as git
+connection state, so it gets its own read shape rather than a widened one.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any, Literal
+from uuid import UUID
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from src.models.contracts.sandbox_runner import SandboxRunnerBlocker
+
+
+class PrivateSolutionCreate(BaseModel):
+    """Create-shape for a private builder Solution.
+
+    Scope is not an input: a private Solution is always owned by the caller and
+    lives in the caller's own organization. ``slug`` is unique per owner, so two
+    users in one org may each hold a private Solution at the same slug.
+    """
+
+    slug: str = Field(min_length=1, max_length=255)
+    name: str = Field(min_length=1, max_length=255)
+    target_kind: Literal["solution", "organization"] = "solution"
+
+
+class PrivateSolutionDTO(BaseModel):
+    """Read-shape for a private builder Solution.
+
+    ``promotion_status`` comes from the Solution's builder-project row, not the
+    install row, and is flattened here because the builder UI treats the pair as
+    one object.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    slug: str
+    name: str
+    visibility: str
+    owner_user_id: UUID | None = None
+    owner_name: str | None = None
+    owner_email: str | None = None
+    organization_id: UUID | None = None
+    organization_name: str | None = None
+    caller_access: Literal["owner", "collaborator", "support"] = "owner"
+    collaborator_access: Literal["view", "edit"] | None = None
+    status: str
+    target_kind: Literal["solution", "organization", "global_repo"] = "solution"
+    promotion_status: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class PrivateSolutionsList(BaseModel):
+    """List envelope for personal/shared work or the explicit support view."""
+
+    solutions: list[PrivateSolutionDTO]
+    total: int
+    limit: int | None = None
+    offset: int = 0
+    view: Literal["mine", "all"] = "mine"
+    can_view_all: bool = False
+    ai_configured: bool
+    builder_ready: bool
+    builder_blockers: list[SandboxRunnerBlocker] = Field(default_factory=list)
+    is_platform_admin: bool
+    can_open_global_workspace: bool = False
+
+
+class BuilderOrganizationTargetDTO(BaseModel):
+    """One exact organization boundary available to the current Builder."""
+
+    id: UUID
+    name: str
+    is_provider: bool = False
+    can_read: bool
+    can_execute: bool
+    can_build_resources: bool
+
+
+class BuilderTargetsDTO(BaseModel):
+    """Boundary-aware Builder entry points available to the current person."""
+
+    organizations: list[BuilderOrganizationTargetDTO] = Field(default_factory=list)
+    can_view_all: bool = False
+    can_open_global_workspace: bool = False
+    ai_configured: bool
+    builder_ready: bool
+    builder_blockers: list[SandboxRunnerBlocker] = Field(default_factory=list)
+    is_platform_admin: bool = False
+
+
+class BuilderCollaboratorUpsert(BaseModel):
+    """Invite or update one same-organization collaborator by email."""
+
+    email: str = Field(min_length=3, max_length=320)
+    access: Literal["view", "edit"] = "edit"
+
+
+class BuilderCollaboratorDTO(BaseModel):
+    """One explicit user grant on a private Builder Solution."""
+
+    id: UUID
+    user_id: UUID
+    name: str | None = None
+    email: str
+    access: Literal["view", "edit"]
+    invited_by: UUID | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class BuilderCollaboratorsList(BaseModel):
+    collaborators: list[BuilderCollaboratorDTO]
+    total: int
+
+
+class BuilderProjectDTO(BaseModel):
+    """Read-shape for a Solution's builder-project row."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    solution_id: UUID
+    current_revision_id: UUID | None = None
+    deployed_revision_id: UUID | None = None
+    target_kind: Literal["solution", "organization", "global_repo"] = "solution"
+    promotion_status: str
+    promotion_revision_id: UUID | None = None
+    promotion_requested_by: UUID | None = None
+    promotion_requested_at: datetime | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class GlobalWorkspaceStatusDTO(BaseModel):
+    """Current state of the singular administrator ``_repo`` workbench."""
+
+    exists: bool
+    solution_id: UUID | None = None
+    current_revision_id: UUID | None = None
+    deployed_revision_id: UUID | None = None
+    has_pending_proposal: bool = False
+    pending_operation_count: int = 0
+    can_rollback: bool = False
+    last_applied_at: datetime | None = None
+
+
+class GlobalWorkspaceValidationDTO(BaseModel):
+    """Non-executing validation result for the current proposal."""
+
+    revision_id: UUID
+    valid: bool
+    errors: list[str] = Field(default_factory=list)
+
+
+class GlobalOperationChangeDTO(BaseModel):
+    """One staged Global loose-resource operation change for human review."""
+
+    id: UUID
+    operation_id: str
+    resource_type: str
+    resource_id: str | None = None
+    state: str
+    validation_errors: list[str] = Field(default_factory=list)
+    before_state: dict[str, Any] | None = None
+    after_state: dict[str, Any] = Field(default_factory=dict)
+
+
+class GlobalOperationChangesListDTO(BaseModel):
+    changes: list[GlobalOperationChangeDTO] = Field(default_factory=list)
+    rollbackable_changes: list[GlobalOperationChangeDTO] = Field(default_factory=list)
+
+
+class GlobalWorkspaceApplyDTO(BaseModel):
+    """Result of explicitly applying or rolling back reviewed ``_repo`` source."""
+
+    revision_id: UUID
+    changed_paths: list[str] = Field(default_factory=list)
+    changed_operations: list[str] = Field(default_factory=list)
+    applied_at: datetime
+    rolled_back: bool = False
+
+
+class PromotionTargetRequest(BaseModel):
+    """Administrator approval of one pinned private-Solution revision."""
+
+    target: Literal["company", "global"]
+    target_organization_id: UUID | None = None
+    runtime_mode: Literal["isolated", "trusted"] = "isolated"
+    approve_role_creation: bool = False
+    approved_connection_names: list[str] = Field(default_factory=list)
+    allow_global_repo_access: bool = False
+    role_user_assignments: dict[str, list[UUID]] = Field(default_factory=dict)
+
+
+class PromotionEntityCounts(BaseModel):
+    workflows: int = 0
+    tables: int = 0
+    apps: int = 0
+    forms: int = 0
+    agents: int = 0
+    claims: int = 0
+    configs: int = 0
+    files: int = 0
+    file_policies: int = 0
+    policy_rules: int = 0
+    events: int = 0
+
+
+class PromotionReviewDTO(BaseModel):
+    """Pinned source and readiness facts shown on the admin review surface."""
+
+    solution_id: UUID
+    slug: str
+    name: str
+    owner_user_id: UUID | None = None
+    organization_id: UUID | None = None
+    promotion_status: str
+    pinned_revision_id: UUID | None = None
+    source_sha256: str | None = None
+    source_size_bytes: int | None = None
+    prior_deployed_revision_id: UUID | None = None
+    changed_paths: list[str] = Field(default_factory=list)
+    requested_at: datetime | None = None
+    requested_by: UUID | None = None
+    user_message_id: UUID | None = None
+    current_revision_id: UUID | None = None
+    deployed_revision_id: UUID | None = None
+    build_job_id: UUID | None = None
+    build_job_ids: list[UUID] = Field(default_factory=list)
+    deploy_job_id: UUID | None = None
+    build_status: str | None = None
+    deploy_status: str | None = None
+    entity_counts: PromotionEntityCounts = Field(default_factory=PromotionEntityCounts)
+    unresolved_roles: list[str] = Field(default_factory=list)
+    connection_names: list[str] = Field(default_factory=list)
+    config_keys_requiring_reentry_for_global: list[str] = Field(default_factory=list)
+    global_repo_access: bool = False
+    ready: bool = False
+    blockers: list[str] = Field(default_factory=list)
+
+
+class PromotionReviewsList(BaseModel):
+    promotions: list[PromotionReviewDTO]
+    total: int
+
+
+class PromotionResultDTO(BaseModel):
+    release_id: UUID
+    published_solution_id: UUID
+    solution_id: UUID
+    target: Literal["company", "global"]
+    visibility: Literal["shared"]
+    organization_id: UUID | None = None
+    promoted_revision_id: UUID
+    roles_created: list[str] = Field(default_factory=list)
+
+
+class CreateSessionRequest(BaseModel):
+    """Create-shape for a builder chat session.
+
+    Only the title is an input. The Solution comes from the authorized path and
+    the session author from the caller, so each team member gets an attributable
+    conversation without being able to choose another user's identity.
+    """
+
+    title: str | None = Field(default=None, max_length=500)
+
+
+class BuilderSessionDTO(BaseModel):
+    """Read-shape for one builder chat session.
+
+    ``conversation_id`` is the Conversation the chat transcript hangs off; the
+    session row is the typed link between that Conversation and the Solution.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    solution_id: UUID
+    conversation_id: UUID
+    user_id: UUID
+    created_at: datetime
+    updated_at: datetime
+
+
+class BuilderSessionsList(BaseModel):
+    """List envelope for the caller's sessions on one Solution."""
+
+    sessions: list[BuilderSessionDTO]
+    total: int
+
+
+class SourceRevisionDTO(BaseModel):
+    """Read-shape for one immutable source revision.
+
+    ``is_current`` and ``is_deployed`` are derived from the project's pointers
+    rather than stored on the revision, because a revision's identity is
+    immutable while which revision is current or deployed changes every turn.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    parent_revision_id: UUID | None = None
+    restored_from_revision_id: UUID | None = None
+    source_sha256: str
+    size_bytes: int
+    summary: str | None = None
+    created_at: datetime
+    created_by: UUID | None = None
+    is_current: bool
+    is_deployed: bool
+
+
+class SourceRevisionsList(BaseModel):
+    """List envelope for a Solution's revision history, newest first."""
+
+    revisions: list[SourceRevisionDTO]
+    total: int
+
+
+class RevisionFileDTO(BaseModel):
+    """One regular file inside an immutable source revision."""
+
+    path: str
+    size_bytes: int
+    is_text: bool
+
+
+class RevisionFilesList(BaseModel):
+    revision_id: UUID
+    files: list[RevisionFileDTO]
+    total: int
+
+
+class RevisionFileContentDTO(BaseModel):
+    revision_id: UUID
+    path: str
+    size_bytes: int
+    encoding: Literal["utf-8", "binary"]
+    content: str | None = None
+    truncated: bool = False
+
+
+class RevisionDiffFileDTO(BaseModel):
+    path: str
+    status: Literal["added", "modified", "deleted"]
+    additions: int = 0
+    deletions: int = 0
+    is_binary: bool = False
+    diff: str | None = None
+    truncated: bool = False
+
+
+class RevisionDiffDTO(BaseModel):
+    revision_id: UUID
+    against_revision_id: UUID | None = None
+    files: list[RevisionDiffFileDTO]
+    total: int
+    additions: int = 0
+    deletions: int = 0
+
+
+class UndoRequest(BaseModel):
+    """Restore an earlier revision's content as a new revision.
+
+    ``session_id`` is required because undo is a turn like any other and every
+    turn belongs to a chat session — the transcript has to show it happened.
+    """
+
+    to_revision_id: UUID
+    session_id: UUID
+
+
+class BuilderTurnDTO(BaseModel):
+    """Read-shape for one builder turn."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    session_id: UUID
+    requested_by: UUID | None = None
+    base_revision_id: UUID | None = None
+    output_revision_id: UUID | None = None
+    resume_from_turn_id: UUID | None = None
+    checkpoint_available: bool = False
+    build_job_id: UUID | None = None
+    deploy_job_id: UUID | None = None
+    status: str
+    error: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class BuilderTurnsList(BaseModel):
+    """List envelope for a Solution's turns, newest first."""
+
+    turns: list[BuilderTurnDTO]
+    total: int
+
+
+class RunTurnRequest(BaseModel):
+    """Ask the builder agent to change the workspace."""
+
+    session_id: UUID
+    message: str = Field(default="", max_length=32_000)
+    attachment_ids: list[UUID] = Field(default_factory=list, max_length=5)
+    resume_from_turn_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def require_content(self) -> "RunTurnRequest":
+        if not self.message.strip() and not self.attachment_ids:
+            raise ValueError("A message or attachment is required")
+        return self
+
+
+class RunTurnResponse(BaseModel):
+    """Accepted durable Builder turn returned without waiting for the model."""
+
+    turn: BuilderTurnDTO
+    job_id: UUID
+    status: Literal["queued"] = "queued"
+
+
+class BuildOutputEntry(BaseModel):
+    """One immutable dist artifact accepted from the build coordinator."""
+
+    path: str = Field(min_length=1, max_length=2048)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    size: int = Field(ge=0)
+
+
+class BuildJobStatusUpdate(BaseModel):
+    """Terminal transition reported by a one-job build capability."""
+
+    status: Literal["succeeded", "failed", "timeout", "cancelled"]
+    error: str | None = None
+    retryable: bool = False
+    log_excerpt: str | None = None
+    output_manifest: list[BuildOutputEntry] | None = None
+
+    @model_validator(mode="after")
+    def validate_retryable_status(self) -> "BuildJobStatusUpdate":
+        if self.retryable and self.status != "failed":
+            raise ValueError("Only failed build jobs can be retryable")
+        return self
+
+
+class ClaimedBuildJob(BaseModel):
+    """The credential-free coordinator's bounded runner instruction."""
+
+    id: UUID
+    solution_id: UUID
+    app_id: UUID
+    timeout_s: int
+
+
+class BuildJobPublic(BaseModel):
+    """Owner-visible build status used by builder polling."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    app_id: UUID | None = None
+    status: str
+    error: str | None = None
+    created_at: datetime
+    started_at: datetime | None = None
+    completed_at: datetime | None = None

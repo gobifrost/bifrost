@@ -12,6 +12,8 @@ from uuid import uuid4
 from tests.unit.services.agent_runtime_fakes import LegacyMockModel
 from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
 from src.services.llm.base import LLMConfig
+from src.services.agent_runtime.usage_governance import RuntimeUsageGovernance
+from src.services.usage_limits import UsageLimitSubject
 
 
 @pytest.fixture(autouse=True)
@@ -28,6 +30,22 @@ def mock_runtime_config():
         yield
 
 
+@pytest.fixture(autouse=True)
+def mock_runtime_usage_governance():
+    """Session-lifecycle tests should not depend on persisted quota rows."""
+
+    with patch(
+        "src.services.execution.autonomous_agent_executor.build_runtime_usage_governance",
+        new_callable=AsyncMock,
+        return_value=RuntimeUsageGovernance(
+            subject=UsageLimitSubject(),
+            policies=(),
+            aggregate_usage_by_scope_period={},
+        ),
+    ):
+        yield
+
+
 def _make_mock_session_factory():
     """Create a mock session factory that tracks session lifecycle."""
     sessions_open = []
@@ -37,6 +55,7 @@ def _make_mock_session_factory():
     mock_session.commit = AsyncMock()
     mock_session.flush = AsyncMock()
     mock_session.get = AsyncMock(return_value=None)
+    mock_session.scalar = AsyncMock(return_value=None)
 
     mock_ctx = AsyncMock()
 

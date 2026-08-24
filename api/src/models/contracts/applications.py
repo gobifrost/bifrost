@@ -57,7 +57,7 @@ class ApplicationCreate(ApplicationBase):
     )
     role_ids: list[UUID] = Field(
         default_factory=list,
-        description="Role IDs for role_based access (ignored if access_level is 'authenticated')",
+        description="Role assignments used when access_level is 'role_based'",
     )
     organization_id: UUID | None = Field(
         default=None,
@@ -99,9 +99,12 @@ class ApplicationUpdate(BaseModel):
     )
     description: str | None = None
     icon: str | None = Field(default=None, max_length=50)
-    scope: str | None = Field(
+    organization_id: UUID | None = Field(
         default=None,
-        description="Organization scope: 'global' for platform-wide, or org UUID string. Platform admin only.",
+        description=(
+            "Organization ID. Explicit null moves the Application to global "
+            "scope; omission preserves its current scope. Platform admin only."
+        ),
     )
     access_level: str | None = Field(
         default=None,
@@ -152,6 +155,10 @@ class ApplicationPublic(ApplicationBase):
     has_unpublished_changes: bool
     access_level: str = Field(default="authenticated")
     app_model: str = Field(default="inline_v1", description="Render model: inline_v1 (legacy inline) | standalone_v2")
+    runtime_mode: Literal["trusted", "isolated"] = Field(
+        default="trusted",
+        description="Server-authoritative browser runtime boundary",
+    )
     is_solution_managed: bool = Field(default=False, description="True if managed by a deployed Solution (read-only on platform)")
     solution_id: UUID | None = Field(default=None, description="UUID of the owning Solution install (null if not solution-managed)")
     role_ids: list[UUID] = Field(default_factory=list)
@@ -178,6 +185,12 @@ class ApplicationListResponse(BaseModel):
 
     applications: list[ApplicationPublic]
     total: int
+
+
+class ApplicationLaunchResponse(BaseModel):
+    """One-time handoff into an isolated application document."""
+
+    launch_url: str
 
 
 # ==================== DEFINITION MODELS ====================

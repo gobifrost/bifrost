@@ -28,24 +28,34 @@ class _FakeClient:
     def __init__(self, sent: dict):
         self._sent = sent
 
-    async def get(self, path, params=None):
+    async def get(self, path, params=None, headers=None):
         self._sent["get"] = (path, params)
+        if headers:
+            self._sent["headers"] = headers
         return _Resp()
 
-    async def post(self, path, json=None, params=None):
+    async def post(self, path, json=None, params=None, headers=None):
         self._sent["post"] = (path, json, params)
+        if headers:
+            self._sent["headers"] = headers
         return _Resp()
 
-    async def put(self, path, json=None, params=None):
+    async def put(self, path, json=None, params=None, headers=None):
         self._sent["put"] = (path, json, params)
+        if headers:
+            self._sent["headers"] = headers
         return _Resp()
 
-    async def patch(self, path, json=None, params=None):
+    async def patch(self, path, json=None, params=None, headers=None):
         self._sent["patch"] = (path, json, params)
+        if headers:
+            self._sent["headers"] = headers
         return _Resp()
 
-    async def delete(self, path, params=None):
+    async def delete(self, path, params=None, headers=None):
         self._sent["delete"] = (path, params)
+        if headers:
+            self._sent["headers"] = headers
         return _Resp()
 
 
@@ -215,6 +225,49 @@ def test_workflows_register_org_via_name(monkeypatch):
     assert res.exit_code == 0
     _, body, _ = sent["post"]
     assert body["organization_id"] == "uuid-acme"
+
+
+def test_workflows_update_omit_preserves_scope(monkeypatch):
+    from bifrost.commands.workflows import workflows_group
+
+    sent, res = _run(
+        monkeypatch,
+        workflows_group,
+        ["update", "workflow-a", "--description", "Updated"],
+    )
+    assert res.exit_code == 0
+    _, body, _ = sent["patch"]
+    assert "organization_id" not in body
+
+
+def test_workflows_update_global_sends_explicit_null(monkeypatch):
+    from bifrost.commands.workflows import workflows_group
+
+    sent, res = _run(
+        monkeypatch,
+        workflows_group,
+        ["update", "workflow-a", "--description", "Updated", "--global"],
+    )
+    assert res.exit_code == 0
+    _, body, _ = sent["patch"]
+    assert body.get("organization_id", "MISSING") is None
+
+
+def test_workflows_list_org_resolves_scope(monkeypatch):
+    from bifrost.commands.workflows import workflows_group
+
+    sent, res = _run(
+        monkeypatch,
+        workflows_group,
+        ["list", "--org", "acme", "--query", "invoice", "--type", "workflow"],
+    )
+    assert res.exit_code == 0
+    _, params = sent["get"]
+    assert params == {
+        "query": "invoice",
+        "type": "workflow",
+        "scope": "uuid-acme",
+    }
 
 
 # ── tables / forms / agents / events (the entity --org standard) ────────────
@@ -400,6 +453,7 @@ def test_events_create_source_org_forms(monkeypatch):
     )
     assert res.exit_code == 0
     assert sent["post"][1].get("organization_id", "MISSING") is None
+    assert sent["headers"] == {"X-Bifrost-Boundary": "platform"}
     sent, res = _run(
         monkeypatch,
         events_group,
@@ -410,3 +464,31 @@ def test_events_create_source_org_forms(monkeypatch):
     )
     assert res.exit_code == 0
     assert sent["post"][1]["organization_id"] == "uuid-acme"
+    assert sent["headers"] == {
+        "X-Bifrost-Boundary": "organization:uuid-acme"
+    }
+
+
+# ── organization lifecycle ─────────────────────────────────────────────────
+
+
+def test_orgs_list_excludes_inactive_by_default(monkeypatch):
+    from bifrost.commands.orgs import orgs_group
+
+    sent, res = _run(monkeypatch, orgs_group, ["list"])
+    assert res.exit_code == 0
+    assert sent["get"] == (
+        "/api/organizations",
+        {"include_inactive": False},
+    )
+
+
+def test_orgs_list_can_include_inactive(monkeypatch):
+    from bifrost.commands.orgs import orgs_group
+
+    sent, res = _run(monkeypatch, orgs_group, ["list", "--include-inactive"])
+    assert res.exit_code == 0
+    assert sent["get"] == (
+        "/api/organizations",
+        {"include_inactive": True},
+    )

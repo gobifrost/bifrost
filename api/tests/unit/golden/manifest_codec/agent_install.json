@@ -1,5 +1,6 @@
 {
   "access_level": "authenticated",
+  "bundle_path": "agents/rt-agent-install",
   "channels": [
     "chat",
     "email"
@@ -19,7 +20,7 @@
   ],
   "system_prompt": "Install test system prompt.",
   "system_tools": [
-    "execute_workflow"
+    "bifrost_execute_workflow"
   ],
   "tool_ids": []
 }

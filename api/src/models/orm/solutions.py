@@ -25,7 +25,16 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, LargeBinary, String, Text, text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    LargeBinary,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
@@ -33,6 +42,7 @@ from src.models.orm.base import Base
 if TYPE_CHECKING:
     from src.models.orm.solution_connection_schema import SolutionConnectionSchema
     from src.models.orm.solution_file_location import SolutionFileLocation
+    from src.models.orm.solution_role_grants import SolutionRoleGrant
 
 
 # Identity entity — a Solution install. Managed entities reference it by
@@ -43,7 +53,9 @@ class Solution(Base):
 
     __tablename__ = "solutions"
 
-    # A Solution installs AT MOST ONCE per scope (one org, or global). Two
+    # A shared Solution installs at most once per scope. Private Builder
+    # Solutions are unique per owner so different users in one organization
+    # can independently develop the same slug before promotion.
     # installs of the same slug in one org would let a v2 app's path::fn workflow
     # ref resolve a sibling install's workflow (Codex #8 P1); the constraint makes
     # that state unreachable. organization_id is nullable and NULLs don't compare
@@ -55,13 +67,22 @@ class Solution(Base):
             "slug",
             "organization_id",
             unique=True,
-            postgresql_where=text("organization_id IS NOT NULL"),
+            postgresql_where=text(
+                "organization_id IS NOT NULL AND visibility = 'shared'"
+            ),
         ),
         Index(
             "ix_solutions_slug_global_unique",
             "slug",
             unique=True,
-            postgresql_where=text("organization_id IS NULL"),
+            postgresql_where=text("organization_id IS NULL AND visibility = 'shared'"),
+        ),
+        Index(
+            "ix_solutions_owner_slug_private_unique",
+            "owner_user_id",
+            "slug",
+            unique=True,
+            postgresql_where=text("visibility = 'private'"),
         ),
     )
 
@@ -85,6 +106,16 @@ class Solution(Base):
     # resources and are not governed by this flag.
     global_repo_access: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
+    )
+
+    owner_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        default=None,
+        index=True,
+    )
+    visibility: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="shared", server_default="shared"
     )
 
     # Version bookkeeping (Task 20). ``version`` is the deployed bundle's
@@ -121,17 +152,23 @@ class Solution(Base):
     git_connected: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=text("false")
     )
-    git_repo_url: Mapped[str | None] = mapped_column(String(1024), nullable=True, default=None)
+    git_repo_url: Mapped[str | None] = mapped_column(
+        String(1024), nullable=True, default=None
+    )
 
     # Subfolder within the connected repo holding this solution's
     # bifrost.solution.yaml (omni-repo: one repo, a folder per solution).
     # None/"" => repo root (backward compatible).
-    repo_subpath: Mapped[str | None] = mapped_column(String(1024), nullable=True, default=None)
+    repo_subpath: Mapped[str | None] = mapped_column(
+        String(1024), nullable=True, default=None
+    )
 
     # Git ref (branch or tag) the connected install tracks. None => the repo's
     # default branch. Lets a consumer pin to a tag while detection still reads
     # the descriptor version: at that ref's HEAD.
-    git_ref: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
+    git_ref: Mapped[str | None] = mapped_column(
+        String(255), nullable=True, default=None
+    )
 
     # Newest descriptor version available at the connected repo's ref HEAD, when
     # it is PEP-440-greater than the installed `version`. None => up to date /
@@ -146,7 +183,9 @@ class Solution(Base):
     logo_data: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
     logo_content_type: Mapped[str | None] = mapped_column(String(100), default=None)
     logo_thumbnail_data: Mapped[bytes | None] = mapped_column(LargeBinary, default=None)
-    logo_thumbnail_content_type: Mapped[str | None] = mapped_column(String(50), default=None)
+    logo_thumbnail_content_type: Mapped[str | None] = mapped_column(
+        String(50), default=None
+    )
     logo_thumbnail_version: Mapped[str | None] = mapped_column(String(64), default=None)
 
     # Long-form README markdown (Task 6). Rendered on the solution's README tab.
@@ -168,6 +207,12 @@ class Solution(Base):
         cascade="all, delete-orphan",
         order_by="SolutionFileLocation.position",
         lazy="selectin",
+    )
+    role_grants: Mapped[list["SolutionRoleGrant"]] = relationship(
+        back_populates="solution",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        order_by="SolutionRoleGrant.created_at",
     )
 
     created_at: Mapped[datetime] = mapped_column(

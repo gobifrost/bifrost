@@ -7,6 +7,23 @@ export type PlatformJobListResponse =
 export type PlatformJobCancelResponse =
 	components["schemas"]["PlatformJobCancelResponse"];
 
+export async function getPlatformJob(
+	jobId: string,
+	signal?: AbortSignal,
+): Promise<PlatformJob> {
+	const { data, error } = await apiClient.GET(
+		"/api/platform-jobs/{job_id}",
+		{
+			params: { path: { job_id: jobId } },
+			signal,
+		},
+	);
+	if (error) {
+		throw new Error("Failed to load build progress");
+	}
+	return data;
+}
+
 export async function getPlatformJobs(
 	options: {
 		activeOnly?: boolean;
@@ -33,6 +50,21 @@ export async function getPlatformJobs(
 		throw new Error("Failed to load platform jobs");
 	}
 	return data;
+}
+
+export async function listPlatformJobs(
+	options: {
+		activeOnly?: boolean;
+		limit?: number;
+		signal?: AbortSignal;
+	} = {},
+): Promise<PlatformJob[]> {
+	const result = await getPlatformJobs({
+		activeOnly: options.activeOnly,
+		limit: options.limit,
+		signal: options.signal,
+	});
+	return result.jobs;
 }
 
 export async function cancelPlatformJob(

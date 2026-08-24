@@ -14,9 +14,9 @@ from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from typing import Any
 
-from sqlalchemy import and_, delete, select
+from sqlalchemy import and_, delete, func, select
 
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context
 from src.core.log_safety import log_safe
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -41,6 +41,7 @@ from src.models import (
     MappingAuthorizeRequest,
     MappingAuthorizeResponse,
     OAuthConfigSummary,
+    Organization,
 )
 from src.models.orm import Config as ConfigModel
 from src.models.orm import IntegrationConfigSchema
@@ -51,6 +52,13 @@ from src.services.oauth_provider import (
     resolve_url_template,
 )
 from src.services.oauth_state import encode_state, remember_nonce
+from src.services.audit import emit_audit
+from src.services.operation_catalog import operation_route
+from src.services.repo_sync_writer import RepoSyncWriter
+from src.services.authorization import (
+    AuthorizationBoundaryKind,
+    CurrentAuthorizationContext,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -99,16 +107,24 @@ class IntegrationsRepository:
     def __init__(self, db_session):
         self.db = db_session
 
-    async def list_integrations(self) -> list[Integration]:
-        """List all integrations (excluding deleted)."""
+    async def list_integrations(
+        self,
+        *,
+        organization_id: UUID | None = None,
+    ) -> list[Integration]:
+        """List non-deleted integrations, optionally restricted to one org mapping."""
         query = (
             select(Integration)
             .where(Integration.is_deleted.is_(False))
             .options(selectinload(Integration.config_schema))
-            .order_by(Integration.name)
         )
+        if organization_id is not None:
+            query = query.join(IntegrationMapping).where(
+                IntegrationMapping.organization_id == organization_id
+            )
+        query = query.order_by(Integration.name)
         result = await self.db.execute(query)
-        return list(result.scalars().all())
+        return list(result.unique().scalars().all())
 
     async def get_integration_by_id(self, integration_id: UUID) -> Integration | None:
         """Get integration by ID."""
@@ -676,19 +692,121 @@ class IntegrationsRepository:
 # =============================================================================
 
 
+def _require_platform_integration_definition(
+    authorization: CurrentAuthorizationContext,
+    operation_id: str,
+) -> None:
+    """Authorize mutation of a Global Integration definition."""
+    authorization.require_operation(operation_id)
+    if (
+        authorization.selected_boundary.kind
+        is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Select Global before changing an Integration definition",
+        )
+    authorization.require_resource_boundary(None)
+
+
+async def _require_visible_integration(
+    ctx: Context,
+    authorization: CurrentAuthorizationContext,
+    integration_id: UUID,
+) -> None:
+    """Require one definition to be admitted by the selected boundary.
+
+    Definitions are Global, but an exact Organization may read a definition
+    mapped to it. Managed organizations is an explicit cross-customer
+    collection/support view and only admits definitions mapped to a customer.
+    """
+    if authorization.has_capability("platform.superuser"):
+        return
+    boundary = authorization.selected_boundary
+    if boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+        return
+    query = select(IntegrationMapping.id).where(
+        IntegrationMapping.integration_id == integration_id
+    )
+    if boundary.kind is AuthorizationBoundaryKind.ORGANIZATION:
+        query = query.where(
+            IntegrationMapping.organization_id == boundary.organization_id
+        )
+    else:
+        query = query.join(
+            Organization,
+            Organization.id == IntegrationMapping.organization_id,
+        ).where(Organization.is_provider.is_(False))
+    if await ctx.db.scalar(query.limit(1)) is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Integration not found",
+        )
+
+
+def _require_integration_mapping_boundary(
+    authorization: CurrentAuthorizationContext,
+    organization_id: UUID | None,
+) -> None:
+    if (
+        authorization.selected_boundary.kind
+        is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Select one organization before changing an Integration mapping",
+        )
+    authorization.require_resource_boundary(organization_id)
+
+
+async def _require_visible_integration_mapping(
+    ctx: Context,
+    authorization: CurrentAuthorizationContext,
+    organization_id: UUID,
+) -> None:
+    """Require the selected collection/resource boundary to cover a mapping."""
+
+    if authorization.has_capability("platform.superuser"):
+        return
+    boundary = authorization.selected_boundary
+    if boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+        return
+    if (
+        boundary.kind is AuthorizationBoundaryKind.ORGANIZATION
+        and boundary.organization_id == organization_id
+    ):
+        return
+    if boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+        is_provider = await ctx.db.scalar(
+            select(Organization.is_provider).where(
+                Organization.id == organization_id
+            )
+        )
+        if is_provider is False:
+            return
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="Integration mapping not found",
+    )
+
+
 @router.post(
     "",
     response_model=IntegrationResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create integration",
     description="Create a new integration (Platform admin only)",
+    **operation_route("integrations.create"),
 )
 async def create_integration(
     request: IntegrationCreate,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> IntegrationResponse:
     """Create a new integration."""
+    _require_platform_integration_definition(
+        authorization, "integrations.create"
+    )
     repo = IntegrationsRepository(ctx.db)
 
     # Check for duplicate name
@@ -702,6 +820,15 @@ async def create_integration(
     integration = await repo.create_integration(request)
     logger.info(f"Created integration: {log_safe(integration.name)}")
 
+    await emit_audit(
+        ctx.db,
+        "integration.create",
+        resource_type="integration",
+        resource_id=integration.id,
+        details={"name": integration.name},
+    )
+    await RepoSyncWriter(ctx.db).regenerate_manifest()
+
     return IntegrationResponse.model_validate(integration)
 
 
@@ -709,15 +836,49 @@ async def create_integration(
     "",
     response_model=IntegrationListResponse,
     summary="List integrations",
-    description="List all integrations (Platform admin only)",
+    description=(
+        "List all integrations for Platform admins; other active users see "
+        "integrations mapped to their organization"
+    ),
+    **operation_route("integrations.list"),
 )
 async def list_integrations(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> IntegrationListResponse:
-    """List all integrations."""
+    """List integrations visible to the caller's platform or organization scope."""
+    if ctx.user.is_external or ctx.user.embed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Integration administration is unavailable to external or embed sessions",
+        )
+    authorization.require_operation("integrations.list")
     repo = IntegrationsRepository(ctx.db)
-    integrations = await repo.list_integrations()
+    boundary = authorization.selected_boundary
+    if boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+        integrations = await repo.list_integrations()
+    elif boundary.kind is AuthorizationBoundaryKind.ORGANIZATION:
+        integrations = await repo.list_integrations(
+            organization_id=boundary.organization_id
+        )
+    else:
+        from src.models.orm.organizations import Organization
+
+        result = await ctx.db.execute(
+            select(Integration)
+            .join(IntegrationMapping)
+            .join(
+                Organization,
+                Organization.id == IntegrationMapping.organization_id,
+            )
+            .where(
+                Integration.is_deleted.is_(False),
+                Organization.is_provider.is_(False),
+            )
+            .options(selectinload(Integration.config_schema))
+            .order_by(Integration.name)
+        )
+        integrations = list(result.unique().scalars().all())
 
     items = [IntegrationResponse.model_validate(i) for i in integrations]
     return IntegrationListResponse(items=items, total=len(items))
@@ -728,13 +889,16 @@ async def list_integrations(
     response_model=IntegrationDetailResponse,
     summary="Get integration by ID",
     description="Get a specific integration by ID with mappings and OAuth config (Platform admin only)",
+    **operation_route("integrations.get"),
 )
 async def get_integration(
     integration_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> IntegrationDetailResponse:
     """Get a specific integration by ID with nested mappings and OAuth config."""
+    authorization.require_operation("integrations.get")
+    await _require_visible_integration(ctx, authorization, integration_id)
     repo = IntegrationsRepository(ctx.db)
     integration = await repo.get_integration_detail_by_id(integration_id)
 
@@ -768,8 +932,28 @@ async def get_integration(
     # Build mapping responses with org-specific overrides only (not merged with defaults)
     # This prevents users from accidentally saving defaults back to org config
     all_org_configs = await repo.get_all_org_config_overrides(integration.id)
+    boundary = authorization.selected_boundary
     mapping_responses = []
     for m in integration.mappings:
+        if not authorization.has_capability("platform.superuser"):
+            if (
+                boundary.kind is AuthorizationBoundaryKind.ORGANIZATION
+                and m.organization_id != boundary.organization_id
+            ):
+                continue
+            if boundary.kind is AuthorizationBoundaryKind.PLATFORM and m.organization_id is not None:
+                continue
+            if boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+                from src.models.orm.organizations import Organization
+
+                is_customer = await ctx.db.scalar(
+                    select(Organization.id).where(
+                        Organization.id == m.organization_id,
+                        Organization.is_provider.is_(False),
+                    )
+                )
+                if is_customer is None:
+                    continue
         org_config = all_org_configs.get(m.organization_id, {}) if m.organization_id else {}
         mapping_responses.append(
             await _mapping_to_response(ctx.db, m, config=org_config if org_config else None)
@@ -784,7 +968,15 @@ async def get_integration(
         ]
 
     # Get integration-level default config values
-    config_defaults = await repo.get_integration_defaults(integration.id, external=False)
+    platform_detail = (
+        authorization.has_capability("platform.superuser")
+        or boundary.kind is AuthorizationBoundaryKind.PLATFORM
+    )
+    config_defaults = (
+        await repo.get_integration_defaults(integration.id, external=False)
+        if platform_detail
+        else {}
+    )
 
     return IntegrationDetailResponse(
         id=integration.id,
@@ -800,7 +992,7 @@ async def get_integration(
         created_at=integration.created_at,
         updated_at=integration.updated_at,
         mappings=mapping_responses,
-        oauth_config=oauth_config,
+        oauth_config=oauth_config if platform_detail else None,
     )
 
 
@@ -813,9 +1005,10 @@ async def get_integration(
 async def get_integration_by_name(
     name: str,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> IntegrationResponse:
     """Get a specific integration by name."""
+    authorization.require_operation("integrations.get")
     repo = IntegrationsRepository(ctx.db)
     integration = await repo.get_integration_by_name(name)
 
@@ -825,6 +1018,8 @@ async def get_integration_by_name(
             detail="Integration not found",
         )
 
+    await _require_visible_integration(ctx, authorization, integration.id)
+
     return IntegrationResponse.model_validate(integration)
 
 
@@ -833,15 +1028,58 @@ async def get_integration_by_name(
     response_model=IntegrationResponse,
     summary="Update integration",
     description="Update an existing integration (Platform admin only)",
+    **operation_route("integrations.update"),
 )
 async def update_integration(
     integration_id: UUID,
     request: IntegrationUpdate,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
+    force_remove_keys: bool = Query(
+        False,
+        description=(
+            "Confirm deletion of config-schema keys and their stored values"
+        ),
+    ),
 ) -> IntegrationResponse:
     """Update an integration."""
+    _require_platform_integration_definition(
+        authorization, "integrations.update"
+    )
     repo = IntegrationsRepository(ctx.db)
+
+    current = await repo.get_integration_by_id(integration_id)
+    if not current:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Integration not found",
+        )
+
+    if request.config_schema is not None:
+        current_by_key = {item.key: item for item in current.config_schema}
+        incoming_keys = {item.key for item in request.config_schema}
+        removed_keys = sorted(set(current_by_key) - incoming_keys)
+        if removed_keys and not force_remove_keys:
+            removed_ids = [current_by_key[key].id for key in removed_keys]
+            affected_values = await ctx.db.scalar(
+                select(func.count())
+                .select_from(ConfigModel)
+                .where(ConfigModel.config_schema_id.in_(removed_ids))
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail={
+                    "code": "integration_schema_removal_requires_confirmation",
+                    "message": (
+                        "Removing integration config-schema keys deletes stored "
+                        "default and organization values"
+                    ),
+                    "removed_keys": removed_keys,
+                    "affected_config_values": int(affected_values or 0),
+                    "force_remove_keys": True,
+                },
+            )
+
     integration = await repo.update_integration(integration_id, request)
 
     if not integration:
@@ -851,6 +1089,15 @@ async def update_integration(
         )
 
     logger.info(f"Updated integration: {log_safe(integration.name)}")
+    changed_fields = sorted(request.model_dump(exclude_unset=True))
+    await emit_audit(
+        ctx.db,
+        "integration.update",
+        resource_type="integration",
+        resource_id=integration.id,
+        details={"name": integration.name, "changed_fields": changed_fields},
+    )
+    await RepoSyncWriter(ctx.db).regenerate_manifest()
     return IntegrationResponse.model_validate(integration)
 
 
@@ -859,13 +1106,17 @@ async def update_integration(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete integration",
     description="Soft delete an integration (Platform admin only)",
+    **operation_route("integrations.delete"),
 )
 async def delete_integration(
     integration_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> None:
     """Soft delete an integration."""
+    _require_platform_integration_definition(
+        authorization, "integrations.delete"
+    )
     repo = IntegrationsRepository(ctx.db)
     deleted = await repo.delete_integration(integration_id)
 
@@ -876,6 +1127,13 @@ async def delete_integration(
         )
 
     logger.info(f"Deleted integration: {log_safe(integration_id)}")
+    await emit_audit(
+        ctx.db,
+        "integration.delete",
+        resource_type="integration",
+        resource_id=integration_id,
+    )
+    await RepoSyncWriter(ctx.db).regenerate_manifest()
 
 
 # =============================================================================
@@ -903,18 +1161,22 @@ class IntegrationConfigResponse(BaseModel):
     response_model=IntegrationConfigResponse,
     summary="Update integration default config",
     description="Set default config values for an integration (Platform admin only)",
+    **operation_route("integrations.config.update"),
 )
 async def update_integration_config(
     integration_id: UUID,
     request: IntegrationConfigUpdate,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> IntegrationConfigResponse:
     """Update integration-level default config values.
 
     These defaults are stored in the configs table with integration_id set
     but no organization_id. Per-org configs override these values.
     """
+    _require_platform_integration_definition(
+        authorization, "integrations.config.update"
+    )
     repo = IntegrationsRepository(ctx.db)
 
     # Verify integration exists
@@ -930,7 +1192,7 @@ async def update_integration_config(
         integration_id=integration_id,
         organization_id=None,
         config=request.config,
-        updated_by=user.email,
+        updated_by=authorization.requester.email,
     )
 
     logger.info(f"Updated default config for integration {log_safe(integration_id)}")
@@ -948,13 +1210,17 @@ async def update_integration_config(
     response_model=IntegrationConfigResponse,
     summary="Get integration default config",
     description="Get default config values for an integration (Platform admin only)",
+    **operation_route("integrations.config.get"),
 )
 async def get_integration_config(
     integration_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> IntegrationConfigResponse:
     """Get integration-level default config values."""
+    _require_platform_integration_definition(
+        authorization, "integrations.config.get"
+    )
     repo = IntegrationsRepository(ctx.db)
 
     # Verify integration exists
@@ -1017,14 +1283,19 @@ async def _mapping_to_response(
     status_code=status.HTTP_201_CREATED,
     summary="Create integration mapping",
     description="Create a new mapping between an integration and organization (Platform admin only)",
+    **operation_route("integrations.mappings.create"),
 )
 async def create_mapping(
     integration_id: UUID,
     request: IntegrationMappingCreate,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> IntegrationMappingResponse:
     """Create a new integration mapping."""
+    authorization.require_operation("integrations.mappings.create")
+    _require_integration_mapping_boundary(
+        authorization, request.organization_id
+    )
     repo = IntegrationsRepository(ctx.db)
 
     # Verify integration exists
@@ -1051,6 +1322,18 @@ async def create_mapping(
     # Get org-specific overrides only (not merged with defaults)
     org_config = await repo.get_org_config_overrides(integration_id, request.organization_id)
 
+    await emit_audit(
+        ctx.db,
+        "integration_mapping.create",
+        resource_type="integration_mapping",
+        resource_id=mapping.id,
+        details={
+            "integration_id": str(integration_id),
+            "organization_id": str(request.organization_id),
+        },
+    )
+    await RepoSyncWriter(ctx.db).regenerate_manifest()
+
     return await _mapping_to_response(ctx.db, mapping, config=org_config if org_config else None)
 
 
@@ -1058,14 +1341,16 @@ async def create_mapping(
     "/{integration_id}/mappings",
     response_model=IntegrationMappingListResponse,
     summary="List mappings for integration",
-    description="List all mappings for a specific integration (Platform admin only)",
+    description="List mappings visible in the selected authorization boundary",
+    **operation_route("integrations.mappings.list"),
 )
 async def list_mappings(
     integration_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> IntegrationMappingListResponse:
     """List all mappings for an integration."""
+    authorization.require_operation("integrations.mappings.list")
     repo = IntegrationsRepository(ctx.db)
 
     # Verify integration exists
@@ -1077,6 +1362,31 @@ async def list_mappings(
         )
 
     mappings = await repo.list_mappings_for_integration(integration_id)
+    if not authorization.has_capability("platform.superuser"):
+        boundary = authorization.selected_boundary
+        if boundary.kind is AuthorizationBoundaryKind.ORGANIZATION:
+            mappings = [
+                mapping
+                for mapping in mappings
+                if mapping.organization_id == boundary.organization_id
+            ]
+        elif boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+            customer_ids = set(
+                (
+                    await ctx.db.execute(
+                        select(Organization.id).where(
+                            Organization.is_provider.is_(False)
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            mappings = [
+                mapping
+                for mapping in mappings
+                if mapping.organization_id in customer_ids
+            ]
 
     items = [await _mapping_to_response(ctx.db, m) for m in mappings]
     return IntegrationMappingListResponse(items=items, total=len(items))
@@ -1086,15 +1396,17 @@ async def list_mappings(
     "/{integration_id}/mappings/{mapping_id}",
     response_model=IntegrationMappingResponse,
     summary="Get integration mapping",
-    description="Get a specific mapping by ID (Platform admin only)",
+    description="Get a mapping visible in the selected authorization boundary",
+    **operation_route("integrations.mappings.get"),
 )
 async def get_mapping(
     integration_id: UUID,
     mapping_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> IntegrationMappingResponse:
     """Get a specific mapping."""
+    authorization.require_operation("integrations.mappings.get")
     repo = IntegrationsRepository(ctx.db)
 
     mapping = await repo.get_mapping_by_id(integration_id, mapping_id)
@@ -1103,6 +1415,9 @@ async def get_mapping(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Mapping not found",
         )
+    await _require_visible_integration_mapping(
+        ctx, authorization, mapping.organization_id
+    )
 
     # Get org-specific overrides only (not merged with defaults)
     org_config = await repo.get_org_config_overrides(integration_id, mapping.organization_id)
@@ -1114,15 +1429,18 @@ async def get_mapping(
     "/{integration_id}/mappings/by-org/{org_id}",
     response_model=IntegrationMappingResponse,
     summary="Get mapping by organization",
-    description="Get the mapping for an integration in a specific organization (Platform admin only)",
+    description="Get an organization mapping in the selected authorization boundary",
+    **operation_route("integrations.mappings.get_by_org"),
 )
 async def get_mapping_by_org(
     integration_id: UUID,
     org_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> IntegrationMappingResponse:
     """Get the mapping for an integration in a specific organization."""
+    authorization.require_operation("integrations.mappings.get_by_org")
+    await _require_visible_integration_mapping(ctx, authorization, org_id)
     repo = IntegrationsRepository(ctx.db)
 
     mapping = await repo.get_mapping_by_org(integration_id, org_id)
@@ -1143,19 +1461,34 @@ async def get_mapping_by_org(
     response_model=IntegrationMappingResponse,
     summary="Update integration mapping",
     description="Update an existing mapping (Platform admin only)",
+    **operation_route("integrations.mappings.update"),
 )
 async def update_mapping(
     integration_id: UUID,
     mapping_id: UUID,
     request: IntegrationMappingUpdate,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> IntegrationMappingResponse:
     """Update an integration mapping."""
+    authorization.require_operation("integrations.mappings.update")
     repo = IntegrationsRepository(ctx.db)
 
+    existing = await repo.get_mapping_by_id(integration_id, mapping_id)
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Mapping not found",
+        )
+    _require_integration_mapping_boundary(
+        authorization, existing.organization_id
+    )
+
     mapping = await repo.update_mapping(
-        integration_id, mapping_id, request, updated_by=user.email
+        integration_id,
+        mapping_id,
+        request,
+        updated_by=authorization.requester.email,
     )
     if not mapping:
         raise HTTPException(
@@ -1168,6 +1501,19 @@ async def update_mapping(
     # Get org-specific overrides only (not merged with defaults)
     org_config = await repo.get_org_config_overrides(integration_id, mapping.organization_id)
 
+    await emit_audit(
+        ctx.db,
+        "integration_mapping.update",
+        resource_type="integration_mapping",
+        resource_id=mapping.id,
+        details={
+            "integration_id": str(integration_id),
+            "organization_id": str(mapping.organization_id),
+            "changed_fields": sorted(request.model_dump(exclude_unset=True)),
+        },
+    )
+    await RepoSyncWriter(ctx.db).regenerate_manifest()
+
     return await _mapping_to_response(ctx.db, mapping, config=org_config if org_config else None)
 
 
@@ -1176,14 +1522,16 @@ async def update_mapping(
     response_model=IntegrationMappingBatchResponse,
     summary="Batch upsert integration mappings",
     description="Create or update multiple mappings in a single request (Platform admin only)",
+    **operation_route("integrations.mappings.batch"),
 )
 async def batch_upsert_mappings(
     integration_id: UUID,
     request: IntegrationMappingBatchRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> IntegrationMappingBatchResponse:
     """Batch create/update integration mappings."""
+    authorization.require_operation("integrations.mappings.batch")
     repo = IntegrationsRepository(ctx.db)
 
     # Verify integration exists
@@ -1197,9 +1545,13 @@ async def batch_upsert_mappings(
     created = 0
     updated = 0
     errors: list[str] = []
+    requester_email = authorization.requester.email
 
     for item in request.mappings:
         try:
+            _require_integration_mapping_boundary(
+                authorization, item.organization_id
+            )
             existing = await repo.get_mapping_by_org(integration_id, item.organization_id)
             if existing:
                 update_data = IntegrationMappingUpdate(
@@ -1207,7 +1559,10 @@ async def batch_upsert_mappings(
                     entity_name=item.entity_name,
                 )
                 await repo.update_mapping(
-                    integration_id, existing.id, update_data, updated_by=user.email
+                    integration_id,
+                    existing.id,
+                    update_data,
+                    updated_by=requester_email,
                 )
                 updated += 1
             else:
@@ -1216,8 +1571,14 @@ async def batch_upsert_mappings(
                     entity_id=item.entity_id,
                     entity_name=item.entity_name,
                 )
-                await repo.create_mapping(create_data, integration_id, updated_by=user.email)
+                await repo.create_mapping(
+                    create_data,
+                    integration_id,
+                    updated_by=requester_email,
+                )
                 created += 1
+        except HTTPException:
+            raise
         except Exception as e:
             errors.append(f"org {item.organization_id}: {str(e)}")
             logger.error(f"Batch mapping error for org {item.organization_id}: {log_safe(e)}")
@@ -1241,15 +1602,25 @@ async def batch_upsert_mappings(
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete integration mapping",
     description="Delete an integration mapping (Platform admin only)",
+    **operation_route("integrations.mappings.delete"),
 )
 async def delete_mapping(
     integration_id: UUID,
     mapping_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> None:
     """Delete an integration mapping."""
+    authorization.require_operation("integrations.mappings.delete")
     repo = IntegrationsRepository(ctx.db)
+
+    mapping = await repo.get_mapping_by_id(integration_id, mapping_id)
+    if not mapping:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Mapping not found",
+        )
+    _require_integration_mapping_boundary(authorization, mapping.organization_id)
 
     deleted = await repo.delete_mapping(integration_id, mapping_id)
     if not deleted:
@@ -1266,19 +1637,21 @@ async def delete_mapping(
     response_model=MappingAuthorizeResponse,
     summary="Begin OAuth authorize flow for a mapping",
     description="Returns the authorization URL with a signed state token carrying mapping_id (Platform admin only)",
+    **operation_route("integrations.mappings.authorize"),
 )
 async def authorize_mapping(
     integration_id: UUID,
     mapping_id: UUID,
     request: MappingAuthorizeRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> MappingAuthorizeResponse:
     """Begin the OAuth authorization flow for a specific integration mapping.
 
     Returns an authorization URL containing a signed state token that carries
     the mapping_id so the callback can attribute the resulting token to this mapping.
     """
+    authorization.require_operation("integrations.mappings.authorize")
     repo = IntegrationsRepository(ctx.db)
     integration = await repo.get_integration_by_id(integration_id)
     if not integration or not integration.oauth_provider:
@@ -1299,6 +1672,7 @@ async def authorize_mapping(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Mapping not found",
         )
+    _require_integration_mapping_boundary(authorization, mapping.organization_id)
 
     defaults = await get_url_resolution_defaults(ctx.db, provider)
     resolved_url = resolve_url_template(url=provider.authorization_url, defaults=defaults)
@@ -1327,17 +1701,20 @@ async def authorize_mapping(
     status_code=204,
     summary="Disconnect a mapping's per-row OAuth connection",
     description="Deletes the mapping's OAuth token and clears oauth_token_id. Fallback to integration-level token resumes (Platform admin only).",
+    **operation_route("integrations.mappings.disconnect"),
 )
 async def disconnect_mapping(
     integration_id: UUID,
     mapping_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> None:
+    authorization.require_operation("integrations.mappings.disconnect")
     repo = IntegrationsRepository(ctx.db)
     mapping = await repo.get_mapping_by_id(integration_id, mapping_id)
     if not mapping:
         raise HTTPException(status_code=404, detail="Mapping not found")
+    _require_integration_mapping_boundary(authorization, mapping.organization_id)
 
     integration = mapping.integration
     organization = mapping.organization
@@ -1385,22 +1762,25 @@ async def disconnect_mapping(
         "tokens don't poison the integration-level fallback's health). "
         "Platform admin only."
     ),
+    **operation_route("integrations.mappings.refresh"),
 )
 async def refresh_mapping_oauth(
     integration_id: UUID,
     mapping_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> IntegrationMappingResponse:
     from src.services.oauth_provider import (
         build_token_refresh_context,
         refresh_oauth_token_http,
     )
 
+    authorization.require_operation("integrations.mappings.refresh")
     repo = IntegrationsRepository(ctx.db)
     mapping = await repo.get_mapping_by_id(integration_id, mapping_id)
     if not mapping:
         raise HTTPException(status_code=404, detail="Mapping not found")
+    _require_integration_mapping_boundary(authorization, mapping.organization_id)
     if not mapping.oauth_token_id:
         raise HTTPException(
             status_code=400,
@@ -1520,13 +1900,17 @@ async def refresh_mapping_oauth(
     response_model=OAuthConfigResponse,
     summary="Get OAuth provider config",
     description="Get the OAuth provider configuration for this integration (Platform admin only)",
+    **operation_route("integrations.oauth.get"),
 )
 async def get_oauth_config(
     integration_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> OAuthConfigResponse:
     """Get the OAuth provider configuration associated with an integration."""
+    _require_platform_integration_definition(
+        authorization, "integrations.oauth.get"
+    )
     repo = IntegrationsRepository(ctx.db)
 
     oauth_provider = await repo.get_oauth_provider(integration_id)
@@ -1555,11 +1939,12 @@ async def get_oauth_config(
     response_model=OAuthAuthorizeResponse,
     summary="Get OAuth authorization URL",
     description="Get the authorization URL for this integration's OAuth flow (Platform admin only)",
+    **operation_route("integrations.oauth.authorize"),
 )
 async def get_oauth_authorization_url(
     integration_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     redirect_uri: str = Query(..., description="Frontend callback URL for OAuth redirect"),
 ) -> OAuthAuthorizeResponse:
     """
@@ -1568,6 +1953,9 @@ async def get_oauth_authorization_url(
     This initiates the OAuth authorization flow and returns the URL
     where the user should be redirected for authorization.
     """
+    _require_platform_integration_definition(
+        authorization, "integrations.oauth.authorize"
+    )
     repo = IntegrationsRepository(ctx.db)
 
     oauth_provider = await repo.get_oauth_provider(integration_id)
@@ -1620,13 +2008,17 @@ async def get_oauth_authorization_url(
         "specific mapping's entity_id (used when the picker fires inside "
         "the OAuth popup of a per-mapping connect). Platform admin only."
     ),
+    **operation_route("integrations.oauth.entity_id_source.update"),
 )
 async def set_entity_id_source(
     integration_id: UUID,
     request: EntityIdSourceUpdateRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> dict:
+    _require_platform_integration_definition(
+        authorization, "integrations.oauth.entity_id_source.update"
+    )
     from src.models.orm import IntegrationMapping as _IM
     from src.models.orm import OAuthProvider as _OP
 
@@ -1666,16 +2058,20 @@ async def set_entity_id_source(
         "under this integration so they re-capture on reconnect. "
         "Platform admin only."
     ),
+    **operation_route("integrations.oauth.entity_id_source.delete"),
 )
 async def clear_entity_id_source(
     integration_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     clear_mappings: bool = Query(
         False,
         description="When true, also clear entity_id on every mapping for this integration",
     ),
 ) -> dict:
+    _require_platform_integration_definition(
+        authorization, "integrations.oauth.entity_id_source.delete"
+    )
     from src.models.orm import IntegrationMapping as _IM
     from src.models.orm import OAuthProvider as _OP
 
@@ -1784,12 +2180,13 @@ result = await test()
     response_model=IntegrationTestResponse,
     summary="Test integration connection",
     description="Test connectivity to an integration by making a GET request to the specified endpoint (Platform admin only)",
+    **operation_route("integrations.test"),
 )
 async def test_integration_connection(
     integration_id: UUID,
     request: IntegrationTestRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> IntegrationTestResponse:
     """
     Test an integration's connectivity.
@@ -1808,6 +2205,10 @@ async def test_integration_connection(
     from src.services.execution.async_executor import enqueue_code_execution
     from src.core.redis_client import get_redis_client
 
+    authorization.require_operation("integrations.test")
+    _require_integration_mapping_boundary(
+        authorization, request.organization_id
+    )
     repo = IntegrationsRepository(ctx.db)
 
     # Get integration
@@ -1833,7 +2234,7 @@ async def test_integration_connection(
         email=ctx.user.email,
         scope=scope,
         organization=org,
-        is_platform_admin=ctx.user.is_superuser,
+        is_platform_admin=authorization.has_capability("platform.superuser"),
         is_function_key=False,
         execution_id=execution_id,
     )
@@ -2057,12 +2458,13 @@ class GenerateSDKResponse(BaseModel):
     response_model=GenerateSDKResponse,
     summary="Generate SDK from OpenAPI spec",
     description="Generate a Python SDK module from an OpenAPI specification (Platform admin only)",
+    **operation_route("integrations.generate_sdk"),
 )
 async def generate_sdk(
     integration_id: UUID,
     request: GenerateSDKRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> GenerateSDKResponse:
     """
     Generate a Python SDK from an OpenAPI specification.
@@ -2078,6 +2480,9 @@ async def generate_sdk(
     """
     from src.services.sdk_generator import generate_sdk_from_url
 
+    _require_platform_integration_definition(
+        authorization, "integrations.generate_sdk"
+    )
     repo = IntegrationsRepository(ctx.db)
 
     # Verify integration exists
@@ -2111,7 +2516,7 @@ async def generate_sdk(
         await storage.write_file(
             path=module_path,
             content=result.code.encode("utf-8"),
-            updated_by=str(user.user_id),
+            updated_by=str(authorization.requester.user_id),
         )
 
         logger.info(

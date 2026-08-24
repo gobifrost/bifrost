@@ -421,6 +421,110 @@ class TestApplicationAccess:
 
 
 @pytest.mark.e2e
+class TestApplicationRoleAndTargetValidation:
+    """Application writes share strict role and organization targeting rules."""
+
+    def test_create_persists_role_assignments_and_rejects_bad_roles(
+        self,
+        e2e_client,
+        platform_admin,
+    ):
+        role_response = e2e_client.post(
+            "/api/roles",
+            headers=platform_admin.headers,
+            json={
+                "name": f"Application Builder {uuid.uuid4().hex[:8]}",
+                "description": "Application role validation",
+            },
+        )
+        assert role_response.status_code == 201, role_response.text
+        role = role_response.json()
+        app_id = None
+        try:
+            slug = f"role-assigned-app-{uuid.uuid4().hex[:8]}"
+            created = e2e_client.post(
+                "/api/applications",
+                headers=platform_admin.headers,
+                json={
+                    "name": "Role-assigned Application",
+                    "slug": slug,
+                    "app_model": "inline_v1",
+                    "access_level": "authenticated",
+                    "role_ids": [role["id"]],
+                },
+            )
+            assert created.status_code == 201, created.text
+            app = created.json()
+            app_id = app["id"]
+            assert app["role_ids"] == [role["id"]]
+
+            duplicate_slug = f"duplicate-role-app-{uuid.uuid4().hex[:8]}"
+            duplicate = e2e_client.post(
+                "/api/applications",
+                headers=platform_admin.headers,
+                json={
+                    "name": "Duplicate role Application",
+                    "slug": duplicate_slug,
+                    "app_model": "inline_v1",
+                    "role_ids": [role["id"], role["id"]],
+                },
+            )
+            assert duplicate.status_code == 422, duplicate.text
+            assert "duplicate references" in duplicate.text
+
+            roles = e2e_client.get(
+                "/api/roles",
+                headers=platform_admin.headers,
+            )
+            assert roles.status_code == 200, roles.text
+            capability_role = next(
+                item
+                for item in roles.json()
+                if item["assignable_to_resources"] is False
+            )
+            capability_slug = f"capability-role-app-{uuid.uuid4().hex[:8]}"
+            capability = e2e_client.post(
+                "/api/applications",
+                headers=platform_admin.headers,
+                json={
+                    "name": "Capability role Application",
+                    "slug": capability_slug,
+                    "app_model": "inline_v1",
+                    "role_ids": [capability_role["id"]],
+                },
+            )
+            assert capability.status_code == 409, capability.text
+            assert "Capability role" in capability.text
+        finally:
+            if app_id is not None:
+                _delete_app(e2e_client, platform_admin.headers, app_id)
+            e2e_client.delete(
+                f"/api/roles/{role['id']}",
+                headers=platform_admin.headers,
+            )
+
+    def test_organization_member_cannot_create_loose_application(
+        self,
+        e2e_client,
+        org1_user,
+    ):
+        slug = f"home-org-app-{uuid.uuid4().hex[:8]}"
+        created = e2e_client.post(
+            "/api/applications",
+            headers=org1_user.headers,
+            json={
+                "name": "Home organization Application",
+                "slug": slug,
+                "app_model": "inline_v1",
+            },
+        )
+        assert created.status_code == 403, created.text
+        assert created.json()["detail"] == (
+            "Missing required capability: apps.readwrite"
+        )
+
+
+@pytest.mark.e2e
 class TestApplicationScopeFiltering:
     """Test application scope filtering."""
 
@@ -574,7 +678,7 @@ class TestApplicationCrossOrgAdmin:
                 headers=org1_user.headers,
                 json={"description": "Should not work"},
             )
-            assert response.status_code == 404, (
+            assert response.status_code == 403, (
                 f"Non-admin in org1 should not be able to PATCH org2 app: "
                 f"status={response.status_code} body={response.text}"
             )

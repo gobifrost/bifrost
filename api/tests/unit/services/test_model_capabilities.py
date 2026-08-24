@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from src.models.contracts.artifacts import ModelCapabilities
 from src.services.model_capabilities import (
+    TOOL_CAPABILITY_PROBE_MAX_TOKENS,
     lookup_model_capabilities,
     model_fingerprint,
     normalize_capabilities,
@@ -120,6 +121,7 @@ async def test_provider_conformance_verifies_tool_image_and_pdf_support(
     class FakeClient:
         async def complete(self, messages, tools=None, **kwargs):
             if kwargs.get("require_tool_call"):
+                assert kwargs["max_tokens"] == TOOL_CAPABILITY_PROBE_MAX_TOKENS
                 return SimpleNamespace(
                     tool_calls=[SimpleNamespace(name="capability_probe")]
                 )

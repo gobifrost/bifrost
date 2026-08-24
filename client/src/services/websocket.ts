@@ -12,6 +12,10 @@
 
 import type { components } from "@/lib/v1";
 import { refreshAccessToken } from "@/lib/api-client";
+import {
+	AUTHORIZATION_BOUNDARY_CHANGED_EVENT,
+	getSelectedAuthorizationBoundary,
+} from "@/lib/authorization-boundary";
 import { getActiveToken } from "@/lib/auth-token";
 import { useNotificationStore } from "@/stores/notificationStore";
 import type { Notification } from "@/stores/notificationStore";
@@ -340,6 +344,12 @@ export interface ChatStreamChunk {
 		size_bytes: number;
 	} | null;
 	agent_switch?: ChatAgentSwitch | null;
+	context_warning?: {
+		current_tokens: number;
+		max_tokens: number;
+		action: "warning" | "compacted";
+		message: string;
+	} | null;
 	message_id?: string | null;
 	// message_start fields - real UUIDs sent before streaming begins
 	user_message_id?: string | null;
@@ -661,6 +671,15 @@ class WebSocketService {
 	private subscribedChannels = new Set<string>();
 	private pendingSubscriptions = new Set<string>();
 
+	constructor() {
+		if (typeof window !== "undefined") {
+			window.addEventListener(
+				AUTHORIZATION_BOUNDARY_CHANGED_EVENT,
+				this.handleAuthorizationBoundaryChanged,
+			);
+		}
+	}
+
 	/**
 	 * Connect to WebSocket with authentication
 	 */
@@ -716,6 +735,11 @@ class WebSocketService {
 			const embedToken = getActiveToken();
 			if (embedToken && isEmbedToken(embedToken)) {
 				params.set("token", embedToken);
+			} else {
+				const boundary = getSelectedAuthorizationBoundary();
+				if (boundary) {
+					params.set("boundary", boundary);
+				}
 			}
 
 			const wsUrl = `${protocol}//${host}/ws/connect?${params.toString()}`;
@@ -1082,6 +1106,38 @@ class WebSocketService {
 	private dispatchPoolMessage(message: PoolMessage) {
 		this.poolMessageCallbacks.forEach((cb) => cb(message));
 	}
+
+	private handleAuthorizationBoundaryChanged = () => {
+		if (!this.ws && !this.isConnecting) {
+			return;
+		}
+
+		if (this.reconnectTimeout) {
+			clearTimeout(this.reconnectTimeout);
+			this.reconnectTimeout = null;
+		}
+		this.stopPingInterval();
+
+		const channels = new Set([
+			...this.subscribedChannels,
+			...this.pendingSubscriptions,
+		]);
+		this.subscribedChannels.clear();
+		this.pendingSubscriptions = new Set(channels);
+
+		if (this.ws) {
+			const socket = this.ws;
+			this.ws = null;
+			socket.close(1000, "Authorization boundary changed");
+		}
+
+		void this.connect(Array.from(channels)).catch((error) => {
+			console.error(
+				"[WebSocket] Failed to reconnect after authorization boundary change:",
+				error,
+			);
+		});
+	};
 
 	private dispatchEventSourceUpdate(message: {
 		type: "event_created" | "event_updated";

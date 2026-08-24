@@ -7,12 +7,9 @@ encrypted client_secret, the visibility flags
 shared service token that backs both flags.
 
 Authorization model:
-- Org admin (or platform admin) for CRUD; for v1 we accept any user in
-  the connection's org plus platform admins. The frontend gates the page
-  to admins; locking down further is a Phase 5 job once the role lattice
-  is finalized.
-- ``/connect`` requires the same scope plus the ability to initiate
-  OAuth on behalf of the org (admin path).
+- Admin CRUD and service-token connect use integrations.read/readwrite plus
+  explicit Platform/Organization boundaries. Managed organizations are
+  collection/read-only and cannot mutate.
 - Per-user routes under ``/api/me/mcp-connections/...`` only require
   that the connection is in the caller's org and that
   ``available_in_chat`` is set on it (otherwise per-user delegation is
@@ -23,13 +20,13 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Literal, Union
+from typing import Annotated, Literal, Union
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import delete, select
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 
 from src.config import get_settings
 from src.core.auth import Context
@@ -43,9 +40,16 @@ from src.models.contracts.external_mcp import (
 )
 from src.models.orm.external_mcp import MCPConnection, UserMCPCredential
 from src.models.orm.oauth import OAuthProvider, OAuthToken
+from src.models.orm.organizations import Organization
 from src.repositories.external_mcp import (
     MCPConnectionRepository,
     MCPServerRepository,
+)
+from src.services.audit import emit_audit
+from src.services.authorization import (
+    AuthorizationContext,
+    AuthorizationBoundaryKind,
+    CurrentAuthorizationContext,
 )
 from src.services.mcp_client import catalog_sync
 from src.services.mcp_client.oauth_state import (
@@ -139,9 +143,7 @@ class MCPConnectActivateResponse(BaseModel):
 # Discriminated union return type for the connect endpoints. The OpenAPI
 # schema renders this as ``oneOf`` on ``flow``; the frontend branches on
 # ``flow`` to decide whether to open a popup or just refetch.
-MCPConnectResponse = Union[
-    MCPConnectAuthorizeResponse, MCPConnectActivateResponse
-]
+MCPConnectResponse = Union[MCPConnectAuthorizeResponse, MCPConnectActivateResponse]
 
 
 # =============================================================================
@@ -161,19 +163,30 @@ def _connection_to_public(connection: MCPConnection) -> MCPConnectionPublic:
 
 
 async def _get_connection_or_404(
-    ctx: Context, connection_id: UUID
+    ctx: Context,
+    connection_id: UUID,
+    authorization: AuthorizationContext,
 ) -> MCPConnection:
     """Resolve a connection and enforce org-scope access.
 
-    Platform admins may fetch any connection. Org users may only fetch
-    connections in their own org.
+    Per-user credentials are self-service for visible connections in the
+    caller's own organization. Platform Admin's wildcard may inspect any
+    connection, but provider-org membership alone is not authority.
     """
+    authorization.require("integrations.read")
+    is_platform_wildcard = authorization.has_capability("platform.superuser")
+    boundary = authorization.selected_boundary
+    repo_org_id = (
+        boundary.organization_id
+        if boundary.kind is AuthorizationBoundaryKind.ORGANIZATION
+        else None
+    )
     repo = MCPConnectionRepository(
         session=ctx.db,
-        org_id=ctx.org_id,
-        user_id=ctx.user.user_id,
-        is_superuser=ctx.user.is_platform_admin,
-        is_external=ctx.user.is_external,
+        org_id=repo_org_id,
+        user_id=authorization.requester.user_id,
+        bypass_resource_admission=is_platform_wildcard,
+        is_external=authorization.requester.is_external,
     )
     connection = await repo.get_connection(connection_id)
     if connection is None:
@@ -181,30 +194,113 @@ async def _get_connection_or_404(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="MCP connection not found",
         )
-    if not ctx.user.is_platform_admin and connection.organization_id != ctx.org_id:
+    if is_platform_wildcard:
+        return connection
+    if connection.organization_id != ctx.org_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="MCP connection not found",
         )
+    try:
+        authorization.require_resource_boundary(connection.organization_id)
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_409_CONFLICT:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="MCP connection not found",
+            ) from exc
+        raise
     return connection
 
 
-def _enforce_can_write_org(ctx: Context, organization_id: UUID) -> None:
-    """Org write scope check.
-
-    For v1, write access requires either platform admin OR membership in
-    the target org. We trust the frontend's admin-gating to keep this
-    permissive — Phase 5 will tighten with a role check if the role
-    lattice gains an explicit ``can_manage_mcp`` permission.
-    """
-    if ctx.user.is_platform_admin:
-        return
-    if ctx.org_id == organization_id:
-        return
-    raise HTTPException(
-        status_code=status.HTTP_403_FORBIDDEN,
-        detail="Cannot manage MCP connections outside your organization",
+async def _managed_customer_org_ids(ctx: Context) -> set[UUID]:
+    return set(
+        (
+            await ctx.db.execute(
+                select(Organization.id).where(Organization.is_provider.is_(False))
+            )
+        ).scalars()
     )
+
+
+async def _get_admin_connection_or_404(
+    ctx: Context,
+    connection_id: UUID,
+    authorization: CurrentAuthorizationContext,
+) -> MCPConnection:
+    """Resolve a connection visible in the selected admin boundary."""
+    authorization.require("integrations.read")
+    boundary = authorization.selected_boundary
+    is_platform_wildcard = authorization.has_capability("platform.superuser")
+    repo = MCPConnectionRepository(
+        session=ctx.db,
+        org_id=(
+            boundary.organization_id
+            if boundary.kind is AuthorizationBoundaryKind.ORGANIZATION
+            else None
+        ),
+        user_id=authorization.requester.user_id,
+        bypass_resource_admission=is_platform_wildcard,
+        is_external=authorization.requester.is_external,
+    )
+    connection = await repo.get_connection(connection_id)
+    if connection is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="MCP connection not found",
+        )
+    if is_platform_wildcard:
+        return connection
+    if boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+        visible_orgs = await _managed_customer_org_ids(ctx)
+        if connection.organization_id in visible_orgs:
+            return connection
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="MCP connection not found",
+        )
+    try:
+        authorization.require_resource_boundary(connection.organization_id)
+    except HTTPException as exc:
+        if exc.status_code == status.HTTP_409_CONFLICT:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="MCP connection not found",
+            ) from exc
+        raise
+    if (
+        boundary.kind is AuthorizationBoundaryKind.PLATFORM
+        and connection.organization_id is not None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="MCP connection not found",
+        )
+    if boundary.kind is AuthorizationBoundaryKind.ORGANIZATION:
+        return connection
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="MCP connection not found",
+    )
+
+
+def _require_mcp_connection_mutation_boundary(
+    authorization: CurrentAuthorizationContext,
+    organization_id: UUID | None,
+) -> None:
+    """Require integrations.write authority in one exact mutation boundary.
+
+    Platform Admin is the only wildcard. Ordinary Platform/Global authority
+    covers only global rows; Managed is intentionally read-only.
+    """
+    authorization.require("integrations.readwrite")
+    boundary = authorization.selected_boundary
+    if boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Select one organization or Platform before changing MCP connections",
+        )
+    authorization.require_resource_boundary(organization_id)
 
 
 def _build_callback_redirect_uri() -> str:
@@ -317,9 +413,7 @@ async def _activate_client_credentials(
         )
 
     defaults = await get_url_resolution_defaults(ctx.db, provider)
-    resolved_token_url = resolve_url_template(
-        provider.token_url, defaults=defaults
-    )
+    resolved_token_url = resolve_url_template(provider.token_url, defaults=defaults)
 
     oauth_client = OAuthProviderClient()
     scopes = " ".join(provider.scopes) if provider.scopes else ""
@@ -367,9 +461,7 @@ async def _activate_client_credentials(
     if connection.service_oauth_token_id is not None:
         # Update in place — preserves FK referenced by other consumers.
         existing = await ctx.db.execute(
-            select(OAuthToken).where(
-                OAuthToken.id == connection.service_oauth_token_id
-            )
+            select(OAuthToken).where(OAuthToken.id == connection.service_oauth_token_id)
         )
         token_row = existing.scalar_one_or_none()
     else:
@@ -422,14 +514,17 @@ async def _activate_client_credentials(
 )
 async def list_mcp_connections(
     ctx: Context,
-    server_id: UUID | None = Query(default=None),
-    scope: str | None = Query(
-        default=None,
+    authorization: CurrentAuthorizationContext,
+    server_id: Annotated[UUID | None, Query()] = None,
+    scope: Annotated[
+        str | None,
+        Query(
         description=(
             "Platform admin filter: omit to see all orgs' connections, or "
             "pass an org UUID to filter to that org. Ignored for non-admins."
         ),
-    ),
+        ),
+    ] = None,
 ) -> list[MCPConnectionSummary]:
     """List MCP connections.
 
@@ -437,11 +532,15 @@ async def list_mcp_connections(
     to filter to a single org. Org users see only their own org's
     connections regardless of the ``scope`` parameter.
     """
-    if ctx.user.is_platform_admin:
-        # Admin path: show all connections (optionally narrowed by scope/server)
-        from sqlalchemy import select
-        from sqlalchemy.orm import joinedload, selectinload
-
+    authorization.require("integrations.read")
+    boundary = authorization.selected_boundary
+    is_platform_wildcard = authorization.has_capability("platform.superuser")
+    if boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+        if scope not in (None, "") and not is_platform_wildcard:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Only Platform Admin can use scope filters from Platform context",
+            )
         query = select(MCPConnection).options(
             joinedload(MCPConnection.server),
             selectinload(MCPConnection.tools),
@@ -449,7 +548,7 @@ async def list_mcp_connections(
         )
         if server_id is not None:
             query = query.where(MCPConnection.server_id == server_id)
-        if scope is not None:
+        if is_platform_wildcard and scope not in (None, ""):
             try:
                 scope_org = UUID(scope)
             except ValueError:
@@ -458,16 +557,45 @@ async def list_mcp_connections(
                     detail=f"Invalid scope value: {scope}",
                 )
             query = query.where(MCPConnection.organization_id == scope_org)
+        elif not is_platform_wildcard:
+            query = query.where(MCPConnection.organization_id.is_(None))
         query = query.order_by(MCPConnection.created_at)
         result = await ctx.db.execute(query)
         connections = list(result.scalars().unique().all())
+    elif boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+        if scope not in (None, ""):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Scope filters are only available in Platform context",
+            )
+        visible_orgs = await _managed_customer_org_ids(ctx)
+        query = (
+            select(MCPConnection)
+            .options(
+                joinedload(MCPConnection.server),
+                selectinload(MCPConnection.tools),
+                joinedload(MCPConnection.service_oauth_token),
+            )
+            .where(MCPConnection.organization_id.in_(visible_orgs))
+            .order_by(MCPConnection.created_at)
+        )
+        if server_id is not None:
+            query = query.where(MCPConnection.server_id == server_id)
+        result = await ctx.db.execute(query)
+        connections = list(result.scalars().unique().all())
     else:
+        if scope not in (None, ""):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Scope filters are only available in Platform context",
+            )
         # Org user path: strict org-only via repo
         repo = MCPConnectionRepository(
             session=ctx.db,
-            org_id=ctx.org_id,
-            user_id=ctx.user.user_id,
-            is_superuser=False,
+            org_id=boundary.organization_id,
+            user_id=authorization.requester.user_id,
+            bypass_resource_admission=False,
+            is_external=authorization.requester.is_external,
         )
         connections = await repo.list_connections(server_id=server_id)
 
@@ -483,20 +611,21 @@ async def list_mcp_connections(
 async def create_mcp_connection(
     request: MCPConnectionCreateRequest,
     ctx: Context,
+    authorization: CurrentAuthorizationContext,
 ) -> MCPConnectionPublic:
     """Create a per-org connection under a server template.
 
     Encrypts the client_secret at rest using the same envelope encryption
     as ``oauth_providers.encrypted_client_secret``.
     """
-    _enforce_can_write_org(ctx, request.organization_id)
+    _require_mcp_connection_mutation_boundary(authorization, request.organization_id)
 
     server_repo = MCPServerRepository(
         session=ctx.db,
         org_id=request.organization_id,
-        user_id=ctx.user.user_id,
-        is_superuser=ctx.user.is_platform_admin,
-        is_external=ctx.user.is_external,
+        user_id=authorization.requester.user_id,
+        bypass_resource_admission=authorization.has_capability("platform.superuser"),
+        is_external=authorization.requester.is_external,
     )
     server = await server_repo.get_server(request.server_id)
     if server is None:
@@ -507,8 +636,12 @@ async def create_mcp_connection(
 
     # Org users may only target platform-level (org_id NULL) templates or
     # their own org's templates.
-    if not ctx.user.is_platform_admin:
-        if server.organization_id is not None and server.organization_id != ctx.org_id:
+    if authorization.selected_boundary.kind is not AuthorizationBoundaryKind.PLATFORM:
+        if (
+            server.organization_id is not None
+            and server.organization_id
+            != authorization.selected_boundary.organization_id
+        ):
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="MCP server template not found",
@@ -529,15 +662,25 @@ async def create_mcp_connection(
     conn_repo = MCPConnectionRepository(
         session=ctx.db,
         org_id=request.organization_id,
-        user_id=ctx.user.user_id,
-        is_superuser=ctx.user.is_platform_admin,
-        is_external=ctx.user.is_external,
+        user_id=authorization.requester.user_id,
+        bypass_resource_admission=authorization.has_capability("platform.superuser"),
+        is_external=authorization.requester.is_external,
     )
     refreshed = await conn_repo.get_connection(connection.id)
     assert refreshed is not None  # we just inserted it
     logger.info(
         f"Created MCP connection {refreshed.id} for org {log_safe(request.organization_id)} "
         f"on server {log_safe(request.server_id)}"
+    )
+    await emit_audit(
+        ctx.db,
+        "mcp_connection.create",
+        resource_type="mcp_connection",
+        resource_id=refreshed.id,
+        details={
+            "organization_id": str(request.organization_id),
+            "server_id": str(request.server_id),
+        },
     )
     return _connection_to_public(refreshed)
 
@@ -550,9 +693,10 @@ async def create_mcp_connection(
 async def get_mcp_connection(
     connection_id: UUID,
     ctx: Context,
+    authorization: CurrentAuthorizationContext,
 ) -> MCPConnectionPublic:
     """Get a single connection with its tool catalog."""
-    connection = await _get_connection_or_404(ctx, connection_id)
+    connection = await _get_admin_connection_or_404(ctx, connection_id, authorization)
     return _connection_to_public(connection)
 
 
@@ -565,14 +709,18 @@ async def update_mcp_connection(
     connection_id: UUID,
     request: MCPConnectionUpdateRequest,
     ctx: Context,
+    authorization: CurrentAuthorizationContext,
 ) -> MCPConnectionPublic:
     """Update a connection.
 
     If ``client_secret`` is supplied it is re-encrypted before persist.
     All other fields are passed through verbatim.
     """
-    connection = await _get_connection_or_404(ctx, connection_id)
-    _enforce_can_write_org(ctx, connection.organization_id)
+    connection = await _get_admin_connection_or_404(ctx, connection_id, authorization)
+    _require_mcp_connection_mutation_boundary(
+        authorization,
+        connection.organization_id,
+    )
 
     update_fields = request.model_dump(exclude_unset=True)
     plaintext_secret = update_fields.pop("client_secret", None)
@@ -584,8 +732,19 @@ async def update_mcp_connection(
     connection.updated_at = datetime.now(timezone.utc)
 
     await ctx.db.flush()
-    refreshed = await _get_connection_or_404(ctx, connection_id)
+    refreshed = await _get_admin_connection_or_404(ctx, connection_id, authorization)
     logger.info("Updated MCP connection %s", log_safe(str(connection_id)))
+    await emit_audit(
+        ctx.db,
+        "mcp_connection.update",
+        resource_type="mcp_connection",
+        resource_id=connection_id,
+        details={
+            "organization_id": str(connection.organization_id),
+            "changed_fields": sorted(update_fields),
+            "rotated_secret": plaintext_secret is not None,
+        },
+    )
     return _connection_to_public(refreshed)
 
 
@@ -601,14 +760,25 @@ async def update_mcp_connection(
 async def delete_mcp_connection(
     connection_id: UUID,
     ctx: Context,
+    authorization: CurrentAuthorizationContext,
 ) -> None:
     """Delete a connection (cascade)."""
-    connection = await _get_connection_or_404(ctx, connection_id)
-    _enforce_can_write_org(ctx, connection.organization_id)
+    connection = await _get_admin_connection_or_404(ctx, connection_id, authorization)
+    _require_mcp_connection_mutation_boundary(
+        authorization,
+        connection.organization_id,
+    )
 
     await ctx.db.execute(delete(MCPConnection).where(MCPConnection.id == connection_id))
     await ctx.db.flush()
     logger.info("Deleted MCP connection %s", log_safe(str(connection_id)))
+    await emit_audit(
+        ctx.db,
+        "mcp_connection.delete",
+        resource_type="mcp_connection",
+        resource_id=connection_id,
+        details={"organization_id": str(connection.organization_id)},
+    )
 
 
 # =============================================================================
@@ -648,12 +818,16 @@ async def update_mcp_connection_tool(
     tool_id: UUID,
     request: MCPToolPatchRequest,
     ctx: Context,
+    authorization: CurrentAuthorizationContext,
 ) -> MCPConnectionToolPublic:
     """Update one tool's enabled flag on a connection's catalog."""
     from src.models.orm.external_mcp import MCPConnectionTool
 
-    connection = await _get_connection_or_404(ctx, connection_id)
-    _enforce_can_write_org(ctx, connection.organization_id)
+    connection = await _get_admin_connection_or_404(ctx, connection_id, authorization)
+    _require_mcp_connection_mutation_boundary(
+        authorization,
+        connection.organization_id,
+    )
 
     tool_q = await ctx.db.execute(
         select(MCPConnectionTool).where(
@@ -681,6 +855,16 @@ async def update_mcp_connection_tool(
 
     await ctx.db.flush()
     await ctx.db.refresh(tool)
+    await emit_audit(
+        ctx.db,
+        "mcp_connection_tool.update",
+        resource_type="mcp_connection_tool",
+        resource_id=tool_id,
+        details={
+            "connection_id": str(connection_id),
+            "enabled": tool.enabled,
+        },
+    )
     return MCPConnectionToolPublic.model_validate(tool)
 
 
@@ -702,10 +886,14 @@ async def update_mcp_connection_tool(
 async def refresh_tools(
     connection_id: UUID,
     ctx: Context,
+    authorization: CurrentAuthorizationContext,
 ) -> MCPConnectionRefreshToolsResponse:
     """Refresh the per-connection tool catalog."""
-    connection = await _get_connection_or_404(ctx, connection_id)
-    _enforce_can_write_org(ctx, connection.organization_id)
+    connection = await _get_admin_connection_or_404(ctx, connection_id, authorization)
+    _require_mcp_connection_mutation_boundary(
+        authorization,
+        connection.organization_id,
+    )
 
     try:
         tools = await catalog_sync.sync_catalog(connection, ctx.db)
@@ -721,6 +909,17 @@ async def refresh_tools(
         )
 
     enabled = sum(1 for t in tools if t.enabled)
+    await emit_audit(
+        ctx.db,
+        "mcp_connection.refresh_tools",
+        resource_type="mcp_connection",
+        resource_id=connection_id,
+        details={
+            "organization_id": str(connection.organization_id),
+            "total": len(tools),
+            "enabled": enabled,
+        },
+    )
     return MCPConnectionRefreshToolsResponse(
         total=len(tools),
         enabled=enabled,
@@ -748,15 +947,30 @@ async def refresh_tools(
 async def connect_service_token(
     connection_id: UUID,
     ctx: Context,
+    authorization: CurrentAuthorizationContext,
 ) -> MCPConnectResponse:
     """Begin or complete the service-token flow."""
-    connection = await _get_connection_or_404(ctx, connection_id)
-    _enforce_can_write_org(ctx, connection.organization_id)
+    connection = await _get_admin_connection_or_404(ctx, connection_id, authorization)
+    _require_mcp_connection_mutation_boundary(
+        authorization,
+        connection.organization_id,
+    )
 
     provider = await _load_provider_or_400(ctx, connection)
 
     if provider.oauth_flow_type == "client_credentials":
-        return await _activate_client_credentials(ctx, connection, provider)
+        result = await _activate_client_credentials(ctx, connection, provider)
+        await emit_audit(
+            ctx.db,
+            "mcp_connection.connect",
+            resource_type="mcp_connection",
+            resource_id=connection_id,
+            details={
+                "organization_id": str(connection.organization_id),
+                "flow": "client_credentials",
+            },
+        )
+        return result
 
     redirect_uri = _build_callback_redirect_uri()
     code_verifier = generate_pkce_verifier()
@@ -770,6 +984,16 @@ async def connect_service_token(
 
     authorization_url = await _build_authorization_url(
         ctx, connection, provider, state_token, code_verifier, redirect_uri
+    )
+    await emit_audit(
+        ctx.db,
+        "mcp_connection.connect",
+        resource_type="mcp_connection",
+        resource_id=connection_id,
+        details={
+            "organization_id": str(connection.organization_id),
+            "flow": "authorization_code",
+        },
     )
     return MCPConnectAuthorizeResponse(
         flow="authorization_code",
@@ -800,9 +1024,10 @@ async def connect_service_token(
 async def connect_user_credential(
     connection_id: UUID,
     ctx: Context,
+    authorization: CurrentAuthorizationContext,
 ) -> MCPConnectAuthorizeResponse:
     """Begin a per-user OAuth flow for the caller."""
-    connection = await _get_connection_or_404(ctx, connection_id)
+    connection = await _get_connection_or_404(ctx, connection_id, authorization)
     # No write-org enforcement for the per-user path: the user is
     # connecting their own credentials, which they're entitled to do
     # provided they can see the connection.

@@ -17,6 +17,7 @@ from uuid import UUID
 from fastapi import APIRouter, Body, HTTPException, Query, status
 from pydantic import ValidationError
 from sqlalchemy import String, cast, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import ColumnElement
 
@@ -26,11 +27,11 @@ from shared.policies.probe import (
     compile_read_filter,
     evaluate_action,
 )
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context
 from src.core.principal import UserPrincipal
 from src.core.constants import SYSTEM_USER_UUID
 from src.core.log_safety import log_safe
-from src.core.org_filter import resolve_org_filter, resolve_target_org
+from src.core.org_filter import OrgFilterType, resolve_target_org
 from src.models.contracts.policies import (
     PolicyRuleRef,
     PolicyValidationError,
@@ -55,6 +56,7 @@ from src.models.contracts.tables import (
     TableUpdate,
 )
 from src.models.orm.custom_claims import CustomClaim as CustomClaimORM
+from src.models.orm.organizations import Organization
 from src.models.orm.tables import Document, Table
 from src.services.solutions.guard import assert_entity_id_not_solution_managed
 from src.services.solution_scope import (
@@ -65,10 +67,68 @@ from src.services.table_policy_loader import load_resolved_table_policies
 from src.repositories.tables import TableRepository
 from src.core.pubsub import publish_document_change, publish_policy_changed
 from src.services.audit import emit_audit
+from src.services.authorization import (
+    AuthorizationBoundaryKind,
+    AuthorizationContext,
+    CurrentAuthorizationContext,
+    parse_authorization_boundary,
+    resolve_authorization_context,
+)
+from src.services.operation_catalog import operation_route
+from src.services.repo_sync_writer import RepoSyncWriter
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/tables", tags=["Tables"])
+
+
+def _table_repository(
+    ctx: Context,
+    authorization: AuthorizationContext,
+) -> TableRepository:
+    boundary = authorization.selected_boundary
+    if boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Select one organization before working with Tables",
+        )
+    organization_id = (
+        boundary.organization_id
+        if boundary.kind is AuthorizationBoundaryKind.ORGANIZATION
+        else None
+    )
+    user = authorization.requester
+    return TableRepository(
+        ctx.db,
+        organization_id,
+        user_id=user.user_id,
+        bypass_resource_admission=authorization.has_capability("platform.superuser"),
+        is_external=user.is_external,
+    )
+
+
+def _selected_table_organization_id(
+    authorization: AuthorizationContext,
+) -> UUID | None:
+    boundary = authorization.selected_boundary
+    if boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Select one organization before working with Tables",
+        )
+    return (
+        boundary.organization_id
+        if boundary.kind is AuthorizationBoundaryKind.ORGANIZATION
+        else None
+    )
+
+
+def _require_table_mutation(
+    authorization: AuthorizationContext,
+    table: Table,
+) -> None:
+    authorization.require("tables.readwrite")
+    authorization.require_resource_boundary(table.organization_id)
 
 
 
@@ -76,11 +136,13 @@ def _resolve_attribution(
     user: UserPrincipal,
     body_created_by: str | None,
     body_updated_by: str | None,
+    authorization: AuthorizationContext | None = None,
 ) -> tuple[str, str]:
     """Decide attribution (created_by, updated_by) for a document write.
 
     If the body carries either field, the caller must be the engine
-    (SYSTEM_USER_UUID) or a platform admin (is_superuser); otherwise we 403
+    (SYSTEM_USER_UUID) or hold canonical platform superuser authority;
+    otherwise we 403
     so a regular user can't forge attribution.
 
     Defaulting:
@@ -92,10 +154,13 @@ def _resolve_attribution(
     has_override = body_created_by is not None or body_updated_by is not None
     if has_override:
         is_engine = user.user_id == SYSTEM_USER_UUID
-        if not (is_engine or user.is_superuser):
+        is_platform_superuser = bool(
+            authorization and authorization.has_capability("platform.superuser")
+        )
+        if not (is_engine or is_platform_superuser):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
-                detail="created_by/updated_by override requires engine or platform-admin caller",
+                detail="created_by/updated_by override requires engine or platform-admin authority",
             )
     caller = str(user.user_id)
     created_by = body_created_by or caller
@@ -509,6 +574,29 @@ def _resolve_target_org_safe(ctx: Context, scope: str | None) -> UUID | None:
         )
 
 
+async def _validate_table_target_org(
+    db: AsyncSession,
+    organization_id: UUID | None,
+) -> None:
+    """Reject a non-existent organization before a foreign-key flush."""
+    if organization_id is None:
+        return
+    exists = await db.scalar(
+        select(Organization.id).where(Organization.id == organization_id)
+    )
+    if exists is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Invalid Table target",
+                "errors": [
+                    f"organization_id '{organization_id}' does not reference "
+                    "an existing organization"
+                ],
+            },
+        )
+
+
 def _validate_policy_claim_refs(
     expr: object,
     known_claim_names: set[str],
@@ -565,13 +653,14 @@ async def get_table_or_404(
     ctx: Context,
     name_or_id: str,
     scope: str | None = None,
+    authorization: AuthorizationContext | None = None,
 ) -> Table:
     """Get table by name or UUID, raise 404 if not found.
 
     Routes both UUID and name lookups through ``OrgScopedRepository.get``,
-    which already enforces the org gate (its ID-lookup branch returns None
-    for non-superusers reaching outside their own-or-global scope). Avoids
-    bypassing the gate with raw SELECT.
+    which already enforces the org gate. Human platform-wildcard admission is
+    derived from ``AuthorizationContext``; engine/runtime callers without one
+    keep the normal non-wildcard repository path.
 
     Install-scoped name resolution (a Solution app via ``X-Bifrost-App`` OR a
     solution workflow via ``ctx.solution_id``) is handled in
@@ -579,10 +668,27 @@ async def get_table_or_404(
     Gated by the org check.
     """
     target_org_id = _resolve_target_org_safe(ctx, scope)
+    if authorization is None and ctx.user.user_id != SYSTEM_USER_UUID:
+        authorization = await resolve_authorization_context(
+            ctx.db,
+            requester=ctx.user,
+            selected_boundary=parse_authorization_boundary(
+                (
+                    "platform"
+                    if scope == "global"
+                    else f"organization:{scope}"
+                    if scope
+                    else None
+                ),
+                home_organization_id=ctx.user.organization_id,
+            ),
+        )
     repo = TableRepository(
         ctx.db,
         target_org_id,
-        is_superuser=ctx.user.is_superuser,
+        bypass_resource_admission=bool(
+            authorization and authorization.has_capability("platform.superuser")
+        ),
         is_external=ctx.user.is_external,
     )
 
@@ -650,30 +756,33 @@ async def _assert_solution_write_targets_owned_table(ctx: Context, table: Table)
     response_model=TablePublic,
     status_code=status.HTTP_201_CREATED,
     summary="Create a table",
+    **operation_route("tables.create"),
 )
 async def create_table(
     data: TableCreate,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(
         default=None,
         description="Target scope: 'global' or org UUID. Defaults to current org.",
     ),
 ) -> TablePublic:
-    """Create a new table for storing documents (platform admin only)."""
+    """Create a new table in the selected authorized boundary."""
+    authorization.require_operation("tables.create")
+    user = authorization.requester
     if ctx.solution_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Tables must be declared by the solution manifest",
         )
 
-    # Prefer organization_id from request body; fall back to scope query param (legacy)
+    del scope  # consumed centrally by CurrentAuthorizationContext
     if "organization_id" in (data.model_fields_set or set()):
         target_org_id = data.organization_id
-    elif scope is not None:
-        target_org_id = _resolve_target_org_safe(ctx, scope)
     else:
-        target_org_id = ctx.org_id
+        target_org_id = _selected_table_organization_id(authorization)
+    authorization.require_resource_boundary(target_org_id)
+    await _validate_table_target_org(ctx.db, target_org_id)
     try:
         await _validate_table_policy_claim_refs(ctx.db, target_org_id, data.policies)
     except ValueError as e:
@@ -682,40 +791,53 @@ async def create_table(
             detail=str(e),
         )
 
-    repo = TableRepository(ctx.db, target_org_id, is_superuser=True)
+    repo = TableRepository(ctx.db, target_org_id, bypass_resource_admission=True)
     try:
         table = await repo.create_table(data, created_by=user.email)
-        return TablePublic.model_validate(table)
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=str(e),
         )
+    await emit_audit(
+        ctx.db,
+        "table.create",
+        resource_type="table",
+        resource_id=table.id,
+        details={
+            "name": table.name,
+            "organization_id": (
+                str(table.organization_id) if table.organization_id else None
+            ),
+        },
+    )
+    await RepoSyncWriter(ctx.db).regenerate_manifest()
+    return TablePublic.model_validate(table)
 
 
 @router.get(
     "",
     response_model=TableListResponse,
     summary="List tables",
+    **operation_route("tables.list"),
 )
 async def list_tables(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(
         default=None,
         description="Filter scope: 'global' for global only, org UUID for specific org.",
     ),
 ) -> TableListResponse:
-    """List all tables in the current scope (platform admin only)."""
-    try:
-        filter_type, filter_org = resolve_org_filter(ctx.user, scope)
-    except ValueError as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e),
-        )
-
-    repo = TableRepository(ctx.db, filter_org, is_superuser=True)
+    """List Tables visible in the explicitly selected context."""
+    del scope  # consumed centrally by CurrentAuthorizationContext
+    authorization.require_operation("tables.list")
+    repo = _table_repository(ctx, authorization)
+    filter_type = (
+        OrgFilterType.GLOBAL_ONLY
+        if authorization.selected_boundary.kind is AuthorizationBoundaryKind.PLATFORM
+        else OrgFilterType.ORG_PLUS_GLOBAL
+    )
     tables = await repo.list_tables(filter_type)
 
     return TableListResponse(
@@ -778,7 +900,7 @@ def _split_value_error_msg(msg: str) -> tuple[str, bool, str]:
 )
 async def validate_policies(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     body: Any = Body(...),
 ) -> PolicyValidationResponse:
     """Validate a candidate ``TablePolicies`` payload.
@@ -797,11 +919,10 @@ async def validate_policies(
     ``actions``) goes through the standard ``loc``-tuple → path conversion
     via ``_loc_to_path``.
 
-    Auth: matches the rest of the tables router (``CurrentSuperuser``).
-    The validator does not touch any tenant data, but tables are
-    superuser-only resources so the endpoint should not be reachable to
-    non-admin callers either.
+    Authorization matches Table schema administration: the caller needs
+    ``tables.readwrite`` in the selected boundary.
     """
+    authorization.require("tables.readwrite")
     if not isinstance(body, dict):
         return PolicyValidationResponse(
             ok=False,
@@ -818,7 +939,11 @@ async def validate_policies(
         # Validate $ref entries resolve to real rules before reporting ok=True.
         from shared.policy_rules import PolicyRuleDomainMismatch, PolicyRuleNotFound, resolve_policy_refs
         from src.repositories.policy_rule import PolicyRuleRepository
-        ref_repo = PolicyRuleRepository(ctx.db, org_id=None, is_superuser=True)
+        ref_repo = PolicyRuleRepository(
+            ctx.db,
+            org_id=_selected_table_organization_id(authorization),
+            bypass_resource_admission=authorization.has_capability("platform.superuser"),
+        )
         try:
             await resolve_policy_refs(parsed.model_copy(deep=True), repo=ref_repo, action_domain="table")
         except (PolicyRuleNotFound, PolicyRuleDomainMismatch) as ref_exc:
@@ -900,15 +1025,16 @@ async def validate_policies(
     "/{table_id}",
     response_model=TablePublic,
     summary="Get table metadata",
+    **operation_route("tables.get"),
 )
 async def get_table(
     table_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> TablePublic:
-    """Get table metadata by UUID (platform admin only)."""
-    result = await ctx.db.execute(select(Table).where(Table.id == table_id))
-    table = result.scalar_one_or_none()
+    """Get table metadata admitted in the selected boundary."""
+    authorization.require_operation("tables.get")
+    table = await _table_repository(ctx, authorization).get(id=table_id)
     if not table:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -921,33 +1047,56 @@ async def get_table(
     "/{table_id}",
     response_model=TablePublic,
     summary="Update table",
+    **operation_route("tables.update"),
 )
 async def update_table(
     table_id: UUID,
     data: TableUpdate,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> TablePublic:
-    """Update table metadata by ID (platform admin only).
+    """Update table metadata in the selected authorized boundary.
 
     Solution-managed tables are read-only here: deploy owns schema + policies.
     Row DATA (documents) stays editable — that's runtime state (criterion 7).
     """
+    authorization.require_operation("tables.update")
     await assert_entity_id_not_solution_managed(ctx.db, Table, table_id)
-    if "policies" in data.model_fields_set:
-        existing_table = (
-            await ctx.db.execute(select(Table).where(Table.id == table_id))
-        ).scalar_one_or_none()
-        if existing_table is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Table '{table_id}' not found",
+    existing_table = (
+        await ctx.db.execute(select(Table).where(Table.id == table_id))
+    ).scalar_one_or_none()
+    if existing_table is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Table '{table_id}' not found",
+        )
+    _require_table_mutation(authorization, existing_table)
+
+    policy_or_scope_changed = bool(
+        {"policies", "organization_id"} & data.model_fields_set
+    )
+    if policy_or_scope_changed:
+        effective_org_id = (
+            data.organization_id
+            if "organization_id" in data.model_fields_set
+            else existing_table.organization_id
+        )
+        authorization.require_resource_boundary(effective_org_id)
+        effective_policies = (
+            data.policies
+            if "policies" in data.model_fields_set
+            else (
+                TablePolicies.model_validate(existing_table.access)
+                if existing_table.access is not None
+                else None
             )
+        )
+        await _validate_table_target_org(ctx.db, effective_org_id)
         try:
             await _validate_table_policy_claim_refs(
                 ctx.db,
-                existing_table.organization_id,
-                data.policies,
+                effective_org_id,
+                effective_policies,
                 existing_table.solution_id,
             )
         except ValueError as e:
@@ -956,13 +1105,19 @@ async def update_table(
                 detail=str(e),
             )
 
-    repo = TableRepository(ctx.db, ctx.org_id, is_superuser=True)
+    repo = _table_repository(ctx, authorization)
     try:
         table = await repo.update_table(table_id, data)
-    except ValueError as e:
+    except (IntegrityError, ValueError) as e:
+        await ctx.db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=str(e),
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"Table '{data.name or existing_table.name}' already exists "
+                "in the target scope"
+                if isinstance(e, IntegrityError)
+                else str(e)
+            ),
         )
 
     if not table:
@@ -970,6 +1125,15 @@ async def update_table(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Table '{table_id}' not found",
         )
+
+    await emit_audit(
+        ctx.db,
+        "table.update",
+        resource_type="table",
+        resource_id=table.id,
+        details={"name": table.name, "fields": sorted(data.model_fields_set)},
+    )
+    await RepoSyncWriter(ctx.db).regenerate_manifest()
 
     if "policies" in data.model_fields_set:
         # Subscribers re-read policies on a separate database connection when
@@ -985,15 +1149,27 @@ async def update_table(
     "/{table_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete table",
+    **operation_route("tables.delete"),
 )
 async def delete_table(
     table_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> None:
-    """Delete a table and all its documents by ID (platform admin only)."""
+    """Delete a table and its documents in the selected boundary."""
+    authorization.require_operation("tables.delete")
     await assert_entity_id_not_solution_managed(ctx.db, Table, table_id)
-    repo = TableRepository(ctx.db, ctx.org_id, is_superuser=True)
+    existing_table = (
+        await ctx.db.execute(select(Table).where(Table.id == table_id))
+    ).scalar_one_or_none()
+    if existing_table is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Table '{table_id}' not found",
+        )
+    _require_table_mutation(authorization, existing_table)
+    table_name = existing_table.name
+    repo = _table_repository(ctx, authorization)
     success = await repo.delete_table(table_id)
 
     if not success:
@@ -1001,6 +1177,15 @@ async def delete_table(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Table '{table_id}' not found",
         )
+
+    await emit_audit(
+        ctx.db,
+        "table.delete",
+        resource_type="table",
+        resource_id=table_id,
+        details={"name": table_name},
+    )
+    await RepoSyncWriter(ctx.db).regenerate_manifest()
 
 
 # =============================================================================
@@ -1018,17 +1203,18 @@ async def insert_document(
     table_id: str,
     body: DocumentCreate,
     ctx: Context,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(
         None,
         description="Target organization scope: 'global' or org UUID. Defaults to caller's home org. Provider admins only for non-self orgs.",
     ),
 ) -> DocumentPublic:
     """Insert a new document into the table."""
-    table = await get_table_or_404(ctx, table_id, scope=scope)
+    table = await get_table_or_404(ctx, table_id, scope=scope, authorization=authorization)
     await _assert_solution_write_targets_owned_table(ctx, table)
     repo = DocumentRepository(ctx.db, table)
     created_by, updated_by = _resolve_attribution(
-        ctx.user, body.created_by, body.updated_by
+        ctx.user, body.created_by, body.updated_by, authorization
     )
 
     if body.upsert and body.id:
@@ -1079,6 +1265,7 @@ async def upsert_document(
     table_id: str,
     body: DocumentUpsert,
     ctx: Context,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(
         None,
         description="Target organization scope: 'global' or org UUID. Defaults to caller's home org. Provider admins only for non-self orgs.",
@@ -1097,11 +1284,11 @@ async def upsert_document(
     so the literal ``/upsert`` segment matches first. Reversing the order
     binds ``doc_id="upsert"`` and the endpoint becomes unreachable.
     """
-    table = await get_table_or_404(ctx, table_id, scope=scope)
+    table = await get_table_or_404(ctx, table_id, scope=scope, authorization=authorization)
     await _assert_solution_write_targets_owned_table(ctx, table)
     repo = DocumentRepository(ctx.db, table)
     created_by, updated_by = _resolve_attribution(
-        ctx.user, body.created_by, body.updated_by
+        ctx.user, body.created_by, body.updated_by, authorization
     )
 
     existing = await repo.get(body.id)
@@ -1138,6 +1325,7 @@ async def upsert_document(
 async def count_documents(
     table_id: str,
     ctx: Context,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(
         None,
         description="Target organization scope: 'global' or org UUID. Defaults to caller's home org. Provider admins only for non-self orgs.",
@@ -1152,7 +1340,7 @@ async def count_documents(
     FastAPI bind ``doc_id="count"`` and return 404, silently disabling the
     count endpoint.
     """
-    table = await get_table_or_404(ctx, table_id, scope=scope)
+    table = await get_table_or_404(ctx, table_id, scope=scope, authorization=authorization)
 
     policies = await load_resolved_table_policies(table, ctx.db)
     await preresolve_for_policies(
@@ -1181,13 +1369,14 @@ async def get_document(
     table_id: str,
     doc_id: str,
     ctx: Context,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(
         None,
         description="Target organization scope: 'global' or org UUID. Defaults to caller's home org. Provider admins only for non-self orgs.",
     ),
 ) -> DocumentPublic:
     """Get a document by ID."""
-    table = await get_table_or_404(ctx, table_id, scope=scope)
+    table = await get_table_or_404(ctx, table_id, scope=scope, authorization=authorization)
     repo = DocumentRepository(ctx.db, table)
     doc = await repo.get(doc_id)
     if doc is None:
@@ -1206,16 +1395,17 @@ async def update_document(
     doc_id: str,
     body: DocumentUpdate,
     ctx: Context,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(
         None,
         description="Target organization scope: 'global' or org UUID. Defaults to caller's home org. Provider admins only for non-self orgs.",
     ),
 ) -> DocumentPublic:
     """Update a document (partial update, merges with existing)."""
-    table = await get_table_or_404(ctx, table_id, scope=scope)
+    table = await get_table_or_404(ctx, table_id, scope=scope, authorization=authorization)
     await _assert_solution_write_targets_owned_table(ctx, table)
     repo = DocumentRepository(ctx.db, table)
-    _, updated_by = _resolve_attribution(ctx.user, None, body.updated_by)
+    _, updated_by = _resolve_attribution(ctx.user, None, body.updated_by, authorization)
     existing = await repo.get(doc_id)
     if existing is None:
         raise HTTPException(status_code=404, detail="Document not found")
@@ -1244,13 +1434,14 @@ async def delete_document(
     table_id: str,
     doc_id: str,
     ctx: Context,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(
         None,
         description="Target organization scope: 'global' or org UUID. Defaults to caller's home org. Provider admins only for non-self orgs.",
     ),
 ) -> None:
     """Delete a document."""
-    table = await get_table_or_404(ctx, table_id, scope=scope)
+    table = await get_table_or_404(ctx, table_id, scope=scope, authorization=authorization)
     await _assert_solution_write_targets_owned_table(ctx, table)
     repo = DocumentRepository(ctx.db, table)
     existing = await repo.get(doc_id)
@@ -1278,6 +1469,7 @@ async def query_documents(
     table_id: str,
     query_params: DocumentQuery,
     ctx: Context,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(
         None,
         description="Target organization scope: 'global' or org UUID. Defaults to caller's home org. Provider admins only for non-self orgs.",
@@ -1287,7 +1479,7 @@ async def query_documents(
 
     Returns 404 if the table doesn't exist.
     """
-    table = await get_table_or_404(ctx, table_id, scope=scope)
+    table = await get_table_or_404(ctx, table_id, scope=scope, authorization=authorization)
 
     policies = await load_resolved_table_policies(table, ctx.db)
     await preresolve_for_policies(
@@ -1329,6 +1521,7 @@ async def batch_documents(
     table_id: str,
     body: DocumentBatchCreate,
     ctx: Context,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(
         None,
         description="Target organization scope: 'global' or org UUID. Defaults to caller's home org. Provider admins only for non-self orgs.",
@@ -1342,7 +1535,7 @@ async def batch_documents(
     All-or-nothing on policy denials: any denied row aborts the whole batch
     with a 403 listing every denied index.
     """
-    table = await get_table_or_404(ctx, table_id, scope=scope)
+    table = await get_table_or_404(ctx, table_id, scope=scope, authorization=authorization)
     await _assert_solution_write_targets_owned_table(ctx, table)
     repo = DocumentRepository(ctx.db, table)
     policies = await load_resolved_table_policies(table, ctx.db)
@@ -1358,7 +1551,7 @@ async def batch_documents(
     # 403 surfaces before we do work and applies all-or-nothing across
     # the batch (consistent with the policy-denial semantics below).
     attribution: list[tuple[str, str]] = [
-        _resolve_attribution(ctx.user, item.created_by, item.updated_by)
+        _resolve_attribution(ctx.user, item.created_by, item.updated_by, authorization)
         for item in body.documents
     ]
 
@@ -1446,6 +1639,7 @@ async def batch_delete_documents(
     table_id: str,
     body: DocumentBatchDeleteRequest,
     ctx: Context,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(
         None,
         description="Target organization scope: 'global' or org UUID. Defaults to caller's home org. Provider admins only for non-self orgs.",
@@ -1456,7 +1650,7 @@ async def batch_delete_documents(
     Skips IDs that don't exist. All-or-nothing on policy denials: any
     denied row aborts the whole batch with a 403 listing every denied index.
     """
-    table = await get_table_or_404(ctx, table_id, scope=scope)
+    table = await get_table_or_404(ctx, table_id, scope=scope, authorization=authorization)
     await _assert_solution_write_targets_owned_table(ctx, table)
     repo = DocumentRepository(ctx.db, table)
     policies = await load_resolved_table_policies(table, ctx.db)

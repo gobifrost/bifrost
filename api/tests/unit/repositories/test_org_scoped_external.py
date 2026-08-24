@@ -139,40 +139,53 @@ class TestAuthenticatedTierDenial:
         )
         assert await repo._can_access_entity(entity) is False
 
-    async def test_external_user_granted_role_based_entity_with_role(self, session):
+    async def test_external_user_granted_role_based_entity_with_role(
+        self, session, monkeypatch
+    ):
         role_id = uuid4()
         user_id = uuid4()
         entity = _entity(org_id=uuid4(), access_level="role_based")
-        # First query: user's role ids. Second: entity's role ids.
-        session.execute.side_effect = [
-            _rows_result([role_id]),
-            _rows_result([role_id]),
-        ]
+        effective_roles = AsyncMock(return_value=frozenset({role_id}))
+        monkeypatch.setattr(
+            "src.repositories.org_scoped.resolve_effective_role_ids",
+            effective_roles,
+        )
+        session.execute.return_value = _rows_result([role_id])
         repo = _FakeRbacRepo(
             session, org_id=entity.organization_id, user_id=user_id, is_external=True
         )
         assert await repo._can_access_entity(entity) is True
+        assert effective_roles.await_args.kwargs["selected_boundary"].organization_id == entity.organization_id
 
-    async def test_external_user_role_grant_works_on_global_entity(self, session):
+    async def test_external_user_role_grant_works_on_global_entity(
+        self, session, monkeypatch
+    ):
         # The capability the old scope-drop broke: a role grant on a GLOBAL
         # entity grants the external user like anyone else.
         role_id = uuid4()
         entity = _entity(org_id=None, access_level="role_based")
-        session.execute.side_effect = [
-            _rows_result([role_id]),
-            _rows_result([role_id]),
-        ]
+        effective_roles = AsyncMock(return_value=frozenset({role_id}))
+        monkeypatch.setattr(
+            "src.repositories.org_scoped.resolve_effective_role_ids",
+            effective_roles,
+        )
+        session.execute.return_value = _rows_result([role_id])
+        active_org_id = uuid4()
         repo = _FakeRbacRepo(
-            session, org_id=uuid4(), user_id=uuid4(), is_external=True
+            session, org_id=active_org_id, user_id=uuid4(), is_external=True
         )
         assert await repo._can_access_entity(entity) is True
+        assert effective_roles.await_args.kwargs["selected_boundary"].organization_id == active_org_id
 
-    async def test_external_user_denied_role_based_entity_without_role(self, session):
+    async def test_external_user_denied_role_based_entity_without_role(
+        self, session, monkeypatch
+    ):
         entity = _entity(org_id=uuid4(), access_level="role_based")
-        session.execute.side_effect = [
-            _rows_result([uuid4()]),  # user has a role...
-            _rows_result([uuid4()]),  # ...but not one assigned to the entity
-        ]
+        monkeypatch.setattr(
+            "src.repositories.org_scoped.resolve_effective_role_ids",
+            AsyncMock(return_value=frozenset({uuid4()})),
+        )
+        session.execute.return_value = _rows_result([uuid4()])
         repo = _FakeRbacRepo(
             session, org_id=entity.organization_id, user_id=uuid4(), is_external=True
         )
@@ -184,7 +197,7 @@ class TestAuthenticatedTierDenial:
             session,
             org_id=entity.organization_id,
             user_id=uuid4(),
-            is_superuser=True,
+            bypass_resource_admission=True,
             is_external=True,
         )
         assert await repo._can_access_entity(entity) is True

@@ -14,10 +14,26 @@ import { renderWithProviders, screen } from "@/test-utils";
 
 const mockUserRoles = vi.fn();
 const mockUserForms = vi.fn();
+const mockRoles = vi.fn();
 
 vi.mock("@/hooks/useUsers", () => ({
 	useUserRoles: () => mockUserRoles(),
 	useUserForms: () => mockUserForms(),
+}));
+
+vi.mock("@/hooks/useRoles", () => ({
+	useRoles: () => mockRoles(),
+}));
+
+vi.mock("@/hooks/useOrganizations", () => ({
+	useOrganizations: () => ({ data: [{ id: "org-1", name: "Acme" }] }),
+	useOrganizationGroups: () => ({ data: [] }),
+}));
+
+vi.mock("@/hooks/useAdministrativeBoundary", () => ({
+	useAdministrativeBoundary: () => "platform",
+	organizationBoundary: (organizationId: string | null | undefined) =>
+		organizationId ? `organization:${organizationId}` : "platform",
 }));
 
 import { UserDetailsDialog } from "./UserDetailsDialog";
@@ -42,8 +58,9 @@ function makeUser(overrides: Partial<NonNullable<User>> = {}): NonNullable<User>
 beforeEach(() => {
 	mockUserRoles.mockReset();
 	mockUserForms.mockReset();
-	mockUserRoles.mockReturnValue({ data: { role_ids: [] }, isLoading: false });
+	mockUserRoles.mockReturnValue({ data: [], isLoading: false });
 	mockUserForms.mockReturnValue({ data: { form_ids: [] }, isLoading: false });
+	mockRoles.mockReturnValue({ data: [] });
 });
 
 describe("UserDetailsDialog", () => {
@@ -73,7 +90,7 @@ describe("UserDetailsDialog", () => {
 			/>,
 		);
 
-		expect(screen.getByText(/platform admin/i)).toBeInTheDocument();
+		expect(screen.getAllByText(/platform admin/i).length).toBeGreaterThan(0);
 		expect(screen.getByText(/full platform access/i)).toBeInTheDocument();
 		// Roles/Forms tabs only render for org users — should NOT show here.
 		expect(
@@ -132,5 +149,28 @@ describe("UserDetailsDialog", () => {
 		expect(
 			screen.getByText(/no roles assigned to this user/i),
 		).toBeInTheDocument();
+	});
+
+	it("shows Role names with their access boundaries", () => {
+		mockRoles.mockReturnValue({ data: [{ id: "r-1", name: "Builder" }] });
+		mockUserRoles.mockReturnValue({
+			data: [
+				{
+					id: "a-1",
+					user_id: "u-1",
+					role_id: "r-1",
+					assigned_at: "2026-08-19T00:00:00Z",
+					boundaries: [{ id: "b-1", boundary_kind: "organization", organization_id: "org-1" }],
+				},
+			],
+			isLoading: false,
+		});
+
+		renderWithProviders(
+			<UserDetailsDialog user={makeUser()} open={true} onClose={vi.fn()} />,
+		);
+
+		expect(screen.getByText("Builder")).toBeInTheDocument();
+		expect(screen.getByText("Acme")).toBeInTheDocument();
 	});
 });

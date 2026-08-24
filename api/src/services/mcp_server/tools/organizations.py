@@ -1,32 +1,13 @@
-"""
-Organization MCP Tools
+"""Organization MCP tools backed by the canonical REST API."""
 
-Tools for listing, creating, getting, updating, and deleting organizations.
-All organization tools are restricted (platform-admin only).
+from __future__ import annotations
 
-``list_organizations`` / ``get_organization`` / ``create_organization``
-predate this plan and continue to use the ORM directly; they are **not
-modified** by the Task 6 parity work.
-
-``update_organization`` and ``delete_organization`` are added here as
-thin wrappers over the REST API (Task 6). They must not touch the ORM
-or repositories — all side effects go through the canonical REST path.
-"""
-
-import logging
-import re
 from typing import Any
-from uuid import UUID, uuid4
 
 from fastmcp.tools import ToolResult
-from sqlalchemy import select
 
-from src.services.mcp_server.tools.db import get_tool_db
-from src.models.orm.organizations import Organization
 from src.services.mcp_server.tool_result import error_result, success_result
 from src.services.mcp_server.tools._http_bridge import call_rest, rest_client
-
-logger = logging.getLogger(__name__)
 
 
 def _ref_error_payload(exc: Exception) -> dict[str, Any]:
@@ -39,177 +20,124 @@ def _ref_error_payload(exc: Exception) -> dict[str, Any]:
     return {"detail": str(exc)}
 
 
-async def list_organizations(context: Any) -> ToolResult:
-    """List all organizations.
-
-    Platform admin only. Returns id, name, domain, is_active for each org.
-    """
-    logger.info("MCP list_organizations called")
-
-    try:
-        async with get_tool_db(context) as db:
-            query = select(Organization).order_by(Organization.name)
-            result = await db.execute(query)
-            orgs = result.scalars().all()
-
-            orgs_data = [
-                {
-                    "id": str(org.id),
-                    "name": org.name,
-                    "domain": org.domain,
-                    "is_active": org.is_active,
-                }
-                for org in orgs
-            ]
-
-            display_text = f"Found {len(orgs_data)} organization(s)"
-            return success_result(display_text, {"organizations": orgs_data, "count": len(orgs_data)})
-
-    except Exception as e:
-        logger.exception(f"Error listing organizations via MCP: {e}")
-        return error_result(f"Error listing organizations: {str(e)}")
+def _rest_error(action: str, status_code: int, body: Any) -> ToolResult:
+    detail = body.get("detail") if isinstance(body, dict) else None
+    if isinstance(detail, dict):
+        message = detail.get("message") or detail.get("detail")
+    else:
+        message = detail
+    return error_result(
+        str(message) if message else f"{action} failed: HTTP {status_code}",
+        {"status_code": status_code, "body": body},
+    )
 
 
-async def get_organization(
+async def _resolve_organization(context: Any, organization_ref: str) -> str:
+    from bifrost.refs import RefResolver
+
+    async with rest_client(context) as http:
+        return await RefResolver(http).resolve("org", organization_ref)
+
+
+async def bifrost_list_organizations(
     context: Any,
-    organization_id: str | None = None,
-    domain: str | None = None,
+    include_inactive: bool = False,
 ) -> ToolResult:
-    """Get organization details by ID or domain.
+    """List Organizations through ``GET /api/organizations``."""
 
-    Platform admin only. Must provide at least one of organization_id or domain.
-    """
-    logger.info(f"MCP get_organization called with id={organization_id}, domain={domain}")
+    status_code, body = await call_rest(
+        context,
+        "GET",
+        "/api/organizations",
+        params={"include_inactive": include_inactive},
+    )
+    if status_code != 200:
+        return _rest_error("List Organizations", status_code, body)
+    organizations = body if isinstance(body, list) else []
+    return success_result(
+        f"Found {len(organizations)} Organization(s)",
+        {"organizations": organizations, "count": len(organizations)},
+    )
 
-    if not organization_id and not domain:
-        return error_result("Either organization_id or domain is required")
 
+async def bifrost_get_organization(
+    context: Any,
+    organization_ref: str,
+) -> ToolResult:
+    """Get one Organization by UUID or name."""
+
+    if not organization_ref:
+        return error_result("organization_ref is required")
     try:
-        async with get_tool_db(context) as db:
-            query = select(Organization)
-
-            if organization_id:
-                try:
-                    query = query.where(Organization.id == UUID(organization_id))
-                except ValueError:
-                    return error_result(f"Invalid organization_id format: {organization_id}")
-            else:
-                query = query.where(Organization.domain == domain)
-
-            result = await db.execute(query)
-            org = result.scalar_one_or_none()
-
-            if not org:
-                identifier = organization_id or domain
-                return error_result(f"Organization not found: {identifier}")
-
-            org_data = {
-                "id": str(org.id),
-                "name": org.name,
-                "domain": org.domain,
-                "is_active": org.is_active,
-                "settings": org.settings,
-                "created_at": org.created_at.isoformat() if org.created_at else None,
-                "created_by": org.created_by,
-                "updated_at": org.updated_at.isoformat() if org.updated_at else None,
-            }
-
-            display_text = f"Organization: {org.name}"
-            return success_result(display_text, org_data)
-
-    except Exception as e:
-        logger.exception(f"Error getting organization via MCP: {e}")
-        return error_result(f"Error getting organization: {str(e)}")
+        organization_id = await _resolve_organization(context, organization_ref)
+    except Exception as exc:
+        return error_result(
+            f"Could not resolve Organization {organization_ref!r}",
+            _ref_error_payload(exc),
+        )
+    status_code, body = await call_rest(
+        context,
+        "GET",
+        f"/api/organizations/{organization_id}",
+    )
+    if status_code != 200:
+        return _rest_error("Get Organization", status_code, body)
+    payload = body if isinstance(body, dict) else {"body": body}
+    return success_result(
+        f"Organization: {payload.get('name', organization_id)}",
+        payload,
+    )
 
 
-async def create_organization(
+async def bifrost_create_organization(
     context: Any,
     name: str,
-    domain: str | None = None,
+    is_active: bool | None = None,
 ) -> ToolResult:
-    """Create a new organization.
+    """Create an Organization through the shared ``OrganizationCreate`` DTO."""
 
-    Platform admin only.
+    from bifrost.dto_flags import DTO_EXCLUDES, assemble_body
+    from bifrost.refs import RefResolver
+    from src.models.contracts.organizations import OrganizationCreate
 
-    Args:
-        context: MCP context with user permissions
-        name: Organization name (required)
-        domain: Organization domain (optional, auto-generated from name if not provided)
-
-    Returns:
-        ToolResult with created organization details
-    """
-    logger.info(f"MCP create_organization called with name={name}")
-
-    if not name:
-        return error_result("name is required")
-
-    if len(name) > 255:
-        return error_result("name must be 255 characters or less")
-
-    # Generate domain from name if not provided
-    if not domain:
-        # Convert to lowercase, replace spaces/special chars with hyphens
-        domain = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
-
-    if len(domain) > 255:
-        return error_result("domain must be 255 characters or less")
-
+    fields: dict[str, Any] = {"name": name, "is_active": is_active}
+    exclude = DTO_EXCLUDES.get("OrganizationCreate", set())
     try:
-        async with get_tool_db(context) as db:
-            # Check for duplicate domain
-            existing_query = select(Organization).where(Organization.domain == domain)
-            existing_result = await db.execute(existing_query)
-            if existing_result.scalar_one_or_none():
-                return error_result(f"Organization with domain '{domain}' already exists")
-
-            # Create organization
-            org = Organization(
-                id=uuid4(),
-                name=name,
-                domain=domain,
-                is_active=True,
-                settings={},
-                created_by=context.user_email,
+        async with rest_client(context) as http:
+            body = await assemble_body(
+                OrganizationCreate,
+                {key: value for key, value in fields.items() if key not in exclude},
+                resolver=RefResolver(http),
             )
+    except Exception as exc:
+        return error_result(
+            f"Invalid Organization input: {exc}",
+            _ref_error_payload(exc),
+        )
 
-            db.add(org)
-            await db.commit()
-
-            logger.info(f"Created organization {org.id}: {org.name}")
-
-            display_text = f"Created organization: {org.name}"
-            return success_result(display_text, {
-                "success": True,
-                "id": str(org.id),
-                "name": org.name,
-                "domain": org.domain,
-                "is_active": org.is_active,
-            })
-
-    except Exception as e:
-        logger.exception(f"Error creating organization via MCP: {e}")
-        return error_result(f"Error creating organization: {str(e)}")
-
-
-# ---------------------------------------------------------------------------
-# Thin-wrapper parity tools (Task 6)
-# ---------------------------------------------------------------------------
+    status_code, response = await call_rest(
+        context,
+        "POST",
+        "/api/organizations",
+        json_body=body,
+    )
+    if status_code != 201:
+        return _rest_error("Create Organization", status_code, response)
+    payload = response if isinstance(response, dict) else {"body": response}
+    return success_result(
+        f"Created Organization: {payload.get('name', name)}",
+        payload,
+    )
 
 
-async def update_organization(
+async def bifrost_update_organization(
     context: Any,
     organization_ref: str,
     name: str | None = None,
     is_active: bool | None = None,
 ) -> ToolResult:
-    """Update an organization — ``PATCH /api/organizations/{uuid}``.
+    """Update an Organization through the shared ``OrganizationUpdate`` DTO."""
 
-    ``organization_ref`` is a UUID or organization name. ``domain`` and
-    ``settings`` are excluded by design (see
-    :data:`bifrost.dto_flags.DTO_EXCLUDES` — ``domain`` is
-    auto-provisioning policy, ``settings`` is a UI-managed JSON blob).
-    """
     if not organization_ref:
         return error_result("organization_ref is required")
 
@@ -218,92 +146,126 @@ async def update_organization(
     from src.models.contracts.organizations import OrganizationUpdate
 
     exclude = DTO_EXCLUDES.get("OrganizationUpdate", set())
-
-    async with rest_client(context) as http:
-        resolver = RefResolver(http)
-        try:
-            org_uuid = await resolver.resolve("org", organization_ref)
-        except Exception as exc:
-            return error_result(
-                f"could not resolve organization {organization_ref!r}",
-                _ref_error_payload(exc),
-            )
-
-        fields: dict[str, Any] = {"name": name, "is_active": is_active}
-        try:
+    fields: dict[str, Any] = {"name": name, "is_active": is_active}
+    try:
+        async with rest_client(context) as http:
+            resolver = RefResolver(http)
+            organization_id = await resolver.resolve("org", organization_ref)
             body = await assemble_body(
                 OrganizationUpdate,
-                {k: v for k, v in fields.items() if k not in exclude},
+                {key: value for key, value in fields.items() if key not in exclude},
                 resolver=resolver,
             )
-        except Exception as exc:
-            return error_result(f"invalid input: {exc}", _ref_error_payload(exc))
+    except Exception as exc:
+        return error_result(
+            f"Invalid Organization input: {exc}",
+            _ref_error_payload(exc),
+        )
+    if not body:
+        return error_result("No updates provided")
 
-    status_code, resp = await call_rest(
-        context, "PATCH", f"/api/organizations/{org_uuid}", json_body=body
+    status_code, response = await call_rest(
+        context,
+        "PATCH",
+        f"/api/organizations/{organization_id}",
+        json_body=body,
     )
     if status_code != 200:
-        return error_result(
-            f"update_organization failed: HTTP {status_code}", {"body": resp}
-        )
+        return _rest_error("Update Organization", status_code, response)
+    payload = response if isinstance(response, dict) else {"body": response}
     return success_result(
-        f"Updated organization {org_uuid}",
-        resp if isinstance(resp, dict) else {"body": resp},
+        f"Updated Organization: {payload.get('name', organization_id)}",
+        payload,
     )
 
 
-async def delete_organization(context: Any, organization_ref: str) -> ToolResult:
-    """Delete an organization — ``DELETE /api/organizations/{uuid}``.
+async def bifrost_delete_organization(
+    context: Any,
+    organization_ref: str,
+) -> ToolResult:
+    """Soft-delete an Organization through its canonical REST endpoint."""
 
-    ``organization_ref`` is a UUID or organization name. Soft-delete
-    semantics are owned by the REST endpoint.
-    """
     if not organization_ref:
         return error_result("organization_ref is required")
-
-    from bifrost.refs import RefResolver
-
-    async with rest_client(context) as http:
-        resolver = RefResolver(http)
-        try:
-            org_uuid = await resolver.resolve("org", organization_ref)
-        except Exception as exc:
-            return error_result(
-                f"could not resolve organization {organization_ref!r}",
-                _ref_error_payload(exc),
-            )
-
-    status_code, resp = await call_rest(
-        context, "DELETE", f"/api/organizations/{org_uuid}"
-    )
-    if status_code not in (200, 204):
+    try:
+        organization_id = await _resolve_organization(context, organization_ref)
+    except Exception as exc:
         return error_result(
-            f"delete_organization failed: HTTP {status_code}", {"body": resp}
+            f"Could not resolve Organization {organization_ref!r}",
+            _ref_error_payload(exc),
         )
-    return success_result(f"Deleted organization {org_uuid}", {"deleted": org_uuid})
+    status_code, response = await call_rest(
+        context,
+        "DELETE",
+        f"/api/organizations/{organization_id}",
+    )
+    if status_code not in {200, 204}:
+        return _rest_error("Delete Organization", status_code, response)
+    return success_result(
+        f"Deleted Organization {organization_id}",
+        {"deleted": organization_id},
+    )
 
 
-# Tool metadata for registration
 TOOLS = [
-    ("list_organizations", "List Organizations", "List all organizations in the platform."),
-    ("get_organization", "Get Organization", "Get organization details by ID or domain."),
-    ("create_organization", "Create Organization", "Create a new organization."),
-    ("update_organization", "Update Organization", "Update an organization (name, is_active)."),
-    ("delete_organization", "Delete Organization", "Delete (soft-delete) an organization."),
+    (
+        "bifrost_list_organizations",
+        "List Organizations",
+        "List active Organizations, optionally including inactive records.",
+    ),
+    (
+        "bifrost_get_organization",
+        "Get Organization",
+        "Get one Organization by UUID or name.",
+    ),
+    (
+        "bifrost_create_organization",
+        "Create Organization",
+        "Create a client Organization through the canonical REST policy boundary.",
+    ),
+    (
+        "bifrost_update_organization",
+        "Update Organization",
+        "Update an Organization through the canonical REST policy boundary.",
+    ),
+    (
+        "bifrost_delete_organization",
+        "Delete Organization",
+        "Soft-delete an Organization through the canonical REST policy boundary.",
+    ),
 ]
 
 
 def register_tools(mcp: Any, get_context_fn: Any) -> None:
-    """Register all organizations tools with FastMCP."""
-    from src.services.mcp_server.generators.fastmcp_generator import register_tool_with_context
+    """Register canonical Organization tools with FastMCP."""
+
+    from src.services.mcp_server.generators.fastmcp_generator import (
+        register_tool_with_context,
+    )
 
     tool_funcs = {
-        "list_organizations": list_organizations,
-        "get_organization": get_organization,
-        "create_organization": create_organization,
-        "update_organization": update_organization,
-        "delete_organization": delete_organization,
+        "bifrost_list_organizations": bifrost_list_organizations,
+        "bifrost_get_organization": bifrost_get_organization,
+        "bifrost_create_organization": bifrost_create_organization,
+        "bifrost_update_organization": bifrost_update_organization,
+        "bifrost_delete_organization": bifrost_delete_organization,
     }
+    for tool_id, _name, description in TOOLS:
+        register_tool_with_context(
+            mcp,
+            tool_funcs[tool_id],
+            tool_id,
+            description,
+            get_context_fn,
+        )
 
-    for tool_id, name, description in TOOLS:
-        register_tool_with_context(mcp, tool_funcs[tool_id], tool_id, description, get_context_fn)
+
+__all__ = [
+    "TOOLS",
+    "bifrost_create_organization",
+    "bifrost_delete_organization",
+    "bifrost_get_organization",
+    "bifrost_list_organizations",
+    "bifrost_update_organization",
+    "register_tools",
+]

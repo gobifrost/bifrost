@@ -338,10 +338,16 @@ class OAuthTokenRepository(OrgScopedRepository[OAuthToken]):
         session: AsyncSession,
         org_id: UUID | str | None,
         user_id: UUID | str | None = None,
-        is_superuser: bool = False,
+        bypass_resource_admission: bool = False,
         is_external: bool = False,
     ):
-        super().__init__(session, org_id, user_id, is_superuser, is_external)
+        super().__init__(
+            session,
+            org_id,
+            user_id,
+            bypass_resource_admission=bypass_resource_admission,
+            is_external=is_external,
+        )
 
     async def get_org_level_for_provider(
         self, provider_id: UUID

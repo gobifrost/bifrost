@@ -1,6 +1,8 @@
 """Run-budget and context-management policy for Bifrost agents."""
 
-from dataclasses import dataclass, replace
+import inspect
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field, replace
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability
 from pydantic_ai.messages import (
     ModelRequest,
@@ -18,6 +20,7 @@ from pydantic_ai_harness.compaction import (
     LimitWarner,
     SlidingWindow,
     TieredCompaction,
+    estimate_token_count,
 )
 from pydantic_ai_harness.cache_stability import CacheStabilityMonitor
 
@@ -33,6 +36,43 @@ FINAL_RESPONSE_RESERVE_TOKENS = 4_000
 MIN_WIND_DOWN_FRACTION = 0.4
 """Never force wind-down before this fraction of the configured local allowance."""
 
+CompactionEventHandler = Callable[[int, int], Awaitable[None] | None]
+
+
+@dataclass
+class ObservedTieredCompaction(TieredCompaction[object]):
+    """Tiered compaction that reports each real context reduction."""
+
+    event_handler: CompactionEventHandler | None = None
+
+    async def before_model_request(
+        self,
+        ctx: RunContext[object],
+        request_context: ModelRequestContext,
+    ) -> ModelRequestContext:
+        before_tokens = estimate_token_count(
+            list(request_context.messages),
+            self.tokenizer,
+        )
+        compacted = await super().before_model_request(ctx, request_context)
+        if before_tokens <= self.target_tokens or self.event_handler is None:
+            return compacted
+        after_tokens = estimate_token_count(
+            list(compacted.messages),
+            self.tokenizer,
+        )
+        callback_result = self.event_handler(before_tokens, after_tokens)
+        if inspect.isawaitable(callback_result):
+            await callback_result
+        return compacted
+
+
+@dataclass
+class AgentRunControl:
+    """Mutable per-run control flags shared across runtime capabilities."""
+
+    force_wind_down: bool = False
+
 
 @dataclass(frozen=True)
 class AgentRunBudget:
@@ -44,6 +84,7 @@ class AgentRunBudget:
     warning_threshold: float = 0.7
     initial_requests: int = 0
     initial_total_tokens: int = 0
+    control: AgentRunControl = field(default_factory=AgentRunControl)
 
     @property
     def wind_down_total_tokens(self) -> int | None:
@@ -94,7 +135,7 @@ class AgentRunBudget:
             wind_down_total_tokens is not None
             and usage.total_tokens >= wind_down_total_tokens
         )
-        return request_limit_reached or token_limit_reached
+        return self.control.force_wind_down or request_limit_reached or token_limit_reached
 
     def usage_limits(self) -> UsageLimits:
         """Return pre-request-enforced limits for the full agentic loop."""
@@ -152,6 +193,7 @@ class AgentRunBudget:
             warning_threshold=self.warning_threshold,
             initial_requests=current_requests,
             initial_total_tokens=current_total_tokens,
+            control=self.control,
         )
 
 
@@ -239,7 +281,11 @@ class BudgetWindDown(AbstractCapability[object]):
         return replace(response, parts=parts, finish_reason="stop")
 
 
-def build_runtime_capabilities(budget: AgentRunBudget) -> list[AgentCapability[object]]:
+def build_runtime_capabilities(
+    budget: AgentRunBudget,
+    *,
+    compaction_event_handler: CompactionEventHandler | None = None,
+) -> list[AgentCapability[object]]:
     """Build the standard context and wind-down policy.
 
     Cheap, deterministic compaction runs before lossy sliding-window trimming.
@@ -254,7 +300,7 @@ def build_runtime_capabilities(budget: AgentRunBudget) -> list[AgentCapability[o
     retained_tail = max(4_000, int(target * 0.75))
     return [
         CacheStabilityMonitor(min_prefix_tokens=1_024),
-        TieredCompaction(
+        ObservedTieredCompaction(
             tiers=[
                 ClampOversizedMessages(
                     max_part_tokens=max(4_000, target // 2),
@@ -273,6 +319,7 @@ def build_runtime_capabilities(budget: AgentRunBudget) -> list[AgentCapability[o
                 ),
             ],
             target_tokens=target,
+            event_handler=compaction_event_handler,
         ),
         LimitWarner(
             max_iterations=budget.max_requests,

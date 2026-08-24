@@ -7,11 +7,11 @@ Covers the mutation surface from Task 5g of the CLI mutation surface plan:
 * ``integrations update <ref> --config-schema @schema.yaml`` — refuses when
   the new schema drops keys currently on the integration, unless
   ``--force-remove-keys`` is passed.
-* ``integrations add-mapping <integration> --organization <org>`` — resolves
+* ``integrations create-mapping <integration> --organization <org>`` — resolves
   both refs and POSTs to ``/api/integrations/{id}/mappings``.
 * ``integrations update-mapping <integration> --organization <org>`` — looks
-  up the mapping by org, then PUTs. ``oauth_token_id`` must NOT be clobbered
-  when the flag is absent (the DTO-driven flag set excludes it).
+  up the mapping by org, then PUTs. ``oauth_token_id`` must NOT be clobbered;
+  the CLI deliberately does not expose OAuth credential IDs.
 """
 
 from __future__ import annotations
@@ -162,6 +162,25 @@ class TestCliIntegrations:
         integration_id = create_resp.json()["id"]
 
         try:
+            # REST is the authority: direct callers also need confirmation.
+            rest_refusal = e2e_client.put(
+                f"/api/integrations/{integration_id}",
+                headers=platform_admin.headers,
+                json={
+                    "config_schema": [
+                        {
+                            "key": "api_endpoint",
+                            "type": "string",
+                            "required": True,
+                        }
+                    ]
+                },
+            )
+            assert rest_refusal.status_code == 409, rest_refusal.text
+            detail = rest_refusal.json()["detail"]
+            assert detail["code"] == "integration_schema_removal_requires_confirmation"
+            assert detail["removed_keys"] == ["timeout_seconds"]
+
             # Without --force-remove-keys → refused (non-zero exit).
             refusal = _invoke([
                 "--json",
@@ -200,10 +219,10 @@ class TestCliIntegrations:
                 headers=platform_admin.headers,
             )
 
-    def test_add_mapping_resolves_refs(
+    def test_create_mapping_resolves_refs(
         self, cli_client, _invoke, e2e_client, platform_admin, org1
     ):
-        """``add-mapping`` resolves integration and org refs by name."""
+        """``create-mapping`` resolves Integration and Organization refs by name."""
         name = f"cli-integ-map-{uuid4().hex[:8]}"
         create_resp = e2e_client.post(
             "/api/integrations",
@@ -216,7 +235,7 @@ class TestCliIntegrations:
         try:
             result = _invoke([
                 "--json",
-                "add-mapping", name,
+                "create-mapping", name,
                 "--organization", org1["name"],
                 "--entity-id", "tenant-abc",
                 "--entity-name", "Tenant ABC",
@@ -260,7 +279,7 @@ class TestCliIntegrations:
         mapping_id = create_resp.json()["id"]
         assert create_resp.json()["oauth_token_id"] == str(oauth_token_id)
 
-        # CLI update without --oauth-token-id.
+        # CLI update has no OAuth-token input surface.
         result = _invoke([
             "--json",
             "update-mapping", integration_name,
@@ -272,7 +291,7 @@ class TestCliIntegrations:
         assert payload["entity_name"] == "Renamed via CLI"
         # Critical: the pre-existing OAuth token must be untouched.
         assert payload["oauth_token_id"] == str(oauth_token_id), (
-            "oauth_token_id was clobbered by update-mapping without --oauth-token-id"
+            "oauth_token_id was clobbered by an unrelated mapping update"
         )
 
         # Double-check via GET.

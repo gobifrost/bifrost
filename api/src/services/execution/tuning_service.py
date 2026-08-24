@@ -45,7 +45,10 @@ from src.models.orm.agent_runs import AgentRun
 from src.models.orm.agents import Agent
 from src.core.cache import get_shared_redis
 from src.services.ai_usage_service import record_ai_usage
-from src.services.execution.agent_run_access import agent_run_visibility_conditions
+from src.services.authorization import AuthorizationContext
+from src.services.execution.agent_run_access import (
+    agent_run_visibility_conditions_for_authorization,
+)
 from src.services.execution.dry_run import evaluate_against_prompt
 from src.services.execution.model_selection import get_tuning_client
 from src.services.llm import LLMMessage
@@ -217,6 +220,7 @@ async def _load_flagged_runs_with_conversations(
     agent_id: UUID,
     db: AsyncSession,
     user: UserPrincipal,
+    authorization: AuthorizationContext,
 ) -> list[tuple[AgentRun, AgentRunFlagConversation | None]]:
     """Load all completed thumbs-down runs for ``agent_id`` and their conversations."""
     runs = (
@@ -226,7 +230,10 @@ async def _load_flagged_runs_with_conversations(
                 .where(AgentRun.agent_id == agent_id)
                 .where(AgentRun.verdict == "down")
                 .where(AgentRun.status == "completed")
-                .where(*agent_run_visibility_conditions(user))
+                .where(*agent_run_visibility_conditions_for_authorization(
+                    user,
+                    authorization,
+                ))
                 .order_by(AgentRun.created_at)
             )
         )
@@ -256,6 +263,7 @@ async def propose_consolidated_tuning(
     agent_id: UUID,
     db: AsyncSession,
     user: UserPrincipal,
+    authorization: AuthorizationContext,
 ) -> ConsolidatedProposal:
     """Single LLM call across all flagged runs; returns one consolidated proposal.
 
@@ -267,7 +275,12 @@ async def propose_consolidated_tuning(
     if agent is None:
         raise LookupError(f"Agent {agent_id} not found")
 
-    pairs = await _load_flagged_runs_with_conversations(agent_id, db, user)
+    pairs = await _load_flagged_runs_with_conversations(
+        agent_id,
+        db,
+        user,
+        authorization,
+    )
     if not pairs:
         raise LookupError(
             f"Agent {agent_id} has no flagged (thumbs-down) runs to tune"
@@ -334,13 +347,19 @@ async def dry_run_consolidated(
     db: AsyncSession,
     session_factory: async_sessionmaker[AsyncSession],
     user: UserPrincipal,
+    authorization: AuthorizationContext,
 ) -> list[tuple[UUID, bool, str, float]]:
     """Run :func:`evaluate_against_prompt` for each flagged run (capped).
 
     Returns a list of ``(run_id, would_still_decide_same, reasoning, confidence)``
     tuples, capped at :data:`CONSOLIDATED_DRY_RUN_LIMIT` runs to bound cost.
     """
-    pairs = await _load_flagged_runs_with_conversations(agent_id, db, user)
+    pairs = await _load_flagged_runs_with_conversations(
+        agent_id,
+        db,
+        user,
+        authorization,
+    )
     capped = pairs[:CONSOLIDATED_DRY_RUN_LIMIT]
     results: list[tuple[UUID, bool, str, float]] = []
     for run, _conv in capped:
@@ -367,6 +386,7 @@ async def apply_consolidated_tuning(
     user_id: UUID | None,
     db: AsyncSession,
     user: UserPrincipal,
+    authorization: AuthorizationContext,
 ) -> AppliedTuning:
     """Apply a consolidated tuning proposal.
 
@@ -380,7 +400,12 @@ async def apply_consolidated_tuning(
     if agent is None:
         raise LookupError(f"Agent {agent_id} not found")
 
-    pairs = await _load_flagged_runs_with_conversations(agent_id, db, user)
+    pairs = await _load_flagged_runs_with_conversations(
+        agent_id,
+        db,
+        user,
+        authorization,
+    )
     affected_ids = [r.id for r, _ in pairs]
 
     previous_prompt = agent.system_prompt

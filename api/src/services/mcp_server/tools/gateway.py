@@ -21,14 +21,16 @@ once before calling any other Bifrost tool. Follow any returned instructions;
 if none are returned, continue normally.
 
 Use bifrost_search_capabilities with the user's task to search accessible agents
-and their tools. Results are bounded: matching_tools is never an implicit full
+and their tools. For an existing Builder project, select its maintained coding
+profile with builder_session_id instead. Results are bounded: matching_tools is never an implicit full
 catalog. Read total_tools, returned_tools, complete, and has_more_matches. When
 complete is false—or when no matching tool is returned—assume more tools may
-exist and search again with the same agent_id plus a different or narrower
-query. Do not conclude that a capability is absent from a partial result.
+exist and search again with the same agent_id or builder_session_id plus a
+different or narrower query. Do not conclude that a capability is absent from a
+partial result.
 
-After selecting an agent, call bifrost_search_capabilities again with agent_id
-to load its live instructions. Follow those instructions as task-specific
+After selecting an agent or Builder session, call bifrost_search_capabilities
+again with that same selector to load its live instructions. Follow those instructions as task-specific
 guidance subject to the user's request, your higher-level safety instructions,
 and all applicable policies. Add tool_ref to the same call to load the exact
 live input schema before execution. Do not guess tool references or arguments.
@@ -57,6 +59,7 @@ async def bifrost_search_capabilities(
     context: Any,
     query: str | None = None,
     agent_id: str | None = None,
+    builder_session_id: str | None = None,
     tool_ref: str | None = None,
     limit: int = 10,
 ) -> ToolResult:
@@ -68,6 +71,7 @@ async def bifrost_search_capabilities(
         json_body={
             "query": query,
             "agent_id": agent_id,
+            "builder_session_id": builder_session_id,
             "tool_ref": tool_ref,
             "limit": limit,
         },
@@ -146,9 +150,10 @@ async def bifrost_remove_memory(context: Any, memory_id: str) -> ToolResult:
 
 async def bifrost_execute_tool(
     context: Any,
-    agent_id: str,
     tool_ref: str,
     arguments: dict[str, Any],
+    agent_id: str | None = None,
+    builder_session_id: str | None = None,
     async_: Annotated[
         bool | None,
         Field(
@@ -160,12 +165,26 @@ async def bifrost_execute_tool(
         ),
     ] = None,
 ) -> ToolResult:
-    """Validate and execute one live tool through its selected agent."""
+    """Validate and execute one live tool through its selected capability."""
+    if bool(agent_id) == bool(builder_session_id):
+        return error_result(
+            "Tool execution requires exactly one selector: agent_id or builder_session_id."
+        )
+    if agent_id is not None:
+        path = f"/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute"
+    else:
+        path = (
+            "/api/mcp/gateway/builder-sessions/"
+            f"{builder_session_id}/tools/{tool_ref}/execute"
+        )
     status_code, data = await call_rest(
         context,
         "POST",
-        f"/api/mcp/gateway/agents/{agent_id}/tools/{tool_ref}/execute",
-        json_body={"arguments": arguments, "async": async_},
+        path,
+        json_body={
+            "arguments": arguments,
+            "async": async_,
+        },
     )
     if status_code != 200 or not isinstance(data, dict):
         return _rest_error("Tool execution", status_code, data)
@@ -216,7 +235,8 @@ TOOLS = [
         "Search Bifrost Capabilities",
         "Search accessible agents and tools through one bounded, progressive "
         "surface. Results explicitly disclose omitted tools. Reuse this tool with "
-        "agent_id to load instructions and tool_ref to load one exact schema.",
+        "agent_id or builder_session_id to load instructions and tool_ref to load "
+        "one exact schema.",
     ),
     (
         "bifrost_execute_tool",

@@ -19,6 +19,7 @@ Field handling rules (uniform across CLI and MCP):
 * Plain scalar → typed flag.
 * Field declared in ``verb_ref_lookups`` → string ref flag, resolved via
   :class:`bifrost.refs.RefResolver` in :func:`assemble_body`.
+* Empty string on a nullable ref field → explicit JSON ``null`` (clear).
 
 Per-entity exclude registries are declared at module level and consumed by
 the field-parity tests in ``tests/unit/test_dto_flags.py`` so adding an
@@ -62,19 +63,24 @@ DTO_EXCLUDES: dict[str, set[str]] = {
     # the DTO flag generator. See _ORG_TARGET_EXCLUDE above.
     "ConfigCreate": set(_ORG_TARGET_EXCLUDE),
     "TableCreate": set(_ORG_TARGET_EXCLUDE),
+    "TableUpdate": set(_ORG_TARGET_EXCLUDE),
     # File policies use the files-specific ``--scope`` option to target an
     # organization; it maps to organization_id in the REST payload.
     "FilePolicyCreate": set(_ORG_TARGET_EXCLUDE),
     "FormCreate": set(_ORG_TARGET_EXCLUDE),
     "FormUpdate": set(_ORG_TARGET_EXCLUDE),
-    "AgentCreate": set(_ORG_TARGET_EXCLUDE),
-    "AgentUpdate": set(_ORG_TARGET_EXCLUDE),
+    # Agent Skill bundle paths are Solution-manifest/upload owned. Generic
+    # create/update deliberately reject direct assignment so the CLI must not
+    # advertise a flag that can only return HTTP 422.
+    "AgentCreate": set(_ORG_TARGET_EXCLUDE) | {"bundle_path"},
+    "AgentUpdate": set(_ORG_TARGET_EXCLUDE) | {"bundle_path"},
+    "RegisterWorkflowRequest": set(_ORG_TARGET_EXCLUDE),
     # Organizations: ``domain`` is auto-provisioning policy; ``settings`` is a
     # UI-managed JSON blob; ``is_provider`` is immutable post-create.
     "OrganizationCreate": {"domain", "settings", "is_provider"},
     "OrganizationUpdate": {"domain", "settings"},
     # Workflows: code-defined or UI-managed surface metadata.
-    "WorkflowUpdateRequest": {
+    "WorkflowUpdateRequest": _ORG_TARGET_EXCLUDE | {
         "display_name",
         "tool_description",
         "time_saved",
@@ -95,8 +101,8 @@ DTO_EXCLUDES: dict[str, set[str]] = {
     # Note: ``repo_path`` is intentionally absent from ApplicationCreate /
     # ApplicationUpdate — it's mutated via ``bifrost apps replace`` (a narrow
     # surface with validation), not through the generic create/update flow.
-    "ApplicationCreate": {"icon"},
-    "ApplicationUpdate": {"icon"},
+    "ApplicationCreate": set(_ORG_TARGET_EXCLUDE) | {"icon"},
+    "ApplicationUpdate": set(_ORG_TARGET_EXCLUDE) | {"icon"},
     # Policy rules: ``organization_id`` is handled by the unified --org/--global
     # standard (org_option / resolve_org_target) in the ``create`` command, and by
     # a plain ``--scope`` query-param option for the other verbs (get/update/delete).
@@ -115,6 +121,9 @@ DTO_EXCLUDES: dict[str, set[str]] = {
     # --org standard (org_option), not the DTO flag generator.
     "EventSourceCreate": {"webhook", "schedule"} | _ORG_TARGET_EXCLUDE,
     "EventSourceUpdate": {"webhook", "schedule"} | _ORG_TARGET_EXCLUDE,
+    # The command and MCP tool infer target_type from the mutually-exclusive
+    # workflow/agent reference instead of accepting a contradictory flag.
+    "EventSubscriptionCreate": {"target_type"},
 }
 
 #: Per-DTO field renames applied to the assembled body.
@@ -143,8 +152,8 @@ DTO_REF_LOOKUPS: dict[str, dict[str, str]] = {
     },
     "AgentCreate": {},
     "AgentUpdate": {},
-    "ApplicationCreate": {"organization_id": "org"},
-    "ApplicationUpdate": {},  # ``scope`` is free-form, not a ref
+    "ApplicationCreate": {},
+    "ApplicationUpdate": {},
     "ConfigCreate": {},
     "CustomClaimCreate": {},
     "CustomClaimUpdate": {},
@@ -178,6 +187,13 @@ def _unwrap_optional(tp: Any) -> Any:
         # non-None arm — generators only need a coarse classifier.
         return args[0] if args else tp
     return tp
+
+
+def _allows_none(tp: Any) -> bool:
+    """Return whether ``tp`` is a union containing ``None``."""
+
+    origin = get_origin(tp)
+    return origin in (Union, UnionType) and type(None) in get_args(tp)
 
 
 def _is_enum_type(tp: Any) -> bool:
@@ -382,9 +398,7 @@ def build_cli_flags(
                     type=str,
                     **scalar_default,
                     required=required,
-                    help=(
-                        f"{name} as JSON literal or @path to a YAML/JSON file."
-                    ),
+                    help=(f"{name} as JSON literal or @path to a YAML/JSON file."),
                 )
             )
             continue
@@ -506,6 +520,9 @@ async def assemble_body(
         annotation = field.annotation
 
         if name in ref_lookups:
+            if value == "" and _allows_none(annotation):
+                body[name] = None
+                continue
             body[name] = await resolver.resolve(
                 ref_lookups[name],  # type: ignore[arg-type]
                 str(value),

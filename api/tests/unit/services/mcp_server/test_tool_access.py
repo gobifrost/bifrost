@@ -149,7 +149,7 @@ class TestGetAccessibleAgents:
         """AUTHENTICATED agents should be accessible to any authenticated user."""
         agent = mock_agent(
             access_level=AgentAccessLevel.AUTHENTICATED,
-            system_tools=["execute_workflow"],
+            system_tools=["bifrost_execute_workflow"],
         )
 
         mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
@@ -167,7 +167,7 @@ class TestGetAccessibleAgents:
         """ROLE_BASED agent accessible when user has matching role."""
         agent = mock_agent(
             access_level=AgentAccessLevel.ROLE_BASED,
-            system_tools=["list_workflows"],
+            system_tools=["bifrost_list_workflows"],
             roles=["Developers"],
         )
 
@@ -186,7 +186,7 @@ class TestGetAccessibleAgents:
         """ROLE_BASED agent not accessible when user lacks matching role."""
         agent = mock_agent(
             access_level=AgentAccessLevel.ROLE_BASED,
-            system_tools=["list_workflows"],
+            system_tools=["bifrost_list_workflows"],
             roles=["Admins"],
         )
 
@@ -204,7 +204,7 @@ class TestGetAccessibleAgents:
         """ROLE_BASED agent with no roles accessible only to superusers."""
         agent = mock_agent(
             access_level=AgentAccessLevel.ROLE_BASED,
-            system_tools=["execute_workflow"],
+            system_tools=["bifrost_execute_workflow"],
             roles=[],  # No roles assigned
         )
 
@@ -234,7 +234,7 @@ class TestGetAccessibleAgents:
         """
         agent = mock_agent(
             access_level=AgentAccessLevel.ROLE_BASED,
-            system_tools=["search_knowledge"],
+            system_tools=["bifrost_search_knowledge"],
             roles=["Secret Team"],
         )
 
@@ -277,7 +277,7 @@ class TestGetAccessibleAgents:
         """Agent accessible when any user role matches any agent role."""
         agent = mock_agent(
             access_level=AgentAccessLevel.ROLE_BASED,
-            system_tools=["list_forms"],
+            system_tools=["bifrost_list_forms"],
             roles=["Developers", "QA"],
         )
 
@@ -303,7 +303,7 @@ class TestGetAccessibleTools:
         """Should collect system tools from accessible agents."""
         agent = mock_agent(
             access_level=AgentAccessLevel.AUTHENTICATED,
-            system_tools=["execute_workflow", "list_workflows"],
+            system_tools=["bifrost_execute_workflow", "bifrost_list_workflows"],
         )
 
         mock_session.execute = AsyncMock(return_value=mock_query_result([agent]))
@@ -323,7 +323,7 @@ class TestGetAccessibleTools:
         system_tools = [t for t in result.tools if t.type == "system"]
         assert len(system_tools) == 2
         tool_ids = {t.id for t in system_tools}
-        assert tool_ids == {"execute_workflow", "list_workflows"}
+        assert tool_ids == {"bifrost_execute_workflow", "bifrost_list_workflows"}
 
     @pytest.mark.asyncio
     async def test_collects_workflow_tools_from_agents(self, service, mock_session, mock_agent, mock_workflow):
@@ -358,12 +358,12 @@ class TestGetAccessibleTools:
         agent1 = mock_agent(
             name="Agent 1",
             access_level=AgentAccessLevel.AUTHENTICATED,
-            system_tools=["execute_workflow", "list_workflows"],
+            system_tools=["bifrost_execute_workflow", "bifrost_list_workflows"],
         )
         agent2 = mock_agent(
             name="Agent 2",
             access_level=AgentAccessLevel.AUTHENTICATED,
-            system_tools=["execute_workflow"],  # Duplicate
+            system_tools=["bifrost_execute_workflow"],  # Duplicate
         )
 
         mock_session.execute = AsyncMock(return_value=mock_query_result([agent1, agent2]))
@@ -383,7 +383,7 @@ class TestGetAccessibleTools:
         system_tools = [t for t in result.tools if t.type == "system"]
         assert len(system_tools) == 2
         tool_ids = {t.id for t in system_tools}
-        assert tool_ids == {"execute_workflow", "list_workflows"}
+        assert tool_ids == {"bifrost_execute_workflow", "bifrost_list_workflows"}
 
     @pytest.mark.asyncio
     async def test_deduplicates_workflow_tools(self, service, mock_session, mock_agent, mock_workflow):
@@ -428,69 +428,69 @@ class TestApplyConfigFilters:
         from src.models.contracts.agents import ToolInfo
 
         tools = [
-            ToolInfo(id="execute_workflow", name="Execute", description="", type="system"),
-            ToolInfo(id="list_workflows", name="List", description="", type="system"),
-            ToolInfo(id="search_knowledge", name="Search", description="", type="system"),
+            ToolInfo(id="bifrost_execute_workflow", name="Execute", description="", type="system"),
+            ToolInfo(id="bifrost_list_workflows", name="List", description="", type="system"),
+            ToolInfo(id="bifrost_search_knowledge", name="Search", description="", type="system"),
         ]
 
         mock_config = MagicMock()
         mock_config.allowed_tool_ids = None
-        mock_config.blocked_tool_ids = ["search_knowledge"]
+        mock_config.blocked_tool_ids = ["bifrost_search_knowledge"]
 
         result = service._apply_config_filters(tools, mock_config)
 
         tool_ids = {t.id for t in result}
-        assert "search_knowledge" not in tool_ids
-        assert "execute_workflow" in tool_ids
-        assert "list_workflows" in tool_ids
+        assert "bifrost_search_knowledge" not in tool_ids
+        assert "bifrost_execute_workflow" in tool_ids
+        assert "bifrost_list_workflows" in tool_ids
 
     def test_applies_config_allowlist(self, service):
         """Only allowed tools should be returned when allowlist is set."""
         from src.models.contracts.agents import ToolInfo
 
         tools = [
-            ToolInfo(id="execute_workflow", name="Execute", description="", type="system"),
-            ToolInfo(id="list_workflows", name="List", description="", type="system"),
-            ToolInfo(id="search_knowledge", name="Search", description="", type="system"),
+            ToolInfo(id="bifrost_execute_workflow", name="Execute", description="", type="system"),
+            ToolInfo(id="bifrost_list_workflows", name="List", description="", type="system"),
+            ToolInfo(id="bifrost_search_knowledge", name="Search", description="", type="system"),
         ]
 
         mock_config = MagicMock()
-        mock_config.allowed_tool_ids = ["execute_workflow"]
+        mock_config.allowed_tool_ids = ["bifrost_execute_workflow"]
         mock_config.blocked_tool_ids = None
 
         result = service._apply_config_filters(tools, mock_config)
 
         assert len(result) == 1
-        assert result[0].id == "execute_workflow"
+        assert result[0].id == "bifrost_execute_workflow"
 
     def test_allowlist_and_blocklist_combined(self, service):
         """Blocklist should be applied after allowlist."""
         from src.models.contracts.agents import ToolInfo
 
         tools = [
-            ToolInfo(id="execute_workflow", name="Execute", description="", type="system"),
-            ToolInfo(id="list_workflows", name="List", description="", type="system"),
-            ToolInfo(id="search_knowledge", name="Search", description="", type="system"),
+            ToolInfo(id="bifrost_execute_workflow", name="Execute", description="", type="system"),
+            ToolInfo(id="bifrost_list_workflows", name="List", description="", type="system"),
+            ToolInfo(id="bifrost_search_knowledge", name="Search", description="", type="system"),
         ]
 
         mock_config = MagicMock()
-        mock_config.allowed_tool_ids = ["execute_workflow", "list_workflows"]
-        mock_config.blocked_tool_ids = ["list_workflows"]
+        mock_config.allowed_tool_ids = ["bifrost_execute_workflow", "bifrost_list_workflows"]
+        mock_config.blocked_tool_ids = ["bifrost_list_workflows"]
 
         result = service._apply_config_filters(tools, mock_config)
 
-        # Allowlist filters to execute_workflow and list_workflows
-        # Blocklist removes list_workflows
+        # Allowlist filters to the canonical execute/list Workflow tools.
+        # Blocklist removes the list operation.
         assert len(result) == 1
-        assert result[0].id == "execute_workflow"
+        assert result[0].id == "bifrost_execute_workflow"
 
     def test_no_filters_returns_all(self, service):
         """No filters should return all tools."""
         from src.models.contracts.agents import ToolInfo
 
         tools = [
-            ToolInfo(id="execute_workflow", name="Execute", description="", type="system"),
-            ToolInfo(id="list_workflows", name="List", description="", type="system"),
+            ToolInfo(id="bifrost_execute_workflow", name="Execute", description="", type="system"),
+            ToolInfo(id="bifrost_list_workflows", name="List", description="", type="system"),
         ]
 
         mock_config = MagicMock()
@@ -506,7 +506,7 @@ class TestApplyConfigFilters:
         from src.models.contracts.agents import ToolInfo
 
         tools = [
-            ToolInfo(id="execute_workflow", name="Execute", description="", type="system"),
+            ToolInfo(id="bifrost_execute_workflow", name="Execute", description="", type="system"),
         ]
 
         mock_config = MagicMock()
@@ -529,25 +529,26 @@ class TestSystemToolMetadata:
         """Known system tools should have proper metadata."""
         expected_tools = [
             # Original tools
-            "execute_workflow",
-            "list_workflows",
-            "list_integrations",
-            "list_forms",
+            "bifrost_execute_workflow",
+            "bifrost_list_workflows",
+            "bifrost_list_integrations",
+            "bifrost_list_forms",
             "get_docs",
-            "search_knowledge",
+            "bifrost_search_knowledge",
             # Code editor tools (precision editing)
-            "list_content",
-            "search_content",
-            "read_content_lines",
-            "get_content",
-            "patch_content",
-            "replace_content",
-            "delete_content",
+            "bifrost_list_files",
+            "bifrost_search_files",
+            "bifrost_read_file",
+            "bifrost_stat_file",
+            "bifrost_exists_file",
+            "bifrost_write_file",
+            "bifrost_patch_file",
+            "bifrost_delete_file",
             # Workflow and execution tools
-            "validate_workflow",
-            "get_workflow",
-            "list_executions",
-            "get_execution",
+            "bifrost_validate_workflow",
+            "bifrost_get_workflow",
+            "bifrost_list_workflow_executions",
+            "bifrost_get_workflow_execution",
         ]
 
         for tool_id in expected_tools:
@@ -595,7 +596,7 @@ class TestEdgeCases:
         """Should return empty list when no agents are accessible."""
         agent = mock_agent(
             access_level=AgentAccessLevel.ROLE_BASED,
-            system_tools=["execute_workflow"],
+            system_tools=["bifrost_execute_workflow"],
             roles=["Secret Role"],
         )
 
@@ -666,11 +667,11 @@ class TestEdgeCases:
         assert workflow_tool.description == "Specific tool description"
 
 
-# ==================== search_knowledge Auto-Injection Tests ====================
+# ==================== bifrost_search_knowledge Auto-Injection Tests ====================
 
 
 class TestSearchKnowledgeAutoInjection:
-    """search_knowledge must be auto-injected when an agent has knowledge_sources.
+    """bifrost_search_knowledge must be auto-injected when an agent has knowledge_sources.
 
     Mirrors the native chat path in agent_helpers.py so MCP listing matches
     what the agent executor exposes.
@@ -680,7 +681,7 @@ class TestSearchKnowledgeAutoInjection:
     async def test_get_accessible_tools_injects_search_knowledge(
         self, service, mock_session, mock_agent
     ):
-        """get_accessible_tools includes search_knowledge when agent has
+        """get_accessible_tools includes bifrost_search_knowledge when agent has
         knowledge_sources, even if system_tools doesn't list it."""
         agent = mock_agent(
             access_level=AgentAccessLevel.AUTHENTICATED,
@@ -702,7 +703,7 @@ class TestSearchKnowledgeAutoInjection:
             )
 
         tool_ids = {t.id for t in result.tools}
-        assert "search_knowledge" in tool_ids
+        assert "bifrost_search_knowledge" in tool_ids
 
     @pytest.mark.asyncio
     async def test_get_accessible_tools_does_not_inject_without_namespaces(
@@ -729,17 +730,17 @@ class TestSearchKnowledgeAutoInjection:
             )
 
         tool_ids = {t.id for t in result.tools}
-        assert "search_knowledge" not in tool_ids
+        assert "bifrost_search_knowledge" not in tool_ids
 
     @pytest.mark.asyncio
     async def test_get_accessible_tools_no_duplicate_when_explicit(
         self, service, mock_session, mock_agent
     ):
-        """Auto-injection must not duplicate search_knowledge if already
+        """Auto-injection must not duplicate bifrost_search_knowledge if already
         listed in system_tools explicitly."""
         agent = mock_agent(
             access_level=AgentAccessLevel.AUTHENTICATED,
-            system_tools=["search_knowledge"],
+            system_tools=["bifrost_search_knowledge"],
             knowledge_sources=["docs"],
         )
 
@@ -756,7 +757,7 @@ class TestSearchKnowledgeAutoInjection:
                 is_superuser=True,
             )
 
-        sk_tools = [t for t in result.tools if t.id == "search_knowledge"]
+        sk_tools = [t for t in result.tools if t.id == "bifrost_search_knowledge"]
         assert len(sk_tools) == 1
 
     @pytest.mark.asyncio
@@ -791,7 +792,7 @@ class TestSearchKnowledgeAutoInjection:
 
         assert result is not None
         tool_ids = {t.id for t in result.tools}
-        assert "search_knowledge" in tool_ids
+        assert "bifrost_search_knowledge" in tool_ids
 
     @pytest.mark.asyncio
     async def test_get_tools_for_agent_no_inject_without_namespaces(
@@ -822,4 +823,4 @@ class TestSearchKnowledgeAutoInjection:
 
         assert result is not None
         tool_ids = {t.id for t in result.tools}
-        assert "search_knowledge" not in tool_ids
+        assert "bifrost_search_knowledge" not in tool_ids

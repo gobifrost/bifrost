@@ -3,7 +3,7 @@ Unit tests for AgentExecutor tool handling.
 
 Tests cover:
 - Tool conflict detection
-- Automatic search_knowledge addition
+- Automatic bifrost_search_knowledge addition
 - Notification creation for conflicts
 - JSON serialization of tool results
 """
@@ -66,63 +66,63 @@ def mock_agent():
 
 
 class TestAutoAddSearchKnowledge:
-    """Test automatic addition of search_knowledge system tool."""
+    """Test automatic addition of bifrost_search_knowledge system tool."""
 
     @pytest.mark.asyncio
     async def test_search_knowledge_added_when_agent_has_knowledge_sources(
         self, executor, mock_agent
     ):
-        """search_knowledge is auto-added when agent has knowledge_sources."""
+        """bifrost_search_knowledge is auto-added when agent has knowledge_sources."""
         mock_agent.knowledge_sources = ["docs", "faq"]
-        mock_agent.system_tools = ["list_organizations"]
+        mock_agent.system_tools = ["bifrost_list_organizations"]
 
         mock_tools = [
-            ToolDefinition(name="list_organizations", description="List all orgs", parameters={"type": "object", "properties": {}}),
-            ToolDefinition(name="search_knowledge", description="Search the knowledge base", parameters={"type": "object", "properties": {}}),
+            ToolDefinition(name="bifrost_list_organizations", description="List all orgs", parameters={"type": "object", "properties": {}}),
+            ToolDefinition(name="bifrost_search_knowledge", description="Search the knowledge base", parameters={"type": "object", "properties": {}}),
         ]
 
         with patch("src.services.agent_executor.resolve_agent_tools", new_callable=AsyncMock, return_value=(mock_tools, {})):
             tools = await executor._get_agent_tools(mock_agent)
 
         tool_names = [t.name for t in tools]
-        assert "search_knowledge" in tool_names
-        assert "list_organizations" in tool_names
+        assert "bifrost_search_knowledge" in tool_names
+        assert "bifrost_list_organizations" in tool_names
 
     @pytest.mark.asyncio
     async def test_search_knowledge_not_duplicated_if_already_in_system_tools(
         self, executor, mock_agent
     ):
-        """search_knowledge is not added twice if already in system_tools."""
+        """bifrost_search_knowledge is not added twice if already in system_tools."""
         mock_agent.knowledge_sources = ["docs"]
-        mock_agent.system_tools = ["search_knowledge"]
+        mock_agent.system_tools = ["bifrost_search_knowledge"]
 
         mock_tools = [
-            ToolDefinition(name="search_knowledge", description="Search the knowledge base", parameters={"type": "object", "properties": {}}),
+            ToolDefinition(name="bifrost_search_knowledge", description="Search the knowledge base", parameters={"type": "object", "properties": {}}),
         ]
 
         with patch("src.services.agent_executor.resolve_agent_tools", new_callable=AsyncMock, return_value=(mock_tools, {})):
             tools = await executor._get_agent_tools(mock_agent)
 
         tool_names = [t.name for t in tools]
-        assert tool_names.count("search_knowledge") == 1
+        assert tool_names.count("bifrost_search_knowledge") == 1
 
     @pytest.mark.asyncio
     async def test_no_search_knowledge_when_no_knowledge_sources(
         self, executor, mock_agent
     ):
-        """search_knowledge is not added when agent has no knowledge_sources."""
+        """bifrost_search_knowledge is not added when agent has no knowledge_sources."""
         mock_agent.knowledge_sources = []
-        mock_agent.system_tools = ["list_organizations"]
+        mock_agent.system_tools = ["bifrost_list_organizations"]
 
         mock_tools = [
-            ToolDefinition(name="list_organizations", description="List all orgs", parameters={"type": "object", "properties": {}}),
+            ToolDefinition(name="bifrost_list_organizations", description="List all orgs", parameters={"type": "object", "properties": {}}),
         ]
 
         with patch("src.services.agent_executor.resolve_agent_tools", new_callable=AsyncMock, return_value=(mock_tools, {})):
             tools = await executor._get_agent_tools(mock_agent)
 
         tool_names = [t.name for t in tools]
-        assert "search_knowledge" not in tool_names
+        assert "bifrost_search_knowledge" not in tool_names
 
 
 class TestKnowledgeSearchBudget:
@@ -136,7 +136,7 @@ class TestKnowledgeSearchBudget:
         executor._knowledge_search_budget.reserve("contact roles")
         tool_call = ToolCallRequest(
             id="duplicate",
-            name="search_knowledge",
+            name="bifrost_search_knowledge",
             arguments={"query": "  CONTACT   ROLES ", "limit": 10},
         )
 
@@ -155,7 +155,7 @@ class TestKnowledgeSearchBudget:
         mock_agent.organization_id = uuid4()
         tool_call = ToolCallRequest(
             id="oversized",
-            name="search_knowledge",
+            name="bifrost_search_knowledge",
             arguments={"query": "contact roles", "limit": 1000},
         )
         embedding_client = MagicMock()
@@ -210,7 +210,7 @@ class TestKnowledgeSearchBudget:
             first = await executor._execute_knowledge_search(
                 ToolCallRequest(
                     id="first",
-                    name="search_knowledge",
+                    name="bifrost_search_knowledge",
                     arguments={"query": "technical poc"},
                 ),
                 mock_agent,
@@ -218,7 +218,7 @@ class TestKnowledgeSearchBudget:
             second = await executor._execute_knowledge_search(
                 ToolCallRequest(
                     id="second",
-                    name="search_knowledge",
+                    name="bifrost_search_knowledge",
                     arguments={"query": "billing contact role"},
                 ),
                 mock_agent,
@@ -265,7 +265,7 @@ class TestKnowledgeSearchBudget:
             result = await executor._execute_knowledge_search(
                 ToolCallRequest(
                     id="metadata",
-                    name="search_knowledge",
+                    name="bifrost_search_knowledge",
                     arguments={"query": "site contact types"},
                 ),
                 mock_agent,
@@ -282,27 +282,27 @@ class TestToolConflictDetection:
     @pytest.mark.asyncio
     async def test_system_tools_win_over_workflow_tools(self, executor, mock_agent):
         """System tools take priority — resolve_agent_tools returns only the system tool."""
-        mock_agent.system_tools = ["execute_workflow"]
+        mock_agent.system_tools = ["bifrost_execute_workflow"]
 
         # resolve_agent_tools handles the conflict internally and returns only the winner
         mock_tools = [
-            ToolDefinition(name="execute_workflow", description="Execute a workflow", parameters={"type": "object", "properties": {}}),
+            ToolDefinition(name="bifrost_execute_workflow", description="Execute a workflow", parameters={"type": "object", "properties": {}}),
         ]
 
         with patch("src.services.agent_executor.resolve_agent_tools", new_callable=AsyncMock, return_value=(mock_tools, {})):
             tools = await executor._get_agent_tools(mock_agent)
 
         tool_names = [t.name for t in tools]
-        assert tool_names.count("execute_workflow") == 1
+        assert tool_names.count("bifrost_execute_workflow") == 1
 
     @pytest.mark.asyncio
     async def test_no_conflict_with_prefixed_workflow_tools(self, executor, mock_agent):
         """Workflow tools with category prefix don't conflict with system tools."""
-        mock_agent.system_tools = ["execute_workflow"]
+        mock_agent.system_tools = ["bifrost_execute_workflow"]
 
         workflow_id = uuid4()
         mock_tools = [
-            ToolDefinition(name="execute_workflow", description="Execute a workflow", parameters={"type": "object", "properties": {}}),
+            ToolDefinition(name="bifrost_execute_workflow", description="Execute a workflow", parameters={"type": "object", "properties": {}}),
             ToolDefinition(name="halopsa_execute_workflow", description="HaloPSA workflow", parameters={"type": "object", "properties": {}}),
         ]
 
@@ -310,7 +310,7 @@ class TestToolConflictDetection:
             tools = await executor._get_agent_tools(mock_agent)
 
         tool_names = [t.name for t in tools]
-        assert "execute_workflow" in tool_names
+        assert "bifrost_execute_workflow" in tool_names
         assert "halopsa_execute_workflow" in tool_names
 
 
@@ -321,7 +321,7 @@ class TestNotifyToolConflicts:
     async def test_notification_created_for_conflicts(self, executor, mock_agent):
         """Notification is created when tools conflict."""
         conflicts = [
-            ("search_knowledge", "workflow 'Search Knowledge'", "system tool 'search_knowledge'"),
+            ("bifrost_search_knowledge", "workflow 'Search Knowledge'", "system tool 'bifrost_search_knowledge'"),
         ]
 
         with patch(
@@ -342,7 +342,7 @@ class TestNotifyToolConflicts:
 
             request = call_args.kwargs["request"]
             assert mock_agent.name in request.title
-            assert "search_knowledge" in request.description
+            assert "bifrost_search_knowledge" in request.description
             assert request.metadata["agent_id"] == str(mock_agent.id)
 
     @pytest.mark.asyncio

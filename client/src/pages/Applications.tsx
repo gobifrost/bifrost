@@ -29,12 +29,11 @@ import {
 } from "@/components/ui/alert-dialog";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useApplications, useDeleteApplication } from "@/hooks/useApplications";
-import { useAuth } from "@/contexts/AuthContext";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { SearchBox } from "@/components/search/SearchBox";
 import { useSearch } from "@/hooks/useSearch";
-import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { term, useTerminology } from "@/lib/terminology";
+import { useAuthorizationBoundary } from "@/contexts/AuthorizationBoundaryContext";
 import type { components } from "@/lib/v1";
 
 type Organization = components["schemas"]["OrganizationPublic"];
@@ -42,10 +41,7 @@ type Organization = components["schemas"]["OrganizationPublic"];
 export function Applications() {
 	const navigate = useNavigate();
 	const terminology = useTerminology();
-	const { isPlatformAdmin } = useAuth();
-	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
-		undefined,
-	);
+	const { selectedTarget, hasSelectedCapability } = useAuthorizationBoundary();
 	const [searchTerm, setSearchTerm] = useState("");
 	const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
 	const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -60,19 +56,13 @@ export function Applications() {
 		data: applicationsData,
 		isLoading,
 		refetch,
-	} = useApplications(
-		isPlatformAdmin
-			? filterOrgId === undefined
-				? undefined
-				: (filterOrgId ?? undefined)
-			: undefined,
-	);
+	} = useApplications();
 	const applications = applicationsData?.applications ?? [];
 	const deleteApplication = useDeleteApplication();
 
 	// Fetch organizations for name lookup (platform admins only)
 	const { data: organizations } = useOrganizations({
-		enabled: isPlatformAdmin,
+		enabled: selectedTarget?.kind === "platform",
 	});
 
 	// Helper to get organization name from ID
@@ -82,8 +72,10 @@ export function Applications() {
 		return org?.name || orgId;
 	};
 
-	// Only platform admins can manage applications
-	const canManageApps = isPlatformAdmin;
+	const canManageApps =
+		selectedTarget?.kind !== "managed_organizations" &&
+		hasSelectedCapability("apps.readwrite");
+	const showOrganizationScope = selectedTarget?.kind === "platform";
 
 	const handleOpenCode = (app: ApplicationListItem) => {
 		navigate(`/apps/${app.slug}/edit`);
@@ -180,17 +172,6 @@ export function Applications() {
 					placeholder={`Search ${term(terminology, "app", "formalPluralLower")} by name, description, or slug...`}
 					className="flex-1"
 				/>
-				{isPlatformAdmin && (
-					<div className="w-full sm:w-64">
-						<OrganizationSelect
-							value={filterOrgId}
-							onChange={setFilterOrgId}
-							showAll={true}
-							showGlobal={true}
-							placeholder="All organizations"
-						/>
-					</div>
-				)}
 			</div>
 
 			<div className="flex-1 min-h-0 overflow-auto">
@@ -198,7 +179,7 @@ export function Applications() {
 					apps={filteredApps as ApplicationListItem[]}
 					viewMode={viewMode}
 					isLoading={isLoading}
-					isPlatformAdmin={isPlatformAdmin}
+					showOrganizationScope={showOrganizationScope}
 					canManageApps={canManageApps}
 					getOrgName={getOrgName}
 					onLaunch={handleLaunch}

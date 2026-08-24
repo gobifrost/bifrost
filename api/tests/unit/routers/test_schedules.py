@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from unittest.mock import patch
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -23,8 +24,7 @@ async def test_validate_cron_preview_uses_requested_timezone():
                 expression="0 9 * * *",
                 timezone="America/New_York",
             ),
-            ctx=object(),
-            user=object(),
+            authorization=MagicMock(),
         )
 
     assert result.valid is True
@@ -39,8 +39,7 @@ async def test_validate_cron_rejects_unknown_timezone():
             expression="0 9 * * *",
             timezone="Not/AZone",
         ),
-        ctx=object(),
-        user=object(),
+        authorization=MagicMock(),
     )
 
     assert result.valid is False

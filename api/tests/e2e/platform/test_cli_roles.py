@@ -3,18 +3,14 @@
 Covers the CRUD surface from Task 5b of the CLI mutation surface plan:
 
 * ``bifrost roles list`` — returns the seeded / created role set.
-* ``bifrost roles create --name foo [--permissions <json>]`` — POSTs a new
+* ``bifrost roles create --name foo [--capabilities <key>]`` — POSTs a new
   role and returns the created entity.
 * ``bifrost roles update <ref> --name bar`` — PATCHes by UUID or name ref.
 * ``bifrost roles delete <ref>`` — deletes the role; CASCADE removes all
   assignments.
 
-``permissions`` is carried in the DTO contract as a ``dict`` (a flat
-``{"key": true|false, ...}`` permission map), so the CLI generates
-``--permissions`` accepting a JSON literal or ``@path`` to a YAML/JSON file.
-This test exercises the JSON literal form end-to-end so we cover the wire
-contract described in the plan (permissions round-trip from CLI → API →
-DB).
+``capabilities`` is the only Role authorization vocabulary. The generated
+``--capabilities`` flag is repeatable and round-trips directly to the API.
 
 The commands are invoked via :class:`click.testing.CliRunner` against the
 real API stack. ``BifrostClient.get_instance`` is patched to return a client
@@ -48,12 +44,12 @@ class TestCliRoles:
         assert result.exit_code == 0, result.output
         payload = json.loads(result.output)
         assert isinstance(payload, list)
-        # Every item has an id and a name; permissions is a dict.
+        # Every item has an id, a name, and canonical capability keys.
         for item in payload:
             assert "id" in item
             assert "name" in item
-            assert "permissions" in item
-            assert isinstance(item["permissions"], dict)
+            assert "capabilities" in item
+            assert isinstance(item["capabilities"], list)
 
     def test_get_by_uuid_returns_role(
         self, cli_client, _invoke, e2e_client, platform_admin
@@ -63,7 +59,7 @@ class TestCliRoles:
         create_resp = e2e_client.post(
             "/api/roles",
             headers=platform_admin.headers,
-            json={"name": name, "permissions": {"workflows.read": True}},
+            json={"name": name, "capabilities": ["workflows.read"]},
         )
         assert create_resp.status_code == 201, create_resp.text
         role_id = create_resp.json()["id"]
@@ -84,14 +80,13 @@ class TestCliRoles:
     ) -> None:
         """Full CRUD cycle: create → update → delete by name ref.
 
-        Also verifies the ``--permissions`` JSON flag round-trips through the
-        generated DTO flag: passing ``'{"workflows.read": true}'`` on create
-        persists those permissions and returns them on the response.
+        Also verifies repeated ``--capabilities`` flags round-trip through the
+        generated DTO surface.
         """
         original_name = f"cli-role-{uuid4().hex[:8]}"
         renamed = f"cli-role-renamed-{uuid4().hex[:8]}"
 
-        perms = {"workflows.read": True, "workflows.write": False}
+        capabilities = ["workflows.read", "workflows.execute"]
 
         # --- create ---
         create_result = _invoke(
@@ -102,8 +97,10 @@ class TestCliRoles:
                 original_name,
                 "--description",
                 "created by test_cli_roles",
-                "--permissions",
-                json.dumps(perms),
+                "--capabilities",
+                capabilities[0],
+                "--capabilities",
+                capabilities[1],
             ]
         )
         assert create_result.exit_code == 0, create_result.output
@@ -111,7 +108,7 @@ class TestCliRoles:
         created_id = str(created["id"])
         assert created["name"] == original_name
         assert created["description"] == "created by test_cli_roles"
-        assert created["permissions"] == perms
+        assert created["capabilities"] == capabilities
 
         # Sanity-check via the REST API that the role is reachable by UUID.
         get_resp = e2e_client.get(
@@ -122,7 +119,7 @@ class TestCliRoles:
         assert get_resp.json()["name"] == original_name
 
         # --- update (by name ref) ---
-        new_perms = {"workflows.read": True, "workflows.write": True}
+        new_capabilities = ["workflows.readwrite"]
         update_result = _invoke(
             [
                 "--json",
@@ -130,15 +127,15 @@ class TestCliRoles:
                 original_name,
                 "--name",
                 renamed,
-                "--permissions",
-                json.dumps(new_perms),
+                "--capabilities",
+                new_capabilities[0],
             ]
         )
         assert update_result.exit_code == 0, update_result.output
         updated = json.loads(update_result.output)
         assert str(updated["id"]) == created_id
         assert updated["name"] == renamed
-        assert updated["permissions"] == new_perms
+        assert updated["capabilities"] == new_capabilities
 
         # --- delete (by renamed ref) ---
         delete_result = _invoke(["--json", "delete", renamed])
@@ -152,38 +149,25 @@ class TestCliRoles:
         )
         assert get_after.status_code == 404, get_after.text
 
-    def test_permissions_flag_is_single_json_value(self, cli_client, _invoke) -> None:
-        """Document the generated flag shape for ``permissions``.
-
-        The DTO declares ``permissions: dict | None``, so
-        :func:`build_cli_flags` emits a single ``--permissions`` flag that
-        accepts a JSON literal (or ``@path`` to YAML/JSON). This test asserts
-        that contract: passing two ``--permissions`` flags uses the *last*
-        value (Click's non-multiple default), not concatenation into a list.
-        Pair this with the round-trip test above for end-to-end coverage.
-        """
-        name = f"cli-role-perms-{uuid4().hex[:8]}"
-        first = {"a.read": True}
-        second = {"b.write": True}
-
-        # When permissions is a plain (non-multiple) flag, Click keeps only
-        # the last value — that's the generator's contract.
+    def test_capabilities_flag_is_repeatable(self, cli_client, _invoke) -> None:
+        """The generated capability flag collects every repeated key."""
+        name = f"cli-role-capabilities-{uuid4().hex[:8]}"
         result = _invoke(
             [
                 "--json",
                 "create",
                 "--name",
                 name,
-                "--permissions",
-                json.dumps(first),
-                "--permissions",
-                json.dumps(second),
+                "--capabilities",
+                "agents.read",
+                "--capabilities",
+                "forms.read",
             ]
         )
         try:
             assert result.exit_code == 0, result.output
             created = json.loads(result.output)
-            assert created["permissions"] == second
+            assert created["capabilities"] == ["agents.read", "forms.read"]
         finally:
             # Cleanup: best-effort delete.
             _invoke(["--json", "delete", name])

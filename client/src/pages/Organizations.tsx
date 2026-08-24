@@ -58,8 +58,14 @@ import {
 	useUpdateOrganization,
 } from "@/hooks/useOrganizations";
 import { useSearch } from "@/hooks/useSearch";
+import {
+	authorizationHeaders,
+	organizationBoundary,
+	useAdministrativeBoundary,
+} from "@/hooks/useAdministrativeBoundary";
 import type { components } from "@/lib/v1";
 import { RequiredInstructionsSettings } from "@/pages/settings/RequiredInstructionsSettings";
+import { OrganizationGroupsManager } from "@/components/organizations/OrganizationGroupsManager";
 
 type Organization = components["schemas"]["OrganizationPublic"];
 type EditTab = "general" | "instructions";
@@ -77,6 +83,8 @@ const EMPTY_FORM: OrganizationFormData = {
 };
 
 export function Organizations() {
+	const administrativeBoundary =
+		useAdministrativeBoundary("organizations.read");
 	const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 	const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
 	const [isDisableDialogOpen, setIsDisableDialogOpen] = useState(false);
@@ -88,7 +96,8 @@ export function Organizations() {
 	const [showInactive, setShowInactive] = useState(false);
 
 	const { data, isLoading, refetch } = useOrganizations({
-		includeInactive: showInactive,
+		includeInactive: true,
+		boundary: administrativeBoundary,
 	});
 	const organizations: Organization[] = Array.isArray(data) ? data : [];
 	const visibleOrganizations = showInactive
@@ -128,6 +137,9 @@ export function Organizations() {
 	const handleSubmitCreate = async (event: React.FormEvent) => {
 		event.preventDefault();
 		await createMutation.mutateAsync({
+			headers: administrativeBoundary
+				? authorizationHeaders(administrativeBoundary)
+				: undefined,
 			body: {
 				name: formData.name.trim(),
 				domain: formData.domain.trim() || null,
@@ -144,6 +156,7 @@ export function Organizations() {
 		if (!selectedOrg) return;
 
 		await updateMutation.mutateAsync({
+			headers: authorizationHeaders(organizationBoundary(selectedOrg.id)),
 			params: { path: { org_id: selectedOrg.id } },
 			body: {
 				name: formData.name.trim(),
@@ -160,6 +173,7 @@ export function Organizations() {
 		isActive: boolean,
 	) => {
 		await updateMutation.mutateAsync({
+			headers: authorizationHeaders(organizationBoundary(org.id)),
 			params: { path: { org_id: org.id } },
 			body: { is_active: isActive },
 		});
@@ -200,182 +214,200 @@ export function Organizations() {
 						Organizations
 					</h1>
 					<p className="mt-2 text-muted-foreground">
-						Manage customer organizations and their configurations
+						Manage customer organizations, provider-owned groups, and their configurations
 					</p>
 				</div>
-				<div className="flex items-center gap-2 sm:shrink-0">
-					<Button
-						variant="outline"
-						size="icon"
-						onClick={() => refetch()}
-						aria-label="Refresh organizations"
-						title="Refresh organizations"
-					>
-						<RefreshCw className="h-4 w-4" />
-					</Button>
-					<Button onClick={handleCreate} className="flex-1 sm:flex-none">
-						<Plus className="h-4 w-4" />
-						New Organization
-					</Button>
-				</div>
 			</div>
 
-			<div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-				<SearchBox
-					value={searchTerm}
-					onChange={setSearchTerm}
-					placeholder="Search by name, domain, or ID..."
-					className="flex-1"
-				/>
-				<div className="flex items-center gap-2 sm:ml-auto">
-					<Switch
-						id="show-inactive-organizations"
-						checked={showInactive}
-						onCheckedChange={setShowInactive}
-					/>
-					<Label
-						htmlFor="show-inactive-organizations"
-						className="cursor-pointer text-sm text-muted-foreground"
-					>
-						Show Inactive
-					</Label>
+			<Tabs defaultValue="organizations" className="flex min-h-0 flex-1 flex-col">
+				<div className="overflow-x-auto">
+					<TabsList className="w-max">
+						<TabsTrigger value="organizations">Organizations</TabsTrigger>
+						<TabsTrigger value="groups">Groups</TabsTrigger>
+					</TabsList>
 				</div>
-			</div>
 
-			<div className="min-h-0 flex-1">
-				{isLoading ? (
-					<div className="space-y-2">
-						{[...Array(5)].map((_, index) => (
-							<Skeleton key={index} className="h-12 w-full" />
-						))}
+				<TabsContent value="organizations" className="mt-6 flex-1 min-h-0 overflow-auto">
+					<div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+						<div className="flex items-center gap-2 sm:shrink-0">
+							<Button
+								variant="outline"
+								size="icon"
+								onClick={() => refetch()}
+								aria-label="Refresh organizations"
+								title="Refresh organizations"
+							>
+								<RefreshCw className="h-4 w-4" />
+							</Button>
+							<Button onClick={handleCreate} className="flex-1 sm:flex-none">
+								<Plus className="h-4 w-4" />
+								New Organization
+							</Button>
+						</div>
 					</div>
-				) : filteredOrgs.length > 0 ? (
-					<DataTable>
-						<DataTableHeader>
-							<DataTableRow>
-								<DataTableHead>Name</DataTableHead>
-								<DataTableHead>Domain</DataTableHead>
-								<DataTableHead className="w-0 whitespace-nowrap">
-									Status
-								</DataTableHead>
-								<DataTableHead className="hidden w-0 whitespace-nowrap md:table-cell">
-									Created
-								</DataTableHead>
-								<DataTableHead className="w-0 whitespace-nowrap text-right" />
-							</DataTableRow>
-						</DataTableHeader>
-						<DataTableBody>
-							{filteredOrgs.map((org) => (
-								<DataTableRow
-									key={org.id}
-									clickable
-									onClick={() => handleEdit(org)}
-									className={`group/row${
-										org.is_provider
-											? " bg-amber-50/50 dark:bg-amber-950/20"
-											: ""
-									}${!org.is_active ? " opacity-60" : ""}`}
-								>
-									<DataTableCell>
-										<div className="flex items-start gap-2">
-											{org.is_provider && (
-												<Star className="mt-0.5 h-4 w-4 shrink-0 fill-amber-500 text-amber-500" />
-											)}
-											<div className="min-w-0">
-												<div className="flex flex-wrap items-center gap-2">
-													<span className="font-medium">{org.name}</span>
+
+					<div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+						<SearchBox
+							value={searchTerm}
+							onChange={setSearchTerm}
+							placeholder="Search by name, domain, or ID..."
+							className="flex-1"
+						/>
+						<div className="flex items-center gap-2 sm:ml-auto">
+							<Switch
+								id="show-inactive-organizations"
+								checked={showInactive}
+								onCheckedChange={setShowInactive}
+							/>
+							<Label
+								htmlFor="show-inactive-organizations"
+								className="cursor-pointer text-sm text-muted-foreground"
+							>
+								Show Inactive
+							</Label>
+						</div>
+					</div>
+
+					<div className="mt-4 min-h-0 flex-1">
+						{isLoading ? (
+							<div className="space-y-2">
+								{[...Array(5)].map((_, index) => (
+									<Skeleton key={index} className="h-12 w-full" />
+								))}
+							</div>
+						) : filteredOrgs.length > 0 ? (
+							<DataTable>
+								<DataTableHeader>
+									<DataTableRow>
+										<DataTableHead>Name</DataTableHead>
+										<DataTableHead>Domain</DataTableHead>
+										<DataTableHead className="w-0 whitespace-nowrap">
+											Status
+										</DataTableHead>
+										<DataTableHead className="hidden w-0 whitespace-nowrap md:table-cell">
+											Created
+										</DataTableHead>
+										<DataTableHead className="w-0 whitespace-nowrap text-right" />
+									</DataTableRow>
+								</DataTableHeader>
+								<DataTableBody>
+									{filteredOrgs.map((org) => (
+										<DataTableRow
+											key={org.id}
+											clickable
+											onClick={() => handleEdit(org)}
+											className={`group/row${
+												org.is_provider
+													? " bg-amber-50/50 dark:bg-amber-950/20"
+													: ""
+											}${!org.is_active ? " opacity-60" : ""}`}
+										>
+											<DataTableCell>
+												<div className="flex items-start gap-2">
 													{org.is_provider && (
-														<Badge
-															variant="outline"
-															className="border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
-														>
-															Provider
-														</Badge>
+														<Star className="mt-0.5 h-4 w-4 shrink-0 fill-amber-500 text-amber-500" />
 													)}
+													<div className="min-w-0">
+														<div className="flex flex-wrap items-center gap-2">
+															<span className="font-medium">{org.name}</span>
+															{org.is_provider && (
+																<Badge
+																	variant="outline"
+																	className="border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+																>
+																	Provider
+																</Badge>
+															)}
+														</div>
+														<div className="mt-1 truncate font-mono text-xs text-muted-foreground">
+															{org.id}
+														</div>
+													</div>
 												</div>
-												<div className="mt-1 truncate font-mono text-xs text-muted-foreground">
-													{org.id}
-												</div>
-											</div>
-										</div>
-									</DataTableCell>
-									<DataTableCell className="text-sm text-muted-foreground">
-										{org.domain || "—"}
-									</DataTableCell>
-									<DataTableCell className="w-0 whitespace-nowrap">
-										<Badge variant={org.is_active ? "default" : "secondary"}>
-											{org.is_active ? "Active" : "Inactive"}
-										</Badge>
-									</DataTableCell>
-									<DataTableCell className="hidden w-0 whitespace-nowrap text-sm text-muted-foreground md:table-cell">
-										{org.created_at
-											? new Date(org.created_at).toLocaleDateString()
-											: "N/A"}
-									</DataTableCell>
-									<DataTableCell
-										className="w-0 whitespace-nowrap text-right"
-										onClick={(event) => event.stopPropagation()}
-									>
-										<DropdownMenu>
-											<DropdownMenuTrigger asChild>
-												<Button
-													variant="ghost"
-													size="icon"
-													aria-label={`${org.name} actions`}
-												>
-													<MoreVertical className="h-4 w-4" />
-												</Button>
-											</DropdownMenuTrigger>
-											<DropdownMenuContent align="end" className="w-48">
-												<DropdownMenuItem
-													className="min-h-9 whitespace-nowrap px-3"
-													onClick={() => handleEdit(org)}
-													aria-label={`Edit ${org.name}`}
-												>
-													<Pencil />
-													Edit
-												</DropdownMenuItem>
-												<DropdownMenuSeparator />
-												<DropdownMenuItem
-													className="min-h-9 whitespace-nowrap px-3"
-													onClick={() => handleToggleActive(org)}
-													disabled={org.is_provider}
-													aria-label={`${org.is_active ? "Disable" : "Enable"} ${org.name}`}
-												>
-													<Power />
-													{org.is_active ? "Disable" : "Enable"}
-												</DropdownMenuItem>
-											</DropdownMenuContent>
-										</DropdownMenu>
-									</DataTableCell>
-								</DataTableRow>
-							))}
-						</DataTableBody>
-					</DataTable>
-				) : (
-					<div className="flex flex-col items-center justify-center py-12 text-center">
-						<Building2 className="h-12 w-12 text-muted-foreground" />
-						<h3 className="mt-4 text-lg font-semibold">
-							{searchTerm
-								? "No organizations match your search"
-								: showInactive
-									? "No organizations found"
-									: "No active organizations found"}
-						</h3>
-						<p className="mt-2 text-sm text-muted-foreground">
-							{searchTerm
-								? "Try adjusting your search or clearing the filter."
-								: showInactive
-									? "Create your first organization to get started."
-									: "Show inactive organizations or create a new one."}
-						</p>
-						<Button onClick={handleCreate} className="mt-4">
-							<Plus className="h-4 w-4" />
-							New Organization
-						</Button>
+											</DataTableCell>
+											<DataTableCell className="text-sm text-muted-foreground">
+												{org.domain || "—"}
+											</DataTableCell>
+											<DataTableCell className="w-0 whitespace-nowrap">
+												<Badge variant={org.is_active ? "default" : "secondary"}>
+													{org.is_active ? "Active" : "Inactive"}
+												</Badge>
+											</DataTableCell>
+											<DataTableCell className="hidden w-0 whitespace-nowrap text-sm text-muted-foreground md:table-cell">
+												{org.created_at
+													? new Date(org.created_at).toLocaleDateString()
+													: "N/A"}
+											</DataTableCell>
+											<DataTableCell
+												className="w-0 whitespace-nowrap text-right"
+												onClick={(event) => event.stopPropagation()}
+											>
+												<DropdownMenu>
+													<DropdownMenuTrigger asChild>
+														<Button
+															variant="ghost"
+															size="icon"
+															aria-label={`${org.name} actions`}
+														>
+															<MoreVertical className="h-4 w-4" />
+														</Button>
+													</DropdownMenuTrigger>
+													<DropdownMenuContent align="end" className="w-48">
+														<DropdownMenuItem
+															className="min-h-9 whitespace-nowrap px-3"
+															onClick={() => handleEdit(org)}
+															aria-label={`Edit ${org.name}`}
+														>
+															<Pencil />
+															Edit
+														</DropdownMenuItem>
+														<DropdownMenuSeparator />
+														<DropdownMenuItem
+															className="min-h-9 whitespace-nowrap px-3"
+															onClick={() => handleToggleActive(org)}
+															disabled={org.is_provider}
+															aria-label={`${org.is_active ? "Disable" : "Enable"} ${org.name}`}
+														>
+															<Power />
+															{org.is_active ? "Disable" : "Enable"}
+														</DropdownMenuItem>
+													</DropdownMenuContent>
+												</DropdownMenu>
+											</DataTableCell>
+										</DataTableRow>
+									))}
+								</DataTableBody>
+							</DataTable>
+						) : (
+							<div className="flex flex-col items-center justify-center py-12 text-center">
+								<Building2 className="h-12 w-12 text-muted-foreground" />
+								<h3 className="mt-4 text-lg font-semibold">
+									{searchTerm
+										? "No organizations match your search"
+										: showInactive
+											? "No organizations found"
+											: "No active organizations found"}
+								</h3>
+								<p className="mt-2 text-sm text-muted-foreground">
+									{searchTerm
+										? "Try adjusting your search or clearing the filter."
+										: showInactive
+											? "Create your first organization to get started."
+											: "Show inactive organizations or create a new one."}
+								</p>
+								<Button onClick={handleCreate} className="mt-4">
+									<Plus className="h-4 w-4" />
+									New Organization
+								</Button>
+							</div>
+						)}
 					</div>
-				)}
-			</div>
+				</TabsContent>
+
+				<TabsContent value="groups" className="mt-6 flex-1 min-h-0 overflow-auto">
+					<OrganizationGroupsManager organizations={organizations} />
+				</TabsContent>
+			</Tabs>
 
 			<Dialog open={isCreateDialogOpen} onOpenChange={handleCreateDialogChange}>
 				<DialogContent>

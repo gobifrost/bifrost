@@ -8,10 +8,11 @@ Replaces Azure Web PubSub with native FastAPI WebSockets.
 import asyncio
 import logging
 from dataclasses import dataclass
+from dataclasses import replace
 from typing import Annotated, Any, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Query, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
@@ -30,11 +31,32 @@ from src.models import Conversation, Execution
 from src.models.contracts.agents import ChatRequest
 from src.models.contracts.policies import Expr, TablePolicies
 from src.models.contracts.policies import FileAction
-from src.models.orm import Agent
+from src.models.orm import Agent, Organization
 from src.models.orm.applications import Application
 from src.models.orm.tables import Table as TableOrm
+from src.services.authorization import (
+    AuthorizationBoundaryKind,
+    AuthorizationContext,
+    parse_authorization_boundary,
+    policy_principal_for_authorization,
+    resolve_authorization_context,
+)
+from src.services.builder.conversation_access import (
+    BUILDER_CONVERSATION_CHANNEL,
+    can_access_conversation as can_access_builder_conversation,
+)
+from shared.authorization_scopes import (
+    EXECUTIONS_READ_SCOPE,
+    FILE_CONTENT_READ_SCOPE,
+    METRICS_READ_SCOPE,
+    REPOSITORY_READ_SCOPE,
+    TABLE_DOCUMENTS_READ_SCOPE,
+)
 
 logger = logging.getLogger(__name__)
+
+PLATFORM_JOBS_READ_SCOPE = "platformjobs.read"
+APPS_READ_SCOPE = "apps.read"
 
 
 class WSError(Exception):
@@ -53,6 +75,84 @@ class ChannelSpec:
     name: str
     filter: Expr | None
     scope: str | None = None
+
+
+def _has_boundary_capability(
+    authorization: AuthorizationContext | None,
+    capability: str,
+    organization_id: UUID | None,
+) -> bool:
+    if authorization is None:
+        return False
+    try:
+        authorization.require(capability)
+        authorization.require_resource_boundary(organization_id)
+    except HTTPException:
+        return False
+    return True
+
+
+def _has_platform_capability(
+    authorization: AuthorizationContext | None,
+    capability: str,
+) -> bool:
+    return _has_boundary_capability(authorization, capability, None)
+
+
+async def _resolve_ws_authorization(
+    user: UserPrincipal,
+    boundary: str | None,
+) -> AuthorizationContext | None:
+    if user.embed:
+        return None
+    selected_boundary = parse_authorization_boundary(
+        boundary,
+        home_organization_id=user.organization_id,
+    )
+    async with get_db_context() as db:
+        return await resolve_authorization_context(
+            db,
+            requester=user,
+            selected_boundary=selected_boundary,
+        )
+
+
+async def _authorization_can_access_org_resource(
+    authorization: AuthorizationContext | None,
+    capability: str,
+    organization_id: UUID | None,
+    *,
+    allow_global_cascade: bool = False,
+) -> bool:
+    if authorization is None:
+        return False
+    try:
+        authorization.require(capability)
+        if authorization.has_capability("platform.superuser"):
+            return True
+        boundary = authorization.selected_boundary
+        if boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+            if organization_id is None:
+                return False
+            async with get_db_context() as db:
+                is_provider = await db.scalar(
+                    select(Organization.is_provider).where(
+                        Organization.id == organization_id
+                    )
+                )
+            return is_provider is False
+        if (
+            boundary.kind is AuthorizationBoundaryKind.ORGANIZATION
+            and organization_id is None
+            and allow_global_cascade
+        ):
+            return True
+        if boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+            return organization_id is None
+        return boundary.organization_id == organization_id
+    except HTTPException:
+        return False
+    return True
 
 
 def _parse_channels(channels_raw: list) -> list[ChannelSpec]:
@@ -82,7 +182,11 @@ def _parse_channels(channels_raw: list) -> list[ChannelSpec]:
     return out
 
 
-async def _resolve_table_id(name_or_id: str, user: UserPrincipal) -> str | None:
+async def _resolve_table_id(
+    name_or_id: str,
+    user: UserPrincipal,
+    authorization: AuthorizationContext | None = None,
+) -> str | None:
     """Resolve a table reference (UUID string or name) to its canonical UUID,
     enforcing the same org gate as the REST `get_table_or_404` helper:
     a non-superuser may only resolve to tables in their own org or global.
@@ -105,10 +209,29 @@ async def _resolve_table_id(name_or_id: str, user: UserPrincipal) -> str | None:
                 # id (or ?solution=).
                 TableOrm.solution_id.is_(None),
             )
-            # Non-superusers' name lookups are restricted to their own org
-            # (cascade with global) — superusers see all orgs.
-            if not user.is_superuser:
-                # Cascade (org + global).
+            # Human name lookups are restricted to the selected boundary.
+            # Runtime/embed paths that do not resolve an AuthorizationContext
+            # retain the legacy home-org cascade.
+            if authorization is not None:
+                boundary = authorization.selected_boundary
+                if authorization.has_capability("platform.superuser"):
+                    pass
+                elif boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+                    stmt = stmt.where(TableOrm.organization_id.is_(None))
+                elif boundary.kind is AuthorizationBoundaryKind.ORGANIZATION:
+                    stmt = stmt.where(
+                        (TableOrm.organization_id == boundary.organization_id)
+                        | TableOrm.organization_id.is_(None)
+                    )
+                elif boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+                    stmt = stmt.where(
+                        TableOrm.organization_id.in_(
+                            select(Organization.id).where(
+                                Organization.is_provider.is_(False)
+                            )
+                        )
+                    )
+            else:
                 stmt = stmt.where(
                     (TableOrm.organization_id == user.organization_id)
                     | TableOrm.organization_id.is_(None)
@@ -122,7 +245,15 @@ async def _resolve_table_id(name_or_id: str, user: UserPrincipal) -> str | None:
     table_id, table_org = row[0], row[1]
 
     # Org gate for UUID lookups (name lookups already constrained above).
-    if not user.is_superuser:
+    if authorization is not None:
+        if not await _authorization_can_access_org_resource(
+            authorization,
+            TABLE_DOCUMENTS_READ_SCOPE,
+            table_org,
+            allow_global_cascade=True,
+        ):
+            return None
+    else:
         if table_org is not None and table_org != user.organization_id:
             return None
 
@@ -242,7 +373,7 @@ async def _load_policies_for_table(table_id: str) -> TablePolicies | None:
     # (one DB lookup per distinct ref name) and must happen after every cache
     # hit so that rule edits are visible without a cache invalidation.
     async with get_db_context() as db:
-        repo = PolicyRuleRepository(db, org_id=raw.org_id, is_superuser=True)
+        repo = PolicyRuleRepository(db, org_id=raw.org_id, bypass_resource_admission=True)
         try:
             await resolve_policy_refs(
                 policies,
@@ -259,22 +390,28 @@ async def _load_policies_for_table(table_id: str) -> TablePolicies | None:
     return policies
 
 
-async def _populate_user_roles(user: UserPrincipal) -> None:
-    """Hydrate `role_ids` / `role_names` on the principal if not already loaded.
+async def _policy_principal(
+    user: UserPrincipal,
+    authorization: AuthorizationContext | None,
+) -> UserPrincipal:
+    """Return a principal with policy roles scoped to this connection boundary.
 
     `get_current_user_ws` does not hit the DB for roles (the JWT carries only
     the `roles` claim, not the `user_roles` rows the policy evaluator's
-    `has_role` reads). Call this once per connection before the first
-    table-subscription policy check. Reads go through the per-user role cache
-    (Redis); DB is fallback on miss.
+    `has_role` reads). Human sockets use AuthorizationContext grant sources so
+    a role assigned in Org A cannot satisfy a table/file policy in Org B.
+    Runtime/embed sockets without an AuthorizationContext preserve the legacy
+    cache hydration behavior.
     """
+    if authorization is not None:
+        return policy_principal_for_authorization(user, authorization)
+
     if user.role_ids or user.role_names:
-        return
+        return user
 
     async with get_db_context() as db:
         role_ids, role_names = await get_user_roles(user.user_id, db)
-        user.role_ids = role_ids
-        user.role_names = role_names
+        return replace(user, role_ids=role_ids, role_names=role_names)
 
 
 def _make_table_dispatcher(websocket: WebSocket, user: UserPrincipal) -> Any:
@@ -386,6 +523,7 @@ async def _re_evaluate_subscription(
 async def _authorize_table_subscribe(
     websocket: WebSocket,
     user: UserPrincipal,
+    authorization: AuthorizationContext | None,
     spec: ChannelSpec,
 ) -> str | None:
     """Run the subscribe-time policy probe and register per-connection state.
@@ -398,7 +536,7 @@ async def _authorize_table_subscribe(
     ack and returns None.
     """
     name_or_id = spec.name.split(":", 1)[1]
-    canonical_id = await _resolve_table_id(name_or_id, user)
+    canonical_id = await _resolve_table_id(name_or_id, user, authorization)
     if canonical_id is None:
         await websocket.send_json({
             "type": "error",
@@ -421,8 +559,8 @@ async def _authorize_table_subscribe(
         })
         return None
 
-    await _populate_user_roles(user)
-    if not is_subscribe_authorized(policies, user):
+    policy_user = await _policy_principal(user, authorization)
+    if not is_subscribe_authorized(policies, policy_user):
         await websocket.send_json({
             "type": "error",
             "channel": spec.name,
@@ -436,7 +574,7 @@ async def _authorize_table_subscribe(
     websocket.state.table_subscriptions = table_subs
 
     if not hasattr(websocket, "_table_dispatcher"):
-        websocket._table_dispatcher = _make_table_dispatcher(websocket, user)  # type: ignore[attr-defined]
+        websocket._table_dispatcher = _make_table_dispatcher(websocket, policy_user)  # type: ignore[attr-defined]
     return canonical_channel
 
 
@@ -461,28 +599,33 @@ def _path_matches(prefix: str, path: str) -> bool:
 def _file_org_and_scope(
     *,
     user: UserPrincipal,
+    authorization: AuthorizationContext | None,
     location: str,
     requested_scope: str | None,
 ) -> tuple[UUID | None, str | None] | None:
     if location == "workspace":
         return None, None
 
-    # Bypass = is_platform_admin OR is_provider_org (repositories/README.md):
-    # provider-org members (portal-hopping platform staff) can subscribe to any
-    # org's / the global file channel, same as platform admins.
-    bypass = user.is_platform_admin or user.is_provider_org
     scope = requested_scope or (str(user.organization_id) if user.organization_id else None)
     if scope is None:
         return None
     if scope == "global":
-        if not bypass:
+        if not _has_boundary_capability(
+            authorization,
+            FILE_CONTENT_READ_SCOPE,
+            None,
+        ):
             return None
         return None, scope
-    if not bypass and str(user.organization_id) != scope:
-        return None
     try:
         org_id = UUID(scope)
     except ValueError:
+        return None
+    if not _has_boundary_capability(
+        authorization,
+        FILE_CONTENT_READ_SCOPE,
+        org_id,
+    ):
         return None
     return org_id, scope
 
@@ -534,6 +677,7 @@ async def _file_has_applicable_policy(
 async def _authorize_file_subscribe(
     websocket: WebSocket,
     user: UserPrincipal,
+    authorization: AuthorizationContext | None,
     spec: ChannelSpec,
 ) -> str | None:
     parsed = _parse_file_channel(spec.name)
@@ -548,6 +692,7 @@ async def _authorize_file_subscribe(
     location, prefix = parsed
     scope_result = _file_org_and_scope(
         user=user,
+        authorization=authorization,
         location=location,
         requested_scope=spec.scope,
     )
@@ -560,7 +705,7 @@ async def _authorize_file_subscribe(
         return None
     organization_id, scope = scope_result
 
-    await _populate_user_roles(user)
+    policy_user = await _policy_principal(user, authorization)
     if not await _file_has_applicable_policy(
         organization_id=organization_id,
         location=location,
@@ -587,7 +732,7 @@ async def _authorize_file_subscribe(
     websocket.state.file_subscriptions = file_subs
 
     if not hasattr(websocket, "_file_dispatcher"):
-        websocket._file_dispatcher = _make_file_dispatcher(websocket, user)  # type: ignore[attr-defined]
+        websocket._file_dispatcher = _make_file_dispatcher(websocket, policy_user)  # type: ignore[attr-defined]
     return canonical_channel
 
 
@@ -680,18 +825,26 @@ async def can_access_conversation(user: UserPrincipal, conversation_id: str) -> 
                 selectinload(Conversation.user),
             )
             .where(Conversation.id == conv_uuid)
-            .where(Conversation.user_id == user.user_id)
             .where(Conversation.is_active.is_(True))
         )
         conversation = result.scalar_one_or_none()
 
-        if conversation is None:
+        if conversation is None or not await can_access_builder_conversation(
+            db,
+            conversation=conversation,
+            principal=user,
+            action="view",
+        ):
             return False, None
 
         return True, conversation
 
 
-async def can_access_execution(user: UserPrincipal, execution_id: str) -> bool:
+async def can_access_execution(
+    user: UserPrincipal,
+    execution_id: str,
+    authorization: AuthorizationContext | None = None,
+) -> bool:
     """
     Check if user can access an execution (owner or superuser).
 
@@ -702,10 +855,6 @@ async def can_access_execution(user: UserPrincipal, execution_id: str) -> bool:
     Returns:
         True if user can access, False otherwise
     """
-    # Superusers can access any execution
-    if user.is_superuser:
-        return True
-
     # App embeds and trusted HMAC form sessions retain exact-execution scoping
     # through their session JTI. Anonymous public form sessions never receive
     # execution channels or status data.
@@ -733,26 +882,41 @@ async def can_access_execution(user: UserPrincipal, execution_id: str) -> bool:
 
     async with get_db_context() as db:
         result = await db.execute(
-            select(Execution.executed_by).where(Execution.id == execution_uuid)
+            select(Execution.executed_by, Execution.organization_id).where(
+                Execution.id == execution_uuid
+            )
         )
-        row = result.scalar_one_or_none()
+        row = result.one_or_none()
 
         if row is None:
             # Execution doesn't exist - allow subscription anyway
             # (they won't receive anything, and this avoids timing attacks)
             return True
 
-        return row == user.user_id
+        executed_by, organization_id = row[0], row[1]
+        if executed_by == user.user_id:
+            return True
+
+    if authorization is None:
+        return False
+    return await _authorization_can_access_org_resource(
+        authorization,
+        EXECUTIONS_READ_SCOPE,
+        organization_id,
+    )
 
 
-async def can_access_app(user: UserPrincipal, app_id: str) -> bool:
+async def can_access_app(
+    user: UserPrincipal,
+    app_id: str,
+    authorization: AuthorizationContext | None = None,
+) -> bool:
     """
     Check if user can access an application.
 
-    Access is granted if:
-    - User is a superuser (platform admin)
-    - App is global (organization_id is NULL)
-    - App belongs to user's organization
+    Access is granted by the resolved human AuthorizationContext, by global
+    runtime fallback, or by the user's home organization when no
+    AuthorizationContext is available.
 
     Args:
         user: The authenticated user
@@ -761,10 +925,6 @@ async def can_access_app(user: UserPrincipal, app_id: str) -> bool:
     Returns:
         True if user can access, False otherwise
     """
-    # Superusers can access any app
-    if user.is_superuser:
-        return True
-
     try:
         app_uuid = UUID(app_id)
     except ValueError:
@@ -785,9 +945,18 @@ async def can_access_app(user: UserPrincipal, app_id: str) -> bool:
 
         org_id = row_result[0]
 
-        # Global app (organization_id is NULL) - accessible to all authenticated users
-        if org_id is None:
+        # Preserve legacy runtime behavior when there is no human
+        # AuthorizationContext. Human sessions must carry apps.read in the
+        # selected boundary, including Global/Platform apps.
+        if authorization is None and org_id is None:
             return True
+        if authorization is not None:
+            return await _authorization_can_access_org_resource(
+                authorization,
+                APPS_READ_SCOPE,
+                org_id,
+                allow_global_cascade=True,
+            )
 
         # Org-scoped app - check if user is in the same org
         return org_id == user.organization_id
@@ -800,6 +969,7 @@ router = APIRouter(prefix="/ws", tags=["WebSocket"])
 async def websocket_connect(
     websocket: WebSocket,
     channels: Annotated[list[str], Query()] = [],
+    boundary: Annotated[str | None, Query()] = None,
 ):
     """
     WebSocket endpoint for real-time updates.
@@ -835,6 +1005,13 @@ async def websocket_connect(
         await websocket.close(code=4003, reason="Form sessions cannot use WebSockets")
         return
 
+    try:
+        authorization = await _resolve_ws_authorization(user, boundary)
+    except HTTPException as exc:
+        await websocket.accept()
+        await websocket.close(code=4003, reason=str(exc.detail))
+        return
+
     # Filter channels - users can only subscribe to their own user channel
     # and execution channels (we'll validate execution access separately)
     allowed_channels = []
@@ -846,11 +1023,11 @@ async def websocket_connect(
         elif channel.startswith("execution:"):
             # Validate user has access to this execution
             execution_id = channel.split(":", 1)[1]
-            if await can_access_execution(user, execution_id):
+            if await can_access_execution(user, execution_id, authorization):
                 allowed_channels.append(channel)
         elif channel == "package:install":
-            # Package installation channel - shared, superusers only
-            if user.is_superuser:
+            # Package installation channel - shared repository activity.
+            if _has_platform_capability(authorization, REPOSITORY_READ_SCOPE):
                 allowed_channels.append(channel)
         elif channel.startswith("git:"):
             # Git job channels - ephemeral, job-specific UUIDs
@@ -862,8 +1039,11 @@ async def websocket_connect(
             # Notification channels - users can subscribe to their own
             if channel == f"notification:{user.user_id}":
                 allowed_channels.append(channel)
-            # Platform admins can subscribe to admin notifications
-            elif channel == "notification:admins" and user.is_superuser:
+            # Platform diagnostics notification channel.
+            elif channel == "notification:admins" and _has_platform_capability(
+                authorization,
+                PLATFORM_JOBS_READ_SCOPE,
+            ):
                 allowed_channels.append(channel)
         elif channel.startswith("chat:"):
             # Chat conversation channels - validate user owns the conversation
@@ -874,10 +1054,13 @@ async def websocket_connect(
         elif channel.startswith("history:"):
             # History channels for real-time updates
             # history:user:{user_id} - Allow only for the user's own channel
-            # history:GLOBAL - Allow only for platform admins
+            # history:GLOBAL - platform execution visibility.
             if channel == f"history:user:{user.user_id}":
                 allowed_channels.append(channel)
-            elif channel == "history:GLOBAL" and user.is_superuser:
+            elif channel == "history:GLOBAL" and _has_platform_capability(
+                authorization,
+                EXECUTIONS_READ_SCOPE,
+            ):
                 allowed_channels.append(channel)
         elif channel.startswith("local-runner:"):
             # Local runner channels - users can subscribe to their own
@@ -900,22 +1083,22 @@ async def websocket_connect(
             # Access is validated on event delivery, so we allow subscription
             allowed_channels.append(channel)
         elif channel.startswith("reindex:"):
-            # Reindex job progress channels - platform admins only
-            if user.is_superuser:
+            # Reindex job progress channels - platform job diagnostics.
+            if _has_platform_capability(authorization, PLATFORM_JOBS_READ_SCOPE):
                 allowed_channels.append(channel)
         elif channel.startswith("app:draft:"):
             # App Builder draft channels - validate user has access to the app
             app_id = channel.split(":", 2)[2]
-            if await can_access_app(user, app_id):
+            if await can_access_app(user, app_id, authorization):
                 allowed_channels.append(channel)
         elif channel.startswith("app:live:"):
             # App Builder live channels - validate user has access to the app
             app_id = channel.split(":", 2)[2]
-            if await can_access_app(user, app_id):
+            if await can_access_app(user, app_id, authorization):
                 allowed_channels.append(channel)
         elif channel == "file-activity":
-            # File activity channel - platform admins only
-            if user.is_superuser:
+            # File activity channel - platform repository activity.
+            if _has_platform_capability(authorization, REPOSITORY_READ_SCOPE):
                 allowed_channels.append(channel)
         elif channel.startswith("files:"):
             # File channels need runtime subscribe metadata (scope) and
@@ -937,12 +1120,12 @@ async def websocket_connect(
             # Agent run list channel for real-time updates
             allowed_channels.append(channel)
         elif channel.startswith("summary-backfill:"):
-            # Summary backfill job progress — platform admins only
-            if user.is_superuser:
+            # Summary backfill job progress - platform metrics activity.
+            if _has_platform_capability(authorization, METRICS_READ_SCOPE):
                 allowed_channels.append(channel)
         elif channel == "platform_workers":
-            # Platform workers channel - diagnostics, platform admins only
-            if user.is_superuser:
+            # Platform workers channel - platform job diagnostics.
+            if _has_platform_capability(authorization, PLATFORM_JOBS_READ_SCOPE):
                 allowed_channels.append(channel)
 
     # Always subscribe to user's own channel
@@ -953,7 +1136,14 @@ async def websocket_connect(
     # Track active chat tasks per conversation so they can be cancelled
     active_chat_tasks: dict[str, asyncio.Task] = {}
     pending_messages: dict[
-        str, tuple[str, str | None, list[UUID], UUID | None]
+        str,
+        tuple[
+            str,
+            str | None,
+            list[UUID],
+            UUID | None,
+            AuthorizationContext | None,
+        ],
     ] = {}
 
     # Per-connection state for policy-driven table subscriptions.
@@ -993,7 +1183,11 @@ async def websocket_connect(
                     if channel.startswith("execution:"):
                         # Validate execution access before subscribing
                         execution_id = channel.split(":", 1)[1]
-                        if not await can_access_execution(user, execution_id):
+                        if not await can_access_execution(
+                            user,
+                            execution_id,
+                            authorization,
+                        ):
                             await websocket.send_json({
                                 "type": "error",
                                 "channel": channel,
@@ -1027,8 +1221,14 @@ async def websocket_connect(
                     elif channel.startswith("history:"):
                         # History channels for real-time execution updates
                         # history:user:{user_id} - Allow only for the user's own channel
-                        # history:GLOBAL - Allow only for platform admins
-                        if channel == f"history:user:{user.user_id}" or (channel == "history:GLOBAL" and user.is_superuser):
+                        # history:GLOBAL - platform execution visibility.
+                        if channel == f"history:user:{user.user_id}" or (
+                            channel == "history:GLOBAL"
+                            and _has_platform_capability(
+                                authorization,
+                                EXECUTIONS_READ_SCOPE,
+                            )
+                        ):
                             if channel not in manager.connections:
                                 manager.connections[channel] = set()
                             manager.connections[channel].add(websocket)
@@ -1045,7 +1245,7 @@ async def websocket_connect(
                     elif channel.startswith("app:draft:") or channel.startswith("app:live:"):
                         # App Builder channels - validate user has access to the app
                         app_id = channel.split(":", 2)[2]
-                        if await can_access_app(user, app_id):
+                        if await can_access_app(user, app_id, authorization):
                             if channel not in manager.connections:
                                 manager.connections[channel] = set()
                             manager.connections[channel].add(websocket)
@@ -1060,8 +1260,8 @@ async def websocket_connect(
                                 "message": "Access denied"
                             })
                     elif channel == "package:install":
-                        # Package installation channel - shared, superusers only
-                        if user.is_superuser:
+                        # Package installation channel - shared repository activity.
+                        if _has_platform_capability(authorization, REPOSITORY_READ_SCOPE):
                             if channel not in manager.connections:
                                 manager.connections[channel] = set()
                             manager.connections[channel].add(websocket)
@@ -1095,12 +1295,12 @@ async def websocket_connect(
                             "channel": channel
                         })
                     elif channel.startswith("summary-backfill:"):
-                        # Summary backfill job progress — platform admins only.
+                        # Summary backfill job progress - platform metrics activity.
                         # Mirrors the initial-connect whitelist above; without this
                         # branch, late subscriptions from SummaryBackfillProgress
                         # silently no-op and no broadcast ever reaches the client
                         # (that's why cancel didn't dismiss and counters didn't tick).
-                        if user.is_superuser:
+                        if _has_platform_capability(authorization, METRICS_READ_SCOPE):
                             if channel not in manager.connections:
                                 manager.connections[channel] = set()
                             manager.connections[channel].add(websocket)
@@ -1115,8 +1315,8 @@ async def websocket_connect(
                                 "message": "Access denied"
                             })
                     elif channel == "platform_workers":
-                        # Platform workers channel - diagnostics, platform admins only
-                        if user.is_superuser:
+                        # Platform workers channel - platform job diagnostics.
+                        if _has_platform_capability(authorization, PLATFORM_JOBS_READ_SCOPE):
                             if channel not in manager.connections:
                                 manager.connections[channel] = set()
                             manager.connections[channel].add(websocket)
@@ -1137,7 +1337,10 @@ async def websocket_connect(
                         # then register per-connection state for the four-way
                         # fanout filter under that canonical key.
                         canonical_channel = await _authorize_table_subscribe(
-                            websocket, user, spec
+                            websocket,
+                            user,
+                            authorization,
+                            spec,
                         )
                         if canonical_channel is None:
                             continue
@@ -1153,7 +1356,7 @@ async def websocket_connect(
                         })
                     elif channel.startswith("files:"):
                         canonical_channel = await _authorize_file_subscribe(
-                            websocket, user, spec
+                            websocket, user, authorization, spec
                         )
                         if canonical_channel is None:
                             continue
@@ -1172,7 +1375,11 @@ async def websocket_connect(
                     # under the canonical UUID channel. Resolve before pop.
                     if channel.startswith("table:"):
                         name_or_id = channel.split(":", 1)[1]
-                        canonical_id = await _resolve_table_id(name_or_id, user)
+                        canonical_id = await _resolve_table_id(
+                            name_or_id,
+                            user,
+                            authorization,
+                        )
                         canonical_channel = (
                             f"table:{canonical_id}"
                             if canonical_id is not None
@@ -1253,6 +1460,12 @@ async def websocket_connect(
                         "error": "Conversation not found or access denied"
                     })
                     continue
+                if conversation.channel == BUILDER_CONVERSATION_CHANNEL:
+                    await websocket.send_json({
+                        "type": "error",
+                        "error": "Builder conversations must be changed through a Builder turn",
+                    })
+                    continue
 
                 # If a task is already running for this conversation, queue the
                 # message instead of cancelling.  Cancelling mid-tool-call causes
@@ -1264,6 +1477,7 @@ async def websocket_connect(
                         local_id,
                         request.attachment_ids,
                         request.model_profile_id,
+                        authorization,
                     )
                     continue
 
@@ -1274,6 +1488,7 @@ async def websocket_connect(
                     lid: str | None,
                     attachment_ids: list[UUID],
                     model_profile_id: UUID | None,
+                    chat_authorization: AuthorizationContext | None,
                 ) -> asyncio.Task:
                     t = asyncio.create_task(
                         _process_chat_message(
@@ -1284,6 +1499,7 @@ async def websocket_connect(
                             local_id=lid,
                             attachment_ids=attachment_ids,
                             model_profile_id=model_profile_id,
+                            authorization=chat_authorization,
                         )
                     )
                     active_chat_tasks[cid] = t
@@ -1292,9 +1508,20 @@ async def websocket_connect(
                         active_chat_tasks.pop(_cid, None)
                         queued = pending_messages.pop(_cid, None)
                         if queued:
-                            q_msg, q_lid, q_attachments, q_profile_id = queued
+                            (
+                                q_msg,
+                                q_lid,
+                                q_attachments,
+                                q_profile_id,
+                                q_authorization,
+                            ) = queued
                             _start_chat_task(
-                                _cid, q_msg, q_lid, q_attachments, q_profile_id
+                                _cid,
+                                q_msg,
+                                q_lid,
+                                q_attachments,
+                                q_profile_id,
+                                q_authorization,
                             )
 
                     t.add_done_callback(_on_task_done)
@@ -1306,6 +1533,7 @@ async def websocket_connect(
                     local_id,
                     request.attachment_ids,
                     request.model_profile_id,
+                    authorization,
                 )
 
             elif data.get("type") == "chat_stop":
@@ -1356,7 +1584,8 @@ async def websocket_execution(
         return
 
     # Validate user has access to this execution
-    if not await can_access_execution(user, execution_id):
+    authorization = await _resolve_ws_authorization(user, None)
+    if not await can_access_execution(user, execution_id, authorization):
         await websocket.close(code=4003, reason="Access denied")
         return
 
@@ -1435,6 +1664,7 @@ async def _process_chat_message(
     local_id: str | None = None,
     attachment_ids: list[UUID] | None = None,
     model_profile_id: UUID | None = None,
+    authorization: AuthorizationContext | None = None,
 ) -> None:
     """
     Process a chat message and stream the response.
@@ -1481,13 +1711,22 @@ async def _process_chat_message(
 
         if conversation.agent_id:
             from src.repositories.agents import AgentRepository
+            from src.services.agent_router import chat_agent_repository_scope
+
+            org_id = user.organization_id
+            bypass_resource_roles = False
+            if authorization is not None:
+                org_id, bypass_resource_roles = chat_agent_repository_scope(
+                    user=user,
+                    authorization_context=authorization,
+                )
 
             async with session_factory() as db:
                 repo = AgentRepository(
                     db,
-                    org_id=user.organization_id,
+                    org_id=org_id,
                     user_id=user.user_id,
-                    is_superuser=user.is_superuser,
+                    bypass_resource_roles=bypass_resource_roles,
                     is_external=user.is_external,
                 )
                 accessible_agent = await repo.get_agent_with_access_check(conversation.agent_id)
@@ -1517,6 +1756,7 @@ async def _process_chat_message(
                 stream=True,
                 local_id=local_id,
                 user=user,
+                authorization_context=authorization,
                 attachment_ids=attachment_ids or [],
                 model_profile_id=model_profile_id,
             ):

@@ -6,6 +6,7 @@ validation time (UsageError) before any HTTP call.
 
 Other tests mock ``BifrostClient.get_instance`` so no network/DB is touched.
 """
+
 from __future__ import annotations
 
 import pathlib
@@ -53,6 +54,7 @@ def _client(captured, *, solutions=None, zip_data=b"PK\x05\x06" + b"\x00" * 18):
         return _resp({})
 
     c = mock.AsyncMock()
+    c.organization = {"id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}
     c.get = get
     c.post = post
     return c
@@ -72,8 +74,10 @@ def test_export_shareable_by_id(tmp_path: pathlib.Path) -> None:
     out_file = tmp_path / "out.zip"
     zip_data = b"PK\x05\x06" + b"\x00" * 18
 
-    with mock.patch("bifrost.client.BifrostClient.get_instance",
-                    return_value=_client(captured, zip_data=zip_data)):
+    with mock.patch(
+        "bifrost.client.BifrostClient.get_instance",
+        return_value=_client(captured, zip_data=zip_data),
+    ):
         res = CliRunner().invoke(
             solution_group,
             ["export", SOL_ID, "--out", str(out_file)],
@@ -92,8 +96,10 @@ def test_export_shareable_by_slug(tmp_path: pathlib.Path) -> None:
     out_file = tmp_path / "out.zip"
     zip_data = b"PK\x05\x06" + b"\x00" * 18
 
-    with mock.patch("bifrost.client.BifrostClient.get_instance",
-                    return_value=_client(captured, zip_data=zip_data)):
+    with mock.patch(
+        "bifrost.client.BifrostClient.get_instance",
+        return_value=_client(captured, zip_data=zip_data),
+    ):
         res = CliRunner().invoke(
             solution_group,
             ["export", SOL_SLUG, "--out", str(out_file)],
@@ -115,12 +121,21 @@ def test_export_full_with_password(tmp_path: pathlib.Path) -> None:
     captured: dict = {}
     out_file = tmp_path / "out.zip"
 
-    with mock.patch("bifrost.client.BifrostClient.get_instance",
-                    return_value=_client(captured)):
+    with mock.patch(
+        "bifrost.client.BifrostClient.get_instance", return_value=_client(captured)
+    ):
         res = CliRunner().invoke(
             solution_group,
-            ["export", SOL_ID, "--mode", "full", "--password", "s3cr3t",
-             "--out", str(out_file)],
+            [
+                "export",
+                SOL_ID,
+                "--mode",
+                "full",
+                "--password",
+                "s3cr3t",
+                "--out",
+                str(out_file),
+            ],
         )
     assert res.exit_code == 0, res.output
     posts = captured.get("posts", [])

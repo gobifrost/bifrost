@@ -63,6 +63,7 @@ interface ChatInputProps {
 	modelProfiles?: ChatModelProfileOption[];
 	modelProfileId?: ChatModelProfileId | null;
 	onModelProfileChange?: (profileId: ChatModelProfileId) => void;
+	showModelSelector?: boolean;
 }
 
 export function ChatInput({
@@ -74,6 +75,7 @@ export function ChatInput({
 	modelProfiles = [],
 	modelProfileId = null,
 	onModelProfileChange,
+	showModelSelector = true,
 }: ChatInputProps) {
 	const [message, setMessage] = useState("");
 	const [mentions, setMentions] = useState<MentionChip[]>([]);
@@ -447,7 +449,7 @@ export function ChatInput({
 							>
 								<Paperclip className="h-4 w-4" />
 							</Button>
-							{modelProfiles.length > 0 && modelProfileId && (
+							{showModelSelector && modelProfiles.length > 0 && modelProfileId && (
 								<Select
 									value={modelProfileId}
 									onValueChange={(value) =>

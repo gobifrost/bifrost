@@ -23,18 +23,19 @@ import redis.asyncio as aioredis
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
-from pydantic_ai import Agent as PydanticAgent
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.usage import RunUsage
 
 from src.models.orm.agents import Agent, AgentDelegation
 from src.models.orm.agent_runs import AgentRun, AgentRunStep
+from src.models.orm.users import User
 from src.core.constants import SYSTEM_USER_ID, SYSTEM_USER_EMAIL
 from src.core.cache.keys import agent_run_steps_stream_key
 from src.core.pubsub import publish_agent_run_step
 from src.services.execution.agent_helpers import (
     build_agent_system_prompt,
     find_delegated_agent,
+    is_agent_system_tool,
     parse_mcp_tool_name,
     resolve_agent_tools,
 )
@@ -45,15 +46,20 @@ from src.services.execution.agent_workflow_tools import (
 from src.services.agent_runtime import (
     AgentRunBudget,
     AgentRunCancelled,
-    BifrostToolset,
+    AgentRuntimeRunner,
     ModelCallEvent,
-    ObservedModel,
     ToolEvent,
     agent_model_settings,
-    build_runtime_capabilities,
     create_agent_model,
     provider_reported_cost,
 )
+from src.services.agent_runtime.usage_governance import (
+    build_runtime_usage_governance,
+    observe_model_usage_for_governance,
+    runtime_usage_organization_id,
+    runtime_usage_subject,
+)
+from src.services.usage_limits import PortableUsage
 from src.services.llm import ToolCallRequest
 from src.services.llm.factory import get_llm_config
 from src.services.knowledge.search_budget import (
@@ -236,10 +242,33 @@ class AutonomousAgentExecutor:
         max_tokens = budget.max_total_tokens
         self._active_usage = usage
         self._active_budget = budget
+        run_started_at = time.monotonic()
 
         # Resolve tools in one short DB lease. No DB
         # connection is held across model requests or tool execution.
         async with self._session_factory() as db:
+            requester_organization_id = None
+            if caller_user_id is not None:
+                requester_organization_id = await db.scalar(
+                    select(User.organization_id).where(User.id == caller_user_id)
+                )
+            runtime_organization_id = runtime_usage_organization_id(
+                resource_organization_id=agent.organization_id,
+                requester_organization_id=requester_organization_id,
+                target_kind=getattr(agent, "target_kind", None),
+            )
+            usage_governance = await build_runtime_usage_governance(
+                db,
+                runtime_usage_subject(
+                    organization_id=runtime_organization_id,
+                    user_id=caller_user_id,
+                    solution_id=agent.solution_id,
+                ),
+            )
+            budget = await usage_governance.constrain_budget(db, budget)
+            max_iterations = budget.max_requests
+            max_tokens = budget.max_total_tokens
+            self._active_budget = budget
             tool_definitions, self._tool_workflow_id_map = await resolve_agent_tools(
                 agent,
                 db,
@@ -284,11 +313,36 @@ class AutonomousAgentExecutor:
                 model_name = response.model_name
             if response.text:
                 last_response_content = response.text
+            if observe_model_usage_for_governance(
+                usage_governance,
+                budget,
+                PortableUsage(
+                    model_requests=1,
+                    input_tokens=request_usage.input_tokens,
+                    output_tokens=request_usage.output_tokens,
+                    cache_read_tokens=request_usage.cache_read_tokens,
+                    cache_write_tokens=request_usage.cache_write_tokens,
+                ),
+            ):
+                step_number += 1
+                await self._record_step(
+                    run_id,
+                    step_number,
+                    "budget_warning",
+                    {
+                        "tokens_used": usage.total_tokens,
+                        "max_tokens": max_tokens,
+                        "iterations_used": usage.requests - usage_start_requests,
+                        "max_iterations": max_iterations,
+                        "reason": "usage_allowance_reached",
+                    },
+                )
             self._buffer_ai_usage(
                 agent=agent,
                 run_id=run_id,
                 provider=response.provider_name or llm_config.provider,
                 model=response.model_name or model_name,
+                organization_id=runtime_organization_id,
                 input_tokens=request_usage.input_tokens,
                 output_tokens=request_usage.output_tokens,
                 cache_read_tokens=request_usage.cache_read_tokens,
@@ -368,31 +422,23 @@ class AutonomousAgentExecutor:
                 duration_ms=event.duration_ms,
             )
 
-        base_model = create_agent_model(llm_config, model=model_name)
-        observed_model = ObservedModel(base_model, record_model_event)
-        toolset = BifrostToolset(
-            tool_definitions,
-            execute_tool,
-            event_handler=record_tool_event,
-            toolset_id=f"bifrost-{agent.id}",
-        )
-        runtime = PydanticAgent(
-            observed_model,
-            system_prompt=build_agent_system_prompt(
+        runtime = AgentRuntimeRunner(
+            model=create_agent_model(llm_config, model=model_name),
+            instructions=build_agent_system_prompt(
                 agent,
                 execution_context={"mode": "autonomous"},
             ),
-            toolsets=[toolset] if tool_definitions else [],
-            capabilities=build_runtime_capabilities(budget),
+            budget=budget,
             model_settings=agent_model_settings(
                 llm_config,
                 max_tokens=agent.llm_max_tokens,
                 session_id=run_id,
             ),
-            # One bounded correction for malformed tool names/arguments. The
-            # shared UsageLimits ledger charges the retry to the parent run.
-            retries=1,
-            end_strategy="exhaustive",
+            tool_definitions=tool_definitions,
+            tool_executor=execute_tool,
+            model_event_handler=record_model_event,
+            tool_event_handler=record_tool_event,
+            toolset_id=f"bifrost-{agent.id}",
         )
 
         user_content = json.dumps(input_data) if input_data else "Run your task."
@@ -462,6 +508,21 @@ class AutonomousAgentExecutor:
         }
         if error and status == "failed":
             response["error"] = error
+        if _shared_budget is None:
+            try:
+                async with self._session_factory() as db:
+                    await usage_governance.record_runner_completion(
+                        db,
+                        runner_duration_ms=int(
+                            (time.monotonic() - run_started_at) * 1000
+                        ),
+                    )
+                    await db.commit()
+            except Exception:
+                logger.warning(
+                    "Failed to record autonomous runner usage",
+                    exc_info=True,
+                )
         return response
 
     # ------------------------------------------------------------------
@@ -509,7 +570,7 @@ class AutonomousAgentExecutor:
     async def _execute_tool(self, tool_call: ToolCallRequest, agent: Agent) -> str:
         """Execute a tool call, mirroring AgentExecutor's dispatch logic."""
         # Knowledge search
-        if tool_call.name == "search_knowledge" and agent.knowledge_sources:
+        if tool_call.name == "bifrost_search_knowledge" and agent.knowledge_sources:
             return await self._execute_knowledge_search(tool_call, agent)
 
         # Delegation
@@ -517,7 +578,7 @@ class AutonomousAgentExecutor:
             return await self._execute_delegation(tool_call, agent)
 
         # System tools
-        if tool_call.name in (agent.system_tools or []):
+        if is_agent_system_tool(agent, tool_call.name):
             return await self._execute_system_tool(tool_call, agent)
 
         # External MCP tools — namespaced ``mcp__<connection_id>__<tool>``.
@@ -663,8 +724,7 @@ class AutonomousAgentExecutor:
     async def _execute_knowledge_search(self, tool_call: ToolCallRequest, agent: Agent) -> str:
         """Execute knowledge search using the agent's configured namespaces."""
         try:
-            from src.repositories.knowledge import KnowledgeRepository
-            from src.services.embeddings import get_embedding_client
+            from src.services.knowledge.search import search_knowledge_documents
 
             query = tool_call.arguments.get("query", "")
             limit = clamp_knowledge_result_limit(
@@ -682,18 +742,13 @@ class AutonomousAgentExecutor:
             if not decision.allowed:
                 return json.dumps(knowledge_search_rejection_payload(decision))
 
-            # Brief DB session for embedding client config + knowledge search
+            # Brief DB session for canonical embedding + knowledge search.
             async with self._session_factory() as db:
-                embedding_client = await get_embedding_client(db)
-                query_embedding = await embedding_client.embed_single(query)
-
-                repo = KnowledgeRepository(
-                    db, org_id=agent.organization_id, is_superuser=True
-                )
-                results = await repo.search(
-                    query_embedding=query_embedding,
-                    namespace=namespaces,
-                    query_text=query,
+                results = await search_knowledge_documents(
+                    db,
+                    query=query,
+                    namespaces=namespaces,
+                    organization_id=agent.organization_id,
                     limit=limit,
                     fallback=True,
                 )
@@ -1083,6 +1138,9 @@ class AutonomousAgentExecutor:
                         and self._caller.get("name")
                         else agent.name
                     ),
+                    agent_bundle_path=agent.bundle_path,
+                    agent_skill_id=agent.id if agent.bundle_path else None,
+                    agent_solution_id=agent.solution_id,
                     session=db,
                 )
 
@@ -1135,6 +1193,7 @@ class AutonomousAgentExecutor:
         run_id: str,
         provider: str,
         model: str,
+        organization_id: UUID | None,
         input_tokens: int,
         output_tokens: int,
         cache_read_tokens: int = 0,
@@ -1155,7 +1214,9 @@ class AutonomousAgentExecutor:
             "provider_cost": provider_cost,
             "duration_ms": duration_ms,
             "agent_run_id": UUID(run_id),
-            "organization_id": agent.organization_id,
+            "organization_id": organization_id,
+            "user_id": self._caller_user_id,
+            "solution_id": agent.solution_id,
         })
 
     # ------------------------------------------------------------------

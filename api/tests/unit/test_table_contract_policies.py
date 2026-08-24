@@ -84,6 +84,51 @@ def test_update_distinguishes_clear_from_unset():
     assert "policies" not in untouched.model_fields_set
 
 
+@pytest.mark.asyncio
+async def test_repository_update_preserves_omitted_fields_and_applies_explicit_nulls(
+    db_session,
+):
+    """PATCH semantics distinguish omission from clearing nullable metadata."""
+    from uuid import uuid4
+
+    from src.models.orm.organizations import Organization
+    from src.models.orm.tables import Table
+    from src.repositories.tables import TableRepository
+
+    organization = Organization(
+        name=f"Table target {uuid4().hex[:8]}",
+        created_by="test",
+    )
+    table = Table(
+        name=f"table_patch_{uuid4().hex[:8]}",
+        description="keep until cleared",
+        schema={"columns": [{"name": "value", "type": "string"}]},
+        organization_id=None,
+        access={"policies": []},
+    )
+    db_session.add_all([organization, table])
+    await db_session.flush()
+
+    repo = TableRepository(db_session, None, bypass_resource_admission=True)
+    untouched = await repo.update_table(table.id, TableUpdate())
+    assert untouched is not None
+    assert untouched.description == "keep until cleared"
+    assert untouched.schema is not None
+
+    cleared = await repo.update_table(
+        table.id,
+        TableUpdate(
+            description=None,
+            schema=None,
+            organization_id=organization.id,
+        ),
+    )
+    assert cleared is not None
+    assert cleared.description is None
+    assert cleared.schema is None
+    assert cleared.organization_id == organization.id
+
+
 def test_public_outputs_policies_field_name():
     """TablePublic.model_dump() must emit 'policies', not 'access'.
 

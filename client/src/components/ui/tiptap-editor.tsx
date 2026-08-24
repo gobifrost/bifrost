@@ -1,7 +1,6 @@
 import { useEffect } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
-import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import { Markdown } from "@tiptap/markdown";
 import { TiptapToolbar } from "./tiptap-toolbar";
@@ -15,6 +14,9 @@ interface TiptapEditorProps {
 	className?: string;
 	editorClassName?: string;
 	ariaLabel?: string;
+	id?: string;
+	ariaDescribedBy?: string;
+	ariaInvalid?: boolean;
 }
 
 export function TiptapEditor({
@@ -25,6 +27,9 @@ export function TiptapEditor({
 	className,
 	editorClassName,
 	ariaLabel,
+	id,
+	ariaDescribedBy,
+	ariaInvalid,
 }: TiptapEditorProps) {
 	const editor = useEditor({
 		extensions: [
@@ -32,14 +37,14 @@ export function TiptapEditor({
 				heading: {
 					levels: [2, 3],
 				},
-			}),
-			Markdown,
-			Link.configure({
-				openOnClick: false,
-				HTMLAttributes: {
-					class: "text-primary underline",
+				link: {
+					openOnClick: false,
+					HTMLAttributes: {
+						class: "text-primary underline",
+					},
 				},
 			}),
+			Markdown,
 			Placeholder.configure({
 				placeholder,
 				emptyEditorClass:
@@ -52,13 +57,23 @@ export function TiptapEditor({
 		onUpdate: ({ editor }) => {
 			onChange?.(editor.getMarkdown());
 		},
-		editorProps: {
+			editorProps: {
 			attributes: {
+				role: "textbox",
+				"aria-multiline": "true",
+				"aria-readonly": String(readOnly),
 				class: cn(
 					"tiptap-editor min-h-[200px] h-full overflow-y-auto p-3 focus:outline-none prose prose-sm dark:prose-invert max-w-none",
 					editorClassName,
 				),
 				...(ariaLabel ? { "aria-label": ariaLabel } : {}),
+				...(id ? { id } : {}),
+				...(ariaDescribedBy
+					? { "aria-describedby": ariaDescribedBy }
+					: {}),
+				...(ariaInvalid !== undefined
+					? { "aria-invalid": String(ariaInvalid) }
+					: {}),
 			},
 		},
 	});

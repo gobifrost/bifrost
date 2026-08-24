@@ -14,7 +14,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context
 from src.core.database import get_db
 from src.core.log_safety import log_safe
 from src.models import (
@@ -25,10 +25,21 @@ from src.models import (
 )
 from src.services.decorator_property_service import DecoratorPropertyService
 from src.services.file_storage import FileStorageService
+from src.services.audit import emit_audit
+from src.services.authorization import AuthorizationContext, CurrentAuthorizationContext
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/decorator-properties", tags=["Decorator Properties"])
+
+
+def _require_platform_repository(
+    authorization: AuthorizationContext,
+    *,
+    write: bool,
+) -> None:
+    authorization.require("repository.readwrite" if write else "repository.read")
+    authorization.require_resource_boundary(None)
 
 
 @router.get(
@@ -39,7 +50,7 @@ router = APIRouter(prefix="/api/decorator-properties", tags=["Decorator Properti
 )
 async def get_decorator_properties(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     path: str = Query(..., description="File path relative to workspace root"),
     db: AsyncSession = Depends(get_db),
 ) -> DecoratorPropertiesResponse:
@@ -52,6 +63,7 @@ async def get_decorator_properties(
     Returns:
         DecoratorPropertiesResponse with list of decorators and their properties
     """
+    _require_platform_repository(authorization, write=False)
     if not path.endswith(".py"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -86,7 +98,10 @@ async def get_decorator_properties(
             detail=f"File not found: {path}",
         )
     except Exception as e:
-        logger.error(f"Error reading decorator properties from {log_safe(path)}: {log_safe(e)}", exc_info=True)
+        logger.error(
+            f"Error reading decorator properties from {log_safe(path)}: {log_safe(e)}",
+            exc_info=True,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to read decorator properties",
@@ -101,7 +116,7 @@ async def get_decorator_properties(
 )
 async def update_decorator_properties(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     request: UpdatePropertiesRequest,
     db: AsyncSession = Depends(get_db),
 ) -> UpdatePropertiesResponse:
@@ -117,6 +132,7 @@ async def update_decorator_properties(
     Returns:
         UpdatePropertiesResponse with modification status and new ETag
     """
+    _require_platform_repository(authorization, write=True)
     if not request.path.endswith(".py"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -172,7 +188,18 @@ async def update_decorator_properties(
         write_result = await storage.write_file(
             request.path,
             modified_content,
-            updated_by=user.email,
+            updated_by=authorization.effective_actor.email,
+        )
+
+        await emit_audit(
+            db,
+            "repository.decorator_properties.update",
+            resource_type="repository_file",
+            details={
+                "path": request.path,
+                "function_name": request.function_name,
+                "changes": result.changes,
+            },
         )
 
         new_etag = hashlib.md5(write_result.final_content).hexdigest()

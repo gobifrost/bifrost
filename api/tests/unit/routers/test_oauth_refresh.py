@@ -3,6 +3,26 @@
 import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, AsyncMock, patch
+from uuid import uuid4
+
+from src.core.principal import UserPrincipal
+from src.services.authorization import AuthorizationBoundary, AuthorizationContext
+
+
+def _authorization(boundary: AuthorizationBoundary) -> AuthorizationContext:
+    principal = UserPrincipal(
+        user_id=uuid4(),
+        email="admin@gobifrost.com",
+        name="Admin User",
+        organization_id=uuid4(),
+    )
+    return AuthorizationContext(
+        requester=principal,
+        effective_actor=principal,
+        selected_boundary=boundary,
+        effective_capabilities=frozenset({"integrations.readwrite"}),
+        grant_sources=(),
+    )
 
 
 class TestOAuthRefreshClientCredentials:
@@ -16,7 +36,9 @@ class TestOAuthRefreshClientCredentials:
         # Create mock provider
         provider = MagicMock()
         provider.oauth_flow_type = "client_credentials"
-        provider.token_url = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+        provider.token_url = (
+            "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+        )
         provider.client_id = "test-client-id"
         provider.encrypted_client_secret = b"encrypted-secret"
         provider.scopes = ["https://graph.microsoft.com/.default"]
@@ -95,7 +117,9 @@ class TestOAuthRefreshClientCredentials:
 
         provider = MagicMock()
         provider.oauth_flow_type = "authorization_code"
-        provider.token_url = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+        provider.token_url = (
+            "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+        )
         provider.client_id = "test-client-id"
         provider.encrypted_client_secret = b"encrypted-secret"
         provider.scopes = [
@@ -106,6 +130,7 @@ class TestOAuthRefreshClientCredentials:
         provider.audience = None
         provider.status = "completed"
         provider.status_message = None
+        provider.organization_id = None
 
         token = MagicMock()
         token.encrypted_refresh_token = b"encrypted-refresh-token"
@@ -115,8 +140,14 @@ class TestOAuthRefreshClientCredentials:
         ctx.org_id = None
 
         with (
-            patch("src.repositories.oauth.OAuthProviderRepository.get_by_connection_name", new=AsyncMock(return_value=provider)),
-            patch("src.repositories.oauth.OAuthProviderRepository.get_token", new=AsyncMock(return_value=token)),
+            patch(
+                "src.repositories.oauth.OAuthProviderRepository.get_by_connection_name",
+                new=AsyncMock(return_value=provider),
+            ),
+            patch(
+                "src.repositories.oauth.OAuthProviderRepository.get_token",
+                new=AsyncMock(return_value=token),
+            ),
             patch(
                 "src.routers.oauth_connections.build_token_refresh_context",
                 new=AsyncMock(
@@ -152,7 +183,7 @@ class TestOAuthRefreshClientCredentials:
             result = await refresh_token(
                 connection_name="Microsoft CSP",
                 ctx=ctx,
-                user=MagicMock(),
+                authorization=_authorization(AuthorizationBoundary.platform()),
             )
 
         assert result.success is True
@@ -171,7 +202,9 @@ class TestOAuthRefreshClientCredentials:
         from src.routers.oauth_connections import oauth_callback
 
         provider = MagicMock()
-        provider.token_url = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+        provider.token_url = (
+            "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+        )
         provider.client_id = "test-client-id"
         provider.encrypted_client_secret = b"encrypted-secret"
         provider.scopes = [
@@ -193,19 +226,37 @@ class TestOAuthRefreshClientCredentials:
         )
 
         with (
-            patch("src.repositories.oauth.OAuthProviderRepository.get_by_connection_name", new=AsyncMock(return_value=provider)),
-            patch("src.repositories.oauth.OAuthProviderRepository.store_token", new=AsyncMock()),
-            patch("src.routers.oauth_connections.get_url_resolution_defaults", new=AsyncMock(return_value={})),
-            patch("src.routers.oauth_connections.resolve_url_template", return_value=provider.token_url),
-            patch("src.services.oauth_provider.OAuthProviderClient.exchange_code_for_token", new=AsyncMock(return_value=(
-                True,
-                {
-                    "access_token": "access-token",
-                    "refresh_token": "refresh-token",
-                    "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
-                    "scope": "openid offline_access https://api.partnercenter.microsoft.com/user_impersonation",
-                },
-            ))) as mock_exchange,
+            patch(
+                "src.repositories.oauth.OAuthProviderRepository.get_by_connection_name",
+                new=AsyncMock(return_value=provider),
+            ),
+            patch(
+                "src.repositories.oauth.OAuthProviderRepository.store_token",
+                new=AsyncMock(),
+            ),
+            patch(
+                "src.routers.oauth_connections.get_url_resolution_defaults",
+                new=AsyncMock(return_value={}),
+            ),
+            patch(
+                "src.routers.oauth_connections.resolve_url_template",
+                return_value=provider.token_url,
+            ),
+            patch(
+                "src.services.oauth_provider.OAuthProviderClient.exchange_code_for_token",
+                new=AsyncMock(
+                    return_value=(
+                        True,
+                        {
+                            "access_token": "access-token",
+                            "refresh_token": "refresh-token",
+                            "expires_at": datetime.now(timezone.utc)
+                            + timedelta(hours=1),
+                            "scope": "openid offline_access https://api.partnercenter.microsoft.com/user_impersonation",
+                        },
+                    )
+                ),
+            ) as mock_exchange,
             patch("src.core.security.decrypt_secret", return_value="decrypted-secret"),
             patch("src.routers.oauth_connections.CACHE_INVALIDATION_AVAILABLE", False),
         ):
@@ -213,7 +264,7 @@ class TestOAuthRefreshClientCredentials:
                 connection_name="Microsoft CSP",
                 request=request,
                 ctx=ctx,
-                user=MagicMock(),
+                authorization=_authorization(AuthorizationBoundary.platform()),
             )
 
         assert result.success is True
@@ -229,7 +280,7 @@ class TestOAuthRefreshClientCredentials:
 
         # This is a logic test - we verify the expected behavior
         client_credentials_needs_refresh_token = False  # Uses client_credentials grant
-        authorization_code_needs_refresh_token = True   # Uses refresh_token grant
+        authorization_code_needs_refresh_token = True  # Uses refresh_token grant
 
         assert client_credentials_needs_refresh_token is False
         assert authorization_code_needs_refresh_token is True

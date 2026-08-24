@@ -23,6 +23,8 @@ from src.models import Execution, Workflow
 from src.models.enums import ExecutionStatus
 from src.models.orm.users import User
 from src.core.constants import PROVIDER_ORG_ID
+from src.core.principal import UserPrincipal
+from src.services.authorization import AuthorizationBoundary, AuthorizationContext
 from tests.conftest import TEST_REDIS_URL
 
 
@@ -64,7 +66,9 @@ async def clean_redis_workers(redis_client):
     # Clean up pool keys before test
     cursor = 0
     while True:
-        cursor, keys = await redis_client.scan(cursor, match="bifrost:pool:*", count=100)
+        cursor, keys = await redis_client.scan(
+            cursor, match="bifrost:pool:*", count=100
+        )
         if keys:
             await redis_client.delete(*keys)
         if cursor == 0:
@@ -75,7 +79,9 @@ async def clean_redis_workers(redis_client):
     # Clean up pool keys after test
     cursor = 0
     while True:
-        cursor, keys = await redis_client.scan(cursor, match="bifrost:pool:*", count=100)
+        cursor, keys = await redis_client.scan(
+            cursor, match="bifrost:pool:*", count=100
+        )
         if keys:
             await redis_client.delete(*keys)
         if cursor == 0:
@@ -89,9 +95,7 @@ async def clean_test_data(db_session: AsyncSession):
 
     # Clean up test executions with stuck messages
     await db_session.execute(
-        delete(Execution).where(
-            Execution.error_message.ilike("%test_stuck%")
-        )
+        delete(Execution).where(Execution.error_message.ilike("%test_stuck%"))
     )
 
     await db_session.commit()
@@ -127,6 +131,22 @@ async def test_workflow(db_session: AsyncSession):
     return workflow
 
 
+def _authorization(capability: str = "platformjobs.read") -> AuthorizationContext:
+    principal = UserPrincipal(
+        user_id=uuid4(),
+        email="admin@test.com",
+        name="Admin User",
+        organization_id=None,
+    )
+    return AuthorizationContext(
+        requester=principal,
+        effective_actor=principal,
+        selected_boundary=AuthorizationBoundary.platform(),
+        effective_capabilities=frozenset({capability}),
+        grant_sources=(),
+    )
+
+
 @pytest.mark.e2e
 @pytest.mark.asyncio
 class TestWorkersListEndpoint:
@@ -139,16 +159,8 @@ class TestWorkersListEndpoint:
     ):
         """List workers returns empty list when no workers registered."""
         from src.routers.platform.workers import list_pools
-        from src.core.principal import UserPrincipal
 
-        admin = UserPrincipal(
-            user_id=uuid4(),
-            email="admin@test.com",
-            organization_id=None,
-            is_superuser=True,
-        )
-
-        result = await list_pools(admin)
+        result = await list_pools(_authorization())
 
         assert result.total == 0
         assert result.pools == []
@@ -161,7 +173,6 @@ class TestWorkersListEndpoint:
     ):
         """List workers returns registered worker data."""
         from src.routers.platform.workers import list_pools
-        from src.core.principal import UserPrincipal
 
         # Register a worker in Redis
         worker_id = "test-worker-001"
@@ -192,14 +203,7 @@ class TestWorkersListEndpoint:
             json.dumps(heartbeat),
         )
 
-        admin = UserPrincipal(
-            user_id=uuid4(),
-            email="admin@test.com",
-            organization_id=None,
-            is_superuser=True,
-        )
-
-        result = await list_pools(admin)
+        result = await list_pools(_authorization())
 
         assert result.total == 1
         pool = result.pools[0]
@@ -223,17 +227,9 @@ class TestWorkerDetailEndpoint:
         """Get worker returns 404 for non-existent worker."""
         from fastapi import HTTPException
         from src.routers.platform.workers import get_pool
-        from src.core.principal import UserPrincipal
-
-        admin = UserPrincipal(
-            user_id=uuid4(),
-            email="admin@test.com",
-            organization_id=None,
-            is_superuser=True,
-        )
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_pool("non-existent-worker", admin)
+            await get_pool("non-existent-worker", _authorization())
 
         assert exc_info.value.status_code == 404
 
@@ -245,7 +241,6 @@ class TestWorkerDetailEndpoint:
     ):
         """Get worker returns detailed worker information."""
         from src.routers.platform.workers import get_pool
-        from src.core.principal import UserPrincipal
 
         # Register a worker in Redis
         worker_id = "test-worker-002"
@@ -283,14 +278,7 @@ class TestWorkerDetailEndpoint:
             json.dumps(heartbeat),
         )
 
-        admin = UserPrincipal(
-            user_id=uuid4(),
-            email="admin@test.com",
-            organization_id=None,
-            is_superuser=True,
-        )
-
-        result = await get_pool(worker_id, admin)
+        result = await get_pool(worker_id, _authorization())
 
         assert result.worker_id == worker_id
         assert result.hostname == "detail-host"
@@ -312,17 +300,14 @@ class TestRecycleProcessEndpoint:
         """Recycle returns 404 for non-existent worker."""
         from fastapi import HTTPException
         from src.routers.platform.workers import recycle_process
-        from src.core.principal import UserPrincipal
-
-        admin = UserPrincipal(
-            user_id=uuid4(),
-            email="admin@test.com",
-            organization_id=None,
-            is_superuser=True,
-        )
 
         with pytest.raises(HTTPException) as exc_info:
-            await recycle_process("non-existent-worker", 12345, admin)
+            await recycle_process(
+                "non-existent-worker",
+                12345,
+                _authorization("platformjobs.execute"),
+                db=db_session,
+            )
 
         assert exc_info.value.status_code == 404
 
@@ -334,7 +319,6 @@ class TestRecycleProcessEndpoint:
     ):
         """Recycle publishes command to Redis pub/sub."""
         from src.routers.platform.workers import recycle_process
-        from src.core.principal import UserPrincipal
         from src.models.contracts.platform import RecycleProcessRequest
 
         # Register a pool in Redis (using new key pattern)
@@ -352,15 +336,14 @@ class TestRecycleProcessEndpoint:
         pubsub = redis_client.pubsub()
         await pubsub.subscribe(f"bifrost:pool:{worker_id}:commands")
 
-        admin = UserPrincipal(
-            user_id=uuid4(),
-            email="admin@test.com",
-            organization_id=None,
-            is_superuser=True,
-        )
-
         request = RecycleProcessRequest(reason="Manual recycle test")
-        result = await recycle_process(worker_id, 12345, admin, request)
+        result = await recycle_process(
+            worker_id,
+            12345,
+            _authorization("platformjobs.execute"),
+            request,
+            db_session,
+        )
 
         assert result.success is True
         assert result.worker_id == worker_id
@@ -381,16 +364,8 @@ class TestQueueEndpoint:
     ):
         """Queue endpoint returns empty list when no pending executions."""
         from src.routers.platform.workers import get_queue
-        from src.core.principal import UserPrincipal
 
-        admin = UserPrincipal(
-            user_id=uuid4(),
-            email="admin@test.com",
-            organization_id=None,
-            is_superuser=True,
-        )
-
-        result = await get_queue(admin, limit=50, offset=0)
+        result = await get_queue(_authorization(), limit=50, offset=0)
 
         # Queue might have items from other tests, just verify structure
         assert hasattr(result, "total")
@@ -410,16 +385,8 @@ class TestStuckHistoryEndpoint:
     ):
         """Stuck history returns empty list when no stuck executions."""
         from src.routers.platform.workers import get_stuck_history
-        from src.core.principal import UserPrincipal
 
-        admin = UserPrincipal(
-            user_id=uuid4(),
-            email="admin@test.com",
-            organization_id=None,
-            is_superuser=True,
-        )
-
-        result = await get_stuck_history(admin, hours=24, db=db_session)
+        result = await get_stuck_history(_authorization(), hours=24, db=db_session)
 
         assert result.hours == 24
         assert isinstance(result.workflows, list)
@@ -432,7 +399,6 @@ class TestStuckHistoryEndpoint:
     ):
         """Stuck history aggregates stuck executions by workflow."""
         from src.routers.platform.workers import get_stuck_history
-        from src.core.principal import UserPrincipal
 
         # Create executions with stuck error messages
         now = datetime.now(timezone.utc)
@@ -451,14 +417,7 @@ class TestStuckHistoryEndpoint:
 
         await db_session.commit()
 
-        admin = UserPrincipal(
-            user_id=uuid4(),
-            email="admin@test.com",
-            organization_id=None,
-            is_superuser=True,
-        )
-
-        result = await get_stuck_history(admin, hours=24, db=db_session)
+        result = await get_stuck_history(_authorization(), hours=24, db=db_session)
 
         # Find the test workflow in results
         test_workflow = next(

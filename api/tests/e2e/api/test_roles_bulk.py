@@ -84,7 +84,15 @@ class TestBulkUnassignUsers:
         assign = e2e_client.post(
             f"/api/roles/{role}/users",
             headers=platform_admin.headers,
-            json={"user_ids": [u1, u2, u3]},
+            json={
+                "user_ids": [u1, u2, u3],
+                "boundaries": [
+                    {
+                        "boundary_kind": "organization",
+                        "organization_id": org1["id"],
+                    }
+                ],
+            },
         )
         assert assign.status_code == 204
 
@@ -117,6 +125,38 @@ class TestBulkUnassignUsers:
 
 @pytest.mark.e2e
 class TestBulkUnassignForms:
+    def test_assign_list_unassign_forms(self, e2e_client, platform_admin):
+        role = _create_role(e2e_client, platform_admin.headers, "AssignF")
+        f1 = _create_form(e2e_client, platform_admin.headers, "RoleForm1")
+        f2 = _create_form(e2e_client, platform_admin.headers, "RoleForm2")
+
+        assign = e2e_client.post(
+            f"/api/roles/{role}/forms",
+            headers=platform_admin.headers,
+            json={"form_ids": [f1, f2]},
+        )
+        assert assign.status_code == 204, assign.text
+
+        assigned = e2e_client.get(
+            f"/api/roles/{role}/forms", headers=platform_admin.headers
+        )
+        assert assigned.status_code == 200, assigned.text
+        assert sorted(assigned.json()["form_ids"]) == sorted([f1, f2])
+
+        resp = e2e_client.request(
+            "DELETE",
+            f"/api/roles/{role}/forms",
+            headers=platform_admin.headers,
+            json={"form_ids": [f1]},
+        )
+        assert resp.status_code == 204, resp.text
+
+        remaining = e2e_client.get(
+            f"/api/roles/{role}/forms", headers=platform_admin.headers
+        ).json()["form_ids"]
+        assert f1 not in remaining
+        assert f2 in remaining
+
     def test_bulk_unassign_forms(self, e2e_client, platform_admin):
         role = _create_role(e2e_client, platform_admin.headers, "UnassignF")
         f1 = _create_form(e2e_client, platform_admin.headers, "BulkF1")
@@ -145,6 +185,38 @@ class TestBulkUnassignForms:
 
 @pytest.mark.e2e
 class TestBulkUnassignAgents:
+    def test_assign_list_unassign_agents(self, e2e_client, platform_admin):
+        role = _create_role(e2e_client, platform_admin.headers, "AssignA")
+        a1 = _create_agent(e2e_client, platform_admin.headers, "RoleAgent1")
+        a2 = _create_agent(e2e_client, platform_admin.headers, "RoleAgent2")
+
+        assign = e2e_client.post(
+            f"/api/roles/{role}/agents",
+            headers=platform_admin.headers,
+            json={"agent_ids": [a1, a2]},
+        )
+        assert assign.status_code == 204, assign.text
+
+        assigned = e2e_client.get(
+            f"/api/roles/{role}/agents", headers=platform_admin.headers
+        )
+        assert assigned.status_code == 200, assigned.text
+        assert sorted(assigned.json()["agent_ids"]) == sorted([a1, a2])
+
+        resp = e2e_client.request(
+            "DELETE",
+            f"/api/roles/{role}/agents",
+            headers=platform_admin.headers,
+            json={"agent_ids": [a1, a2]},
+        )
+        assert resp.status_code == 204, resp.text
+
+        remaining = e2e_client.get(
+            f"/api/roles/{role}/agents", headers=platform_admin.headers
+        ).json()["agent_ids"]
+        assert a1 not in remaining
+        assert a2 not in remaining
+
     def test_bulk_unassign_agents(self, e2e_client, platform_admin):
         role = _create_role(e2e_client, platform_admin.headers, "UnassignA")
         a1 = _create_agent(e2e_client, platform_admin.headers, "BulkA1")

@@ -37,6 +37,21 @@ Keep the scaffold's `index.html` and reusable `mount()` lifecycle in `src/main.t
 
 The scaffold creates the app manifest entry. App metadata, source path, logo path, and dependencies deploy from the Solution; do not create or update the managed app record live.
 
+The portable manifest shape is exact. A scaffolded entry looks like:
+
+```yaml
+apps:
+  <app-uuid>:
+    id: <app-uuid>
+    slug: operations
+    name: Operations
+    path: apps/operations
+    app_model: standalone_v2
+```
+
+Use `app_model`, not `type`. Do not add `entry` or `mount_function`; the v2
+runtime contract comes from the scaffolded source and build output.
+
 ## Import boundaries
 
 The `bifrost` package contains only the v2 runtime SDK:
@@ -80,6 +95,35 @@ Enforce authorization and integration access in the workflow. Client-side hiding
 
 Use the app's normal package manifest for browser dependencies. Install shadcn components into the app and import their local source; the platform does not inject the host client's private component tree into v2 apps.
 
+Hosted and native Builder builds use a fixed, offline package catalog. The
+standard runtime and toolchain are injected, so a Builder-authored app should
+not declare `react`, `react-dom`, `lucide-react`, Vite, TypeScript, Tailwind,
+PostCSS, Autoprefixer, or `@types/*` merely to make the scaffold look familiar.
+Declare only packages the source actually imports. The currently supported
+optional browser packages and exact pins are:
+
+```yaml
+dependencies:
+  class-variance-authority: 0.7.0
+  clsx: 2.1.1
+  react-router-dom: 6.22.0
+  tailwind-merge: 2.5.4
+  tw-animate-css: 1.2.0
+```
+
+`validate_solution` checks this same catalog before deployment and returns the
+required pin for a known package. A package outside the catalog must be
+replaced, used only in a locally prebuilt `dist/`, or added to the platform's
+reviewed catalog by an administrator; the hosted runner has no registry access.
+
+Tailwind 4 does not synthesize shadcn's older semantic utilities merely because
+a CSS variable exists. Do not use v3-era rules such as
+`@apply border-border`. Define the semantic color through `@theme inline` or
+use ordinary CSS such as `border-color: var(--border)`. Always run
+`test_solution_build` after `validate_solution`; it invokes the exact production
+compiler, returns its diagnostic output to the Builder, and leaves successful
+artifacts available for the preview deploy to reuse.
+
 The scaffold intentionally omits an instance-specific `bifrost` dependency. `bifrost solution start` installs the selected instance's SDK transiently without changing `package.json`; deployed builds inject the SDK shipped by the serving instance.
 
 Prefer dependencies that are actively maintained, browser-safe, and compatible with the app's React version. Do not introduce a library for behavior that the platform or browser already provides simply because an old example used it.
@@ -100,7 +144,8 @@ The preview uses the bound install and selected live instance. Reads and writes 
 
 Before offering deploy:
 
-- run the app's tests, type check, and production build;
+- run the app's tests and type check; in native Builder, call
+  `validate_solution` and `test_solution_build` until both pass;
 - exercise local workflows through the app, not only as isolated Python functions;
 - inspect every changed route and important state using `app-quality.md`;
 - verify `supportsTheme` only after both themes pass;

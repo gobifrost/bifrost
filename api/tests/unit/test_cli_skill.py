@@ -143,6 +143,40 @@ class TestSkillUpdate:
         assert "Installed foo" in captured
         assert "Installed bar" in captured
 
+    def test_install_carries_references_and_generated_appendices(
+        self,
+        workspace: Path,
+        stub_github,
+    ) -> None:
+        """A Skill is useless without its nested reference tree.
+
+        bifrost-build routes work to `references/*.md` and resolves exact
+        transport syntax from `generated/*.md`. If install flattened or dropped
+        those subdirectories, the Skill would tell a harness to load files that
+        are not there — and it must land identically in both harness locations,
+        since the whole point of the .agents/skills convention is that Codex,
+        Copilot, Cursor and Gemini read the same Skill Claude Code does.
+        """
+        stub_github["install"](
+            {
+                ".claude/skills/foo/SKILL.md": b"# Foo skill\n",
+                ".claude/skills/foo/references/entities.md": b"entities\n",
+                ".claude/skills/foo/references/sources.yaml": b"references: []\n",
+                ".claude/skills/foo/generated/operations.md": b"| Intent |\n",
+                ".claude/skills/foo/generated/cli-reference.md": b"cli\n",
+            }
+        )
+
+        assert skill_module.handle_skill(["update"]) == 0
+
+        for root in (".claude/skills", ".agents/skills"):
+            base = workspace / root / "foo"
+            assert (base / "SKILL.md").is_file()
+            assert (base / "references/entities.md").read_bytes() == b"entities\n"
+            assert (base / "references/sources.yaml").is_file()
+            assert (base / "generated/operations.md").read_bytes() == b"| Intent |\n"
+            assert (base / "generated/cli-reference.md").is_file()
+
     def test_positional_arg_rejected(
         self,
         workspace: Path,

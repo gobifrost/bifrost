@@ -18,7 +18,7 @@ async def _resolve_form_workflow(db: AsyncSession, form: Any, ref: str | None):
     repository = WorkflowRepository(
         db,
         org_id=form.organization_id,
-        is_superuser=True,
+        bypass_resource_roles=True,
     )
     allow_shared = form.solution_id is None or await solution_allows_global(
         db, form.solution_id

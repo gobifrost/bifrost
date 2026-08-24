@@ -5,18 +5,20 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from decimal import Decimal, InvalidOperation
-from urllib.parse import urlparse
-
 import httpx
 import redis.asyncio as redis
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm.ai_usage import AIModelPricing, AIUsage
+from src.services.llm.provider_identity import (
+    OPENROUTER_PROVIDER,
+    canonical_provider,
+    is_openrouter_endpoint as is_openrouter_endpoint,
+)
 
 logger = logging.getLogger(__name__)
 
-OPENROUTER_PROVIDER = "openrouter"
 OPENROUTER_MODELS_ENDPOINT = "https://openrouter.ai/api/v1/models"
 PRICING_DISCOVERY_KEY_PREFIX = "ai_pricing_discovery:"
 PRICING_DISCOVERY_TTL = 300
@@ -30,28 +32,6 @@ class PublishedModelPricing:
     output_price: Decimal
     cache_read_price: Decimal | None = None
     cache_write_price: Decimal | None = None
-
-
-def is_openrouter_endpoint(endpoint: str | None) -> bool:
-    """Return whether an OpenAI-compatible endpoint is OpenRouter."""
-
-    if not endpoint:
-        return False
-    hostname = urlparse(endpoint).hostname
-    return hostname == "openrouter.ai" or bool(
-        hostname and hostname.endswith(".openrouter.ai")
-    )
-
-
-def canonical_provider(provider: str, endpoint: str | None = None) -> str:
-    """Resolve the billing provider without changing Bifrost's public config."""
-
-    normalized = provider.strip().lower()
-    if normalized == "custom":
-        normalized = "openai"
-    if normalized == OPENROUTER_PROVIDER or is_openrouter_endpoint(endpoint):
-        return OPENROUTER_PROVIDER
-    return normalized
 
 
 def configured_models(*models: str | None) -> set[str]:

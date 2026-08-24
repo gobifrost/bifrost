@@ -145,8 +145,8 @@ async def process_ticket(ticket_id: str):
 Event subscriptions can target agents directly using `target_type: "agent"`:
 
 ```
-create_event_subscription(source_id=<id>, agent_id=<agent_id>,
-                          target_type="agent", event_type="ticket.created")
+bifrost_create_event_subscription(source_ref=<id>, agent_id=<agent_id>,
+                                  event_type="ticket.created")
 ```
 
 The event payload is passed as the agent's input data.
@@ -600,20 +600,20 @@ Use `@data_provider` decorator — see Workflows section for syntax.
 ### Schedule Source
 
 ```
-create_event_source(name="Daily Report", source_type="schedule",
-                    cron_expression="0 9 * * *", timezone="America/New_York")
-create_event_subscription(source_id=<id>, workflow_id=<id>,
-                          input_mapping={"report_type": "daily"})
+bifrost_create_event_source(name="Daily Report", source_type="schedule",
+                            cron_expression="0 9 * * *", timezone="America/New_York")
+bifrost_create_event_subscription(source_ref=<id>, workflow_id=<id>,
+                                  input_mapping={"report_type": "daily"})
 ```
 
 ### Webhook Source
 
 ```
-create_event_source(name="HaloPSA Tickets", source_type="webhook",
-                    adapter_name="generic")
+bifrost_create_event_source(name="HaloPSA Tickets", source_type="webhook",
+                            adapter_name="generic")
   → returns callback_url: /api/hooks/{source_id}
-create_event_subscription(source_id=<id>, workflow_id=<id>,
-                          event_type="ticket.created")
+bifrost_create_event_subscription(source_ref=<id>, workflow_id=<id>,
+                                  event_type="ticket.created")
 ```
 
 Configure the external service to POST to the callback_url.
@@ -623,8 +623,8 @@ Configure the external service to POST to the callback_url.
 Subscriptions can target agents instead of workflows:
 
 ```
-create_event_subscription(source_id=<id>, agent_id=<agent_id>,
-                          target_type="agent", event_type="ticket.created")
+bifrost_create_event_subscription(source_ref=<id>, agent_id=<agent_id>,
+                                  event_type="ticket.created")
 ```
 
 The event payload is passed as the agent's input data. The agent runs autonomously and results are recorded as agent runs.

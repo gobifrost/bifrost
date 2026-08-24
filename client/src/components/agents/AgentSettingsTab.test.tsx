@@ -8,6 +8,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen, waitFor } from "@/test-utils";
 
+vi.mock("@/hooks/useAdministrativeBoundary", () => ({
+	useAdministrativeBoundary: () => "platform",
+}));
+
 const mockAuth = vi.fn();
 vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockAuth(),
@@ -66,6 +70,26 @@ vi.mock("@/components/ai/ModelProfileSelector", () => ({
 		</label>
 	),
 }));
+vi.mock("@/services/agentSkills", () => ({
+	getAgentSkill: async () => ({
+		name: "Inline agent instructions",
+		description: "",
+		revision: "0".repeat(64),
+		bundle_path: null,
+		skill_markdown: "",
+		files: ["SKILL.md"],
+		companion_files: [],
+		automatic_capabilities: [],
+		source: "inline",
+		is_managed: false,
+	}),
+	getAgentSkillFile: vi.fn(),
+	uploadAgentSkill: vi.fn(),
+	detachAgentSkill: vi.fn(),
+	// Pure derivation, not I/O — mirror the real implementation rather than
+	// stubbing it, so this mock cannot drift from the source's meaning.
+	hasSkillBundle: (skill: { source: string }) => skill.source !== "inline",
+}));
 
 beforeEach(() => {
 	mockAuth.mockReturnValue({ isPlatformAdmin: false });
@@ -122,9 +146,9 @@ describe("AgentSettingsTab — edit mode", () => {
 		}) as HTMLInputElement;
 		expect(nameInput.value).toBe("Tier-1 Triage");
 		const promptInput = screen.getByRole("textbox", {
-			name: /system prompt/i,
-		}) as HTMLTextAreaElement;
-		expect(promptInput.value).toBe("You are a triage bot.");
+			name: /inline instructions/i,
+		});
+		expect(promptInput).toHaveTextContent("You are a triage bot.");
 	});
 
 	it("submits via update mutation on Save", async () => {
@@ -142,6 +166,7 @@ describe("AgentSettingsTab — edit mode", () => {
 		expect(args.params.path.agent_id).toBe("agent-1");
 		expect(args.body.name).toBe("Tier-1 Triage");
 		expect(args.body.llm_profile_id).toBeNull();
+		expect(args.body).not.toHaveProperty("mcp_connection_ids");
 		expect(mockCreateMutation).not.toHaveBeenCalled();
 	});
 
@@ -162,6 +187,26 @@ describe("AgentSettingsTab — edit mode", () => {
 		});
 		expect(mockUpdateMutation.mock.calls[0][0].body.llm_profile_id).toBe(
 			"profile-support",
+		);
+	});
+
+	it("submits MCP connection grants only for platform admins", async () => {
+		mockAuth.mockReturnValue({ isPlatformAdmin: true });
+		const { user } = await renderTab({
+			mode: "edit",
+			agent: {
+				...existingAgent,
+				organization_id: "org-1",
+				mcp_connection_ids: ["connection-1"],
+			},
+		});
+
+		await user.click(screen.getByRole("button", { name: /save changes/i }));
+		await waitFor(() => {
+			expect(mockUpdateMutation).toHaveBeenCalledTimes(1);
+		});
+		expect(mockUpdateMutation.mock.calls[0][0].body.mcp_connection_ids).toEqual(
+			["connection-1"],
 		);
 	});
 
@@ -218,7 +263,7 @@ describe("AgentSettingsTab — create mode", () => {
 			"Sales Bot",
 		);
 		await user.type(
-			screen.getByRole("textbox", { name: /system prompt/i }),
+			screen.getByRole("textbox", { name: /inline instructions/i }),
 			"Be helpful.",
 		);
 		await user.click(

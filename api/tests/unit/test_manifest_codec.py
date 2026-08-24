@@ -185,7 +185,12 @@ async def test_role_git_sync_parity(db_session):
     await db_session.commit()
 
     try:
-        expected = {"id": str(role.id), "name": "rt_role_parity"}
+        expected = {
+            "id": str(role.id),
+            "name": "rt_role_parity",
+            "capabilities": [],
+            "permissions": {},
+        }
         produced = ManifestRole.from_row(role).view(Destination.GIT_SYNC)
         assert_parity(produced, expected, label="role git_sync")
     finally:
@@ -1337,10 +1342,11 @@ async def test_agent_git_sync_parity(db_session):
         name="rt_agent_golden",
         description="parity test agent",
         system_prompt="You are a helpful assistant.",
+        bundle_path="agents/rt-agent",
         channels=["chat"],
         knowledge_sources=["kb1"],
-        system_tools=["execute_workflow"],
-        llm_profile_id=profile.id,
+		system_tools=["bifrost_execute_workflow"],
+		llm_profile_id=profile.id,
         llm_max_tokens=4096,
         max_iterations=10,
         max_token_budget=50000,
@@ -1471,10 +1477,11 @@ async def test_agent_install_parity(db_session):
         name="rt_agent_install_golden",
         description="install parity agent",
         system_prompt="Install test system prompt.",
+        bundle_path="agents/rt-agent-install",
         channels=["chat", "email"],
         knowledge_sources=[],
-        system_tools=["execute_workflow"],
-        llm_profile_id=None,
+		system_tools=["bifrost_execute_workflow"],
+		llm_profile_id=None,
         llm_max_tokens=None,
         max_iterations=20,
         max_token_budget=None,
@@ -1579,8 +1586,8 @@ async def test_agent_to_orm_values_partition(db_session):
         system_prompt="Partition test prompt.",
         channels=["chat"],
         knowledge_sources=["kb_partition"],
-        system_tools=["execute_workflow"],
-        llm_profile_id=profile.id,
+		system_tools=["bifrost_execute_workflow"],
+		llm_profile_id=profile.id,
         llm_max_tokens=1024,
         max_iterations=5,
         max_token_budget=10000,

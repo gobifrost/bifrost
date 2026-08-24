@@ -24,7 +24,7 @@ class _FakeEmbedder:
 
 @pytest.mark.asyncio
 async def test_store_short_content_produces_one_row(db_session):
-    repo = KnowledgeRepository(db_session, org_id=None, is_superuser=True)
+    repo = KnowledgeRepository(db_session, org_id=None, bypass_resource_admission=True)
     embedder = _FakeEmbedder()
 
     await repo.store_chunked(
@@ -47,7 +47,7 @@ async def test_store_short_content_produces_one_row(db_session):
 
 @pytest.mark.asyncio
 async def test_store_long_content_produces_multiple_rows(db_session):
-    repo = KnowledgeRepository(db_session, org_id=None, is_superuser=True)
+    repo = KnowledgeRepository(db_session, org_id=None, bypass_resource_admission=True)
     embedder = _FakeEmbedder()
     long = ("Sentence number X. " * 500).strip()
 
@@ -76,7 +76,7 @@ async def test_store_long_content_produces_multiple_rows(db_session):
 
 @pytest.mark.asyncio
 async def test_store_replaces_existing_chunks_atomically(db_session):
-    repo = KnowledgeRepository(db_session, org_id=None, is_superuser=True)
+    repo = KnowledgeRepository(db_session, org_id=None, bypass_resource_admission=True)
     embedder = _FakeEmbedder()
     long_v1 = ("Version one. " * 500).strip()
     long_v2 = ("Version two. " * 500).strip()
@@ -99,7 +99,7 @@ async def test_store_replaces_existing_chunks_atomically(db_session):
 
 @pytest.mark.asyncio
 async def test_store_without_key_inserts_chunk_rows(db_session):
-    repo = KnowledgeRepository(db_session, org_id=None, is_superuser=True)
+    repo = KnowledgeRepository(db_session, org_id=None, bypass_resource_admission=True)
     embedder = _FakeEmbedder()
     long = ("Anonymous doc. " * 500).strip()
 
@@ -118,7 +118,7 @@ async def test_store_without_key_inserts_chunk_rows(db_session):
 
 @pytest.mark.asyncio
 async def test_search_dedups_by_key_by_default(db_session):
-    repo = KnowledgeRepository(db_session, org_id=None, is_superuser=True)
+    repo = KnowledgeRepository(db_session, org_id=None, bypass_resource_admission=True)
     embedder = _FakeEmbedder()
 
     long = ("Subject of interest. " * 500).strip()
@@ -145,7 +145,7 @@ async def test_search_dedups_by_key_by_default(db_session):
 
 @pytest.mark.asyncio
 async def test_search_group_by_key_false_returns_raw_chunks(db_session):
-    repo = KnowledgeRepository(db_session, org_id=None, is_superuser=True)
+    repo = KnowledgeRepository(db_session, org_id=None, bypass_resource_admission=True)
     embedder = _FakeEmbedder()
     long = ("Subject of interest. " * 500).strip()
     await repo.store_chunked(content=long, namespace="ns-raw", key="big", embedder=embedder)
@@ -164,7 +164,7 @@ async def test_search_group_by_key_false_returns_raw_chunks(db_session):
 
 @pytest.mark.asyncio
 async def test_search_metadata_filter_applies_to_chunks(db_session):
-    repo = KnowledgeRepository(db_session, org_id=None, is_superuser=True)
+    repo = KnowledgeRepository(db_session, org_id=None, bypass_resource_admission=True)
     embedder = _FakeEmbedder()
     long = ("Body text. " * 500).strip()
     await repo.store_chunked(
@@ -199,7 +199,7 @@ async def test_search_metadata_filter_applies_to_chunks(db_session):
 async def test_hybrid_search_recovers_exact_lexical_match_missed_by_vector_candidates(
     db_session,
 ):
-    repo = KnowledgeRepository(db_session, org_id=None, is_superuser=True)
+    repo = KnowledgeRepository(db_session, org_id=None, bypass_resource_admission=True)
 
     for index in range(21):
         db_session.add(

@@ -115,6 +115,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/authorization-targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the current person's selectable authorization contexts
+         * @description Bootstrap explicit Organization, Managed, and Global UI context.
+         *
+         *     This discovery response carries no authority. Every subsequent operation
+         *     sends one selected boundary and is re-evaluated from durable assignments.
+         */
+        get: operations["list_authorization_targets_auth_authorization_targets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/login": {
         parameters: {
             query?: never;
@@ -413,16 +436,17 @@ export interface paths {
         put?: never;
         /**
          * Admin Revoke User Sessions
-         * @description Revoke all refresh tokens for a specific user (admin only).
+         * @description Revoke all refresh tokens for a user in the selected boundary.
          *
          *     Allows platform administrators to forcibly log out a user from all
          *     devices. Useful for security incidents or account compromises.
          *
-         *     Requires platform admin (superuser) privileges.
+         *     Requires organization administration rights in the target user's exact
+         *     Organization or Platform boundary.
          *
          *     Args:
          *         revoke_data: Target user ID to revoke
-         *         current_user: Current authenticated user (must be admin)
+         *         authorization: Current capability and selected-boundary context
          *         db: Database session
          *
          *     Returns:
@@ -1276,13 +1300,13 @@ export interface paths {
          * List organizations
          * @description Get active organizations, optionally including inactive ones (Platform admin only)
          */
-        get: operations["list_organizations_api_organizations_get"];
+        get: operations["organizations.list"];
         put?: never;
         /**
          * Create a new organization
          * @description Create a new client organization (Platform admin only)
          */
-        post: operations["create_organization_api_organizations_post"];
+        post: operations["organizations.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1300,21 +1324,57 @@ export interface paths {
          * Get organization by ID
          * @description Get a specific organization by ID (Platform admin only)
          */
-        get: operations["get_organization_api_organizations__org_id__get"];
+        get: operations["organizations.get"];
         put?: never;
         post?: never;
         /**
          * Delete an organization
          * @description Soft delete an organization (sets is_active=False, Platform admin only)
          */
-        delete: operations["delete_organization_api_organizations__org_id__delete"];
+        delete: operations["organizations.delete"];
         options?: never;
         head?: never;
         /**
          * Update an organization
          * @description Update an existing organization (Platform admin only)
          */
-        patch: operations["update_organization_api_organizations__org_id__patch"];
+        patch: operations["organizations.update"];
+        trace?: never;
+    };
+    "/api/organization-groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Organization Groups */
+        get: operations["list_organization_groups_api_organization_groups_get"];
+        put?: never;
+        /** Create Organization Group */
+        post: operations["create_organization_group_api_organization_groups_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/organization-groups/{group_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Organization Group */
+        delete: operations["delete_organization_group_api_organization_groups__group_id__delete"];
+        options?: never;
+        head?: never;
+        /** Update Organization Group */
+        patch: operations["update_organization_group_api_organization_groups__group_id__patch"];
         trace?: never;
     };
     "/api/users": {
@@ -1328,13 +1388,13 @@ export interface paths {
          * List users
          * @description List all users with optional filtering by type and organization
          */
-        get: operations["list_users_api_users_get"];
+        get: operations["users.list"];
         put?: never;
         /**
          * Create user
-         * @description Create a new user proactively (Platform admin only)
+         * @description Create a new user in an authorized organization boundary
          */
-        post: operations["create_user_api_users_post"];
+        post: operations["users.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1358,7 +1418,7 @@ export interface paths {
          * Bulk user operation
          * @description Apply one operation (move_org, replace_roles, set_active) to a batch of users in a single transaction. Returns per-user pass/fail.
          */
-        patch: operations["bulk_update_users_api_users_bulk_patch"];
+        patch: operations["users.bulk_update"];
         trace?: never;
     };
     "/api/users/{user_id}/invite/resend": {
@@ -1374,7 +1434,7 @@ export interface paths {
          * Resend invite
          * @description Generate a fresh invite token and email it to the user.
          */
-        post: operations["resend_invite_api_users__user_id__invite_resend_post"];
+        post: operations["users.invites.resend"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1394,7 +1454,7 @@ export interface paths {
          * Send invite
          * @description Emit invite automation for an existing registration link without rotating the token.
          */
-        post: operations["send_invite_api_users__user_id__invite_send_post"];
+        post: operations["users.invites.send"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1414,7 +1474,7 @@ export interface paths {
          * Regenerate invite link
          * @description Generate a fresh invite token without sending an email; returns the URL.
          */
-        post: operations["regenerate_invite_api_users__user_id__invite_regenerate_post"];
+        post: operations["users.invites.regenerate"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1435,7 +1495,7 @@ export interface paths {
          * Revoke invite
          * @description Revoke any active invite for the user.
          */
-        delete: operations["revoke_invite_api_users__user_id__invite_delete"];
+        delete: operations["users.invites.revoke"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1450,23 +1510,23 @@ export interface paths {
         };
         /**
          * Get user details
-         * @description Get a specific user's details (Platform admin only)
+         * @description Get a user admitted by the active organization boundary
          */
-        get: operations["get_user_api_users__user_id__get"];
+        get: operations["users.get"];
         put?: never;
         post?: never;
         /**
          * Delete user
          * @description Delete a user from the system
          */
-        delete: operations["delete_user_api_users__user_id__delete"];
+        delete: operations["users.delete"];
         options?: never;
         head?: never;
         /**
          * Update user
          * @description Update user properties including role transitions
          */
-        patch: operations["update_user_api_users__user_id__patch"];
+        patch: operations["users.update"];
         trace?: never;
     };
     "/api/users/{user_id}/roles": {
@@ -1478,9 +1538,29 @@ export interface paths {
         };
         /**
          * Get user roles
-         * @description Get all roles assigned to a user
+         * @description Get all role IDs assigned to a user
          */
-        get: operations["get_user_roles_api_users__user_id__roles_get"];
+        get: operations["users.roles.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/users/{user_id}/role-assignments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get user role assignments
+         * @description Get all boundary-aware role assignments for a user
+         */
+        get: operations["get_user_role_assignments_api_users__user_id__role_assignments_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1500,7 +1580,7 @@ export interface paths {
          * Get user forms
          * @description Get all forms a user can access based on their roles
          */
-        get: operations["get_user_forms_api_users__user_id__forms_get"];
+        get: operations["users.forms.list"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1520,13 +1600,53 @@ export interface paths {
          * List all roles
          * @description Get all roles (Platform admin only)
          */
-        get: operations["list_roles_api_roles_get"];
+        get: operations["roles.list"];
         put?: never;
         /**
          * Create a role
          * @description Create a new role (Platform admin only)
          */
-        post: operations["create_role_api_roles_post"];
+        post: operations["roles.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/roles/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List authorization capabilities
+         * @description Get the code-owned authorization capability catalog
+         */
+        get: operations["list_authorization_capabilities_api_roles_capabilities_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/roles/scopes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List authorization capabilities (deprecated scopes alias)
+         * @description Deprecated compatibility alias for /api/roles/capabilities.
+         */
+        get: operations["list_authorization_scopes_api_roles_scopes_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1544,21 +1664,21 @@ export interface paths {
          * Get a role
          * @description Get a role by ID (Platform admin only)
          */
-        get: operations["get_role_api_roles__role_id__get"];
+        get: operations["roles.get"];
         put?: never;
         post?: never;
         /**
          * Delete a role
          * @description Delete a role (Platform admin only). CASCADE removes all role assignments.
          */
-        delete: operations["delete_role_api_roles__role_id__delete"];
+        delete: operations["roles.delete"];
         options?: never;
         head?: never;
         /**
          * Update a role
          * @description Update a role (Platform admin only)
          */
-        patch: operations["update_role_api_roles__role_id__patch"];
+        patch: operations["roles.update"];
         trace?: never;
     };
     "/api/roles/{role_id}/users": {
@@ -1572,18 +1692,18 @@ export interface paths {
          * Get role users
          * @description Get all users assigned to a role
          */
-        get: operations["get_role_users_api_roles__role_id__users_get"];
+        get: operations["roles.users.list"];
         put?: never;
         /**
          * Assign users to role
          * @description Assign users to a role (batch operation)
          */
-        post: operations["assign_users_to_role_api_roles__role_id__users_post"];
+        post: operations["roles.users.assign"];
         /**
          * Bulk unassign users from role
          * @description Bulk unassign N users from a role in one call. Pass the user UUIDs in the request body as {user_ids: [...]}. Unknown ids are silently skipped.
          */
-        delete: operations["bulk_unassign_users_api_roles__role_id__users_delete"];
+        delete: operations["roles.users.bulk_remove"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1603,7 +1723,7 @@ export interface paths {
          * Remove user from role
          * @description Remove a user from a role
          */
-        delete: operations["remove_user_from_role_api_roles__role_id__users__user_id__delete"];
+        delete: operations["roles.users.remove"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1620,18 +1740,18 @@ export interface paths {
          * Get role forms
          * @description Get all forms assigned to a role
          */
-        get: operations["get_role_forms_api_roles__role_id__forms_get"];
+        get: operations["roles.forms.list"];
         put?: never;
         /**
          * Assign forms to role
          * @description Assign forms to a role (batch operation)
          */
-        post: operations["assign_forms_to_role_api_roles__role_id__forms_post"];
+        post: operations["roles.forms.assign"];
         /**
          * Bulk unassign forms from role
          * @description Remove multiple forms from a role in one statement.
          */
-        delete: operations["bulk_unassign_forms_api_roles__role_id__forms_delete"];
+        delete: operations["roles.forms.bulk_remove"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1651,7 +1771,7 @@ export interface paths {
          * Remove form from role
          * @description Remove a form from a role
          */
-        delete: operations["remove_form_from_role_api_roles__role_id__forms__form_id__delete"];
+        delete: operations["roles.forms.remove"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1668,18 +1788,18 @@ export interface paths {
          * Get role agents
          * @description Get all agents assigned to a role
          */
-        get: operations["get_role_agents_api_roles__role_id__agents_get"];
+        get: operations["roles.agents.list"];
         put?: never;
         /**
          * Assign agents to role
          * @description Assign agents to a role (batch operation)
          */
-        post: operations["assign_agents_to_role_api_roles__role_id__agents_post"];
+        post: operations["roles.agents.assign"];
         /**
          * Bulk unassign agents from role
          * @description Remove multiple agents from a role in one statement.
          */
-        delete: operations["bulk_unassign_agents_api_roles__role_id__agents_delete"];
+        delete: operations["roles.agents.bulk_remove"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1699,7 +1819,7 @@ export interface paths {
          * Remove agent from role
          * @description Remove an agent from a role
          */
-        delete: operations["remove_agent_from_role_api_roles__role_id__agents__agent_id__delete"];
+        delete: operations["roles.agents.remove"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1713,12 +1833,12 @@ export interface paths {
             cookie?: never;
         };
         /** Get role apps */
-        get: operations["get_role_apps_api_roles__role_id__apps_get"];
+        get: operations["roles.apps.list"];
         put?: never;
         /** Assign apps to role */
-        post: operations["assign_apps_to_role_api_roles__role_id__apps_post"];
+        post: operations["roles.apps.assign"];
         /** Bulk unassign apps from role */
-        delete: operations["bulk_unassign_apps_api_roles__role_id__apps_delete"];
+        delete: operations["roles.apps.bulk_remove"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1732,12 +1852,12 @@ export interface paths {
             cookie?: never;
         };
         /** Get role workflows */
-        get: operations["get_role_workflows_api_roles__role_id__workflows_get"];
+        get: operations["roles.workflows.list"];
         put?: never;
         /** Assign workflows to role */
-        post: operations["assign_workflows_to_role_api_roles__role_id__workflows_post"];
+        post: operations["roles.workflows.assign"];
         /** Bulk unassign workflows from role */
-        delete: operations["bulk_unassign_workflows_api_roles__role_id__workflows_delete"];
+        delete: operations["roles.workflows.bulk_remove"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1751,12 +1871,12 @@ export interface paths {
             cookie?: never;
         };
         /** Get role knowledge-namespace assignments */
-        get: operations["get_role_knowledge_api_roles__role_id__knowledge_get"];
+        get: operations["roles.knowledge.list"];
         put?: never;
         /** Assign knowledge namespaces to role */
-        post: operations["assign_knowledge_to_role_api_roles__role_id__knowledge_post"];
+        post: operations["roles.knowledge.assign"];
         /** Bulk unassign knowledge namespaces from role */
-        delete: operations["bulk_unassign_knowledge_api_roles__role_id__knowledge_delete"];
+        delete: operations["roles.knowledge.bulk_remove"];
         options?: never;
         head?: never;
         patch?: never;
@@ -1773,7 +1893,7 @@ export interface paths {
          * List workflow executions
          * @description List workflow executions with filtering and pagination
          */
-        get: operations["list_executions_api_executions_get"];
+        get: operations["executions.list"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1813,7 +1933,7 @@ export interface paths {
          * Get execution details
          * @description Get detailed information about a specific execution
          */
-        get: operations["get_execution_api_executions__execution_id__get"];
+        get: operations["executions.get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1973,7 +2093,7 @@ export interface paths {
          * List all workflows
          * @description Returns metadata for all registered workflows in the system
          */
-        get: operations["list_workflows_api_workflows_get"];
+        get: operations["workflows.list"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2015,7 +2135,7 @@ export interface paths {
          * Execute a workflow, data provider, or script
          * @description Execute a workflow or data provider by ID. For data providers, returns options list in result field. Requires platform admin, API key, or access via form/app/integration.
          */
-        post: operations["execute_workflow_api_workflows_execute_post"];
+        post: operations["workflows.execute"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2055,7 +2175,7 @@ export interface paths {
          * Validate a workflow file
          * @description Validate a workflow file for syntax errors and decorator issues
          */
-        post: operations["validate_workflow_api_workflows_validate_post"];
+        post: operations["workflows.validate"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2075,7 +2195,7 @@ export interface paths {
          * Register a workflow function
          * @description Register a decorated function from an existing .py file as a workflow.
          */
-        post: operations["register_workflow_api_workflows_register_post"];
+        post: operations["workflows.register"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2089,21 +2209,25 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Get one workflow
+         * @description Return one workflow visible to the caller.
+         */
+        get: operations["workflows.get"];
         put?: never;
         post?: never;
         /**
          * Delete a workflow
          * @description Delete a workflow by removing its function from the source file. Returns 409 with deactivation details if the workflow has history or dependencies.
          */
-        delete: operations["delete_workflow_api_workflows__workflow_id__delete"];
+        delete: operations["workflows.delete"];
         options?: never;
         head?: never;
         /**
          * Update a workflow
          * @description Update editable workflow properties like organization scope (Platform admin only)
          */
-        patch: operations["update_workflow_api_workflows__workflow_id__patch"];
+        patch: operations["workflows.update"];
         trace?: never;
     };
     "/api/workflows/orphaned": {
@@ -2243,7 +2367,7 @@ export interface paths {
          * Assign roles to workflow
          * @description Assign roles to a workflow (batch operation, Platform admin only)
          */
-        post: operations["assign_roles_to_workflow_api_workflows__workflow_id__roles_post"];
+        post: operations["workflows.roles.grant"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2264,7 +2388,7 @@ export interface paths {
          * Remove role from workflow
          * @description Remove a role from a workflow (Platform admin only)
          */
-        delete: operations["remove_role_from_workflow_api_workflows__workflow_id__roles__role_id__delete"];
+        delete: operations["workflows.roles.revoke"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2281,13 +2405,13 @@ export interface paths {
          * List forms
          * @description List all forms visible to the user based on their permissions
          */
-        get: operations["list_forms_api_forms_get"];
+        get: operations["forms.list"];
         put?: never;
         /**
          * Create a new form
-         * @description Create a new form (Platform admin only)
+         * @description Create a new form in the selected authorized boundary
          */
-        post: operations["create_form_api_forms_post"];
+        post: operations["forms.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2392,21 +2516,21 @@ export interface paths {
          * Get form by ID
          * @description Get a specific form by ID. User must have access to the form.
          */
-        get: operations["get_form_api_forms__form_id__get"];
+        get: operations["forms.get"];
         put?: never;
         post?: never;
         /**
          * Delete a form
-         * @description Delete a form. Use ?purge=true to permanently remove it from the database (Platform admin only)
+         * @description Delete a form. Use ?purge=true to permanently remove it from the database.
          */
-        delete: operations["delete_form_api_forms__form_id__delete"];
+        delete: operations["forms.delete"];
         options?: never;
         head?: never;
         /**
          * Update a form
-         * @description Update an existing form (Platform admin only)
+         * @description Update an existing form in the selected authorized boundary
          */
-        patch: operations["update_form_api_forms__form_id__patch"];
+        patch: operations["forms.update"];
         trace?: never;
     };
     "/api/forms/{form_id}/submissions": {
@@ -2497,13 +2621,13 @@ export interface paths {
          * Get configuration values
          * @description Get configuration values for current scope (includes global configs)
          */
-        get: operations["get_config_api_config_get"];
+        get: operations["configs.list"];
         put?: never;
         /**
          * Set configuration value
          * @description Set a configuration value in the current scope
          */
-        post: operations["set_config_api_config_post"];
+        post: operations["configs.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2517,18 +2641,22 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Get a configuration value by ID
+         * @description Get a single configuration value by its UUID
+         */
+        get: operations["configs.get"];
         /**
          * Update configuration value by ID
          * @description Update an existing configuration value, including its organization scope
          */
-        put: operations["update_config_api_config__config_id__put"];
+        put: operations["configs.update"];
         post?: never;
         /**
          * Delete configuration value
          * @description Delete a configuration value by ID
          */
-        delete: operations["delete_config_api_config__config_id__delete"];
+        delete: operations["configs.delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2644,7 +2772,7 @@ export interface paths {
          *     ``solution`` (an install UUID) lists that install's deploy-owned solution
          *     tier — admins may SEE these; edits stay blocked (deploy-owned).
          */
-        get: operations["list_file_policies_api_files_policies_get"];
+        get: operations["files.policies.list"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2666,7 +2794,7 @@ export interface paths {
          * Test File Policy Access
          * @description Evaluate effective access for a path using the real file policy service.
          */
-        post: operations["test_file_policy_access_api_files_policies_test_post"];
+        post: operations["files.policies.test"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2688,7 +2816,7 @@ export interface paths {
          *     in a scope, so the explorer tree never orphans a file. Excludes reserved
          *     workspace/temp; flags uploads read-only. Omit `location` to discover shares.
          */
-        post: operations["list_file_structure_api_files_structure_post"];
+        post: operations["files.structure.list"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2708,14 +2836,14 @@ export interface paths {
          *
          *     ``solution`` reads the install's deploy-owned solution tier (read-only).
          */
-        get: operations["get_file_policy_api_files_policies__policy_path__get"];
+        get: operations["files.policies.get"];
         /**
          * Set File Policy
          * @description Create or replace the file policy for a location/path prefix.
          *
          *     Solution-tier rows (``solution`` set) are deploy-owned and refused (409).
          */
-        put: operations["set_file_policy_api_files_policies__policy_path__put"];
+        put: operations["files.policies.set"];
         post?: never;
         /**
          * Delete File Policy
@@ -2723,7 +2851,7 @@ export interface paths {
          *
          *     Solution-tier rows (``solution`` set) are deploy-owned and refused (409).
          */
-        delete: operations["delete_file_policy_api_files_policies__policy_path__delete"];
+        delete: operations["files.policies.delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -2742,7 +2870,7 @@ export interface paths {
          * Read File
          * @description Read a file from a managed or custom location.
          */
-        post: operations["read_file_api_files_read_post"];
+        post: operations["workspace.files.read"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2762,7 +2890,7 @@ export interface paths {
          * Write File
          * @description Write a file to a managed or custom location.
          */
-        post: operations["write_file_api_files_write_post"];
+        post: operations["workspace.files.write"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2782,7 +2910,7 @@ export interface paths {
          * Delete File
          * @description Delete a file from a managed or custom location.
          */
-        post: operations["delete_file_api_files_delete_post"];
+        post: operations["workspace.files.delete"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2802,7 +2930,7 @@ export interface paths {
          * List Files Simple
          * @description List files in a directory (simple SDK-focused endpoint).
          */
-        post: operations["list_files_simple_api_files_list_post"];
+        post: operations["workspace.files.list"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2822,7 +2950,7 @@ export interface paths {
          * File Exists
          * @description Check if a file exists.
          */
-        post: operations["file_exists_api_files_exists_post"];
+        post: operations["workspace.files.exists"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2842,7 +2970,27 @@ export interface paths {
          * File Stat
          * @description Return file metadata for guarded CLI workflows.
          */
-        post: operations["file_stat_api_files_stat_post"];
+        post: operations["workspace.files.stat"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/files/patch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Patch Workspace File
+         * @description Replace one unique text fragment in the global source workspace.
+         */
+        post: operations["workspace.files.patch"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2929,7 +3077,7 @@ export interface paths {
          *     Only returns regenerated .bifrost/*.yaml from DB state.
          *     Code file reconciliation is handled by git, not by this endpoint.
          */
-        post: operations["pull_files_api_files_pull_post"];
+        post: operations["workspace.files.pull"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2947,7 +3095,7 @@ export interface paths {
          * Get Manifest
          * @description Return regenerated manifest files from DB state.
          */
-        get: operations["get_manifest_api_files_manifest_get"];
+        get: operations["workspace.files.manifest"];
         put?: never;
         post?: never;
         delete?: never;
@@ -2969,7 +3117,7 @@ export interface paths {
          * Manage Watch Session
          * @description Register, heartbeat, or deregister a CLI watch session.
          */
-        post: operations["manage_watch_session_api_files_watch_post"];
+        post: operations["workspace.files.watch"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2987,7 +3135,7 @@ export interface paths {
          * List Active Watchers
          * @description List active CLI watch sessions.
          */
-        get: operations["list_active_watchers_api_files_watchers_get"];
+        get: operations["workspace.files.watchers"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3010,7 +3158,7 @@ export interface paths {
          *     Cloud mode only - used by browser editor.
          *     Lists directly from S3 via RepoStorage (source of truth).
          */
-        get: operations["list_files_editor_api_files_editor_get"];
+        get: operations["workspace.files.editor.list"];
         put?: never;
         post?: never;
         /**
@@ -3020,7 +3168,7 @@ export interface paths {
          *     Cloud mode only - used by browser editor.
          *     Uses S3 prefix listing to detect folders (no file_index markers needed).
          */
-        delete: operations["delete_file_editor_api_files_editor_delete"];
+        delete: operations["workspace.files.editor.delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -3039,14 +3187,14 @@ export interface paths {
          *
          *     Cloud mode only - used by browser editor.
          */
-        get: operations["get_file_content_editor_api_files_editor_content_get"];
+        get: operations["workspace.files.editor.read"];
         /**
          * Write file content (editor)
          * @description Write file content with conflict detection.
          *
          *     Cloud mode only - used by browser editor.
          */
-        put: operations["put_file_content_editor_api_files_editor_content_put"];
+        put: operations["workspace.files.editor.write"];
         post?: never;
         delete?: never;
         options?: never;
@@ -3069,7 +3217,7 @@ export interface paths {
          *
          *     Cloud mode only - used by browser editor.
          */
-        post: operations["create_folder_editor_api_files_editor_folder_post"];
+        post: operations["workspace.files.editor.folder.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3096,7 +3244,7 @@ export interface paths {
          *
          *     Cloud mode only - used by browser editor.
          */
-        post: operations["rename_file_editor_api_files_editor_rename_post"];
+        post: operations["workspace.files.editor.rename"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3118,7 +3266,7 @@ export interface paths {
          *
          *     Searches database directly - workflows, modules, forms, and agents.
          */
-        post: operations["search_file_contents_api_files_search_post"];
+        post: operations["workspace.files.search"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3834,7 +3982,7 @@ export interface paths {
             cookie?: never;
         };
         /** Get durable platform-job status */
-        get: operations["get_platform_job_status_api_platform_jobs__job_id__get"];
+        get: operations["platform.jobs.get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -3888,6 +4036,54 @@ export interface paths {
         get: operations["get_scheduler_task_history_api_platform_scheduler_tasks__task_id__runs_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/builder/runner": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Runner Setup
+         * @description Return masked configuration and live setup blockers.
+         */
+        get: operations["get_runner_setup_api_admin_builder_runner_get"];
+        /**
+         * Save Runner Setup
+         * @description Save encrypted provider settings; connection state is never client-set.
+         */
+        put: operations["save_runner_setup_api_admin_builder_runner_put"];
+        post?: never;
+        /**
+         * Delete Runner Setup
+         * @description Remove provider settings only while no sandbox work is active.
+         */
+        delete: operations["delete_runner_setup_api_admin_builder_runner_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/builder/runner/provision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Provision Runner
+         * @description Queue deployment and a real container self-test as one durable job.
+         */
+        post: operations["provision_runner_api_admin_builder_runner_provision_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4130,9 +4326,8 @@ export interface paths {
          * @description Get development context for CLI initialization.
          *
          *     Returns the authenticated user and their ``organization_id``-resolved
-         *     org. The optional ``org_id`` query parameter lets platform admins and
-         *     provider-org members target another org for the session — gated by
-         *     the same C2 rule the scope resolver applies elsewhere.
+         *     org. The optional ``org_id`` query parameter lets users with a role
+         *     assignment covering that organization target it for the session.
          */
         get: operations["get_dev_context_api_sdk_context_get"];
         put?: never;
@@ -4934,10 +5129,10 @@ export interface paths {
          * @description List tables via SDK.
          *
          *     Engine sentinel: the SDK has already resolved scope, so non-external
-         *     principals get is_superuser=True and we trust the org_uuid. The base
-         *     class handles the cascade (org + global) for us. EXTERNAL principals
-         *     do not inherit sentinel trust (OPEN-B) — they get the normal user
-         *     cascade (org + global table names/schemas; row data is policy-gated).
+         *     principals receive resource-admission bypass and we trust the org_uuid.
+         *     The base class handles the cascade (org + global) for us. EXTERNAL
+         *     principals do not inherit sentinel trust (OPEN-B) — they get the normal
+         *     user cascade (org + global table names/schemas; row data is policy-gated).
          */
         post: operations["cli_list_tables_api_sdk_tables_list_post"];
         delete?: never;
@@ -5333,28 +5528,15 @@ export interface paths {
         };
         /**
          * List Agents
-         * @description List agents the user has access to.
-         *
-         *     Organization filtering:
-         *     - Superusers with scope omitted: show all agents
-         *     - Superusers with scope='global': show only global agents
-         *     - Superusers with scope={uuid}: show that org's agents only
-         *     - Org users: always show their org's agents + global agents (scope ignored)
-         *
-         *     Access level filtering (applied after org filter):
-         *     - Platform admins see all agents
-         *     - Users see AUTHENTICATED agents + ROLE_BASED agents assigned to their roles
+         * @description List Agents visible in the explicitly selected authorization context.
          */
-        get: operations["list_agents_api_agents_get"];
+        get: operations["agents.list"];
         put?: never;
         /**
          * Create Agent
-         * @description Create a new agent.
-         *
-         *     Platform admins can create any agent type.
-         *     Regular users can only create private agents with tools they have access to.
+         * @description Create an Agent in the selected organization or Global workspace.
          */
-        post: operations["create_agent_api_agents_post"];
+        post: operations["agents.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -5410,11 +5592,7 @@ export interface paths {
         };
         /**
          * Get Fleet Stats Endpoint
-         * @description Fleet-wide agent run stats over the last ``window_days``.
-         *
-         *     Superusers see cross-org totals; org users are scoped to their org.
-         *     Route is registered before ``/{agent_id}`` so the literal ``stats``
-         *     prefix is not parsed as a UUID.
+         * @description Agent run stats for one selected organization.
          */
         get: operations["get_fleet_stats_endpoint_api_agents_stats_fleet_get"];
         put?: never;
@@ -5436,21 +5614,117 @@ export interface paths {
          * Get Agent
          * @description Get agent by ID.
          */
-        get: operations["get_agent_api_agents__agent_id__get"];
+        get: operations["agents.get"];
         /**
          * Update Agent
-         * @description Update an agent. Admins can update any agent. Users can update their own private agents.
+         * @description Update an Agent the caller can edit in the selected boundary.
          */
-        put: operations["update_agent_api_agents__agent_id__put"];
+        put: operations["agents.update"];
         post?: never;
         /**
          * Delete Agent
-         * @description Permanently delete an agent. Admins can delete any agent. Users can delete their own private agents.
-         *
-         *     System agents can be deleted - they will be recreated on next startup
-         *     if they are still defined in the system agent definitions.
+         * @description Permanently delete an Agent the caller can edit.
          */
-        delete: operations["delete_agent_api_agents__agent_id__delete"];
+        delete: operations["agents.delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agents/{agent_id}/skill": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Inspect an Agent's portable skill projection */
+        get: operations["get_agent_skill_api_agents__agent_id__skill_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agents/{agent_id}/skill/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one file from an Agent Skill bundle */
+        get: operations["get_agent_skill_file_api_agents__agent_id__skill_file_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agents/{agent_id}/skill/bundle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Upload or replace an Agent Skill bundle */
+        put: operations["upload_agent_skill_api_agents__agent_id__skill_bundle_put"];
+        post?: never;
+        /** Detach an uploaded bundle and return the Agent to inline instructions */
+        delete: operations["detach_agent_skill_api_agents__agent_id__skill_bundle_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agents/{agent_id}/skill/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download an Agent as a portable Agent Skill
+         * @description Stream ``SKILL.md`` plus companion bundle assets for an accessible Agent.
+         */
+        get: operations["download_agent_skill_api_agents__agent_id__skill_download_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/agents/{agent_id}/skill/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Export an Agent Skill as an opaque artifact reference
+         * @description Export the Skill as a stored artifact and return only its opaque ref.
+         *
+         *     The download route streams bytes to a browser; this one is for runtimes. It
+         *     persists the same deterministic archive and hands back an ``ArtifactRef``
+         *     (id, filename, content type, size) with no storage path, so a caller can
+         *     pass the Skill onward without ever learning an S3 key. Re-exporting
+         *     identical content produces identical bytes — the archive uses a fixed epoch
+         *     and sorted members — though each export is a distinct artifact.
+         */
+        post: operations["export_agent_skill_api_agents__agent_id__skill_export_post"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -6556,15 +6830,15 @@ export interface paths {
         };
         /**
          * List integrations
-         * @description List all integrations (Platform admin only)
+         * @description List all integrations for Platform admins; other active users see integrations mapped to their organization
          */
-        get: operations["list_integrations_api_integrations_get"];
+        get: operations["integrations.list"];
         put?: never;
         /**
          * Create integration
          * @description Create a new integration (Platform admin only)
          */
-        post: operations["create_integration_api_integrations_post"];
+        post: operations["integrations.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6582,18 +6856,18 @@ export interface paths {
          * Get integration by ID
          * @description Get a specific integration by ID with mappings and OAuth config (Platform admin only)
          */
-        get: operations["get_integration_api_integrations__integration_id__get"];
+        get: operations["integrations.get"];
         /**
          * Update integration
          * @description Update an existing integration (Platform admin only)
          */
-        put: operations["update_integration_api_integrations__integration_id__put"];
+        put: operations["integrations.update"];
         post?: never;
         /**
          * Delete integration
          * @description Soft delete an integration (Platform admin only)
          */
-        delete: operations["delete_integration_api_integrations__integration_id__delete"];
+        delete: operations["integrations.delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -6630,12 +6904,12 @@ export interface paths {
          * Get integration default config
          * @description Get default config values for an integration (Platform admin only)
          */
-        get: operations["get_integration_config_api_integrations__integration_id__config_get"];
+        get: operations["integrations.config.get"];
         /**
          * Update integration default config
          * @description Set default config values for an integration (Platform admin only)
          */
-        put: operations["update_integration_config_api_integrations__integration_id__config_put"];
+        put: operations["integrations.config.update"];
         post?: never;
         delete?: never;
         options?: never;
@@ -6652,15 +6926,15 @@ export interface paths {
         };
         /**
          * List mappings for integration
-         * @description List all mappings for a specific integration (Platform admin only)
+         * @description List mappings visible in the selected authorization boundary
          */
-        get: operations["list_mappings_api_integrations__integration_id__mappings_get"];
+        get: operations["integrations.mappings.list"];
         put?: never;
         /**
          * Create integration mapping
          * @description Create a new mapping between an integration and organization (Platform admin only)
          */
-        post: operations["create_mapping_api_integrations__integration_id__mappings_post"];
+        post: operations["integrations.mappings.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6676,20 +6950,20 @@ export interface paths {
         };
         /**
          * Get integration mapping
-         * @description Get a specific mapping by ID (Platform admin only)
+         * @description Get a mapping visible in the selected authorization boundary
          */
-        get: operations["get_mapping_api_integrations__integration_id__mappings__mapping_id__get"];
+        get: operations["integrations.mappings.get"];
         /**
          * Update integration mapping
          * @description Update an existing mapping (Platform admin only)
          */
-        put: operations["update_mapping_api_integrations__integration_id__mappings__mapping_id__put"];
+        put: operations["integrations.mappings.update"];
         post?: never;
         /**
          * Delete integration mapping
          * @description Delete an integration mapping (Platform admin only)
          */
-        delete: operations["delete_mapping_api_integrations__integration_id__mappings__mapping_id__delete"];
+        delete: operations["integrations.mappings.delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -6704,9 +6978,9 @@ export interface paths {
         };
         /**
          * Get mapping by organization
-         * @description Get the mapping for an integration in a specific organization (Platform admin only)
+         * @description Get an organization mapping in the selected authorization boundary
          */
-        get: operations["get_mapping_by_org_api_integrations__integration_id__mappings_by_org__org_id__get"];
+        get: operations["integrations.mappings.get_by_org"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6728,7 +7002,7 @@ export interface paths {
          * Batch upsert integration mappings
          * @description Create or update multiple mappings in a single request (Platform admin only)
          */
-        post: operations["batch_upsert_mappings_api_integrations__integration_id__mappings_batch_post"];
+        post: operations["integrations.mappings.batch"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6748,7 +7022,7 @@ export interface paths {
          * Begin OAuth authorize flow for a mapping
          * @description Returns the authorization URL with a signed state token carrying mapping_id (Platform admin only)
          */
-        post: operations["authorize_mapping_api_integrations__integration_id__mappings__mapping_id__oauth_authorize_post"];
+        post: operations["integrations.mappings.authorize"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6768,7 +7042,7 @@ export interface paths {
          * Disconnect a mapping's per-row OAuth connection
          * @description Deletes the mapping's OAuth token and clears oauth_token_id. Fallback to integration-level token resumes (Platform admin only).
          */
-        post: operations["disconnect_mapping_api_integrations__integration_id__mappings__mapping_id__oauth_disconnect_post"];
+        post: operations["integrations.mappings.disconnect"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6788,7 +7062,7 @@ export interface paths {
          * Refresh a mapping's per-row OAuth token
          * @description Proactively refresh the OAuth access token linked to this mapping. Uses the stored refresh token (authorization_code) or re-mints with client credentials (client_credentials). Updates token.status and token.last_refresh_at; provider.status is NOT touched (per-mapping tokens don't poison the integration-level fallback's health). Platform admin only.
          */
-        post: operations["refresh_mapping_oauth_api_integrations__integration_id__mappings__mapping_id__oauth_refresh_post"];
+        post: operations["integrations.mappings.refresh"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6806,7 +7080,7 @@ export interface paths {
          * Get OAuth provider config
          * @description Get the OAuth provider configuration for this integration (Platform admin only)
          */
-        get: operations["get_oauth_config_api_integrations__integration_id__oauth_get"];
+        get: operations["integrations.oauth.get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6826,7 +7100,7 @@ export interface paths {
          * Get OAuth authorization URL
          * @description Get the authorization URL for this integration's OAuth flow (Platform admin only)
          */
-        get: operations["get_oauth_authorization_url_api_integrations__integration_id__oauth_authorize_get"];
+        get: operations["integrations.oauth.authorize"];
         put?: never;
         post?: never;
         delete?: never;
@@ -6849,14 +7123,14 @@ export interface paths {
          * Clear entity_id_source on the integration's OAuth provider
          * @description Resets the provider's entity_id_source to NULL. Picker will reappear on next OAuth connect so the admin can pick a different source. When clear_mappings=true, also clears entity_id on every mapping under this integration so they re-capture on reconnect. Platform admin only.
          */
-        delete: operations["clear_entity_id_source_api_integrations__integration_id__oauth_entity_id_source_delete"];
+        delete: operations["integrations.oauth.entity_id_source.delete"];
         options?: never;
         head?: never;
         /**
          * Set entity_id_source on the integration's OAuth provider
          * @description Persists the admin's picker selection. Optionally backfills a specific mapping's entity_id (used when the picker fires inside the OAuth popup of a per-mapping connect). Platform admin only.
          */
-        patch: operations["set_entity_id_source_api_integrations__integration_id__oauth_entity_id_source_patch"];
+        patch: operations["integrations.oauth.entity_id_source.update"];
         trace?: never;
     };
     "/api/integrations/{integration_id}/test": {
@@ -6872,7 +7146,7 @@ export interface paths {
          * Test integration connection
          * @description Test connectivity to an integration by making a GET request to the specified endpoint (Platform admin only)
          */
-        post: operations["test_integration_connection_api_integrations__integration_id__test_post"];
+        post: operations["integrations.test"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6892,7 +7166,7 @@ export interface paths {
          * Generate SDK from OpenAPI spec
          * @description Generate a Python SDK module from an OpenAPI specification (Platform admin only)
          */
-        post: operations["generate_sdk_api_integrations__integration_id__generate_sdk_post"];
+        post: operations["integrations.generate_sdk"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7090,15 +7364,12 @@ export interface paths {
          * @description Get current ROI settings.
          *
          *     Returns current settings or defaults if not configured.
-         *     Requires platform admin access.
          */
         get: operations["get_roi_settings_api_admin_roi_settings_get"];
         put?: never;
         /**
          * Update Roi Settings
          * @description Update ROI settings.
-         *
-         *     Requires platform admin access.
          */
         post: operations["update_roi_settings_api_admin_roi_settings_post"];
         delete?: never;
@@ -7116,7 +7387,7 @@ export interface paths {
         };
         /**
          * Get ROI summary
-         * @description Get overall ROI summary for a date range. Platform admin only.
+         * @description Get overall ROI summary for a date range.
          */
         get: operations["get_roi_summary_api_reports_roi_summary_get"];
         put?: never;
@@ -7136,7 +7407,7 @@ export interface paths {
         };
         /**
          * Get ROI by workflow
-         * @description Get workflow breakdown of ROI for a date range. Platform admin only.
+         * @description Get workflow breakdown of ROI for a date range.
          */
         get: operations["get_roi_by_workflow_api_reports_roi_by_workflow_get"];
         put?: never;
@@ -7156,7 +7427,7 @@ export interface paths {
         };
         /**
          * Get ROI by organization
-         * @description Get organization breakdown of ROI for a date range. Platform admin only.
+         * @description Get organization breakdown of ROI for a date range.
          */
         get: operations["get_roi_by_organization_api_reports_roi_by_organization_get"];
         put?: never;
@@ -7176,7 +7447,7 @@ export interface paths {
         };
         /**
          * Get ROI trends
-         * @description Get ROI trends over time. Platform admin only.
+         * @description Get ROI trends over time.
          */
         get: operations["get_roi_trends_api_reports_roi_trends_get"];
         put?: never;
@@ -7196,12 +7467,76 @@ export interface paths {
         };
         /**
          * Get usage report
-         * @description Get AI usage report for a date range. Platform admin only.
+         * @description Get AI usage report for a date range in the selected Platform or Organization boundary.
          */
         get: operations["get_usage_report_api_reports_usage_get"];
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/ai/usage-limits": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Usage Limits
+         * @description List usage-limit policies inside the selected exact boundary.
+         */
+        get: operations["list_usage_limits_api_settings_ai_usage_limits_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/ai/usage-limits/effective/{scope}/{target_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Effective Usage Limits
+         * @description Read effective per-run and aggregate usage-limit diagnostics.
+         */
+        get: operations["get_effective_usage_limits_api_settings_ai_usage_limits_effective__scope___target_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/settings/ai/usage-limits/{scope}/{target_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Upsert Usage Limit
+         * @description Create or replace a usage-limit policy.
+         */
+        put: operations["upsert_usage_limit_api_settings_ai_usage_limits__scope___target_id__put"];
+        post?: never;
+        /**
+         * Remove Usage Limit
+         * @description Delete a usage-limit policy if it exists.
+         */
+        delete: operations["remove_usage_limit_api_settings_ai_usage_limits__scope___target_id__delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -7497,10 +7832,30 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Execute Gateway Tool
-         * @description Re-resolve, validate, and execute an agent-bound tool.
+         * Execute Gateway Agent Tool
+         * @description Canonical agent-bound gateway execution route.
          */
-        post: operations["execute_gateway_tool_api_mcp_gateway_agents__agent_id__tools__tool_ref__execute_post"];
+        post: operations["execute_gateway_agent_tool_api_mcp_gateway_agents__agent_id__tools__tool_ref__execute_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/gateway/builder-sessions/{builder_session_id}/tools/{tool_ref}/execute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Execute Gateway Builder Session Tool
+         * @description Canonical builder-session-bound gateway execution route.
+         */
+        post: operations["execute_gateway_builder_session_tool_api_mcp_gateway_builder_sessions__builder_session_id__tools__tool_ref__execute_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7645,7 +8000,7 @@ export interface paths {
          * List available webhook adapters
          * @description List all available webhook adapters and their configuration schemas (Platform admin only).
          */
-        get: operations["list_adapters_api_events_adapters_get"];
+        get: operations["events.webhook_adapters.list"];
         put?: never;
         post?: never;
         delete?: never;
@@ -7685,13 +8040,13 @@ export interface paths {
          * List event sources
          * @description List all event sources (Platform admin only).
          */
-        get: operations["list_sources_api_events_sources_get"];
+        get: operations["events.sources.list"];
         put?: never;
         /**
          * Create event source
          * @description Create a new event source (Platform admin only).
          */
-        post: operations["create_source_api_events_sources_post"];
+        post: operations["events.sources.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7709,21 +8064,21 @@ export interface paths {
          * Get event source
          * @description Get a specific event source by ID (Platform admin only).
          */
-        get: operations["get_source_api_events_sources__source_id__get"];
+        get: operations["events.sources.get"];
         put?: never;
         post?: never;
         /**
          * Delete event source
          * @description Permanently delete an event source and all its subscriptions, events, and deliveries (Platform admin only).
          */
-        delete: operations["delete_source_api_events_sources__source_id__delete"];
+        delete: operations["events.sources.delete"];
         options?: never;
         head?: never;
         /**
          * Update event source
          * @description Update an event source (Platform admin only).
          */
-        patch: operations["update_source_api_events_sources__source_id__patch"];
+        patch: operations["events.sources.update"];
         trace?: never;
     };
     "/api/events/sources/{source_id}/subscriptions": {
@@ -7737,13 +8092,13 @@ export interface paths {
          * List subscriptions
          * @description List subscriptions for an event source (Platform admin only).
          */
-        get: operations["list_subscriptions_api_events_sources__source_id__subscriptions_get"];
+        get: operations["events.subscriptions.list"];
         put?: never;
         /**
          * Create subscription
          * @description Create a subscription to an event source (Platform admin only).
          */
-        post: operations["create_subscription_api_events_sources__source_id__subscriptions_post"];
+        post: operations["events.subscriptions.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7757,21 +8112,25 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Get subscription
+         * @description Get one subscription for an event source (Platform admin only).
+         */
+        get: operations["events.subscriptions.get"];
         put?: never;
         post?: never;
         /**
          * Delete subscription
          * @description Permanently delete an event subscription (Platform admin only).
          */
-        delete: operations["delete_subscription_api_events_sources__source_id__subscriptions__subscription_id__delete"];
+        delete: operations["events.subscriptions.delete"];
         options?: never;
         head?: never;
         /**
          * Update subscription
          * @description Update an event subscription (Platform admin only).
          */
-        patch: operations["update_subscription_api_events_sources__source_id__subscriptions__subscription_id__patch"];
+        patch: operations["events.subscriptions.update"];
         trace?: never;
     };
     "/api/events/sources/{source_id}/events": {
@@ -7927,15 +8286,15 @@ export interface paths {
         };
         /**
          * List tables
-         * @description List all tables in the current scope (platform admin only).
+         * @description List Tables visible in the explicitly selected context.
          */
-        get: operations["list_tables_api_tables_get"];
+        get: operations["tables.list"];
         put?: never;
         /**
          * Create a table
-         * @description Create a new table for storing documents (platform admin only).
+         * @description Create a new table in the selected authorized boundary.
          */
-        post: operations["create_table_api_tables_post"];
+        post: operations["tables.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7971,26 +8330,26 @@ export interface paths {
         };
         /**
          * Get table metadata
-         * @description Get table metadata by UUID (platform admin only).
+         * @description Get table metadata admitted in the selected boundary.
          */
-        get: operations["get_table_api_tables__table_id__get"];
+        get: operations["tables.get"];
         put?: never;
         post?: never;
         /**
          * Delete table
-         * @description Delete a table and all its documents by ID (platform admin only).
+         * @description Delete a table and its documents in the selected boundary.
          */
-        delete: operations["delete_table_api_tables__table_id__delete"];
+        delete: operations["tables.delete"];
         options?: never;
         head?: never;
         /**
          * Update table
-         * @description Update table metadata by ID (platform admin only).
+         * @description Update table metadata in the selected authorized boundary.
          *
          *     Solution-managed tables are read-only here: deploy owns schema + policies.
          *     Row DATA (documents) stays editable — that's runtime state (criterion 7).
          */
-        patch: operations["update_table_api_tables__table_id__patch"];
+        patch: operations["tables.update"];
         trace?: never;
     };
     "/api/tables/{table_id}/documents": {
@@ -8181,14 +8540,14 @@ export interface paths {
          * List custom claims
          * @description List custom claims.
          *
-         *     Platform admins see claims across every org by default — the
-         *     organization column lets them filter in the UI. Non-superusers don't
-         *     reach this endpoint (gated by ``CurrentSuperuser``).
+         *     Exact Organization reads stay in that organization. Managed organizations
+         *     may list customer claims across the support catalog or narrow to one
+         *     customer. Platform has no loose Global Custom Claims.
          */
-        get: operations["list_claims_api_claims_get"];
+        get: operations["claims.list"];
         put?: never;
         /** Create a custom claim (admin only) */
-        post: operations["create_claim_api_claims_post"];
+        post: operations["claims.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8203,15 +8562,15 @@ export interface paths {
             cookie?: never;
         };
         /** Get a custom claim by name */
-        get: operations["get_claim_api_claims__name__get"];
+        get: operations["claims.get"];
         put?: never;
         post?: never;
         /** Delete a custom claim (admin only) */
-        delete: operations["delete_claim_api_claims__name__delete"];
+        delete: operations["claims.delete"];
         options?: never;
         head?: never;
         /** Update a custom claim (admin only) */
-        patch: operations["update_claim_api_claims__name__patch"];
+        patch: operations["claims.update"];
         trace?: never;
     };
     "/api/solutions": {
@@ -8221,11 +8580,11 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List Solution installs (admin only) */
-        get: operations["list_solutions_api_solutions_get"];
+        /** List Solution installs */
+        get: operations["solutions.list"];
         put?: never;
-        /** Create a Solution install (admin only) */
-        post: operations["create_solution_api_solutions_post"];
+        /** Create a Solution install */
+        post: operations["solutions.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8239,8 +8598,8 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Get a Solution install (admin only) */
-        get: operations["get_solution_api_solutions__solution_id__get"];
+        /** Get a Solution install */
+        get: operations["solutions.get"];
         put?: never;
         post?: never;
         /**
@@ -8262,7 +8621,7 @@ export interface paths {
          *     To uninstall non-destructively (freeze data, flip status only), use:
          *     ``POST /{id}/uninstall``.
          */
-        delete: operations["delete_solution_api_solutions__solution_id__delete"];
+        delete: operations["solutions.delete"];
         options?: never;
         head?: never;
         /**
@@ -8281,7 +8640,7 @@ export interface paths {
          *     operator re-enters the values in the new scope. (The 5 entity tables above
          *     ARE re-homed because they carry ``solution_id`` and are owned by the bundle.)
          */
-        patch: operations["update_solution_api_solutions__solution_id__patch"];
+        patch: operations["solutions.update"];
         trace?: never;
     };
     "/api/solutions/{solution_id}/logo": {
@@ -8385,7 +8744,7 @@ export interface paths {
          *     ``include_data`` controls table row data. A password is required whenever a
          *     backup payload is requested.
          */
-        post: operations["export_solution_api_solutions__solution_id__export_post"];
+        post: operations["solutions.export"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8575,7 +8934,7 @@ export interface paths {
         get?: never;
         put?: never;
         /** Enqueue a deploy to an install (async, full replace, admin only) */
-        post: operations["deploy_solution_api_solutions__solution_id__deploy_post"];
+        post: operations["solutions.deploy"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8616,7 +8975,7 @@ export interface paths {
          *     clusters into a Solution. It stamps compatible loose entities with
          *     ``solution_id`` and stores an export zip containing the captured definitions.
          */
-        post: operations["capture_solution_entities_api_solutions__solution_id__capture_post"];
+        post: operations["solutions.capture"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8665,7 +9024,7 @@ export interface paths {
          *     writer for a connected install — the deploy endpoint is refused for it. For a
          *     disconnected install there is nothing to pull, so this is refused in turn.
          */
-        post: operations["sync_solution_api_solutions__solution_id__sync_post"];
+        post: operations["solutions.sync"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8787,7 +9146,521 @@ export interface paths {
          *     pass ``?reactivate=true`` or delete the install first — so it must refuse on
          *     the request itself, before a job row exists.
          */
-        post: operations["install_solution_api_solutions_install_post"];
+        post: operations["solutions.install"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/targets": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List the Builder boundaries available to the current person
+         * @description Discover selectable boundaries before the client chooses one.
+         *
+         *     This endpoint returns only boundaries backed by a covering Role assignment.
+         *     Every subsequent create, tool call, and turn rechecks the selected exact
+         *     boundary; discovery is never accepted as execution authority.
+         */
+        get: operations["list_builder_targets_api_builder_solutions_targets_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the caller's own private builder Solutions */
+        get: operations["list_solutions_api_builder_solutions_get"];
+        put?: never;
+        /** Create a private builder Solution owned by the caller */
+        post: operations["create_solution_api_builder_solutions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/global-workspace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get the administrator global workspace state */
+        get: operations["get_global_workspace_api_builder_solutions_global_workspace_get"];
+        put?: never;
+        /** Create or open the administrator global workspace */
+        post: operations["create_global_workspace_api_builder_solutions_global_workspace_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/global-workspace/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Refresh the proposal baseline from live _repo */
+        post: operations["refresh_global_workspace_route_api_builder_solutions_global_workspace_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/global-workspace/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Validate the current global workspace proposal without executing it */
+        post: operations["validate_global_workspace_route_api_builder_solutions_global_workspace_validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/global-workspace/operations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List staged Global operation changes for human review */
+        get: operations["list_global_workspace_operations_api_builder_solutions_global_workspace_operations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/global-workspace/operations/{change_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Discard one staged Global operation change */
+        delete: operations["discard_global_workspace_operation_api_builder_solutions_global_workspace_operations__change_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/global-workspace/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Queue the reviewed global workspace release */
+        post: operations["apply_global_workspace_route_api_builder_solutions_global_workspace_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/global-workspace/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Queue rollback of the latest global workspace release */
+        post: operations["rollback_global_workspace_route_api_builder_solutions_global_workspace_rollback_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/{solution_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one authorized private Builder Solution */
+        get: operations["get_solution_api_builder_solutions__solution_id__get"];
+        put?: never;
+        post?: never;
+        /** Delete a private builder Solution and everything it owns (owner only) */
+        delete: operations["delete_solution_api_builder_solutions__solution_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/{solution_id}/collaborators": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List explicit collaborators on a private Builder Solution */
+        get: operations["get_collaborators_api_builder_solutions__solution_id__collaborators_get"];
+        /** Invite or update one Builder collaborator */
+        put: operations["put_collaborator_api_builder_solutions__solution_id__collaborators_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/{solution_id}/collaborators/{collaborator_user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove one Builder collaborator */
+        delete: operations["delete_collaborator_api_builder_solutions__solution_id__collaborators__collaborator_user_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/{solution_id}/role-grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Role grants on a private Builder Solution */
+        get: operations["get_solution_role_grants_api_builder_solutions__solution_id__role_grants_get"];
+        /** Create or update one Role grant on a private Builder Solution */
+        put: operations["put_solution_role_grant_api_builder_solutions__solution_id__role_grants_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/{solution_id}/role-grants/{role_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove one Role grant from a private Builder Solution */
+        delete: operations["delete_solution_role_grant_api_builder_solutions__solution_id__role_grants__role_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/{solution_id}/promotion-request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Ask a platform administrator to promote this Solution */
+        post: operations["create_promotion_request_api_builder_solutions__solution_id__promotion_request_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/{solution_id}/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List the caller's builder chat sessions for this Solution */
+        get: operations["list_sessions_api_builder_solutions__solution_id__sessions_get"];
+        put?: never;
+        /** Open an attributable Builder chat session for this Solution */
+        post: operations["create_session_api_builder_solutions__solution_id__sessions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/{solution_id}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List this Solution's source revisions, newest first */
+        get: operations["list_revisions_api_builder_solutions__solution_id__revisions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/{solution_id}/revisions/{revision_id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download one authorized source revision as a zip */
+        get: operations["download_revision_api_builder_solutions__solution_id__revisions__revision_id__download_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/{solution_id}/revisions/{revision_id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List files in one immutable source revision */
+        get: operations["get_revision_files_api_builder_solutions__solution_id__revisions__revision_id__files_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/{solution_id}/revisions/{revision_id}/file": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read one bounded text file from a source revision */
+        get: operations["get_revision_file_api_builder_solutions__solution_id__revisions__revision_id__file_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/{solution_id}/revisions/{revision_id}/diff": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Diff one source revision against its parent or another revision */
+        get: operations["get_revision_diff_api_builder_solutions__solution_id__revisions__revision_id__diff_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/{solution_id}/undo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore an earlier revision as a new revision (owner only) */
+        post: operations["undo_to_revision_api_builder_solutions__solution_id__undo_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/{solution_id}/turns": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List this Solution's builder turns, newest first */
+        get: operations["list_turns_api_builder_solutions__solution_id__turns_get"];
+        put?: never;
+        /**
+         * Queue one durable builder agent turn (owner only)
+         * @description Persist the message and queue an isolated Builder turn.
+         *
+         *     The response returns as soon as the durable PlatformJob exists. Progress,
+         *     completion, and restored conversation state arrive through the shared
+         *     PlatformJob notification transport.
+         */
+        post: operations["run_turn_api_builder_solutions__solution_id__turns_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/{solution_id}/build-jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one owner-scoped builder build job */
+        get: operations["get_build_job_api_builder_solutions__solution_id__build_jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/{solution_id}/deploy-jobs/{job_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get one owner-scoped builder deploy job */
+        get: operations["get_deploy_job_api_builder_solutions__solution_id__deploy_jobs__job_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/solution-promotions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Reviews */
+        get: operations["list_reviews_api_solution_promotions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/solution-promotions/{solution_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Review */
+        get: operations["get_review_api_solution_promotions__solution_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/solution-promotions/{solution_id}/promote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Promote */
+        post: operations["promote_api_solution_promotions__solution_id__promote_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/builder/solutions/{solution_id}/apps/{app_id}/launch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create a one-time launch URL for an isolated Solution app */
+        post: operations["create_launch_api_builder_solutions__solution_id__apps__app_id__launch_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8805,7 +9678,7 @@ export interface paths {
          * List Namespaces
          * @description List knowledge namespaces derived from knowledge_store.
          */
-        get: operations["list_namespaces_api_knowledge_sources_get"];
+        get: operations["knowledge.namespaces.list"];
         put?: never;
         post?: never;
         delete?: never;
@@ -8874,7 +9747,7 @@ export interface paths {
          *     - "global": show only global documents (organization_id IS NULL)
          *     - UUID string: show only that org's documents (no global fallback)
          */
-        get: operations["list_all_documents_api_knowledge_sources_documents_get"];
+        get: operations["knowledge.documents.list"];
         put?: never;
         post?: never;
         delete?: never;
@@ -8898,7 +9771,7 @@ export interface paths {
         head?: never;
         /**
          * Bulk Update Document Scope
-         * @description Bulk update scope for multiple documents. Superuser only.
+         * @description Bulk update scope for multiple documents.
          *
          *     When replace=true in the request body, conflicting documents in the
          *     target scope are deleted before moving.
@@ -8923,7 +9796,7 @@ export interface paths {
          * Create Document
          * @description Create a document in a namespace with embedding.
          */
-        post: operations["create_document_api_knowledge_sources__namespace__documents_post"];
+        post: operations["knowledge.documents.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -8941,7 +9814,7 @@ export interface paths {
          * Get Document
          * @description Get a document by UUID.
          */
-        get: operations["get_document_api_knowledge_sources__namespace__documents__doc_id__get"];
+        get: operations["knowledge.documents.get"];
         /**
          * Update Document
          * @description Update a document and re-embed. Optionally change scope.
@@ -8960,13 +9833,13 @@ export interface paths {
          *     document already holding the same identity in the target scope 409s
          *     unless ``replace=true``.
          */
-        put: operations["update_document_api_knowledge_sources__namespace__documents__doc_id__put"];
+        put: operations["knowledge.documents.update"];
         post?: never;
         /**
          * Delete Document
          * @description Delete a document — every chunk row of it, not just the addressed row.
          */
-        delete: operations["delete_document_api_knowledge_sources__namespace__documents__doc_id__delete"];
+        delete: operations["knowledge.documents.delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -8987,6 +9860,26 @@ export interface paths {
          * @description Delete all documents in a namespace.
          */
         delete: operations["delete_namespace_api_knowledge_sources__namespace__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/knowledge/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hybrid-search knowledge documents
+         * @description Search direct scope or an accessible Agent's trusted knowledge boundary.
+         */
+        post: operations["knowledge.search"];
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -9039,13 +9932,13 @@ export interface paths {
          * List applications
          * @description List all applications in the current scope.
          */
-        get: operations["list_applications_api_applications_get"];
+        get: operations["apps.list"];
         put?: never;
         /**
          * Create an application
          * @description Create a new application.
          */
-        post: operations["create_application_api_applications_post"];
+        post: operations["apps.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9063,9 +9956,29 @@ export interface paths {
          * Get application metadata
          * @description Get application metadata by slug (globally unique).
          */
-        get: operations["get_application_api_applications__slug__get"];
+        get: operations["apps.get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/applications/{app_id}/isolated-launch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a one-time launch for an isolated application
+         * @description Hand an authorized platform user into the app's opaque runtime.
+         */
+        post: operations["create_isolated_application_launch_api_applications__app_id__isolated_launch_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9086,14 +9999,14 @@ export interface paths {
          * Delete application
          * @description Delete an application by ID.
          */
-        delete: operations["delete_application_api_applications__app_id__delete"];
+        delete: operations["apps.delete"];
         options?: never;
         head?: never;
         /**
          * Update application metadata
          * @description Update application metadata and access control by ID.
          */
-        patch: operations["update_application_api_applications__app_id__patch"];
+        patch: operations["apps.update"];
         trace?: never;
     };
     "/api/applications/{app_id}/draft": {
@@ -9144,7 +10057,7 @@ export interface paths {
          *     request while the same app is queued or running returns the existing
          *     operation instead of launching a conflicting publish.
          */
-        post: operations["publish_application_api_applications__app_id__publish_post"];
+        post: operations["apps.publish"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9167,7 +10080,7 @@ export interface paths {
          *     Validates that the new path is unique, non-nested with other apps, and has
          *     source files under it. ``force: true`` bypasses all three checks.
          */
-        post: operations["replace_application_endpoint_api_applications__app_id__replace_post"];
+        post: operations["apps.replace"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9215,7 +10128,7 @@ export interface paths {
          *     Checks for: unknown components, workflow ID format/existence,
          *     bad imports, forbidden patterns, required file structure.
          */
-        post: operations["validate_application_api_applications__app_id__validate_post"];
+        post: operations["apps.validate"];
         delete?: never;
         options?: never;
         head?: never;
@@ -9463,14 +10376,14 @@ export interface paths {
          * Get app dependencies
          * @description Return the app's npm dependencies.
          */
-        get: operations["get_dependencies_api_applications__app_id__dependencies_get"];
+        get: operations["apps.dependencies.get"];
         /**
          * Update app dependencies
          * @description Replace the app's npm dependencies.
          *
          *     Validates every package name and version, enforces the max-dependency limit.
          */
-        put: operations["put_dependencies_api_applications__app_id__dependencies_put"];
+        put: operations["apps.dependencies.update"];
         post?: never;
         delete?: never;
         options?: never;
@@ -9502,7 +10415,8 @@ export interface paths {
          *     - Agents USE workflows (via tools)
          *     - Workflows are USED BY forms, apps, and agents
          *
-         *     Platform admin only.
+         *     The selected boundary must contain the root entity. The returned graph is
+         *     limited to that entity's scope plus inherited Platform dependencies.
          */
         get: operations["get_dependency_graph_api_dependencies__entity_type___entity_id__get"];
         put?: never;
@@ -10352,15 +11266,15 @@ export interface paths {
         };
         /**
          * List policy rules
-         * @description List policy rules visible to the caller's scope.
+         * @description List policy rules visible in the selected boundary.
          */
-        get: operations["list_policy_rules_api_policy_rules_get"];
+        get: operations["policy.rules.list"];
         put?: never;
         /**
          * Create a named policy rule
-         * @description Create a new (name, domain) policy rule in the caller's org (or global when no org).
+         * @description Create a policy rule in the caller's selected boundary.
          */
-        post: operations["create_policy_rule_api_policy_rules_post"];
+        post: operations["policy.rules.create"];
         delete?: never;
         options?: never;
         head?: never;
@@ -10374,18 +11288,22 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Get a named policy rule
+         * @description Get one policy rule by domain and name.
+         */
+        get: operations["policy.rules.get"];
         /**
          * Update a named policy rule
          * @description Update an existing policy rule.
          */
-        put: operations["update_policy_rule_api_policy_rules__domain___name__put"];
+        put: operations["policy.rules.update"];
         post?: never;
         /**
          * Delete a named policy rule
          * @description Delete a policy rule. Fails with 409 if the rule is in use or read-only.
          */
-        delete: operations["delete_policy_rule_api_policy_rules__domain___name__delete"];
+        delete: operations["policy.rules.delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -10402,7 +11320,7 @@ export interface paths {
          * Get usages of a named policy rule
          * @description Return all file-policies and tables that reference this rule.
          */
-        get: operations["get_policy_rule_usages_api_policy_rules__domain___name__usages_get"];
+        get: operations["policy.rules.list_usages"];
         put?: never;
         post?: never;
         delete?: never;
@@ -10457,7 +11375,7 @@ export interface components {
              * Assignment Key
              * @enum {string}
              */
-            assignment_key: "primary" | "summarization" | "tuning" | "image_generation" | "video_generation" | "chat_default";
+            assignment_key: "primary" | "summarization" | "tuning" | "image_generation" | "video_generation" | "chat_default" | "builder";
             /**
              * Profile Id
              * Format: uuid
@@ -10698,7 +11616,7 @@ export interface components {
             /** Reassigned Agent Count */
             reassigned_agent_count: number;
             /** Reassigned Assignment Keys */
-            reassigned_assignment_keys: ("primary" | "summarization" | "tuning" | "image_generation" | "video_generation" | "chat_default")[];
+            reassigned_assignment_keys: ("primary" | "summarization" | "tuning" | "image_generation" | "video_generation" | "chat_default" | "builder")[];
         };
         /** AIModelProfileResponse */
         AIModelProfileResponse: {
@@ -10721,7 +11639,7 @@ export interface components {
             enabled_for_chat: boolean;
             connection: components["schemas"]["AIProviderConnectionSummary"];
             /** Assignment Keys */
-            assignment_keys?: ("primary" | "summarization" | "tuning" | "image_generation" | "video_generation" | "chat_default")[];
+            assignment_keys?: ("primary" | "summarization" | "tuning" | "image_generation" | "video_generation" | "chat_default" | "builder")[];
             /**
              * Referenced Agent Count
              * @default 0
@@ -11006,6 +11924,8 @@ export interface components {
             description?: string | null;
             /** System Prompt */
             system_prompt: string;
+            /** Bundle Path */
+            bundle_path?: string | null;
             /** Channels */
             channels?: components["schemas"]["AgentChannel"][];
             /** @default role_based */
@@ -11095,6 +12015,8 @@ export interface components {
             description?: string | null;
             /** System Prompt */
             system_prompt: string;
+            /** Bundle Path */
+            bundle_path?: string | null;
             /** Channels */
             channels: string[];
             access_level?: components["schemas"]["AgentAccessLevel"] | null;
@@ -11463,6 +12385,53 @@ export interface components {
              */
             created_at: string;
         };
+        /**
+         * AgentSkillFilePublic
+         * @description One browser-readable file from an Agent Skill bundle.
+         */
+        AgentSkillFilePublic: {
+            /** Path */
+            path: string;
+            /**
+             * Encoding
+             * @enum {string}
+             */
+            encoding: "utf-8" | "base64";
+            /** Content */
+            content: string;
+        };
+        /**
+         * AgentSkillPublic
+         * @description Canonical Skill projection and companion-file inventory for an Agent.
+         */
+        AgentSkillPublic: {
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Revision */
+            revision: string;
+            /** Bundle Path */
+            bundle_path?: string | null;
+            /** Skill Markdown */
+            skill_markdown: string;
+            /** Files */
+            files?: string[];
+            /** Companion Files */
+            companion_files?: string[];
+            /** Automatic Capabilities */
+            automatic_capabilities?: string[];
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "inline" | "upload" | "solution";
+            /**
+             * Is Managed
+             * @default false
+             */
+            is_managed: boolean;
+        };
         /** AgentStatsResponse */
         AgentStatsResponse: {
             /**
@@ -11563,6 +12532,8 @@ export interface components {
             description?: string | null;
             /** System Prompt */
             system_prompt?: string | null;
+            /** Bundle Path */
+            bundle_path?: string | null;
             /** Channels */
             channels?: components["schemas"]["AgentChannel"][] | null;
             access_level?: components["schemas"]["AgentAccessLevel"] | null;
@@ -11796,7 +12767,7 @@ export interface components {
             app_model: string;
             /**
              * Role Ids
-             * @description Role IDs for role_based access (ignored if access_level is 'authenticated')
+             * @description Role assignments used when access_level is 'role_based'
              */
             role_ids?: string[];
             /**
@@ -11840,6 +12811,14 @@ export interface components {
             definition: {
                 [key: string]: unknown;
             };
+        };
+        /**
+         * ApplicationLaunchResponse
+         * @description One-time handoff into an isolated application document.
+         */
+        ApplicationLaunchResponse: {
+            /** Launch Url */
+            launch_url: string;
         };
         /**
          * ApplicationListResponse
@@ -11905,6 +12884,13 @@ export interface components {
              * @default inline_v1
              */
             app_model: string;
+            /**
+             * Runtime Mode
+             * @description Server-authoritative browser runtime boundary
+             * @default trusted
+             * @enum {string}
+             */
+            runtime_mode: "trusted" | "isolated";
             /**
              * Is Solution Managed
              * @description True if managed by a deployed Solution (read-only on platform)
@@ -12023,10 +13009,10 @@ export interface components {
             /** Icon */
             icon?: string | null;
             /**
-             * Scope
-             * @description Organization scope: 'global' for platform-wide, or org UUID string. Platform admin only.
+             * Organization Id
+             * @description Organization ID. Explicit null moves the Application to global scope; omission preserves its current scope. Platform admin only.
              */
-            scope?: string | null;
+            organization_id?: string | null;
             /**
              * Access Level
              * @description Access level: 'authenticated' (any logged-in user) or 'role_based' (specific roles)
@@ -12182,6 +13168,8 @@ export interface components {
              * @description List of user IDs to assign
              */
             user_ids: string[];
+            /** Boundaries */
+            boundaries?: components["schemas"]["RoleAssignmentBoundaryInput"][] | null;
         };
         /**
          * AssignWorkflowsToRoleRequest
@@ -12364,6 +13352,56 @@ export interface components {
             default_sso_provider?: ("microsoft" | "google" | "oidc") | null;
         };
         /**
+         * AuthorizationCapabilityPublic
+         * @description Display metadata for one code-owned authorization capability.
+         */
+        AuthorizationCapabilityPublic: {
+            /** Key */
+            key: string;
+            /** Display Name */
+            display_name: string;
+            /** Description */
+            description: string;
+            /** Category */
+            category: string;
+            /** Is Privileged */
+            is_privileged: boolean;
+            /** Assignable To Custom Roles */
+            assignable_to_custom_roles: boolean;
+        };
+        /**
+         * AuthorizationTargetPublic
+         * @description One executable or collection authorization context for the caller.
+         */
+        AuthorizationTargetPublic: {
+            /** Boundary */
+            boundary: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "organization" | "managed_organizations" | "platform";
+            /** Label */
+            label: string;
+            /** Capabilities */
+            capabilities?: string[];
+            /** Organization Id */
+            organization_id?: string | null;
+            /**
+             * Is Provider
+             * @default false
+             */
+            is_provider: boolean;
+        };
+        /**
+         * AuthorizationTargetsPublic
+         * @description All request contexts backed by the caller's current Role assignments.
+         */
+        AuthorizationTargetsPublic: {
+            /** Targets */
+            targets?: components["schemas"]["AuthorizationTargetPublic"][];
+        };
+        /**
          * AuthorizeResponse
          * @description Response for initiating OAuth authorization.
          */
@@ -12500,19 +13538,6 @@ export interface components {
              */
             cost_basis: "history" | "fallback";
         };
-        /** Body_deploy_solution_api_solutions__solution_id__deploy_post */
-        Body_deploy_solution_api_solutions__solution_id__deploy_post: {
-            /**
-             * File
-             * @description Solution workspace zip
-             */
-            file: string;
-        };
-        /** Body_export_solution_api_solutions__solution_id__export_post */
-        Body_export_solution_api_solutions__solution_id__export_post: {
-            /** Password */
-            password?: string | null;
-        };
         /** Body_import_all_api_export_import_import_all_post */
         Body_import_all_api_export_import_import_all_post: {
             /** File */
@@ -12589,33 +13614,6 @@ export interface components {
             /** Organization Id */
             organization_id?: string | null;
         };
-        /** Body_install_solution_api_solutions_install_post */
-        Body_install_solution_api_solutions_install_post: {
-            /**
-             * File
-             * @description Solution workspace zip
-             */
-            file: string;
-            /** Organization Id */
-            organization_id?: string | null;
-            /**
-             * Config Values
-             * @default {}
-             */
-            config_values: string;
-            /** Password */
-            password?: string | null;
-            /**
-             * Replace Secrets
-             * @default false
-             */
-            replace_secrets: boolean;
-            /**
-             * Replace Data
-             * @default false
-             */
-            replace_data: boolean;
-        };
         /** Body_login_auth_login_post */
         Body_login_auth_login_post: {
             /** Grant Type */
@@ -12650,6 +13648,14 @@ export interface components {
             /**
              * File
              * @description Logo image (PNG/JPEG/SVG, ≤5MB)
+             */
+            file: string;
+        };
+        /** Body_upload_agent_skill_api_agents__agent_id__skill_bundle_put */
+        Body_upload_agent_skill_api_agents__agent_id__skill_bundle_put: {
+            /**
+             * File
+             * @description .skill or .zip Agent Skill archive
              */
             file: string;
         };
@@ -12744,6 +13750,287 @@ export interface components {
             /** @description Fixed product terminology overrides for the platform UI */
             terminology?: components["schemas"]["BrandingTerminology"] | null;
         };
+        /**
+         * BuildJobPublic
+         * @description Owner-visible build status used by builder polling.
+         */
+        BuildJobPublic: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** App Id */
+            app_id?: string | null;
+            /** Status */
+            status: string;
+            /** Error */
+            error?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Started At */
+            started_at?: string | null;
+            /** Completed At */
+            completed_at?: string | null;
+        };
+        /**
+         * BuilderCollaboratorDTO
+         * @description One explicit user grant on a private Builder Solution.
+         */
+        BuilderCollaboratorDTO: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+            /** Name */
+            name?: string | null;
+            /** Email */
+            email: string;
+            /**
+             * Access
+             * @enum {string}
+             */
+            access: "view" | "edit";
+            /** Invited By */
+            invited_by?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * BuilderCollaboratorUpsert
+         * @description Invite or update one same-organization collaborator by email.
+         */
+        BuilderCollaboratorUpsert: {
+            /** Email */
+            email: string;
+            /**
+             * Access
+             * @default edit
+             * @enum {string}
+             */
+            access: "view" | "edit";
+        };
+        /** BuilderCollaboratorsList */
+        BuilderCollaboratorsList: {
+            /** Collaborators */
+            collaborators: components["schemas"]["BuilderCollaboratorDTO"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * BuilderOrganizationTargetDTO
+         * @description One exact organization boundary available to the current Builder.
+         */
+        BuilderOrganizationTargetDTO: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Is Provider
+             * @default false
+             */
+            is_provider: boolean;
+            /** Can Read */
+            can_read: boolean;
+            /** Can Execute */
+            can_execute: boolean;
+            /** Can Build Resources */
+            can_build_resources: boolean;
+        };
+        /**
+         * BuilderProjectDTO
+         * @description Read-shape for a Solution's builder-project row.
+         */
+        BuilderProjectDTO: {
+            /**
+             * Solution Id
+             * Format: uuid
+             */
+            solution_id: string;
+            /** Current Revision Id */
+            current_revision_id?: string | null;
+            /** Deployed Revision Id */
+            deployed_revision_id?: string | null;
+            /**
+             * Target Kind
+             * @default solution
+             * @enum {string}
+             */
+            target_kind: "solution" | "organization" | "global_repo";
+            /** Promotion Status */
+            promotion_status: string;
+            /** Promotion Revision Id */
+            promotion_revision_id?: string | null;
+            /** Promotion Requested By */
+            promotion_requested_by?: string | null;
+            /** Promotion Requested At */
+            promotion_requested_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * BuilderSessionDTO
+         * @description Read-shape for one builder chat session.
+         *
+         *     ``conversation_id`` is the Conversation the chat transcript hangs off; the
+         *     session row is the typed link between that Conversation and the Solution.
+         */
+        BuilderSessionDTO: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Solution Id
+             * Format: uuid
+             */
+            solution_id: string;
+            /**
+             * Conversation Id
+             * Format: uuid
+             */
+            conversation_id: string;
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * BuilderSessionsList
+         * @description List envelope for the caller's sessions on one Solution.
+         */
+        BuilderSessionsList: {
+            /** Sessions */
+            sessions: components["schemas"]["BuilderSessionDTO"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * BuilderTargetsDTO
+         * @description Boundary-aware Builder entry points available to the current person.
+         */
+        BuilderTargetsDTO: {
+            /** Organizations */
+            organizations?: components["schemas"]["BuilderOrganizationTargetDTO"][];
+            /**
+             * Can View All
+             * @default false
+             */
+            can_view_all: boolean;
+            /**
+             * Can Open Global Workspace
+             * @default false
+             */
+            can_open_global_workspace: boolean;
+            /** Ai Configured */
+            ai_configured: boolean;
+            /** Builder Ready */
+            builder_ready: boolean;
+            /** Builder Blockers */
+            builder_blockers?: components["schemas"]["SandboxRunnerBlocker"][];
+            /**
+             * Is Platform Admin
+             * @default false
+             */
+            is_platform_admin: boolean;
+        };
+        /**
+         * BuilderTurnDTO
+         * @description Read-shape for one builder turn.
+         */
+        BuilderTurnDTO: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            session_id: string;
+            /** Requested By */
+            requested_by?: string | null;
+            /** Base Revision Id */
+            base_revision_id?: string | null;
+            /** Output Revision Id */
+            output_revision_id?: string | null;
+            /** Resume From Turn Id */
+            resume_from_turn_id?: string | null;
+            /**
+             * Checkpoint Available
+             * @default false
+             */
+            checkpoint_available: boolean;
+            /** Build Job Id */
+            build_job_id?: string | null;
+            /** Deploy Job Id */
+            deploy_job_id?: string | null;
+            /** Status */
+            status: string;
+            /** Error */
+            error?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Started At */
+            started_at?: string | null;
+            /** Completed At */
+            completed_at?: string | null;
+        };
+        /**
+         * BuilderTurnsList
+         * @description List envelope for a Solution's turns, newest first.
+         */
+        BuilderTurnsList: {
+            /** Turns */
+            turns: components["schemas"]["BuilderTurnDTO"][];
+            /** Total */
+            total: number;
+        };
         /** BulkExportRequest */
         BulkExportRequest: {
             /** Knowledge Ids */
@@ -12772,7 +14059,7 @@ export interface components {
          * BulkUserOperation
          * @description One bulk operation on a set of users.
          *
-         *     Exactly one of `organization_id`, `role_ids`, or `is_active` is required;
+         *     Exactly one of `organization_id`, `role_assignments`, or `is_active` is required;
          *     `operation` identifies which.
          */
         BulkUserOperation: {
@@ -12789,8 +14076,13 @@ export interface components {
              */
             organization_id?: string | null;
             /**
+             * Role Assignments
+             * @description Full boundary-aware role set for replace_roles. Empty clears all roles.
+             */
+            role_assignments?: components["schemas"]["RoleAssignmentSelection"][] | null;
+            /**
              * Role Ids
-             * @description Full role set for replace_roles. Empty list clears all roles.
+             * @description Legacy replace_roles input. When supplied without role_assignments, the route infers the requester's home-organization boundary.
              */
             role_ids?: string[] | null;
             /**
@@ -14050,6 +15342,18 @@ export interface components {
              * @description HTTPS clone URL
              */
             clone_url: string;
+        };
+        /**
+         * CreateSessionRequest
+         * @description Create-shape for a builder chat session.
+         *
+         *     Only the title is an input. The Solution comes from the authorized path and
+         *     the session author from the caller, so each team member gets an attributable
+         *     conversation without being able to choose another user's identity.
+         */
+        CreateSessionRequest: {
+            /** Title */
+            title?: string | null;
         };
         /**
          * CronValidationRequest
@@ -15778,7 +17082,7 @@ export interface components {
             /** @description Webhook configuration updates */
             webhook?: components["schemas"]["WebhookSourceConfig"] | null;
             /** @description Schedule configuration updates */
-            schedule?: components["schemas"]["ScheduleSourceConfig"] | null;
+            schedule?: components["schemas"]["ScheduleSourceUpdate"] | null;
         };
         /**
          * EventStatus
@@ -15796,8 +17100,9 @@ export interface components {
              * Target Type
              * @description Target type: 'workflow' or 'agent'
              * @default workflow
+             * @enum {string}
              */
-            target_type: string;
+            target_type: "workflow" | "agent";
             /**
              * Workflow Id
              * @description Workflow ID (required when target_type='workflow')
@@ -16186,7 +17491,7 @@ export interface components {
              * @description Type of conflict
              * @enum {string}
              */
-            reason: "content_changed" | "file_exists" | "file_missing" | "path_not_found" | "version_conflict" | "workflows_would_deactivate";
+            reason: "content_changed" | "file_exists" | "file_missing" | "path_not_found" | "string_not_found" | "string_not_unique" | "version_conflict" | "workflows_would_deactivate";
             /**
              * Message
              * @description Human-readable conflict description
@@ -17884,6 +19189,88 @@ export interface components {
             error?: string | null;
         };
         /**
+         * GlobalOperationChangeDTO
+         * @description One staged Global loose-resource operation change for human review.
+         */
+        GlobalOperationChangeDTO: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Operation Id */
+            operation_id: string;
+            /** Resource Type */
+            resource_type: string;
+            /** Resource Id */
+            resource_id?: string | null;
+            /** State */
+            state: string;
+            /** Validation Errors */
+            validation_errors?: string[];
+            /** Before State */
+            before_state?: {
+                [key: string]: unknown;
+            } | null;
+            /** After State */
+            after_state?: {
+                [key: string]: unknown;
+            };
+        };
+        /** GlobalOperationChangesListDTO */
+        GlobalOperationChangesListDTO: {
+            /** Changes */
+            changes?: components["schemas"]["GlobalOperationChangeDTO"][];
+            /** Rollbackable Changes */
+            rollbackable_changes?: components["schemas"]["GlobalOperationChangeDTO"][];
+        };
+        /**
+         * GlobalWorkspaceStatusDTO
+         * @description Current state of the singular administrator ``_repo`` workbench.
+         */
+        GlobalWorkspaceStatusDTO: {
+            /** Exists */
+            exists: boolean;
+            /** Solution Id */
+            solution_id?: string | null;
+            /** Current Revision Id */
+            current_revision_id?: string | null;
+            /** Deployed Revision Id */
+            deployed_revision_id?: string | null;
+            /**
+             * Has Pending Proposal
+             * @default false
+             */
+            has_pending_proposal: boolean;
+            /**
+             * Pending Operation Count
+             * @default 0
+             */
+            pending_operation_count: number;
+            /**
+             * Can Rollback
+             * @default false
+             */
+            can_rollback: boolean;
+            /** Last Applied At */
+            last_applied_at?: string | null;
+        };
+        /**
+         * GlobalWorkspaceValidationDTO
+         * @description Non-executing validation result for the current proposal.
+         */
+        GlobalWorkspaceValidationDTO: {
+            /**
+             * Revision Id
+             * Format: uuid
+             */
+            revision_id: string;
+            /** Valid */
+            valid: boolean;
+            /** Errors */
+            errors?: string[];
+        };
+        /**
          * GoogleOAuthConfigRequest
          * @description Request model for configuring Google OAuth SSO.
          */
@@ -18848,6 +20235,74 @@ export interface components {
             assigned_by?: string | null;
         };
         /**
+         * KnowledgeSearchRequest
+         * @description Canonical direct or Agent-bound knowledge-search request.
+         */
+        KnowledgeSearchRequest: {
+            /**
+             * Query
+             * @description Search query
+             */
+            query: string;
+            /**
+             * Namespace
+             * @description Namespaces to search. Direct searches default to 'default'; Agent-bound searches default to every namespace granted to the Agent.
+             */
+            namespace?: string[] | null;
+            /**
+             * Limit
+             * @description Maximum results
+             * @default 5
+             */
+            limit: number;
+            /** Min Score */
+            min_score?: number | null;
+            /** Metadata Filter */
+            metadata_filter?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Scope
+             * @description Direct-search scope: omitted, 'global', or an organization UUID
+             */
+            scope?: string | null;
+            /**
+             * Agent Id
+             * @description Accessible Agent whose organization and knowledge grants define the search boundary
+             */
+            agent_id?: string | null;
+            /**
+             * Fallback
+             * @description Also search global knowledge when searching an organization
+             * @default true
+             */
+            fallback: boolean;
+        };
+        /**
+         * KnowledgeSearchResult
+         * @description One canonical hybrid knowledge-search result.
+         */
+        KnowledgeSearchResult: {
+            /** Id */
+            id: string;
+            /** Namespace */
+            namespace: string;
+            /** Content */
+            content: string;
+            /** Metadata */
+            metadata?: {
+                [key: string]: unknown;
+            };
+            /** Score */
+            score?: number | null;
+            /** Organization Id */
+            organization_id?: string | null;
+            /** Key */
+            key?: string | null;
+            /** Created At */
+            created_at?: string | null;
+        };
+        /**
          * KnowledgeStorageTrend
          * @description Daily knowledge storage trend data point.
          */
@@ -19317,6 +20772,37 @@ export interface components {
             service_oauth_token_id?: string | null;
         };
         /**
+         * MCPGatewayBuilderExecuteResponse
+         * @description Builder-session-bound REST envelope for an auditable gateway tool call.
+         */
+        MCPGatewayBuilderExecuteResponse: {
+            /** Builder Session Id */
+            builder_session_id: string;
+            /** Agent Name */
+            agent_name: string;
+            /** Tool Ref */
+            tool_ref: string;
+            /** Tool Name */
+            tool_name: string;
+            /** Source */
+            source: string;
+            /** Duration Ms */
+            duration_ms: number;
+            /**
+             * Async
+             * @default false
+             */
+            async: boolean;
+            /** Execution Id */
+            execution_id?: string | null;
+            /** Execution Type */
+            execution_type?: ("workflow" | "agent_run") | null;
+            /** Status */
+            status?: string | null;
+            /** Result */
+            result?: unknown;
+        };
+        /**
          * MCPGatewayCapabilityAgent
          * @description One agent and the bounded subset of tools relevant to the search.
          */
@@ -19327,6 +20813,18 @@ export interface components {
             name: string;
             /** Description */
             description?: string | null;
+            /**
+             * Builder
+             * @default false
+             */
+            builder: boolean;
+            /**
+             * Builder Session Required
+             * @default false
+             */
+            builder_session_required: boolean;
+            /** Builder Session Id */
+            builder_session_id?: string | null;
             /** Instructions */
             instructions?: string | null;
             /**
@@ -19358,6 +20856,8 @@ export interface components {
             query?: string | null;
             /** Agent Id */
             agent_id?: string | null;
+            /** Builder Session Id */
+            builder_session_id?: string | null;
             /** Tool Ref */
             tool_ref?: string | null;
             /**
@@ -19375,6 +20875,8 @@ export interface components {
             query?: string | null;
             /** Agent Id */
             agent_id?: string | null;
+            /** Builder Session Id */
+            builder_session_id?: string | null;
             /** Tool Ref */
             tool_ref?: string | null;
             /** Agents */
@@ -19392,7 +20894,7 @@ export interface components {
         };
         /**
          * MCPGatewayExecuteRequest
-         * @description Arguments passed to an agent-bound tool.
+         * @description Arguments passed to a path-bound gateway tool execution route.
          */
         MCPGatewayExecuteRequest: {
             /** Arguments */
@@ -19407,7 +20909,7 @@ export interface components {
         };
         /**
          * MCPGatewayExecuteResponse
-         * @description Internal REST envelope for an auditable gateway tool call.
+         * @description Agent-bound REST envelope for an auditable gateway tool call.
          *
          *     Synchronous public MCP calls return ``result`` directly. Async calls return
          *     this compact receipt so the caller can poll ``bifrost_get_execution``.
@@ -20845,6 +22347,50 @@ export interface components {
             };
         };
         /**
+         * OrganizationGroupCreate
+         * @description Input for creating an organization group.
+         */
+        OrganizationGroupCreate: {
+            /** Name */
+            name: string;
+            /** Member Organization Ids */
+            member_organization_ids?: string[];
+        };
+        /**
+         * OrganizationGroupPublic
+         * @description Organization-group output for API responses.
+         */
+        OrganizationGroupPublic: {
+            /** Name */
+            name: string;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Owner Organization Id
+             * Format: uuid
+             */
+            owner_organization_id: string;
+            /** Member Organization Ids */
+            member_organization_ids?: string[];
+            /** Created At */
+            created_at: string | null;
+            /** Updated At */
+            updated_at: string | null;
+        };
+        /**
+         * OrganizationGroupUpdate
+         * @description Input for updating an organization group.
+         */
+        OrganizationGroupUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Member Organization Ids */
+            member_organization_ids?: string[] | null;
+        };
+        /**
          * OrganizationMetricsResponse
          * @description Response for organization metrics breakdown.
          */
@@ -21506,6 +23052,12 @@ export interface components {
             memory_peak_bytes?: number | null;
             /** Memory Limit Bytes */
             memory_limit_bytes?: number | null;
+            /** External Provider */
+            external_provider?: string | null;
+            /** External Run Id */
+            external_run_id?: string | null;
+            /** External Started At */
+            external_started_at?: string | null;
             /** Started At */
             started_at?: string | null;
             /** Completed At */
@@ -21870,6 +23422,126 @@ export interface components {
             warnings?: components["schemas"]["PreflightIssueResponse"][];
         };
         /**
+         * PrivateSolutionCreate
+         * @description Create-shape for a private builder Solution.
+         *
+         *     Scope is not an input: a private Solution is always owned by the caller and
+         *     lives in the caller's own organization. ``slug`` is unique per owner, so two
+         *     users in one org may each hold a private Solution at the same slug.
+         */
+        PrivateSolutionCreate: {
+            /** Slug */
+            slug: string;
+            /** Name */
+            name: string;
+            /**
+             * Target Kind
+             * @default solution
+             * @enum {string}
+             */
+            target_kind: "solution" | "organization";
+        };
+        /**
+         * PrivateSolutionDTO
+         * @description Read-shape for a private builder Solution.
+         *
+         *     ``promotion_status`` comes from the Solution's builder-project row, not the
+         *     install row, and is flattened here because the builder UI treats the pair as
+         *     one object.
+         */
+        PrivateSolutionDTO: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Slug */
+            slug: string;
+            /** Name */
+            name: string;
+            /** Visibility */
+            visibility: string;
+            /** Owner User Id */
+            owner_user_id?: string | null;
+            /** Owner Name */
+            owner_name?: string | null;
+            /** Owner Email */
+            owner_email?: string | null;
+            /** Organization Id */
+            organization_id?: string | null;
+            /** Organization Name */
+            organization_name?: string | null;
+            /**
+             * Caller Access
+             * @default owner
+             * @enum {string}
+             */
+            caller_access: "owner" | "collaborator" | "support";
+            /** Collaborator Access */
+            collaborator_access?: ("view" | "edit") | null;
+            /** Status */
+            status: string;
+            /**
+             * Target Kind
+             * @default solution
+             * @enum {string}
+             */
+            target_kind: "solution" | "organization" | "global_repo";
+            /** Promotion Status */
+            promotion_status: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * PrivateSolutionsList
+         * @description List envelope for personal/shared work or the explicit support view.
+         */
+        PrivateSolutionsList: {
+            /** Solutions */
+            solutions: components["schemas"]["PrivateSolutionDTO"][];
+            /** Total */
+            total: number;
+            /** Limit */
+            limit?: number | null;
+            /**
+             * Offset
+             * @default 0
+             */
+            offset: number;
+            /**
+             * View
+             * @default mine
+             * @enum {string}
+             */
+            view: "mine" | "all";
+            /**
+             * Can View All
+             * @default false
+             */
+            can_view_all: boolean;
+            /** Ai Configured */
+            ai_configured: boolean;
+            /** Builder Ready */
+            builder_ready: boolean;
+            /** Builder Blockers */
+            builder_blockers?: components["schemas"]["SandboxRunnerBlocker"][];
+            /** Is Platform Admin */
+            is_platform_admin: boolean;
+            /**
+             * Can Open Global Workspace
+             * @default false
+             */
+            can_open_global_workspace: boolean;
+        };
+        /**
          * ProcessInfo
          * @description Information about a worker process in the pool.
          */
@@ -21958,6 +23630,213 @@ export interface components {
              * @description Display name
              */
             name?: string | null;
+        };
+        /** PromotionEntityCounts */
+        PromotionEntityCounts: {
+            /**
+             * Workflows
+             * @default 0
+             */
+            workflows: number;
+            /**
+             * Tables
+             * @default 0
+             */
+            tables: number;
+            /**
+             * Apps
+             * @default 0
+             */
+            apps: number;
+            /**
+             * Forms
+             * @default 0
+             */
+            forms: number;
+            /**
+             * Agents
+             * @default 0
+             */
+            agents: number;
+            /**
+             * Claims
+             * @default 0
+             */
+            claims: number;
+            /**
+             * Configs
+             * @default 0
+             */
+            configs: number;
+            /**
+             * Files
+             * @default 0
+             */
+            files: number;
+            /**
+             * File Policies
+             * @default 0
+             */
+            file_policies: number;
+            /**
+             * Policy Rules
+             * @default 0
+             */
+            policy_rules: number;
+            /**
+             * Events
+             * @default 0
+             */
+            events: number;
+        };
+        /** PromotionResultDTO */
+        PromotionResultDTO: {
+            /**
+             * Release Id
+             * Format: uuid
+             */
+            release_id: string;
+            /**
+             * Published Solution Id
+             * Format: uuid
+             */
+            published_solution_id: string;
+            /**
+             * Solution Id
+             * Format: uuid
+             */
+            solution_id: string;
+            /**
+             * Target
+             * @enum {string}
+             */
+            target: "company" | "global";
+            /**
+             * Visibility
+             * @constant
+             */
+            visibility: "shared";
+            /** Organization Id */
+            organization_id?: string | null;
+            /**
+             * Promoted Revision Id
+             * Format: uuid
+             */
+            promoted_revision_id: string;
+            /** Roles Created */
+            roles_created?: string[];
+        };
+        /**
+         * PromotionReviewDTO
+         * @description Pinned source and readiness facts shown on the admin review surface.
+         */
+        PromotionReviewDTO: {
+            /**
+             * Solution Id
+             * Format: uuid
+             */
+            solution_id: string;
+            /** Slug */
+            slug: string;
+            /** Name */
+            name: string;
+            /** Owner User Id */
+            owner_user_id?: string | null;
+            /** Organization Id */
+            organization_id?: string | null;
+            /** Promotion Status */
+            promotion_status: string;
+            /** Pinned Revision Id */
+            pinned_revision_id?: string | null;
+            /** Source Sha256 */
+            source_sha256?: string | null;
+            /** Source Size Bytes */
+            source_size_bytes?: number | null;
+            /** Prior Deployed Revision Id */
+            prior_deployed_revision_id?: string | null;
+            /** Changed Paths */
+            changed_paths?: string[];
+            /** Requested At */
+            requested_at?: string | null;
+            /** Requested By */
+            requested_by?: string | null;
+            /** User Message Id */
+            user_message_id?: string | null;
+            /** Current Revision Id */
+            current_revision_id?: string | null;
+            /** Deployed Revision Id */
+            deployed_revision_id?: string | null;
+            /** Build Job Id */
+            build_job_id?: string | null;
+            /** Build Job Ids */
+            build_job_ids?: string[];
+            /** Deploy Job Id */
+            deploy_job_id?: string | null;
+            /** Build Status */
+            build_status?: string | null;
+            /** Deploy Status */
+            deploy_status?: string | null;
+            entity_counts?: components["schemas"]["PromotionEntityCounts"];
+            /** Unresolved Roles */
+            unresolved_roles?: string[];
+            /** Connection Names */
+            connection_names?: string[];
+            /** Config Keys Requiring Reentry For Global */
+            config_keys_requiring_reentry_for_global?: string[];
+            /**
+             * Global Repo Access
+             * @default false
+             */
+            global_repo_access: boolean;
+            /**
+             * Ready
+             * @default false
+             */
+            ready: boolean;
+            /** Blockers */
+            blockers?: string[];
+        };
+        /** PromotionReviewsList */
+        PromotionReviewsList: {
+            /** Promotions */
+            promotions: components["schemas"]["PromotionReviewDTO"][];
+            /** Total */
+            total: number;
+        };
+        /**
+         * PromotionTargetRequest
+         * @description Administrator approval of one pinned private-Solution revision.
+         */
+        PromotionTargetRequest: {
+            /**
+             * Target
+             * @enum {string}
+             */
+            target: "company" | "global";
+            /** Target Organization Id */
+            target_organization_id?: string | null;
+            /**
+             * Runtime Mode
+             * @default isolated
+             * @enum {string}
+             */
+            runtime_mode: "isolated" | "trusted";
+            /**
+             * Approve Role Creation
+             * @default false
+             */
+            approve_role_creation: boolean;
+            /** Approved Connection Names */
+            approved_connection_names?: string[];
+            /**
+             * Allow Global Repo Access
+             * @default false
+             */
+            allow_global_repo_access: boolean;
+            /** Role User Assignments */
+            role_user_assignments?: {
+                [key: string]: string[];
+            };
         };
         /** ProposalTurn */
         ProposalTurn: {
@@ -22687,6 +24566,110 @@ export interface components {
              */
             max_backoff_seconds: number;
         };
+        /** RevisionDiffDTO */
+        RevisionDiffDTO: {
+            /**
+             * Revision Id
+             * Format: uuid
+             */
+            revision_id: string;
+            /** Against Revision Id */
+            against_revision_id?: string | null;
+            /** Files */
+            files: components["schemas"]["RevisionDiffFileDTO"][];
+            /** Total */
+            total: number;
+            /**
+             * Additions
+             * @default 0
+             */
+            additions: number;
+            /**
+             * Deletions
+             * @default 0
+             */
+            deletions: number;
+        };
+        /** RevisionDiffFileDTO */
+        RevisionDiffFileDTO: {
+            /** Path */
+            path: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "added" | "modified" | "deleted";
+            /**
+             * Additions
+             * @default 0
+             */
+            additions: number;
+            /**
+             * Deletions
+             * @default 0
+             */
+            deletions: number;
+            /**
+             * Is Binary
+             * @default false
+             */
+            is_binary: boolean;
+            /** Diff */
+            diff?: string | null;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
+        };
+        /** RevisionFileContentDTO */
+        RevisionFileContentDTO: {
+            /**
+             * Revision Id
+             * Format: uuid
+             */
+            revision_id: string;
+            /** Path */
+            path: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /**
+             * Encoding
+             * @enum {string}
+             */
+            encoding: "utf-8" | "binary";
+            /** Content */
+            content?: string | null;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
+        };
+        /**
+         * RevisionFileDTO
+         * @description One regular file inside an immutable source revision.
+         */
+        RevisionFileDTO: {
+            /** Path */
+            path: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Is Text */
+            is_text: boolean;
+        };
+        /** RevisionFilesList */
+        RevisionFilesList: {
+            /**
+             * Revision Id
+             * Format: uuid
+             */
+            revision_id: string;
+            /** Files */
+            files: components["schemas"]["RevisionFileDTO"][];
+            /** Total */
+            total: number;
+        };
         /**
          * RevokeAllResponse
          * @description Revoke all sessions response model.
@@ -22715,6 +24698,84 @@ export interface components {
              * @description App IDs assigned to the role
              */
             app_ids: string[];
+        };
+        /**
+         * RoleAssignmentBoundaryInput
+         * @description Request-body shape for one role-assignment boundary.
+         */
+        RoleAssignmentBoundaryInput: {
+            /**
+             * Boundary Kind
+             * @enum {string}
+             */
+            boundary_kind: "organization" | "organization_group" | "managed_organizations" | "platform";
+            /** Organization Id */
+            organization_id?: string | null;
+            /** Organization Group Id */
+            organization_group_id?: string | null;
+        };
+        /**
+         * RoleAssignmentBoundaryPublic
+         * @description Persisted role-assignment boundary.
+         */
+        RoleAssignmentBoundaryPublic: {
+            /**
+             * Boundary Kind
+             * @enum {string}
+             */
+            boundary_kind: "organization" | "organization_group" | "managed_organizations" | "platform";
+            /** Organization Id */
+            organization_id?: string | null;
+            /** Organization Group Id */
+            organization_group_id?: string | null;
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+        };
+        /**
+         * RoleAssignmentPublic
+         * @description Durable role assignment with explicit boundary selections.
+         */
+        RoleAssignmentPublic: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * User Id
+             * Format: uuid
+             */
+            user_id: string;
+            /**
+             * Role Id
+             * Format: uuid
+             */
+            role_id: string;
+            /** Assigned By User Id */
+            assigned_by_user_id?: string | null;
+            /**
+             * Assigned At
+             * Format: date-time
+             */
+            assigned_at: string;
+            /** Boundaries */
+            boundaries?: components["schemas"]["RoleAssignmentBoundaryPublic"][];
+        };
+        /**
+         * RoleAssignmentSelection
+         * @description A Role and its boundaries when replacing a user's assignment set.
+         */
+        RoleAssignmentSelection: {
+            /**
+             * Role Id
+             * Format: uuid
+             */
+            role_id: string;
+            /** Boundaries */
+            boundaries: components["schemas"]["RoleAssignmentBoundaryInput"][];
         };
         /**
          * RoleConsumerCounts
@@ -22763,10 +24824,17 @@ export interface components {
             name: string;
             /** Description */
             description?: string | null;
+            /** Capabilities */
+            capabilities?: string[];
+            /**
+             * Scopes
+             * @description Deprecated alias for capabilities; accepted for compatibility.
+             */
+            scopes?: string[] | null;
             /** Permissions */
             permissions?: {
                 [key: string]: unknown;
-            } | null;
+            };
         };
         /**
          * RoleFormsResponse
@@ -22818,10 +24886,26 @@ export interface components {
              * Format: uuid
              */
             id: string;
+            /** Key */
+            key?: string | null;
+            /** Capabilities */
+            capabilities?: string[];
+            /** Scopes */
+            scopes?: string[];
             /** Permissions */
             permissions?: {
                 [key: string]: unknown;
             };
+            /**
+             * Is Builtin
+             * @default false
+             */
+            is_builtin: boolean;
+            /**
+             * Assignable To Resources
+             * @default true
+             */
+            assignable_to_resources: boolean;
             /** Created By */
             created_by: string;
             /** Created At */
@@ -22840,6 +24924,13 @@ export interface components {
             name?: string | null;
             /** Description */
             description?: string | null;
+            /** Capabilities */
+            capabilities?: string[] | null;
+            /**
+             * Scopes
+             * @description Deprecated alias for capabilities; accepted for compatibility.
+             */
+            scopes?: string[] | null;
             /** Permissions */
             permissions?: {
                 [key: string]: unknown;
@@ -22866,6 +24957,44 @@ export interface components {
              * @description Workflow IDs assigned to the role
              */
             workflow_ids: string[];
+        };
+        /**
+         * RunTurnRequest
+         * @description Ask the builder agent to change the workspace.
+         */
+        RunTurnRequest: {
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            session_id: string;
+            /**
+             * Message
+             * @default
+             */
+            message: string;
+            /** Attachment Ids */
+            attachment_ids?: string[];
+            /** Resume From Turn Id */
+            resume_from_turn_id?: string | null;
+        };
+        /**
+         * RunTurnResponse
+         * @description Accepted durable Builder turn returned without waiting for the model.
+         */
+        RunTurnResponse: {
+            turn: components["schemas"]["BuilderTurnDTO"];
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /**
+             * Status
+             * @default queued
+             * @constant
+             */
+            status: "queued";
         };
         /**
          * SDKIntegrationsDeleteMappingRequest
@@ -23244,6 +25373,176 @@ export interface components {
             scope?: string | null;
         };
         /**
+         * SandboxRunnerBlocker
+         * @description One actionable readiness blocker for the admin setup UI.
+         */
+        SandboxRunnerBlocker: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Action */
+            action: string;
+        };
+        /**
+         * SandboxRunnerCloudflareConfig
+         * @description Cloudflare-specific runner settings.
+         *
+         *     ``api_token`` is write-only. The saved/read response uses ``api_token_set``.
+         */
+        SandboxRunnerCloudflareConfig: {
+            /** Account Id */
+            account_id?: string | null;
+            /** Api Token */
+            api_token?: string | null;
+        };
+        /**
+         * SandboxRunnerCloudflarePublic
+         * @description Cloudflare runner settings safe to return to browsers.
+         */
+        SandboxRunnerCloudflarePublic: {
+            /** Account Id */
+            account_id?: string | null;
+            /**
+             * Api Token Set
+             * @default false
+             */
+            api_token_set: boolean;
+            /**
+             * Script Name
+             * @default bifrost-build
+             */
+            script_name: string;
+            /**
+             * Workflow Name
+             * @default bifrost-build-workflow
+             */
+            workflow_name: string;
+        };
+        /**
+         * SandboxRunnerConfigPublic
+         * @description Runner configuration response with secrets masked.
+         */
+        SandboxRunnerConfigPublic: {
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "cloudflare" | "local";
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /** Callback Base Url */
+            callback_base_url?: string | null;
+            /**
+             * Provisioned
+             * @default false
+             */
+            provisioned: boolean;
+            /**
+             * Connected
+             * @default false
+             */
+            connected: boolean;
+            cloudflare?: components["schemas"]["SandboxRunnerCloudflarePublic"] | null;
+            local?: components["schemas"]["SandboxRunnerLocalPublic"] | null;
+        };
+        /**
+         * SandboxRunnerConfigSave
+         * @description Request shape for saving runner configuration.
+         */
+        SandboxRunnerConfigSave: {
+            /**
+             * Provider
+             * @enum {string}
+             */
+            provider: "cloudflare" | "local";
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /** Callback Base Url */
+            callback_base_url?: string | null;
+            cloudflare?: components["schemas"]["SandboxRunnerCloudflareConfig"] | null;
+            local?: components["schemas"]["SandboxRunnerLocalConfig"] | null;
+        };
+        /**
+         * SandboxRunnerLocalConfig
+         * @description Local execution uses the existing Bifrost worker and needs no settings.
+         */
+        SandboxRunnerLocalConfig: Record<string, never>;
+        /**
+         * SandboxRunnerLocalPublic
+         * @description Local runner settings safe to return to browsers.
+         */
+        SandboxRunnerLocalPublic: {
+            /**
+             * Uses Existing Worker
+             * @default true
+             */
+            uses_existing_worker: boolean;
+        };
+        /**
+         * SandboxRunnerReadiness
+         * @description Readiness facts for enabling the native builder.
+         */
+        SandboxRunnerReadiness: {
+            /** Configured */
+            configured: boolean;
+            /** Ready */
+            ready: boolean;
+            /** Ai Configured */
+            ai_configured: boolean;
+            /** Provider */
+            provider?: ("cloudflare" | "local") | null;
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+            /**
+             * Credentials Configured
+             * @default false
+             */
+            credentials_configured: boolean;
+            /**
+             * Callback Configured
+             * @default false
+             */
+            callback_configured: boolean;
+            /**
+             * Provisioned
+             * @default false
+             */
+            provisioned: boolean;
+            /**
+             * Connected
+             * @default false
+             */
+            connected: boolean;
+            /** Blockers */
+            blockers?: components["schemas"]["SandboxRunnerBlocker"][];
+        };
+        /**
+         * SandboxRunnerSetupState
+         * @description Complete admin setup state without provider secrets.
+         */
+        SandboxRunnerSetupState: {
+            config?: components["schemas"]["SandboxRunnerConfigPublic"] | null;
+            readiness: components["schemas"]["SandboxRunnerReadiness"];
+            /** Recommended Callback Base Url */
+            recommended_callback_base_url: string;
+            /** Runner Image */
+            runner_image: string;
+            /** Active Provisioning Job Id */
+            active_provisioning_job_id?: string | null;
+            /** Cloudflare Permissions */
+            cloudflare_permissions?: string[];
+        };
+        /**
          * ScheduleOverlapPolicy
          * @description Behavior when a schedule fires while a previous run is still active.
          * @enum {string}
@@ -23302,6 +25601,29 @@ export interface components {
              * @default skip
              */
             overlap_policy: components["schemas"]["ScheduleOverlapPolicy"];
+        };
+        /**
+         * ScheduleSourceUpdate
+         * @description Partial schedule configuration used by Event Source updates.
+         */
+        ScheduleSourceUpdate: {
+            /**
+             * Cron Expression
+             * @description Cron expression for the schedule
+             */
+            cron_expression?: string | null;
+            /**
+             * Timezone
+             * @description Timezone for the schedule
+             */
+            timezone?: string | null;
+            /**
+             * Enabled
+             * @description Whether the schedule is enabled
+             */
+            enabled?: boolean | null;
+            /** @description Behavior when a prior scheduled run is still active */
+            overlap_policy?: components["schemas"]["ScheduleOverlapPolicy"] | null;
         };
         /** SchedulerCapacityStatus */
         SchedulerCapacityStatus: {
@@ -24716,6 +27038,67 @@ export interface components {
             organization_id?: string | null;
         };
         /**
+         * SolutionRoleGrantCreate
+         * @description Input for creating a role-based Solution grant.
+         */
+        SolutionRoleGrantCreate: {
+            /**
+             * Role Id
+             * Format: uuid
+             */
+            role_id: string;
+            /**
+             * Access
+             * @default edit
+             * @enum {string}
+             */
+            access: "view" | "edit";
+            /**
+             * Solution Id
+             * Format: uuid
+             */
+            solution_id: string;
+        };
+        /**
+         * SolutionRoleGrantPublic
+         * @description Persisted role grant on a Solution.
+         */
+        SolutionRoleGrantPublic: {
+            /**
+             * Role Id
+             * Format: uuid
+             */
+            role_id: string;
+            /**
+             * Access
+             * @default edit
+             * @enum {string}
+             */
+            access: "view" | "edit";
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Solution Id
+             * Format: uuid
+             */
+            solution_id: string;
+            /** Granted By User Id */
+            granted_by_user_id?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
          * SolutionSetupItem
          * @description One declared requirement paired with whether it's satisfied.
          *
@@ -24818,6 +27201,52 @@ export interface components {
         SolutionsList: {
             /** Solutions */
             solutions?: components["schemas"]["Solution"][];
+        };
+        /**
+         * SourceRevisionDTO
+         * @description Read-shape for one immutable source revision.
+         *
+         *     ``is_current`` and ``is_deployed`` are derived from the project's pointers
+         *     rather than stored on the revision, because a revision's identity is
+         *     immutable while which revision is current or deployed changes every turn.
+         */
+        SourceRevisionDTO: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Parent Revision Id */
+            parent_revision_id?: string | null;
+            /** Restored From Revision Id */
+            restored_from_revision_id?: string | null;
+            /** Source Sha256 */
+            source_sha256: string;
+            /** Size Bytes */
+            size_bytes: number;
+            /** Summary */
+            summary?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Created By */
+            created_by?: string | null;
+            /** Is Current */
+            is_current: boolean;
+            /** Is Deployed */
+            is_deployed: boolean;
+        };
+        /**
+         * SourceRevisionsList
+         * @description List envelope for a Solution's revision history, newest first.
+         */
+        SourceRevisionsList: {
+            /** Revisions */
+            revisions: components["schemas"]["SourceRevisionDTO"][];
+            /** Total */
+            total: number;
         };
         /**
          * SpreadsheetArtifactSpec
@@ -25087,6 +27516,11 @@ export interface components {
             schema?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Organization Id
+             * @description Organization ID. Null for global table.
+             */
+            organization_id?: string | null;
             /** @description Optional row-level access policies. See docs/superpowers/specs/2026-04-30-table-policies-design.md. */
             policies?: components["schemas"]["TablePolicies"] | null;
         };
@@ -25338,6 +27772,25 @@ export interface components {
             workflow_ids: string[];
         };
         /**
+         * UndoRequest
+         * @description Restore an earlier revision's content as a new revision.
+         *
+         *     ``session_id`` is required because undo is a turn like any other and every
+         *     turn belongs to a chat session — the transcript has to show it happened.
+         */
+        UndoRequest: {
+            /**
+             * To Revision Id
+             * Format: uuid
+             */
+            to_revision_id: string;
+            /**
+             * Session Id
+             * Format: uuid
+             */
+            session_id: string;
+        };
+        /**
          * UpdateConfigRequest
          * @description Request model for updating an existing config by ID.
          *
@@ -25525,6 +27978,151 @@ export interface components {
              * @description File size in bytes
              */
             size: number;
+        };
+        /**
+         * UsageLimitAggregateStatus
+         * @description One cumulative aggregate policy with current usage.
+         */
+        UsageLimitAggregateStatus: {
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "platform" | "organization" | "user" | "solution";
+            /**
+             * Aggregate Period
+             * @enum {string}
+             */
+            aggregate_period: "daily" | "monthly";
+            /**
+             * Period Start
+             * Format: date
+             */
+            period_start: string;
+            usage: components["schemas"]["UsageLimitCeilings"];
+            ceilings: components["schemas"]["UsageLimitCeilings"];
+            /** Dimensions */
+            dimensions?: components["schemas"]["UsageLimitDimensionStatus"][];
+        };
+        /**
+         * UsageLimitCeilings
+         * @description Provider-neutral usage ceilings.
+         */
+        UsageLimitCeilings: {
+            /** Model Requests */
+            model_requests?: number | null;
+            /** Input Tokens */
+            input_tokens?: number | null;
+            /** Output Tokens */
+            output_tokens?: number | null;
+            /** Cache Read Tokens */
+            cache_read_tokens?: number | null;
+            /** Cache Write Tokens */
+            cache_write_tokens?: number | null;
+            /** Total Tokens */
+            total_tokens?: number | null;
+            /** Runner Duration Ms */
+            runner_duration_ms?: number | null;
+            /** Sandbox Compute Ms */
+            sandbox_compute_ms?: number | null;
+        };
+        /**
+         * UsageLimitDimensionStatus
+         * @description Current usage percentage for one configured ceiling.
+         */
+        UsageLimitDimensionStatus: {
+            /** Dimension */
+            dimension: string;
+            /** Limit */
+            limit: number;
+            /** Current */
+            current: number;
+            /** Remaining */
+            remaining: number;
+            /** Percentage */
+            percentage: number;
+        };
+        /**
+         * UsageLimitEffectiveResponse
+         * @description Effective policy diagnostics for a concrete run subject.
+         */
+        UsageLimitEffectiveResponse: {
+            /**
+             * Subject Scope
+             * @enum {string}
+             */
+            subject_scope: "platform" | "organization" | "user" | "solution";
+            /** Organization Id */
+            organization_id?: string | null;
+            /** User Id */
+            user_id?: string | null;
+            /** Solution Id */
+            solution_id?: string | null;
+            /** Effective Per Run Scope */
+            effective_per_run_scope?: ("platform" | "organization" | "user" | "solution") | null;
+            effective_per_run?: components["schemas"]["UsageLimitCeilings"];
+            /** Aggregate */
+            aggregate?: components["schemas"]["UsageLimitAggregateStatus"][];
+        };
+        /**
+         * UsageLimitListResponse
+         * @description Usage-limit policies visible in the selected authorization boundary.
+         */
+        UsageLimitListResponse: {
+            /** Policies */
+            policies?: components["schemas"]["UsageLimitPolicyPublic"][];
+        };
+        /**
+         * UsageLimitPolicyPublic
+         * @description Configured usage-limit policy.
+         */
+        UsageLimitPolicyPublic: {
+            /** Id */
+            id: number;
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "platform" | "organization" | "user" | "solution";
+            /** Scope Key */
+            scope_key: string;
+            /** Organization Id */
+            organization_id?: string | null;
+            /** User Id */
+            user_id?: string | null;
+            /** Solution Id */
+            solution_id?: string | null;
+            per_run: components["schemas"]["UsageLimitCeilings"];
+            aggregate: components["schemas"]["UsageLimitCeilings"];
+            /**
+             * Aggregate Period
+             * @enum {string}
+             */
+            aggregate_period: "daily" | "monthly";
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /**
+         * UsageLimitPolicyUpsert
+         * @description Create or replace a usage-limit policy.
+         */
+        UsageLimitPolicyUpsert: {
+            per_run?: components["schemas"]["UsageLimitCeilings"];
+            aggregate?: components["schemas"]["UsageLimitCeilings"];
+            /**
+             * Aggregate Period
+             * @default monthly
+             * @enum {string}
+             */
+            aggregate_period: "daily" | "monthly";
         };
         /**
          * UsageReportResponse
@@ -26970,6 +29568,117 @@ export interface components {
             metadata?: components["schemas"]["WorkflowMetadata"] | null;
         };
         /**
+         * WorkspaceFilePatchRequest
+         * @description Conflict-safe unique-string edit for the global source workspace.
+         */
+        WorkspaceFilePatchRequest: {
+            /**
+             * Path
+             * @description Workspace-relative file path
+             */
+            path: string;
+            /**
+             * Old String
+             * @description Unique text to replace
+             */
+            old_string: string;
+            /**
+             * New String
+             * @description Replacement text
+             * @default
+             */
+            new_string: string;
+            /**
+             * Expected Version
+             * @description Optional version returned by the file stat operation
+             */
+            expected_version?: string | null;
+            /**
+             * Force Deactivation
+             * @description Allow workflows removed by this edit to be deactivated
+             * @default false
+             */
+            force_deactivation: boolean;
+            /**
+             * Replacements
+             * @description Map old workflow IDs to replacement function names
+             */
+            replacements?: {
+                [key: string]: string;
+            } | null;
+            /**
+             * Workflows To Deactivate
+             * @description Workflow IDs explicitly selected for deactivation
+             */
+            workflows_to_deactivate?: string[] | null;
+        };
+        /**
+         * WorkspaceFilePatchResponse
+         * @description Result of a successful workspace patch.
+         */
+        WorkspaceFilePatchResponse: {
+            /** Path */
+            path: string;
+            /** Version */
+            version: string;
+            /** Lines Changed */
+            lines_changed: number;
+            /**
+             * Content Modified
+             * @default false
+             */
+            content_modified: boolean;
+            /**
+             * Needs Indexing
+             * @default false
+             */
+            needs_indexing: boolean;
+            /** Diagnostics */
+            diagnostics?: {
+                [key: string]: unknown;
+            }[];
+        };
+        /** Body_solutions.deploy */
+        deploy: {
+            /**
+             * File
+             * @description Solution workspace zip
+             */
+            file: string;
+        };
+        /** Body_solutions.export */
+        export: {
+            /** Password */
+            password?: string | null;
+        };
+        /** Body_solutions.install */
+        install: {
+            /**
+             * File
+             * @description Solution workspace zip
+             */
+            file: string;
+            /** Organization Id */
+            organization_id?: string | null;
+            /**
+             * Config Values
+             * @default {}
+             */
+            config_values: string;
+            /** Password */
+            password?: string | null;
+            /**
+             * Replace Secrets
+             * @default false
+             */
+            replace_secrets: boolean;
+            /**
+             * Replace Data
+             * @default false
+             */
+            replace_data: boolean;
+        };
+        /**
          * OAuthProviderInfo
          * @description OAuth provider information for login page
          */
@@ -27259,6 +29968,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["VersionResponse"];
+                };
+            };
+        };
+    };
+    list_authorization_targets_auth_authorization_targets_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthorizationTargetsPublic"];
                 };
             };
         };
@@ -28384,7 +31113,7 @@ export interface operations {
             };
         };
     };
-    list_organizations_api_organizations_get: {
+    "organizations.list": {
         parameters: {
             query?: {
                 /** @description Include inactive (disabled) organizations */
@@ -28416,7 +31145,7 @@ export interface operations {
             };
         };
     };
-    create_organization_api_organizations_post: {
+    "organizations.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -28449,7 +31178,7 @@ export interface operations {
             };
         };
     };
-    get_organization_api_organizations__org_id__get: {
+    "organizations.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -28480,7 +31209,7 @@ export interface operations {
             };
         };
     };
-    delete_organization_api_organizations__org_id__delete: {
+    "organizations.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -28509,7 +31238,7 @@ export interface operations {
             };
         };
     };
-    update_organization_api_organizations__org_id__patch: {
+    "organizations.update": {
         parameters: {
             query?: never;
             header?: never;
@@ -28544,7 +31273,124 @@ export interface operations {
             };
         };
     };
-    list_users_api_users_get: {
+    list_organization_groups_api_organization_groups_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationGroupPublic"][];
+                };
+            };
+        };
+    };
+    create_organization_group_api_organization_groups_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizationGroupCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationGroupPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_organization_group_api_organization_groups__group_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_organization_group_api_organization_groups__group_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizationGroupUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationGroupPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "users.list": {
         parameters: {
             query?: {
                 /** @description Filter by user type: 'platform' or 'org' */
@@ -28580,7 +31426,7 @@ export interface operations {
             };
         };
     };
-    create_user_api_users_post: {
+    "users.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -28613,7 +31459,7 @@ export interface operations {
             };
         };
     };
-    bulk_update_users_api_users_bulk_patch: {
+    "users.bulk_update": {
         parameters: {
             query?: never;
             header?: never;
@@ -28646,7 +31492,7 @@ export interface operations {
             };
         };
     };
-    resend_invite_api_users__user_id__invite_resend_post: {
+    "users.invites.resend": {
         parameters: {
             query?: never;
             header?: never;
@@ -28677,7 +31523,7 @@ export interface operations {
             };
         };
     };
-    send_invite_api_users__user_id__invite_send_post: {
+    "users.invites.send": {
         parameters: {
             query?: never;
             header?: never;
@@ -28712,7 +31558,7 @@ export interface operations {
             };
         };
     };
-    regenerate_invite_api_users__user_id__invite_regenerate_post: {
+    "users.invites.regenerate": {
         parameters: {
             query?: never;
             header?: never;
@@ -28743,7 +31589,7 @@ export interface operations {
             };
         };
     };
-    revoke_invite_api_users__user_id__invite_delete: {
+    "users.invites.revoke": {
         parameters: {
             query?: never;
             header?: never;
@@ -28772,7 +31618,7 @@ export interface operations {
             };
         };
     };
-    get_user_api_users__user_id__get: {
+    "users.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -28803,7 +31649,7 @@ export interface operations {
             };
         };
     };
-    delete_user_api_users__user_id__delete: {
+    "users.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -28832,7 +31678,7 @@ export interface operations {
             };
         };
     };
-    update_user_api_users__user_id__patch: {
+    "users.update": {
         parameters: {
             query?: never;
             header?: never;
@@ -28867,7 +31713,7 @@ export interface operations {
             };
         };
     };
-    get_user_roles_api_users__user_id__roles_get: {
+    "users.roles.list": {
         parameters: {
             query?: never;
             header?: never;
@@ -28898,7 +31744,38 @@ export interface operations {
             };
         };
     };
-    get_user_forms_api_users__user_id__forms_get: {
+    get_user_role_assignments_api_users__user_id__role_assignments_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RoleAssignmentPublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "users.forms.list": {
         parameters: {
             query?: never;
             header?: never;
@@ -28929,7 +31806,7 @@ export interface operations {
             };
         };
     };
-    list_roles_api_roles_get: {
+    "roles.list": {
         parameters: {
             query?: never;
             header?: never;
@@ -28949,7 +31826,7 @@ export interface operations {
             };
         };
     };
-    create_role_api_roles_post: {
+    "roles.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -28982,7 +31859,47 @@ export interface operations {
             };
         };
     };
-    get_role_api_roles__role_id__get: {
+    list_authorization_capabilities_api_roles_capabilities_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthorizationCapabilityPublic"][];
+                };
+            };
+        };
+    };
+    list_authorization_scopes_api_roles_scopes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AuthorizationCapabilityPublic"][];
+                };
+            };
+        };
+    };
+    "roles.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -29013,7 +31930,7 @@ export interface operations {
             };
         };
     };
-    delete_role_api_roles__role_id__delete: {
+    "roles.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -29042,7 +31959,7 @@ export interface operations {
             };
         };
     };
-    update_role_api_roles__role_id__patch: {
+    "roles.update": {
         parameters: {
             query?: never;
             header?: never;
@@ -29077,7 +31994,7 @@ export interface operations {
             };
         };
     };
-    get_role_users_api_roles__role_id__users_get: {
+    "roles.users.list": {
         parameters: {
             query?: never;
             header?: never;
@@ -29108,7 +32025,7 @@ export interface operations {
             };
         };
     };
-    assign_users_to_role_api_roles__role_id__users_post: {
+    "roles.users.assign": {
         parameters: {
             query?: never;
             header?: never;
@@ -29141,7 +32058,7 @@ export interface operations {
             };
         };
     };
-    bulk_unassign_users_api_roles__role_id__users_delete: {
+    "roles.users.bulk_remove": {
         parameters: {
             query?: never;
             header?: never;
@@ -29174,7 +32091,7 @@ export interface operations {
             };
         };
     };
-    remove_user_from_role_api_roles__role_id__users__user_id__delete: {
+    "roles.users.remove": {
         parameters: {
             query?: never;
             header?: never;
@@ -29204,7 +32121,7 @@ export interface operations {
             };
         };
     };
-    get_role_forms_api_roles__role_id__forms_get: {
+    "roles.forms.list": {
         parameters: {
             query?: never;
             header?: never;
@@ -29235,7 +32152,7 @@ export interface operations {
             };
         };
     };
-    assign_forms_to_role_api_roles__role_id__forms_post: {
+    "roles.forms.assign": {
         parameters: {
             query?: never;
             header?: never;
@@ -29268,7 +32185,7 @@ export interface operations {
             };
         };
     };
-    bulk_unassign_forms_api_roles__role_id__forms_delete: {
+    "roles.forms.bulk_remove": {
         parameters: {
             query?: never;
             header?: never;
@@ -29301,7 +32218,7 @@ export interface operations {
             };
         };
     };
-    remove_form_from_role_api_roles__role_id__forms__form_id__delete: {
+    "roles.forms.remove": {
         parameters: {
             query?: never;
             header?: never;
@@ -29331,7 +32248,7 @@ export interface operations {
             };
         };
     };
-    get_role_agents_api_roles__role_id__agents_get: {
+    "roles.agents.list": {
         parameters: {
             query?: never;
             header?: never;
@@ -29362,7 +32279,7 @@ export interface operations {
             };
         };
     };
-    assign_agents_to_role_api_roles__role_id__agents_post: {
+    "roles.agents.assign": {
         parameters: {
             query?: never;
             header?: never;
@@ -29395,7 +32312,7 @@ export interface operations {
             };
         };
     };
-    bulk_unassign_agents_api_roles__role_id__agents_delete: {
+    "roles.agents.bulk_remove": {
         parameters: {
             query?: never;
             header?: never;
@@ -29428,7 +32345,7 @@ export interface operations {
             };
         };
     };
-    remove_agent_from_role_api_roles__role_id__agents__agent_id__delete: {
+    "roles.agents.remove": {
         parameters: {
             query?: never;
             header?: never;
@@ -29458,7 +32375,7 @@ export interface operations {
             };
         };
     };
-    get_role_apps_api_roles__role_id__apps_get: {
+    "roles.apps.list": {
         parameters: {
             query?: never;
             header?: never;
@@ -29489,7 +32406,7 @@ export interface operations {
             };
         };
     };
-    assign_apps_to_role_api_roles__role_id__apps_post: {
+    "roles.apps.assign": {
         parameters: {
             query?: never;
             header?: never;
@@ -29522,7 +32439,7 @@ export interface operations {
             };
         };
     };
-    bulk_unassign_apps_api_roles__role_id__apps_delete: {
+    "roles.apps.bulk_remove": {
         parameters: {
             query?: never;
             header?: never;
@@ -29555,7 +32472,7 @@ export interface operations {
             };
         };
     };
-    get_role_workflows_api_roles__role_id__workflows_get: {
+    "roles.workflows.list": {
         parameters: {
             query?: never;
             header?: never;
@@ -29586,7 +32503,7 @@ export interface operations {
             };
         };
     };
-    assign_workflows_to_role_api_roles__role_id__workflows_post: {
+    "roles.workflows.assign": {
         parameters: {
             query?: never;
             header?: never;
@@ -29619,7 +32536,7 @@ export interface operations {
             };
         };
     };
-    bulk_unassign_workflows_api_roles__role_id__workflows_delete: {
+    "roles.workflows.bulk_remove": {
         parameters: {
             query?: never;
             header?: never;
@@ -29652,7 +32569,7 @@ export interface operations {
             };
         };
     };
-    get_role_knowledge_api_roles__role_id__knowledge_get: {
+    "roles.knowledge.list": {
         parameters: {
             query?: never;
             header?: never;
@@ -29683,7 +32600,7 @@ export interface operations {
             };
         };
     };
-    assign_knowledge_to_role_api_roles__role_id__knowledge_post: {
+    "roles.knowledge.assign": {
         parameters: {
             query?: never;
             header?: never;
@@ -29716,7 +32633,7 @@ export interface operations {
             };
         };
     };
-    bulk_unassign_knowledge_api_roles__role_id__knowledge_delete: {
+    "roles.knowledge.bulk_remove": {
         parameters: {
             query?: never;
             header?: never;
@@ -29749,7 +32666,7 @@ export interface operations {
             };
         };
     };
-    list_executions_api_executions_get: {
+    "executions.list": {
         parameters: {
             query?: {
                 /** @description Filter scope: omit for all (superusers), 'global' for global only, or org UUID for specific org + global. */
@@ -29843,7 +32760,7 @@ export interface operations {
             };
         };
     };
-    get_execution_api_executions__execution_id__get: {
+    "executions.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -30100,11 +33017,15 @@ export interface operations {
             };
         };
     };
-    list_workflows_api_workflows_get: {
+    "workflows.list": {
         parameters: {
             query?: {
                 type?: string | null;
                 is_tool?: boolean | null;
+                /** @description Case-insensitive search across workflow name and description. */
+                query?: string | null;
+                /** @description Filter by exact category. */
+                category?: string | null;
                 /** @description Filter scope: omit for user's org + global, 'global' for global only, 'all' for all workflows (platform admins only), or org UUID for specific org. */
                 scope?: string | null;
                 /** @description Filter to workflows used by a specific form */
@@ -30172,7 +33093,7 @@ export interface operations {
             };
         };
     };
-    execute_workflow_api_workflows_execute_post: {
+    "workflows.execute": {
         parameters: {
             query?: never;
             header?: never;
@@ -30238,7 +33159,7 @@ export interface operations {
             };
         };
     };
-    validate_workflow_api_workflows_validate_post: {
+    "workflows.validate": {
         parameters: {
             query?: never;
             header?: never;
@@ -30271,7 +33192,7 @@ export interface operations {
             };
         };
     };
-    register_workflow_api_workflows_register_post: {
+    "workflows.register": {
         parameters: {
             query?: never;
             header?: never;
@@ -30304,7 +33225,38 @@ export interface operations {
             };
         };
     };
-    delete_workflow_api_workflows__workflow_id__delete: {
+    "workflows.get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowMetadata"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workflows.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -30353,7 +33305,7 @@ export interface operations {
             };
         };
     };
-    update_workflow_api_workflows__workflow_id__patch: {
+    "workflows.update": {
         parameters: {
             query?: never;
             header?: never;
@@ -30602,7 +33554,7 @@ export interface operations {
             };
         };
     };
-    assign_roles_to_workflow_api_workflows__workflow_id__roles_post: {
+    "workflows.roles.grant": {
         parameters: {
             query?: never;
             header?: never;
@@ -30635,7 +33587,7 @@ export interface operations {
             };
         };
     };
-    remove_role_from_workflow_api_workflows__workflow_id__roles__role_id__delete: {
+    "workflows.roles.revoke": {
         parameters: {
             query?: never;
             header?: never;
@@ -30665,10 +33617,10 @@ export interface operations {
             };
         };
     };
-    list_forms_api_forms_get: {
+    "forms.list": {
         parameters: {
             query?: {
-                /** @description Filter scope: omit for all (superusers), 'global' for global only, or org UUID for specific org + global. */
+                /** @description Target organization UUID or 'global'; omit for your home organization. */
                 scope?: string | null;
             };
             header?: never;
@@ -30697,7 +33649,7 @@ export interface operations {
             };
         };
     };
-    create_form_api_forms_post: {
+    "forms.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -30949,7 +33901,7 @@ export interface operations {
             };
         };
     };
-    get_form_api_forms__form_id__get: {
+    "forms.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -30980,7 +33932,7 @@ export interface operations {
             };
         };
     };
-    delete_form_api_forms__form_id__delete: {
+    "forms.delete": {
         parameters: {
             query?: {
                 /** @description Permanently remove the form from the database instead of soft-deleting */
@@ -31012,7 +33964,7 @@ export interface operations {
             };
         };
     };
-    update_form_api_forms__form_id__patch: {
+    "forms.update": {
         parameters: {
             query?: never;
             header?: never;
@@ -31190,10 +34142,10 @@ export interface operations {
             };
         };
     };
-    get_config_api_config_get: {
+    "configs.list": {
         parameters: {
             query?: {
-                /** @description Filter scope: omit for all (superusers), 'global' for global only, or org UUID for specific org. */
+                /** @description Optional scope within the selected authorization boundary. */
                 scope?: string | null;
             };
             header?: never;
@@ -31222,7 +34174,7 @@ export interface operations {
             };
         };
     };
-    set_config_api_config_post: {
+    "configs.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -31255,7 +34207,38 @@ export interface operations {
             };
         };
     };
-    update_config_api_config__config_id__put: {
+    "configs.get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                config_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConfigResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "configs.update": {
         parameters: {
             query?: never;
             header?: never;
@@ -31290,7 +34273,7 @@ export interface operations {
             };
         };
     };
-    delete_config_api_config__config_id__delete: {
+    "configs.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -31539,7 +34522,7 @@ export interface operations {
             };
         };
     };
-    list_file_policies_api_files_policies_get: {
+    "files.policies.list": {
         parameters: {
             query?: {
                 location?: string | null;
@@ -31573,7 +34556,7 @@ export interface operations {
             };
         };
     };
-    test_file_policy_access_api_files_policies_test_post: {
+    "files.policies.test": {
         parameters: {
             query?: never;
             header?: never;
@@ -31606,7 +34589,7 @@ export interface operations {
             };
         };
     };
-    list_file_structure_api_files_structure_post: {
+    "files.structure.list": {
         parameters: {
             query?: never;
             header?: never;
@@ -31639,7 +34622,7 @@ export interface operations {
             };
         };
     };
-    get_file_policy_api_files_policies__policy_path__get: {
+    "files.policies.get": {
         parameters: {
             query?: {
                 location?: string;
@@ -31674,7 +34657,7 @@ export interface operations {
             };
         };
     };
-    set_file_policy_api_files_policies__policy_path__put: {
+    "files.policies.set": {
         parameters: {
             query?: {
                 location?: string;
@@ -31713,7 +34696,7 @@ export interface operations {
             };
         };
     };
-    delete_file_policy_api_files_policies__policy_path__delete: {
+    "files.policies.delete": {
         parameters: {
             query?: {
                 location?: string;
@@ -31746,7 +34729,7 @@ export interface operations {
             };
         };
     };
-    read_file_api_files_read_post: {
+    "workspace.files.read": {
         parameters: {
             query?: never;
             header?: never;
@@ -31779,7 +34762,7 @@ export interface operations {
             };
         };
     };
-    write_file_api_files_write_post: {
+    "workspace.files.write": {
         parameters: {
             query?: never;
             header?: never;
@@ -31810,7 +34793,7 @@ export interface operations {
             };
         };
     };
-    delete_file_api_files_delete_post: {
+    "workspace.files.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -31841,7 +34824,7 @@ export interface operations {
             };
         };
     };
-    list_files_simple_api_files_list_post: {
+    "workspace.files.list": {
         parameters: {
             query?: never;
             header?: never;
@@ -31874,7 +34857,7 @@ export interface operations {
             };
         };
     };
-    file_exists_api_files_exists_post: {
+    "workspace.files.exists": {
         parameters: {
             query?: never;
             header?: never;
@@ -31907,7 +34890,7 @@ export interface operations {
             };
         };
     };
-    file_stat_api_files_stat_post: {
+    "workspace.files.stat": {
         parameters: {
             query?: never;
             header?: never;
@@ -31927,6 +34910,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FileStatResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workspace.files.patch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkspaceFilePatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceFilePatchResponse"];
+                };
+            };
+            /** @description File conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FileConflictResponse"];
                 };
             };
             /** @description Validation Error */
@@ -32037,7 +35062,7 @@ export interface operations {
             };
         };
     };
-    pull_files_api_files_pull_post: {
+    "workspace.files.pull": {
         parameters: {
             query?: never;
             header?: never;
@@ -32070,7 +35095,7 @@ export interface operations {
             };
         };
     };
-    get_manifest_api_files_manifest_get: {
+    "workspace.files.manifest": {
         parameters: {
             query?: never;
             header?: never;
@@ -32092,7 +35117,7 @@ export interface operations {
             };
         };
     };
-    manage_watch_session_api_files_watch_post: {
+    "workspace.files.watch": {
         parameters: {
             query?: never;
             header?: never;
@@ -32127,7 +35152,7 @@ export interface operations {
             };
         };
     };
-    list_active_watchers_api_files_watchers_get: {
+    "workspace.files.watchers": {
         parameters: {
             query?: never;
             header?: never;
@@ -32149,7 +35174,7 @@ export interface operations {
             };
         };
     };
-    list_files_editor_api_files_editor_get: {
+    "workspace.files.editor.list": {
         parameters: {
             query: {
                 /** @description Directory path relative to workspace root */
@@ -32183,7 +35208,7 @@ export interface operations {
             };
         };
     };
-    delete_file_editor_api_files_editor_delete: {
+    "workspace.files.editor.delete": {
         parameters: {
             query: {
                 /** @description File or folder path */
@@ -32213,7 +35238,7 @@ export interface operations {
             };
         };
     };
-    get_file_content_editor_api_files_editor_content_get: {
+    "workspace.files.editor.read": {
         parameters: {
             query: {
                 /** @description File path relative to workspace root */
@@ -32245,7 +35270,7 @@ export interface operations {
             };
         };
     };
-    put_file_content_editor_api_files_editor_content_put: {
+    "workspace.files.editor.write": {
         parameters: {
             query?: never;
             header?: never;
@@ -32287,7 +35312,7 @@ export interface operations {
             };
         };
     };
-    create_folder_editor_api_files_editor_folder_post: {
+    "workspace.files.editor.folder.create": {
         parameters: {
             query: {
                 /** @description Folder path relative to workspace root */
@@ -32319,7 +35344,7 @@ export interface operations {
             };
         };
     };
-    rename_file_editor_api_files_editor_rename_post: {
+    "workspace.files.editor.rename": {
         parameters: {
             query: {
                 /** @description Current path */
@@ -32353,7 +35378,7 @@ export interface operations {
             };
         };
     };
-    search_file_contents_api_files_search_post: {
+    "workspace.files.search": {
         parameters: {
             query?: never;
             header?: never;
@@ -33474,7 +36499,7 @@ export interface operations {
             };
         };
     };
-    get_platform_job_status_api_platform_jobs__job_id__get: {
+    "platform.jobs.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -33585,6 +36610,97 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_runner_setup_api_admin_builder_runner_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxRunnerSetupState"];
+                };
+            };
+        };
+    };
+    save_runner_setup_api_admin_builder_runner_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SandboxRunnerConfigSave"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SandboxRunnerConfigPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_runner_setup_api_admin_builder_runner_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    provision_runner_api_admin_builder_runner_provision_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
                 };
             };
         };
@@ -36168,10 +39284,10 @@ export interface operations {
             };
         };
     };
-    list_agents_api_agents_get: {
+    "agents.list": {
         parameters: {
             query?: {
-                /** @description Filter scope: omit for all (superusers), 'global' for global only, or org UUID for specific org. */
+                /** @description Target organization UUID or 'global'; omit for your home organization. */
                 scope?: string | null;
                 category?: string | null;
                 active_only?: boolean;
@@ -36204,7 +39320,7 @@ export interface operations {
             };
         };
     };
-    create_agent_api_agents_post: {
+    "agents.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -36308,7 +39424,7 @@ export interface operations {
             };
         };
     };
-    get_agent_api_agents__agent_id__get: {
+    "agents.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -36339,7 +39455,7 @@ export interface operations {
             };
         };
     };
-    update_agent_api_agents__agent_id__put: {
+    "agents.update": {
         parameters: {
             query?: never;
             header?: never;
@@ -36374,7 +39490,7 @@ export interface operations {
             };
         };
     };
-    delete_agent_api_agents__agent_id__delete: {
+    "agents.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -36391,6 +39507,196 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_skill_api_agents__agent_id__skill_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentSkillPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_agent_skill_file_api_agents__agent_id__skill_file_get: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentSkillFilePublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_agent_skill_api_agents__agent_id__skill_bundle_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_agent_skill_api_agents__agent_id__skill_bundle_put"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentSkillPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    detach_agent_skill_api_agents__agent_id__skill_bundle_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_agent_skill_api_agents__agent_id__skill_download_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_agent_skill_api_agents__agent_id__skill_export_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                agent_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactRef"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -38386,7 +41692,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                assignment_key: "primary" | "summarization" | "tuning" | "image_generation" | "video_generation" | "chat_default";
+                assignment_key: "primary" | "summarization" | "tuning" | "image_generation" | "video_generation" | "chat_default" | "builder";
             };
             cookie?: never;
         };
@@ -38421,7 +41727,7 @@ export interface operations {
             query?: never;
             header?: never;
             path: {
-                assignment_key: "primary" | "summarization" | "tuning" | "image_generation" | "video_generation" | "chat_default";
+                assignment_key: "primary" | "summarization" | "tuning" | "image_generation" | "video_generation" | "chat_default" | "builder";
             };
             cookie?: never;
         };
@@ -38445,7 +41751,7 @@ export interface operations {
             };
         };
     };
-    list_integrations_api_integrations_get: {
+    "integrations.list": {
         parameters: {
             query?: never;
             header?: never;
@@ -38465,7 +41771,7 @@ export interface operations {
             };
         };
     };
-    create_integration_api_integrations_post: {
+    "integrations.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -38498,7 +41804,7 @@ export interface operations {
             };
         };
     };
-    get_integration_api_integrations__integration_id__get: {
+    "integrations.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -38529,9 +41835,12 @@ export interface operations {
             };
         };
     };
-    update_integration_api_integrations__integration_id__put: {
+    "integrations.update": {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Confirm deletion of config-schema keys and their stored values */
+                force_remove_keys?: boolean;
+            };
             header?: never;
             path: {
                 integration_id: string;
@@ -38564,7 +41873,7 @@ export interface operations {
             };
         };
     };
-    delete_integration_api_integrations__integration_id__delete: {
+    "integrations.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -38624,7 +41933,7 @@ export interface operations {
             };
         };
     };
-    get_integration_config_api_integrations__integration_id__config_get: {
+    "integrations.config.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -38655,7 +41964,7 @@ export interface operations {
             };
         };
     };
-    update_integration_config_api_integrations__integration_id__config_put: {
+    "integrations.config.update": {
         parameters: {
             query?: never;
             header?: never;
@@ -38690,7 +41999,7 @@ export interface operations {
             };
         };
     };
-    list_mappings_api_integrations__integration_id__mappings_get: {
+    "integrations.mappings.list": {
         parameters: {
             query?: never;
             header?: never;
@@ -38721,7 +42030,7 @@ export interface operations {
             };
         };
     };
-    create_mapping_api_integrations__integration_id__mappings_post: {
+    "integrations.mappings.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -38756,7 +42065,7 @@ export interface operations {
             };
         };
     };
-    get_mapping_api_integrations__integration_id__mappings__mapping_id__get: {
+    "integrations.mappings.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -38788,7 +42097,7 @@ export interface operations {
             };
         };
     };
-    update_mapping_api_integrations__integration_id__mappings__mapping_id__put: {
+    "integrations.mappings.update": {
         parameters: {
             query?: never;
             header?: never;
@@ -38824,7 +42133,7 @@ export interface operations {
             };
         };
     };
-    delete_mapping_api_integrations__integration_id__mappings__mapping_id__delete: {
+    "integrations.mappings.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -38854,7 +42163,7 @@ export interface operations {
             };
         };
     };
-    get_mapping_by_org_api_integrations__integration_id__mappings_by_org__org_id__get: {
+    "integrations.mappings.get_by_org": {
         parameters: {
             query?: never;
             header?: never;
@@ -38886,7 +42195,7 @@ export interface operations {
             };
         };
     };
-    batch_upsert_mappings_api_integrations__integration_id__mappings_batch_post: {
+    "integrations.mappings.batch": {
         parameters: {
             query?: never;
             header?: never;
@@ -38921,7 +42230,7 @@ export interface operations {
             };
         };
     };
-    authorize_mapping_api_integrations__integration_id__mappings__mapping_id__oauth_authorize_post: {
+    "integrations.mappings.authorize": {
         parameters: {
             query?: never;
             header?: never;
@@ -38957,7 +42266,7 @@ export interface operations {
             };
         };
     };
-    disconnect_mapping_api_integrations__integration_id__mappings__mapping_id__oauth_disconnect_post: {
+    "integrations.mappings.disconnect": {
         parameters: {
             query?: never;
             header?: never;
@@ -38987,7 +42296,7 @@ export interface operations {
             };
         };
     };
-    refresh_mapping_oauth_api_integrations__integration_id__mappings__mapping_id__oauth_refresh_post: {
+    "integrations.mappings.refresh": {
         parameters: {
             query?: never;
             header?: never;
@@ -39019,7 +42328,7 @@ export interface operations {
             };
         };
     };
-    get_oauth_config_api_integrations__integration_id__oauth_get: {
+    "integrations.oauth.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -39050,7 +42359,7 @@ export interface operations {
             };
         };
     };
-    get_oauth_authorization_url_api_integrations__integration_id__oauth_authorize_get: {
+    "integrations.oauth.authorize": {
         parameters: {
             query: {
                 /** @description Frontend callback URL for OAuth redirect */
@@ -39084,7 +42393,7 @@ export interface operations {
             };
         };
     };
-    clear_entity_id_source_api_integrations__integration_id__oauth_entity_id_source_delete: {
+    "integrations.oauth.entity_id_source.delete": {
         parameters: {
             query?: {
                 /** @description When true, also clear entity_id on every mapping for this integration */
@@ -39120,7 +42429,7 @@ export interface operations {
             };
         };
     };
-    set_entity_id_source_api_integrations__integration_id__oauth_entity_id_source_patch: {
+    "integrations.oauth.entity_id_source.update": {
         parameters: {
             query?: never;
             header?: never;
@@ -39157,7 +42466,7 @@ export interface operations {
             };
         };
     };
-    test_integration_connection_api_integrations__integration_id__test_post: {
+    "integrations.test": {
         parameters: {
             query?: never;
             header?: never;
@@ -39192,7 +42501,7 @@ export interface operations {
             };
         };
     };
-    generate_sdk_api_integrations__integration_id__generate_sdk_post: {
+    "integrations.generate_sdk": {
         parameters: {
             query?: never;
             header?: never;
@@ -39724,6 +43033,124 @@ export interface operations {
             };
         };
     };
+    list_usage_limits_api_settings_ai_usage_limits_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageLimitListResponse"];
+                };
+            };
+        };
+    };
+    get_effective_usage_limits_api_settings_ai_usage_limits_effective__scope___target_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scope: string;
+                target_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageLimitEffectiveResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upsert_usage_limit_api_settings_ai_usage_limits__scope___target_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scope: string;
+                target_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UsageLimitPolicyUpsert"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UsageLimitPolicyPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    remove_usage_limit_api_settings_ai_usage_limits__scope___target_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scope: string;
+                target_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_pricing_api_settings_ai_pricing_get: {
         parameters: {
             query?: never;
@@ -40212,7 +43639,7 @@ export interface operations {
             };
         };
     };
-    execute_gateway_tool_api_mcp_gateway_agents__agent_id__tools__tool_ref__execute_post: {
+    execute_gateway_agent_tool_api_mcp_gateway_agents__agent_id__tools__tool_ref__execute_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -40235,6 +43662,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MCPGatewayExecuteResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    execute_gateway_builder_session_tool_api_mcp_gateway_builder_sessions__builder_session_id__tools__tool_ref__execute_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                builder_session_id: string;
+                tool_ref: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MCPGatewayExecuteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MCPGatewayBuilderExecuteResponse"];
                 };
             };
             /** @description Validation Error */
@@ -40406,7 +43869,7 @@ export interface operations {
             };
         };
     };
-    list_adapters_api_events_adapters_get: {
+    "events.webhook_adapters.list": {
         parameters: {
             query?: never;
             header?: never;
@@ -40461,7 +43924,7 @@ export interface operations {
             };
         };
     };
-    list_sources_api_events_sources_get: {
+    "events.sources.list": {
         parameters: {
             query?: {
                 /** @description Filter by source type */
@@ -40501,7 +43964,7 @@ export interface operations {
             };
         };
     };
-    create_source_api_events_sources_post: {
+    "events.sources.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -40534,7 +43997,7 @@ export interface operations {
             };
         };
     };
-    get_source_api_events_sources__source_id__get: {
+    "events.sources.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -40565,7 +44028,7 @@ export interface operations {
             };
         };
     };
-    delete_source_api_events_sources__source_id__delete: {
+    "events.sources.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -40594,7 +44057,7 @@ export interface operations {
             };
         };
     };
-    update_source_api_events_sources__source_id__patch: {
+    "events.sources.update": {
         parameters: {
             query?: never;
             header?: never;
@@ -40629,7 +44092,7 @@ export interface operations {
             };
         };
     };
-    list_subscriptions_api_events_sources__source_id__subscriptions_get: {
+    "events.subscriptions.list": {
         parameters: {
             query?: {
                 /** @description Max results */
@@ -40665,7 +44128,7 @@ export interface operations {
             };
         };
     };
-    create_subscription_api_events_sources__source_id__subscriptions_post: {
+    "events.subscriptions.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -40700,7 +44163,39 @@ export interface operations {
             };
         };
     };
-    delete_subscription_api_events_sources__source_id__subscriptions__subscription_id__delete: {
+    "events.subscriptions.get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+                subscription_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventSubscriptionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "events.subscriptions.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -40730,7 +44225,7 @@ export interface operations {
             };
         };
     };
-    update_subscription_api_events_sources__source_id__subscriptions__subscription_id__patch: {
+    "events.subscriptions.update": {
         parameters: {
             query?: never;
             header?: never;
@@ -41015,7 +44510,7 @@ export interface operations {
             };
         };
     };
-    list_tables_api_tables_get: {
+    "tables.list": {
         parameters: {
             query?: {
                 /** @description Filter scope: 'global' for global only, org UUID for specific org. */
@@ -41047,7 +44542,7 @@ export interface operations {
             };
         };
     };
-    create_table_api_tables_post: {
+    "tables.create": {
         parameters: {
             query?: {
                 /** @description Target scope: 'global' or org UUID. Defaults to current org. */
@@ -41116,7 +44611,7 @@ export interface operations {
             };
         };
     };
-    get_table_api_tables__table_id__get: {
+    "tables.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -41147,7 +44642,7 @@ export interface operations {
             };
         };
     };
-    delete_table_api_tables__table_id__delete: {
+    "tables.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -41176,7 +44671,7 @@ export interface operations {
             };
         };
     };
-    update_table_api_tables__table_id__patch: {
+    "tables.update": {
         parameters: {
             query?: never;
             header?: never;
@@ -41542,10 +45037,10 @@ export interface operations {
             };
         };
     };
-    list_claims_api_claims_get: {
+    "claims.list": {
         parameters: {
             query?: {
-                /** @description Filter scope: omit to list across all orgs (superuser default), or pass an org UUID. */
+                /** @description Optional organization UUID within the active authorization boundary. */
                 scope?: string | null;
             };
             header?: never;
@@ -41574,7 +45069,7 @@ export interface operations {
             };
         };
     };
-    create_claim_api_claims_post: {
+    "claims.create": {
         parameters: {
             query?: {
                 /** @description Target organization scope (org UUID). Defaults to caller's home org. */
@@ -41610,7 +45105,7 @@ export interface operations {
             };
         };
     };
-    get_claim_api_claims__name__get: {
+    "claims.get": {
         parameters: {
             query?: {
                 /** @description Target organization scope (org UUID). Defaults to caller's home org. */
@@ -41644,7 +45139,7 @@ export interface operations {
             };
         };
     };
-    delete_claim_api_claims__name__delete: {
+    "claims.delete": {
         parameters: {
             query?: {
                 /** @description Target organization scope (org UUID). Defaults to caller's home org. */
@@ -41676,7 +45171,7 @@ export interface operations {
             };
         };
     };
-    update_claim_api_claims__name__patch: {
+    "claims.update": {
         parameters: {
             query?: {
                 /** @description Target organization scope (org UUID). Defaults to caller's home org. */
@@ -41714,7 +45209,7 @@ export interface operations {
             };
         };
     };
-    list_solutions_api_solutions_get: {
+    "solutions.list": {
         parameters: {
             query?: never;
             header?: never;
@@ -41734,7 +45229,7 @@ export interface operations {
             };
         };
     };
-    create_solution_api_solutions_post: {
+    "solutions.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -41767,7 +45262,7 @@ export interface operations {
             };
         };
     };
-    get_solution_api_solutions__solution_id__get: {
+    "solutions.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -41798,7 +45293,7 @@ export interface operations {
             };
         };
     };
-    delete_solution_api_solutions__solution_id__delete: {
+    "solutions.delete": {
         parameters: {
             query?: {
                 confirm?: string;
@@ -41831,7 +45326,7 @@ export interface operations {
             };
         };
     };
-    update_solution_api_solutions__solution_id__patch: {
+    "solutions.update": {
         parameters: {
             query?: never;
             header?: never;
@@ -42005,7 +45500,7 @@ export interface operations {
             };
         };
     };
-    export_solution_api_solutions__solution_id__export_post: {
+    "solutions.export": {
         parameters: {
             query?: {
                 mode?: string;
@@ -42021,7 +45516,7 @@ export interface operations {
         };
         requestBody?: {
             content: {
-                "application/json": components["schemas"]["Body_export_solution_api_solutions__solution_id__export_post"];
+                "application/json": components["schemas"]["export"];
             };
         };
         responses: {
@@ -42355,7 +45850,7 @@ export interface operations {
             };
         };
     };
-    deploy_solution_api_solutions__solution_id__deploy_post: {
+    "solutions.deploy": {
         parameters: {
             query?: {
                 force?: boolean;
@@ -42368,7 +45863,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "multipart/form-data": components["schemas"]["Body_deploy_solution_api_solutions__solution_id__deploy_post"];
+                "multipart/form-data": components["schemas"]["deploy"];
             };
         };
         responses: {
@@ -42423,7 +45918,7 @@ export interface operations {
             };
         };
     };
-    capture_solution_entities_api_solutions__solution_id__capture_post: {
+    "solutions.capture": {
         parameters: {
             query?: never;
             header?: never;
@@ -42493,7 +45988,7 @@ export interface operations {
             };
         };
     };
-    sync_solution_api_solutions__solution_id__sync_post: {
+    "solutions.sync": {
         parameters: {
             query?: never;
             header?: never;
@@ -42625,7 +46120,7 @@ export interface operations {
             };
         };
     };
-    install_solution_api_solutions_install_post: {
+    "solutions.install": {
         parameters: {
             query?: {
                 force?: boolean;
@@ -42637,7 +46132,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "multipart/form-data": components["schemas"]["Body_install_solution_api_solutions_install_post"];
+                "multipart/form-data": components["schemas"]["install"];
             };
         };
         responses: {
@@ -42661,7 +46156,1066 @@ export interface operations {
             };
         };
     };
-    list_namespaces_api_knowledge_sources_get: {
+    list_builder_targets_api_builder_solutions_targets_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuilderTargetsDTO"];
+                };
+            };
+        };
+    };
+    list_solutions_api_builder_solutions_get: {
+        parameters: {
+            query?: {
+                view?: "mine" | "all";
+                organization_id?: string | null;
+                owner_user_id?: string | null;
+                search?: string | null;
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrivateSolutionsList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_solution_api_builder_solutions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PrivateSolutionCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrivateSolutionDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_global_workspace_api_builder_solutions_global_workspace_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalWorkspaceStatusDTO"];
+                };
+            };
+        };
+    };
+    create_global_workspace_api_builder_solutions_global_workspace_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalWorkspaceStatusDTO"];
+                };
+            };
+        };
+    };
+    refresh_global_workspace_route_api_builder_solutions_global_workspace_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalWorkspaceStatusDTO"];
+                };
+            };
+        };
+    };
+    validate_global_workspace_route_api_builder_solutions_global_workspace_validate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalWorkspaceValidationDTO"];
+                };
+            };
+        };
+    };
+    list_global_workspace_operations_api_builder_solutions_global_workspace_operations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalOperationChangesListDTO"];
+                };
+            };
+        };
+    };
+    discard_global_workspace_operation_api_builder_solutions_global_workspace_operations__change_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                change_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GlobalOperationChangeDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_global_workspace_route_api_builder_solutions_global_workspace_apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
+            };
+        };
+    };
+    rollback_global_workspace_route_api_builder_solutions_global_workspace_rollback_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
+            };
+        };
+    };
+    get_solution_api_builder_solutions__solution_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PrivateSolutionDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_solution_api_builder_solutions__solution_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_collaborators_api_builder_solutions__solution_id__collaborators_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuilderCollaboratorsList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_collaborator_api_builder_solutions__solution_id__collaborators_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BuilderCollaboratorUpsert"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuilderCollaboratorDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_collaborator_api_builder_solutions__solution_id__collaborators__collaborator_user_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+                collaborator_user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_solution_role_grants_api_builder_solutions__solution_id__role_grants_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionRoleGrantPublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_solution_role_grant_api_builder_solutions__solution_id__role_grants_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SolutionRoleGrantCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionRoleGrantPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_solution_role_grant_api_builder_solutions__solution_id__role_grants__role_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+                role_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_promotion_request_api_builder_solutions__solution_id__promotion_request_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuilderProjectDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_sessions_api_builder_solutions__solution_id__sessions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuilderSessionsList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_session_api_builder_solutions__solution_id__sessions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateSessionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuilderSessionDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_revisions_api_builder_solutions__solution_id__revisions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SourceRevisionsList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_revision_api_builder_solutions__solution_id__revisions__revision_id__download_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_revision_files_api_builder_solutions__solution_id__revisions__revision_id__files_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RevisionFilesList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_revision_file_api_builder_solutions__solution_id__revisions__revision_id__file_get: {
+        parameters: {
+            query: {
+                path: string;
+            };
+            header?: never;
+            path: {
+                solution_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RevisionFileContentDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_revision_diff_api_builder_solutions__solution_id__revisions__revision_id__diff_get: {
+        parameters: {
+            query?: {
+                against_revision_id?: string | null;
+            };
+            header?: never;
+            path: {
+                solution_id: string;
+                revision_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RevisionDiffDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    undo_to_revision_api_builder_solutions__solution_id__undo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UndoRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuilderTurnDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_turns_api_builder_solutions__solution_id__turns_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuilderTurnsList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_turn_api_builder_solutions__solution_id__turns_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunTurnRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RunTurnResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_build_job_api_builder_solutions__solution_id__build_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuildJobPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_deploy_job_api_builder_solutions__solution_id__deploy_jobs__job_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionDeployJobStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_reviews_api_solution_promotions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromotionReviewsList"];
+                };
+            };
+        };
+    };
+    get_review_api_solution_promotions__solution_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromotionReviewDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    promote_api_solution_promotions__solution_id__promote_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PromotionTargetRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PromotionResultDTO"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_launch_api_builder_solutions__solution_id__apps__app_id__launch_post: {
+        parameters: {
+            query?: {
+                path?: string;
+            };
+            header?: never;
+            path: {
+                solution_id: string;
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "knowledge.namespaces.list": {
         parameters: {
             query?: {
                 scope?: string | null;
@@ -42774,7 +47328,7 @@ export interface operations {
             };
         };
     };
-    list_all_documents_api_knowledge_sources_documents_get: {
+    "knowledge.documents.list": {
         parameters: {
             query?: {
                 scope?: string | null;
@@ -42880,7 +47434,7 @@ export interface operations {
             };
         };
     };
-    create_document_api_knowledge_sources__namespace__documents_post: {
+    "knowledge.documents.create": {
         parameters: {
             query?: {
                 scope?: string | null;
@@ -42917,7 +47471,7 @@ export interface operations {
             };
         };
     };
-    get_document_api_knowledge_sources__namespace__documents__doc_id__get: {
+    "knowledge.documents.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -42949,7 +47503,7 @@ export interface operations {
             };
         };
     };
-    update_document_api_knowledge_sources__namespace__documents__doc_id__put: {
+    "knowledge.documents.update": {
         parameters: {
             query?: {
                 scope?: string | null;
@@ -42988,7 +47542,7 @@ export interface operations {
             };
         };
     };
-    delete_document_api_knowledge_sources__namespace__documents__doc_id__delete: {
+    "knowledge.documents.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -43037,6 +47591,39 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "knowledge.search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeSearchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KnowledgeSearchResult"][];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -43181,7 +47768,7 @@ export interface operations {
             };
         };
     };
-    list_applications_api_applications_get: {
+    "apps.list": {
         parameters: {
             query?: {
                 /** @description Filter scope: 'global' for global only, org UUID for specific org. */
@@ -43213,7 +47800,7 @@ export interface operations {
             };
         };
     };
-    create_application_api_applications_post: {
+    "apps.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -43246,7 +47833,7 @@ export interface operations {
             };
         };
     };
-    get_application_api_applications__slug__get: {
+    "apps.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -43277,7 +47864,40 @@ export interface operations {
             };
         };
     };
-    delete_application_api_applications__app_id__delete: {
+    create_isolated_application_launch_api_applications__app_id__isolated_launch_post: {
+        parameters: {
+            query?: {
+                path?: string;
+            };
+            header?: never;
+            path: {
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApplicationLaunchResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "apps.delete": {
         parameters: {
             query?: never;
             header?: never;
@@ -43306,7 +47926,7 @@ export interface operations {
             };
         };
     };
-    update_application_api_applications__app_id__patch: {
+    "apps.update": {
         parameters: {
             query?: never;
             header?: never;
@@ -43407,7 +48027,7 @@ export interface operations {
             };
         };
     };
-    publish_application_api_applications__app_id__publish_post: {
+    "apps.publish": {
         parameters: {
             query?: never;
             header?: never;
@@ -43442,7 +48062,7 @@ export interface operations {
             };
         };
     };
-    replace_application_endpoint_api_applications__app_id__replace_post: {
+    "apps.replace": {
         parameters: {
             query?: never;
             header?: never;
@@ -43510,7 +48130,7 @@ export interface operations {
             };
         };
     };
-    validate_application_api_applications__app_id__validate_post: {
+    "apps.validate": {
         parameters: {
             query?: never;
             header?: never;
@@ -43998,7 +48618,7 @@ export interface operations {
             };
         };
     };
-    get_dependencies_api_applications__app_id__dependencies_get: {
+    "apps.dependencies.get": {
         parameters: {
             query?: never;
             header?: never;
@@ -44032,7 +48652,7 @@ export interface operations {
             };
         };
     };
-    put_dependencies_api_applications__app_id__dependencies_put: {
+    "apps.dependencies.update": {
         parameters: {
             query?: never;
             header?: never;
@@ -45545,7 +50165,7 @@ export interface operations {
             };
         };
     };
-    list_policy_rules_api_policy_rules_get: {
+    "policy.rules.list": {
         parameters: {
             query?: {
                 /** @description Filter by domain ('file' or 'table') */
@@ -45579,7 +50199,7 @@ export interface operations {
             };
         };
     };
-    create_policy_rule_api_policy_rules_post: {
+    "policy.rules.create": {
         parameters: {
             query?: never;
             header?: never;
@@ -45612,7 +50232,41 @@ export interface operations {
             };
         };
     };
-    update_policy_rule_api_policy_rules__domain___name__put: {
+    "policy.rules.get": {
+        parameters: {
+            query?: {
+                organization_id?: string | null;
+            };
+            header?: never;
+            path: {
+                domain: string;
+                name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PolicyRulePublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "policy.rules.update": {
         parameters: {
             query?: {
                 organization_id?: string | null;
@@ -45650,7 +50304,7 @@ export interface operations {
             };
         };
     };
-    delete_policy_rule_api_policy_rules__domain___name__delete: {
+    "policy.rules.delete": {
         parameters: {
             query?: {
                 organization_id?: string | null;
@@ -45682,7 +50336,7 @@ export interface operations {
             };
         };
     };
-    get_policy_rule_usages_api_policy_rules__domain___name__usages_get: {
+    "policy.rules.list_usages": {
         parameters: {
             query?: {
                 organization_id?: string | null;

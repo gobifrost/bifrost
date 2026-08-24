@@ -14,16 +14,37 @@ import { toast } from "sonner";
 export function useOrganizations(options?: {
 	enabled?: boolean;
 	includeInactive?: boolean;
+	boundary?: string;
 }) {
 	return $api.useQuery(
 		"get",
 		"/api/organizations",
 		{
+			headers: options?.boundary
+				? { "X-Bifrost-Boundary": options.boundary }
+				: undefined,
 			params: {
 				query: {
 					include_inactive: options?.includeInactive ?? false,
 				},
 			},
+		},
+		{ enabled: options?.enabled ?? true },
+	);
+}
+
+/** Fetch provider-defined organization groups available for Role boundaries. */
+export function useOrganizationGroups(options?: {
+	enabled?: boolean;
+	boundary?: string;
+}) {
+	return $api.useQuery(
+		"get",
+		"/api/organization-groups",
+		{
+			headers: options?.boundary
+				? { "X-Bifrost-Boundary": options.boundary }
+				: undefined,
 		},
 		{ enabled: options?.enabled ?? true },
 	);

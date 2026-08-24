@@ -12,9 +12,6 @@ const { mockUseEditor } = vi.hoisted(() => ({
 vi.mock("@tiptap/starter-kit", () => ({
 	default: { configure: vi.fn(() => "starter-kit") },
 }));
-vi.mock("@tiptap/extension-link", () => ({
-	default: { configure: vi.fn(() => "link") },
-}));
 vi.mock("@tiptap/extension-placeholder", () => ({
 	default: { configure: vi.fn(() => "placeholder") },
 }));

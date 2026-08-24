@@ -21,12 +21,12 @@ import asyncio
 import logging
 import re
 from enum import Enum
+from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Path, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 
-from src.core.auth import Context, CurrentUser
-from src.core.exceptions import AccessDeniedError
+from src.core.auth import Context
 from src.core.log_safety import log_safe
 from src.services.solutions.guard import assert_entity_id_not_solution_managed
 from src.models.contracts.applications import (
@@ -37,7 +37,18 @@ from src.models.contracts.applications import (
     SimpleFileResponse,
 )
 from src.models.orm.applications import Application
-from src.routers.applications import ApplicationRepository
+from src.services.application_authorization import (
+    authorized_application_by_id,
+    require_application_mutation,
+)
+from src.services.authorization import (
+    AuthorizationContext,
+    CurrentAuthorizationContext,
+    get_authorization_context,
+)
+from src.services.audit import emit_audit
+from src.services.operation_catalog import operation_route
+from src.services.repo_sync_writer import RepoSyncWriter
 from src.services.app_storage import AppStorageService
 from src.services.repo_storage import RepoStorage
 from src.services.file_storage.service import get_file_storage_service
@@ -53,6 +64,54 @@ render_router = APIRouter(
     prefix="/api/applications/{app_id}",
     tags=["App Rendering"],
 )
+
+
+async def get_app_runtime_authorization(
+    request: Request,
+    ctx: Context,
+) -> AuthorizationContext | None:
+    """Resolve human app-file authorization while preserving embed tokens.
+
+    Embed/app runtime tokens are already bound to one app by token claims and
+    do not carry human RBAC boundary headers. Human requests continue through
+    the canonical AuthorizationContext capability/boundary path.
+    """
+
+    if ctx.user.embed:
+        return None
+    return await get_authorization_context(request, ctx.user, ctx.db)
+
+
+AppRuntimeAuthorization = Annotated[
+    AuthorizationContext | None,
+    Depends(get_app_runtime_authorization),
+]
+
+
+async def authorized_runtime_application_by_id(
+    ctx: Context,
+    authorization: AuthorizationContext | None,
+    app_id: UUID,
+) -> Application:
+    """Authorize app runtime/static asset access for humans or embed tokens."""
+
+    if ctx.user.embed:
+        if ctx.user.app_id == str(app_id):
+            app = await ctx.db.get(Application, app_id)
+            if app is not None:
+                return app
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Application '{app_id}' not found",
+        )
+
+    if authorization is None:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Application authorization is required",
+        )
+    authorization.require("apps.read")
+    return await authorized_application_by_id(ctx, authorization, app_id)
 
 
 # =============================================================================
@@ -216,53 +275,6 @@ def validate_file_path(path: str) -> None:
             )
 
 
-# =============================================================================
-# Helper Functions
-# =============================================================================
-
-
-async def get_application_or_404(ctx: Context, app_id: UUID) -> Application:
-    """Get application by UUID with access control.
-
-    Uses ApplicationRepository for cascade scoping and role-based access.
-    Returns 404 for both not found and access denied to avoid leaking
-    existence information.
-
-    Returns:
-        Application if found and accessible
-
-    Raises:
-        HTTPException 404 if not found or access denied
-    """
-    if ctx.user.embed is True:
-        # Embed pre-auth (OPEN-D): the token is HMAC-bound to exactly ONE
-        # app (its app_id claim). Tier/role checks don't apply; identity
-        # binding does — only the bound app's files resolve.
-        if ctx.user.app_id == str(app_id):
-            app = await ctx.db.get(Application, app_id)
-            if app is not None:
-                return app
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Application '{app_id}' not found",
-        )
-
-    repo = ApplicationRepository(
-        session=ctx.db,
-        org_id=ctx.org_id,
-        user_id=ctx.user.user_id,
-        is_superuser=ctx.user.is_platform_admin,
-        is_external=ctx.user.is_external,
-    )
-    try:
-        return await repo.can_access(id=app_id)
-    except AccessDeniedError:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Application '{app_id}' not found",
-        )
-
-
 class FileMode(str, Enum):
     draft = "draft"
     live = "live"
@@ -283,7 +295,7 @@ async def list_app_files(
     mode: FileMode = FileMode.draft,
     *,
     ctx: Context,
-    _user: CurrentUser,
+    authorization: CurrentAuthorizationContext,
 ) -> SimpleFileListResponse:
     """List all files for an application.
 
@@ -291,7 +303,8 @@ async def list_app_files(
     Compiled content is read from _apps/{app_id}/{mode}/.
     The compiled field is only set when it differs from source.
     """
-    app = await get_application_or_404(ctx, app_id)
+    authorization.require("apps.read")
+    app = await authorized_application_by_id(ctx, authorization, app_id)
     app_storage = AppStorageService()
     repo = RepoStorage()
 
@@ -348,7 +361,7 @@ async def read_app_file(
     mode: FileMode = FileMode.draft,
     *,
     ctx: Context,
-    _user: CurrentUser,
+    authorization: CurrentAuthorizationContext,
 ) -> SimpleFileResponse:
     """Read a single file by relative path.
 
@@ -356,7 +369,8 @@ async def read_app_file(
     Compiled content is read from _apps/{app_id}/{mode}/.
     The compiled field is only set when it differs from source.
     """
-    app = await get_application_or_404(ctx, app_id)
+    authorization.require("apps.read")
+    app = await authorized_application_by_id(ctx, authorization, app_id)
     app_storage = AppStorageService()
 
     # Source from S3 (_repo/)
@@ -399,14 +413,15 @@ async def write_app_file(
     file_path: str = Path(..., description="Relative file path (can contain slashes)"),
     *,
     ctx: Context,
-    user: CurrentUser,
+    authorization: CurrentAuthorizationContext,
 ) -> SimpleFileResponse:
     """Create or update a file at the given path.
 
     Validates the path, then writes via FileStorageService (which handles
     S3 _repo/ storage, file_index update, pubsub, and preview sync).
     """
-    app = await get_application_or_404(ctx, app_id)
+    app = await authorized_application_by_id(ctx, authorization, app_id)
+    require_application_mutation(authorization, app)
     # Solution-managed app source is read-only on the platform — only deploy
     # may write it. The before_flush backstop can't see this: it writes to S3 +
     # file_index, never dirtying the Application ORM row. (criterion 6)
@@ -423,7 +438,7 @@ async def write_app_file(
     await storage.write_file(
         path=full_path,
         content=source.encode("utf-8"),
-        updated_by=user.email or "unknown",
+        updated_by=authorization.requester.email or "unknown",
     )
 
     # Compile server-side and return compiled code in the response
@@ -449,14 +464,15 @@ async def delete_app_file(
     file_path: str = Path(..., description="Relative file path (can contain slashes)"),
     *,
     ctx: Context,
-    _user: CurrentUser,
+    authorization: CurrentAuthorizationContext,
 ) -> None:
     """Delete a file at the given path.
 
     Deletes via FileStorageService (which handles S3 _repo/ deletion,
     file_index cleanup, pubsub, and preview sync).
     """
-    app = await get_application_or_404(ctx, app_id)
+    app = await authorized_application_by_id(ctx, authorization, app_id)
+    require_application_mutation(authorization, app)
     # Read-only for solution-managed apps (S3 delete bypasses the ORM backstop).
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
     prefix = app.repo_prefix
@@ -482,7 +498,7 @@ async def render_app(
     mode: FileMode = FileMode.draft,
     *,
     ctx: Context,
-    _user: CurrentUser,
+    authorization: AppRuntimeAuthorization,
 ) -> AppRenderResponse:
     """Return all files as compiled JS, ready for client-side execution.
 
@@ -491,7 +507,7 @@ async def render_app(
 
     Unlike /files, this returns only `path` + `code` (no source).
     """
-    app = await get_application_or_404(ctx, app_id)
+    app = await authorized_runtime_application_by_id(ctx, authorization, app_id)
     app_storage = AppStorageService()
     storage_mode = "preview" if mode == FileMode.draft else "live"
     app_id_str = str(app.id)
@@ -577,7 +593,7 @@ async def get_bundle_manifest(
     mode: FileMode = FileMode.draft,
     *,
     ctx: Context,
-    _user: CurrentUser,
+    authorization: AppRuntimeAuthorization,
 ) -> dict:
     """Return the manifest.json describing the bundled app.
 
@@ -587,7 +603,7 @@ async def get_bundle_manifest(
 
     If no manifest exists yet, triggers a build and returns that one.
     """
-    app = await get_application_or_404(ctx, app_id)
+    app = await authorized_runtime_application_by_id(ctx, authorization, app_id)
     app_storage = AppStorageService()
     storage_mode = "preview" if mode == FileMode.draft else "live"
     app_id_str = str(app.id)
@@ -759,7 +775,7 @@ async def get_bundle_asset(
     mode: FileMode = FileMode.draft,
     *,
     ctx: Context,
-    _user: CurrentUser,
+    authorization: AppRuntimeAuthorization,
 ):
     """Stream a bundled asset file from S3.
 
@@ -768,7 +784,7 @@ async def get_bundle_asset(
     """
     from fastapi.responses import Response
 
-    app = await get_application_or_404(ctx, app_id)
+    app = await authorized_runtime_application_by_id(ctx, authorization, app_id)
     app_storage = AppStorageService()
     storage_mode = "preview" if mode == FileMode.draft else "live"
 
@@ -804,7 +820,7 @@ async def get_v2_dist_asset(
     path: str = Path(..., description="Path within the app's dist/ (e.g. index.html)"),
     *,
     ctx: Context,
-    _user: CurrentUser,
+    authorization: AppRuntimeAuthorization,
 ):
     """Stream a built dist/ file for a standalone_v2 app.
 
@@ -818,7 +834,7 @@ async def get_v2_dist_asset(
 
     from src.services.solutions.app_build import SolutionAppBuilder
 
-    app = await get_application_or_404(ctx, app_id)
+    app = await authorized_runtime_application_by_id(ctx, authorization, app_id)
     rel = path or "index.html"
     try:
         data = await SolutionAppBuilder().read_dist(str(app.id), rel)
@@ -862,15 +878,17 @@ async def get_v2_dist_asset(
     "/dependencies",
     response_model=dict[str, str],
     summary="Get app dependencies",
+    **operation_route("apps.dependencies.get"),
 )
 async def get_dependencies(
     app_id: UUID = Path(..., description="Application UUID"),
     *,
     ctx: Context,
-    _user: CurrentUser,
+    authorization: CurrentAuthorizationContext,
 ) -> dict[str, str]:
     """Return the app's npm dependencies."""
-    app = await get_application_or_404(ctx, app_id)
+    authorization.require_operation("apps.dependencies.get")
+    app = await authorized_application_by_id(ctx, authorization, app_id)
     return app.dependencies or {}
 
 
@@ -878,19 +896,22 @@ async def get_dependencies(
     "/dependencies",
     response_model=dict[str, str],
     summary="Update app dependencies",
+    **operation_route("apps.dependencies.update"),
 )
 async def put_dependencies(
     deps: dict[str, str],
     app_id: UUID = Path(..., description="Application UUID"),
     *,
     ctx: Context,
-    _user: CurrentUser,
+    authorization: CurrentAuthorizationContext,
 ) -> dict[str, str]:
     """Replace the app's npm dependencies.
 
     Validates every package name and version, enforces the max-dependency limit.
     """
-    app = await get_application_or_404(ctx, app_id)
+    authorization.require_operation("apps.dependencies.update")
+    app = await authorized_application_by_id(ctx, authorization, app_id)
+    require_application_mutation(authorization, app)
     # Dependencies are solution-owned metadata — read-only for managed apps.
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
 
@@ -914,10 +935,22 @@ async def put_dependencies(
 
     # Update DB
     app.dependencies = deps if deps else None
-    await ctx.db.commit()
 
     # Invalidate render cache
     app_storage = AppStorageService()
     await app_storage.invalidate_render_cache(str(app.id))
+
+    await emit_audit(
+        ctx.db,
+        "app.dependencies.update",
+        resource_type="application",
+        resource_id=app.id,
+        details={
+            "name": app.name,
+            "dependencies": sorted(deps),
+        },
+    )
+    await RepoSyncWriter(ctx.db).regenerate_manifest()
+    await ctx.db.commit()
 
     return deps

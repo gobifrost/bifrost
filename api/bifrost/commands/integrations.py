@@ -11,15 +11,13 @@ parity follow-up:
   (body from :class:`IntegrationUpdate`). Removed-key detection runs against
   the current server state before the PUT fires; the command refuses unless
   ``--force-remove-keys`` is set.
-* ``bifrost integrations add-mapping <integration-ref>`` →
+* ``bifrost integrations create-mapping <integration-ref>`` →
   ``POST /api/integrations/{id}/mappings`` (body from
   :class:`IntegrationMappingCreate`). ``--organization`` is a ref.
 * ``bifrost integrations update-mapping <integration-ref>`` → resolves the
   mapping via ``GET /api/integrations/{id}/mappings/by-org/{org_id}``, then
   ``PUT /api/integrations/{id}/mappings/{mapping_id}``. ``oauth_token_id`` is
-  **never** sent unless the opt-in ``--oauth-token-id`` flag is passed — the
-  DTO-driven flag set excludes the field (per :data:`DTO_EXCLUDES`) so the
-  server's existing token isn't clobbered with ``None`` on unrelated updates.
+  excluded because OAuth credentials are owned by the UI authorization flow.
 
 ``config_schema`` is handled specially:
 
@@ -64,6 +62,12 @@ from bifrost.contracts import (
 from .base import _apply_flags, entity_group, output_result, pass_resolver, run_async
 
 integrations_group = entity_group("integrations", "Manage integrations.")
+
+_PLATFORM_HEADERS = {"X-Bifrost-Boundary": "platform"}
+
+
+def _organization_headers(organization_id: str) -> dict[str, str]:
+    return {"X-Bifrost-Boundary": f"organization:{organization_id}"}
 
 
 def load_schema_file(raw: str | None) -> list[dict[str, Any]] | None:
@@ -215,7 +219,11 @@ async def create_integration(
     body = await assemble_body(IntegrationCreate, fields, resolver=resolver)
     if schema_items is not None:
         body["config_schema"] = schema_items
-    response = await client.post("/api/integrations", json=body)
+    response = await client.post(
+        "/api/integrations",
+        json=body,
+        headers=_PLATFORM_HEADERS,
+    )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
 
@@ -278,12 +286,20 @@ async def update_integration(
     ``--force-remove-keys`` is passed — removed keys cascade-delete related
     ``Config`` rows (integration-level defaults and per-org overrides).
     """
-    integration_uuid = await resolver.resolve("integration", ref)
+    platform_resolver = RefResolver(client, headers=_PLATFORM_HEADERS)
+    integration_uuid = await platform_resolver.resolve("integration", ref)
     schema_items = _extract_config_schema(fields)
-    body = await assemble_body(IntegrationUpdate, fields, resolver=resolver)
+    body = await assemble_body(
+        IntegrationUpdate,
+        fields,
+        resolver=platform_resolver,
+    )
 
     if schema_items is not None:
-        detail_resp = await client.get(f"/api/integrations/{integration_uuid}")
+        detail_resp = await client.get(
+            f"/api/integrations/{integration_uuid}",
+            headers=_PLATFORM_HEADERS,
+        )
         detail_resp.raise_for_status()
         current = detail_resp.json()
         existing_keys = _current_schema_keys(current)
@@ -309,28 +325,25 @@ async def update_integration(
             sys.exit(1)
         body["config_schema"] = schema_items
 
-    response = await client.put(f"/api/integrations/{integration_uuid}", json=body)
+    response = await client.put(
+        f"/api/integrations/{integration_uuid}",
+        params={"force_remove_keys": force_remove_keys},
+        json=body,
+        headers=_PLATFORM_HEADERS,
+    )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
 
 
-@integrations_group.command("add-mapping")
+@integrations_group.command("create-mapping")
 @click.argument("integration_ref")
 @_apply_flags(_MAPPING_CREATE_FLAGS)
-@click.option(
-    "--oauth-token-id",
-    "oauth_token_id_opt",
-    default=None,
-    type=str,
-    help="OAuth token UUID (opt-in; empty means leave unset).",
-)
 @click.pass_context
 @pass_resolver
 @run_async
-async def add_mapping(
+async def create_mapping(
     ctx: click.Context,
     integration_ref: str,
-    oauth_token_id_opt: str | None,
     *,
     client: BifrostClient,
     resolver: RefResolver,
@@ -341,16 +354,19 @@ async def add_mapping(
     ``INTEGRATION_REF`` is a UUID or integration name. ``--organization`` is a
     UUID or org name (resolved via :class:`RefResolver`).
 
-    ``--oauth-token-id`` is an opt-in flag outside the DTO-generated flag set —
-    the DTO excludes ``oauth_token_id`` to avoid accidentally surfacing the
-    UI-managed OAuth handshake data as a writable CLI field.
+    OAuth token IDs are intentionally excluded because the UI authorization
+    flow owns credential creation and rotation.
     """
-    integration_uuid = await resolver.resolve("integration", integration_ref)
+    platform_resolver = RefResolver(client, headers=_PLATFORM_HEADERS)
+    integration_uuid = await platform_resolver.resolve(
+        "integration", integration_ref
+    )
     body = await assemble_body(IntegrationMappingCreate, fields, resolver=resolver)
-    if oauth_token_id_opt is not None:
-        body["oauth_token_id"] = oauth_token_id_opt
+    organization_id = str(body["organization_id"])
     response = await client.post(
-        f"/api/integrations/{integration_uuid}/mappings", json=body
+        f"/api/integrations/{integration_uuid}/mappings",
+        json=body,
+        headers=_organization_headers(organization_id),
     )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
@@ -366,13 +382,6 @@ async def add_mapping(
     help="organization ref (UUID or name) — identifies the mapping to update.",
 )
 @_apply_flags(_MAPPING_UPDATE_FLAGS)
-@click.option(
-    "--oauth-token-id",
-    "oauth_token_id_opt",
-    default=None,
-    type=str,
-    help="OAuth token UUID (opt-in; omitted means leave unchanged).",
-)
 @click.pass_context
 @pass_resolver
 @run_async
@@ -380,7 +389,6 @@ async def update_mapping(
     ctx: click.Context,
     integration_ref: str,
     organization_ref: str,
-    oauth_token_id_opt: str | None,
     *,
     client: BifrostClient,
     resolver: RefResolver,
@@ -390,24 +398,28 @@ async def update_mapping(
 
     Resolves ``INTEGRATION_REF`` + ``--organization`` to the mapping UUID via
     ``GET /api/integrations/{id}/mappings/by-org/{org_id}``, then PUTs the
-    update body. ``oauth_token_id`` is only sent when ``--oauth-token-id`` is
-    explicitly passed — this preserves the server's existing token on
-    unrelated updates (it's set by the OAuth flow, not by CLI users).
+    update body. OAuth token IDs are intentionally excluded because they are
+    managed by the UI authorization flow.
     """
-    integration_uuid = await resolver.resolve("integration", integration_ref)
+    platform_resolver = RefResolver(client, headers=_PLATFORM_HEADERS)
+    integration_uuid = await platform_resolver.resolve(
+        "integration", integration_ref
+    )
     organization_uuid = await resolver.resolve("org", organization_ref)
+    organization_headers = _organization_headers(organization_uuid)
 
     lookup = await client.get(
-        f"/api/integrations/{integration_uuid}/mappings/by-org/{organization_uuid}"
+        f"/api/integrations/{integration_uuid}/mappings/by-org/{organization_uuid}",
+        headers=organization_headers,
     )
     lookup.raise_for_status()
     mapping_id = str(lookup.json()["id"])
 
     body = await assemble_body(IntegrationMappingUpdate, fields, resolver=resolver)
-    if oauth_token_id_opt is not None:
-        body["oauth_token_id"] = oauth_token_id_opt
     response = await client.put(
-        f"/api/integrations/{integration_uuid}/mappings/{mapping_id}", json=body
+        f"/api/integrations/{integration_uuid}/mappings/{mapping_id}",
+        json=body,
+        headers=organization_headers,
     )
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)

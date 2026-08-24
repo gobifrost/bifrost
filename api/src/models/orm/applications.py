@@ -76,6 +76,13 @@ class Application(Base):
         String(20), default="inline_v1", server_default="inline_v1"
     )
 
+    # Existing applications keep the trusted runtime. Builder-authored apps
+    # use the opaque isolated runtime unless an administrator promotes them as
+    # trusted.
+    runtime_mode: Mapped[str] = mapped_column(
+        String(16), default="trusted", server_default="trusted"
+    )
+
     # Metadata
     description: Mapped[str | None] = mapped_column(Text, default=None)
     dependencies: Mapped[dict | None] = mapped_column(JSON, default=None, nullable=True)

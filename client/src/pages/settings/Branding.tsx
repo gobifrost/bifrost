@@ -53,7 +53,11 @@ const TERMINOLOGY_ROWS: Array<{
 	},
 ];
 
-export function Branding() {
+interface BrandingProps {
+	canWrite?: boolean;
+}
+
+export function Branding({ canWrite = true }: BrandingProps) {
 	const { refreshBranding } = useOrgScope();
 	const [branding, setBranding] = useState<
 		components["schemas"]["BrandingSettings"] | null
@@ -106,6 +110,7 @@ export function Branding() {
 
 	// Update primary color
 	const handleColorUpdate = async () => {
+		if (!canWrite) return;
 		setSaving(true);
 		try {
 			const updated = await updateBranding({
@@ -132,6 +137,7 @@ export function Branding() {
 	};
 
 	const handleTerminologyUpdate = async () => {
+		if (!canWrite) return;
 		setSavingTerminology(true);
 		try {
 			const updated = await updateBranding({
@@ -161,6 +167,7 @@ export function Branding() {
 	};
 
 	const handleApplicationNameUpdate = async () => {
+		if (!canWrite) return;
 		const trimmed = applicationName.trim();
 		setSavingApplicationName(true);
 		try {
@@ -190,6 +197,7 @@ export function Branding() {
 	};
 
 	const handleResetApplicationName = async () => {
+		if (!canWrite) return;
 		setResetting("application-name");
 		try {
 			const updated = await resetApplicationName();
@@ -246,6 +254,7 @@ export function Branding() {
 	// Handle file upload
 	const handleLogoUpload = useCallback(
 		async (type: "square" | "rectangle", file: File) => {
+			if (!canWrite) return;
 			// Validate file type
 			if (!file.type.startsWith("image/")) {
 				toast.error("Invalid file type", {
@@ -291,7 +300,7 @@ export function Branding() {
 				setUploading(null);
 			}
 		},
-		[refreshBranding],
+		[canWrite, refreshBranding],
 	);
 
 	// Drag and drop handlers
@@ -339,8 +348,9 @@ export function Branding() {
 
 	// Reset handlers
 	const handleResetLogo = useCallback(
-		async (type: "square" | "rectangle") => {
-			setResetting(type);
+			async (type: "square" | "rectangle") => {
+				if (!canWrite) return;
+				setResetting(type);
 			try {
 				const updated = await resetLogo(type);
 				setBranding(updated);
@@ -363,10 +373,11 @@ export function Branding() {
 				setResetting(null);
 			}
 		},
-		[refreshBranding],
+		[canWrite, refreshBranding],
 	);
 
 	const handleResetColor = useCallback(async () => {
+		if (!canWrite) return;
 		setResetting("color");
 		try {
 			const updated = await resetColor();
@@ -388,7 +399,7 @@ export function Branding() {
 		} finally {
 			setResetting(null);
 		}
-	}, [refreshBranding]);
+	}, [canWrite, refreshBranding]);
 
 	if (loading) {
 		return (
@@ -423,17 +434,19 @@ export function Branding() {
 								setApplicationName(e.target.value)
 							}
 							placeholder="Bifrost"
-							maxLength={40}
-							className="max-w-sm"
-						/>
+								maxLength={40}
+								className="max-w-sm"
+								disabled={!canWrite}
+							/>
 					</div>
 					<div className="flex gap-2">
 						<Button
 							onClick={handleApplicationNameUpdate}
 							disabled={
-								savingApplicationName ||
-								resetting === "application-name"
-							}
+									savingApplicationName ||
+									resetting === "application-name" ||
+									!canWrite
+								}
 							variant="default"
 						>
 							{savingApplicationName ? (
@@ -444,9 +457,10 @@ export function Branding() {
 						<Button
 							onClick={handleResetApplicationName}
 							disabled={
-								savingApplicationName ||
-								resetting === "application-name"
-							}
+									savingApplicationName ||
+									resetting === "application-name" ||
+									!canWrite
+								}
 							variant="outline"
 							size="icon"
 							title="Reset to default name"
@@ -483,9 +497,10 @@ export function Branding() {
 								onChange={(e) =>
 									setPrimaryColor(e.target.value)
 								}
-								placeholder="#0066CC"
-								className="w-32 font-mono"
-							/>
+									placeholder="#0066CC"
+									className="w-32 font-mono"
+									disabled={!canWrite}
+								/>
 						</div>
 						<div className="space-y-2">
 							<Label>Preview</Label>
@@ -498,7 +513,7 @@ export function Branding() {
 					<div className="flex gap-2">
 						<Button
 							onClick={handleColorUpdate}
-							disabled={saving || resetting === "color"}
+								disabled={saving || resetting === "color" || !canWrite}
 							variant="default"
 						>
 							{saving ? (
@@ -508,7 +523,7 @@ export function Branding() {
 						</Button>
 						<Button
 							onClick={handleResetColor}
-							disabled={saving || resetting === "color"}
+								disabled={saving || resetting === "color" || !canWrite}
 							variant="outline"
 							size="icon"
 							title="Reset to default color"
@@ -550,14 +565,15 @@ export function Branding() {
 									<Input
 										id={`${row.key}-singular`}
 										value={terminology[row.key].singular}
-										onChange={(e) =>
-											updateTerm(
+											onChange={(e) =>
+												updateTerm(
 												row.key,
 												"singular",
 												e.target.value,
-											)
-										}
-									/>
+												)
+											}
+											disabled={!canWrite}
+										/>
 								</div>
 								<div className="space-y-2">
 									<Label htmlFor={`${row.key}-plural`}>
@@ -566,23 +582,24 @@ export function Branding() {
 									<Input
 										id={`${row.key}-plural`}
 										value={terminology[row.key].plural}
-										onChange={(e) =>
-											updateTerm(
+											onChange={(e) =>
+												updateTerm(
 												row.key,
 												"plural",
 												e.target.value,
-											)
-										}
-									/>
+												)
+											}
+											disabled={!canWrite}
+										/>
 								</div>
 							</div>
 						))}
 					</div>
 					<div className="flex gap-2">
 						<Button
-							onClick={handleTerminologyUpdate}
-							disabled={savingTerminology}
-						>
+								onClick={handleTerminologyUpdate}
+								disabled={savingTerminology || !canWrite}
+							>
 							{savingTerminology ? (
 								<Loader2 className="mr-2 h-4 w-4 animate-spin" />
 							) : null}
@@ -619,9 +636,10 @@ export function Branding() {
 											handleResetLogo("square");
 										}}
 										disabled={
-											uploading === "square" ||
-											resetting === "square"
-										}
+												uploading === "square" ||
+												resetting === "square" ||
+												!canWrite
+											}
 									>
 										{resetting === "square" ? (
 											<Loader2 className="h-4 w-4 animate-spin" />
@@ -640,9 +658,10 @@ export function Branding() {
 										? "border-primary bg-primary/5"
 										: "border-border"
 								} ${
-									uploading === "square" ||
-									resetting === "square"
-										? "opacity-50 pointer-events-none"
+										uploading === "square" ||
+										resetting === "square" ||
+										!canWrite
+											? "opacity-50 pointer-events-none"
 										: "cursor-pointer hover:border-primary/50"
 								}`}
 								onDragEnter={(e) => handleDrag(e, "square")}
@@ -662,8 +681,9 @@ export function Branding() {
 									onChange={(e) =>
 										handleFileInput(e, "square")
 									}
-									className="hidden"
-								/>
+										className="hidden"
+										disabled={!canWrite}
+									/>
 								{branding?.square_logo_url ? (
 									<div className="flex flex-col items-center gap-3 w-full">
 										<img
@@ -707,9 +727,10 @@ export function Branding() {
 											handleResetLogo("rectangle");
 										}}
 										disabled={
-											uploading === "rectangle" ||
-											resetting === "rectangle"
-										}
+												uploading === "rectangle" ||
+												resetting === "rectangle" ||
+												!canWrite
+											}
 									>
 										{resetting === "rectangle" ? (
 											<Loader2 className="h-4 w-4 animate-spin" />
@@ -728,9 +749,10 @@ export function Branding() {
 										? "border-primary bg-primary/5"
 										: "border-border"
 								} ${
-									uploading === "rectangle" ||
-									resetting === "rectangle"
-										? "opacity-50 pointer-events-none"
+										uploading === "rectangle" ||
+										resetting === "rectangle" ||
+										!canWrite
+											? "opacity-50 pointer-events-none"
 										: "cursor-pointer hover:border-primary/50"
 								}`}
 								onDragEnter={(e) => handleDrag(e, "rectangle")}
@@ -750,8 +772,9 @@ export function Branding() {
 									onChange={(e) =>
 										handleFileInput(e, "rectangle")
 									}
-									className="hidden"
-								/>
+										className="hidden"
+										disabled={!canWrite}
+									/>
 								{branding?.rectangle_logo_url ? (
 									<div className="flex flex-col items-center gap-3 w-full">
 										<img

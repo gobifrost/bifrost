@@ -25,16 +25,16 @@ import {
 	BookOpen,
 	ServerCog,
 	Boxes,
+	FileCheck2,
+	Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/contexts/AuthContext";
 import { Logo } from "@/components/branding/Logo";
 import { Button } from "@/components/ui/button";
-import {
-	term,
-	useTerminology,
-	type ProductTermKey,
-} from "@/lib/terminology";
+import { term, useTerminology, type ProductTermKey } from "@/lib/terminology";
+import { useBuilderAccess } from "@/hooks/useBuilderAccess";
+import { useAuthorizationBoundary } from "@/contexts/AuthorizationBoundaryContext";
 
 interface NavItem {
 	title: string;
@@ -42,6 +42,10 @@ interface NavItem {
 	href: string;
 	icon: React.ElementType;
 	requiresPlatformAdmin?: boolean;
+	requiresBuilder?: boolean;
+	requiredCapability?: string;
+	requiredAnyCapabilities?: string[];
+	requiredBoundaryKind?: "platform";
 	dividerBefore?: boolean;
 }
 
@@ -68,6 +72,12 @@ const navSections: NavSection[] = [
 		title: "Hub",
 		items: [
 			{
+				title: "Build",
+				href: "/build",
+				icon: Sparkles,
+				requiresBuilder: true,
+			},
+			{
 				title: "Chat",
 				href: "/chat",
 				icon: MessageSquare,
@@ -77,17 +87,20 @@ const navSections: NavSection[] = [
 				termKey: "app",
 				href: "/apps",
 				icon: AppWindow,
+				requiredCapability: "apps.read",
 			},
 			{
 				title: "Forms",
 				termKey: "form",
 				href: "/forms",
 				icon: FileCode,
+				requiredCapability: "forms.read",
 			},
 			{
 				title: "History",
 				href: "/history",
 				icon: History,
+				requiredCapability: "executions.read",
 			},
 		],
 	},
@@ -99,62 +112,62 @@ const navSections: NavSection[] = [
 				termKey: "agent",
 				href: "/agents",
 				icon: Bot,
+				requiredCapability: "agents.read",
 			},
 			{
 				title: "Workflows",
 				href: "/workflows",
 				icon: Workflow,
-				requiresPlatformAdmin: true,
+				requiredCapability: "workflows.read",
 			},
 		],
 	},
 	{
 		title: "Data",
-		requiresPlatformAdmin: true,
 		items: [
 			{
 				title: "Config",
 				href: "/config",
 				icon: Key,
-				requiresPlatformAdmin: true,
+				requiredCapability: "configs.read",
 			},
 			{
 				title: "Tables",
 				href: "/tables",
 				icon: Database,
-				requiresPlatformAdmin: true,
+				requiredCapability: "tables.read",
 			},
 			{
 				title: "Files",
 				href: "/files",
 				icon: FolderOpen,
-				requiresPlatformAdmin: true,
+				requiredCapability: "managedfiles.read",
 			},
 			{
 				title: "Knowledge",
 				href: "/knowledge",
 				icon: BookOpen,
-				requiresPlatformAdmin: true,
+				requiredCapability: "knowledge.read",
 			},
 			{
 				title: "Integrations",
 				href: "/integrations",
 				icon: Plug,
-				requiresPlatformAdmin: true,
+				requiredCapability: "integrations.read",
 			},
 			{
 				title: "MCP Servers",
 				href: "/mcp-servers",
 				icon: ServerCog,
-				requiresPlatformAdmin: true,
+				requiredCapability: "integrations.read",
 			},
 			{
 				title: "Events",
 				href: "/event-sources",
 				icon: Webhook,
-				requiresPlatformAdmin: true,
+				requiredCapability: "events.read",
 			},
-	{
+			{
 				title: "Entity Management",
 				href: "/entity-management",
 				icon: Network,
@@ -164,67 +177,86 @@ const navSections: NavSection[] = [
 	},
 	{
 		title: "Platform",
-		requiresPlatformAdmin: true,
 		items: [
 			{
 				title: "Organizations",
 				href: "/organizations",
 				icon: Building,
-				requiresPlatformAdmin: true,
+				requiredCapability: "organizations.read",
 			},
 			{
 				title: "Users",
 				href: "/users",
 				icon: Users,
-				requiresPlatformAdmin: true,
+				requiredCapability: "organizations.read",
 			},
 			{
 				title: "Roles",
 				href: "/roles",
 				icon: UserCog,
-				requiresPlatformAdmin: true,
+				requiredCapability: "roles.read",
 			},
 			{
 				title: "Solutions",
 				href: "/solutions",
 				icon: Boxes,
-				requiresPlatformAdmin: true,
+				requiredCapability: "solutions.read",
+			},
+			{
+				title: "Promotion review",
+				href: "/solution-promotions",
+				icon: FileCheck2,
+				requiredCapability: "solutions.publish.read",
 			},
 			{
 				title: "Settings",
 				href: "/settings",
 				icon: SettingsIcon,
-				requiresPlatformAdmin: true,
+				requiredAnyCapabilities: [
+					"configs.read",
+					"configs.readwrite",
+					"integrations.read",
+					"integrations.readwrite",
+					"platformjobs.read",
+					"platformjobs.execute",
+					"repository.read",
+					"repository.readwrite",
+					"workflows.read",
+					"workflows.readwrite",
+				],
+				requiredBoundaryKind: "platform",
 			},
 			{
 				title: "Diagnostics",
 				href: "/diagnostics",
 				icon: Stethoscope,
-				requiresPlatformAdmin: true,
+				requiredCapability: "platformjobs.read",
+				requiredBoundaryKind: "platform",
 			},
 			{
 				title: "Audit Log",
 				href: "/audit",
 				icon: ShieldCheck,
-				requiresPlatformAdmin: true,
+				requiredCapability: "audit.read",
+				requiredBoundaryKind: "platform",
 			},
 		],
 	},
 	{
 		title: "Reports",
-		requiresPlatformAdmin: true,
 		items: [
 			{
 				title: "ROI",
 				href: "/reports/roi",
 				icon: DollarSign,
-				requiresPlatformAdmin: true,
+				requiredCapability: "metrics.read",
+				requiredBoundaryKind: "platform",
 			},
 			{
 				title: "Usage",
 				href: "/reports/usage",
 				icon: Activity,
-				requiresPlatformAdmin: true,
+				requiredCapability: "metrics.read",
 			},
 		],
 	},
@@ -242,7 +274,9 @@ export function Sidebar({
 	isCollapsed,
 }: SidebarProps) {
 	const { isPlatformAdmin } = useAuth();
+	const { hasSelectedCapability, selectedTarget } = useAuthorizationBoundary();
 	const terminology = useTerminology();
+	const { canAccessBuilder } = useBuilderAccess();
 
 	// Filter sections and items based on user permissions
 	const visibleSections = navSections
@@ -250,7 +284,17 @@ export function Sidebar({
 		.map((section) => ({
 			...section,
 			items: section.items.filter(
-				(item) => !item.requiresPlatformAdmin || isPlatformAdmin,
+				(item) =>
+					(!item.requiresPlatformAdmin || isPlatformAdmin) &&
+					(!item.requiredCapability ||
+						hasSelectedCapability(item.requiredCapability)) &&
+					(!item.requiredAnyCapabilities ||
+						item.requiredAnyCapabilities.some(
+							hasSelectedCapability,
+						)) &&
+					(!item.requiredBoundaryKind ||
+						selectedTarget?.kind === item.requiredBoundaryKind) &&
+					(!item.requiresBuilder || canAccessBuilder),
 			),
 		}))
 		.filter((section) => section.items.length > 0); // Remove empty sections

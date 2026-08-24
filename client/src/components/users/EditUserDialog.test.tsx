@@ -20,9 +20,11 @@ const mockUpdateMutate = vi.fn();
 const mockAssignMutate = vi.fn();
 const mockRemoveMutate = vi.fn();
 const mockOrganizations = vi.fn();
+const mockOrganizationGroups = vi.fn();
 const mockRoles = vi.fn();
 const mockUserRoles = vi.fn();
 const mockAuth = vi.fn();
+const mockAuthorizationBoundary = vi.fn();
 
 vi.mock("@/hooks/useUsers", () => ({
 	useUpdateUser: () => ({
@@ -46,10 +48,14 @@ vi.mock("@/hooks/useRoles", () => ({
 
 vi.mock("@/hooks/useOrganizations", () => ({
 	useOrganizations: () => mockOrganizations(),
+	useOrganizationGroups: () => mockOrganizationGroups(),
 }));
 
 vi.mock("@/contexts/AuthContext", () => ({
 	useAuth: () => mockAuth(),
+}));
+vi.mock("@/contexts/AuthorizationBoundaryContext", () => ({
+	useAuthorizationBoundary: () => mockAuthorizationBoundary(),
 }));
 
 vi.mock("@/components/ui/combobox", () => ({
@@ -127,9 +133,23 @@ beforeEach(() => {
 		isLoading: false,
 	});
 	mockRoles.mockReturnValue({ data: [] });
-	mockUserRoles.mockReturnValue({ data: { role_ids: [] } });
+	mockOrganizationGroups.mockReturnValue({ data: [], isLoading: false });
+	mockUserRoles.mockReturnValue({ data: [], isLoading: false });
 	mockAuth.mockReturnValue({
 		user: { id: "other-user", email: "admin@example.com" },
+		isPlatformAdmin: false,
+		hasRole: () => false,
+	});
+	mockAuthorizationBoundary.mockReturnValue({
+		selectedBoundary: "organization:org-1",
+		selectedTarget: { boundary: "organization:org-1", capabilities: ["organizations.read"] },
+		targets: [
+			{
+				boundary: "organization:org-1",
+				capabilities: ["organizations.read"],
+			},
+		],
+		hasSelectedCapability: () => true,
 	});
 });
 
@@ -145,7 +165,11 @@ describe("EditUserDialog", () => {
 
 	it("shows 'editing your own account' notice when editing self", () => {
 		const user = makeUser();
-		mockAuth.mockReturnValue({ user: { id: user.id, email: user.email } });
+		mockAuth.mockReturnValue({
+			user: { id: user.id, email: user.email },
+			isPlatformAdmin: false,
+			hasRole: () => false,
+		});
 
 		renderWithProviders(
 			<EditUserDialog user={user} open={true} onOpenChange={vi.fn()} />,
@@ -200,7 +224,11 @@ describe("EditUserDialog", () => {
 		expect(onOpenChange).toHaveBeenCalledWith(false);
 	});
 
-	it("shows the promotion notice when switching to Platform Administrator", async () => {
+	it("assigns Platform Admin through the Role model at the Platform boundary", async () => {
+		mockRoles.mockReturnValue({
+			data: [{ id: "platform-admin", name: "Platform Admin" }],
+			isLoading: false,
+		});
 		const { user } = renderWithProviders(
 			<EditUserDialog
 				user={makeUser()}
@@ -210,12 +238,18 @@ describe("EditUserDialog", () => {
 		);
 
 		await user.selectOptions(
-			screen.getByLabelText(/userType/i),
-			"platform",
+			screen.getByLabelText("role-assignment-editor-add-role"),
+			"platform-admin",
 		);
+		await user.click(screen.getByRole("button", { name: /save changes/i }));
 
-		expect(
-			await screen.findByText(/promoting this user to platform administrator/i),
-		).toBeInTheDocument();
+		await waitFor(() => expect(mockAssignMutate).toHaveBeenCalledTimes(1));
+		expect(mockAssignMutate.mock.calls[0]?.[0]).toEqual({
+			params: { path: { role_id: "platform-admin" } },
+			body: {
+				user_ids: ["u-1"],
+				boundaries: [{ boundary_kind: "platform" }],
+			},
+		});
 	});
 });

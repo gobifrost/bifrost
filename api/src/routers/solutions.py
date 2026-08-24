@@ -19,14 +19,23 @@ import tempfile
 import zipfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
-from uuid import UUID, uuid4
+from uuid import UUID
 
-from fastapi import APIRouter, Body, File, HTTPException, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Body,
+    Depends,
+    File,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from fastapi import Form as FastapiForm
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, noload
 from starlette.background import BackgroundTask
 
@@ -35,7 +44,7 @@ from bifrost.solution_jobs import (
     DEPLOY_JOB_TIMEOUT_SECONDS,
 )
 from shared.logo_processing import is_logo_thumbnail_version
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context
 from src.models.contracts.solutions import (
     Solution as SolutionDTO,
     SolutionAccessUserSummary,
@@ -76,25 +85,31 @@ from src.models.orm.config import Config
 from src.models.orm.custom_claims import CustomClaim
 from src.models.orm.file_metadata import FileMetadata
 from src.models.orm.forms import Form, FormRole
+from src.models.orm.organizations import Organization
+from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solution_config_schema import SolutionConfigSchema
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
 from src.models.orm.solution_export_jobs import SolutionExportJob
 from src.models.orm.solutions import Solution as SolutionORM
 from src.models.orm.tables import Table
-from src.models.orm.users import Role, User, UserRole
+from src.models.orm.role_assignments import RoleAssignment
+from src.models.orm.users import Role, User
 from src.models.orm.workflow_roles import WorkflowRole
 from src.models.orm.workflows import Workflow
 from src.jobs.platform.solution_export import (
     SOLUTION_EXPORT_DEFINITION,
     SolutionExportPayload,
 )
-from src.jobs.platform.solution_deploy import (
-    SOLUTION_DEPLOY_DEFINITION,
-    SolutionDeployPayload,
-)
 from src.services.platform_jobs import enqueue_platform_job, publish_platform_job_update
 from src.services.platform_job_memory_profiles import build_solution_memory_profile_key
-from src.services.solutions.deploy_job_storage import SolutionDeployJobStorage
+from src.services.operation_catalog import operation_route
+from src.services.audit import emit_audit
+from src.services.authorization import (
+    AuthorizationBoundaryKind,
+    AuthorizationContext,
+    CurrentAuthorizationContext,
+)
+from src.services.solutions.deploy_jobs import create_staged_deploy_job
 from src.services.solutions.deploy import (
     SolutionDeployConflict,
     SolutionDowngradeBlocked,
@@ -106,13 +121,44 @@ from src.services.solutions.export_jobs import (
     list_export_jobs,
     public_job,
 )
+from src.services.solutions.access import VISIBILITY_PRIVATE, VISIBILITY_SHARED
 
 if TYPE_CHECKING:
     from src.services.solutions.zip_install import PreviewResult
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/solutions", tags=["Solutions"])
+
+async def _hide_private_builder_solution(request: Request, ctx: Context) -> None:
+    """Keep private Builder source out of the ordinary install surface.
+
+    Support users and administrators reach private projects through the
+    Builder catalog, which applies owner/collaborator/support semantics.  A
+    route-wide dependency prevents any nested legacy Solution endpoint from
+    becoming an accidental alternate read or mutation path.
+    """
+    raw_solution_id = request.path_params.get("solution_id")
+    if raw_solution_id is None:
+        return
+    try:
+        solution_id = UUID(str(raw_solution_id))
+    except (TypeError, ValueError):
+        return
+    visibility = await ctx.db.scalar(
+        select(SolutionORM.visibility).where(SolutionORM.id == solution_id)
+    )
+    if visibility == VISIBILITY_PRIVATE:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Solution not found",
+        )
+
+
+router = APIRouter(
+    prefix="/api/solutions",
+    tags=["Solutions"],
+    dependencies=[Depends(_hide_private_builder_solution)],
+)
 
 UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024
 _ZIP_FILENAME_SAFE_RE = re.compile(r"[^A-Za-z0-9._-]+")
@@ -131,6 +177,97 @@ def _safe_zip_filename(filename: str) -> str:
     return f"{safe_stem or 'solution-export'}.zip"
 
 
+def _require_solution_read(authorization: AuthorizationContext) -> None:
+    authorization.require("solutions.read")
+
+
+def _require_solution_readwrite(authorization: AuthorizationContext) -> None:
+    authorization.require("solutions.readwrite")
+
+
+def _require_solution_build_execute(authorization: AuthorizationContext) -> None:
+    authorization.require("solutions.build.execute")
+
+
+def _require_solution_deploy_execute(authorization: AuthorizationContext) -> None:
+    authorization.require("solutions.deploy.execute")
+
+
+async def _load_solution_or_404(ctx: Context, solution_id: UUID) -> SolutionORM:
+    sol = await ctx.db.get(SolutionORM, solution_id)
+    if sol is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found"
+        )
+    return sol
+
+
+async def _authorized_solution(
+    ctx: Context,
+    authorization: AuthorizationContext,
+    solution_id: UUID,
+    *,
+    write: bool = False,
+    build: bool = False,
+    deploy: bool = False,
+    operation_id: str | None = None,
+) -> SolutionORM:
+    """Load one shared install through capability and exact resource gates."""
+
+    if operation_id is not None:
+        authorization.require_operation(operation_id)
+    else:
+        _require_solution_readwrite(authorization) if write else _require_solution_read(
+            authorization
+        )
+        if build:
+            _require_solution_build_execute(authorization)
+        if deploy:
+            _require_solution_deploy_execute(authorization)
+    solution = await _load_solution_or_404(ctx, solution_id)
+    authorization.require_resource_boundary(solution.organization_id)
+    return solution
+
+
+def _selected_install_organization(
+    authorization: AuthorizationContext,
+    requested_organization_id: UUID | None,
+    *,
+    was_explicit: bool,
+) -> UUID | None:
+    """Resolve an install target from the visible authorization context."""
+
+    if was_explicit:
+        organization_id = requested_organization_id
+    elif authorization.selected_boundary.kind is AuthorizationBoundaryKind.ORGANIZATION:
+        organization_id = authorization.selected_boundary.organization_id
+    elif authorization.selected_boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+        organization_id = None
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Select a specific organization or Global before creating or "
+                "installing a Solution."
+            ),
+        )
+    authorization.require_resource_boundary(organization_id)
+    return organization_id
+
+
+def _solution_collection_filter(authorization: AuthorizationContext):
+    """Return the shared-install predicate for the visibly selected context."""
+
+    boundary = authorization.selected_boundary
+    if boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+        return SolutionORM.organization_id.is_(None)
+    if boundary.kind is AuthorizationBoundaryKind.ORGANIZATION:
+        return SolutionORM.organization_id == boundary.organization_id
+    return SolutionORM.organization_id.in_(
+        select(Organization.id).where(Organization.is_provider.is_(False))
+    )
+
+
 async def _spool_upload_to_temp(file: UploadFile, *, prefix: str) -> Path:
     tmp = tempfile.NamedTemporaryFile(prefix=prefix, suffix=".zip", delete=False)
     path = Path(tmp.name)
@@ -144,87 +281,29 @@ async def _spool_upload_to_temp(file: UploadFile, *, prefix: str) -> Path:
     return path
 
 
-async def _enqueue_solution_deploy_job(
-    db: AsyncSession,
-    *,
-    kind: str,
-    install_id: UUID | None,
-    organization_id: UUID | None,
-    options: dict,
-    requested_by_user_id: UUID,
-    requested_by_email: str,
-    requested_by_name: str,
-    input_path: Path | None = None,
-    input_bytes: bytes | None = None,
-    memory_profile_key: str | None = None,
-) -> SolutionDeployJob:
-    """Stage one validated input and atomically expose its central job row."""
-    if (input_path is None) == (input_bytes is None):
-        raise ValueError("exactly one staged input is required")
-    job_id = uuid4()
-    storage = SolutionDeployJobStorage(job_id)
-    if input_path is not None:
-        digest, _ = await storage.write_path(input_path)
-    else:
-        assert input_bytes is not None
-        digest, _ = await storage.write_bytes(input_bytes)
-
-    projection = SolutionDeployJob(
-        id=job_id,
-        install_id=install_id,
-        status="queued",
-    )
-    db.add(projection)
-    try:
-        platform_job, _ = await enqueue_platform_job(
-            db,
-            SOLUTION_DEPLOY_DEFINITION,
-            SolutionDeployPayload(
-                deploy_job_id=job_id,
-                kind=kind,
-                install_id=install_id,
-                input_sha256=digest,
-                options=options,
-            ),
-            dedupe_key=str(job_id),
-            resource_lock_key=f"solution:{install_id}" if install_id else None,
-            priority=500,
-            organization_id=organization_id,
-            requested_by_user_id=requested_by_user_id,
-            requested_by_email=requested_by_email,
-            requested_by_name=requested_by_name,
-            resource_type="solution_deploy",
-            resource_id=str(job_id),
-            title=f"Solution {kind.replace('_', ' ')}",
-            action_url=(f"/solutions/{install_id}" if install_id else "/solutions"),
-            job_id=job_id,
-            memory_profile_key=memory_profile_key,
-        )
-        await db.commit()
-        await db.refresh(projection)
-    except Exception:
-        await db.rollback()
-        await storage.delete()
-        raise
-    await publish_platform_job_update(platform_job)
-    return projection
-
-
-@router.post("", response_model=SolutionDTO, status_code=status.HTTP_201_CREATED, summary="Create a Solution install (admin only)")
-async def create_solution(body: SolutionCreate, ctx: Context, user: CurrentSuperuser) -> SolutionDTO:
+@router.post(
+    "",
+    response_model=SolutionDTO,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a Solution install",
+    **operation_route("solutions.create"),
+)
+async def create_solution(
+    body: SolutionCreate,
+    ctx: Context,
+    authorization: CurrentAuthorizationContext,
+) -> SolutionDTO:
+    authorization.require_operation("solutions.create")
     # Install kind is DERIVED from organization_id (unified --org standard) —
     # there is no `scope` input. HOME (organization_id absent) => the caller's
     # own org; explicit null => global (org NULL); a UUID => that org.
-    if "organization_id" in body.model_fields_set:
-        org_id: UUID | None = body.organization_id  # explicit (null == global)
-    else:
-        org_id = ctx.org_id  # HOME — the caller's own org
-        if org_id is None:
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail="install requires an organization (caller has no org; "
-                "pass organization_id, or null for a global install)",
-            )
+    org_id = _selected_install_organization(
+        authorization,
+        body.organization_id,
+        was_explicit="organization_id" in body.model_fields_set,
+    )
+    if body.global_repo_access:
+        authorization.require("repository.access.readwrite")
 
     row = SolutionORM(
         slug=body.slug,
@@ -241,13 +320,24 @@ async def create_solution(body: SolutionCreate, ctx: Context, user: CurrentSuper
         await ctx.db.flush()
     except IntegrityError as exc:
         await ctx.db.rollback()
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
+    await emit_audit(
+        ctx.db,
+        "solution.create",
+        resource_type="solution",
+        resource_id=row.id,
+        details={"organization_id": str(org_id) if org_id else None},
+    )
     await ctx.db.commit()
     await ctx.db.refresh(row)
     return SolutionDTO.model_validate(row)
 
 
-async def _count_by_solution(ctx: Context, model: type, solution_ids: list[UUID]) -> dict[UUID, int]:
+async def _count_by_solution(
+    ctx: Context, model: type, solution_ids: list[UUID]
+) -> dict[UUID, int]:
     if not solution_ids:
         return {}
     rows = await ctx.db.execute(
@@ -255,16 +345,17 @@ async def _count_by_solution(ctx: Context, model: type, solution_ids: list[UUID]
         .where(model.solution_id.in_(solution_ids))  # type: ignore[attr-defined]
         .group_by(model.solution_id)  # type: ignore[attr-defined]
     )
-    return {solution_id: int(count) for solution_id, count in rows.all() if solution_id is not None}
+    return {
+        solution_id: int(count)
+        for solution_id, count in rows.all()
+        if solution_id is not None
+    }
 
 
 async def _solution_entity_counts(
     ctx: Context, solution_ids: list[UUID]
 ) -> dict[UUID, SolutionEntityCounts]:
-    counts = {
-        solution_id: SolutionEntityCounts()
-        for solution_id in solution_ids
-    }
+    counts = {solution_id: SolutionEntityCounts() for solution_id in solution_ids}
     for attr, model in (
         ("workflows", Workflow),
         ("apps", Application),
@@ -280,12 +371,25 @@ async def _solution_entity_counts(
     return counts
 
 
-@router.get("", response_model=SolutionsList, summary="List Solution installs (admin only)")
-async def list_solutions(ctx: Context, user: CurrentSuperuser) -> SolutionsList:
+@router.get(
+    "",
+    response_model=SolutionsList,
+    summary="List Solution installs",
+    **operation_route("solutions.list"),
+)
+async def list_solutions(
+    ctx: Context,
+    authorization: CurrentAuthorizationContext,
+) -> SolutionsList:
+    authorization.require_operation("solutions.list")
     rows = (
         (
             await ctx.db.execute(
                 select(SolutionORM)
+                .where(
+                    SolutionORM.visibility == VISIBILITY_SHARED,
+                    _solution_collection_filter(authorization),
+                )
                 .options(
                     defer(SolutionORM.logo_data),
                     defer(SolutionORM.logo_thumbnail_data),
@@ -314,11 +418,23 @@ async def list_solutions(ctx: Context, user: CurrentSuperuser) -> SolutionsList:
     )
 
 
-@router.get("/{solution_id}", response_model=SolutionDTO, summary="Get a Solution install (admin only)")
-async def get_solution(solution_id: UUID, ctx: Context, user: CurrentSuperuser) -> SolutionDTO:
-    row = await ctx.db.get(SolutionORM, solution_id)
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+@router.get(
+    "/{solution_id}",
+    response_model=SolutionDTO,
+    summary="Get a Solution install",
+    **operation_route("solutions.get"),
+)
+async def get_solution(
+    solution_id: UUID,
+    ctx: Context,
+    authorization: CurrentAuthorizationContext,
+) -> SolutionDTO:
+    row = await _authorized_solution(
+        ctx,
+        authorization,
+        solution_id,
+        operation_id="solutions.get",
+    )
     return SolutionDTO.model_validate(row).model_copy(
         update={
             "logo_url": _entity_logo_url(
@@ -345,14 +461,18 @@ async def get_solution(solution_id: UUID, ctx: Context, user: CurrentSuperuser) 
     },
 )
 async def get_solution_logo(
-    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID,
+    ctx: Context,
+    authorization: CurrentAuthorizationContext,
 ) -> Response:
     """The solution-level icon (bifrost.solution.yaml ``logo:``), shown on the
     /solutions catalog cards. Bytes only — mirrors the application logo
     endpoint."""
-    row = await ctx.db.get(SolutionORM, solution_id)
-    if row is None or not row.logo_data:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Icon not set")
+    row = await _authorized_solution(ctx, authorization, solution_id)
+    if not row.logo_data:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Icon not set"
+        )
     thumbnail_ready = bool(row.logo_thumbnail_data and row.logo_thumbnail_version)
     headers = (
         {
@@ -379,13 +499,13 @@ async def get_solution_logo(
     summary="Get an install's README markdown (admin only)",
 )
 async def get_solution_readme(
-    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID,
+    ctx: Context,
+    authorization: CurrentAuthorizationContext,
 ) -> SolutionReadme:
     """The install's long-form README markdown (repo-sourced on deploy, or
     edited directly via PUT). ``null`` when none is set."""
-    row = await ctx.db.get(SolutionORM, solution_id)
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    row = await _authorized_solution(ctx, authorization, solution_id)
     return SolutionReadme(readme=row.readme)
 
 
@@ -398,7 +518,7 @@ async def put_solution_readme(
     solution_id: UUID,
     body: SolutionReadmeUpdate,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> SolutionReadme:
     """Full-replace the install's README markdown (``readme=null`` clears it).
 
@@ -407,9 +527,7 @@ async def put_solution_readme(
     install the next auto-pull would clobber any hand edit, so editing the
     README here is refused (409) — the repo owns it. The UI hides the edit
     affordance for connected installs to match."""
-    row = await ctx.db.get(SolutionORM, solution_id)
-    if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    row = await _authorized_solution(ctx, authorization, solution_id, write=True)
     if row.git_connected:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -430,22 +548,23 @@ async def put_solution_readme(
     summary="Required-config setup status (admin only)",
 )
 async def solution_setup(
-    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID,
+    ctx: Context,
+    authorization: CurrentAuthorizationContext,
 ) -> SolutionSetupStatus:
     """Return all config declarations for the install paired with whether each
     has a matching Config value in the install's org scope.  ``setup_complete``
     is True only when every required declaration is satisfied."""
     from src.services.solutions.setup_status import compute_setup_status
 
-    sol = await ctx.db.get(SolutionORM, solution_id)
-    if sol is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    sol = await _authorized_solution(ctx, authorization, solution_id)
     return await compute_setup_status(ctx.db, sol)
 
 
 @router.post(
     "/{solution_id}/export",
     summary="Download the install's workspace zip (admin only)",
+    **operation_route("solutions.export"),
     responses={
         200: {"content": {"application/zip": {}}},
         404: {"description": "Install not found, or it predates export support"},
@@ -454,7 +573,7 @@ async def solution_setup(
 async def export_solution(
     solution_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     mode: str = "shareable",
     include_values: bool | None = None,
     include_files: bool | None = None,
@@ -476,6 +595,13 @@ async def export_solution(
     ``include_data`` controls table row data. A password is required whenever a
     backup payload is requested.
     """
+    sol = await _authorized_solution(
+        ctx,
+        authorization,
+        solution_id,
+        build=True,
+        operation_id="solutions.export",
+    )
     if mode not in ("shareable", "full"):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -505,10 +631,6 @@ async def export_solution(
         build_workspace_zip_for_export,
     )
     from src.services.solutions.source_artifact import SolutionSourceArtifactStorage
-
-    sol = await ctx.db.get(SolutionORM, solution_id)
-    if sol is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
 
     artifact = SolutionSourceArtifactStorage(solution_id)
     filename = _safe_zip_filename(f"{sol.slug}-{sol.version or 'unversioned'}.zip")
@@ -562,6 +684,13 @@ async def export_solution(
         # response races the commit (flaky under load), and a deferred-commit
         # failure would silently drop the persisted declarations. Every other
         # mutating endpoint in this router commits explicitly; match that.
+        await emit_audit(
+            ctx.db,
+            "solution.export",
+            resource_type="solution",
+            resource_id=sol.id,
+            details={"mode": mode, "include_data": include_data},
+        )
         await ctx.db.commit()
     except Exception:
         _cleanup_file(out_path)
@@ -587,7 +716,7 @@ async def create_solution_export_job(
     solution_id: UUID,
     body: SolutionExportJobCreate,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> SolutionExportJobPublic:
     """Create a scheduler-owned backup export job without building the zip."""
     from src.models.contracts.notifications import (
@@ -596,12 +725,16 @@ async def create_solution_export_job(
     )
     from src.services.notification_service import get_notification_service
 
-    sol = await ctx.db.get(SolutionORM, solution_id)
-    if sol is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    sol = await _authorized_solution(
+        ctx,
+        authorization,
+        solution_id,
+        build=True,
+    )
+    actor = authorization.effective_actor
 
     try:
-        created = await create_export_job(ctx.db, sol, user.user_id, body.options)
+        created = await create_export_job(ctx.db, sol, actor.user_id, body.options)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -610,7 +743,7 @@ async def create_solution_export_job(
 
     try:
         notification = await get_notification_service().create_notification(
-            str(user.user_id),
+            str(actor.user_id),
             NotificationCreate(
                 category=NotificationCategory.SYSTEM,
                 title="Backup queued",
@@ -648,9 +781,9 @@ async def create_solution_export_job(
         resource_lock_key=f"solution:{solution_id}",
         priority=100,
         organization_id=sol.organization_id,
-        requested_by_user_id=user.user_id,
-        requested_by_email=user.email,
-        requested_by_name=user.name or user.email or "Unknown",
+        requested_by_user_id=actor.user_id,
+        requested_by_email=actor.email,
+        requested_by_name=actor.name or actor.email or "Unknown",
         resource_type="solution_export",
         resource_id=str(row.id),
         title=f"Exporting {sol.name}",
@@ -670,11 +803,9 @@ async def create_solution_export_job(
 async def get_solution_export_jobs(
     solution_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> SolutionExportJobsList:
-    sol = await ctx.db.get(SolutionORM, solution_id)
-    if sol is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    await _authorized_solution(ctx, authorization, solution_id, build=True)
     return SolutionExportJobsList(jobs=await list_export_jobs(ctx.db, solution_id))
 
 
@@ -686,11 +817,14 @@ async def get_solution_export_jobs(
 async def get_solution_export_job(
     job_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> SolutionExportJobPublic:
     row = await ctx.db.get(SolutionExportJob, job_id)
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export job not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Export job not found"
+        )
+    await _authorized_solution(ctx, authorization, row.solution_id, build=True)
     return public_job(row)
 
 
@@ -706,13 +840,16 @@ async def get_solution_export_job(
 async def download_solution_export_job(
     job_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> StreamingResponse:
     from src.services.file_storage import FileStorageService
 
     row = await ctx.db.get(SolutionExportJob, job_id)
     if row is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export job not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Export job not found"
+        )
+    await _authorized_solution(ctx, authorization, row.solution_id, build=True)
     if (
         row.status != "completed"
         or not row.artifact_storage_key
@@ -723,7 +860,9 @@ async def download_solution_export_job(
             detail="Export job is not downloadable",
         )
 
-    filename = _safe_zip_filename(row.artifact_filename or f"solution-export-{row.id}.zip")
+    filename = _safe_zip_filename(
+        row.artifact_filename or f"solution-export-{row.id}.zip"
+    )
     return StreamingResponse(
         FileStorageService(ctx.db).iter_raw_s3_chunks(row.artifact_storage_key),
         media_type="application/zip",
@@ -737,14 +876,14 @@ async def download_solution_export_job(
     summary="Get an install + everything it owns (admin only)",
 )
 async def get_solution_entities(
-    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID,
+    ctx: Context,
+    authorization: CurrentAuthorizationContext,
 ) -> SolutionEntities:
     """One call for the detail UI: the install, all owned entities, and each
     config declaration paired with whether a value is set in the install's scope
     (plus the derived required-but-unset key list)."""
-    sol = await ctx.db.get(SolutionORM, solution_id)
-    if sol is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    sol = await _authorized_solution(ctx, authorization, solution_id)
 
     from src.services.solution_files import enumerate_solution_files
 
@@ -761,17 +900,23 @@ async def get_solution_entities(
     ]
 
     decls = (
-        await ctx.db.execute(
-            select(SolutionConfigSchema)
-            .where(SolutionConfigSchema.solution_id == solution_id)
-            .order_by(SolutionConfigSchema.position)
+        (
+            await ctx.db.execute(
+                select(SolutionConfigSchema)
+                .where(SolutionConfigSchema.solution_id == solution_id)
+                .order_by(SolutionConfigSchema.position)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     # A declaration is "satisfied" when an instance Config row exists for the
     # install's org scope (NULL org for a global install) with the same key.
     if sol.organization_id is not None:
-        set_keys_q = select(Config.key).where(Config.organization_id == sol.organization_id)
+        set_keys_q = select(Config.key).where(
+            Config.organization_id == sol.organization_id
+        )
     else:
         set_keys_q = select(Config.key).where(Config.organization_id.is_(None))
     set_keys = set((await ctx.db.execute(set_keys_q)).scalars().all())
@@ -843,8 +988,8 @@ async def _access_details_by_entity(
                 User.email,
             )
             .join(Role, getattr(junction, "role_id") == Role.id)
-            .outerjoin(UserRole, UserRole.role_id == Role.id)
-            .outerjoin(User, User.id == UserRole.user_id)
+            .outerjoin(RoleAssignment, RoleAssignment.role_id == Role.id)
+            .outerjoin(User, User.id == RoleAssignment.user_id)
             .where(entity_col.in_(entity_ids))
             .order_by(Role.name, User.email)
         )
@@ -860,10 +1005,12 @@ async def _access_details_by_entity(
             role_ids_by_entity[entity_id].append(role_id)
             role_names_by_entity[entity_id].append(role_name)
         if user_id is not None and user_email is not None:
-            users_by_entity.setdefault(entity_id, {})[user_id] = SolutionAccessUserSummary(
-                id=user_id,
-                name=user_name,
-                email=user_email,
+            users_by_entity.setdefault(entity_id, {})[user_id] = (
+                SolutionAccessUserSummary(
+                    id=user_id,
+                    name=user_name,
+                    email=user_email,
+                )
             )
 
     return {
@@ -877,8 +1024,14 @@ async def _access_details_by_entity(
 
 
 async def _workflow_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
-    rows = (await ctx.db.execute(select(Workflow).where(*where).order_by(Workflow.name))).scalars().all()
-    access = await _access_details_by_entity(ctx, WorkflowRole, "workflow_id", [row.id for row in rows])
+    rows = (
+        (await ctx.db.execute(select(Workflow).where(*where).order_by(Workflow.name)))
+        .scalars()
+        .all()
+    )
+    access = await _access_details_by_entity(
+        ctx, WorkflowRole, "workflow_id", [row.id for row in rows]
+    )
     summaries: list[SolutionEntitySummary] = []
     for row in rows:
         role_ids, role_names, access_users = access.get(row.id, ([], [], []))
@@ -905,17 +1058,23 @@ async def _workflow_summaries(ctx: Context, *where) -> list[SolutionEntitySummar
 
 async def _app_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
     rows = (
-        await ctx.db.execute(
-            select(Application)
-            .options(
-                defer(Application.logo_data),
-                defer(Application.logo_thumbnail_data),
+        (
+            await ctx.db.execute(
+                select(Application)
+                .options(
+                    defer(Application.logo_data),
+                    defer(Application.logo_thumbnail_data),
+                )
+                .where(*where)
+                .order_by(Application.name)
             )
-            .where(*where)
-            .order_by(Application.name)
         )
-    ).scalars().all()
-    access = await _access_details_by_entity(ctx, AppRole, "app_id", [row.id for row in rows])
+        .scalars()
+        .all()
+    )
+    access = await _access_details_by_entity(
+        ctx, AppRole, "app_id", [row.id for row in rows]
+    )
     summaries: list[SolutionEntitySummary] = []
     for row in rows:
         role_ids, role_names, access_users = access.get(row.id, ([], [], []))
@@ -944,8 +1103,14 @@ async def _app_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
 
 
 async def _form_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
-    rows = (await ctx.db.execute(select(Form).where(*where).order_by(Form.name))).scalars().all()
-    access = await _access_details_by_entity(ctx, FormRole, "form_id", [row.id for row in rows])
+    rows = (
+        (await ctx.db.execute(select(Form).where(*where).order_by(Form.name)))
+        .scalars()
+        .all()
+    )
+    access = await _access_details_by_entity(
+        ctx, FormRole, "form_id", [row.id for row in rows]
+    )
     summaries: list[SolutionEntitySummary] = []
     for row in rows:
         role_ids, role_names, access_users = access.get(row.id, ([], [], []))
@@ -970,17 +1135,23 @@ async def _form_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
 
 async def _agent_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
     rows = (
-        await ctx.db.execute(
-            select(Agent)
-            .options(
-                defer(Agent.logo_data),
-                defer(Agent.logo_thumbnail_data),
+        (
+            await ctx.db.execute(
+                select(Agent)
+                .options(
+                    defer(Agent.logo_data),
+                    defer(Agent.logo_thumbnail_data),
+                )
+                .where(*where)
+                .order_by(Agent.name)
             )
-            .where(*where)
-            .order_by(Agent.name)
         )
-    ).scalars().all()
-    access = await _access_details_by_entity(ctx, AgentRole, "agent_id", [row.id for row in rows])
+        .scalars()
+        .all()
+    )
+    access = await _access_details_by_entity(
+        ctx, AgentRole, "agent_id", [row.id for row in rows]
+    )
     summaries: list[SolutionEntitySummary] = []
     for row in rows:
         role_ids, role_names, access_users = access.get(row.id, ([], [], []))
@@ -993,9 +1164,7 @@ async def _agent_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
                 access_level=_enum_to_str(row.access_level),
                 is_active=row.is_active,
                 logo=None,
-                logo_url=_entity_logo_url(
-                    "agents", row.id, row.logo_thumbnail_version
-                ),
+                logo_url=_entity_logo_url("agents", row.id, row.logo_thumbnail_version),
                 logo_version=_entity_logo_version(row.logo_thumbnail_version),
                 created_at=row.created_at,
                 role_ids=role_ids,
@@ -1007,7 +1176,11 @@ async def _agent_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
 
 
 async def _table_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
-    rows = (await ctx.db.execute(select(Table).where(*where).order_by(Table.name))).scalars().all()
+    rows = (
+        (await ctx.db.execute(select(Table).where(*where).order_by(Table.name)))
+        .scalars()
+        .all()
+    )
     return [
         SolutionEntitySummary(
             id=row.id,
@@ -1021,7 +1194,15 @@ async def _table_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
 
 
 async def _claim_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
-    rows = (await ctx.db.execute(select(CustomClaim).where(*where).order_by(CustomClaim.name))).scalars().all()
+    rows = (
+        (
+            await ctx.db.execute(
+                select(CustomClaim).where(*where).order_by(CustomClaim.name)
+            )
+        )
+        .scalars()
+        .all()
+    )
     return [
         SolutionEntitySummary(
             id=row.id,
@@ -1029,7 +1210,9 @@ async def _claim_summaries(ctx: Context, *where) -> list[SolutionEntitySummary]:
             description=row.description,
             organization_id=row.organization_id,
             type=row.type,
-            source_table=row.query.get("table") if isinstance(row.query, dict) else None,
+            source_table=row.query.get("table")
+            if isinstance(row.query, dict)
+            else None,
             select=row.query.get("select") if isinstance(row.query, dict) else None,
             created_at=row.created_at,
         )
@@ -1049,37 +1232,67 @@ def _same_scope(model: type, org_id: UUID | None):
     summary="List loose same-scope entities capturable by an install (admin only)",
 )
 async def get_solution_capture_candidates(
-    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID,
+    ctx: Context,
+    authorization: CurrentAuthorizationContext,
 ) -> SolutionCaptureCandidates:
-    sol = await ctx.db.get(SolutionORM, solution_id)
-    if sol is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    sol = await _authorized_solution(
+        ctx, authorization, solution_id, write=True, build=True
+    )
 
     config_rows = (
-        await ctx.db.execute(
-            select(Config).where(
-                _same_scope(Config, sol.organization_id),
-                Config.integration_id.is_(None),
-                Config.config_schema_id.is_(None),
-            ).order_by(Config.key)
+        (
+            await ctx.db.execute(
+                select(Config)
+                .where(
+                    _same_scope(Config, sol.organization_id),
+                    Config.integration_id.is_(None),
+                    Config.config_schema_id.is_(None),
+                )
+                .order_by(Config.key)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     existing_config_keys = set(
         (
             await ctx.db.execute(
-                select(SolutionConfigSchema.key).where(SolutionConfigSchema.solution_id == solution_id)
+                select(SolutionConfigSchema.key).where(
+                    SolutionConfigSchema.solution_id == solution_id
+                )
             )
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
 
     return SolutionCaptureCandidates(
-        workflows=await _workflow_summaries(ctx, Workflow.solution_id.is_(None), _same_scope(Workflow, sol.organization_id)),
-        apps=await _app_summaries(ctx, Application.solution_id.is_(None), _same_scope(Application, sol.organization_id)),
-        forms=await _form_summaries(ctx, Form.solution_id.is_(None), _same_scope(Form, sol.organization_id)),
-        agents=await _agent_summaries(ctx, Agent.solution_id.is_(None), _same_scope(Agent, sol.organization_id)),
-        claims=await _claim_summaries(ctx, CustomClaim.solution_id.is_(None), _same_scope(CustomClaim, sol.organization_id)),
-        tables=await _table_summaries(ctx, Table.solution_id.is_(None), _same_scope(Table, sol.organization_id)),
+        workflows=await _workflow_summaries(
+            ctx,
+            Workflow.solution_id.is_(None),
+            _same_scope(Workflow, sol.organization_id),
+        ),
+        apps=await _app_summaries(
+            ctx,
+            Application.solution_id.is_(None),
+            _same_scope(Application, sol.organization_id),
+        ),
+        forms=await _form_summaries(
+            ctx, Form.solution_id.is_(None), _same_scope(Form, sol.organization_id)
+        ),
+        agents=await _agent_summaries(
+            ctx, Agent.solution_id.is_(None), _same_scope(Agent, sol.organization_id)
+        ),
+        claims=await _claim_summaries(
+            ctx,
+            CustomClaim.solution_id.is_(None),
+            _same_scope(CustomClaim, sol.organization_id),
+        ),
+        tables=await _table_summaries(
+            ctx, Table.solution_id.is_(None), _same_scope(Table, sol.organization_id)
+        ),
         configs=[
             SolutionConfigStatus(
                 id=row.id,
@@ -1104,7 +1317,7 @@ async def preview_solution_capture(
     solution_id: UUID,
     body: SolutionDependencyPreviewRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> SolutionDependencyPreview:
     """Dependency preview for a capture selection (§3.2/§3.3).
 
@@ -1114,9 +1327,9 @@ async def preview_solution_capture(
     everything is deselectable in the UI; nothing is silently blocked. The scan
     is static, so computed/dynamic refs are invisible — the UI says so.
     """
-    sol = await ctx.db.get(SolutionORM, solution_id)
-    if sol is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    sol = await _authorized_solution(
+        ctx, authorization, solution_id, write=True, build=True
+    )
 
     from src.services.solutions.dependency_walker import SolutionDependencyWalker
 
@@ -1137,9 +1350,13 @@ async def preview_solution_capture(
     "/{solution_id}",
     response_model=SolutionDTO,
     summary="Update an install's local fields (admin only)",
+    **operation_route("solutions.update"),
 )
 async def update_solution(
-    solution_id: UUID, body: SolutionUpdate, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID,
+    body: SolutionUpdate,
+    ctx: Context,
+    authorization: CurrentAuthorizationContext,
 ) -> SolutionDTO:
     """Edit INSTALL-LOCAL fields only (name/scope/global_repo_access/git fields).
 
@@ -1155,9 +1372,13 @@ async def update_solution(
     operator re-enters the values in the new scope. (The 5 entity tables above
     ARE re-homed because they carry ``solution_id`` and are owned by the bundle.)
     """
-    sol = await ctx.db.get(SolutionORM, solution_id)
-    if sol is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    sol = await _authorized_solution(
+        ctx,
+        authorization,
+        solution_id,
+        write=True,
+        operation_id="solutions.update",
+    )
 
     # PATCH semantics: only fields explicitly present in the request are applied.
     # organization_id=None is a legitimate value (global scope), distinguished
@@ -1165,6 +1386,10 @@ async def update_solution(
     fields = body.model_dump(exclude_unset=True)
     if not fields:
         return SolutionDTO.model_validate(sol)  # nothing to do
+    if "organization_id" in fields:
+        authorization.require_resource_boundary(fields["organization_id"])
+    if fields.get("global_repo_access"):
+        authorization.require("repository.access.readwrite")
 
     from src.services.solutions.write_lock import (
         SolutionWriteLockHeld,
@@ -1188,6 +1413,13 @@ async def update_solution(
                         .where(model.solution_id == solution_id)
                         .values(organization_id=new_org)
                     )
+            await emit_audit(
+                ctx.db,
+                "solution.update",
+                resource_type="solution",
+                resource_id=solution_id,
+                details={"fields": sorted(fields)},
+            )
             await ctx.db.commit()
     except SolutionWriteLockHeld as exc:
         raise HTTPException(
@@ -1204,7 +1436,9 @@ async def update_solution(
     summary="Uninstall: flip status to inactive, data frozen in place (admin only)",
 )
 async def uninstall_solution(
-    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID,
+    ctx: Context,
+    authorization: CurrentAuthorizationContext,
 ) -> SolutionDTO:
     """Flip the install's lifecycle status to ``inactive``.
 
@@ -1217,9 +1451,9 @@ async def uninstall_solution(
     To permanently destroy an install and all of its owned data, use the hard-delete
     path: ``DELETE /{id}?confirm=<slug>``.
     """
-    sol = await ctx.db.get(SolutionORM, solution_id)
-    if sol is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    sol = await _authorized_solution(
+        ctx, authorization, solution_id, write=True, deploy=True
+    )
     await ctx.db.execute(
         update(SolutionORM)
         .where(SolutionORM.id == solution_id)
@@ -1236,7 +1470,9 @@ async def uninstall_solution(
     summary="Preview counts of what a hard-delete would destroy (admin only)",
 )
 async def get_solution_deletion_summary(
-    solution_id: UUID, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID,
+    ctx: Context,
+    authorization: CurrentAuthorizationContext,
 ) -> SolutionDeletionSummary:
     """Return per-entity counts of what ``DELETE /{id}?confirm=<slug>`` would destroy.
 
@@ -1247,13 +1483,13 @@ async def get_solution_deletion_summary(
     from src.models.orm.events import EventSource, EventSubscription
     from src.services.solution_files import enumerate_solution_files
 
-    sol = await ctx.db.get(SolutionORM, solution_id)
-    if sol is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    await _authorized_solution(ctx, authorization, solution_id)
 
     async def _count(model: type) -> int:
         result = await ctx.db.execute(
-            select(func.count()).select_from(model).where(model.solution_id == solution_id)  # type: ignore[attr-defined]
+            select(func.count())
+            .select_from(model)
+            .where(model.solution_id == solution_id)  # type: ignore[attr-defined]
         )
         return result.scalar_one()
 
@@ -1277,11 +1513,12 @@ async def get_solution_deletion_summary(
     "/{solution_id}",
     response_model=SolutionDeleteSummary,
     summary="Hard-delete an install and ALL owned data — irreversible (admin only)",
+    **operation_route("solutions.delete"),
 )
 async def delete_solution(
     solution_id: UUID,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     confirm: str = "",
 ) -> SolutionDeleteSummary:
     """Confirmed hard-delete: drops the Solution row and ALL owned entities.
@@ -1321,7 +1558,11 @@ async def delete_solution(
         )
     ).scalar_one_or_none()
     if sol is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found"
+        )
+    authorization.require_operation("solutions.delete")
+    authorization.require_resource_boundary(sol.organization_id)
 
     # Server-side confirm: the caller must echo the install's slug.
     if confirm != sol.slug:
@@ -1351,7 +1592,9 @@ async def delete_solution(
             # and the S3 app-dist sweep (the rows are gone after the delete).
             async def _count(model: type) -> int:
                 result = await ctx.db.execute(
-                    select(func.count()).select_from(model).where(model.solution_id == solution_id)  # type: ignore[attr-defined]
+                    select(func.count())
+                    .select_from(model)
+                    .where(model.solution_id == solution_id)  # type: ignore[attr-defined]
                 )
                 return result.scalar_one()
 
@@ -1362,7 +1605,9 @@ async def delete_solution(
                             Application.solution_id == solution_id
                         )
                     )
-                ).scalars().all()
+                )
+                .scalars()
+                .all()
             )
 
             # Enumerate S3 files BEFORE the DB delete (file_metadata rows cascade away).
@@ -1382,6 +1627,13 @@ async def delete_solution(
 
             # Hard-delete: the existing ondelete=CASCADE FKs remove all owned rows.
             # No orphan/detach logic — this is the destructive path.
+            await emit_audit(
+                ctx.db,
+                "solution.delete",
+                resource_type="solution",
+                resource_id=solution_id,
+                details={"slug": sol.slug},
+            )
             await ctx.db.delete(sol)
             await ctx.db.commit()
 
@@ -1417,6 +1669,10 @@ async def _run_deploy_job(
     zip_path: Path,
     *,
     force: bool,
+    promotion: bool = False,
+    isolated_app_builds: bool = False,
+    source_revision_id: UUID | None = None,
+    requested_by: UUID | None = None,
 ) -> None:
     """Execute the deploy under a fresh session (background task).
 
@@ -1432,6 +1688,8 @@ async def _run_deploy_job(
         UnmetDependency,
         deploy_zip_to_solution_path,
     )
+    from src.services.builder.build_requests import BuildFailed
+    from src.services.builder.solution_build_check import model_visible_build_failure
     from src.services.solutions.write_lock import (
         SolutionWriteLockHeld,
         solution_write_lock,
@@ -1468,9 +1726,18 @@ async def _run_deploy_job(
                 solution = await db.get(SolutionORM, solution_id)
                 if solution is None:
                     raise SolutionDeployConflict("Solution not found")
-                await _set_phase("parsing workspace zip and building app dist")
+                await _set_phase(
+                    "parsing workspace zip and preparing application builds"
+                )
                 result = await deploy_zip_to_solution_path(
-                    db, solution, zip_path, force=force
+                    db,
+                    solution,
+                    zip_path,
+                    force=force,
+                    promotion=promotion,
+                    isolated_app_builds=isolated_app_builds,
+                    source_revision_id=source_revision_id,
+                    requested_by=requested_by,
                 )
                 await db.commit()
                 # S3 only after the DB is durable — a failed commit changes no running
@@ -1493,7 +1760,12 @@ async def _run_deploy_job(
                     "claims_deleted": result.claims_deleted,
                     "integrations_shell_created": result.integrations_shell_created,
                     "roles_created": list(result.roles_created),
+                    "roles_unresolved": list(result.roles_unresolved),
+                    "build_job_ids": [
+                        str(build_id) for build_id in result.build_job_ids
+                    ],
                 }
+
     try:
         await asyncio.wait_for(
             _execute(),
@@ -1514,6 +1786,12 @@ async def _run_deploy_job(
             "Deploy committed but storage was unavailable after retries. "
             "Re-run the deploy to complete it (it is idempotent).",
         )
+    except BuildFailed as exc:
+        # A source compile failure is actionable input feedback, not an opaque
+        # deploy infrastructure error. Keep the bounded compiler tail on the
+        # durable job so native Builder, CLI, and support views see the same
+        # repair details.
+        await _set_status("failed", model_visible_build_failure(exc))
     except (
         SolutionDowngradeBlocked,
         SolutionDeployConflict,
@@ -1611,6 +1889,7 @@ async def _run_install_job(
                 reactivate=reactivate,
             )
             install_result = {"solution_id": str(solution.id), "slug": solution.slug}
+
     try:
         await asyncio.wait_for(
             _execute(),
@@ -1665,17 +1944,24 @@ async def _run_install_job(
     response_model=SolutionDeployEnqueued,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Enqueue a deploy to an install (async, full replace, admin only)",
+    **operation_route("solutions.deploy"),
 )
 async def deploy_solution(
     solution_id: UUID,
     file: Annotated[UploadFile, File(description="Solution workspace zip")],
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     force: bool = False,
 ) -> SolutionDeployEnqueued:
-    solution = await ctx.db.get(SolutionORM, solution_id)
-    if solution is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    solution = await _authorized_solution(
+        ctx,
+        authorization,
+        solution_id,
+        write=True,
+        deploy=True,
+        operation_id="solutions.deploy",
+    )
+    actor = authorization.effective_actor
 
     # One-writer invariant: a git-connected install is written only by auto-pull
     # (Sub-plan 5); deploy is refused for it.
@@ -1719,9 +2005,9 @@ async def deploy_solution(
         }
         pending_rows = (
             await ctx.db.execute(
-                select(PendingCaptureORM.entity_type, PendingCaptureORM.entity_id).where(
-                    PendingCaptureORM.solution_id == solution_id
-                )
+                select(
+                    PendingCaptureORM.entity_type, PendingCaptureORM.entity_id
+                ).where(PendingCaptureORM.solution_id == solution_id)
             )
         ).all()
         blockers = unpulled_blockers([(t, i) for t, i in pending_rows], manifest_ids)
@@ -1738,16 +2024,23 @@ async def deploy_solution(
             )
 
     memory_profile_key = build_solution_memory_profile_key(preview)
+    await emit_audit(
+        ctx.db,
+        "solution.deploy",
+        resource_type="solution",
+        resource_id=solution_id,
+        details={"force": force},
+    )
     try:
-        job = await _enqueue_solution_deploy_job(
+        job = await create_staged_deploy_job(
             ctx.db,
             kind="deploy",
             install_id=solution_id,
             organization_id=solution.organization_id,
             options={"force": force},
-            requested_by_user_id=user.user_id,
-            requested_by_email=user.email,
-            requested_by_name=user.name or user.email or "Unknown",
+            requested_by_user_id=actor.user_id,
+            requested_by_email=actor.email,
+            requested_by_name=actor.name or actor.email or "Unknown",
             input_path=zip_path,
             memory_profile_key=memory_profile_key,
         )
@@ -1762,13 +2055,26 @@ async def deploy_solution(
     summary="Poll the status of an async deploy job (admin only)",
 )
 async def get_deploy_job(
-    job_id: UUID, ctx: Context, user: CurrentSuperuser
+    job_id: UUID,
+    ctx: Context,
+    authorization: CurrentAuthorizationContext,
 ) -> SolutionDeployJobStatus:
     job = await ctx.db.get(SolutionDeployJob, job_id)
     if job is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Deploy job not found"
         )
+    if job.install_id is not None:
+        await _authorized_solution(ctx, authorization, job.install_id, deploy=True)
+    else:
+        _require_solution_deploy_execute(authorization)
+        platform_job = await ctx.db.get(PlatformJob, job.id)
+        if platform_job is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Deploy job not found",
+            )
+        authorization.require_resource_boundary(platform_job.organization_id)
     return SolutionDeployJobStatus.model_validate(job)
 
 
@@ -1776,9 +2082,13 @@ async def get_deploy_job(
     "/{solution_id}/capture",
     response_model=SolutionCaptureResponse,
     summary="Capture existing loose entities into an install (admin only)",
+    **operation_route("solutions.capture"),
 )
 async def capture_solution_entities(
-    solution_id: UUID, body: SolutionCaptureRequest, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID,
+    body: SolutionCaptureRequest,
+    ctx: Context,
+    authorization: CurrentAuthorizationContext,
 ) -> SolutionCaptureResponse:
     """Adopt existing `_repo/` entities into this install in place.
 
@@ -1786,9 +2096,14 @@ async def capture_solution_entities(
     clusters into a Solution. It stamps compatible loose entities with
     ``solution_id`` and stores an export zip containing the captured definitions.
     """
-    solution = await ctx.db.get(SolutionORM, solution_id)
-    if solution is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    solution = await _authorized_solution(
+        ctx,
+        authorization,
+        solution_id,
+        write=True,
+        build=True,
+        operation_id="solutions.capture",
+    )
 
     from src.services.solutions.capture import (
         SolutionCaptureConflict,
@@ -1814,7 +2129,13 @@ async def capture_solution_entities(
                     configs=body.configs,
                 ),
                 include_imports=body.include_imports,
-                captured_by=user.user_id,
+                captured_by=authorization.effective_actor.user_id,
+            )
+            await emit_audit(
+                ctx.db,
+                "solution.capture",
+                resource_type="solution",
+                resource_id=solution_id,
             )
             await ctx.db.commit()
     except SolutionWriteLockHeld as exc:
@@ -1823,7 +2144,9 @@ async def capture_solution_entities(
             detail="A write is already in progress for this install; retry shortly.",
         ) from exc
     except SolutionCaptureConflict as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
 
     return SolutionCaptureResponse(
         solution_id=solution_id,
@@ -1843,7 +2166,10 @@ async def capture_solution_entities(
     summary="Clear pending_captures rows the client pulled into source (admin only)",
 )
 async def ack_pulled_captures(
-    solution_id: UUID, body: PullAckRequest, ctx: Context, user: CurrentSuperuser
+    solution_id: UUID,
+    body: PullAckRequest,
+    ctx: Context,
+    authorization: CurrentAuthorizationContext,
 ) -> PullAckResponse:
     """Server-authoritative clear of pending_captures rows.
 
@@ -1856,9 +2182,7 @@ async def ack_pulled_captures(
 
     from src.models.orm.pending_capture import PendingCaptureORM
 
-    sol = await ctx.db.get(SolutionORM, solution_id)
-    if sol is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    await _authorized_solution(ctx, authorization, solution_id, write=True, build=True)
 
     cleared = 0
     for ent in body.entities:
@@ -1880,17 +2204,27 @@ async def ack_pulled_captures(
     "/{solution_id}/sync",
     status_code=status.HTTP_202_ACCEPTED,
     summary="Auto-pull a git-connected install from its repo (admin only)",
+    **operation_route("solutions.sync"),
 )
-async def sync_solution(solution_id: UUID, ctx: Context, user: CurrentSuperuser) -> dict:
+async def sync_solution(
+    solution_id: UUID,
+    ctx: Context,
+    authorization: CurrentAuthorizationContext,
+) -> dict:
     """Pull the connected install's repo ``main`` and deploy it (criterion 13).
 
     This is the auto-pull entry point (webhook/poll/manual). It is the ONLY
     writer for a connected install — the deploy endpoint is refused for it. For a
     disconnected install there is nothing to pull, so this is refused in turn.
     """
-    solution = await ctx.db.get(SolutionORM, solution_id)
-    if solution is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Solution not found")
+    solution = await _authorized_solution(
+        ctx,
+        authorization,
+        solution_id,
+        write=True,
+        deploy=True,
+        operation_id="solutions.sync",
+    )
     if not solution.git_connected:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -1913,7 +2247,13 @@ async def sync_solution(solution_id: UUID, ctx: Context, user: CurrentSuperuser)
         # pending "update available" signal so the badge disappears.
         if solution.update_available_version is not None:
             solution.update_available_version = None
-            await ctx.db.commit()
+        await emit_audit(
+            ctx.db,
+            "solution.sync",
+            resource_type="solution",
+            resource_id=solution_id,
+        )
+        await ctx.db.commit()
     except NotASolutionWorkspace as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
@@ -2001,7 +2341,7 @@ async def _preview_to_dto(
 async def install_preview(
     file: Annotated[UploadFile, File(description="Solution workspace zip")],
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     organization_id: Annotated[str | None, FastapiForm()] = None,
 ) -> SolutionInstallPreview:
     """Unzip + parse a Solution workspace zip and report what it would create.
@@ -2016,16 +2356,22 @@ async def install_preview(
     """
     from src.services.solutions.zip_install import preview_zip_path
 
-    org_id: UUID | None = None
+    _require_solution_deploy_execute(authorization)
+    parsed_org_id: UUID | None = None
     if organization_id:
         try:
-            org_id = UUID(organization_id)
+            parsed_org_id = UUID(organization_id)
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Invalid organization_id: {organization_id}",
             ) from exc
 
+    org_id = _selected_install_organization(
+        authorization,
+        parsed_org_id,
+        was_explicit=organization_id is not None,
+    )
     zip_path = await _spool_upload_to_temp(file, prefix="bifrost-solution-preview-")
     try:
         result = preview_zip_path(zip_path)
@@ -2046,10 +2392,18 @@ async def install_preview(
     summary="Preview a Solution install from a git repo (parse-only, admin only)",
 )
 async def install_preview_repo(
-    body: SolutionRepoPreviewRequest, ctx: Context, user: CurrentSuperuser
+    body: SolutionRepoPreviewRequest,
+    ctx: Context,
+    authorization: CurrentAuthorizationContext,
 ) -> SolutionInstallPreview:
     """Clone the repo (+ optional subpath/ref), parse the workspace, and report
     the install plan — the same plan the zip preview returns. No DB write."""
+    _require_solution_deploy_execute(authorization)
+    org_id = _selected_install_organization(
+        authorization,
+        body.organization_id,
+        was_explicit="organization_id" in body.model_fields_set,
+    )
     import tempfile
     from pathlib import Path
 
@@ -2084,7 +2438,7 @@ async def install_preview_repo(
                 f"{body.repo_subpath or '<repo root>'} in {body.repo_url}",
             )
         result = _parse_workspace(root)
-    return await _preview_to_dto(ctx, result, None)
+    return await _preview_to_dto(ctx, result, org_id)
 
 
 @router.post(
@@ -2096,7 +2450,7 @@ async def install_preview_repo(
 async def install_from_repo(
     body: SolutionRepoPreviewRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> SolutionDeployEnqueued:
     """Create a git-connected install from a repo (+ optional subpath/ref) and
     enqueue its first deploy as an async job. git-connected from birth: deploy is
@@ -2111,6 +2465,8 @@ async def install_from_repo(
     ``result`` carries the installed ``solution_id``. If the first deploy fails,
     the job removes the brand-new install so no empty git_connected orphan remains.
     """
+    authorization.require_operation("solutions.install")
+    actor = authorization.effective_actor
     import tempfile
     from pathlib import Path
 
@@ -2160,16 +2516,11 @@ async def install_from_repo(
         # Install kind comes from the REQUEST (unified --org standard), not the
         # descriptor: HOME (organization_id absent) => the caller's own org;
         # explicit null => global; a UUID => that org.
-        if "organization_id" in body.model_fields_set:
-            org_id: UUID | None = body.organization_id
-        else:
-            org_id = ctx.org_id
-            if org_id is None:
-                raise HTTPException(
-                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-                    detail="install requires an organization (caller has no org; "
-                    "pass organization_id, or null for a global install)",
-                )
+        org_id = _selected_install_organization(
+            authorization,
+            body.organization_id,
+            was_explicit="organization_id" in body.model_fields_set,
+        )
 
         # Fast-path 409 with a clear message for the common sequential case; the
         # flush() catch below covers the concurrent race on the unique index.
@@ -2212,15 +2563,15 @@ async def install_from_repo(
                 ),
             )
         archive = _build_deploy_zip(root, extra_text_files={})
-        job = await _enqueue_solution_deploy_job(
+        job = await create_staged_deploy_job(
             ctx.db,
             kind="install_from_repo",
             install_id=solution.id,
             organization_id=solution.organization_id,
             options={"force": True},
-            requested_by_user_id=user.user_id,
-            requested_by_email=user.email,
-            requested_by_name=user.name or user.email or "Unknown",
+            requested_by_user_id=actor.user_id,
+            requested_by_email=actor.email,
+            requested_by_name=actor.name or actor.email or "Unknown",
             input_bytes=archive,
             memory_profile_key=memory_profile_key,
         )
@@ -2236,11 +2587,12 @@ async def install_from_repo(
     response_model=SolutionDeployEnqueued,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Enqueue a Solution zip install (async deploy + config values, admin only)",
+    **operation_route("solutions.install"),
 )
 async def install_solution(
     file: Annotated[UploadFile, File(description="Solution workspace zip")],
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     organization_id: Annotated[str | None, FastapiForm()] = None,
     config_values: Annotated[str, FastapiForm()] = "{}",
     password: Annotated[str | None, FastapiForm()] = None,
@@ -2273,22 +2625,29 @@ async def install_solution(
     pass ``?reactivate=true`` or delete the install first — so it must refuse on
     the request itself, before a job row exists.
     """
+    _require_solution_deploy_execute(authorization)
+    actor = authorization.effective_actor
     from src.services.solutions.zip_install import (
         BadExportPassword,
         find_install,
         validate_install_zip,
     )
 
-    org_id: UUID | None = None
+    parsed_org_id: UUID | None = None
     if organization_id:
         try:
-            org_id = UUID(organization_id)
+            parsed_org_id = UUID(organization_id)
         except ValueError as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=f"Invalid organization_id: {organization_id}",
             ) from exc
 
+    org_id = _selected_install_organization(
+        authorization,
+        parsed_org_id,
+        was_explicit=organization_id is not None,
+    )
     try:
         values = json.loads(config_values) if config_values else {}
     except json.JSONDecodeError as exc:
@@ -2344,8 +2703,14 @@ async def install_solution(
             )
 
     memory_profile_key = build_solution_memory_profile_key(preview)
+    await emit_audit(
+        ctx.db,
+        "solution.install",
+        resource_type="solution",
+        details={"organization_id": str(org_id) if org_id else None},
+    )
     try:
-        job = await _enqueue_solution_deploy_job(
+        job = await create_staged_deploy_job(
             ctx.db,
             kind="install",
             install_id=None,
@@ -2353,16 +2718,16 @@ async def install_solution(
             options={
                 "organization_id": str(org_id) if org_id is not None else None,
                 "config_values": values,
-                "deployer_email": user.email,
+                "deployer_email": actor.email,
                 "force": force,
                 "password": password,
                 "replace_secrets": replace_secrets,
                 "replace_data": replace_data,
                 "reactivate": reactivate,
             },
-            requested_by_user_id=user.user_id,
-            requested_by_email=user.email,
-            requested_by_name=user.name or user.email or "Unknown",
+            requested_by_user_id=actor.user_id,
+            requested_by_email=actor.email,
+            requested_by_name=actor.name or actor.email or "Unknown",
             input_path=zip_path,
             memory_profile_key=memory_profile_key,
         )

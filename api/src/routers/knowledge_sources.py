@@ -12,12 +12,10 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, func, or_, select, update
 
-from src.core.auth import CurrentActiveUser, CurrentSuperuser
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
-from src.core.org_filter import OrgFilterType, org_filter_clause, resolve_org_filter
 from src.models.contracts.knowledge import (
     KnowledgeDocumentBulkScopeUpdate,
     KnowledgeDocumentCreate,
@@ -30,15 +28,23 @@ from src.models.contracts.knowledge import (
 )
 from src.models.orm.knowledge import KnowledgeStore
 from src.models.orm.knowledge_sources import KnowledgeNamespaceRole
+from src.models.orm.organizations import Organization
 from src.models.orm.users import Role
 from src.repositories.knowledge import KnowledgeRepository
+from src.services.audit import emit_audit
+from src.services.authorization import (
+    AuthorizationBoundaryKind,
+    AuthorizationContext,
+    CurrentAuthorizationContext,
+)
+from src.services.operation_catalog import operation_route
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/knowledge-sources", tags=["Knowledge Sources"])
 
 
-def _deny_external(user) -> None:
+def _deny_external(authorization: AuthorizationContext) -> None:
     """403 an external principal off the direct knowledge surface.
 
     The knowledge store has no grant axis (no roles, no access_level, no row
@@ -46,11 +52,103 @@ def _deny_external(user) -> None:
     reach KB content only THROUGH workflows/agents they were granted (the
     engine sentinel keeps the full cascade).
     """
-    if getattr(user, "is_external", False):
+    if authorization.requester.is_external:
         raise HTTPException(
             status_code=403,
             detail="External users cannot access the knowledge store directly",
         )
+
+
+def _selected_knowledge_organization(
+    authorization: AuthorizationContext,
+) -> UUID | None:
+    """Return the exact writable Knowledge boundary."""
+
+    boundary = authorization.selected_boundary
+    if boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Select one organization or Global before changing Knowledge",
+        )
+    if boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+        return None
+    return boundary.organization_id
+
+
+def _knowledge_visibility_clause(authorization: AuthorizationContext):
+    """Filter Knowledge rows to the explicitly selected read context."""
+
+    boundary = authorization.selected_boundary
+    if boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+        return KnowledgeStore.organization_id.is_(None)
+    if boundary.kind is AuthorizationBoundaryKind.ORGANIZATION:
+        return or_(
+            KnowledgeStore.organization_id == boundary.organization_id,
+            KnowledgeStore.organization_id.is_(None),
+        )
+    return KnowledgeStore.organization_id.in_(
+        select(Organization.id).where(Organization.is_provider.is_(False))
+    )
+
+
+def _namespace_role_visibility_clause(authorization: AuthorizationContext):
+    boundary = authorization.selected_boundary
+    if boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+        return KnowledgeNamespaceRole.organization_id.is_(None)
+    if boundary.kind is AuthorizationBoundaryKind.ORGANIZATION:
+        return or_(
+            KnowledgeNamespaceRole.organization_id == boundary.organization_id,
+            KnowledgeNamespaceRole.organization_id.is_(None),
+        )
+    return KnowledgeNamespaceRole.organization_id.in_(
+        select(Organization.id).where(Organization.is_provider.is_(False))
+    )
+
+
+async def _require_visible_knowledge_organization(
+    db: DbSession,
+    authorization: AuthorizationContext,
+    organization_id: UUID | None,
+) -> None:
+    """Hide a Knowledge resource outside the selected read context."""
+
+    if authorization.has_capability("platform.superuser"):
+        return
+    boundary = authorization.selected_boundary
+    if organization_id is None:
+        if boundary.kind in {
+            AuthorizationBoundaryKind.PLATFORM,
+            AuthorizationBoundaryKind.ORGANIZATION,
+        }:
+            return
+    elif (
+        boundary.kind is AuthorizationBoundaryKind.ORGANIZATION
+        and boundary.organization_id == organization_id
+    ):
+        return
+    elif boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+        is_provider = await db.scalar(
+            select(Organization.is_provider).where(Organization.id == organization_id)
+        )
+        if is_provider is False:
+            return
+    raise HTTPException(status_code=404, detail="Knowledge resource not found")
+
+
+def _require_knowledge_mutation(
+    authorization: AuthorizationContext,
+    organization_id: UUID | None,
+) -> None:
+    authorization.require("knowledge.readwrite")
+    if (
+        authorization.selected_boundary.kind
+        is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Select one organization or Global before changing Knowledge",
+        )
+    authorization.require_resource_boundary(organization_id)
 
 
 # =============================================================================
@@ -58,40 +156,39 @@ def _deny_external(user) -> None:
 # =============================================================================
 
 
-@router.get("")
+@router.get("", **operation_route("knowledge.namespaces.list"))
 async def list_namespaces(
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(default=None),
 ) -> list[KnowledgeNamespaceInfo]:
     """List knowledge namespaces derived from knowledge_store."""
-    _deny_external(user)
-    try:
-        filter_type, filter_org_id = resolve_org_filter(user, scope)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-
-    repo = KnowledgeRepository(session=db, org_id=filter_org_id)
-
-    if filter_type == OrgFilterType.ALL:
-        # Superuser with no scope filter — show ALL namespaces
-        ns_list = await repo.list_all_namespaces()
-    elif filter_type == OrgFilterType.GLOBAL_ONLY:
-        ns_list = await repo.list_namespaces(organization_id=None, include_global=True)
-    elif filter_type == OrgFilterType.ORG_ONLY:
-        ns_list = await repo.list_namespaces(organization_id=filter_org_id, include_global=False)
-    else:
-        # ORG_PLUS_GLOBAL
-        ns_list = await repo.list_namespaces(organization_id=filter_org_id, include_global=True)
-
+    del scope  # The shared dependency validates and resolves the legacy selector.
+    authorization.require("knowledge.read")
+    _deny_external(authorization)
+    rows = (
+        await db.execute(
+            select(
+                KnowledgeStore.namespace,
+                KnowledgeStore.organization_id,
+                func.count(KnowledgeStore.id),
+            )
+            .where(_knowledge_visibility_clause(authorization))
+            .group_by(KnowledgeStore.namespace, KnowledgeStore.organization_id)
+        )
+    ).all()
+    counts: dict[str, dict[str, int]] = {}
+    for namespace, organization_id, count in rows:
+        bucket = counts.setdefault(namespace, {"global": 0, "org": 0})
+        bucket["global" if organization_id is None else "org"] += count
     return [
         KnowledgeNamespaceInfo(
-            namespace=ns.namespace,
-            document_count=ns.scopes.get("total", 0),
-            global_count=ns.scopes.get("global", 0),
-            org_count=ns.scopes.get("org", 0),
+            namespace=namespace,
+            document_count=scope_counts["global"] + scope_counts["org"],
+            global_count=scope_counts["global"],
+            org_count=scope_counts["org"],
         )
-        for ns in ns_list
+        for namespace, scope_counts in sorted(counts.items())
     ]
 
 
@@ -104,10 +201,16 @@ async def list_namespaces(
 @router.get("/roles")
 async def list_namespace_roles(
     db: DbSession,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> list[KnowledgeNamespaceRolePublic]:
     """List all namespace role assignments."""
-    result = await db.execute(select(KnowledgeNamespaceRole))
+    authorization.require("knowledge.read")
+    _deny_external(authorization)
+    result = await db.execute(
+        select(KnowledgeNamespaceRole).where(
+            _namespace_role_visibility_clause(authorization)
+        )
+    )
     assignments = result.scalars().all()
 
     return [
@@ -126,10 +229,16 @@ async def list_namespace_roles(
 async def assign_namespace_roles(
     data: KnowledgeNamespaceRoleCreate,
     db: DbSession,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> list[KnowledgeNamespaceRolePublic]:
     """Assign roles to a namespace."""
-    org_id = UUID(data.organization_id) if data.organization_id else None
+    requested_org_id = UUID(data.organization_id) if data.organization_id else None
+    org_id = (
+        requested_org_id
+        if data.organization_id is not None
+        else _selected_knowledge_organization(authorization)
+    )
+    _require_knowledge_mutation(authorization, org_id)
     created = []
 
     for role_id_str in data.role_ids:
@@ -140,9 +249,7 @@ async def assign_namespace_roles(
             continue
 
         # Verify role exists
-        result = await db.execute(
-            select(Role).where(Role.id == role_uuid)
-        )
+        result = await db.execute(select(Role).where(Role.id == role_uuid))
         if not result.scalar_one_or_none():
             continue
 
@@ -161,19 +268,34 @@ async def assign_namespace_roles(
             namespace=data.namespace,
             organization_id=org_id,
             role_id=role_uuid,
-            assigned_by=user.email,
+            assigned_by=authorization.effective_actor.email,
         )
         db.add(assignment)
         await db.flush()
 
-        created.append(KnowledgeNamespaceRolePublic(
-            id=str(assignment.id),
-            namespace=assignment.namespace,
-            organization_id=str(assignment.organization_id) if assignment.organization_id else None,
-            role_id=str(assignment.role_id),
-            assigned_by=assignment.assigned_by,
-        ))
+        created.append(
+            KnowledgeNamespaceRolePublic(
+                id=str(assignment.id),
+                namespace=assignment.namespace,
+                organization_id=str(assignment.organization_id)
+                if assignment.organization_id
+                else None,
+                role_id=str(assignment.role_id),
+                assigned_by=assignment.assigned_by,
+            )
+        )
 
+    if created:
+        await emit_audit(
+            db,
+            "knowledge.namespace_roles.assign",
+            resource_type="knowledge_namespace",
+            details={
+                "namespace": data.namespace,
+                "organization_id": str(org_id) if org_id else None,
+                "role_ids": [assignment.role_id for assignment in created],
+            },
+        )
     return created
 
 
@@ -181,19 +303,35 @@ async def assign_namespace_roles(
 async def remove_namespace_role(
     assignment_id: UUID,
     db: DbSession,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> None:
     """Remove a namespace role assignment."""
     result = await db.execute(
         select(KnowledgeNamespaceRole).where(KnowledgeNamespaceRole.id == assignment_id)
     )
-    if not result.scalar_one_or_none():
+    assignment = result.scalar_one_or_none()
+    if not assignment:
         raise HTTPException(404, f"Assignment {assignment_id} not found")
+
+    _require_knowledge_mutation(authorization, assignment.organization_id)
 
     await db.execute(
         delete(KnowledgeNamespaceRole).where(KnowledgeNamespaceRole.id == assignment_id)
     )
     await db.flush()
+    await emit_audit(
+        db,
+        "knowledge.namespace_roles.remove",
+        resource_type="knowledge_namespace",
+        resource_id=assignment_id,
+        details={
+            "namespace": assignment.namespace,
+            "organization_id": (
+                str(assignment.organization_id) if assignment.organization_id else None
+            ),
+            "role_id": str(assignment.role_id),
+        },
+    )
 
 
 # =============================================================================
@@ -202,10 +340,10 @@ async def remove_namespace_role(
 # =============================================================================
 
 
-@router.get("/documents")
+@router.get("/documents", **operation_route("knowledge.documents.list"))
 async def list_all_documents(
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(default=None),
     namespace: str | None = Query(default=None),
     search: str | None = Query(default=None),
@@ -219,22 +357,11 @@ async def list_all_documents(
     - "global": show only global documents (organization_id IS NULL)
     - UUID string: show only that org's documents (no global fallback)
     """
-    _deny_external(user)
+    del scope
+    authorization.require("knowledge.read")
+    _deny_external(authorization)
 
-    try:
-        filter_type, filter_org_id = resolve_org_filter(user, scope)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-
-    stmt = select(KnowledgeStore)
-
-    # Apply org scope filter via the single source of truth — never a
-    # hand-rolled cascade (an ``== None`` org filter compiles to ``IS NULL``).
-    _clause = org_filter_clause(
-        KnowledgeStore.organization_id, filter_type, filter_org_id
-    )
-    if _clause is not None:
-        stmt = stmt.where(_clause)
+    stmt = select(KnowledgeStore).where(_knowledge_visibility_clause(authorization))
 
     if namespace:
         stmt = stmt.where(KnowledgeStore.namespace == namespace)
@@ -271,18 +398,31 @@ async def list_all_documents(
 async def bulk_update_document_scope(
     data: KnowledgeDocumentBulkScopeUpdate,
     db: DbSession,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> dict:
-    """Bulk update scope for multiple documents. Superuser only.
+    """Bulk update scope for multiple documents.
 
     When replace=true in the request body, conflicting documents in the
     target scope are deleted before moving.
     """
-    from src.core.org_filter import resolve_target_org
-    try:
-        target_org_id = resolve_target_org(user, data.scope)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    target_org_id = _selected_knowledge_organization(authorization)
+    requested_scope = data.scope.strip().lower()
+    if requested_scope == "global":
+        requested_org_id = None
+    else:
+        try:
+            requested_org_id = UUID(requested_scope)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="scope must be global or an organization UUID",
+            ) from exc
+    if requested_org_id != target_org_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The requested scope does not match the selected authorization boundary",
+        )
+    _require_knowledge_mutation(authorization, target_org_id)
 
     doc_uuids = []
     for did in data.document_ids:
@@ -296,9 +436,11 @@ async def bulk_update_document_scope(
     source_docs = await db.execute(
         select(KnowledgeStore).where(KnowledgeStore.id.in_(doc_uuids))
     )
+    source_rows = source_docs.scalars().all()
+    for source_doc in source_rows:
+        _require_knowledge_mutation(authorization, source_doc.organization_id)
     keyed_docs = [
-        d for d in source_docs.scalars().all()
-        if d.key and d.organization_id != target_org_id
+        d for d in source_rows if d.key and d.organization_id != target_org_id
     ]
 
     if keyed_docs:
@@ -338,6 +480,17 @@ async def bulk_update_document_scope(
     result = await db.execute(stmt)
     await db.flush()
 
+    await emit_audit(
+        db,
+        "knowledge.documents.scope_update",
+        resource_type="knowledge_document",
+        details={
+            "document_ids": [str(document_id) for document_id in doc_uuids],
+            "organization_id": str(target_org_id) if target_org_id else None,
+            "updated": result.rowcount,
+        },
+    )
+
     return {"updated": result.rowcount}
 
 
@@ -350,28 +503,21 @@ async def bulk_update_document_scope(
 async def list_documents(
     namespace: str,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(default=None),
     search: str | None = Query(default=None),
     limit: int = Query(default=50, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> list[KnowledgeDocumentSummary]:
     """List documents in a namespace."""
-    _deny_external(user)
+    del scope
+    authorization.require("knowledge.read")
+    _deny_external(authorization)
 
-    try:
-        filter_type, filter_org_id = resolve_org_filter(user, scope)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-
-    stmt = select(KnowledgeStore).where(KnowledgeStore.namespace == namespace)
-
-    # Org scope via the single source of truth (org_filter_clause).
-    _clause = org_filter_clause(
-        KnowledgeStore.organization_id, filter_type, filter_org_id
+    stmt = select(KnowledgeStore).where(
+        KnowledgeStore.namespace == namespace,
+        _knowledge_visibility_clause(authorization),
     )
-    if _clause is not None:
-        stmt = stmt.where(_clause)
 
     if search:
         stmt = stmt.where(
@@ -397,24 +543,27 @@ async def list_documents(
     ]
 
 
-@router.post("/{namespace}/documents", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/{namespace}/documents",
+    status_code=status.HTTP_201_CREATED,
+    **operation_route("knowledge.documents.create"),
+)
 async def create_document(
     namespace: str,
     data: KnowledgeDocumentCreate,
     db: DbSession,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(default=None),
 ) -> KnowledgeDocumentPublic:
     """Create a document in a namespace with embedding."""
-    from src.core.org_filter import resolve_target_org
-    try:
-        target_org_id = resolve_target_org(user, scope)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    del scope
+    target_org_id = _selected_knowledge_organization(authorization)
+    _require_knowledge_mutation(authorization, target_org_id)
 
     # Generate embedding
     try:
         from src.services.embeddings.factory import get_embedding_client
+
         client = await get_embedding_client(db)
     except ValueError as e:
         raise HTTPException(503, f"Embedding service unavailable: {e}")
@@ -426,7 +575,7 @@ async def create_document(
         key=data.key,
         metadata=data.metadata,
         organization_id=target_org_id,
-        created_by=user.user_id,
+        created_by=authorization.effective_actor.user_id,
         embedder=client,
     )
     await db.flush()
@@ -436,6 +585,18 @@ async def create_document(
         select(KnowledgeStore).where(KnowledgeStore.id == UUID(doc_ids[0]))
     )
     doc = result.scalar_one()
+
+    await emit_audit(
+        db,
+        "knowledge.document.create",
+        resource_type="knowledge_document",
+        resource_id=doc.id,
+        details={
+            "namespace": namespace,
+            "key": doc.key,
+            "organization_id": str(target_org_id) if target_org_id else None,
+        },
+    )
 
     return KnowledgeDocumentPublic(
         id=str(doc.id),
@@ -450,20 +611,31 @@ async def create_document(
     )
 
 
-@router.get("/{namespace}/documents/{doc_id}")
+@router.get(
+    "/{namespace}/documents/{doc_id}",
+    **operation_route("knowledge.documents.get"),
+)
 async def get_document(
     namespace: str,
     doc_id: UUID,
     db: DbSession,
-    user: CurrentActiveUser,
+    authorization: CurrentAuthorizationContext,
 ) -> KnowledgeDocumentPublic:
     """Get a document by UUID."""
-    _deny_external(user)
-    repo = KnowledgeRepository(session=db, org_id=user.organization_id)
+    authorization.require("knowledge.read")
+    _deny_external(authorization)
+    repo = KnowledgeRepository(session=db, org_id=None)
     doc = await repo.get_by_id(doc_id)
 
     if not doc or doc.namespace != namespace:
-        raise HTTPException(404, f"Document {doc_id} not found in namespace {namespace}")
+        raise HTTPException(
+            404, f"Document {doc_id} not found in namespace {namespace}"
+        )
+    await _require_visible_knowledge_organization(
+        db,
+        authorization,
+        UUID(doc.organization_id) if doc.organization_id else None,
+    )
 
     return KnowledgeDocumentPublic(
         id=doc.id,
@@ -476,13 +648,16 @@ async def get_document(
     )
 
 
-@router.put("/{namespace}/documents/{doc_id}")
+@router.put(
+    "/{namespace}/documents/{doc_id}",
+    **operation_route("knowledge.documents.update"),
+)
 async def update_document(
     namespace: str,
     doc_id: UUID,
     data: KnowledgeDocumentUpdate,
     db: DbSession,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(default=None),
     replace: bool = Query(default=False),
 ) -> KnowledgeDocumentPublic:
@@ -502,15 +677,17 @@ async def update_document(
     document already holding the same identity in the target scope 409s
     unless ``replace=true``.
     """
+    authorization.require("knowledge.readwrite")
     # First resolve the addressed physical chunk without locking it. Every
     # chunk id is an alias for one logical document, so locking this row would
     # let requests through different chunks deadlock during group replacement.
-    result = await db.execute(
-        select(KnowledgeStore).where(KnowledgeStore.id == doc_id)
-    )
+    result = await db.execute(select(KnowledgeStore).where(KnowledgeStore.id == doc_id))
     addressed = result.scalar_one_or_none()
     if not addressed or addressed.namespace != namespace:
-        raise HTTPException(404, f"Document {doc_id} not found in namespace {namespace}")
+        raise HTTPException(
+            404, f"Document {doc_id} not found in namespace {namespace}"
+        )
+    _require_knowledge_mutation(authorization, addressed.organization_id)
 
     # Resolve every alias to chunk zero and lock that persistent canonical row.
     # This gives concurrent edits one lock order and one stable public id.
@@ -519,7 +696,9 @@ async def update_document(
         namespace, addressed.key, addressed.organization_id
     )
     if not doc:
-        raise HTTPException(404, f"Document {doc_id} not found in namespace {namespace}")
+        raise HTTPException(
+            404, f"Document {doc_id} not found in namespace {namespace}"
+        )
 
     # Snapshot identity/audit fields before sibling replacement.
     doc_key = doc.key
@@ -529,13 +708,13 @@ async def update_document(
     metadata = data.metadata if data.metadata is not None else (doc.doc_metadata or {})
 
     # Resolve the target scope (defaults to the doc's current org when unchanged).
-    target_org_id = current_org_id
-    if scope is not None:
-        from src.core.org_filter import resolve_target_org
-        try:
-            target_org_id = resolve_target_org(user, scope)
-        except ValueError as e:
-            raise HTTPException(status_code=422, detail=str(e))
+    target_org_id = _selected_knowledge_organization(authorization)
+    if scope is None and target_org_id != current_org_id:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Select the document's exact authorization boundary before editing it",
+        )
+    _require_knowledge_mutation(authorization, target_org_id)
 
     repo = KnowledgeRepository(session=db, org_id=target_org_id)
 
@@ -544,9 +723,7 @@ async def update_document(
         # identity in the target scope — keyed or keyless (NULL keys are
         # equal under the NULLS NOT DISTINCT unique constraint). 409 before
         # mutating anything, unless the caller asked to replace it.
-        conflicting_id = await repo.find_document_id(
-            namespace, doc_key, target_org_id
-        )
+        conflicting_id = await repo.find_document_id(namespace, doc_key, target_org_id)
         if conflicting_id:
             if replace:
                 await repo.delete_document(namespace, doc_key, target_org_id)
@@ -565,6 +742,7 @@ async def update_document(
 
     try:
         from src.services.embeddings.factory import get_embedding_client
+
         client = await get_embedding_client(db)
     except ValueError as e:
         raise HTTPException(503, f"Embedding service unavailable: {e}")
@@ -594,6 +772,19 @@ async def update_document(
     )
     new_doc = stored.scalar_one()
 
+    await emit_audit(
+        db,
+        "knowledge.document.update",
+        resource_type="knowledge_document",
+        resource_id=new_doc.id,
+        details={
+            "namespace": namespace,
+            "key": new_doc.key,
+            "organization_id": str(target_org_id) if target_org_id else None,
+            "moved": target_org_id != current_org_id,
+        },
+    )
+
     return KnowledgeDocumentPublic(
         id=str(new_doc.id),
         namespace=new_doc.namespace,
@@ -601,47 +792,67 @@ async def update_document(
         # Echo the full submitted content, not the first chunk row's slice.
         content=data.content,
         metadata=new_doc.doc_metadata or {},
-        organization_id=str(new_doc.organization_id) if new_doc.organization_id else None,
+        organization_id=str(new_doc.organization_id)
+        if new_doc.organization_id
+        else None,
         created_at=new_doc.created_at,
         updated_at=new_doc.updated_at,
     )
 
 
-@router.delete("/{namespace}/documents/{doc_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{namespace}/documents/{doc_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    **operation_route("knowledge.documents.delete"),
+)
 async def delete_document(
     namespace: str,
     doc_id: UUID,
     db: DbSession,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> None:
     """Delete a document — every chunk row of it, not just the addressed row."""
-    result = await db.execute(
-        select(KnowledgeStore).where(KnowledgeStore.id == doc_id)
-    )
+    result = await db.execute(select(KnowledgeStore).where(KnowledgeStore.id == doc_id))
     doc = result.scalar_one_or_none()
     if not doc or doc.namespace != namespace:
-        raise HTTPException(404, f"Document {doc_id} not found in namespace {namespace}")
+        raise HTTPException(
+            404, f"Document {doc_id} not found in namespace {namespace}"
+        )
+    _require_knowledge_mutation(authorization, doc.organization_id)
 
     repo = KnowledgeRepository(session=db, org_id=doc.organization_id)
     await repo.delete_document(namespace, doc.key, doc.organization_id)
+    await emit_audit(
+        db,
+        "knowledge.document.delete",
+        resource_type="knowledge_document",
+        resource_id=doc_id,
+        details={
+            "namespace": namespace,
+            "key": doc.key,
+            "organization_id": (
+                str(doc.organization_id) if doc.organization_id else None
+            ),
+        },
+    )
 
 
 @router.delete("/{namespace}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_namespace(
     namespace: str,
     db: DbSession,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
     scope: str | None = Query(default=None),
 ) -> None:
     """Delete all documents in a namespace."""
-    from src.core.org_filter import resolve_target_org
-    try:
-        target_org_id = resolve_target_org(user, scope)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
+    del scope
+    target_org_id = _selected_knowledge_organization(authorization)
+    _require_knowledge_mutation(authorization, target_org_id)
 
     repo = KnowledgeRepository(session=db, org_id=target_org_id)
-    deleted = await repo.delete_namespace(namespace=namespace, organization_id=target_org_id)
+    deleted = await repo.delete_namespace(
+        namespace=namespace, organization_id=target_org_id
+    )
 
     if deleted == 0:
         raise HTTPException(404, f"Namespace '{namespace}' not found or empty")
@@ -653,3 +864,13 @@ async def delete_namespace(
         )
     )
     await db.flush()
+    await emit_audit(
+        db,
+        "knowledge.namespace.delete",
+        resource_type="knowledge_namespace",
+        details={
+            "namespace": namespace,
+            "organization_id": str(target_org_id) if target_org_id else None,
+            "document_count": deleted,
+        },
+    )

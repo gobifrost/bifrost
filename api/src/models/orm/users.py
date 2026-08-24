@@ -1,24 +1,37 @@
-"""
-User, Role, and UserRole ORM models.
-
-Represents users, roles, and role assignments in the platform.
-"""
+"""User and Role ORM models."""
 
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, LargeBinary, String, Text, text
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    LargeBinary,
+    String,
+    Text,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
+from src.models.orm.role_assignments import RoleAssignment
 
 if TYPE_CHECKING:
     from src.models.orm.agents import Agent
     from src.models.orm.executions import Execution
-    from src.models.orm.mfa import MFARecoveryCode, TrustedDevice, UserMFAMethod, UserOAuthAccount, UserPasskey
+    from src.models.orm.mfa import (
+        MFARecoveryCode,
+        TrustedDevice,
+        UserMFAMethod,
+        UserOAuthAccount,
+        UserPasskey,
+    )
     from src.models.orm.organizations import Organization
+    from src.models.orm.solution_role_grants import SolutionRoleGrant
 
 
 # Identity entity — looked up by ID for auth/audit, not by name with cascade.
@@ -47,13 +60,19 @@ class User(Base):
     memory_enabled: Mapped[bool] = mapped_column(
         Boolean, default=True, nullable=False, server_default=text("true")
     )
-    mfa_enforced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    mfa_enforced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
     organization_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("organizations.id"), nullable=True
     )
-    last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    last_login: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=text("NOW()"),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -67,12 +86,17 @@ class User(Base):
     avatar_content_type: Mapped[str | None] = mapped_column(String(50), default=None)
 
     # WebAuthn/Passkeys
-    webauthn_user_id: Mapped[bytes | None] = mapped_column(LargeBinary(64), default=None)
+    webauthn_user_id: Mapped[bytes | None] = mapped_column(
+        LargeBinary(64), default=None
+    )
 
     # Relationships
     organization: Mapped["Organization"] = relationship(back_populates="users")
-    roles: Mapped[list["UserRole"]] = relationship(
-        back_populates="user", cascade="all, delete-orphan", passive_deletes=True
+    role_assignments: Mapped[list["RoleAssignment"]] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        foreign_keys="RoleAssignment.user_id",
     )
     executions: Mapped[list["Execution"]] = relationship(
         back_populates="executed_by_user", passive_deletes=True
@@ -108,12 +132,26 @@ class Role(Base):
     __tablename__ = "roles"
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    key: Mapped[str | None] = mapped_column(String(100), unique=True, default=None)
     name: Mapped[str] = mapped_column(String(100))
     description: Mapped[str | None] = mapped_column(Text, default=None)
-    permissions: Mapped[dict] = mapped_column(JSONB, default={}, server_default='{}')
+    capabilities: Mapped[list[str]] = mapped_column(
+        JSONB, default=list, nullable=False, server_default="[]"
+    )
+    permissions: Mapped[dict] = mapped_column(
+        JSONB, default=dict, nullable=False, server_default="{}"
+    )
+    is_builtin: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False, server_default=text("false")
+    )
+    assignable_to_resources: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False, server_default=text("true")
+    )
     created_by: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=text("NOW()"),
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -123,26 +161,16 @@ class Role(Base):
     )
 
     # Relationships
-    users: Mapped[list["UserRole"]] = relationship(back_populates="role")
+    role_assignments: Mapped[list["RoleAssignment"]] = relationship(
+        back_populates="role",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    solution_grants: Mapped[list["SolutionRoleGrant"]] = relationship(
+        back_populates="role"
+    )
     # Agents via junction table
     agents: Mapped[list["Agent"]] = relationship(
         secondary="agent_roles",
         back_populates="roles",
     )
-
-
-class UserRole(Base):
-    """User-Role association table."""
-
-    __tablename__ = "user_roles"
-
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
-    role_id: Mapped[UUID] = mapped_column(ForeignKey("roles.id", ondelete="CASCADE"), primary_key=True)
-    assigned_by: Mapped[str] = mapped_column(String(255))
-    assigned_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")
-    )
-
-    # Relationships
-    user: Mapped["User"] = relationship(back_populates="roles")
-    role: Mapped["Role"] = relationship(back_populates="users")

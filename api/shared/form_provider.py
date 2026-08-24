@@ -73,7 +73,11 @@ async def execute_form_field_provider(
     from src.services.solution_scope import solution_allows_global
 
     anchor_org_id = form.organization_id or caller_org_id
-    repo = WorkflowRepository(db, org_id=anchor_org_id, is_superuser=True)
+    repo = WorkflowRepository(
+        db,
+        org_id=anchor_org_id,
+        bypass_resource_roles=True,
+    )
     allow_shared = (
         form.solution_id is None
         or await solution_allows_global(db, form.solution_id)

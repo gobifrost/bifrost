@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker,
     create_async_engine,
 )
+from sqlalchemy.pool import NullPool
 
 from src.config import Settings, get_settings
 from src.models import Base  # noqa: F401 - imported for Alembic
@@ -96,16 +97,30 @@ def get_engine(settings: Settings | None = None) -> AsyncEngine:
         # Convert sslmode parameter for asyncpg compatibility
         db_url, connect_args = _prepare_asyncpg_url(settings.database_url)
 
-        _engine = create_async_engine(
-            db_url,
-            echo=settings.debug,
-            pool_size=settings.database_pool_size,
-            max_overflow=settings.database_max_overflow,
-            pool_pre_ping=True,  # Verify connections before use
-            pool_timeout=30,  # Fail fast when pool is exhausted
-            pool_recycle=1800,  # Recycle connections every 30 min
-            connect_args=connect_args,
-        )
+        if settings.environment == "testing":
+            # pytest-asyncio gives each async test a fresh event loop. A pooled
+            # asyncpg connection is permanently bound to the loop that opened
+            # it, so reusing the application engine across tests can otherwise
+            # surface "Future attached to a different loop" failures. Tests do
+            # not need connection reuse; production and development retain the
+            # configured queue pool below.
+            _engine = create_async_engine(
+                db_url,
+                echo=settings.debug,
+                poolclass=NullPool,
+                connect_args=connect_args,
+            )
+        else:
+            _engine = create_async_engine(
+                db_url,
+                echo=settings.debug,
+                pool_size=settings.database_pool_size,
+                max_overflow=settings.database_max_overflow,
+                pool_pre_ping=True,  # Verify connections before use
+                pool_timeout=30,  # Fail fast when pool is exhausted
+                pool_recycle=1800,  # Recycle connections every 30 min
+                connect_args=connect_args,
+            )
 
     return _engine
 

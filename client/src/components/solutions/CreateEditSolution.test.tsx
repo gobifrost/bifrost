@@ -7,6 +7,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen, within } from "@/test-utils";
 import { waitFor } from "@testing-library/react";
+
+vi.mock("@/hooks/useAdministrativeBoundary", () => ({
+	useAdministrativeBoundary: () => "platform",
+}));
 import { CreateEditSolution } from "./CreateEditSolution";
 import {
 	installSolution,

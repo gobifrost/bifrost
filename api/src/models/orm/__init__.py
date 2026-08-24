@@ -12,11 +12,29 @@ from src.models.orm.agent_run_flag_conversations import AgentRunFlagConversation
 from src.models.orm.agent_run_verdict_history import AgentRunVerdictHistory
 from src.models.orm.agent_runs import AgentRun, AgentRunStep
 from src.models.orm.summary_backfill_job import SummaryBackfillJob
-from src.models.orm.agents import Agent, AgentDelegation, AgentRole, AgentTool, Conversation, Message, MessageAttachment
-from src.models.orm.ai_usage import AIModelPricing, AIUsage
-from src.models.orm.ai_models import AIEmbeddingConfig, AIModelAssignment, AIModelProfile, AIProviderConnection
+from src.models.orm.agents import (
+    Agent,
+    AgentDelegation,
+    AgentRole,
+    AgentTool,
+    Conversation,
+    Message,
+    MessageAttachment,
+)
+from src.models.orm.ai_usage import (
+    AIModelPricing,
+    AIUsage,
+    UsageLedgerPeriod,
+    UsageLimitPolicyORM,
+)
+from src.models.orm.ai_models import (
+    AIEmbeddingConfig,
+    AIModelAssignment,
+    AIModelProfile,
+    AIProviderConnection,
+)
 from src.models.orm.app_embed_secrets import AppEmbedSecret
-from src.models.orm.artifacts import Artifact
+from src.models.orm.artifacts import Artifact, ArtifactWorkspaceTombstone
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.platform_job_memory_profiles import PlatformJobMemoryProfile
 from src.models.orm.scheduler_leases import SchedulerLease
@@ -35,7 +53,13 @@ from src.models.orm.base import Base
 from src.models.orm.branding import GlobalBranding
 from src.models.orm.cli import CLISession
 from src.models.orm.config import Config, SystemConfig
-from src.models.orm.events import Event, EventDelivery, EventSource, EventSubscription, WebhookSource
+from src.models.orm.events import (
+    Event,
+    EventDelivery,
+    EventSource,
+    EventSubscription,
+    WebhookSource,
+)
 from src.models.orm.executions import Execution, ExecutionLog
 from src.models.orm.external_mcp import (
     AgentMCPConnection,
@@ -45,12 +69,26 @@ from src.models.orm.external_mcp import (
     UserMCPCredential,
 )
 from src.models.orm.forms import Form, FormField, FormRole
-from src.models.orm.integrations import Integration, IntegrationConfigSchema, IntegrationMapping
+from src.models.orm.integrations import (
+    Integration,
+    IntegrationConfigSchema,
+    IntegrationMapping,
+)
 from src.models.orm.knowledge import KnowledgeStore
 from src.models.orm.knowledge_sources import KnowledgeNamespaceRole
 from src.models.orm.memory import MemoryEntry, MemoryStore
-from src.models.orm.metrics import ExecutionMetricsDaily, KnowledgeStorageDaily, PlatformMetricsSnapshot, WorkflowROIDaily
-from src.models.orm.mfa import MFARecoveryCode, TrustedDevice, UserMFAMethod, UserOAuthAccount
+from src.models.orm.metrics import (
+    ExecutionMetricsDaily,
+    KnowledgeStorageDaily,
+    PlatformMetricsSnapshot,
+    WorkflowROIDaily,
+)
+from src.models.orm.mfa import (
+    MFARecoveryCode,
+    TrustedDevice,
+    UserMFAMethod,
+    UserOAuthAccount,
+)
 from src.models.orm.oauth import OAuthProvider, OAuthToken
 from src.models.orm.organizations import Organization
 from src.models.orm.pending_capture import PendingCaptureORM
@@ -60,9 +98,25 @@ from src.models.orm.solution_connection_schema import SolutionConnectionSchema
 from src.models.orm.solution_file_location import SolutionFileLocation
 from src.models.orm.solutions import Solution
 from src.models.orm.solution_export_jobs import SolutionExportJob
+from src.models.orm.solution_builder import (
+    SolutionUserGrant,
+    SolutionBuilderProject,
+    SolutionBuilderRelease,
+    SolutionBuilderSession,
+    SolutionBuilderTurn,
+    SolutionGlobalWorkspaceApply,
+    SolutionSourceRevision,
+)
+from src.models.orm.solution_role_grants import SolutionRoleGrant
+from src.models.orm.organization_groups import (
+    OrganizationGroup,
+    OrganizationGroupMembership,
+)
+from src.models.orm.role_assignments import RoleAssignment, RoleAssignmentBoundary
+from src.models.orm.solution_build_jobs import SolutionBuildJob
 from src.models.orm.custom_claims import CustomClaim
 from src.models.orm.tables import Document, Table
-from src.models.orm.users import Role, User, UserRole
+from src.models.orm.users import Role, User
 from src.models.orm.user_invites import UserInvite
 from src.models.orm.workflow_roles import WorkflowRole
 from src.models.orm.workflows import Workflow
@@ -83,10 +137,22 @@ __all__ = [
     "SolutionFileLocation",
     "SolutionDeployJob",
     "SolutionExportJob",
+    "SolutionBuildJob",
+    "SolutionUserGrant",
+    "SolutionBuilderProject",
+    "SolutionBuilderRelease",
+    "SolutionBuilderSession",
+    "SolutionBuilderTurn",
+    "SolutionGlobalWorkspaceApply",
+    "SolutionSourceRevision",
+    "SolutionRoleGrant",
+    "OrganizationGroup",
+    "OrganizationGroupMembership",
     "PendingCaptureORM",
     # Applications (App Builder)
     "Application",
     "Artifact",
+    "ArtifactWorkspaceTombstone",
     "PlatformJob",
     "PlatformJobMemoryProfile",
     "SchedulerLease",
@@ -99,7 +165,8 @@ __all__ = [
     # Users and Roles
     "User",
     "Role",
-    "UserRole",
+    "RoleAssignment",
+    "RoleAssignmentBoundary",
     "UserInvite",
     # Agent Runs
     "AgentRun",
@@ -123,6 +190,8 @@ __all__ = [
     "AIEmbeddingConfig",
     "AIModelProfile",
     "AIProviderConnection",
+    "UsageLedgerPeriod",
+    "UsageLimitPolicyORM",
     # Forms
     "Form",
     "FormField",

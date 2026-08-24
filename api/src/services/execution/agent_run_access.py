@@ -1,33 +1,52 @@
 """Shared visibility policy for agent-run records."""
 
-from sqlalchemy import or_
+from sqlalchemy import or_, select
 from sqlalchemy.sql.elements import ColumnElement
 
 from src.core.principal import UserPrincipal
+from src.models.orm.organizations import Organization
 from src.models.orm.agent_runs import AgentRun
+from src.services.authorization import AuthorizationBoundaryKind, AuthorizationContext
 
 
-def agent_run_visibility_conditions(
+def agent_run_visibility_conditions_for_authorization(
     user: UserPrincipal,
+    authorization: AuthorizationContext,
 ) -> tuple[ColumnElement[bool], ...]:
-    """Return SQL conditions limiting runs to those visible to ``user``.
+    """Return boundary-aware SQL conditions limiting visible agent runs.
 
-    Autonomous delegations have a parent run and remain visible anywhere
-    their parent orchestration is visible. Chat has no parent ``AgentRun``, so
-    its delegated child is a root delegation row. Those rows inherit the
-    private conversation's owner boundary through ``caller_user_id``.
+    A human always keeps visibility to their own runs. Broader run visibility
+    requires ``executions.read`` in the selected authorization boundary.
+    Platform is Global-only; only ``platform.superuser`` is wildcard.
     """
-    if user.is_superuser:
+
+    if authorization.has_capability("platform.superuser"):
         return ()
 
-    conditions: list[ColumnElement[bool]] = []
-    if user.organization_id is not None:
-        conditions.append(AgentRun.org_id == user.organization_id)
-    conditions.append(
+    visible: list[ColumnElement[bool]] = [AgentRun.caller_user_id == str(user.user_id)]
+    if authorization.has_capability("executions.read"):
+        boundary = authorization.selected_boundary
+        if boundary.kind is AuthorizationBoundaryKind.PLATFORM:
+            visible.append(AgentRun.org_id.is_(None))
+        elif boundary.kind is AuthorizationBoundaryKind.ORGANIZATION:
+            visible.append(AgentRun.org_id == boundary.organization_id)
+        elif boundary.kind is AuthorizationBoundaryKind.MANAGED_ORGANIZATIONS:
+            visible.append(
+                AgentRun.org_id.in_(
+                    select(Organization.id).where(Organization.is_provider.is_(False))
+                )
+            )
+
+    return (or_(*visible), *_agent_run_delegation_conditions(user))
+
+
+def _agent_run_delegation_conditions(
+    user: UserPrincipal,
+) -> tuple[ColumnElement[bool], ...]:
+    return (
         or_(
             AgentRun.trigger_type != "delegation",
             AgentRun.parent_run_id.is_not(None),
             AgentRun.caller_user_id == str(user.user_id),
-        )
+        ),
     )
-    return tuple(conditions)

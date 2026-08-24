@@ -115,7 +115,7 @@ class AIModelAssignment(Base):
 
     __table_args__ = (
         CheckConstraint(
-            "assignment_key IN ('primary', 'summarization', 'tuning', 'image_generation', 'video_generation', 'chat_default')",
+            "assignment_key IN ('primary', 'summarization', 'tuning', 'image_generation', 'video_generation', 'chat_default', 'builder')",
             name="ck_ai_model_assignments_key",
         ),
         Index("ix_ai_model_assignments_profile_id", "profile_id"),

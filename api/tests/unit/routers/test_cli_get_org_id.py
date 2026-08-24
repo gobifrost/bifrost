@@ -26,7 +26,8 @@ import pytest
 from fastapi import HTTPException
 
 from src.core.principal import UserPrincipal
-from src.routers.cli import _resolve_sdk_org_id
+from src.routers.cli import _authorize_cli_context_org, _resolve_sdk_org_id
+from src.services.authorization import AuthorizationBoundary, AuthorizationContext
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +61,16 @@ def _db_no_lookup():
         side_effect=AssertionError("provider lookup should not run on UNSET/own-org paths")
     )
     return db
+
+
+def _authorization(user: UserPrincipal, org_id: UUID) -> AuthorizationContext:
+    return AuthorizationContext(
+        requester=user,
+        effective_actor=user,
+        selected_boundary=AuthorizationBoundary.organization(org_id),
+        effective_capabilities=frozenset({"organizations.read"}),
+        grant_sources=(),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -198,3 +209,35 @@ async def test_uppercase_uuid_accepted_for_admin():
     db = _db_with_provider(False)
     result = await _resolve_sdk_org_id(user, upper, db)
     assert UUID(result) == UUID(upper)
+
+
+@pytest.mark.asyncio
+async def test_cli_context_cross_org_uses_authorization_context(monkeypatch):
+    user = _user(org_id=uuid4(), is_superuser=False)
+    target_org_id = uuid4()
+    db = AsyncMock()
+    resolve = AsyncMock(return_value=_authorization(user, target_org_id))
+    monkeypatch.setattr("src.routers.cli.resolve_authorization_context", resolve)
+
+    await _authorize_cli_context_org(db, user, target_org_id)
+
+    resolve.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cli_context_provider_membership_alone_no_longer_authorizes(
+    monkeypatch,
+):
+    user = _user(org_id=uuid4(), is_superuser=False)
+    target_org_id = uuid4()
+    db = AsyncMock()
+
+    async def _deny(*args, **kwargs):
+        raise HTTPException(status_code=403, detail="Missing required capability")
+
+    monkeypatch.setattr("src.routers.cli.resolve_authorization_context", _deny)
+
+    with pytest.raises(HTTPException) as exc:
+        await _authorize_cli_context_org(db, user, target_org_id)
+
+    assert exc.value.status_code == 403

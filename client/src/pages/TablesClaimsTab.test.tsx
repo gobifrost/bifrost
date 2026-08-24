@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, waitFor } from "@/test-utils";
 
+vi.mock("@/hooks/useAdministrativeBoundary", () => ({
+	useAdministrativeBoundary: () => "platform",
+}));
+
 const mockListClaims = vi.fn();
 const mockCreateClaim = vi.fn();
 const mockUpdateClaim = vi.fn();

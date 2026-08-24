@@ -11,7 +11,7 @@ from typing import AsyncGenerator
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import ValidationError as PydanticValidationError
 from sqlalchemy.exc import IntegrityError, NoResultFound, OperationalError
 
@@ -29,6 +29,7 @@ from src.routers import (
     passkeys_router,
     health_router,
     organizations_router,
+    organization_groups_router,
     users_router,
     roles_router,
     executions_router,
@@ -47,6 +48,8 @@ from src.routers import (
     jobs_router,
     platform_jobs_router,
     scheduler_diagnostics_router,
+    sandbox_jobs_router,
+    sandbox_runner_admin_router,
     oauth_connections_router,
     endpoints_router,
     cli_router,
@@ -69,6 +72,7 @@ from src.routers import (
     roi_settings_router,
     roi_reports_router,
     usage_reports_router,
+    usage_limits_router,
     ai_pricing_router,
     oauth_config_router,
     tools_router,
@@ -78,7 +82,11 @@ from src.routers import (
     tables_router,
     claims_router,
     solutions_router,
+    solution_builder_router,
+    solution_promotions_router,
+    solution_app_launch_router,
     knowledge_sources_router,
+    knowledge_router,
     app_embed_secrets_router,
     applications_router,
     app_code_files_router,
@@ -544,6 +552,35 @@ def create_app() -> FastAPI:
             clear_actor(actor_token)
         return response
 
+    @app.middleware("http")
+    async def opaque_runtime_cors(request: Request, call_next):
+        """Admit credentialed requests only from opaque Builder documents."""
+        if not request.url.path.startswith("/api/builder-runtime/"):
+            return await call_next(request)
+        origin = request.headers.get("origin")
+        if request.method == "OPTIONS":
+            if origin != "null":
+                return Response(status_code=403)
+            return Response(
+                status_code=204,
+                headers={
+                    "Access-Control-Allow-Origin": "null",
+                    "Access-Control-Allow-Credentials": "true",
+                    "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+                    "Access-Control-Allow-Headers": request.headers.get(
+                        "access-control-request-headers",
+                        "Authorization, Content-Type, X-Bifrost-App",
+                    ),
+                    "Vary": "Origin",
+                },
+            )
+        response = await call_next(request)
+        if origin == "null":
+            response.headers["Access-Control-Allow-Origin"] = "null"
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+            response.headers["Vary"] = "Origin"
+        return response
+
     # Register routers
     app.include_router(health_router)
     app.include_router(version_router)
@@ -552,6 +589,7 @@ def create_app() -> FastAPI:
     app.include_router(oauth_router)
     app.include_router(passkeys_router)
     app.include_router(organizations_router)
+    app.include_router(organization_groups_router)
     app.include_router(users_router)
     app.include_router(roles_router)
     app.include_router(executions_router)
@@ -570,6 +608,8 @@ def create_app() -> FastAPI:
     app.include_router(jobs_router)
     app.include_router(platform_jobs_router)
     app.include_router(scheduler_diagnostics_router)
+    app.include_router(sandbox_jobs_router)
+    app.include_router(sandbox_runner_admin_router)
     app.include_router(oauth_connections_router)
     app.include_router(endpoints_router)
     app.include_router(cli_router)
@@ -592,6 +632,7 @@ def create_app() -> FastAPI:
     app.include_router(roi_settings_router)
     app.include_router(roi_reports_router)
     app.include_router(usage_reports_router)
+    app.include_router(usage_limits_router)
     app.include_router(ai_pricing_router)
     app.include_router(oauth_config_router)
     app.include_router(tools_router)
@@ -601,7 +642,11 @@ def create_app() -> FastAPI:
     app.include_router(tables_router)
     app.include_router(claims_router)
     app.include_router(solutions_router)
+    app.include_router(solution_builder_router)
+    app.include_router(solution_promotions_router)
+    app.include_router(solution_app_launch_router)
     app.include_router(knowledge_sources_router)
+    app.include_router(knowledge_router)
     app.include_router(app_embed_secrets_router)
     app.include_router(applications_router)
     app.include_router(app_code_files_router)
@@ -620,6 +665,14 @@ def create_app() -> FastAPI:
     app.include_router(mcp_oauth_callback_router)
     app.include_router(sdk_modules_router)
     app.include_router(policy_rules_router)
+
+    from src.app_host import create_app as create_solution_app_runtime
+
+    app.mount(
+        "/api/builder-runtime",
+        create_solution_app_runtime(),
+        name="isolated-app-runtime",
+    )
 
     # Mount MCP OAuth routes at root level (required by RFC 8414/9728)
     # These must be registered BEFORE the FastMCP ASGI mount

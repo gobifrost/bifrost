@@ -62,6 +62,16 @@ _OPERATIONAL_SOLUTION_ROW_NAMES = {
     # Job bookkeeping belongs to the platform scheduler/API, not the deploy-owned
     # portable entity surface protected by this guard.
     "SolutionExportJob",
+    "SolutionBuildJob",
+    # Builder rows describe private source history, sessions, collaboration,
+    # and workspace bookkeeping. They are platform control-plane state rather
+    # than portable entities materialized by Solution deployment.
+    "SolutionBuilderProject",
+    "SolutionUserGrant",
+    "SolutionGlobalWorkspaceApply",
+    "SolutionGlobalOperationChange",
+    "SolutionSourceRevision",
+    "SolutionBuilderSession",
 }
 
 _WORKFLOW_RUNTIME_KEY_FIELDS = {
@@ -141,6 +151,71 @@ async def assert_entity_id_not_solution_managed(
         await db.execute(select(model.solution_id).where(model.id == entity_id))  # type: ignore[attr-defined]
     ).scalar_one_or_none()
     if solution_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=SOLUTION_MANAGED_MESSAGE,
+        )
+
+
+async def assert_workspace_path_not_solution_managed(
+    db: AsyncSession,
+    path: str,
+    *,
+    recursive: bool = False,
+) -> None:
+    """Refuse workspace file writes that would mutate managed App source.
+
+    Workspace file endpoints write S3 and ``file_index`` directly, so the ORM
+    flush guard cannot see them.  Keep the path check at the REST boundary so
+    the browser editor, CLI, MCP, and any future adapter share one decision.
+
+    ``recursive`` is used for folder/prefix deletion and rename.  It rejects
+    both a path inside a managed App and a parent path that contains one.
+    """
+    from sqlalchemy import func, or_
+
+    from src.models.orm.applications import Application
+
+    normalized = path.strip("/")
+    if not normalized:
+        if recursive:
+            managed = (
+                await db.execute(
+                    select(Application.id)
+                    .where(Application.solution_id.is_not(None))
+                    .limit(1)
+                )
+            ).scalar_one_or_none()
+            if managed is not None:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=SOLUTION_MANAGED_MESSAGE,
+                )
+        return
+
+    inside_managed = func.starts_with(
+        normalized + "/",
+        func.rtrim(Application.repo_path, "/") + "/",
+    )
+    predicates = [inside_managed]
+    if recursive:
+        contains_managed = func.starts_with(
+            func.rtrim(Application.repo_path, "/") + "/",
+            normalized + "/",
+        )
+        predicates.append(contains_managed)
+
+    managed = (
+        await db.execute(
+            select(Application.id)
+            .where(
+                Application.solution_id.is_not(None),
+                or_(*predicates),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if managed is not None:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail=SOLUTION_MANAGED_MESSAGE,

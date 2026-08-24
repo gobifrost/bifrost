@@ -24,7 +24,7 @@ from src.models import (
     PackageUpdate,
     PackageUpdatesResponse,
 )
-from src.core.auth import Context, CurrentSuperuser
+from src.core.auth import Context
 from src.core.log_safety import log_safe
 from src.core.redis_client import get_redis_client
 from src.core.requirements_cache import (
@@ -35,10 +35,23 @@ from src.core.requirements_cache import (
     warm_requirements_cache,
 )
 from src.jobs.rabbitmq import publish_broadcast
+from src.services.audit import emit_audit
+from src.services.authorization import AuthorizationContext, CurrentAuthorizationContext
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/packages", tags=["Packages"])
+
+
+def _require_package_access(
+    authorization: AuthorizationContext,
+    *,
+    write: bool,
+) -> None:
+    """Treat shared runtime requirements as part of the Platform repository."""
+
+    authorization.require("repository.readwrite" if write else "repository.read")
+    authorization.require_resource_boundary(None)
 
 
 # =============================================================================
@@ -66,7 +79,7 @@ async def get_packages_from_workers() -> list[InstalledPackage] | None:
         while True:
             cursor, keys = await cast(
                 Awaitable[tuple[int, list[str]]],
-                raw_redis.scan(cursor, match="bifrost:pool:*", count=100)
+                raw_redis.scan(cursor, match="bifrost:pool:*", count=100),
             )
             for key in keys:
                 # Skip non-registration keys (heartbeat, commands, etc.)
@@ -76,8 +89,7 @@ async def get_packages_from_workers() -> list[InstalledPackage] | None:
                     continue
                 # Pool data is stored as a hash, get the "packages" field
                 packages_json = await cast(
-                    Awaitable[str | None],
-                    raw_redis.hget(key, "packages")
+                    Awaitable[str | None], raw_redis.hget(key, "packages")
                 )
                 if packages_json:
                     try:
@@ -87,7 +99,10 @@ async def get_packages_from_workers() -> list[InstalledPackage] | None:
                             version = pkg.get("version", "")
                             if name:
                                 # Keep highest version if multiple workers report different versions
-                                if name not in all_packages or version > all_packages[name]:
+                                if (
+                                    name not in all_packages
+                                    or version > all_packages[name]
+                                ):
                                     all_packages[name] = version
                     except (json.JSONDecodeError, TypeError):
                         logger.warning(f"Failed to parse packages from {key}")
@@ -122,7 +137,10 @@ async def check_package_updates() -> list[PackageUpdate]:
     """
     try:
         proc = await asyncio.create_subprocess_exec(
-            "pip", "list", "--outdated", "--format=json",
+            "pip",
+            "list",
+            "--outdated",
+            "--format=json",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -166,7 +184,9 @@ async def get_installed_packages_local() -> list[InstalledPackage]:
     """
     try:
         proc = await asyncio.create_subprocess_exec(
-            "pip", "list", "--format=json",
+            "pip",
+            "list",
+            "--format=json",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -228,7 +248,7 @@ async def get_installed_packages() -> list[InstalledPackage]:
 )
 async def list_packages(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> InstalledPackagesResponse:
     """
     List all installed Python packages.
@@ -236,6 +256,7 @@ async def list_packages(
     Returns:
         List of installed packages with versions
     """
+    _require_package_access(authorization, write=False)
     try:
         packages = await get_installed_packages()
         logger.info(f"Listed {len(packages)} installed packages")
@@ -260,7 +281,7 @@ async def list_packages(
 )
 async def check_updates(
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> PackageUpdatesResponse:
     """
     Check for available package updates.
@@ -268,6 +289,7 @@ async def check_updates(
     Returns:
         List of packages with available updates
     """
+    _require_package_access(authorization, write=False)
     try:
         updates = await check_package_updates()
         logger.info(f"Found {len(updates)} package updates available")
@@ -293,7 +315,7 @@ async def check_updates(
 async def install_package(
     request: InstallPackageRequest,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> PackageInstallResponse:
     """
     Install a Python package by updating requirements.txt and recycling workers.
@@ -309,6 +331,7 @@ async def install_package(
 
     Returns immediately — worker recycling happens asynchronously.
     """
+    _require_package_access(authorization, write=True)
     try:
         if request.package_name:
             # Append/update package in requirements.txt
@@ -349,6 +372,16 @@ async def install_package(
                 "run_id": str(uuid4()),
             },
         )
+        await emit_audit(
+            ctx.db,
+            "package.install",
+            resource_type="package",
+            details={
+                "package_name": request.package_name,
+                "version": request.version,
+                "requirements_recycle": request.package_name is None,
+            },
+        )
 
         return PackageInstallResponse(
             package_name=request.package_name,
@@ -373,7 +406,7 @@ async def install_package(
 async def uninstall_package(
     package_name: str,
     ctx: Context,
-    user: CurrentSuperuser,
+    authorization: CurrentAuthorizationContext,
 ) -> dict:
     """Uninstall a package: drop it from requirements.txt and recycle workers.
 
@@ -381,6 +414,7 @@ async def uninstall_package(
     recycle, and any package removed from requirements is gone after the next
     process spawn.
     """
+    _require_package_access(authorization, write=True)
     try:
         logger.info(f"Uninstalling package: {log_safe(package_name)}")
 
@@ -409,6 +443,15 @@ async def uninstall_package(
                 "version": None,
                 "is_update": True,
                 "run_id": str(uuid4()),
+            },
+        )
+        await emit_audit(
+            ctx.db,
+            "package.uninstall",
+            resource_type="package",
+            details={
+                "package_name": package_name,
+                "was_present": was_present,
             },
         )
 

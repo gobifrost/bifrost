@@ -138,6 +138,24 @@ class TestMCPAgentGateway:
         assert agent_response.status_code == 201, agent_response.text
         agent_id = agent_response.json()["id"]
 
+        builder_response = requests.post(
+            f"{TEST_API_URL}/api/builder/solutions",
+            headers=headers,
+            json={
+                "name": f"Gateway Builder {suffix}",
+                "slug": f"gateway-builder-{suffix}",
+            },
+        )
+        assert builder_response.status_code == 201, builder_response.text
+        builder_solution_id = builder_response.json()["id"]
+        builder_session_response = requests.post(
+            f"{TEST_API_URL}/api/builder/solutions/{builder_solution_id}/sessions",
+            headers=headers,
+            json={},
+        )
+        assert builder_session_response.status_code == 201, builder_session_response.text
+        builder_session = builder_session_response.json()
+
         request.cls.token = token
         request.cls.headers = headers
         request.cls.agent_id = agent_id
@@ -146,6 +164,8 @@ class TestMCPAgentGateway:
         request.cls.function_name = function_name
         request.cls.delegated_agent_id = delegated_agent_id
         request.cls.delegated_agent_name = delegated_agent_name
+        request.cls.builder_solution_id = builder_solution_id
+        request.cls.builder_session_id = builder_session["id"]
 
         yield
 
@@ -165,6 +185,10 @@ class TestMCPAgentGateway:
             f"{TEST_API_URL}/api/files/editor",
             headers=headers,
             params={"path": path},
+        )
+        requests.delete(
+            f"{TEST_API_URL}/api/builder/solutions/{builder_solution_id}",
+            headers=headers,
         )
 
     def test_default_and_agent_scoped_surfaces_are_distinct(self):
@@ -215,6 +239,61 @@ class TestMCPAgentGateway:
             {},
         )
         assert result["instructions"] == []
+
+    def test_builder_profile_uses_the_same_gateway_and_session_workspace(self):
+        loaded = _call_gateway(
+            self.token,
+            "bifrost_search_capabilities",
+            {"builder_session_id": self.builder_session_id},
+        )
+        selected = loaded["agents"][0]
+        assert selected["builder"] is True
+        assert selected["builder_session_required"] is True
+        assert selected["builder_session_id"] == self.builder_session_id
+        assert "Bifrost" in selected["instructions"]
+
+        found = _call_gateway(
+            self.token,
+            "bifrost_search_capabilities",
+            {
+                "builder_session_id": self.builder_session_id,
+                "query": "write builder file",
+            },
+        )
+        write_tool = next(
+            tool
+            for tool in found["agents"][0]["matching_tools"]
+            if tool["name"] == "write_file"
+        )
+        hydrated = _call_gateway(
+            self.token,
+            "bifrost_search_capabilities",
+            {
+                "builder_session_id": self.builder_session_id,
+                "tool_ref": write_tool["tool_ref"],
+            },
+        )["agents"][0]["matching_tools"][0]
+        assert "builder_session_id" not in hydrated["input_schema"]["properties"]
+        assert hydrated["input_schema"]["properties"]["finalize"]["default"] is False
+
+        executed = _call_gateway(
+            self.token,
+            "bifrost_execute_tool",
+            {
+                "builder_session_id": self.builder_session_id,
+                "tool_ref": write_tool["tool_ref"],
+                "arguments": {
+                    "path": "README.md",
+                    "content": "# Updated through the shared MCP gateway\n",
+                },
+            },
+        )
+        # Synchronous gateway tools return the selected tool's result directly;
+        # Builder uses that same public contract rather than inventing a second
+        # execution envelope for workspace mutations.
+        assert executed["revision_created"] is True
+        assert executed["finalized"] is False
+        assert executed["deploy_job_id"] is None
 
     def test_memory_tools_save_search_and_remove_over_mcp(self):
         connection_response = requests.post(

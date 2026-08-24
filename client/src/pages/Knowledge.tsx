@@ -14,7 +14,6 @@ import {
 	Trash2,
 	Globe,
 	Building2,
-	ArrowRightLeft,
 	Download,
 	Upload,
 } from "lucide-react";
@@ -57,18 +56,8 @@ import {
 	AlertDialogHeader,
 	AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-	Dialog,
-	DialogContent,
-	DialogDescription,
-	DialogFooter,
-	DialogHeader,
-	DialogTitle,
-} from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
 import { SearchBox } from "@/components/search/SearchBox";
-import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
-import { useAuth } from "@/contexts/AuthContext";
+import { useAuthorizationBoundary } from "@/contexts/AuthorizationBoundaryContext";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { toast } from "sonner";
 import { authFetch } from "@/lib/api-client";
@@ -94,14 +83,15 @@ interface KnowledgeNamespace {
 }
 
 export function Knowledge() {
-	const { isPlatformAdmin } = useAuth();
+	const { selectedBoundary, selectedTarget, hasSelectedCapability } =
+		useAuthorizationBoundary();
+	const canManageKnowledge =
+		hasSelectedCapability("knowledge.readwrite") &&
+		selectedTarget?.kind !== "managed_organizations";
 	const [documents, setDocuments] = useState<DocumentSummary[]>([]);
 	const [namespaces, setNamespaces] = useState<KnowledgeNamespace[]>([]);
 	const [isLoading, setIsLoading] = useState(true);
 	const [searchTerm, setSearchTerm] = useState("");
-	const [filterOrgId, setFilterOrgId] = useState<string | null | undefined>(
-		undefined,
-	);
 	const [filterNamespace, setFilterNamespace] = useState<string | undefined>(
 		undefined,
 	);
@@ -112,28 +102,26 @@ export function Knowledge() {
 	const [viewDocNamespace, setViewDocNamespace] = useState<string>("");
 	const [isCreating, setIsCreating] = useState(false);
 	const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-	const [bulkScopeOpen, setBulkScopeOpen] = useState(false);
-	const [bulkScopeOrgId, setBulkScopeOrgId] = useState<
-		string | null | undefined
-	>(null);
-	const [isBulkUpdating, setIsBulkUpdating] = useState(false);
-	const [bulkConflictMessage, setBulkConflictMessage] = useState<
-		string | null
-	>(null);
 	const [isImportOpen, setIsImportOpen] = useState(false);
 	const [isExporting, setIsExporting] = useState(false);
 
 	const { data: organizations } = useOrganizations({
-		enabled: isPlatformAdmin,
+		enabled:
+			selectedTarget?.kind === "managed_organizations" &&
+			hasSelectedCapability("organizations.read"),
 	});
 
 	const getOrgName = (orgId: string | null | undefined): string => {
 		if (!orgId) return "Global";
+		if (selectedTarget?.organization_id === orgId) {
+			return selectedTarget.label;
+		}
 		const org = organizations?.find((o) => o.id === orgId);
 		return org?.name || orgId;
 	};
 
 	const fetchNamespaces = useCallback(async () => {
+		if (!selectedBoundary) return;
 		try {
 			const response = await authFetch("/api/knowledge-sources");
 			if (response.ok) {
@@ -143,19 +131,15 @@ export function Knowledge() {
 		} catch {
 			// Non-critical — namespace filter just won't populate
 		}
-	}, []);
+	}, [selectedBoundary]);
 
 	const fetchDocuments = useCallback(async () => {
+		if (!selectedBoundary) return;
 		setIsLoading(true);
 		try {
 			const params = new URLSearchParams();
 			if (searchTerm) params.set("search", searchTerm);
 			if (filterNamespace) params.set("namespace", filterNamespace);
-			if (filterOrgId === null) {
-				params.set("scope", "global");
-			} else if (filterOrgId !== undefined) {
-				params.set("scope", filterOrgId);
-			}
 			params.set("limit", String(PAGE_SIZE));
 			params.set("offset", String(page * PAGE_SIZE));
 			const qs = params.toString();
@@ -172,11 +156,11 @@ export function Knowledge() {
 		} finally {
 			setIsLoading(false);
 		}
-	}, [searchTerm, filterNamespace, filterOrgId, page]);
+	}, [searchTerm, filterNamespace, page, selectedBoundary]);
 
 	// Reset page when filters change. Use the adjusting-state-on-prop-change
 	// idiom to avoid a setState-in-effect cycle.
-	const filtersKey = `${searchTerm}|${filterNamespace ?? ""}|${filterOrgId ?? ""}`;
+	const filtersKey = `${selectedBoundary ?? ""}|${searchTerm}|${filterNamespace ?? ""}`;
 	const [prevFiltersKey, setPrevFiltersKey] = useState(filtersKey);
 	if (prevFiltersKey !== filtersKey) {
 		setPrevFiltersKey(filtersKey);
@@ -239,55 +223,6 @@ export function Knowledge() {
 		}
 	};
 
-	const handleBulkScopeUpdate = async (forceReplace = false) => {
-		if (selectedIds.size === 0) return;
-		setIsBulkUpdating(true);
-		try {
-			const scope =
-				bulkScopeOrgId === null ? "global" : (bulkScopeOrgId ?? "");
-			const response = await authFetch(
-				"/api/knowledge-sources/documents/scope",
-				{
-					method: "PATCH",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({
-						document_ids: Array.from(selectedIds),
-						scope,
-						replace: forceReplace,
-					}),
-				},
-			);
-			if (response.ok) {
-				const result = await response.json();
-				toast.success(`Updated scope for ${result.updated} documents`);
-				setSelectedIds(new Set());
-				setBulkScopeOpen(false);
-				fetchDocuments();
-			} else if (response.status === 409) {
-				const err = await response.json().catch(() => ({}));
-				const detail = err.detail;
-				const msg =
-					typeof detail === "object"
-						? detail?.message
-						: detail || "Resource already exists";
-				setBulkScopeOpen(false);
-				setBulkConflictMessage(msg);
-			} else {
-				const err = await response.json().catch(() => ({}));
-				const detail = err.detail;
-				const msg =
-					typeof detail === "object"
-						? detail?.message
-						: detail || "Failed to update scope";
-				toast.error(msg);
-			}
-		} catch {
-			toast.error("Failed to update scope");
-		} finally {
-			setIsBulkUpdating(false);
-		}
-	};
-
 	const handleExport = async () => {
 		const ids = selectedIds.size > 0 ? Array.from(selectedIds) : [];
 		setIsExporting(true);
@@ -310,7 +245,8 @@ export function Knowledge() {
 						Knowledge
 					</h1>
 					<p className="mt-2 text-muted-foreground">
-						Manage knowledge documents for AI agents
+						Browse knowledge available in the current working
+						context
 					</p>
 				</div>
 				<div className="flex gap-2">
@@ -322,13 +258,15 @@ export function Knowledge() {
 					>
 						<RefreshCw className="h-4 w-4" />
 					</Button>
-					<Button
-						variant="outline"
-						onClick={() => setIsCreating(true)}
-					>
-						<Plus className="h-4 w-4 mr-1" />
-						Add Document
-					</Button>
+					{canManageKnowledge && (
+						<Button
+							variant="outline"
+							onClick={() => setIsCreating(true)}
+						>
+							<Plus className="h-4 w-4 mr-1" />
+							Add Document
+						</Button>
+					)}
 				</div>
 			</div>
 
@@ -358,36 +296,12 @@ export function Knowledge() {
 						))}
 					</SelectContent>
 				</Select>
-				{isPlatformAdmin && (
-					<div className="w-64">
-						<OrganizationSelect
-							value={filterOrgId}
-							onChange={setFilterOrgId}
-							showAll={true}
-							showGlobal={true}
-							placeholder="All organizations"
-						/>
-					</div>
-				)}
-				{isPlatformAdmin && (
+				{canManageKnowledge && (
 					<div className="flex items-center gap-2 ml-auto">
 						{selectedIds.size > 0 && (
-							<>
-								<span className="text-sm text-muted-foreground">
-									{selectedIds.size} selected
-								</span>
-								<Button
-									variant="outline"
-									size="sm"
-									onClick={() => {
-										setBulkScopeOrgId(null);
-										setBulkScopeOpen(true);
-									}}
-								>
-									<ArrowRightLeft className="h-4 w-4 mr-1" />
-									Change Scope
-								</Button>
-							</>
+							<span className="text-sm text-muted-foreground">
+								{selectedIds.size} selected
+							</span>
 						)}
 						<Button
 							variant="outline"
@@ -425,7 +339,7 @@ export function Knowledge() {
 						<DataTable className="max-h-full">
 							<DataTableHeader>
 								<DataTableRow>
-									{isPlatformAdmin && (
+									{canManageKnowledge && (
 										<DataTableHead className="w-10">
 											<Checkbox
 												checked={
@@ -439,10 +353,16 @@ export function Knowledge() {
 											/>
 										</DataTableHead>
 									)}
-									<DataTableHead className="w-0 whitespace-nowrap">Scope</DataTableHead>
-									<DataTableHead className="w-0 whitespace-nowrap">Namespace</DataTableHead>
+									<DataTableHead className="w-0 whitespace-nowrap">
+										Scope
+									</DataTableHead>
+									<DataTableHead className="w-0 whitespace-nowrap">
+										Namespace
+									</DataTableHead>
 									<DataTableHead>Key</DataTableHead>
-									<DataTableHead className="w-0 whitespace-nowrap">Created</DataTableHead>
+									<DataTableHead className="w-0 whitespace-nowrap">
+										Created
+									</DataTableHead>
 									<DataTableHead className="w-0 whitespace-nowrap text-right" />
 								</DataTableRow>
 							</DataTableHeader>
@@ -453,7 +373,7 @@ export function Knowledge() {
 										className="cursor-pointer"
 										onClick={() => openDocument(doc)}
 									>
-										{isPlatformAdmin && (
+										{canManageKnowledge && (
 											<DataTableCell>
 												<Checkbox
 													checked={selectedIds.has(
@@ -506,16 +426,21 @@ export function Knowledge() {
 												: "-"}
 										</DataTableCell>
 										<DataTableCell className="w-0 whitespace-nowrap text-right">
-											<Button
-												variant="ghost"
-												size="icon-sm"
-												onClick={(e) => {
-													e.stopPropagation();
-													setDeleteDoc(doc);
-												}}
-											>
-												<Trash2 className="h-4 w-4" />
-											</Button>
+											{canManageKnowledge &&
+												doc.organization_id ===
+													(selectedTarget?.organization_id ??
+														null) && (
+													<Button
+														variant="ghost"
+														size="icon-sm"
+														onClick={(e) => {
+															e.stopPropagation();
+															setDeleteDoc(doc);
+														}}
+													>
+														<Trash2 className="h-4 w-4" />
+													</Button>
+												)}
 										</DataTableCell>
 									</DataTableRow>
 								))}
@@ -524,7 +449,7 @@ export function Knowledge() {
 								<DataTableFooter>
 									<DataTableRow>
 										<DataTableCell
-											colSpan={isPlatformAdmin ? 6 : 5}
+											colSpan={canManageKnowledge ? 6 : 5}
 											className="p-0"
 										>
 											<div className="px-6 py-4 flex items-center justify-center">
@@ -532,35 +457,53 @@ export function Knowledge() {
 													<PaginationContent>
 														<PaginationItem>
 															<PaginationPrevious
-																onClick={(e) => {
+																onClick={(
+																	e,
+																) => {
 																	e.preventDefault();
-																	setPage((p) => p - 1);
+																	setPage(
+																		(p) =>
+																			p -
+																			1,
+																	);
 																}}
 																className={
 																	page === 0
 																		? "pointer-events-none opacity-50"
 																		: "cursor-pointer"
 																}
-																aria-disabled={page === 0}
+																aria-disabled={
+																	page === 0
+																}
 															/>
 														</PaginationItem>
 														<PaginationItem>
-															<PaginationLink isActive>
+															<PaginationLink
+																isActive
+															>
 																{page + 1}
 															</PaginationLink>
 														</PaginationItem>
 														<PaginationItem>
 															<PaginationNext
-																onClick={(e) => {
+																onClick={(
+																	e,
+																) => {
 																	e.preventDefault();
-																	setPage((p) => p + 1);
+																	setPage(
+																		(p) =>
+																			p +
+																			1,
+																	);
 																}}
 																className={
 																	!hasMore
 																		? "pointer-events-none opacity-50"
 																		: "cursor-pointer"
 																}
-																aria-disabled={!hasMore}
+																aria-disabled={
+																	!hasMore
+																}
 															/>
 														</PaginationItem>
 													</PaginationContent>
@@ -595,7 +538,7 @@ export function Knowledge() {
 							>
 								Back to first page
 							</Button>
-						) : (
+						) : canManageKnowledge ? (
 							<Button
 								variant="outline"
 								onClick={() => setIsCreating(true)}
@@ -604,7 +547,7 @@ export function Knowledge() {
 								<Plus className="h-4 w-4 mr-2" />
 								Add Document
 							</Button>
-						)}
+						) : null}
 					</CardContent>
 				</Card>
 			)}
@@ -634,70 +577,6 @@ export function Knowledge() {
 				</AlertDialogContent>
 			</AlertDialog>
 
-			{/* Bulk Scope Change Dialog */}
-			<Dialog open={bulkScopeOpen} onOpenChange={setBulkScopeOpen}>
-				<DialogContent className="sm:max-w-md">
-					<DialogHeader>
-						<DialogTitle>Change Scope</DialogTitle>
-						<DialogDescription>
-							Update the organization scope for{" "}
-							{selectedIds.size} selected document
-							{selectedIds.size !== 1 ? "s" : ""}.
-						</DialogDescription>
-					</DialogHeader>
-					<div className="space-y-2 py-4">
-						<Label>Target Organization</Label>
-						<OrganizationSelect
-							value={bulkScopeOrgId}
-							onChange={setBulkScopeOrgId}
-							showGlobal={true}
-						/>
-					</div>
-					<DialogFooter>
-						<Button
-							variant="outline"
-							onClick={() => setBulkScopeOpen(false)}
-						>
-							Cancel
-						</Button>
-						<Button
-							onClick={() => handleBulkScopeUpdate(false)}
-							disabled={isBulkUpdating}
-						>
-							{isBulkUpdating ? "Updating..." : "Update Scope"}
-						</Button>
-					</DialogFooter>
-				</DialogContent>
-			</Dialog>
-
-			{/* Bulk Replace Confirmation */}
-			<AlertDialog
-				open={!!bulkConflictMessage}
-				onOpenChange={() => setBulkConflictMessage(null)}
-			>
-				<AlertDialogContent>
-					<AlertDialogHeader>
-						<AlertDialogTitle>
-							Replace Existing Documents?
-						</AlertDialogTitle>
-						<AlertDialogDescription>
-							{bulkConflictMessage} Do you want to replace them?
-						</AlertDialogDescription>
-					</AlertDialogHeader>
-					<AlertDialogFooter>
-						<AlertDialogCancel>Cancel</AlertDialogCancel>
-						<AlertDialogAction
-							onClick={() => {
-								setBulkConflictMessage(null);
-								handleBulkScopeUpdate(true);
-							}}
-						>
-							Replace
-						</AlertDialogAction>
-					</AlertDialogFooter>
-				</AlertDialogContent>
-			</AlertDialog>
-
 			{/* Import Dialog */}
 			<ImportDialog
 				open={isImportOpen}
@@ -711,6 +590,8 @@ export function Knowledge() {
 				namespace={viewDocNamespace}
 				documentId={viewDocId}
 				isCreating={isCreating}
+				canEdit={canManageKnowledge}
+				selectedOrganizationId={selectedTarget?.organization_id ?? null}
 				onClose={() => {
 					setViewDocId(null);
 					setViewDocNamespace("");

@@ -74,6 +74,36 @@ async def test_wind_down_keeps_text_and_discards_stale_tool_intent() -> None:
 
 
 @pytest.mark.asyncio
+async def test_forced_usage_governance_wind_down_discards_tool_intent() -> None:
+    budget = AgentRunBudget(max_requests=10, max_total_tokens=20_000)
+    budget.control.force_wind_down = True
+    capability = BudgetWindDown(budget)
+    ctx = MagicMock(usage=RunUsage(input_tokens=1_000))
+    response = ModelResponse(
+        parts=[
+            TextPart(content="I need to stop here."),
+            ToolCallPart(
+                tool_name="write_file",
+                args={"path": "x"},
+                tool_call_id="blocked-call",
+            ),
+        ],
+        finish_reason="tool_call",
+    )
+
+    result = await capability.after_model_request(
+        ctx,
+        request_context=MagicMock(messages=[]),
+        response=response,
+    )
+
+    assert result.finish_reason == "stop"
+    assert len(result.parts) == 1
+    assert isinstance(result.parts[0], TextPart)
+    assert "Not completed: Write File." in result.parts[0].content
+
+
+@pytest.mark.asyncio
 async def test_wind_down_uses_fallback_when_provider_returns_only_a_tool_call() -> None:
     capability = BudgetWindDown(
         AgentRunBudget(max_requests=10, max_total_tokens=20_000)

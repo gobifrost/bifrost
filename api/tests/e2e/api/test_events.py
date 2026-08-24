@@ -49,6 +49,7 @@ def test_workflow(e2e_client, platform_admin):
         "e2e_events_test_workflow.py",
         TEST_WORKFLOW_CONTENT,
         "e2e_events_test_workflow",
+        organization_id=None,
     )
 
     yield result
@@ -224,6 +225,63 @@ class TestEventSourceCRUD:
             headers=platform_admin.headers,
         )
 
+    def test_create_source_rejects_unknown_organization(
+        self, e2e_client, platform_admin
+    ):
+        response = e2e_client.post(
+            "/api/events/sources",
+            headers=platform_admin.headers,
+            json={
+                "name": f"Unknown Org {uuid.uuid4().hex[:8]}",
+                "source_type": "webhook",
+                "organization_id": str(uuid.uuid4()),
+                "webhook": {"adapter_name": "generic", "config": {}},
+            },
+        )
+        assert response.status_code == 404, response.text
+        assert response.json()["detail"] == "Organization not found"
+
+    @pytest.mark.parametrize(
+        ("payload", "detail"),
+        [
+            (
+                {
+                    "source_type": "schedule",
+                    "schedule": {"cron_expression": "not a cron"},
+                },
+                "Invalid CRON expression",
+            ),
+            (
+                {
+                    "source_type": "schedule",
+                    "schedule": {
+                        "cron_expression": "0 9 * * *",
+                        "timezone": "Mars/Olympus_Mons",
+                    },
+                },
+                "Unknown timezone: Mars/Olympus_Mons",
+            ),
+            (
+                {
+                    "source_type": "schedule",
+                    "schedule": {"cron_expression": "0 9 * * *"},
+                    "webhook": {"adapter_name": "generic", "config": {}},
+                },
+                "Schedule sources cannot include webhook configuration",
+            ),
+        ],
+    )
+    def test_create_source_validates_type_specific_configuration(
+        self, e2e_client, platform_admin, payload, detail
+    ):
+        response = e2e_client.post(
+            "/api/events/sources",
+            headers=platform_admin.headers,
+            json={"name": f"Invalid Source {uuid.uuid4().hex[:8]}", **payload},
+        )
+        assert response.status_code == 422, response.text
+        assert response.json()["detail"] == detail
+
     def test_list_event_sources(self, e2e_client, platform_admin, event_source):
         """List event sources (platform admin sees all)."""
         response = e2e_client.get(
@@ -344,6 +402,17 @@ class TestEventSourceCRUD:
             json={"organization_id": None},
         )
 
+    def test_update_source_rejects_unknown_organization(
+        self, e2e_client, platform_admin, event_source
+    ):
+        response = e2e_client.patch(
+            f"/api/events/sources/{event_source['id']}",
+            headers=platform_admin.headers,
+            json={"organization_id": str(uuid.uuid4())},
+        )
+        assert response.status_code == 404, response.text
+        assert response.json()["detail"] == "Organization not found"
+
     def test_org_user_cannot_create_source(self, e2e_client, org1_user):
         """Only platform admin can create sources."""
         response = e2e_client.post(
@@ -444,6 +513,149 @@ class TestEventSubscriptions:
         assert "items" in data
         sub_ids = [s["id"] for s in data["items"]]
         assert subscription["id"] in sub_ids
+
+    def test_get_subscription(
+        self, e2e_client, platform_admin, event_source, subscription
+    ):
+        response = e2e_client.get(
+            f"/api/events/sources/{event_source['id']}/subscriptions/{subscription['id']}",
+            headers=platform_admin.headers,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["id"] == subscription["id"]
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"target_type": "workflow"},
+            {
+                "target_type": "workflow",
+                "workflow_id": str(uuid.uuid4()),
+                "agent_id": str(uuid.uuid4()),
+            },
+            {"target_type": "agent", "workflow_id": str(uuid.uuid4())},
+        ],
+    )
+    def test_create_subscription_requires_exactly_one_matching_target(
+        self, e2e_client, platform_admin, event_source, payload
+    ):
+        response = e2e_client.post(
+            f"/api/events/sources/{event_source['id']}/subscriptions",
+            headers=platform_admin.headers,
+            json=payload,
+        )
+        assert response.status_code == 422, response.text
+
+    def test_create_subscription_rejects_missing_workflow(
+        self, e2e_client, platform_admin, event_source
+    ):
+        response = e2e_client.post(
+            f"/api/events/sources/{event_source['id']}/subscriptions",
+            headers=platform_admin.headers,
+            json={
+                "target_type": "workflow",
+                "workflow_id": str(uuid.uuid4()),
+            },
+        )
+        assert response.status_code == 404, response.text
+        assert response.json()["detail"] == "Workflow not found"
+
+    def test_create_subscription_rejects_duplicate_target(
+        self, e2e_client, platform_admin, event_source, test_workflow
+    ):
+        body = {
+            "target_type": "workflow",
+            "workflow_id": test_workflow["id"],
+        }
+        first = e2e_client.post(
+            f"/api/events/sources/{event_source['id']}/subscriptions",
+            headers=platform_admin.headers,
+            json=body,
+        )
+        assert first.status_code == 201, first.text
+        duplicate = e2e_client.post(
+            f"/api/events/sources/{event_source['id']}/subscriptions",
+            headers=platform_admin.headers,
+            json=body,
+        )
+        assert duplicate.status_code == 409, duplicate.text
+
+    def test_create_subscription_rejects_cross_org_target(
+        self, e2e_client, platform_admin, event_source, org1
+    ):
+        suffix = uuid.uuid4().hex[:8]
+        path = f"workflows/event_cross_org_{suffix}.py"
+        function_name = f"event_cross_org_{suffix}"
+        workflow = write_and_register(
+            e2e_client,
+            platform_admin.headers,
+            path=path,
+            content=(
+                "from bifrost import workflow\n\n"
+                f"@workflow\nasync def {function_name}(event: dict) -> dict:\n"
+                "    return event\n"
+            ),
+            function_name=function_name,
+            organization_id=org1["id"],
+        )
+        try:
+            response = e2e_client.post(
+                f"/api/events/sources/{event_source['id']}/subscriptions",
+                headers=platform_admin.headers,
+                json={
+                    "target_type": "workflow",
+                    "workflow_id": workflow["id"],
+                },
+            )
+            assert response.status_code == 422, response.text
+            assert "Event Source organization" in response.json()["detail"]
+        finally:
+            e2e_client.delete(
+                f"/api/files/editor?path={path}",
+                headers=platform_admin.headers,
+            )
+
+    def test_source_rescope_rejects_stranding_org_subscription(
+        self, e2e_client, platform_admin, org_event_source, org1, org2
+    ):
+        suffix = uuid.uuid4().hex[:8]
+        path = f"workflows/event_rescope_{suffix}.py"
+        function_name = f"event_rescope_{suffix}"
+        workflow = write_and_register(
+            e2e_client,
+            platform_admin.headers,
+            path=path,
+            content=(
+                "from bifrost import workflow\n\n"
+                f"@workflow\nasync def {function_name}(event: dict) -> dict:\n"
+                "    return event\n"
+            ),
+            function_name=function_name,
+            organization_id=org1["id"],
+        )
+        try:
+            subscribed = e2e_client.post(
+                f"/api/events/sources/{org_event_source['id']}/subscriptions",
+                headers=platform_admin.headers,
+                json={
+                    "target_type": "workflow",
+                    "workflow_id": workflow["id"],
+                },
+            )
+            assert subscribed.status_code == 201, subscribed.text
+
+            moved = e2e_client.patch(
+                f"/api/events/sources/{org_event_source['id']}",
+                headers=platform_admin.headers,
+                json={"organization_id": org2["id"]},
+            )
+            assert moved.status_code == 422, moved.text
+            assert "Event Source organization" in moved.json()["detail"]
+        finally:
+            e2e_client.delete(
+                f"/api/files/editor?path={path}",
+                headers=platform_admin.headers,
+            )
 
     def test_update_subscription(
         self, e2e_client, platform_admin, event_source, subscription

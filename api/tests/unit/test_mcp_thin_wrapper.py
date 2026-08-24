@@ -1,8 +1,8 @@
 """Guardrail tests for MCP parity tools (Task 6 + Task 11).
 
 Task 11 adds solution-scope forwarding to the file policy MCP tools —
-``list_file_policies``, ``get_file_policy``, ``set_file_policy``,
-``delete_file_policy`` — each accepts an optional ``solution`` param that
+``bifrost_list_file_policies``, ``bifrost_get_file_policy``, ``bifrost_set_file_policy``,
+``bifrost_delete_file_policy`` — each accepts an optional ``solution`` param that
 is forwarded as ``?solution=<uuid>`` to the REST endpoint via ``call_rest``.
 Tests for that behaviour live at the bottom of this file under
 ``test_file_policy_solution_scope_*``.
@@ -24,9 +24,9 @@ and reject any import from ``src.repositories.*``, ``src.models.orm.*``,
 or ``sqlalchemy.ext.asyncio.AsyncSession`` that is scoped to a Task 6
 handler.
 
-Existing tool handlers (``list_integrations``, ``list_organizations``,
-etc.) intentionally still use ORM — this test only inspects the Task 6
-additions. Adding new parity tools: extend ``PARITY_HANDLERS`` below.
+Existing uncatalogued handlers may still use the ORM; this test expands as each
+vertical slice moves behind REST. Adding new parity tools: extend
+``PARITY_HANDLERS`` below.
 """
 
 from __future__ import annotations
@@ -45,58 +45,158 @@ import pytest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from src.services.mcp_server.tools import (  # noqa: E402
+    agents as agents_mod,
     claims as claims_mod,
+    code_editor as code_editor_mod,
     configs as configs_mod,
+    events as events_mod,
+    execution as execution_mod,
     files as files_mod,
+    forms as forms_mod,
     gateway as gateway_mod,
     integrations as integrations_mod,
+    knowledge as knowledge_mod,
     organizations as organizations_mod,
+    platform_jobs as platform_jobs_mod,
     apps as apps_mod,
     policy_rules as policy_rules_mod,
     roles as roles_mod,
+    tables as tables_mod,
     workflow as workflow_mod,
 )
 
 
 PARITY_HANDLERS: dict[str, set[str]] = {
-    "roles": {"list_roles", "create_role", "update_role", "delete_role"},
+    "code_editor": {
+        "bifrost_list_files",
+        "bifrost_search_files",
+        "bifrost_read_file",
+        "bifrost_stat_file",
+        "bifrost_exists_file",
+        "bifrost_write_file",
+        "bifrost_patch_file",
+        "bifrost_delete_file",
+    },
+    "agents": {
+        "bifrost_list_agents",
+        "bifrost_get_agent",
+        "bifrost_create_agent",
+        "bifrost_update_agent",
+        "bifrost_delete_agent",
+    },
+    "forms": {
+        "bifrost_list_forms",
+        "bifrost_get_form",
+        "bifrost_create_form",
+        "bifrost_update_form",
+        "bifrost_delete_form",
+    },
+    "tables": {
+        "bifrost_list_tables",
+        "bifrost_get_table",
+        "bifrost_create_table",
+        "bifrost_update_table",
+        "bifrost_delete_table",
+    },
+    "roles": {
+        "bifrost_list_roles",
+        "bifrost_get_role",
+        "bifrost_create_role",
+        "bifrost_update_role",
+        "bifrost_delete_role",
+    },
     "configs": {
-        "list_configs",
-        "create_config",
-        "update_config",
-        "delete_config",
+        "bifrost_list_configs",
+        "bifrost_get_config",
+        "bifrost_create_config",
+        "bifrost_update_config",
+        "bifrost_delete_config",
     },
     "claims": {
-        "list_claims",
-        "get_claim",
-        "create_claim",
-        "update_claim",
-        "delete_claim",
+        "bifrost_list_claims",
+        "bifrost_get_claim",
+        "bifrost_create_claim",
+        "bifrost_update_claim",
+        "bifrost_delete_claim",
     },
-    "organizations": {"update_organization", "delete_organization"},
+    "organizations": {
+        "bifrost_list_organizations",
+        "bifrost_get_organization",
+        "bifrost_create_organization",
+        "bifrost_update_organization",
+        "bifrost_delete_organization",
+    },
     "integrations": {
-        "create_integration",
-        "update_integration",
-        "add_integration_mapping",
-        "update_integration_mapping",
+        "bifrost_list_integrations",
+        "bifrost_get_integration",
+        "bifrost_create_integration",
+        "bifrost_update_integration",
+        "bifrost_create_integration_mapping",
+        "bifrost_update_integration_mapping",
     },
     "workflow": {
-        "update_workflow",
-        "delete_workflow",
-        "grant_workflow_role",
-        "revoke_workflow_role",
+        "bifrost_list_workflows",
+        "bifrost_get_workflow",
+        "bifrost_validate_workflow",
+        "bifrost_register_workflow",
+        "bifrost_execute_workflow",
+        "bifrost_update_workflow",
+        "bifrost_delete_workflow",
+        "bifrost_grant_workflow_role",
+        "bifrost_revoke_workflow_role",
     },
     "files": {
-        "list_file_policies",
-        "get_file_policy",
-        "set_file_policy",
-        "delete_file_policy",
+        "bifrost_list_file_policies",
+        "bifrost_get_file_policy",
+        "bifrost_set_file_policy",
+        "bifrost_delete_file_policy",
     },
-    "apps": {"publish_app", "get_app_publish_status"},
+    "apps": {
+        "bifrost_list_apps",
+        "bifrost_get_app",
+        "bifrost_create_app",
+        "bifrost_update_app",
+        "bifrost_delete_app",
+        "bifrost_publish_app",
+        "bifrost_replace_app",
+        "bifrost_validate_app",
+        "bifrost_get_app_dependencies",
+        "bifrost_update_app_dependencies",
+    },
+    "events": {
+        "bifrost_list_event_sources",
+        "bifrost_get_event_source",
+        "bifrost_create_event_source",
+        "bifrost_update_event_source",
+        "bifrost_delete_event_source",
+        "bifrost_list_event_subscriptions",
+        "bifrost_get_event_subscription",
+        "bifrost_create_event_subscription",
+        "bifrost_update_event_subscription",
+        "bifrost_delete_event_subscription",
+        "bifrost_list_event_webhook_adapters",
+    },
+    "execution": {
+        "bifrost_list_workflow_executions",
+        "bifrost_get_workflow_execution",
+    },
+    "knowledge": {
+        "bifrost_search_knowledge",
+        "bifrost_list_knowledge_namespaces",
+        "bifrost_list_knowledge_documents",
+        "bifrost_get_knowledge_document",
+        "bifrost_create_knowledge_document",
+        "bifrost_update_knowledge_document",
+        "bifrost_delete_knowledge_document",
+    },
+    "platform_jobs": {"bifrost_get_platform_job"},
     "policy_rules": {
-        "list_policy_rules",
-        "create_policy_rule",
-        "delete_policy_rule",
+        "bifrost_list_policy_rules",
+        "bifrost_get_policy_rule",
+        "bifrost_create_policy_rule",
+        "bifrost_update_policy_rule",
+        "bifrost_delete_policy_rule",
+        "bifrost_list_policy_rule_usages",
     },
     "gateway": {
         "bifrost_get_required_instructions",
@@ -111,6 +211,10 @@ PARITY_HANDLERS: dict[str, set[str]] = {
 
 
 MODULES = {
+    "code_editor": code_editor_mod,
+    "agents": agents_mod,
+    "forms": forms_mod,
+    "tables": tables_mod,
     "roles": roles_mod,
     "claims": claims_mod,
     "configs": configs_mod,
@@ -120,6 +224,10 @@ MODULES = {
     "files": files_mod,
     "policy_rules": policy_rules_mod,
     "apps": apps_mod,
+    "events": events_mod,
+    "execution": execution_mod,
+    "knowledge": knowledge_mod,
+    "platform_jobs": platform_jobs_mod,
     "gateway": gateway_mod,
 }
 
@@ -172,9 +280,7 @@ def _walk_imports(node: ast.AST) -> Iterable[str]:
         for handler in handlers
     ],
 )
-def test_parity_handler_has_no_orm_imports(
-    module_name: str, handler_name: str
-) -> None:
+def test_parity_handler_has_no_orm_imports(module_name: str, handler_name: str) -> None:
     """Each Task 6 handler body must not import ORM / repositories / AsyncSession."""
     module = MODULES[module_name]
     module_path = pathlib.Path(inspect.getfile(module))
@@ -214,17 +320,15 @@ def test_parity_handlers_use_http_bridge() -> None:
             node = _handler_source(module_path, handler)
             bodies = [ast.unparse(stmt) for stmt in ast.walk(node)]
             joined = "\n".join(bodies)
-            assert (
-                "call_rest" in joined or "rest_client" in joined
-            ), (
+            assert "call_rest" in joined or "rest_client" in joined, (
                 f"{module_name}.{handler} does not use call_rest / rest_client; "
                 "Task 6 parity tools must go through the in-process REST bridge."
             )
 
         # Sanity: the module imports the bridge at module scope.
-        assert (
-            "from src.services.mcp_server.tools._http_bridge" in source
-        ), f"{module_name} does not import the HTTP bridge helpers"
+        assert "from src.services.mcp_server.tools._http_bridge" in source, (
+            f"{module_name} does not import the HTTP bridge helpers"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -249,7 +353,9 @@ def _call_rest_capturing_params() -> tuple[AsyncMock, list[dict]]:
     calls: list[dict] = []
 
     async def _fake_call_rest(context, method, path, *, json_body=None, params=None):
-        calls.append({"method": method, "path": path, "params": params, "json_body": json_body})
+        calls.append(
+            {"method": method, "path": path, "params": params, "json_body": json_body}
+        )
         return (200, {"policies": [], "count": 0})
 
     return AsyncMock(side_effect=_fake_call_rest), calls
@@ -257,15 +363,15 @@ def _call_rest_capturing_params() -> tuple[AsyncMock, list[dict]]:
 
 @pytest.mark.asyncio
 async def test_file_policy_solution_scope_forwarded_list() -> None:
-    """list_file_policies forwards ?solution= to the REST endpoint."""
-    from src.services.mcp_server.tools.files import list_file_policies
+    """bifrost_list_file_policies forwards ?solution= to the REST endpoint."""
+    from src.services.mcp_server.tools.files import bifrost_list_file_policies
 
     mock_call_rest, captures = _call_rest_capturing_params()
     ctx = _make_mcp_context()
     install_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
     with patch("src.services.mcp_server.tools.files.call_rest", mock_call_rest):
-        await list_file_policies(ctx, location="solutions", solution=install_id)
+        await bifrost_list_file_policies(ctx, location="solutions", solution=install_id)
 
     assert len(captures) == 1
     assert captures[0]["params"].get("solution") == install_id
@@ -273,8 +379,8 @@ async def test_file_policy_solution_scope_forwarded_list() -> None:
 
 @pytest.mark.asyncio
 async def test_file_policy_solution_scope_forwarded_get() -> None:
-    """get_file_policy forwards ?solution= to the REST endpoint."""
-    from src.services.mcp_server.tools.files import get_file_policy
+    """bifrost_get_file_policy forwards ?solution= to the REST endpoint."""
+    from src.services.mcp_server.tools.files import bifrost_get_file_policy
 
     mock_call_rest, captures = _call_rest_capturing_params()
     ctx = _make_mcp_context()
@@ -284,8 +390,12 @@ async def test_file_policy_solution_scope_forwarded_get() -> None:
         return (200, {"id": "x", "path": "", "location": "solutions", "policies": []})
 
     install_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
-    with patch("src.services.mcp_server.tools.files.call_rest", AsyncMock(side_effect=_fake)):
-        await get_file_policy(ctx, path="data/", location="solutions", solution=install_id)
+    with patch(
+        "src.services.mcp_server.tools.files.call_rest", AsyncMock(side_effect=_fake)
+    ):
+        await bifrost_get_file_policy(
+            ctx, path="data/", location="solutions", solution=install_id
+        )
 
     assert captures[0]["params"].get("solution") == install_id
 
@@ -293,29 +403,74 @@ async def test_file_policy_solution_scope_forwarded_get() -> None:
 @pytest.mark.asyncio
 async def test_file_policy_solution_scope_omitted_when_none() -> None:
     """When solution is None the ?solution= key is absent from the REST call."""
-    from src.services.mcp_server.tools.files import list_file_policies
+    from src.services.mcp_server.tools.files import bifrost_list_file_policies
 
     mock_call_rest, captures = _call_rest_capturing_params()
     ctx = _make_mcp_context()
 
     with patch("src.services.mcp_server.tools.files.call_rest", mock_call_rest):
-        await list_file_policies(ctx, location="workspace", solution=None)
+        await bifrost_list_file_policies(ctx, location="workspace", solution=None)
 
     assert len(captures) == 1
     assert "solution" not in captures[0]["params"]
+
+
+@pytest.mark.asyncio
+async def test_policy_rules_list_forwards_org_scope_and_domain() -> None:
+    """bifrost_list_policy_rules forwards both query selectors to REST."""
+    from src.services.mcp_server.tools.policy_rules import bifrost_list_policy_rules
+
+    mock_call_rest, captures = _call_rest_capturing_params()
+    ctx = _make_mcp_context()
+    organization_id = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+
+    with patch("src.services.mcp_server.tools.policy_rules.call_rest", mock_call_rest):
+        await bifrost_list_policy_rules(
+            ctx,
+            domain="file",
+            organization_id=organization_id,
+        )
+
+    assert len(captures) == 1
+    assert captures[0]["path"] == "/api/policy-rules"
+    assert captures[0]["params"] == {
+        "domain": "file",
+        "organization_id": organization_id,
+    }
+
+
+@pytest.mark.asyncio
+async def test_policy_rules_list_omits_org_scope_when_none() -> None:
+    """bifrost_list_policy_rules keeps the base collection URL when unscoped."""
+    from src.services.mcp_server.tools.policy_rules import bifrost_list_policy_rules
+
+    mock_call_rest, captures = _call_rest_capturing_params()
+    ctx = _make_mcp_context()
+
+    with patch("src.services.mcp_server.tools.policy_rules.call_rest", mock_call_rest):
+        await bifrost_list_policy_rules(ctx, domain="table")
+
+    assert len(captures) == 1
+    assert captures[0]["path"] == "/api/policy-rules"
+    assert captures[0]["params"] == {"domain": "table"}
 
 
 def test_file_policy_tools_accept_solution_param() -> None:
     """All four file policy tools declare an optional ``solution`` keyword argument."""
     import inspect as _inspect
     from src.services.mcp_server.tools.files import (
-        delete_file_policy,
-        get_file_policy,
-        list_file_policies,
-        set_file_policy,
+        bifrost_delete_file_policy,
+        bifrost_get_file_policy,
+        bifrost_list_file_policies,
+        bifrost_set_file_policy,
     )
 
-    for fn in (list_file_policies, get_file_policy, set_file_policy, delete_file_policy):
+    for fn in (
+        bifrost_list_file_policies,
+        bifrost_get_file_policy,
+        bifrost_set_file_policy,
+        bifrost_delete_file_policy,
+    ):
         sig = _inspect.signature(fn)
         assert "solution" in sig.parameters, (
             f"{fn.__name__} does not accept a 'solution' parameter (Task 11)"

@@ -3,6 +3,8 @@ Knowledge namespace and document contract models for Bifrost.
 """
 
 from datetime import datetime
+from typing import Any
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -79,4 +81,48 @@ class KnowledgeDocumentSummary(BaseModel):
     content_preview: str = Field(default="", description="First ~200 chars of content")
     metadata: dict = Field(default_factory=dict)
     organization_id: str | None = None
+    created_at: datetime | None = None
+
+
+class KnowledgeSearchRequest(BaseModel):
+    """Canonical direct or Agent-bound knowledge-search request."""
+
+    query: str = Field(..., min_length=1, description="Search query")
+    namespace: list[str] | None = Field(
+        default=None,
+        description=(
+            "Namespaces to search. Direct searches default to 'default'; "
+            "Agent-bound searches default to every namespace granted to the Agent."
+        ),
+    )
+    limit: int = Field(default=5, ge=1, le=100, description="Maximum results")
+    min_score: float | None = Field(default=None, ge=0, le=1)
+    metadata_filter: dict[str, Any] | None = None
+    scope: str | None = Field(
+        default=None,
+        description="Direct-search scope: omitted, 'global', or an organization UUID",
+    )
+    agent_id: UUID | None = Field(
+        default=None,
+        description=(
+            "Accessible Agent whose organization and knowledge grants define "
+            "the search boundary"
+        ),
+    )
+    fallback: bool = Field(
+        default=True,
+        description="Also search global knowledge when searching an organization",
+    )
+
+
+class KnowledgeSearchResult(BaseModel):
+    """One canonical hybrid knowledge-search result."""
+
+    id: str
+    namespace: str
+    content: str
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    score: float | None = None
+    organization_id: str | None = None
+    key: str | None = None
     created_at: datetime | None = None

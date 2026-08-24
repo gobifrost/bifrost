@@ -66,6 +66,7 @@ services:
       RABBITMQ_DEFAULT_PASS: bifrost_debug
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+      - ./config/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "check_running"]
       interval: 10s
@@ -167,6 +168,8 @@ services:
       BIFROST_S3_SECRET_KEY: bifrost_debug_key
       BIFROST_S3_REGION: us-east-1
       BIFROST_PUBLIC_URL: ${BIFROST_PUBLIC_URL:-}
+      BIFROST_BUILDER_RUNNER_IMAGE_REPOSITORY: ${BIFROST_BUILDER_RUNNER_IMAGE_REPOSITORY:-ghcr.io/gobifrost/bifrost-build}
+      BIFROST_BUILDER_RUNNER_IMAGE_TAG: ${BIFROST_BUILDER_RUNNER_IMAGE_TAG:-}
       BIFROST_MFA_ENABLED: "false"
       EMBEDDING_ALLOWED_HOSTS: scheduler-fixtures
       BIFROST_DEFAULT_USER_EMAIL: ${BIFROST_DEFAULT_USER_EMAIL:-dev@gobifrost.com}
@@ -229,6 +232,8 @@ services:
       BIFROST_S3_SECRET_KEY: bifrost_debug_key
       BIFROST_S3_REGION: us-east-1
       BIFROST_PUBLIC_URL: ${BIFROST_PUBLIC_URL:-}
+      BIFROST_BUILDER_RUNNER_IMAGE_REPOSITORY: ${BIFROST_BUILDER_RUNNER_IMAGE_REPOSITORY:-ghcr.io/gobifrost/bifrost-build}
+      BIFROST_BUILDER_RUNNER_IMAGE_TAG: ${BIFROST_BUILDER_RUNNER_IMAGE_TAG:-}
     volumes:
       - ./api/src:/app/src:ro
       - /app/src/services/app_compiler/node_modules
@@ -355,6 +360,7 @@ services:
   # Only started with --profile netbird.
   netbird:
     image: netbirdio/netbird:latest
+    restart: unless-stopped
     entrypoint: ["/usr/local/bin/bifrost-netbird-entrypoint.sh"]
     network_mode: "service:client"
     cap_add:

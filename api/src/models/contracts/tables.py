@@ -73,6 +73,10 @@ class TableUpdate(BaseModel):
     )
     description: str | None = None
     schema: dict[str, Any] | None = None
+    organization_id: UUID | None = Field(
+        default=None,
+        description="Organization ID. Null for global table.",
+    )
     policies: TablePolicies | None = Field(
         default=None,
         description=(

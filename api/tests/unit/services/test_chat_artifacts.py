@@ -8,6 +8,7 @@ from src.services.chat_artifacts import (
     CREATE_DOCUMENT_TOOL,
     CREATE_IMAGE_TOOL,
     CREATE_VIDEO_TOOL,
+    LIST_ARTIFACTS_TOOL,
     artifact_tool_definitions,
     execute_artifact_tool,
     promote_artifact_refs,
@@ -106,6 +107,70 @@ async def test_document_tool_reads_prior_workspace_image() -> None:
     render.assert_called_once()
     assert render.call_args.args[1] == {"Bluetick Portrait.png": b"png"}
     assert ref.filename == "Bluetick Guide.pdf"
+
+
+@pytest.mark.asyncio
+async def test_artifact_tool_ignores_legacy_superuser_bit_without_authorization_context() -> None:
+    conversation_id = uuid4()
+    message_id = uuid4()
+    user_id = uuid4()
+    conversation = MagicMock(id=conversation_id, user_id=user_id)
+    user = MagicMock(id=user_id, organization_id=uuid4(), is_superuser=True)
+    db = MagicMock()
+    db.get = AsyncMock(side_effect=[conversation, user])
+    service = MagicMock()
+    service.list_workspace = AsyncMock(return_value=[])
+
+    with patch("src.services.chat_artifacts.ArtifactService", return_value=service):
+        _, result = await execute_artifact_tool(
+            db,
+            tool_name=LIST_ARTIFACTS_TOOL,
+            arguments={},
+            conversation_id=conversation_id,
+            message_id=message_id,
+        )
+
+    service.list_workspace.assert_awaited_once_with(
+        conversation_id,
+        user_id=user_id,
+        organization_id=user.organization_id,
+        is_platform_admin=False,
+    )
+    assert result == {"workspace_id": str(conversation_id), "files": []}
+
+
+@pytest.mark.asyncio
+async def test_artifact_tool_uses_canonical_platform_superuser_capability() -> None:
+    conversation_id = uuid4()
+    message_id = uuid4()
+    user_id = uuid4()
+    conversation = MagicMock(id=conversation_id, user_id=user_id)
+    user = MagicMock(id=user_id, organization_id=uuid4(), is_superuser=False)
+    db = MagicMock()
+    db.get = AsyncMock(side_effect=[conversation, user])
+    service = MagicMock()
+    service.list_workspace = AsyncMock(return_value=[])
+    authorization = MagicMock()
+    authorization.has_capability.side_effect = (
+        lambda capability: capability == "platform.superuser"
+    )
+
+    with patch("src.services.chat_artifacts.ArtifactService", return_value=service):
+        await execute_artifact_tool(
+            db,
+            tool_name=LIST_ARTIFACTS_TOOL,
+            arguments={},
+            conversation_id=conversation_id,
+            message_id=message_id,
+            authorization_context=authorization,
+        )
+
+    service.list_workspace.assert_awaited_once_with(
+        conversation_id,
+        user_id=user_id,
+        organization_id=user.organization_id,
+        is_platform_admin=True,
+    )
 
 
 @pytest.mark.asyncio

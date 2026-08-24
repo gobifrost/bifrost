@@ -234,14 +234,44 @@ async def test_uuid_passthrough_for_ref_fields() -> None:
 
 
 @pytest.mark.asyncio
-async def test_event_subscription_resolves_workflow_or_agent() -> None:
+async def test_empty_nullable_ref_becomes_explicit_null() -> None:
     resolver = _resolver()
     body = await assemble_body(
-        EventSubscriptionCreate,
+        FormUpdate,
         _parsed(
-            EventSubscriptionCreate,
-            {"target_type": "agent", "agent_id": "Helper"},
+            FormUpdate,
+            {"workflow_id": "", "launch_workflow_id": ""},
         ),
+        resolver=resolver,  # type: ignore[arg-type]
+    )
+    assert body == {"workflow_id": None, "launch_workflow_id": None}
+    assert resolver.calls == []
+
+
+@pytest.mark.asyncio
+async def test_empty_required_ref_still_resolves_or_fails() -> None:
+    resolver = _resolver()
+    with pytest.raises(AssertionError, match="missing mapping"):
+        await assemble_body(
+            IntegrationMappingCreate,
+            _parsed(
+                IntegrationMappingCreate,
+                {"organization_id": "", "entity_id": "tenant"},
+            ),
+            resolver=resolver,  # type: ignore[arg-type]
+        )
+    assert resolver.calls == [("org", "")]
+
+
+@pytest.mark.asyncio
+async def test_event_subscription_resolves_workflow_or_agent() -> None:
+    resolver = _resolver()
+    parsed = _parsed(EventSubscriptionCreate, {"agent_id": "Helper"})
+    # The command infers this excluded field from the selected target flag.
+    parsed["target_type"] = "agent"
+    body = await assemble_body(
+        EventSubscriptionCreate,
+        parsed,
         resolver=resolver,  # type: ignore[arg-type]
     )
     assert body["agent_id"] == AGENT_UUID
@@ -422,7 +452,7 @@ async def test_role_update_omit_unset() -> None:
 
 
 @pytest.mark.asyncio
-async def test_application_create_resolves_org_only() -> None:
+async def test_application_create_org_target_is_owned_by_command_adapter() -> None:
     resolver = _resolver()
     body = await assemble_body(
         ApplicationCreate,
@@ -431,27 +461,28 @@ async def test_application_create_resolves_org_only() -> None:
             {
                 "name": "App",
                 "slug": "app",
-                "organization_id": "Acme",
                 "access_level": "authenticated",
             },
         ),
         resolver=resolver,  # type: ignore[arg-type]
     )
-    assert body["organization_id"] == ORG_UUID
     assert body["slug"] == "app"
     assert body["access_level"] == "authenticated"
+    assert "organization_id" not in body
+    assert "organization_id" not in DTO_REF_LOOKUPS.get("ApplicationCreate", {})
 
 
 @pytest.mark.asyncio
-async def test_application_update_no_ref_resolution_for_scope() -> None:
-    """ApplicationUpdate's ``scope`` is free-form (``global`` or org UUID)."""
+async def test_application_update_org_target_is_owned_by_command_adapter() -> None:
+    """The shared ``--org`` adapter, not DTO assembly, sets organization_id."""
     resolver = _resolver()
     body = await assemble_body(
         ApplicationUpdate,
-        _parsed(ApplicationUpdate, {"scope": "global", "name": "Renamed"}),
+        _parsed(ApplicationUpdate, {"name": "Renamed"}),
         resolver=resolver,  # type: ignore[arg-type]
     )
-    assert body == {"scope": "global", "name": "Renamed"}
+    assert body == {"name": "Renamed"}
+    assert "organization_id" not in DTO_REF_LOOKUPS.get("ApplicationUpdate", {})
 
 
 @pytest.mark.asyncio

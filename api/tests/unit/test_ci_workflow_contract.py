@@ -158,12 +158,15 @@ def test_fresh_ci_jobs_consume_clean_boot_state_once() -> None:
         assert commands.index("./test.sh stack up") < commands.rindex("./test.sh")
 
 
-def test_dev_artifact_is_built_on_merge_candidate_and_promoted_without_rebuild() -> None:
+def test_dev_artifact_is_built_on_candidate_events_and_promoted_without_rebuild() -> None:
     jobs = _load_workflow(CI_WORKFLOW)["jobs"]
     candidate = jobs["build-dev-candidate"]
     promotion = jobs["build-dev"]
 
-    assert _normalized(candidate["if"]) == "github.event_name == 'merge_group'"
+    assert _normalized(candidate["if"]) == (
+        "github.event_name == 'merge_group' || "
+        "github.event_name == 'workflow_dispatch'"
+    )
     assert candidate["name"] == "Build Dev Candidate"
     assert candidate["permissions"]["packages"] == "write"
 
@@ -172,12 +175,13 @@ def test_dev_artifact_is_built_on_merge_candidate_and_promoted_without_rebuild()
         step for step in candidate_steps
         if str(step.get("uses", "")).startswith("docker/build-push-action@")
     ]
-    assert len(candidate_builds) == 2
+    assert len(candidate_builds) == 3
     assert all(step["with"]["push"] == "true" for step in candidate_builds)
     assert {
         step["with"]["tags"] for step in candidate_builds
     } == {
         "ghcr.io/${{ env.API_IMAGE }}:candidate-${{ github.sha }}",
+        "ghcr.io/${{ env.BUILDER_IMAGE }}:candidate-${{ github.sha }}",
         "ghcr.io/${{ env.CLIENT_IMAGE }}:candidate-${{ github.sha }}",
     }
     candidate_source = "\n".join(
@@ -186,6 +190,7 @@ def test_dev_artifact_is_built_on_merge_candidate_and_promoted_without_rebuild()
     assert "docker run --rm" in candidate_source
     assert "from src.main import app" in candidate_source
     assert "get_version() == os.environ['EXPECTED_VERSION']" in candidate_source
+    assert "/opt/bifrost-build/runner.py --probe" in candidate_source
 
     assert promotion["name"] == "Promote Dev Images"
     assert not any(
@@ -251,8 +256,13 @@ def test_release_tags_still_require_the_complete_suite() -> None:
     release_prerequisites = {"test-unit", "test-e2e-gate", "lint"}
 
     assert set(jobs["build-api"]["needs"]) == release_prerequisites
+    assert set(jobs["build-builder"]["needs"]) == release_prerequisites
     assert set(jobs["build-client"]["needs"]) == release_prerequisites
-    assert set(jobs["create-release"]["needs"]) == {"build-api", "build-client"}
+    assert set(jobs["create-release"]["needs"]) == {
+        "build-api",
+        "build-builder",
+        "build-client",
+    }
 
 
 def test_nightly_owns_full_browser_slow_and_clean_build_discovery() -> None:

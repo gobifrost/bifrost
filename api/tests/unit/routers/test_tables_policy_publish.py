@@ -4,10 +4,12 @@ from uuid import uuid4
 import pytest
 
 from src.core.auth import ExecutionContext
+from src.core.principal import UserPrincipal
 from src.models.contracts.policies import TablePolicies
 from src.models.contracts.tables import TableUpdate
 from src.models.orm.tables import Table
 from src.routers import tables
+from src.services.authorization import AuthorizationBoundary, AuthorizationContext
 
 
 @pytest.mark.asyncio
@@ -42,12 +44,24 @@ async def test_policy_update_commits_before_notifying_subscribers(
         AsyncMock(),
     )
 
-    ctx = ExecutionContext(user=None, org_id=None, db=db_session)  # type: ignore[arg-type]
+    principal = UserPrincipal(
+        user_id=uuid4(),
+        email="builder@example.com",
+        organization_id=uuid4(),
+    )
+    ctx = ExecutionContext(user=principal, org_id=None, db=db_session)
+    authorization = AuthorizationContext(
+        requester=principal,
+        effective_actor=principal,
+        selected_boundary=AuthorizationBoundary.platform(),
+        effective_capabilities=frozenset({"tables.readwrite"}),
+        grant_sources=(),
+    )
     await tables.update_table(
         table.id,
         TableUpdate(policies=TablePolicies(policies=[])),
         ctx,
-        None,  # type: ignore[arg-type]
+        authorization,
     )
 
     assert events == ["commit", "publish"]

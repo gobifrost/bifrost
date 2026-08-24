@@ -7,6 +7,8 @@ Each module provides a register_tools(mcp, get_context_fn) function.
 from src.services.mcp_server.tools import (
     agents,
     apps,
+    builder_global_operations,
+    builder_workspace,
     claims,
     code_editor,
     configs,
@@ -18,9 +20,12 @@ from src.services.mcp_server.tools import (
     integrations,
     knowledge,
     organizations,
+    platform_jobs,
     policy_rules,
     roles,
     sdk,
+    skill_assets,
+    solutions,
     tables,
     workflow,
 )
@@ -29,6 +34,8 @@ from src.services.mcp_server.tools import gateway
 TOOL_MODULES = [
     agents,
     apps,
+    builder_global_operations,
+    builder_workspace,
     claims,
     code_editor,
     configs,
@@ -40,9 +47,12 @@ TOOL_MODULES = [
     integrations,
     knowledge,
     organizations,
+    platform_jobs,
     policy_rules,
     roles,
     sdk,
+    skill_assets,
+    solutions,
     tables,
     workflow,
 ]
