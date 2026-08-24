@@ -1325,6 +1325,7 @@ class AgentExecutor:
         try:
             # Get the workflow for this tool — prefer ID lookup (handles normalized names)
             workflow_id = self._tool_workflow_id_map.get(tool_call.name)
+            resolved_workflow: tuple[str, str] | None = None
             async with self._db() as session:
                 if workflow_id:
                     result = await session.execute(
@@ -1339,8 +1340,13 @@ class AgentExecutor:
                         .where(Workflow.is_active.is_(True))
                     )
                 workflow = result.scalar_one_or_none()
+                if workflow is not None:
+                    # Keep ORM access inside the owning async session. Session exit
+                    # may expire attributes, and later implicit IO would fail with
+                    # MissingGreenlet outside SQLAlchemy's async bridge.
+                    resolved_workflow = (str(workflow.id), workflow.name)
 
-            if not workflow:
+            if resolved_workflow is None:
                 return ToolResult(
                     tool_call_id=tool_call.id,
                     tool_name=tool_call.name,
@@ -1348,6 +1354,7 @@ class AgentExecutor:
                     error=f"Tool '{tool_call.name}' not found",
                     duration_ms=int((time.time() - start_time) * 1000),
                 )
+            resolved_workflow_id, resolved_workflow_name = resolved_workflow
 
             # Get user info from conversation
             user = conversation.user if conversation else None
@@ -1359,14 +1366,15 @@ class AgentExecutor:
             org_id = str(agent.organization_id) if agent and agent.organization_id else None
 
             execution_response = await execute_tool(
-                workflow_id=str(workflow.id),
-                workflow_name=workflow.name,
+                workflow_id=resolved_workflow_id,
+                workflow_name=resolved_workflow_name,
                 parameters=tool_call.arguments or {},
                 user_id=str(user.id) if user else "system",
                 user_email=user.email if user else "system@internal.gobifrost.com",
                 user_name=user.name if user else "System",
                 org_id=org_id,
                 is_platform_admin=user.is_superuser if user else False,
+                is_agent=True,
                 execution_id=execution_id,
                 artifact_workspace_id=str(conversation.id) if conversation else None,
             )
