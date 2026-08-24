@@ -151,7 +151,9 @@ a reused job ID that the caller cannot read.
 
 All job types use the shared observation endpoints:
 
-- `GET /api/platform-jobs` lists visible jobs;
+- `GET /api/platform-jobs` lists visible jobs with `limit`, `offset`, `status`,
+  `active_only`, and `search` filters. The response includes `total`, `limit`,
+  and `offset` so history views can paginate without silently truncating jobs;
 - `GET /api/platform-jobs/{job_id}` returns durable status, progress, result,
   and error;
 - `POST /api/platform-jobs/{job_id}/cancel` requests cancellation when allowed

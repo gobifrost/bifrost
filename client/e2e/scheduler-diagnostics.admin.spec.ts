@@ -19,6 +19,14 @@ test.describe("Scheduler diagnostics (platform admin)", () => {
 		});
 		await expect(platformJobs).toBeVisible();
 		await expect(
+			platformJobs.getByRole("textbox", { name: "Search Platform Jobs" }),
+		).toBeVisible();
+		await expect(
+			platformJobs.getByRole("combobox", {
+				name: "Filter Platform Jobs by state",
+			}),
+		).toBeVisible();
+		await expect(
 			diagnostics.getByRole("button", {
 				name: "Refresh scheduler diagnostics",
 			}),

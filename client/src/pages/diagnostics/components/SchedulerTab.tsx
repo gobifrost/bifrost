@@ -14,15 +14,15 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import {
-	Table,
-	TableBody,
-	TableCell,
-	TableHead,
-	TableHeader,
-	TableRow,
-} from "@/components/ui/table";
+	DataTable,
+	DataTableBody,
+	DataTableCell,
+	DataTableHead,
+	DataTableHeader,
+	DataTableRow,
+} from "@/components/ui/data-table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
 	Tooltip,
@@ -336,104 +336,116 @@ export function SchedulerTab() {
 					/>
 				</div>
 
-				<Card>
-					<CardHeader>
-						<CardTitle className="text-base">
+				<section
+					aria-labelledby="scheduler-replicas-heading"
+					className="space-y-3"
+				>
+					<div>
+						<h3
+							id="scheduler-replicas-heading"
+							className="font-semibold"
+						>
 							Scheduler Replicas
-						</CardTitle>
-					</CardHeader>
-					<CardContent>
-						<Table>
-							<TableHeader>
-								<TableRow>
-									<TableHead>Replica</TableHead>
-									<TableHead>Role</TableHead>
-									<TableHead>Status</TableHead>
-									<TableHead>Memory</TableHead>
-									<TableHead>Slots</TableHead>
-									<TableHead>Workload</TableHead>
-								</TableRow>
-							</TableHeader>
-							<TableBody>
-								{data.replicas.map((replica) => (
-									<TableRow key={replica.id}>
-										<TableCell>
-											<div className="font-medium">
-												{replica.hostname}
-											</div>
-											<div
-												className="max-w-[220px] truncate text-xs text-muted-foreground"
-												title={replica.id}
-											>
-												{replica.id}
-											</div>
-										</TableCell>
-										<TableCell>
-											<Badge
-												variant="outline"
-												className={
-													replica.is_leader
-														? "border-violet-500/30 bg-violet-500/15 text-violet-700 dark:text-violet-400"
-														: "border-blue-500/30 bg-blue-500/15 text-blue-700 dark:text-blue-400"
-												}
-											>
-												{replica.is_leader
-													? "Trigger Leader"
-													: "Job Runner"}
-											</Badge>
-										</TableCell>
-										<TableCell>
-											<Badge
-												variant={
-													replica.online
-														? "outline"
-														: "destructive"
-												}
-												className={
-													replica.online
-														? "border-green-500/30 bg-green-500/15 text-green-700 dark:text-green-400"
-														: undefined
-												}
-											>
-												{replica.online
-													? "Online"
-													: "Stale"}
-											</Badge>
-											<div className="mt-1 text-xs text-muted-foreground">
-												{relativeTime(
-													replica.last_heartbeat_at,
-												)}
-											</div>
-										</TableCell>
-										<TableCell>
-											{formatBytes(
-												replica.memory_current_bytes,
-											)}{" "}
-											/{" "}
-											{formatBytes(
-												replica.memory_limit_bytes,
+						</h3>
+						<p className="mt-1 text-sm text-muted-foreground">
+							Live capacity and workload across scheduler
+							instances.
+						</p>
+					</div>
+					<DataTable
+						className={
+							data.replicas.length === 0 ? "hidden" : undefined
+						}
+					>
+						<DataTableHeader>
+							<DataTableRow>
+								<DataTableHead>Replica</DataTableHead>
+								<DataTableHead>Role</DataTableHead>
+								<DataTableHead>Status</DataTableHead>
+								<DataTableHead>Memory</DataTableHead>
+								<DataTableHead>Slots</DataTableHead>
+								<DataTableHead>Workload</DataTableHead>
+							</DataTableRow>
+						</DataTableHeader>
+						<DataTableBody>
+							{data.replicas.map((replica) => (
+								<DataTableRow key={replica.id}>
+									<DataTableCell>
+										<div className="font-medium">
+											{replica.hostname}
+										</div>
+										<div
+											className="max-w-[220px] truncate text-xs text-muted-foreground"
+											title={replica.id}
+										>
+											{replica.id}
+										</div>
+									</DataTableCell>
+									<DataTableCell>
+										<Badge
+											variant="outline"
+											className={
+												replica.is_leader
+													? "border-violet-500/30 bg-violet-500/15 text-violet-700 dark:text-violet-400"
+													: "border-blue-500/30 bg-blue-500/15 text-blue-700 dark:text-blue-400"
+											}
+										>
+											{replica.is_leader
+												? "Trigger Leader"
+												: "Job Runner"}
+										</Badge>
+									</DataTableCell>
+									<DataTableCell>
+										<Badge
+											variant={
+												replica.online
+													? "outline"
+													: "destructive"
+											}
+											className={
+												replica.online
+													? "border-green-500/30 bg-green-500/15 text-green-700 dark:text-green-400"
+													: undefined
+											}
+										>
+											{replica.online
+												? "Online"
+												: "Stale"}
+										</Badge>
+										<div className="mt-1 text-xs text-muted-foreground">
+											{relativeTime(
+												replica.last_heartbeat_at,
 											)}
-										</TableCell>
-										<TableCell>
-											{replica.active_platform_jobs} /{" "}
-											{replica.job_slots}
-										</TableCell>
-										<TableCell>
-											{replica.active_platform_jobs === 0
-												? "Idle"
-												: `${replica.active_platform_jobs} running`}
-										</TableCell>
-									</TableRow>
-								))}
-							</TableBody>
-						</Table>
-						{data.replicas.length === 0 && (
-							<p className="py-8 text-center text-sm text-muted-foreground">
-								No scheduler replicas have reported a heartbeat.
-							</p>
-						)}
-					</CardContent>
-				</Card>
+										</div>
+									</DataTableCell>
+									<DataTableCell>
+										{formatBytes(
+											replica.memory_current_bytes,
+										)}{" "}
+										/{" "}
+										{formatBytes(
+											replica.memory_limit_bytes,
+										)}
+									</DataTableCell>
+									<DataTableCell>
+										{replica.active_platform_jobs} /{" "}
+										{replica.job_slots}
+									</DataTableCell>
+									<DataTableCell>
+										{replica.active_platform_jobs === 0
+											? "Idle"
+											: `${replica.active_platform_jobs} running`}
+									</DataTableCell>
+								</DataTableRow>
+							))}
+						</DataTableBody>
+					</DataTable>
+					{data.replicas.length === 0 && (
+						<p className="rounded-2xl border border-dashed py-8 text-center text-sm text-muted-foreground">
+							No scheduler replicas have reported a heartbeat.
+						</p>
+					)}
+				</section>
 
 				<Tabs defaultValue="platform-jobs" className="space-y-3">
 					<TabsList>
@@ -450,132 +462,149 @@ export function SchedulerTab() {
 						/>
 					</TabsContent>
 					<TabsContent value="system-schedules" className="mt-0">
-						<Card>
-							<CardHeader>
-								<CardTitle className="text-base">
+						<section
+							aria-labelledby="system-schedules-heading"
+							className="space-y-3"
+						>
+							<div>
+								<h3
+									id="system-schedules-heading"
+									className="font-semibold"
+								>
 									System Schedules
-								</CardTitle>
-							</CardHeader>
-							<CardContent>
-								<Table>
-									<TableHeader>
-										<TableRow>
-											<TableHead>Name</TableHead>
-											<TableHead>State</TableHead>
-											<TableHead>Schedule</TableHead>
-											<TableHead>Next Run</TableHead>
-											<TableHead>Last Run</TableHead>
-											<TableHead title="Change in the shared scheduler container working set while this job ran">
-												Memory
-											</TableHead>
-										</TableRow>
-									</TableHeader>
-									<TableBody>
-										{data.tasks.map((task) => (
-											<TableRow
-												key={task.task_id}
-												className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-												tabIndex={0}
-												aria-label={`View recent runs for ${task.name}`}
-												onClick={() =>
-													setSelectedTask(task)
+								</h3>
+								<p className="mt-1 text-sm text-muted-foreground">
+									Registered recurring triggers and their
+									latest run.
+								</p>
+							</div>
+							<DataTable
+								className={
+									data.tasks.length === 0
+										? "hidden"
+										: "max-h-[min(56vh,620px)]"
+								}
+							>
+								<DataTableHeader>
+									<DataTableRow>
+										<DataTableHead>Name</DataTableHead>
+										<DataTableHead>State</DataTableHead>
+										<DataTableHead>Schedule</DataTableHead>
+										<DataTableHead>Next Run</DataTableHead>
+										<DataTableHead>Last Run</DataTableHead>
+										<DataTableHead title="Change in the shared scheduler container working set while this job ran">
+											Memory
+										</DataTableHead>
+									</DataTableRow>
+								</DataTableHeader>
+								<DataTableBody>
+									{data.tasks.map((task) => (
+										<DataTableRow
+											key={task.task_id}
+											clickable
+											className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+											tabIndex={0}
+											aria-label={`View recent runs for ${task.name}`}
+											onClick={() =>
+												setSelectedTask(task)
+											}
+											onKeyDown={(event) => {
+												if (
+													event.key === "Enter" ||
+													event.key === " "
+												) {
+													event.preventDefault();
+													setSelectedTask(task);
 												}
-												onKeyDown={(event) => {
-													if (
-														event.key === "Enter" ||
-														event.key === " "
-													) {
-														event.preventDefault();
-														setSelectedTask(task);
-													}
-												}}
-											>
-												<TableCell>
-													<div className="font-medium">
-														{task.name}
-													</div>
-													<div className="text-xs text-muted-foreground">
-														{task.execution_mode ===
-														"durable_job"
-															? "Distributed Job"
-															: "Leader Trigger"}
-													</div>
-												</TableCell>
-												<TableCell>
-													<Badge
-														variant={statusVariant(
+											}}
+										>
+											<DataTableCell>
+												<div className="font-medium">
+													{task.name}
+												</div>
+												<div className="text-xs text-muted-foreground">
+													{task.execution_mode ===
+													"durable_job"
+														? "Distributed Job"
+														: "Leader Trigger"}
+												</div>
+											</DataTableCell>
+											<DataTableCell>
+												<Badge
+													variant={statusVariant(
+														task.last_run
+															?.platform_job_status ??
 															task.last_run
-																?.platform_job_status ??
-																task.last_run
-																	?.status,
-														)}
-														className={statusClassName(
+																?.status,
+													)}
+													className={statusClassName(
+														task.last_run
+															?.platform_job_status ??
 															task.last_run
-																?.platform_job_status ??
-																task.last_run
-																	?.status,
-														)}
+																?.status,
+													)}
+												>
+													{formatStatus(
+														task.last_run
+															?.platform_job_status ??
+															task.last_run
+																?.status,
+													)}
+												</Badge>
+												{task.last_run
+													?.error_message && (
+													<div
+														className="mt-1 max-w-[260px] truncate text-xs text-destructive"
+														title={
+															task.last_run
+																.error_message
+														}
 													>
-														{formatStatus(
+														{
 															task.last_run
-																?.platform_job_status ??
-																task.last_run
-																	?.status,
-														)}
-													</Badge>
+																.error_message
+														}
+													</div>
+												)}
+											</DataTableCell>
+											<DataTableCell>
+												<div>{task.schedule}</div>
+											</DataTableCell>
+											<DataTableCell>
+												{relativeTime(task.next_run_at)}
+											</DataTableCell>
+											<DataTableCell>
+												<div>
 													{task.last_run
-														?.error_message && (
-														<div
-															className="mt-1 max-w-[260px] truncate text-xs text-destructive"
-															title={
-																task.last_run
-																	.error_message
-															}
-														>
-															{
-																task.last_run
-																	.error_message
-															}
-														</div>
-													)}
-												</TableCell>
-												<TableCell>
-													<div>{task.schedule}</div>
-												</TableCell>
-												<TableCell>
+														?.duration_ms == null
+														? "—"
+														: `${task.last_run.duration_ms} ms`}
+												</div>
+												<div className="text-xs text-muted-foreground">
 													{relativeTime(
-														task.next_run_at,
-													)}
-												</TableCell>
-												<TableCell>
-													<div>
-														{task.last_run
-															?.duration_ms ==
-														null
-															? "—"
-															: `${task.last_run.duration_ms} ms`}
-													</div>
-													<div className="text-xs text-muted-foreground">
-														{relativeTime(
-															task.last_run
-																?.completed_at,
-														)}
-													</div>
-												</TableCell>
-												<TableCell>
-													{formatContainerMemoryChange(
 														task.last_run
-															?.platform_job_memory_start_bytes,
-														task.last_run
-															?.platform_job_memory_peak_bytes,
+															?.completed_at,
 													)}
-												</TableCell>
-											</TableRow>
-										))}
-									</TableBody>
-								</Table>
-							</CardContent>
-						</Card>
+												</div>
+											</DataTableCell>
+											<DataTableCell>
+												{formatContainerMemoryChange(
+													task.last_run
+														?.platform_job_memory_start_bytes,
+													task.last_run
+														?.platform_job_memory_peak_bytes,
+												)}
+											</DataTableCell>
+										</DataTableRow>
+									))}
+								</DataTableBody>
+							</DataTable>
+							{data.tasks.length === 0 && (
+								<p className="rounded-2xl border border-dashed py-8 text-center text-sm text-muted-foreground">
+									No System Schedules are registered.
+								</p>
+							)}
+						</section>
 					</TabsContent>
 				</Tabs>
 			</div>

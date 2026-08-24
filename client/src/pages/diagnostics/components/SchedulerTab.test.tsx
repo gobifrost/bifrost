@@ -96,7 +96,12 @@ vi.mock("@/services/schedulerDiagnostics", async () => {
 	};
 });
 vi.mock("@/services/platformJobs", () => ({
-	getPlatformJobs: vi.fn().mockResolvedValue([]),
+	getPlatformJobs: vi.fn().mockResolvedValue({
+		jobs: [],
+		total: 0,
+		limit: 25,
+		offset: 0,
+	}),
 	cancelPlatformJob: vi.fn(),
 }));
 

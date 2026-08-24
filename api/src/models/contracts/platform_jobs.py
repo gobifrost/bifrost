@@ -78,6 +78,9 @@ class PlatformJobPublic(BaseModel):
 
 class PlatformJobListResponse(BaseModel):
     jobs: list[PlatformJobPublic]
+    total: int
+    limit: int
+    offset: int
 
 
 class PlatformJobCancelResponse(BaseModel):

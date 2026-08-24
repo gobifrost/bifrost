@@ -20,13 +20,28 @@ describe("platform jobs service", () => {
 
 	it("lists platform jobs with explicit history options", async () => {
 		const jobs = [{ id: "job-1", status: "running" }];
-		mockGet.mockResolvedValue({ data: { jobs } });
+		const response = { jobs, total: 1, limit: 25, offset: 25 };
+		mockGet.mockResolvedValue({ data: response });
 
 		await expect(
-			getPlatformJobs({ activeOnly: false, limit: 25 }),
-		).resolves.toBe(jobs);
+			getPlatformJobs({
+				activeOnly: false,
+				limit: 25,
+				offset: 25,
+				status: "running",
+				search: "deploy",
+			}),
+		).resolves.toBe(response);
 		expect(mockGet).toHaveBeenCalledWith("/api/platform-jobs", {
-			params: { query: { active_only: false, limit: 25 } },
+			params: {
+				query: {
+					active_only: false,
+					limit: 25,
+					offset: 25,
+					status: "running",
+					search: "deploy",
+				},
+			},
 			signal: undefined,
 		});
 	});

@@ -21425,6 +21425,12 @@ export interface components {
         PlatformJobListResponse: {
             /** Jobs */
             jobs: components["schemas"]["PlatformJobPublic"][];
+            /** Total */
+            total: number;
+            /** Limit */
+            limit: number;
+            /** Offset */
+            offset: number;
         };
         /** PlatformJobProgress */
         PlatformJobProgress: {
@@ -33438,6 +33444,9 @@ export interface operations {
             query?: {
                 active_only?: boolean;
                 limit?: number;
+                offset?: number;
+                status?: components["schemas"]["PlatformJobStatus"] | null;
+                search?: string | null;
             };
             header?: never;
             path?: never;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useDeferredValue, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format, formatDistanceStrict } from "date-fns";
 import {
@@ -25,8 +25,32 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+	DataTable,
+	DataTableBody,
+	DataTableCell,
+	DataTableFooter,
+	DataTableHead,
+	DataTableHeader,
+	DataTableRow,
+} from "@/components/ui/data-table";
+import { Input } from "@/components/ui/input";
+import {
+	Pagination,
+	PaginationContent,
+	PaginationItem,
+	PaginationLink,
+	PaginationNext,
+	PaginationPrevious,
+} from "@/components/ui/pagination";
 import { Progress } from "@/components/ui/progress";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import {
 	Sheet,
 	SheetContent,
@@ -34,14 +58,6 @@ import {
 	SheetHeader,
 	SheetTitle,
 } from "@/components/ui/sheet";
-import {
-	Table,
-	TableBody,
-	TableCell,
-	TableHead,
-	TableHeader,
-	TableRow,
-} from "@/components/ui/table";
 import { copyToClipboard } from "@/lib/clipboard";
 import {
 	cancelPlatformJob,
@@ -60,7 +76,9 @@ const ACTIVE_STATUSES = new Set([
 	"waiting",
 	"cancel_requested",
 ]);
-const JOBS_QUERY_KEY = ["platform-jobs", "scheduler-diagnostics"] as const;
+const PAGE_SIZE = 25;
+
+type StatusFilter = "all" | "active" | PlatformJob["status"];
 
 function formatBytes(value: number | null | undefined) {
 	if (value == null) return "Not recorded";
@@ -105,44 +123,6 @@ function StatusIcon({ status }: { status: string }) {
 	if (ACTIVE_STATUSES.has(status))
 		return <Loader2 className="h-3.5 w-3.5 animate-spin" />;
 	return <Clock3 className="h-3.5 w-3.5" />;
-}
-
-function sortJobs(jobs: ObservablePlatformJob[]) {
-	return [...jobs].sort((left, right) => {
-		const activeDifference =
-			Number(ACTIVE_STATUSES.has(right.status)) -
-			Number(ACTIVE_STATUSES.has(left.status));
-		if (activeDifference) return activeDifference;
-		return (
-			new Date(right.created_at).getTime() -
-			new Date(left.created_at).getTime()
-		);
-	});
-}
-
-function mergeJob(
-	jobs: ObservablePlatformJob[] | undefined,
-	job: ObservablePlatformJob,
-) {
-	const byId = new Map((jobs ?? []).map((item) => [item.id, item]));
-	const current = byId.get(job.id);
-	if (!current || job.revision >= current.revision) byId.set(job.id, job);
-	const sorted = sortJobs([...byId.values()]);
-	const active = sorted.filter((item) => ACTIVE_STATUSES.has(item.status));
-	const recent = sorted
-		.filter((item) => !ACTIVE_STATUSES.has(item.status))
-		.slice(0, 50);
-	return [...active, ...recent];
-}
-
-async function loadVisibleJobs(signal?: AbortSignal) {
-	const [active, recent] = await Promise.all([
-		getPlatformJobs({ activeOnly: true, limit: 200, signal }),
-		getPlatformJobs({ activeOnly: false, limit: 50, signal }),
-	]);
-	let merged: ObservablePlatformJob[] = [];
-	for (const job of [...active, ...recent]) merged = mergeJob(merged, job);
-	return merged;
 }
 
 function elapsed(job: ObservablePlatformJob) {
@@ -209,11 +189,33 @@ export function PlatformJobsPanel({
 	availableMemoryBytes,
 }: PlatformJobsPanelProps) {
 	const queryClient = useQueryClient();
-	const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
+	const [selectedJob, setSelectedJob] =
+		useState<ObservablePlatformJob | null>(null);
 	const [cancelJobId, setCancelJobId] = useState<string | null>(null);
+	const [page, setPage] = useState(0);
+	const [search, setSearch] = useState("");
+	const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+	const deferredSearch = useDeferredValue(search.trim());
 	const query = useQuery({
-		queryKey: JOBS_QUERY_KEY,
-		queryFn: ({ signal }) => loadVisibleJobs(signal),
+		queryKey: [
+			"platform-jobs",
+			"scheduler-diagnostics",
+			page,
+			deferredSearch,
+			statusFilter,
+		],
+		queryFn: ({ signal }) =>
+			getPlatformJobs({
+				activeOnly: statusFilter === "active",
+				limit: PAGE_SIZE,
+				offset: page * PAGE_SIZE,
+				status:
+					statusFilter === "all" || statusFilter === "active"
+						? undefined
+						: statusFilter,
+				search: deferredSearch || undefined,
+				signal,
+			}),
 		refetchOnWindowFocus: true,
 		staleTime: 30_000,
 	});
@@ -221,26 +223,29 @@ export function PlatformJobsPanel({
 	useEffect(
 		() =>
 			webSocketService.onAnyPlatformJobUpdate((job) => {
-				queryClient.setQueryData<ObservablePlatformJob[]>(
-					JOBS_QUERY_KEY,
-					(current) => mergeJob(current, job),
+				setSelectedJob((current) =>
+					current?.id === job.id && job.revision >= current.revision
+						? job
+						: current,
 				);
+				void queryClient.invalidateQueries({
+					queryKey: ["platform-jobs"],
+				});
 			}),
 		[queryClient],
 	);
 
-	const jobs = query.data ?? [];
-	const selectedJob = jobs.find((job) => job.id === selectedJobId) ?? null;
-	const activeCount = jobs.filter((job) =>
-		ACTIVE_STATUSES.has(job.status),
-	).length;
+	const jobs = query.data?.jobs ?? [];
+	const total = query.data?.total ?? 0;
+	const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+	const hasFilters = statusFilter !== "all" || deferredSearch.length > 0;
 	const cancelMutation = useMutation({
 		mutationFn: cancelPlatformJob,
 		onSuccess: (response) => {
-			queryClient.setQueryData<ObservablePlatformJob[]>(
-				JOBS_QUERY_KEY,
-				(current) => mergeJob(current, response.job),
-			);
+			setSelectedJob(response.job);
+			void queryClient.invalidateQueries({
+				queryKey: ["platform-jobs"],
+			});
 			setCancelJobId(null);
 			if (response.accepted) toast.success("Cancellation requested");
 			else toast.info("This job can no longer be cancelled");
@@ -255,197 +260,298 @@ export function PlatformJobsPanel({
 		else toast.error("Failed to copy job ID");
 	};
 
+	const handleSearchChange = (value: string) => {
+		setSearch(value);
+		setPage(0);
+	};
+
+	const handleStatusChange = (value: StatusFilter) => {
+		setStatusFilter(value);
+		setPage(0);
+	};
+
 	return (
 		<>
-			<section aria-labelledby="platform-jobs-heading">
-				<Card>
-					<CardHeader>
-						<div>
-							<div className="flex flex-wrap items-center gap-2">
-								<CardTitle
-									id="platform-jobs-heading"
-									className="text-base"
-								>
-									Platform Jobs
-								</CardTitle>
-								<Badge
-									variant={
-										activeCount ? "warning" : "outline"
-									}
-								>
-									{activeCount} active
+			<section
+				aria-labelledby="platform-jobs-heading"
+				className="space-y-3"
+			>
+				<div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+					<div>
+						<div className="flex flex-wrap items-center gap-2">
+							<h3
+								id="platform-jobs-heading"
+								className="font-semibold"
+							>
+								Platform Jobs
+							</h3>
+							{query.data ? (
+								<Badge variant="outline">
+									{total} {total === 1 ? "job" : "jobs"}
 								</Badge>
-							</div>
-							<p className="mt-1 text-sm text-muted-foreground">
-								On-demand and scheduled durable work, updated
-								live.
-							</p>
+							) : null}
 						</div>
-					</CardHeader>
-					<CardContent>
-						{query.isLoading ? (
-							<div className="flex justify-center py-10">
-								<Loader2 className="h-7 w-7 animate-spin text-muted-foreground" />
-							</div>
-						) : query.error ? (
-							<Alert variant="destructive">
-								<AlertDescription>
-									Platform jobs could not be loaded. Use
-									Refresh above to try again.
-								</AlertDescription>
-							</Alert>
-						) : jobs.length === 0 ? (
-							<div className="rounded-lg border border-dashed px-5 py-10 text-center">
-								<CheckCircle2 className="mx-auto h-6 w-6 text-green-600" />
-								<p className="mt-3 font-medium">
-									No Platform Jobs Yet
-								</p>
-								<p className="mt-1 text-sm text-muted-foreground">
-									Builds, deploys, maintenance, and other
-									durable work will appear here.
-								</p>
-							</div>
-						) : (
-							<div className="max-h-[min(56vh,620px)] overflow-auto rounded-lg border">
-								<Table className="min-w-[760px]">
-									<TableHeader className="sticky top-0 z-10 bg-card">
-										<TableRow>
-											<TableHead>Name</TableHead>
-											<TableHead>State</TableHead>
-											<TableHead>Elapsed</TableHead>
-											<TableHead>Memory</TableHead>
-										</TableRow>
-									</TableHeader>
-									<TableBody>
-										{jobs.map((job) => (
-											<TableRow
-												key={job.id}
-												tabIndex={0}
-												className="cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-												aria-label={`View ${job.title} platform job`}
-												onClick={() =>
-													setSelectedJobId(job.id)
-												}
-												onKeyDown={(event) => {
-													if (
-														event.key === "Enter" ||
-														event.key === " "
-													) {
-														event.preventDefault();
-														setSelectedJobId(
-															job.id,
-														);
-													}
-												}}
+						<p className="mt-1 text-sm text-muted-foreground">
+							On-demand and scheduled durable work, updated live.
+						</p>
+					</div>
+					<div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
+						<label
+							className="sr-only"
+							htmlFor="platform-job-search"
+						>
+							Search Platform Jobs
+						</label>
+						<Input
+							id="platform-job-search"
+							className="sm:w-64"
+							placeholder="Search jobs"
+							value={search}
+							onChange={(event) =>
+								handleSearchChange(event.target.value)
+							}
+						/>
+						<Select
+							value={statusFilter}
+							onValueChange={handleStatusChange}
+						>
+							<SelectTrigger
+								className="w-full sm:w-44"
+								aria-label="Filter Platform Jobs by state"
+							>
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="all">All States</SelectItem>
+								<SelectItem value="active">Active</SelectItem>
+								<SelectItem value="queued">Queued</SelectItem>
+								<SelectItem value="running">Running</SelectItem>
+								<SelectItem value="waiting">Waiting</SelectItem>
+								<SelectItem value="cancel_requested">
+									Cancel Requested
+								</SelectItem>
+								<SelectItem value="succeeded">
+									Succeeded
+								</SelectItem>
+								<SelectItem value="failed">Failed</SelectItem>
+								<SelectItem value="cancelled">
+									Cancelled
+								</SelectItem>
+							</SelectContent>
+						</Select>
+					</div>
+				</div>
+
+				{query.isLoading ? (
+					<div className="flex justify-center py-10">
+						<Loader2 className="h-7 w-7 animate-spin text-muted-foreground" />
+					</div>
+				) : query.error ? (
+					<Alert variant="destructive">
+						<AlertDescription>
+							Platform jobs could not be loaded. Use Refresh above
+							to try again.
+						</AlertDescription>
+					</Alert>
+				) : jobs.length === 0 ? (
+					<div className="rounded-2xl border border-dashed px-5 py-10 text-center">
+						<CheckCircle2 className="mx-auto h-6 w-6 text-green-600" />
+						<p className="mt-3 font-medium">
+							{hasFilters
+								? "No Platform Jobs Match"
+								: "No Platform Jobs Yet"}
+						</p>
+						<p className="mt-1 text-sm text-muted-foreground">
+							{hasFilters
+								? "Try another search or state filter."
+								: "Builds, deploys, maintenance, and other durable work will appear here."}
+						</p>
+					</div>
+				) : (
+					<DataTable className="max-h-[min(56vh,620px)]">
+						<DataTableHeader>
+							<DataTableRow>
+								<DataTableHead>Name</DataTableHead>
+								<DataTableHead>State</DataTableHead>
+								<DataTableHead>Elapsed</DataTableHead>
+								<DataTableHead>Memory</DataTableHead>
+							</DataTableRow>
+						</DataTableHeader>
+						<DataTableBody>
+							{jobs.map((job) => (
+								<DataTableRow
+									key={job.id}
+									clickable
+									tabIndex={0}
+									className="focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+									aria-label={`View ${job.title} platform job`}
+									onClick={() => setSelectedJob(job)}
+									onKeyDown={(event) => {
+										if (
+											event.key === "Enter" ||
+											event.key === " "
+										) {
+											event.preventDefault();
+											setSelectedJob(job);
+										}
+									}}
+								>
+									<DataTableCell>
+										<p
+											className="max-w-[240px] truncate font-medium"
+											title={job.title}
+										>
+											{job.title}
+										</p>
+										<p className="font-mono text-xs text-muted-foreground">
+											{job.job_type}
+										</p>
+										<p
+											className="max-w-[240px] truncate text-xs text-muted-foreground"
+											title={job.requested_by_name}
+										>
+											{job.requested_by_name}
+										</p>
+									</DataTableCell>
+									<DataTableCell>
+										<Badge
+											variant="outline"
+											className={`gap-1 ${statusClassName(job.status)}`}
+										>
+											<StatusIcon status={job.status} />
+											{displayStatus(job.status)}
+										</Badge>
+										<p
+											className="mt-1 max-w-[260px] truncate text-xs text-muted-foreground"
+											title={
+												job.progress.phase ?? undefined
+											}
+										>
+											{job.progress.phase ??
+												"No phase reported"}
+										</p>
+										{job.progress.percent != null &&
+										ACTIVE_STATUSES.has(job.status) ? (
+											<div className="mt-1.5 flex items-center gap-2">
+												<Progress
+													className="h-1.5 w-24"
+													value={job.progress.percent}
+												/>
+												<span className="text-xs text-muted-foreground">
+													{job.progress.percent.toFixed(
+														0,
+													)}
+													%
+												</span>
+											</div>
+										) : null}
+										{job.error ? (
+											<p
+												className="mt-1 max-w-[260px] truncate text-xs text-destructive"
+												title={job.error.message}
 											>
-												<TableCell>
-													<p
-														className="max-w-[240px] truncate font-medium"
-														title={job.title}
-													>
-														{job.title}
-													</p>
-													<p className="font-mono text-xs text-muted-foreground">
-														{job.job_type}
-													</p>
-													<p
-														className="max-w-[240px] truncate text-xs text-muted-foreground"
-														title={
-															job.requested_by_name
-														}
-													>
-														{job.requested_by_name}
-													</p>
-												</TableCell>
-												<TableCell>
-													<Badge
-														variant="outline"
-														className={`gap-1 ${statusClassName(job.status)}`}
-													>
-														<StatusIcon
-															status={job.status}
-														/>
-														{displayStatus(
-															job.status,
-														)}
-													</Badge>
-													<p
-														className="mt-1 max-w-[260px] truncate text-xs text-muted-foreground"
-														title={
-															job.progress
-																.phase ??
-															undefined
-														}
-													>
-														{job.progress.phase ??
-															"No phase reported"}
-													</p>
-													{job.progress.percent !=
-														null &&
-													ACTIVE_STATUSES.has(
-														job.status,
-													) ? (
-														<div className="mt-1.5 flex items-center gap-2">
-															<Progress
-																className="h-1.5 w-24"
-																value={
-																	job.progress
-																		.percent
-																}
-															/>
-															<span className="text-xs text-muted-foreground">
-																{job.progress.percent.toFixed(
-																	0,
-																)}
-																%
-															</span>
-														</div>
-													) : null}
-													{job.error ? (
-														<p
-															className="mt-1 max-w-[260px] truncate text-xs text-destructive"
-															title={
-																job.error
-																	.message
-															}
-														>
-															{job.error.message}
-														</p>
-													) : null}
-												</TableCell>
-												<TableCell>
-													<p>{elapsed(job)}</p>
-													<p className="text-xs text-muted-foreground">
-														{ACTIVE_STATUSES.has(
-															job.status,
-														)
-															? "in progress"
-															: relativeFinished(
-																	job,
-																)}
-													</p>
-												</TableCell>
-												<TableCell>
-													<MemorySummary
-														job={job}
-														availableMemoryBytes={
-															availableMemoryBytes
-														}
-													/>
-												</TableCell>
-											</TableRow>
-										))}
-									</TableBody>
-								</Table>
-							</div>
-						)}
-					</CardContent>
-				</Card>
+												{job.error.message}
+											</p>
+										) : null}
+									</DataTableCell>
+									<DataTableCell>
+										<p>{elapsed(job)}</p>
+										<p className="text-xs text-muted-foreground">
+											{ACTIVE_STATUSES.has(job.status)
+												? "in progress"
+												: relativeFinished(job)}
+										</p>
+									</DataTableCell>
+									<DataTableCell>
+										<MemorySummary
+											job={job}
+											availableMemoryBytes={
+												availableMemoryBytes
+											}
+										/>
+									</DataTableCell>
+								</DataTableRow>
+							))}
+						</DataTableBody>
+						<DataTableFooter>
+							<DataTableRow>
+								<DataTableCell
+									colSpan={2}
+									className="text-muted-foreground"
+								>
+									{page * PAGE_SIZE + 1}–
+									{Math.min((page + 1) * PAGE_SIZE, total)} of{" "}
+									{total}
+								</DataTableCell>
+								<DataTableCell colSpan={2}>
+									<Pagination className="justify-end">
+										<PaginationContent>
+											<PaginationItem>
+												<PaginationPrevious
+													onClick={(event) => {
+														event.preventDefault();
+														setPage((current) =>
+															Math.max(
+																0,
+																current - 1,
+															),
+														);
+													}}
+													className={
+														page === 0 ||
+														query.isFetching
+															? "pointer-events-none opacity-50"
+															: "cursor-pointer"
+													}
+													aria-disabled={
+														page === 0 ||
+														query.isFetching
+													}
+												/>
+											</PaginationItem>
+											<PaginationItem>
+												<PaginationLink
+													isActive
+													aria-label={`Page ${page + 1}`}
+												>
+													{page + 1} of {totalPages}
+												</PaginationLink>
+											</PaginationItem>
+											<PaginationItem>
+												<PaginationNext
+													onClick={(event) => {
+														event.preventDefault();
+														setPage(
+															(current) =>
+																current + 1,
+														);
+													}}
+													className={
+														page + 1 >=
+															totalPages ||
+														query.isFetching
+															? "pointer-events-none opacity-50"
+															: "cursor-pointer"
+													}
+													aria-disabled={
+														page + 1 >=
+															totalPages ||
+														query.isFetching
+													}
+												/>
+											</PaginationItem>
+										</PaginationContent>
+									</Pagination>
+								</DataTableCell>
+							</DataTableRow>
+						</DataTableFooter>
+					</DataTable>
+				)}
 			</section>
 
 			<Sheet
 				open={selectedJob != null}
-				onOpenChange={(open) => !open && setSelectedJobId(null)}
+				onOpenChange={(open) => !open && setSelectedJob(null)}
 			>
 				<SheetContent
 					side="right"

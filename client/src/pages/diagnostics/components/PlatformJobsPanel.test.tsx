@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
@@ -83,7 +83,12 @@ describe("PlatformJobsPanel", () => {
 		mocks.getPlatformJobs.mockReset();
 		mocks.cancelPlatformJob.mockReset();
 		mocks.onAnyPlatformJobUpdate.mockClear();
-		mocks.getPlatformJobs.mockResolvedValue([queuedJob]);
+		mocks.getPlatformJobs.mockResolvedValue({
+			jobs: [queuedJob],
+			total: 1,
+			limit: 25,
+			offset: 0,
+		});
 		mocks.cancelPlatformJob.mockResolvedValue({
 			accepted: true,
 			job: {
@@ -114,6 +119,13 @@ describe("PlatformJobsPanel", () => {
 		expect(
 			screen.queryByRole("columnheader", { name: "Attempts" }),
 		).not.toBeInTheDocument();
+		expect(mocks.getPlatformJobs).toHaveBeenCalledWith(
+			expect.objectContaining({
+				activeOnly: false,
+				limit: 25,
+				offset: 0,
+			}),
+		);
 
 		await user.click(
 			screen.getByRole("row", {
@@ -126,6 +138,31 @@ describe("PlatformJobsPanel", () => {
 		expect(
 			within(drawer).getByRole("link", { name: /Open resource/ }),
 		).toHaveAttribute("href", "/solutions/solution-1");
+	});
+
+	it("pages and searches the full server-side job history", async () => {
+		const user = userEvent.setup();
+		mocks.getPlatformJobs.mockResolvedValue({
+			jobs: [queuedJob],
+			total: 26,
+			limit: 25,
+			offset: 0,
+		});
+		renderPanel();
+
+		await user.click(await screen.findByLabelText("Go to next page"));
+		await waitFor(() =>
+			expect(mocks.getPlatformJobs).toHaveBeenCalledWith(
+				expect.objectContaining({ offset: 25 }),
+			),
+		);
+
+		await user.type(screen.getByLabelText("Search Platform Jobs"), "deploy");
+		await waitFor(() =>
+			expect(mocks.getPlatformJobs).toHaveBeenCalledWith(
+				expect.objectContaining({ offset: 0, search: "deploy" }),
+			),
+		);
 	});
 
 	it("confirms cancellation through the shared job endpoint", async () => {

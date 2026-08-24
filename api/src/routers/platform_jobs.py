@@ -5,13 +5,14 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import case, func, or_, select
 
 from src.core.auth import Context, CurrentUser
 from src.models.contracts.platform_jobs import (
     PlatformJobCancelResponse,
     PlatformJobListResponse,
     PlatformJobPublic,
+    PlatformJobStatus,
 )
 from src.models.orm.platform_jobs import PlatformJob
 from src.services.platform_jobs import (
@@ -54,19 +55,52 @@ async def list_platform_jobs(
     user: CurrentUser,
     active_only: bool = Query(default=True),
     limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    job_status: PlatformJobStatus | None = Query(default=None, alias="status"),
+    search: str | None = Query(default=None, min_length=1, max_length=200),
 ) -> PlatformJobListResponse:
-    query = select(PlatformJob).order_by(PlatformJob.created_at.desc()).limit(limit)
+    filters = []
     if not user.is_platform_admin:
-        query = query.where(
+        filters.append(
             PlatformJob.requested_by_user_id == str(user.user_id)
         )
-    if active_only:
-        query = query.where(
+    if job_status is not None:
+        filters.append(PlatformJob.status == job_status.value)
+    elif active_only:
+        filters.append(
             PlatformJob.status.in_(ACTIVE_PLATFORM_JOB_STATUSES)
         )
-    jobs = (await ctx.db.execute(query)).scalars().all()
+    normalized_search = search.strip() if search else ""
+    if normalized_search:
+        pattern = f"%{normalized_search}%"
+        filters.append(
+            or_(
+                PlatformJob.title.ilike(pattern),
+                PlatformJob.job_type.ilike(pattern),
+                PlatformJob.requested_by_name.ilike(pattern),
+                PlatformJob.resource_type.ilike(pattern),
+            )
+        )
+
+    total_query = select(func.count()).select_from(PlatformJob).where(*filters)
+    total = (await ctx.db.execute(total_query)).scalar_one()
+    active_first = case(
+        (PlatformJob.status.in_(ACTIVE_PLATFORM_JOB_STATUSES), 0),
+        else_=1,
+    )
+    jobs_query = (
+        select(PlatformJob)
+        .where(*filters)
+        .order_by(active_first, PlatformJob.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+    jobs = (await ctx.db.execute(jobs_query)).scalars().all()
     return PlatformJobListResponse(
-        jobs=[platform_job_to_public(job) for job in jobs]
+        jobs=[platform_job_to_public(job) for job in jobs],
+        total=total,
+        limit=limit,
+        offset=offset,
     )
 
 
