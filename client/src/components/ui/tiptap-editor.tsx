@@ -57,8 +57,11 @@ export function TiptapEditor({
 		onUpdate: ({ editor }) => {
 			onChange?.(editor.getMarkdown());
 		},
-		editorProps: {
+			editorProps: {
 			attributes: {
+				role: "textbox",
+				"aria-multiline": "true",
+				"aria-readonly": String(readOnly),
 				class: cn(
 					"tiptap-editor min-h-[200px] h-full overflow-y-auto p-3 focus:outline-none prose prose-sm dark:prose-invert max-w-none",
 					editorClassName,

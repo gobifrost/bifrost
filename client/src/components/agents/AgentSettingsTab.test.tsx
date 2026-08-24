@@ -146,9 +146,9 @@ describe("AgentSettingsTab — edit mode", () => {
 		}) as HTMLInputElement;
 		expect(nameInput.value).toBe("Tier-1 Triage");
 		const promptInput = screen.getByRole("textbox", {
-			name: /system prompt/i,
-		}) as HTMLTextAreaElement;
-		expect(promptInput.value).toBe("You are a triage bot.");
+			name: /inline instructions/i,
+		});
+		expect(promptInput).toHaveTextContent("You are a triage bot.");
 	});
 
 	it("submits via update mutation on Save", async () => {
@@ -263,7 +263,7 @@ describe("AgentSettingsTab — create mode", () => {
 			"Sales Bot",
 		);
 		await user.type(
-			screen.getByRole("textbox", { name: /system prompt/i }),
+			screen.getByRole("textbox", { name: /inline instructions/i }),
 			"Be helpful.",
 		);
 		await user.click(
