@@ -28,6 +28,10 @@ from src.services.execution.agent_helpers import (
     parse_mcp_tool_name,
     resolve_agent_tools,
 )
+from src.services.execution.agent_workflow_tools import (
+    AgentWorkflowCaller,
+    execute_agent_workflow_tool,
+)
 from src.services.llm import ToolDefinition
 from src.services.mcp_client import dispatch as mcp_dispatch
 from src.services.mcp_client.errors import (
@@ -1225,23 +1229,22 @@ class MCPAgentGatewayService:
         *,
         async_execution: bool = False,
     ) -> Any:
-        from src.services.execution.service import execute_tool
-
         if tool.source_id is None:
             raise GatewayError(
                 "TOOL_EXECUTION_FAILED",
                 "Workflow identity is missing.",
             )
-        response = await execute_tool(
-            workflow_id=str(tool.source_id),
+        response = await execute_agent_workflow_tool(
+            workflow_id=tool.source_id,
             workflow_name=tool.definition.name,
             parameters=arguments,
-            user_id=str(self.context.user_id),
-            user_email=self.context.user_email,
-            user_name=self.context.user_name or "MCP User",
-            org_id=str(self.context.org_id) if self.context.org_id else None,
-            is_platform_admin=self.context.is_platform_admin,
-            is_agent=True,
+            caller=AgentWorkflowCaller(
+                user_id=str(self.context.user_id),
+                email=self.context.user_email,
+                name=self.context.user_name or "MCP User",
+                is_platform_admin=self.context.is_platform_admin,
+            ),
+            organization_id=self.context.org_id,
             sync=not async_execution,
         )
         data = {

@@ -233,7 +233,7 @@ from bifrost import workflow
     description="E2E portable ref test tool",
     is_tool=True
 )
-def {workflow_name}(query: str) -> str:
+async def {workflow_name}(query: str) -> str:
     """Search for information."""
     return f"result: {{query}}"
 '''

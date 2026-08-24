@@ -73,6 +73,10 @@ from src.services.execution.agent_helpers import (
     parse_mcp_tool_name,
     resolve_agent_tools,
 )
+from src.services.execution.agent_workflow_tools import (
+    AgentWorkflowCaller,
+    execute_agent_workflow_tool,
+)
 from src.services.execution.autonomous_agent_executor import (
     AutonomousAgentExecutor,
     ToolError,
@@ -1359,22 +1363,20 @@ class AgentExecutor:
             # Get user info from conversation
             user = conversation.user if conversation else None
 
-            # Execute the workflow via execution service
-            from src.services.execution.service import execute_tool
-
             # Get org_id from agent (workflows are not org-scoped)
             org_id = str(agent.organization_id) if agent and agent.organization_id else None
 
-            execution_response = await execute_tool(
+            execution_response = await execute_agent_workflow_tool(
                 workflow_id=resolved_workflow_id,
                 workflow_name=resolved_workflow_name,
                 parameters=tool_call.arguments or {},
-                user_id=str(user.id) if user else "system",
-                user_email=user.email if user else "system@internal.gobifrost.com",
-                user_name=user.name if user else "System",
-                org_id=org_id,
-                is_platform_admin=user.is_superuser if user else False,
-                is_agent=True,
+                caller=AgentWorkflowCaller(
+                    user_id=str(user.id) if user else "system",
+                    email=user.email if user else "system@internal.gobifrost.com",
+                    name=user.name if user else "System",
+                    is_platform_admin=user.is_superuser if user else False,
+                ),
+                organization_id=org_id,
                 execution_id=execution_id,
                 artifact_workspace_id=str(conversation.id) if conversation else None,
             )

@@ -38,6 +38,10 @@ from src.services.execution.agent_helpers import (
     parse_mcp_tool_name,
     resolve_agent_tools,
 )
+from src.services.execution.agent_workflow_tools import (
+    AgentWorkflowCaller,
+    execute_agent_workflow_tool,
+)
 from src.services.agent_runtime import (
     AgentRunBudget,
     AgentRunCancelled,
@@ -537,38 +541,37 @@ class AutonomousAgentExecutor:
         if not workflow_id:
             raise ToolError(f"Unknown tool: {tool_call.name}")
 
-        from src.services.execution.service import execute_tool
-
-        response = await execute_tool(
-            workflow_id=str(workflow_id),
+        response = await execute_agent_workflow_tool(
+            workflow_id=workflow_id,
             workflow_name=tool_call.name,
             parameters=tool_call.arguments or {},
-            user_id=(
-                str(self._caller_user_id)
-                if self._caller_user_id
-                else SYSTEM_USER_ID
+            caller=AgentWorkflowCaller(
+                user_id=(
+                    str(self._caller_user_id)
+                    if self._caller_user_id
+                    else SYSTEM_USER_ID
+                ),
+                email=(
+                    str(self._caller.get("email"))
+                    if self._caller_user_id
+                    and self._caller
+                    and self._caller.get("email")
+                    else SYSTEM_USER_EMAIL
+                ),
+                name=(
+                    str(self._caller.get("name"))
+                    if self._caller_user_id
+                    and self._caller
+                    and self._caller.get("name")
+                    else agent.name
+                ),
+                is_platform_admin=(
+                    bool(self._caller.get("is_platform_admin", False))
+                    if self._caller_user_id and self._caller
+                    else False
+                ),
             ),
-            user_email=(
-                str(self._caller.get("email"))
-                if self._caller_user_id
-                and self._caller
-                and self._caller.get("email")
-                else SYSTEM_USER_EMAIL
-            ),
-            user_name=(
-                str(self._caller.get("name"))
-                if self._caller_user_id
-                and self._caller
-                and self._caller.get("name")
-                else agent.name
-            ),
-            org_id=str(agent.organization_id) if agent.organization_id else None,
-            is_platform_admin=(
-                bool(self._caller.get("is_platform_admin", False))
-                if self._caller_user_id and self._caller
-                else False
-            ),
-            is_agent=True,
+            organization_id=agent.organization_id,
             artifact_workspace_id=(
                 self._ancestor_run_ids[0]
                 if self._ancestor_run_ids
