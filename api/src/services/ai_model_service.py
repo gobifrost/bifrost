@@ -46,6 +46,7 @@ ASSIGNMENT_KEYS: tuple[AIModelAssignmentKey, ...] = (
     "image_generation",
     "video_generation",
     "chat_default",
+    "builder",
 )
 
 
@@ -306,6 +307,48 @@ class AIModelService:
 
         config = await self.resolve_config(profile_id=profile.id)
         return profile, config, self.normalized_profile_capabilities(profile)
+
+    async def resolve_assignment_profile(
+        self,
+        assignment_key: AIModelAssignmentKey,
+        *,
+        fallback_assignment_key: AIModelAssignmentKey | None = None,
+    ) -> tuple[AIModelProfile, LLMConfig, ModelCapabilities]:
+        """Resolve one runtime assignment, optionally falling back to another."""
+
+        keys = (assignment_key, fallback_assignment_key)
+        for key in keys:
+            if key is None:
+                continue
+            assignment = (
+                (
+                    await self.session.execute(
+                        select(AIModelAssignment)
+                        .options(
+                            joinedload(AIModelAssignment.profile).joinedload(
+                                AIModelProfile.connection
+                            )
+                        )
+                        .where(AIModelAssignment.assignment_key == key)
+                    )
+                )
+                .unique()
+                .scalars()
+                .first()
+            )
+            if assignment is not None:
+                profile = assignment.profile
+                config = await self.resolve_config(profile_id=profile.id)
+                return (
+                    profile,
+                    config,
+                    self.normalized_profile_capabilities(profile),
+                )
+
+        raise ValueError(
+            f"LLM model assignment '{assignment_key}' is not configured. "
+            "Please configure AI model profiles in System Settings > AI Configuration."
+        )
 
     async def list_connections(self) -> list[AIProviderConnection]:
         return list(

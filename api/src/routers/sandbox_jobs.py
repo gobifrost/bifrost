@@ -109,7 +109,6 @@ from src.services.chat_attachments import (
     validate_model_input_capabilities,
 )
 from src.services.execution.agent_helpers import build_agent_system_prompt
-from src.services.llm import get_llm_client
 from src.services.sandbox_runner_config import SandboxRunnerConfigService
 from src.services.builder.workspace_tool_runtime import (
     CLOUDFLARE_WORKSPACE_COMMAND_TOOL_ID,
@@ -275,13 +274,22 @@ async def _resolved_turn_tools(
 ):
     from src.core.database import get_session_factory
     from src.services.agent_executor import AgentExecutor
+    from src.services.ai_model_service import AIModelService
     from src.services.chat_artifacts import artifact_tool_definitions
-    from src.services.llm_config_service import LLMConfigService
 
-    public_config = await LLMConfigService(db).get_config()
-    if public_config is None:
-        raise HTTPException(status_code=409, detail="Builder model is not configured")
-    model_capabilities = public_config.resolve_builder_capabilities()
+    model_service = AIModelService(db)
+    try:
+        _profile, resolved_config, model_capabilities = (
+            await model_service.resolve_assignment_profile(
+                "builder",
+                fallback_assignment_key="primary",
+            )
+        )
+    except (LookupError, ValueError) as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Builder model is not configured",
+        ) from exc
     executor = AgentExecutor(get_session_factory(), model_profile="builder")
     definitions = await executor._get_agent_tools(  # noqa: SLF001 - shared internal boundary
         agent,
@@ -294,16 +302,16 @@ async def _resolved_turn_tools(
         definitions.extend(
             definition
             for definition in artifact_tool_definitions(
-                image_generation_enabled=bool(
-                    public_config.image_generation_model
+                image_generation_enabled=await model_service.has_assignment(
+                    "image_generation"
                 ),
-                video_generation_enabled=bool(
-                    public_config.video_generation_model
+                video_generation_enabled=await model_service.has_assignment(
+                    "video_generation"
                 ),
             )
             if definition.name not in existing
         )
-    return executor, public_config, definitions
+    return executor, resolved_config, model_capabilities, definitions
 
 
 async def _broadcast_chunks(
@@ -415,13 +423,12 @@ async def get_turn_context(
     turn, session, conversation, agent = await _load_turn_runtime(db, job_id)
     if turn.base_revision_id is None or turn.user_message_id is None:
         raise HTTPException(status_code=409, detail="Builder turn context is incomplete")
-    executor, public_config, definitions = await _resolved_turn_tools(
+    executor, resolved_config, model_capabilities, definitions = await _resolved_turn_tools(
         db,
         agent=agent,
         conversation=conversation,
     )
     del executor
-    llm_client = await get_llm_client(db)
     recent = (
         (
             await db.execute(
@@ -436,7 +443,6 @@ async def get_turn_context(
         .all()
     )
     try:
-        model_capabilities = public_config.resolve_builder_capabilities()
         validate_model_input_capabilities(
             [
                 attachment
@@ -475,7 +481,7 @@ async def get_turn_context(
         )
         for message in reversed(recent)
     ]
-    model = public_config.resolve_builder_model()
+    model = resolved_config.model
     from src.services.agent_runtime import AgentRunBudget
     from src.services.agent_runtime.usage_governance import (
         build_runtime_usage_governance,
@@ -539,12 +545,12 @@ async def get_turn_context(
         ),
         bundle_path=agent.bundle_path,
         llm_config=SandboxBuilderModelConfig(
-            provider=llm_client.config.provider,
+            provider=resolved_config.provider,
             model=model,
-            api_key=llm_client.config.api_key,
-            endpoint=llm_client.config.endpoint,
-            max_tokens=agent.llm_max_tokens or llm_client.config.max_tokens,
-            extra_params=llm_client.config.extra_params,
+            api_key=resolved_config.api_key,
+            endpoint=resolved_config.endpoint,
+            max_tokens=agent.llm_max_tokens or resolved_config.max_tokens,
+            extra_params=resolved_config.extra_params,
         ),
         max_iterations=budget.max_requests if budget.max_requests is not None else 50,
         max_token_budget=(
@@ -619,7 +625,7 @@ async def post_assistant_segment(
     capability.require(SANDBOX_EVENT_WRITE)
     _require_turn(capability)
     _turn, _session, conversation, agent = await _load_turn_runtime(db, job_id)
-    executor, public_config, _definitions = await _resolved_turn_tools(
+    executor, resolved_config, _model_capabilities, _definitions = await _resolved_turn_tools(
         db,
         agent=agent,
         conversation=conversation,
@@ -627,7 +633,7 @@ async def post_assistant_segment(
     message = await executor.save_assistant_segment(
         conversation=conversation,
         content=body.content,
-        model=public_config.resolve_builder_model(),
+        model=resolved_config.model,
     )
     await _broadcast_chunks(
         conversation.id,
@@ -686,7 +692,7 @@ async def start_turn_tool(
     capability.require(SANDBOX_TOOL_EXECUTE)
     _require_turn(capability)
     turn, _session, conversation, agent = await _load_turn_runtime(db, job_id)
-    executor, _public_config, definitions = await _resolved_turn_tools(
+    executor, _resolved_config, _model_capabilities, definitions = await _resolved_turn_tools(
         db,
         agent=agent,
         conversation=conversation,
@@ -833,7 +839,7 @@ async def finish_turn_tool(
         | {CLOUDFLARE_WORKSPACE_COMMAND_TOOL_ID, TEST_SOLUTION_BUILD_TOOL_ID}
     ):
         raise HTTPException(status_code=403, detail="Tool must execute in Bifrost")
-    executor, _public_config, definitions = await _resolved_turn_tools(
+    executor, _resolved_config, _model_capabilities, definitions = await _resolved_turn_tools(
         db,
         agent=agent,
         conversation=conversation,

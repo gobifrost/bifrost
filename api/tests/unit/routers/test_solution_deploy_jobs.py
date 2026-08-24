@@ -66,16 +66,18 @@ async def test_deploy_job_passes_memory_profile_key_to_platform_job(
     path = tmp_path / "deploy.zip"
     path.write_bytes(b"validated")
     enqueue = AsyncMock(return_value=(PlatformJob(id=uuid4(), status="queued"), False))
-    monkeypatch.setattr("src.routers.solutions.enqueue_platform_job", enqueue)
     monkeypatch.setattr(
-        "src.routers.solutions.SolutionDeployJobStorage.write_path",
+        "src.services.solutions.deploy_jobs.enqueue_platform_job", enqueue
+    )
+    monkeypatch.setattr(
+        "src.services.solutions.deploy_jobs.SolutionDeployJobStorage.write_path",
         AsyncMock(return_value=("a" * 64, len(b"validated"))),
     )
     monkeypatch.setattr(
-        "src.routers.solutions.publish_platform_job_update", AsyncMock()
+        "src.services.solutions.deploy_jobs.publish_platform_job_update", AsyncMock()
     )
 
-    await _enqueue_solution_deploy_job(
+    await create_staged_deploy_job(
         db_session,
         kind="deploy",
         install_id=sol.id,

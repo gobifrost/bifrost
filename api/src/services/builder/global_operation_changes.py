@@ -39,7 +39,7 @@ REVERSIBLE_AGENT_UPDATE_FIELDS = frozenset(
     {
         # Canonical Agent PUT can restore these fields through AgentUpdate today.
         # Nullable fields that the router ignores when set to null
-        # (description, llm_model, llm_max_tokens) and relationship/bundle fields
+        # (description and relationship/bundle fields)
         # are deliberately fail-closed until the Agent domain service supports
         # fully reversible/idempotent mutation.
         "name",

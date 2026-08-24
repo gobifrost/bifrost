@@ -94,7 +94,7 @@ class BuilderRuntimeProfile:
     channels: tuple[str, ...] = ("chat",)
     access_level: AgentAccessLevel = AgentAccessLevel.ROLE_BASED
     is_active: bool = True
-    llm_model: str | None = None
+    llm_profile_id: UUID | None = None
     max_iterations: int = BUILDER_AGENT_MAX_ITERATIONS
     max_token_budget: int = BUILDER_AGENT_MAX_TOKEN_BUDGET
     llm_max_tokens: int | None = None

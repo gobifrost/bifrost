@@ -8,6 +8,17 @@ from src.core.principal import UserPrincipal
 from src.models.contracts.platform_jobs import PlatformJobStatus
 from src.models.orm.platform_jobs import PlatformJob
 from src.routers.platform_jobs import list_platform_jobs
+from src.services.authorization import AuthorizationBoundary, AuthorizationContext
+
+
+def _authorization(user: UserPrincipal) -> AuthorizationContext:
+    return AuthorizationContext(
+        requester=user,
+        effective_actor=user,
+        selected_boundary=AuthorizationBoundary.platform(),
+        effective_capabilities=frozenset(),
+        grant_sources=(),
+    )
 
 
 def _job(
@@ -60,10 +71,11 @@ async def test_platform_jobs_list_is_paginated_and_orders_active_jobs_first(
         organization_id=uuid4(),
     )
     ctx = ExecutionContext(user=user, org_id=user.organization_id, db=db_session)
+    authorization = _authorization(user)
 
     first_page = await list_platform_jobs(
         ctx,
-        user,
+        authorization,
         active_only=False,
         limit=2,
         offset=0,
@@ -77,7 +89,7 @@ async def test_platform_jobs_list_is_paginated_and_orders_active_jobs_first(
 
     second_page = await list_platform_jobs(
         ctx,
-        user,
+        authorization,
         active_only=False,
         limit=2,
         offset=2,
@@ -88,7 +100,7 @@ async def test_platform_jobs_list_is_paginated_and_orders_active_jobs_first(
 
     active_only = await list_platform_jobs(
         ctx,
-        user,
+        authorization,
         active_only=True,
         limit=25,
         offset=0,
@@ -137,7 +149,7 @@ async def test_platform_jobs_list_filters_by_status_and_search(db_session):
 
     response = await list_platform_jobs(
         ctx,
-        user,
+        _authorization(user),
         active_only=False,
         limit=25,
         offset=0,

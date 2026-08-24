@@ -8,6 +8,7 @@ from src.services.ai_model_service import (
     OPENROUTER_DEFAULT_ENDPOINT,
     PROVIDER_DEFAULT_ENDPOINTS,
 )
+from src.services.model_capabilities import should_offer_tool_calling
 
 
 async def _connection(service: AIModelService):
@@ -61,6 +62,7 @@ async def test_first_profile_bootstraps_every_assignment(db_session):
         "image_generation",
         "video_generation",
         "chat_default",
+        "builder",
     }
     assert {assignment.profile_id for assignment in assignments} == {profile.id}
 
@@ -280,6 +282,25 @@ async def test_resolve_config_from_explicit_profile_uuid(db_session):
     assert config.provider == "openai"
     assert config.endpoint == "https://openrouter.ai/api/v1"
     assert config.model == "openai/gpt-4o-mini"
+
+
+@pytest.mark.asyncio
+async def test_builder_assignment_falls_back_to_primary(db_session):
+    service = AIModelService(db_session)
+    profile = await _profile(service)
+    await service.set_assignment("primary", profile.id)
+    await service.clear_assignment("builder")
+
+    resolved_profile, config, capabilities = (
+        await service.resolve_assignment_profile(
+            "builder",
+            fallback_assignment_key="primary",
+        )
+    )
+
+    assert resolved_profile.id == profile.id
+    assert config.model == profile.model
+    assert should_offer_tool_calling(capabilities) is True
 
 
 @pytest.mark.asyncio

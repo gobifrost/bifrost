@@ -155,6 +155,12 @@ const ASSIGNMENTS: {
 		description: "The selected profile when chat starts.",
 		icon: MessageSquareText,
 	},
+	{
+		key: "builder",
+		label: "Builder",
+		description: "Used for native and externally hosted coding turns.",
+		icon: Bot,
+	},
 ];
 
 function providerLabel(provider: AIProviderKind): string {
@@ -252,7 +258,7 @@ export function AIModelSettings() {
 	});
 
 	const providers = providersQuery.data ?? [];
-	const profiles = profilesQuery.data ?? [];
+	const profiles = useMemo(() => profilesQuery.data ?? [], [profilesQuery.data]);
 	const assignmentsByKey = useMemo(
 		() =>
 			new Map(

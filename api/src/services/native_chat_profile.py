@@ -44,7 +44,7 @@ class NativeChatExecutionProfile:
     channels: tuple[str, ...] = ("chat",)
     access_level: AgentAccessLevel = AgentAccessLevel.ROLE_BASED
     is_active: bool = True
-    llm_model: str | None = None
+    llm_profile_id: UUID | None = None
     max_iterations: int | None = None
     max_token_budget: int | None = None
     llm_max_tokens: int | None = None

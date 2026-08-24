@@ -39,12 +39,18 @@ import {
 	type LucideIcon,
 } from "lucide-react";
 import { Github } from "@/components/icons/GithubIcon";
+import { useAuthorizationBoundary } from "@/contexts/AuthorizationBoundaryContext";
+
+interface SettingsContentProps {
+	canWrite?: boolean;
+	canExecute?: boolean;
+}
 
 type SettingsItem = {
 	value: string;
 	label: string;
 	icon: ComponentType<{ className?: string }>;
-	content: ComponentType;
+	content: ComponentType<SettingsContentProps>;
 };
 
 type SettingsSection = {
@@ -153,31 +159,63 @@ const settingsSections: SettingsSection[] = [
 	},
 ];
 
-function findActiveSectionId(currentTab: string) {
-	return (
-		settingsSections.find((section) =>
-			section.items.some((item) => item.value === currentTab),
-		)?.id ?? settingsSections[0].id
-	);
-}
+const SETTINGS_CAPABILITIES: Record<
+	string,
+	{ read: string; write: string }
+> = {
+	ai: { read: "configs.read", write: "configs.readwrite" },
+	"ai-embeddings": { read: "configs.read", write: "configs.readwrite" },
+	"ai-chat": { read: "configs.read", write: "configs.readwrite" },
+	"ai-memory": { read: "configs.read", write: "configs.readwrite" },
+	"ai-instructions": { read: "configs.read", write: "configs.readwrite" },
+	"ai-usage": { read: "configs.read", write: "configs.readwrite" },
+	mcp: { read: "integrations.read", write: "integrations.readwrite" },
+	github: { read: "repository.read", write: "repository.readwrite" },
+	sso: { read: "integrations.read", write: "integrations.readwrite" },
+	"workflow-keys": { read: "workflows.read", write: "workflows.readwrite" },
+	builder: { read: "platformjobs.read", write: "platformjobs.execute" },
+	branding: { read: "configs.read", write: "configs.readwrite" },
+	maintenance: { read: "platformjobs.read", write: "platformjobs.execute" },
+};
 
-function findActiveContent(currentTab: string) {
+function findActiveSectionId(
+	sections: SettingsSection[],
+	currentTab: string,
+) {
 	return (
-		settingsSections
-			.flatMap((section) => section.items)
-			.find((item) => item.value === currentTab)?.content ??
-		AIModelSettings
+		sections.find((section) =>
+			section.items.some((item) => item.value === currentTab),
+		)?.id ?? sections[0]?.id ?? ""
 	);
 }
 
 export function Settings() {
 	const navigate = useNavigate();
 	const location = useLocation();
+	const { hasSelectedCapability } = useAuthorizationBoundary();
+	const availableSections = settingsSections
+		.map((section) => ({
+			...section,
+			items: section.items.filter((item) => {
+				const capabilities = SETTINGS_CAPABILITIES[item.value];
+				return (
+					capabilities !== undefined &&
+					(hasSelectedCapability(capabilities.read) ||
+						hasSelectedCapability(capabilities.write))
+				);
+			}),
+		}))
+		.filter((section) => section.items.length > 0);
 
 	// Parse the current tab from the URL path
-	const currentTab = location.pathname.split("/settings/")[1] || "ai";
-	const activeSectionId = findActiveSectionId(currentTab);
-	const ActiveContent = findActiveContent(currentTab);
+	const requestedTab = location.pathname.split("/settings/")[1];
+	const availableItems = availableSections.flatMap((section) => section.items);
+	const activeItem =
+		availableItems.find((item) => item.value === requestedTab) ??
+		availableItems[0];
+	const currentTab = activeItem?.value ?? "";
+	const activeSectionId = findActiveSectionId(availableSections, currentTab);
+	const ActiveContent = activeItem?.content;
 	const [expandedSections, setExpandedSections] = useState<string[]>(() => [
 		activeSectionId,
 	]);
@@ -189,7 +227,7 @@ export function Settings() {
 	);
 
 	const handleRouteChange = (value: string) => {
-		const destinationSection = findActiveSectionId(value);
+		const destinationSection = findActiveSectionId(availableSections, value);
 		setExpandedSections((sections) =>
 			sections.includes(destinationSection)
 				? sections
@@ -206,12 +244,12 @@ export function Settings() {
 		);
 	};
 
-	// Redirect /settings to /settings/ai (first tab)
+	// Keep the URL on the first setting admitted by the selected Role.
 	useEffect(() => {
-		if (location.pathname === "/settings") {
-			navigate("/settings/ai", { replace: true });
+		if (currentTab && location.pathname !== `/settings/${currentTab}`) {
+			navigate(`/settings/${currentTab}`, { replace: true });
 		}
-	}, [location.pathname, navigate]);
+	}, [currentTab, location.pathname, navigate]);
 
 	useEffect(() => {
 		if (contentRef.current) contentRef.current.scrollTop = 0;
@@ -233,7 +271,7 @@ export function Settings() {
 					aria-label="Settings sections"
 					className="min-h-0 rounded-lg border bg-card p-2 lg:max-h-[calc(100vh-13rem)] lg:overflow-auto"
 				>
-					{settingsSections.map((section) => {
+					{availableSections.map((section) => {
 						const SectionIcon = section.icon;
 						const isExpanded = sectionState.has(section.id);
 						const containsActive = section.id === activeSectionId;
@@ -312,7 +350,18 @@ export function Settings() {
 					ref={contentRef}
 					className="min-h-0 overflow-auto px-1 pb-6 pr-3 sm:px-2 sm:pr-4"
 				>
-					{createElement(ActiveContent)}
+					{ActiveContent && activeItem
+						? createElement(ActiveContent, {
+								canWrite: hasSelectedCapability(
+									SETTINGS_CAPABILITIES[activeItem.value]
+										.write,
+								),
+								canExecute: hasSelectedCapability(
+									SETTINGS_CAPABILITIES[activeItem.value]
+										.write,
+								),
+							})
+						: null}
 				</section>
 			</div>
 		</div>

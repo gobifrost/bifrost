@@ -17,6 +17,7 @@ AIModelAssignmentKey = Literal[
     "image_generation",
     "video_generation",
     "chat_default",
+    "builder",
 ]
 
 

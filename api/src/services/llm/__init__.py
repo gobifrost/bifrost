@@ -25,12 +25,7 @@ from src.services.llm.base import (
 )
 
 
-async def get_llm_client(session):
-    """Resolve the configured client without importing API/database code eagerly."""
-
-    from src.services.llm.factory import get_llm_client as resolve_client
-
-    return await resolve_client(session)
+from src.services.llm.factory import get_llm_client
 
 __all__ = [
     "BaseLLMClient",

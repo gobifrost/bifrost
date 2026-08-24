@@ -1,7 +1,6 @@
 """Chat contract coverage for the Pydantic AI loop."""
 
 from contextlib import asynccontextmanager
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -16,6 +15,7 @@ from src.models.contracts.agents import ToolResult
 from src.models.contracts.artifacts import ModelCapabilities
 from src.models.orm.ai_models import AIModelProfile
 from src.services.agent_executor import AgentExecutor
+from src.services.agent_runtime import AgentRunBudget, AgentRuntimeRunner
 from src.services.llm import LLMMessage, ToolDefinition
 from src.services.llm.base import LLMConfig
 from src.services.llm.pydantic_client import PydanticAIClient
@@ -70,6 +70,16 @@ def configured_chat_model():
         pdf_input=False,
         tool_calling=True,
     )
+    class PassthroughUsageGovernance:
+        async def constrain_budget(self, _session, budget: AgentRunBudget):
+            return budget
+
+        def observe_model_usage(self, _usage):
+            return False
+
+        async def record_runner_completion(self, _session, **_kwargs):
+            return None
+
     with (
         patch(
             "src.services.agent_executor.AIModelService.resolve_chat_profile",
@@ -78,6 +88,10 @@ def configured_chat_model():
         patch(
             "src.services.agent_executor.AIModelService.has_assignment",
             new=AsyncMock(return_value=False),
+        ),
+        patch(
+            "src.services.agent_executor.build_runtime_usage_governance",
+            new=AsyncMock(return_value=PassthroughUsageGovernance()),
         ),
     ):
         yield
@@ -118,7 +132,10 @@ async def test_chat_stream_contract_is_driven_by_pydantic_runtime(
         return_value=client,
     ), patch(
         "src.services.agent_executor.create_agent_model",
-        return_value=CountingTestModel(custom_output_text="Hello from Pydantic"),
+        return_value=CountingTestModel(
+            call_tools=[],
+            custom_output_text="Hello from Pydantic",
+        ),
     ):
         chunks = [
             chunk
@@ -172,7 +189,7 @@ async def test_chat_resolves_explicit_model_profile_id(
         patch("src.services.agent_executor.get_llm_client", new=AsyncMock(return_value=client)) as client_factory,
         patch(
             "src.services.agent_executor.create_agent_model",
-            return_value=CountingTestModel(custom_output_text="Hello"),
+            return_value=CountingTestModel(call_tools=[], custom_output_text="Hello"),
         ),
     ):
         _ = [
@@ -227,7 +244,7 @@ async def test_chat_omitted_model_profile_uses_default_resolution(
         new=AsyncMock(return_value=client),
     ), patch(
         "src.services.agent_executor.create_agent_model",
-        return_value=CountingTestModel(custom_output_text="Hello"),
+        return_value=CountingTestModel(call_tools=[], custom_output_text="Hello"),
     ):
         _ = [
             chunk
@@ -297,27 +314,13 @@ async def test_unknown_capabilities_still_offer_agent_tools(
     executor: AgentExecutor,
     conversation,
 ) -> None:
-    captured: dict[str, Any] = {}
+    captured_tool_names: list[str] = []
 
-    class FakeRunStreamEvents:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-        def __aiter__(self):
-            return self
-
-        async def __anext__(self):
-            raise StopAsyncIteration
-
-    class FakePydanticAgent:
-        def __init__(self, model, **kwargs):
-            captured["toolsets"] = kwargs["toolsets"]
-
-        def run_stream_events(self, *args, **kwargs):
-            return FakeRunStreamEvents()
+    def capture_runtime(*args, **kwargs):
+        captured_tool_names.extend(
+            definition.name for definition in kwargs["tool_definitions"]
+        )
+        return AgentRuntimeRunner(*args, **kwargs)
 
     profile = MagicMock(spec=AIModelProfile)
     profile.id = uuid4()
@@ -366,10 +369,13 @@ async def test_unknown_capabilities_still_offer_agent_tools(
         new=AsyncMock(return_value=llm_client),
     ), patch(
         "src.services.agent_executor.create_agent_model",
-        return_value=CountingTestModel(custom_output_text="Hello from Pydantic"),
+        return_value=CountingTestModel(
+            call_tools=[],
+            custom_output_text="Hello from Pydantic",
+        ),
     ), patch(
-        "src.services.agent_executor.PydanticAgent",
-        new=FakePydanticAgent,
+        "src.services.agent_executor.AgentRuntimeRunner",
+        side_effect=capture_runtime,
     ):
         chunks = [
             chunk
@@ -380,12 +386,10 @@ async def test_unknown_capabilities_still_offer_agent_tools(
                 stream=False,
                 enable_routing=False,
             )
-        ]
+    ]
 
     assert any(chunk.type == "done" for chunk in chunks)
-    toolsets = captured["toolsets"]
-    assert len(toolsets) == 1
-    assert toolsets[0]._definitions[0].name == "wf_test"
+    assert "wf_test" in captured_tool_names
 
 
 @pytest.mark.asyncio

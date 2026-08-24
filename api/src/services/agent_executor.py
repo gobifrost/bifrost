@@ -306,16 +306,17 @@ class AgentExecutor:
         try:
             async with self._db() as session:
                 model_service = AIModelService(session)
-                effective_profile_id = (
-                    agent.llm_profile_id
-                    if self._model_profile == "builder"
-                    and agent is not None
-                    and agent.llm_profile_id is not None
-                    else model_profile_id
-                )
-                chat_profile, resolved_config, model_capabilities = await model_service.resolve_chat_profile(
-                    effective_profile_id
-                )
+                if self._model_profile == "builder":
+                    chat_profile, resolved_config, model_capabilities = (
+                        await model_service.resolve_assignment_profile(
+                            "builder",
+                            fallback_assignment_key="primary",
+                        )
+                    )
+                else:
+                    chat_profile, resolved_config, model_capabilities = (
+                        await model_service.resolve_chat_profile(model_profile_id)
+                    )
                 image_generation_enabled = await model_service.has_assignment("image_generation")
                 video_generation_enabled = await model_service.has_assignment("video_generation")
             model_override = resolved_config.model
@@ -330,22 +331,12 @@ class AgentExecutor:
                         .where(MessageAttachment.conversation_id == conversation.id)
                     )
                     selected_attachments = attachment_result.scalars().all()
-                if any(
-                    attachment.content_type in IMAGE_CONTENT_TYPES
-                    for attachment in selected_attachments
-                ) and not model_capabilities.image_input:
-                    raise ValueError(
-                        f"Model profile '{chat_profile.name}' is not configured for image input. "
-                        "Choose another model profile or ask an administrator to verify its capabilities."
-                    )
-                if any(
-                    attachment.content_type in PDF_CONTENT_TYPES
-                    for attachment in selected_attachments
-                ) and not model_capabilities.pdf_input:
-                    raise ValueError(
-                        f"Model profile '{chat_profile.name}' is not configured for PDF input. "
-                        "Choose another model profile or ask an administrator to verify its capabilities."
-                    )
+                validate_model_input_capabilities(
+                    selected_attachments,
+                    image_input=model_capabilities.image_input,
+                    pdf_input=model_capabilities.pdf_input,
+                    model_label=chat_profile.name,
+                )
 
             # 1. Check for @mention agent switching
             if enable_routing:

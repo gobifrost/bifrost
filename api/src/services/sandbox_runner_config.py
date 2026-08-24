@@ -400,15 +400,16 @@ async def get_builder_readiness(
     session: AsyncSession,
 ) -> tuple[bool, SandboxRunnerReadiness]:
     """Return canonical AI + sandbox readiness for every Builder surface."""
-    from src.services.llm_config_service import LLMConfigService
+    from src.services.ai_model_service import AIModelService
 
-    llm_config = await LLMConfigService(session).get_config()
-    ai_configured = bool(
-        llm_config
-        and llm_config.is_configured
-        and llm_config.api_key_set
-        and (llm_config.builder_model or llm_config.model)
-    )
+    try:
+        await AIModelService(session).resolve_assignment_profile(
+            "builder",
+            fallback_assignment_key="primary",
+        )
+        ai_configured = True
+    except (LookupError, ValueError):
+        ai_configured = False
     readiness = await SandboxRunnerConfigService(session).get_readiness(
         ai_configured=ai_configured
     )
