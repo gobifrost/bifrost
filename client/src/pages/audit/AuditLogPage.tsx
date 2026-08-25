@@ -143,8 +143,8 @@ export function AuditLogPage() {
 				<Alert variant="destructive">
 					<AlertCircle className="h-4 w-4" />
 					<AlertDescription>
-						You do not have permission to view the audit log. Platform
-						administrator access is required.
+						You do not have permission to view the audit log.
+						Platform administrator access is required.
 					</AlertDescription>
 				</Alert>
 				<Button onClick={() => navigate("/")} className="mt-4">
@@ -157,89 +157,123 @@ export function AuditLogPage() {
 	return (
 		<div className="h-[calc(100vh-8rem)] flex flex-col space-y-6">
 			{/* Header */}
-			<div>
-				<h1 className="text-4xl font-extrabold tracking-tight">Audit Log</h1>
-				<p className="mt-2 text-muted-foreground">
-					Trace security decisions and administrative activity across the
-					platform
-				</p>
-			</div>
-
-			{/* Filters */}
-			<div className="flex items-center gap-4 flex-wrap">
-				<Select
-					value={actionGroup}
-					onValueChange={(value) => updateFilter(setActionGroup, value)}
-				>
-					<SelectTrigger className="w-[200px]" aria-label="Action filter">
-						<SelectValue placeholder="Action" />
-					</SelectTrigger>
-					<SelectContent>
-						{ACTION_GROUPS.map((g) => (
-							<SelectItem key={g.value} value={g.value}>
-								{g.label}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
-
-				<Select
-					value={outcome}
-					onValueChange={(value) => updateFilter(setOutcome, value)}
-				>
-					<SelectTrigger className="w-[160px]" aria-label="Outcome filter">
-						<SelectValue placeholder="Outcome" />
-					</SelectTrigger>
-					<SelectContent>
-						{OUTCOMES.map((o) => (
-							<SelectItem key={o.value} value={o.value}>
-								{o.label}
-							</SelectItem>
-						))}
-					</SelectContent>
-				</Select>
-
-				<Input
-					type="search"
-					aria-label="Search audit events"
-					placeholder="Search path, table, action, or IP…"
-					value={searchText}
-					onChange={(e) => updateFilter(setSearchText, e.target.value)}
-					className="w-full min-w-0 max-w-md sm:min-w-[320px] sm:flex-1"
-				/>
-
-				<Input
-					type="date"
-					aria-label="Start date"
-					value={startDate}
-					onChange={(e) => updateFilter(setStartDate, e.target.value)}
-					className="w-[160px]"
-				/>
-				<Input
-					type="date"
-					aria-label="End date"
-					value={endDate}
-					onChange={(e) => updateFilter(setEndDate, e.target.value)}
-					className="w-[160px]"
-				/>
-
+			<div className="flex items-start justify-between gap-4">
+				<div>
+					<h1 className="text-4xl font-extrabold tracking-tight">
+						Audit Log
+					</h1>
+					<p className="mt-2 text-muted-foreground">
+						Trace security decisions and administrative activity
+						across the platform
+					</p>
+				</div>
 				<Button
 					variant="outline"
 					size="icon"
 					onClick={() => refetch()}
 					disabled={isLoading}
 					aria-label="Refresh audit log"
+					className="shrink-0"
 				>
 					<RefreshCw
 						className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`}
 					/>
 				</Button>
+			</div>
 
-				{hasActiveFilters && (
-					<Button variant="ghost" onClick={clearFilters}>
-						Clear filters
-					</Button>
-				)}
+			{/* Filters */}
+			<div className="space-y-3">
+				<Input
+					type="search"
+					aria-label="Search audit events"
+					placeholder="Search path, table, action, or IP…"
+					value={searchText}
+					onChange={(e) =>
+						updateFilter(setSearchText, e.target.value)
+					}
+					className="w-full"
+				/>
+
+				<div className="grid gap-3 sm:grid-cols-2 lg:flex lg:items-center">
+					<Select
+						value={actionGroup}
+						onValueChange={(value) =>
+							updateFilter(setActionGroup, value)
+						}
+					>
+						<SelectTrigger
+							className="w-full lg:w-[200px]"
+							aria-label="Action filter"
+						>
+							<SelectValue placeholder="Action" />
+						</SelectTrigger>
+						<SelectContent>
+							{ACTION_GROUPS.map((g) => (
+								<SelectItem key={g.value} value={g.value}>
+									{g.label}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+
+					<Select
+						value={outcome}
+						onValueChange={(value) =>
+							updateFilter(setOutcome, value)
+						}
+					>
+						<SelectTrigger
+							className="w-full lg:w-[160px]"
+							aria-label="Outcome filter"
+						>
+							<SelectValue placeholder="Outcome" />
+						</SelectTrigger>
+						<SelectContent>
+							{OUTCOMES.map((o) => (
+								<SelectItem key={o.value} value={o.value}>
+									{o.label}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+
+					<div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-2 gap-y-2 sm:col-span-2 lg:ml-auto lg:flex">
+						<span className="text-sm text-muted-foreground">
+							From
+						</span>
+						<Input
+							type="date"
+							aria-label="Start date"
+							value={startDate}
+							onChange={(e) =>
+								updateFilter(setStartDate, e.target.value)
+							}
+							className="min-w-0 lg:w-[150px]"
+						/>
+						<span className="text-sm text-muted-foreground">
+							To
+						</span>
+						<Input
+							type="date"
+							aria-label="End date"
+							value={endDate}
+							onChange={(e) =>
+								updateFilter(setEndDate, e.target.value)
+							}
+							className="min-w-0 lg:w-[150px]"
+						/>
+					</div>
+
+					{hasActiveFilters && (
+						<Button
+							variant="ghost"
+							onClick={clearFilters}
+							className="justify-self-start lg:shrink-0"
+						>
+							Clear filters
+						</Button>
+					)}
+				</div>
 			</div>
 
 			{/* Content */}
@@ -275,10 +309,14 @@ export function AuditLogPage() {
 							{entries.map((entry: AuditLogEntry) => (
 								<DataTableRow key={entry.id}>
 									<DataTableCell className="font-mono text-xs whitespace-nowrap">
-										{new Date(entry.timestamp).toLocaleString()}
+										{new Date(
+											entry.timestamp,
+										).toLocaleString()}
 									</DataTableCell>
 									<DataTableCell>
-										<Badge variant="secondary">{entry.action}</Badge>
+										<Badge variant="secondary">
+											{entry.action}
+										</Badge>
 									</DataTableCell>
 									<DataTableCell>
 										<Badge
@@ -318,11 +356,18 @@ export function AuditLogPage() {
 						</DataTableBody>
 						<DataTableFooter>
 							<DataTableRow>
-								<DataTableCell colSpan={4} className="text-sm text-muted-foreground">
+								<DataTableCell
+									colSpan={4}
+									className="text-sm text-muted-foreground"
+								>
 									{entries.length} event
-									{entries.length !== 1 ? "s" : ""} on this page
+									{entries.length !== 1 ? "s" : ""} on this
+									page
 								</DataTableCell>
-								<DataTableCell colSpan={3} className="text-right">
+								<DataTableCell
+									colSpan={3}
+									className="text-right"
+								>
 									<div className="flex gap-2 justify-end">
 										<Button
 											variant="outline"
@@ -350,7 +395,9 @@ export function AuditLogPage() {
 				) : (
 					<Card>
 						<CardContent className="flex flex-col items-center justify-center py-12 text-center">
-							<h3 className="text-lg font-semibold">No events found</h3>
+							<h3 className="text-lg font-semibold">
+								No events found
+							</h3>
 							<p className="mt-2 text-sm text-muted-foreground">
 								Try adjusting your filters or date range
 							</p>
