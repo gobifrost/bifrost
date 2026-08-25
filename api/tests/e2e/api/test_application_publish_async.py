@@ -47,6 +47,27 @@ def _poll(e2e_client, headers, job_id: str) -> dict:
     raise AssertionError(f"publish job {job_id} did not finish")
 
 
+def _poll_notification(
+    e2e_client,
+    headers,
+    notification_id: str,
+    status: str,
+) -> dict:
+    for _ in range(120):
+        response = e2e_client.get(
+            f"/api/notifications/{notification_id}",
+            headers=headers,
+        )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        if body["status"] == status:
+            return body
+        time.sleep(0.25)
+    raise AssertionError(
+        f"notification {notification_id} did not reach status {status}"
+    )
+
+
 def test_enqueue_poll_and_success(e2e_client, platform_admin):
     app = _create_app(
         e2e_client,
@@ -86,13 +107,13 @@ def test_enqueue_poll_and_success(e2e_client, platform_admin):
     )
     assert application.status_code == 200
     assert application.json()["is_published"] is True
-    notification = e2e_client.get(
-        f"/api/notifications/{response.json()['notification_id']}",
-        headers=platform_admin.headers,
+    notification = _poll_notification(
+        e2e_client,
+        platform_admin.headers,
+        response.json()["notification_id"],
+        "completed",
     )
-    assert notification.status_code == 200, notification.text
-    assert notification.json()["status"] == "completed"
-    assert notification.json()["percent"] == 100
+    assert notification["percent"] == 100
 
 
 def test_job_is_not_visible_to_another_user(
@@ -223,13 +244,13 @@ def test_bundle_failure_is_persisted_and_does_not_publish(
 
     assert body["status"] == "failed", body
     assert "Bundle build failed" in body["error"]["message"]
-    notification = e2e_client.get(
-        f"/api/notifications/{response.json()['notification_id']}",
-        headers=platform_admin.headers,
+    notification = _poll_notification(
+        e2e_client,
+        platform_admin.headers,
+        response.json()["notification_id"],
+        "failed",
     )
-    assert notification.status_code == 200, notification.text
-    assert notification.json()["status"] == "failed"
-    assert "Bundle build failed" in notification.json()["error"]
+    assert "Bundle build failed" in notification["error"]
     app_response = e2e_client.get(
         f"/api/applications/{app['slug']}",
         headers=platform_admin.headers,
