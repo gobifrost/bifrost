@@ -1,8 +1,8 @@
 """
 Execution Cleanup Scheduler
 
-Cleans up stuck executions that remain in PENDING, RUNNING, or CANCELLING
-status for too long.
+Cleans up stuck workflow executions and stale autonomous agent runs that
+remain in in-progress states for too long.
 
 Runs every 5 minutes to find and timeout stuck executions.
 """
@@ -11,10 +11,16 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import select, and_
+from sqlalchemy import and_, select
 
 from src.core.database import get_session_factory
-from src.core.pubsub import publish_execution_update, publish_history_update
+from src.core.pubsub import (
+    publish_agent_run_update,
+    publish_execution_update,
+    publish_history_update,
+)
+from src.models.orm.agent_runs import AgentRun
+from src.models.orm.agents import Agent
 from src.models import Execution as ExecutionModel, ExecutionLog
 from src.models.orm.workflows import Workflow
 
@@ -24,6 +30,8 @@ logger = logging.getLogger(__name__)
 PENDING_TIMEOUT_MINUTES = 10  # If PENDING for 10+ minutes, it's stuck in queue
 RUNNING_TIMEOUT_MINUTES = 30  # If RUNNING for 30+ minutes, worker likely crashed
 CANCELLING_TIMEOUT_MINUTES = 3  # If CANCELLING for 3+ minutes, worker failed to cancel
+DEFAULT_AGENT_RUN_TIMEOUT_SECONDS = 30 * 60
+AGENT_RUN_TIMEOUT_GRACE_SECONDS = 5 * 60
 
 
 async def cleanup_stuck_executions() -> dict[str, Any]:
@@ -46,6 +54,10 @@ async def cleanup_stuck_executions() -> dict[str, Any]:
         "cancelling_timeouts": 0,
         "total_cleaned": 0,
         "errors": [],
+        "agent_run_queued_timeouts": 0,
+        "agent_run_running_timeouts": 0,
+        "agent_run_total_cleaned": 0,
+        "agent_run_errors": [],
     }
 
     now = datetime.now(timezone.utc)
@@ -237,5 +249,150 @@ async def cleanup_stuck_executions() -> dict[str, Any]:
     except Exception as e:
         logger.error("Error in execution cleanup", extra={"error": str(e)}, exc_info=True)
         results["errors"].append({"error": str(e)})
+    finally:
+        try:
+            agent_run_results = await _cleanup_stale_agent_runs(now)
+            results.update(agent_run_results)
+        except Exception as e:
+            logger.error("Error in agent run cleanup", extra={"error": str(e)}, exc_info=True)
+            results["agent_run_errors"].append({"error": str(e)})
+        else:
+            logger.info(
+                "Agent run cleanup completed",
+                extra={
+                    "agent_run_queued_timeouts": results["agent_run_queued_timeouts"],
+                    "agent_run_running_timeouts": results["agent_run_running_timeouts"],
+                    "agent_run_total_cleaned": results["agent_run_total_cleaned"],
+                },
+            )
 
     return results
+
+
+def _agent_run_timeout_seconds(agent: Agent | None) -> int:
+    """Return the configured timeout for an agent, falling back to the shared default."""
+    configured = getattr(agent, "max_run_timeout", None)
+    if configured is not None and configured > 0:
+        return configured
+    return DEFAULT_AGENT_RUN_TIMEOUT_SECONDS
+
+
+async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
+    """Terminalize stale queued/running AgentRun rows without replaying them."""
+    session_factory = get_session_factory()
+    updates: list[dict[str, Any]] = []
+    results: dict[str, Any] = {
+        "agent_run_queued_timeouts": 0,
+        "agent_run_running_timeouts": 0,
+        "agent_run_total_cleaned": 0,
+        "agent_run_errors": [],
+    }
+
+    try:
+        async with session_factory() as db:
+            query = (
+                select(AgentRun, Agent)
+                .join(Agent, AgentRun.agent_id == Agent.id)
+                .where(AgentRun.status.in_(("queued", "running")))
+                .order_by(AgentRun.created_at.asc())
+            )
+            runs = (await db.execute(query)).all()
+
+            for candidate, agent in runs:
+                timeout_seconds = _agent_run_timeout_seconds(agent)
+                timeout_with_grace = timeout_seconds + AGENT_RUN_TIMEOUT_GRACE_SECONDS
+                reference_time = (
+                    candidate.created_at
+                    if candidate.status == "queued"
+                    else (candidate.started_at or candidate.created_at)
+                )
+                if reference_time is None:
+                    continue
+
+                elapsed = (now - reference_time).total_seconds()
+                if elapsed <= timeout_with_grace:
+                    continue
+
+                # Lock only the row already identified as stale. The status
+                # predicate is a compare-and-set guard against a worker that
+                # completed between the candidate read and this lock.
+                run = (
+                    await db.execute(
+                        select(AgentRun)
+                        .where(
+                            AgentRun.id == candidate.id,
+                            AgentRun.status == candidate.status,
+                        )
+                        .with_for_update(skip_locked=True, of=AgentRun)
+                    )
+                ).scalar_one_or_none()
+                if run is None:
+                    continue
+
+                reference_time = (
+                    run.created_at
+                    if run.status == "queued"
+                    else (run.started_at or run.created_at)
+                )
+                if reference_time is None:
+                    continue
+                elapsed = (now - reference_time).total_seconds()
+                if elapsed <= timeout_with_grace:
+                    continue
+
+                agent_name = agent.name
+                if run.status == "queued":
+                    final_status = "failed"
+                    timeout_reason = (
+                        f"Agent run timed out waiting in queue after "
+                        f"{timeout_with_grace} seconds."
+                    )
+                    results["agent_run_queued_timeouts"] += 1
+                else:
+                    final_status = "timeout"
+                    timeout_reason = (
+                        f"Agent run timed out after {timeout_with_grace} seconds."
+                    )
+                    results["agent_run_running_timeouts"] += 1
+
+                logger.warning(
+                    "agent_run_swept",
+                    extra={
+                        "agent_run_id": str(run.id),
+                        "agent_id": str(run.agent_id),
+                        "agent_name": agent_name,
+                        "stuck_status": run.status,
+                        "stuck_for_seconds": int(elapsed),
+                        "timeout_seconds": timeout_seconds,
+                        "timeout_with_grace": timeout_with_grace,
+                    },
+                )
+
+                run.status = final_status
+                run.error = timeout_reason
+                run.completed_at = now
+                updates.append(
+                    {
+                        "run": run,
+                        "agent_name": agent_name,
+                    }
+                )
+                results["agent_run_total_cleaned"] += 1
+
+            await db.commit()
+
+        for update in updates:
+            try:
+                await publish_agent_run_update(update["run"], update["agent_name"])
+            except Exception:
+                logger.warning(
+                    "Failed to publish agent run update",
+                    extra={"agent_run_id": str(update["run"].id)},
+                    exc_info=True,
+                )
+
+        return results
+    except Exception as e:
+        logger.error("Error in agent run cleanup", extra={"error": str(e)}, exc_info=True)
+        results["agent_run_errors"].append({"error": str(e)})
+        return results

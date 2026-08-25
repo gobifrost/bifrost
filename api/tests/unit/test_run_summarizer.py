@@ -8,8 +8,6 @@ extraction, and persists the parsed result onto the run record + an
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-import httpx
-import openai
 import pytest
 import pytest_asyncio
 from sqlalchemy import delete, select
@@ -20,30 +18,8 @@ from src.services.llm import LLMResponse
 from src.services.execution.run_summarizer import (
     _clamp_confidence,
     _extract_json_object,
-    _retry_delay_from_exception,
     summarize_run,
 )
-
-
-def _build_rate_limit_error(retry_after: str | None = None) -> openai.RateLimitError:
-    """Build a realistic-looking openai.RateLimitError for retry tests.
-
-    The SDK's exception requires an httpx.Response so ``exc.response.headers``
-    works; retry-after honoring depends on that attribute chain.
-    """
-    headers = {}
-    if retry_after is not None:
-        headers["Retry-After"] = retry_after
-    response = httpx.Response(
-        status_code=429,
-        headers=headers,
-        request=httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions"),
-    )
-    return openai.RateLimitError(
-        "429 rate limit exceeded (test)",
-        response=response,
-        body=None,
-    )
 
 
 @pytest_asyncio.fixture
@@ -346,98 +322,25 @@ def test_clamp_confidence():
     assert _clamp_confidence("0.7") == 0.7  # numeric string parsed
 
 
-def test_retry_delay_honors_retry_after_header():
-    """429 with Retry-After should override the exponential backoff."""
-    exc = _build_rate_limit_error(retry_after="3")
-    # Attempt index shouldn't matter when the header is present.
-    assert _retry_delay_from_exception(exc, attempt=0) == 3.0
-    assert _retry_delay_from_exception(exc, attempt=4) == 3.0
-
-
-def test_retry_delay_falls_back_to_exponential_with_jitter():
-    """Without Retry-After, delay grows with attempt and has jitter."""
-    exc = _build_rate_limit_error(retry_after=None)
-    # Jitter is in [0.5, 1.0) of base — we just bound it.
-    d0 = _retry_delay_from_exception(exc, attempt=0)
-    d2 = _retry_delay_from_exception(exc, attempt=2)
-    assert 1.0 <= d0 <= 2.0  # base=2, jitter half-to-full
-    assert 4.0 <= d2 <= 8.0  # base=8
-    # Cap enforced.
-    huge = _retry_delay_from_exception(exc, attempt=10)
-    assert huge <= 30.0
-
-
 @pytest.mark.asyncio
-async def test_summarize_run_retries_429_then_succeeds(
+async def test_summarize_run_does_not_stack_transport_retries(
     async_session_factory, seed_completed_run
 ):
-    """Transient 429 on the first attempt should be retried, not persisted as
-    a terminal failure. Regression: prior to the fix, OpenRouter 429s during
-    a backfill permanently failed ~525 runs because the summarizer's generic
-    `except Exception` treated rate limits the same as invalid JSON."""
-    from src.services.execution import run_summarizer as mod
-
-    ok_resp = _build_mock_llm_response(
-        '{"asked": "reset", "did": "routed", "confidence": 0.8, '
-        '"confidence_reason": "clear", "metadata": {}}'
-    )
-    mock_client = MagicMock()
-    # First call: 429. Second call: success.
-    mock_client.complete = AsyncMock(
-        side_effect=[_build_rate_limit_error(retry_after="0"), ok_resp]
-    )
-    mock_client.provider_name = "openai"
-
-    # Patch asyncio.sleep so the test doesn't actually wait.
-    with (
-        patch.object(
-            mod,
-            "get_summarization_client",
-            new=AsyncMock(return_value=(mock_client, "gemini-3-flash")),
-        ),
-        patch.object(mod.asyncio, "sleep", new=AsyncMock()),
-    ):
-        await summarize_run(seed_completed_run.id, async_session_factory)
-
-    assert mock_client.complete.await_count == 2
-    async with async_session_factory() as db:
-        run = (
-            await db.execute(
-                select(AgentRun).where(AgentRun.id == seed_completed_run.id)
-            )
-        ).scalar_one()
-        assert run.summary_status == "completed"
-        assert run.asked == "reset"
-
-
-@pytest.mark.asyncio
-async def test_summarize_run_429_exhausts_retries_marks_failed(
-    async_session_factory, seed_completed_run
-):
-    """After the retry budget is exhausted, the run is marked failed with a
-    message that identifies the transient error type — admins should not have
-    to grep worker logs to tell 'provider was rate-limiting us' from 'model
-    returned bad JSON'."""
+    """A provider-exhausted request is attempted once at the summary layer."""
     from src.services.execution import run_summarizer as mod
 
     mock_client = MagicMock()
-    mock_client.complete = AsyncMock(
-        side_effect=_build_rate_limit_error(retry_after="0")
-    )
+    mock_client.complete = AsyncMock(side_effect=RuntimeError("429 rate limited"))
     mock_client.provider_name = "openai"
 
-    with (
-        patch.object(
-            mod,
-            "get_summarization_client",
-            new=AsyncMock(return_value=(mock_client, "gemini-3-flash")),
-        ),
-        patch.object(mod.asyncio, "sleep", new=AsyncMock()),
+    with patch.object(
+        mod,
+        "get_summarization_client",
+        new=AsyncMock(return_value=(mock_client, "gemini-3-flash")),
     ):
         await summarize_run(seed_completed_run.id, async_session_factory)
 
-    # _MAX_RETRIES=5 retries after the initial attempt → 6 total calls.
-    assert mock_client.complete.await_count == mod._MAX_RETRIES + 1
+    assert mock_client.complete.await_count == 1
     async with async_session_factory() as db:
         run = (
             await db.execute(
@@ -446,8 +349,8 @@ async def test_summarize_run_429_exhausts_retries_marks_failed(
         ).scalar_one()
         assert run.summary_status == "failed"
         assert run.summary_error is not None
-        assert "RateLimitError" in run.summary_error
-        assert "after retries" in run.summary_error
+        assert "RuntimeError" in run.summary_error
+        assert "429 rate limited" in run.summary_error
 
 
 class TestExtractJsonObject:

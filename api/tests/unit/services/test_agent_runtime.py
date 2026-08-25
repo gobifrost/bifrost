@@ -165,6 +165,11 @@ def test_create_agent_model_supports_every_configured_provider(
 
     assert model.model_name == "test-model"
     assert model.system == expected_system
+    provider_client = model.provider.client
+    if provider == "google":
+        assert provider_client._api_client._async_httpx_client is not None
+    else:
+        assert provider_client.max_retries == 0
 
 
 def test_create_agent_model_uses_native_openrouter_adapter() -> None:
@@ -182,6 +187,7 @@ def test_create_agent_model_uses_native_openrouter_adapter() -> None:
     assert isinstance(model, OpenRouterModel)
     assert model.model_name == "~deepseek/deepseek-v4-flash-latest"
     assert model.system == "openrouter"
+    assert model.provider.client.max_retries == 0
     settings = cast(OpenRouterModelSettings, model.settings)
     assert settings.get("openrouter_usage") == {"include": True}
 

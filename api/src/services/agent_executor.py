@@ -612,6 +612,7 @@ class AgentExecutor:
             observed_model = ObservedModel(
                 create_agent_model(llm_client.config, model=model_name),
                 record_model_event,
+                retry_surface="chat_agent",
             )
             toolset = BifrostToolset(
                 tool_definitions,

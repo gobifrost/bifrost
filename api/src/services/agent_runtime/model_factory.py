@@ -9,6 +9,7 @@ from decimal import Decimal, InvalidOperation
 from pydantic_ai.models import Model
 from pydantic_ai.usage import RequestUsage
 
+from src.services.agent_runtime.retry_transport import get_ai_retry_http_client
 from src.services.llm.base import LLMConfig, request_max_tokens
 from src.services.model_pricing import is_openrouter_endpoint
 
@@ -84,6 +85,7 @@ def create_agent_model(config: LLMConfig, *, model: str | None = None) -> Model:
 
     if config.provider == "openai":
         if is_openrouter_endpoint(config.endpoint):
+            from openai import AsyncOpenAI
             from pydantic_ai.models.openrouter import (
                 OpenRouterModel,
                 OpenRouterStreamedResponse,
@@ -126,29 +128,43 @@ def create_agent_model(config: LLMConfig, *, model: str | None = None) -> Model:
                         "openrouter_cache_messages": True,
                     }
                 )
+            client = AsyncOpenAI(
+                api_key=config.api_key,
+                base_url=config.endpoint or "https://openrouter.ai/api/v1",
+                http_client=get_ai_retry_http_client(),
+                max_retries=0,
+            )
             return BifrostOpenRouterModel(
                 model_name,
-                provider=OpenRouterProvider(api_key=config.api_key),
+                provider=OpenRouterProvider(openai_client=client),
                 settings=settings,
             )
 
+        from openai import AsyncOpenAI
         from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.openai import OpenAIProvider
 
-        provider = OpenAIProvider(
+        client = AsyncOpenAI(
             api_key=config.api_key,
             base_url=config.endpoint,
+            http_client=get_ai_retry_http_client(),
+            max_retries=0,
         )
+        provider = OpenAIProvider(openai_client=client)
         return OpenAIChatModel(model_name, provider=provider)
 
     if config.provider == "anthropic":
+        from anthropic import AsyncAnthropic
         from pydantic_ai.models.anthropic import AnthropicModel
         from pydantic_ai.providers.anthropic import AnthropicProvider
 
-        provider = AnthropicProvider(
+        client = AsyncAnthropic(
             api_key=config.api_key,
             base_url=config.endpoint,
+            http_client=get_ai_retry_http_client(),
+            max_retries=0,
         )
+        provider = AnthropicProvider(anthropic_client=client)
         return AnthropicModel(model_name, provider=provider)
 
     if config.provider == "google":
@@ -158,6 +174,7 @@ def create_agent_model(config: LLMConfig, *, model: str | None = None) -> Model:
         provider = GoogleProvider(
             api_key=config.api_key,
             base_url=config.endpoint,
+            http_client=get_ai_retry_http_client(),
         )
         return GoogleModel(model_name, provider=provider)
 

@@ -1212,6 +1212,7 @@ httpx==0.28.1 \
     #   google-genai
     #   mcp
     #   pydantic-ai-harness
+    #   pydantic-ai-slim
 httpx-sse==0.4.3 \
     --hash=sha256:0ac1c9fe3c0afad2e0ebb25a934a59f4c7823b60792691f779fad2c5568830fc \
     --hash=sha256:9b1ed0127459a66014aec3c56bebd93da3c1bc8bb6618c8082039a44889a755d
@@ -2309,7 +2310,7 @@ pydantic-ai-harness==0.24.0 \
     --hash=sha256:6caa05a553b0cef6acc8a63fd1440ce80aaba2709ef02987daaf8ef415c85234 \
     --hash=sha256:f1b738b788b48a30570d47ea094b0e6cbcb4ff1b3ec5a889d0d37691733178a1
     # via bifrost-api (pyproject.toml)
-pydantic-ai-slim[anthropic,google,openai]==2.33.0 \
+pydantic-ai-slim[anthropic,google,openai,retries]==2.33.0 \
     --hash=sha256:5ab28c9f6d7c0a6dd8e5c4f75ba4bcfa84a7f6aa0faa7b64209fbcaa981f922b \
     --hash=sha256:7809e3000df0265ee93e7c55ff1d852621a23b22ccb5ad790d9228e457cfb10a
     # via
@@ -3025,7 +3026,9 @@ starlette==1.0.0 \
 tenacity==9.1.4 \
     --hash=sha256:6095a360c919085f28c6527de529e76a06ad89b23659fa881ae0649b867a9d55 \
     --hash=sha256:adb31d4c263f2bd041081ab33b498309a57c77f9acf2db65aadf0898179cf93a
-    # via google-genai
+    # via
+    #   google-genai
+    #   pydantic-ai-slim
 textual==8.2.4 \
     --hash=sha256:a83bd3f0cc7125ca203845af753f9d6b6be030025ecd1b05cc75ebe645b9c4ba \
     --hash=sha256:d4e2b2ddd7157191d00b228592b7c739ea080b7d792fd410f23ca75f05ea76c4

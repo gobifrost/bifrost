@@ -33,6 +33,7 @@ from src.services.agent_runtime.model_factory import (
     create_agent_model,
     provider_name_for_config,
 )
+from src.services.agent_runtime.retry_transport import ai_retry_context
 from src.services.agent_runtime.usage import provider_reported_cost
 from src.services.llm.base import (
     BaseLLMClient,
@@ -67,17 +68,23 @@ class PydanticAIClient(BaseLLMClient):
         # response. Anthropic rejects high-output non-streaming requests that
         # could exceed ten minutes, so this preserves the legacy contract
         # without leaking provider-specific behavior into callers.
-        async with model_request_stream(
-            create_agent_model(self.config, model=model),
-            self.convert_messages(messages),
-            model_settings=self._model_settings(max_tokens),
-            model_request_parameters=self._request_parameters(
-                tools, require_tool_call=require_tool_call
-            ),
-        ) as stream:
-            async for _ in stream:
-                pass
-            response = stream.get()
+        resolved_model = model or self.config.model
+        with ai_retry_context(
+            provider=self.provider_name,
+            model=resolved_model,
+            surface="llm_client.complete",
+        ):
+            async with model_request_stream(
+                create_agent_model(self.config, model=resolved_model),
+                self.convert_messages(messages),
+                model_settings=self._model_settings(max_tokens),
+                model_request_parameters=self._request_parameters(
+                    tools, require_tool_call=require_tool_call
+                ),
+            ) as stream:
+                async for _ in stream:
+                    pass
+                response = stream.get()
         return self._convert_response(response)
 
     async def stream(
@@ -89,39 +96,45 @@ class PydanticAIClient(BaseLLMClient):
         model: str | None = None,
     ) -> AsyncGenerator[LLMStreamChunk, None]:
         try:
-            async with model_request_stream(
-                create_agent_model(self.config, model=model),
-                self.convert_messages(messages),
-                model_settings=self._model_settings(max_tokens),
-                model_request_parameters=self._request_parameters(tools),
-            ) as stream:
-                async for event in stream:
-                    if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
-                        if event.part.content:
-                            yield LLMStreamChunk(type="delta", content=event.part.content)
-                    elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
-                        if event.delta.content_delta:
-                            yield LLMStreamChunk(type="delta", content=event.delta.content_delta)
+            resolved_model = model or self.config.model
+            with ai_retry_context(
+                provider=self.provider_name,
+                model=resolved_model,
+                surface="llm_client.stream",
+            ):
+                async with model_request_stream(
+                    create_agent_model(self.config, model=resolved_model),
+                    self.convert_messages(messages),
+                    model_settings=self._model_settings(max_tokens),
+                    model_request_parameters=self._request_parameters(tools),
+                ) as stream:
+                    async for event in stream:
+                        if isinstance(event, PartStartEvent) and isinstance(event.part, TextPart):
+                            if event.part.content:
+                                yield LLMStreamChunk(type="delta", content=event.part.content)
+                        elif isinstance(event, PartDeltaEvent) and isinstance(event.delta, TextPartDelta):
+                            if event.delta.content_delta:
+                                yield LLMStreamChunk(type="delta", content=event.delta.content_delta)
 
-                response = stream.get()
-                for tool_call in response.tool_calls:
+                    response = stream.get()
+                    for tool_call in response.tool_calls:
+                        yield LLMStreamChunk(
+                            type="tool_call",
+                            tool_call=ToolCallRequest(
+                                id=tool_call.tool_call_id,
+                                name=tool_call.tool_name,
+                                arguments=tool_call.args_as_dict(),
+                            ),
+                        )
                     yield LLMStreamChunk(
-                        type="tool_call",
-                        tool_call=ToolCallRequest(
-                            id=tool_call.tool_call_id,
-                            name=tool_call.tool_name,
-                            arguments=tool_call.args_as_dict(),
-                        ),
+                        type="done",
+                        finish_reason=response.finish_reason,
+                        input_tokens=response.usage.input_tokens,
+                        output_tokens=response.usage.output_tokens,
+                        cache_read_tokens=response.usage.cache_read_tokens,
+                        cache_write_tokens=response.usage.cache_write_tokens,
+                        provider_cost=provider_reported_cost(response),
                     )
-                yield LLMStreamChunk(
-                    type="done",
-                    finish_reason=response.finish_reason,
-                    input_tokens=response.usage.input_tokens,
-                    output_tokens=response.usage.output_tokens,
-                    cache_read_tokens=response.usage.cache_read_tokens,
-                    cache_write_tokens=response.usage.cache_write_tokens,
-                    provider_cost=provider_reported_cost(response),
-                )
         except Exception as exc:
             logger.error("Pydantic AI streaming error: %s", exc)
             yield LLMStreamChunk(type="error", error=str(exc))

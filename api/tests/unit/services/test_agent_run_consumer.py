@@ -1,9 +1,11 @@
 """Unit tests for AgentRunConsumer error handling paths."""
 
 import json
+from datetime import datetime, timezone
 import pytest
+from sqlalchemy import select
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from src.jobs.consumers.agent_run import AgentRunConsumer
 from src.models.orm.agent_runs import AgentRun
@@ -20,6 +22,39 @@ class FakeRedisCtx:
 
     async def __aexit__(self, *args):
         pass
+
+
+class FakeLateExecutor:
+    """Executor stub that simulates a late terminalizer racing the consumer."""
+
+    def __init__(self, session_factory, redis_client):
+        self._session_factory = session_factory
+        self._redis = redis_client
+
+    async def run(self, *, run_id, **kwargs):
+        async with self._session_factory() as db:
+            run_obj = await db.get(AgentRun, UUID(run_id))
+            run_obj.status = "timeout"
+            run_obj.error = "scheduler terminalized the run"
+            run_obj.completed_at = datetime.now(timezone.utc)
+            await db.commit()
+
+        return {
+            "output": {"text": "late consumer result"},
+            "iterations_used": 9,
+            "tokens_used": 27,
+            "status": "completed",
+            "llm_model": "test-model",
+        }
+
+    async def flush_to_db(self, db):
+        return None
+
+
+async def _load_run(async_session_factory, run_id):
+    async with async_session_factory() as db:
+        result = await db.execute(select(AgentRun).where(AgentRun.id == run_id))
+        return result.scalar_one()
 
 
 @pytest.fixture
@@ -143,3 +178,68 @@ async def test_pre_cancel_updates_existing_queued_run(consumer):
     mock_session.add.assert_not_called()
     _, get_kwargs = mock_session.get.call_args
     assert get_kwargs["with_for_update"] == {"of": AgentRun}
+
+
+@pytest.mark.asyncio
+async def test_late_terminalized_run_is_not_overwritten(
+    consumer,
+    db_session,
+    async_session_factory,
+    seed_agent,
+):
+    run_id = uuid4()
+    run = AgentRun(
+        id=run_id,
+        agent_id=seed_agent.id,
+        trigger_type="manual",
+        status="queued",
+        iterations_used=0,
+        tokens_used=0,
+        created_at=datetime.now(timezone.utc),
+    )
+    db_session.add(run)
+    await db_session.commit()
+
+    consumer._session_factory = async_session_factory
+
+    redis_mock = AsyncMock()
+    context_key = f"bifrost:agent_run:{run_id}:context"
+    cancel_key = f"bifrost:agent_run:{run_id}:cancel"
+
+    async def _redis_get(key):
+        if key == context_key:
+            return json.dumps({"org_id": str(uuid4()), "input": "hello"})
+        if key == cancel_key:
+            return None
+        return None
+
+    redis_mock.get.side_effect = _redis_get
+
+    with (
+        patch("src.jobs.consumers.agent_run.get_redis", return_value=FakeRedisCtx(redis_mock)),
+        patch(
+            "src.services.execution.autonomous_agent_executor.AutonomousAgentExecutor",
+            FakeLateExecutor,
+        ),
+        patch("src.jobs.consumers.agent_run.publish_agent_run_update", AsyncMock()) as publish_mock,
+        patch("src.jobs.consumers.agent_run._publish_sync_result", AsyncMock()) as sync_mock,
+    ):
+        await consumer.process_message(
+            {
+                "run_id": str(run_id),
+                "agent_id": str(seed_agent.id),
+                "trigger_type": "manual",
+                "sync": True,
+            }
+        )
+
+    refreshed = await _load_run(async_session_factory, run_id)
+    assert refreshed.status == "timeout"
+    assert refreshed.error == "scheduler terminalized the run"
+    assert refreshed.completed_at is not None
+    assert publish_mock.await_count == 2
+    assert publish_mock.await_args_list[0].args[0].status == "running"
+    assert publish_mock.await_args_list[1].args[0].status == "timeout"
+    sync_payload = sync_mock.await_args.args[1]
+    assert sync_payload["status"] == "timeout"
+    assert sync_payload["error"] == "scheduler terminalized the run"

@@ -369,7 +369,11 @@ class AutonomousAgentExecutor:
             )
 
         base_model = create_agent_model(llm_config, model=model_name)
-        observed_model = ObservedModel(base_model, record_model_event)
+        observed_model = ObservedModel(
+            base_model,
+            record_model_event,
+            retry_surface="autonomous_agent",
+        )
         toolset = BifrostToolset(
             tool_definitions,
             execute_tool,

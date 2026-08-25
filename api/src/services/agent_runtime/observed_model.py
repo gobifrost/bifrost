@@ -24,6 +24,8 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
 
+from src.services.agent_runtime.retry_transport import ai_retry_context
+
 
 @dataclass(frozen=True)
 class ModelCallEvent:
@@ -44,9 +46,16 @@ ModelCallObserver = Callable[[ModelCallEvent], Awaitable[None]]
 class ObservedModel(WrapperModel):
     """Report every provider request while leaving Pydantic AI in control of the loop."""
 
-    def __init__(self, wrapped: Model, observer: ModelCallObserver):
+    def __init__(
+        self,
+        wrapped: Model,
+        observer: ModelCallObserver,
+        *,
+        retry_surface: str = "agent",
+    ):
         super().__init__(wrapped)
         self._observer = observer
+        self._retry_surface = retry_surface
 
     @staticmethod
     def _estimated_input_tokens(
@@ -187,11 +196,16 @@ class ObservedModel(WrapperModel):
         )
         started = time.monotonic()
         try:
-            response = await self.wrapped.request(
-                messages,
-                model_settings,
-                model_request_parameters,
-            )
+            with ai_retry_context(
+                provider=self.wrapped.system,
+                model=self.wrapped.model_name,
+                surface=self._retry_surface,
+            ):
+                response = await self.wrapped.request(
+                    messages,
+                    model_settings,
+                    model_request_parameters,
+                )
         except Exception as exc:
             await self._observer(
                 ModelCallEvent(
@@ -239,19 +253,24 @@ class ObservedModel(WrapperModel):
         )
         started = time.monotonic()
         try:
-            async with self.wrapped.request_stream(
-                messages,
-                model_settings,
-                model_request_parameters,
-                run_context,
-            ) as response_stream:
-                yield response_stream
-                # Agent graphs can stop consuming after a final-result event,
-                # before OpenAI-compatible providers send their trailing
-                # usage-only chunk. Resume the same iterator so actual usage
-                # and cost are captured before persistence.
-                async for _ in response_stream:
-                    pass
+            with ai_retry_context(
+                provider=self.wrapped.system,
+                model=self.wrapped.model_name,
+                surface=self._retry_surface,
+            ):
+                async with self.wrapped.request_stream(
+                    messages,
+                    model_settings,
+                    model_request_parameters,
+                    run_context,
+                ) as response_stream:
+                    yield response_stream
+                    # Agent graphs can stop consuming after a final-result event,
+                    # before OpenAI-compatible providers send their trailing
+                    # usage-only chunk. Resume the same iterator so actual usage
+                    # and cost are captured before persistence.
+                    async for _ in response_stream:
+                        pass
             response = response_stream.get()
         except Exception as exc:
             await self._observer(

@@ -197,6 +197,12 @@ class Worker:
         await rabbitmq.close()
         logger.info("RabbitMQ connections closed")
 
+        from src.services.agent_runtime.retry_transport import (
+            close_ai_retry_http_client,
+        )
+
+        await close_ai_retry_http_client()
+
         # Close database connections.
         await close_db()
         logger.info("Database connections closed")

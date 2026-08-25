@@ -169,6 +169,11 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Shutdown
     logger.info("Shutting down Bifrost API...")
 
+    from src.services.agent_runtime.retry_transport import (
+        close_ai_retry_http_client,
+    )
+
+    await close_ai_retry_http_client()
     await pubsub_manager.close()
     await close_health_check_clients()
     await close_db()

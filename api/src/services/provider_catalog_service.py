@@ -8,6 +8,12 @@ from urllib.parse import urlparse
 
 import httpx
 
+from src.services.agent_runtime.retry_transport import (
+    MAX_ATTEMPTS,
+    RETRYABLE_STATUS_CODES,
+    ai_retry_context,
+    get_ai_retry_http_client,
+)
 from src.services.model_capabilities import OPENROUTER_MODELS_URL
 
 logger = logging.getLogger(__name__)
@@ -113,10 +119,20 @@ class ProviderCatalogService:
         try:
             from openai import AsyncOpenAI
 
-            client = AsyncOpenAI(api_key=api_key, base_url=endpoint or None)
+            client = AsyncOpenAI(
+                api_key=api_key,
+                base_url=endpoint or None,
+                http_client=get_ai_retry_http_client(),
+                max_retries=0,
+            )
             endpoint_label = endpoint or "https://api.openai.com/v1"
             try:
-                response = await client.models.list()
+                with ai_retry_context(
+                    provider="openrouter" if _is_openrouter_endpoint(endpoint) else "openai",
+                    model="catalog",
+                    surface="provider_catalog",
+                ):
+                    response = await client.models.list()
                 models = [
                     ProviderModelInfo(m.id, m.id, _model_output_modalities(m))
                     for m in sorted(response.data, key=lambda item: item.id)
@@ -139,10 +155,20 @@ class ProviderCatalogService:
         try:
             from anthropic import AsyncAnthropic
 
-            client = AsyncAnthropic(api_key=api_key, base_url=endpoint or None)
+            client = AsyncAnthropic(
+                api_key=api_key,
+                base_url=endpoint or None,
+                http_client=get_ai_retry_http_client(),
+                max_retries=0,
+            )
             endpoint_label = endpoint or "https://api.anthropic.com"
             try:
-                response = await client.models.list()
+                with ai_retry_context(
+                    provider="anthropic",
+                    model="catalog",
+                    surface="provider_catalog",
+                ):
+                    response = await client.models.list()
                 seen: set[str] = set()
                 models: list[ProviderModelInfo] = []
                 for item in sorted(response.data, key=lambda model: model.id, reverse=True):
@@ -167,10 +193,25 @@ class ProviderCatalogService:
 
             client = genai.Client(
                 api_key=api_key,
-                http_options=types.HttpOptions(base_url=endpoint) if endpoint else None,
+                http_options=types.HttpOptions(
+                    base_url=endpoint,
+                    retry_options=types.HttpRetryOptions(
+                        attempts=MAX_ATTEMPTS,
+                        initial_delay=1.0,
+                        max_delay=4.0,
+                        exp_base=2.0,
+                        jitter=1.0,
+                        http_status_codes=sorted(RETRYABLE_STATUS_CODES),
+                    ),
+                ),
             )
             try:
-                pager = await client.aio.models.list(config={"page_size": 100})
+                with ai_retry_context(
+                    provider="google",
+                    model="catalog",
+                    surface="provider_catalog",
+                ):
+                    pager = await client.aio.models.list(config={"page_size": 100})
                 models = [
                     ProviderModelInfo(
                         (item.name or "").removeprefix("models/"),

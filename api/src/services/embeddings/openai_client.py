@@ -9,6 +9,10 @@ import logging
 
 from openai import AsyncOpenAI
 
+from src.services.agent_runtime.retry_transport import (
+    ai_retry_context,
+    get_ai_retry_http_client,
+)
 from src.services.embeddings.base import BaseEmbeddingClient, EmbeddingConfig
 
 logger = logging.getLogger(__name__)
@@ -48,7 +52,12 @@ class OpenAIEmbeddingClient(BaseEmbeddingClient):
 
     def __init__(self, config: EmbeddingConfig):
         super().__init__(config)
-        self._client = AsyncOpenAI(api_key=config.api_key, base_url=config.endpoint or None)
+        self._client = AsyncOpenAI(
+            api_key=config.api_key,
+            base_url=config.endpoint or None,
+            http_client=get_ai_retry_http_client(),
+            max_retries=0,
+        )
 
     async def embed(self, texts: list[str]) -> list[list[float]]:
         """
@@ -83,11 +92,16 @@ class OpenAIEmbeddingClient(BaseEmbeddingClient):
             # to it) explicitly rejects base64 with a 200-shaped error body
             # the SDK then silently turns into "No embedding data received".
             # Plain floats work everywhere.
-            response = await self._client.embeddings.create(
-                input=texts,
+            with ai_retry_context(
+                provider="openai",
                 model=self.config.model,
-                encoding_format="float",
-            )
+                surface="embeddings",
+            ):
+                response = await self._client.embeddings.create(
+                    input=texts,
+                    model=self.config.model,
+                    encoding_format="float",
+                )
         except Exception as e:
             logger.error(f"Failed to generate embeddings: {e}")
             raise
