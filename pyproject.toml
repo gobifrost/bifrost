@@ -130,8 +130,8 @@ dependencies = [
     # =========================================================================
     # Exact pins are intentional: the Harness API is still pre-1.0 and is the
     # execution boundary for every Bifrost agent surface.
-    "pydantic-ai-slim[openai,anthropic,google]==2.15.0",
-    "pydantic-ai-harness==0.9.0",
+    "pydantic-ai-slim[openai,anthropic,google]==2.33.0",
+    "pydantic-ai-harness==0.24.0",
 
     # =========================================================================
     # MCP (Model Context Protocol)
