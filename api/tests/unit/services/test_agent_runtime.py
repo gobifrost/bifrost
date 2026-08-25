@@ -11,8 +11,8 @@ import pytest
 from openai.types.chat import ChatCompletion
 from pydantic_ai import Agent as PydanticAgent
 from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai_harness.cache_stability import CacheStabilityMonitor
-from pydantic_ai_harness.compaction import LimitWarner, TieredCompaction
+from pydantic_ai_harness.compaction import TieredCompaction, WarnNearLimits
+from pydantic_ai_harness.warn_on_cache_busts import WarnOnCacheBusts
 from pydantic_ai.messages import (
     BinaryContent,
     ModelMessage,
@@ -329,8 +329,8 @@ def test_budget_is_enforced_before_requests_and_warns_before_hard_stop() -> None
     assert limits.total_tokens_limit == 100_000
     assert limits.count_tokens_before_request is True
     assert any(isinstance(item, TieredCompaction) for item in capabilities)
-    assert any(isinstance(item, CacheStabilityMonitor) for item in capabilities)
-    warner = next(item for item in capabilities if isinstance(item, LimitWarner))
+    assert any(isinstance(item, WarnOnCacheBusts) for item in capabilities)
+    warner = next(item for item in capabilities if isinstance(item, WarnNearLimits))
     assert warner.max_iterations == 9
     assert warner.max_total_tokens == 100_000
     assert warner.warning_threshold == 0.7
@@ -349,7 +349,7 @@ def test_unconfigured_budget_disables_run_limits_but_keeps_context_governance() 
         RunUsage(requests=1_000, input_tokens=1_000_000)
     )
     assert any(isinstance(item, TieredCompaction) for item in capabilities)
-    warner = next(item for item in capabilities if isinstance(item, LimitWarner))
+    warner = next(item for item in capabilities if isinstance(item, WarnNearLimits))
     assert warner.max_iterations is None
     assert warner.max_total_tokens is None
     assert warner.max_context_tokens == budget.context_target_tokens

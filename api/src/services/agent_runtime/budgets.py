@@ -15,11 +15,11 @@ from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness.compaction import (
     ClampOversizedMessages,
     ClearToolResults,
-    LimitWarner,
-    SlidingWindow,
+    SlidingWindowCompaction,
     TieredCompaction,
+    WarnNearLimits,
 )
-from pydantic_ai_harness.cache_stability import CacheStabilityMonitor
+from pydantic_ai_harness.warn_on_cache_busts import WarnOnCacheBusts
 
 DEFAULT_CONTEXT_TARGET_TOKENS = 24_000
 """Keep the active request well below typical provider context windows.
@@ -72,7 +72,7 @@ class AgentRunBudget:
 
     @property
     def wind_down_warning_threshold(self) -> float:
-        """LimitWarner threshold aligned with the absolute finalization boundary."""
+        """WarnNearLimits threshold aligned with the finalization boundary."""
 
         if self.max_total_tokens is None:
             return self.warning_threshold
@@ -244,7 +244,7 @@ def build_runtime_capabilities(budget: AgentRunBudget) -> list[AgentCapability[o
 
     Cheap, deterministic compaction runs before lossy sliding-window trimming.
     Tool output is bounded at the Bifrost tool boundary, before it enters model
-    history. LimitWarner gives the model time to finish notes and communicate
+    history. WarnNearLimits gives the model time to finish notes and communicate
     partial progress before the hard guard rejects a request. BudgetWindDown
     then removes every function tool for the reserved final request and
     normalizes any stale provider tool call into a final response.
@@ -253,7 +253,7 @@ def build_runtime_capabilities(budget: AgentRunBudget) -> list[AgentCapability[o
     target = budget.context_target_tokens
     retained_tail = max(4_000, int(target * 0.75))
     return [
-        CacheStabilityMonitor(min_prefix_tokens=1_024),
+        WarnOnCacheBusts[object](min_prefix_tokens=1_024),
         TieredCompaction(
             tiers=[
                 ClampOversizedMessages(
@@ -266,7 +266,7 @@ def build_runtime_capabilities(budget: AgentRunBudget) -> list[AgentCapability[o
                     keep_pairs=3,
                     min_clear_tokens=1_000,
                 ),
-                SlidingWindow(
+                SlidingWindowCompaction(
                     max_tokens=1,
                     keep_tokens=retained_tail,
                     preserve_first_user_message=True,
@@ -274,7 +274,7 @@ def build_runtime_capabilities(budget: AgentRunBudget) -> list[AgentCapability[o
             ],
             target_tokens=target,
         ),
-        LimitWarner(
+        WarnNearLimits[object](
             max_iterations=budget.max_requests,
             max_context_tokens=target,
             max_total_tokens=budget.max_total_tokens,
