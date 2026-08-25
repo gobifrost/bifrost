@@ -137,3 +137,28 @@ async def emit_file_policy_deny(
         },
         actor_override=actor_override,
     )
+
+
+async def emit_table_policy_deny(
+    db: AsyncSession,
+    *,
+    policy_action: str,
+    table_id: UUID,
+    table_name: str,
+    resource_id: UUID | None = None,
+    actor_override: ActorContext | None = None,
+) -> None:
+    """Emit the canonical Event Log payload for a denied table operation."""
+    await emit_audit(
+        db,
+        "policy.deny",
+        resource_type="table_document",
+        resource_id=resource_id,
+        outcome="failure",
+        details={
+            "policy_action": policy_action,
+            "table_id": str(table_id),
+            "table_name": table_name,
+        },
+        actor_override=actor_override,
+    )

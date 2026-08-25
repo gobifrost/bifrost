@@ -33,7 +33,7 @@ from src.models.contracts.policies import FileAction
 from src.models.orm import Agent
 from src.models.orm.applications import Application
 from src.models.orm.tables import Table as TableOrm
-from src.services.audit import emit_file_policy_deny
+from src.services.audit import emit_file_policy_deny, emit_table_policy_deny
 from src.services.audit_context import ActorContext
 
 logger = logging.getLogger(__name__)
@@ -425,6 +425,11 @@ async def _authorize_table_subscribe(
 
     await _populate_user_roles(user)
     if not is_subscribe_authorized(policies, user):
+        await _emit_table_subscribe_denial(
+            websocket=websocket,
+            user=user,
+            table_id=UUID(canonical_id),
+        )
         await websocket.send_json({
             "type": "error",
             "channel": spec.name,
@@ -616,20 +621,7 @@ async def _emit_file_subscribe_denial(
     scope: str | None,
 ) -> None:
     """Persist a WebSocket denial through the same Event Log path as REST."""
-    forwarded = websocket.headers.get("x-forwarded-for")
-    ip_address = (
-        forwarded.split(",", 1)[0].strip()
-        if forwarded
-        else websocket.client.host if websocket.client else "unknown"
-    )
-    actor = ActorContext(
-        user_id=user.user_id,
-        organization_id=user.organization_id,
-        email=user.email,
-        name=user.name,
-        ip_address=ip_address,
-        user_agent=websocket.headers.get("user-agent"),
-    )
+    actor = _websocket_actor(websocket, user)
     async with get_db_context() as db:
         await emit_file_policy_deny(
             db,
@@ -639,6 +631,46 @@ async def _emit_file_subscribe_denial(
             scope=scope,
             solution_id=None,
             actor_override=actor,
+        )
+
+
+def _websocket_actor(websocket: WebSocket, user: UserPrincipal) -> ActorContext:
+    """Build the HTTP-equivalent audit actor for an upgraded connection."""
+    forwarded = websocket.headers.get("x-forwarded-for")
+    ip_address = (
+        forwarded.split(",", 1)[0].strip()
+        if forwarded
+        else websocket.client.host if websocket.client else "unknown"
+    )
+    return ActorContext(
+        user_id=user.user_id,
+        organization_id=user.organization_id,
+        email=user.email,
+        name=user.name,
+        ip_address=ip_address,
+        user_agent=websocket.headers.get("user-agent"),
+    )
+
+
+async def _emit_table_subscribe_denial(
+    *,
+    websocket: WebSocket,
+    user: UserPrincipal,
+    table_id: UUID,
+) -> None:
+    """Persist a table subscribe denial through the canonical Event Log path."""
+    async with get_db_context() as db:
+        table_name = await db.scalar(
+            select(TableOrm.name).where(TableOrm.id == table_id)
+        )
+        if table_name is None:
+            return
+        await emit_table_policy_deny(
+            db,
+            policy_action="subscribe",
+            table_id=table_id,
+            table_name=table_name,
+            actor_override=_websocket_actor(websocket, user),
         )
 
 

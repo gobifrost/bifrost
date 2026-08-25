@@ -11,10 +11,12 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import Text, and_, cast, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm.audit import AuditLog
+from src.models.orm.organizations import Organization
+from src.models.orm.users import User
 
 logger = logging.getLogger(__name__)
 
@@ -85,6 +87,9 @@ class AuditLogRepository:
 
         action_prefix: matches `action` by prefix (e.g. "user." matches
         "user.create", "user.update", etc.)
+        search: matches actor identity, organization, action, resource type,
+        IP address, or serialized event details so Event Log context such as
+        file paths and table names/IDs is searchable across every page.
         """
         limit = max(1, min(limit, 500))
 
@@ -104,10 +109,19 @@ class AuditLogRepository:
             query = query.where(AuditLog.created_at <= end_date)
         if search:
             like = f"%{search}%"
+            query = query.outerjoin(User, User.id == AuditLog.user_id).outerjoin(
+                Organization,
+                Organization.id == AuditLog.organization_id,
+            )
             query = query.where(
                 or_(
+                    User.email.ilike(like),
+                    User.name.ilike(like),
+                    Organization.name.ilike(like),
                     AuditLog.action.ilike(like),
                     AuditLog.resource_type.ilike(like),
+                    AuditLog.ip_address.ilike(like),
+                    cast(AuditLog.details, Text).ilike(like),
                 )
             )
 

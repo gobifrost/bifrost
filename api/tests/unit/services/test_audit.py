@@ -7,7 +7,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.services.audit import emit_audit, emit_file_policy_deny
+from src.services.audit import (
+    emit_audit,
+    emit_file_policy_deny,
+    emit_table_policy_deny,
+)
 from src.services.audit_context import (
     ActorContext,
     clear_actor,
@@ -211,6 +215,37 @@ async def test_file_policy_deny_uses_canonical_scope_payload(monkeypatch):
             "path": "quarterly/result.csv",
             "scope": str(solution_id),
             "solution_id": str(solution_id),
+        },
+        actor_override=actor,
+    )
+
+
+@pytest.mark.asyncio
+async def test_table_policy_deny_uses_canonical_table_payload(monkeypatch):
+    emitted = AsyncMock()
+    monkeypatch.setattr("src.services.audit.emit_audit", emitted)
+    table_id = uuid4()
+    actor = ActorContext(user_id=uuid4(), organization_id=uuid4())
+    db = MagicMock()
+
+    await emit_table_policy_deny(
+        db,
+        policy_action="subscribe",
+        table_id=table_id,
+        table_name="customers",
+        actor_override=actor,
+    )
+
+    emitted.assert_awaited_once_with(
+        db,
+        "policy.deny",
+        resource_type="table_document",
+        resource_id=None,
+        outcome="failure",
+        details={
+            "policy_action": "subscribe",
+            "table_id": str(table_id),
+            "table_name": "customers",
         },
         actor_override=actor,
     )

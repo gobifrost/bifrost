@@ -64,7 +64,7 @@ from src.services.solution_scope import (
 from src.services.table_policy_loader import load_resolved_table_policies
 from src.repositories.tables import TableRepository
 from src.core.pubsub import publish_document_change, publish_policy_changed
-from src.services.audit import emit_audit
+from src.services.audit import emit_table_policy_deny
 
 logger = logging.getLogger(__name__)
 
@@ -168,17 +168,12 @@ async def _check_action_or_403(
         except (ValueError, TypeError):
             resource_id = None
 
-    await emit_audit(
+    await emit_table_policy_deny(
         db,
-        "policy.deny",
-        resource_type="table_document",
+        policy_action=action,
+        table_id=table.id,
+        table_name=table.name,
         resource_id=resource_id,
-        outcome="failure",
-        details={
-            "policy_action": action,
-            "table_id": str(table.id),
-            "table_name": table.name,
-        },
     )
     # Commit the audit row now — if we let the HTTPException propagate
     # without committing, the request-scoped session rolls back and the

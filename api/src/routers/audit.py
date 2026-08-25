@@ -38,7 +38,10 @@ async def list_audit_logs(
     user_id: UUID | None = Query(None, description="Filter by acting user ID"),
     start_date: datetime | None = Query(None, description="Start of time range (inclusive)"),
     end_date: datetime | None = Query(None, description="End of time range (inclusive)"),
-    search: str | None = Query(None, description="Free-text search on action/resource_type"),
+    search: str | None = Query(
+        None,
+        description="Free-text search on actor, organization, action, resource type, IP address, and event details",
+    ),
     limit: int = Query(50, ge=1, le=500),
     continuation_token: str | None = Query(None, description="Pagination cursor"),
 ) -> AuditLogListResponse:

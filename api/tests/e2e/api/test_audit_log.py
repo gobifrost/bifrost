@@ -8,7 +8,11 @@ Covers:
 - Access control (non-platform-admin denied)
 """
 
+from uuid import uuid4
+
 import pytest
+
+from src.models.orm.audit import AuditLog
 
 
 @pytest.mark.e2e
@@ -106,6 +110,53 @@ class TestAuditLogEmission:
         assert resp.status_code == 200
         for entry in resp.json()["entries"]:
             assert entry["outcome"] == "success"
+
+    @pytest.mark.asyncio
+    async def test_search_matches_file_path_and_table_context(
+        self,
+        e2e_client,
+        platform_admin,
+        db_session,
+    ):
+        path = f"reports/deny-{uuid4().hex}.csv"
+        table_name = f"customers_{uuid4().hex[:8]}"
+        db_session.add_all([
+            AuditLog(
+                action="policy.deny",
+                user_id=platform_admin.user_id,
+                organization_id=None,
+                resource_type="file",
+                outcome="failure",
+                source="http",
+                details={"path": path, "location": "reports"},
+            ),
+            AuditLog(
+                action="policy.deny",
+                user_id=platform_admin.user_id,
+                organization_id=None,
+                resource_type="table_document",
+                outcome="failure",
+                source="http",
+                details={"table_name": table_name, "table_id": str(uuid4())},
+            ),
+        ])
+        await db_session.commit()
+
+        for needle, expected_context in (
+            (path, path),
+            (table_name, table_name),
+            (platform_admin.email, path),
+        ):
+            response = e2e_client.get(
+                "/api/audit",
+                headers=platform_admin.headers,
+                params={"search": needle},
+            )
+            assert response.status_code == 200, response.text
+            assert any(
+                entry["details"] and expected_context in str(entry["details"])
+                for entry in response.json()["entries"]
+            )
 
 
 @pytest.mark.e2e
