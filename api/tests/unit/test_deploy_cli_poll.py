@@ -1,9 +1,9 @@
-"""Unit: the CLI deploy poll loop prints a heartbeat + terminal status.
+"""Unit: the CLI deploy poll loop renders progress + terminal status.
 
 The deploy endpoint is async (Task 7) — the CLI POSTs, gets a job id, then
-polls ``GET /api/solutions/deploy-jobs/{id}`` until a terminal status. While the
-job is still running it prints ``Still deploying... Ns``; on success it prints
-``Deploy complete``; on failure it surfaces the server-captured error.
+polls ``GET /api/solutions/deploy-jobs/{id}`` until a terminal status. Interactive
+terminals animate one spinner line; redirected output stays stable. Failures
+surface the shared platform-job error and durable details URL.
 """
 from __future__ import annotations
 
@@ -25,13 +25,22 @@ class _FakeResponse:
 class _FakeClient:
     """Returns ``running`` for the first N status polls, then a terminal state."""
 
-    def __init__(self, terminal: dict, running_count: int = 2) -> None:
+    def __init__(
+        self,
+        terminal: dict,
+        running_count: int = 2,
+        platform_error: dict | None = None,
+    ) -> None:
         self._terminal = terminal
         self._running_left = running_count
+        self._platform_error = platform_error
         self.calls = 0
+        self.api_url = "https://bifrost.example"
 
     async def get(self, path: str, **kwargs):  # noqa: ANN003
         self.calls += 1
+        if path.startswith("/api/platform-jobs/"):
+            return _FakeResponse({"error": self._platform_error})
         if self._running_left > 0:
             self._running_left -= 1
             return _FakeResponse({"status": "running", "error": None})
@@ -42,25 +51,47 @@ def _run(coro):
     return asyncio.run(coro)
 
 
-def test_poll_prints_heartbeat_and_result(capsys):
+def test_poll_non_interactive_prints_only_result(capsys):
     client = _FakeClient(
         {"status": "succeeded", "error": None, "install_id": "abc"}
     )
-    rc = _run(_poll_deploy_job(client, "job-1", interval=0.0))
+    rc = _run(_poll_deploy_job(client, "job-1", interval=0.0, interactive=False))
     out = capsys.readouterr().out
     assert rc == 0
-    assert "Still deploying..." in out
+    assert "deploying..." not in out.lower()
+    assert "Deploy complete" in out
+
+
+def test_poll_interactive_animates_one_spinner_line(capsys):
+    client = _FakeClient(
+        {"status": "succeeded", "error": None}, running_count=1
+    )
+
+    rc = _run(_poll_deploy_job(client, "job-spin", interval=0.001, interactive=True))
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "\r| Deploying..." in out
+    assert "Still deploying" not in out
     assert "Deploy complete" in out
 
 
 def test_poll_surfaces_failure(capsys):
     client = _FakeClient(
-        {"status": "failed", "error": "manifest entry `diverged` mismatch"}
+        {"status": "failed", "error": "manifest entry `diverged` mismatch"},
+        platform_error={
+            "code": "solution_deploy_failed",
+            "message": "manifest entry `diverged` mismatch",
+            "retryable": False,
+        },
     )
     rc = _run(_poll_deploy_job(client, "job-2", interval=0.0))
     captured = capsys.readouterr()
     assert rc == 1
-    assert "diverged" in (captured.out + captured.err)
+    combined = captured.out + captured.err
+    assert "diverged" in combined
+    assert "solution_deploy_failed" in combined
+    assert "https://bifrost.example/api/platform-jobs/job-2" in combined
 
 
 def test_poll_install_action_reports_solution_id(capsys):
@@ -77,7 +108,7 @@ def test_poll_install_action_reports_solution_id(capsys):
     rc = _run(_poll_deploy_job(client, "job-i", interval=0.0, action="Install"))
     out = capsys.readouterr().out
     assert rc == 0
-    assert "Still installing..." in out
+    assert "Still installing..." not in out
     assert "Install complete: solution sol-123 (slug=acme)." in out
 
 

@@ -1891,8 +1891,9 @@ async def _poll_deploy_job(
     interval: float = 3.0,
     action: str = "Deploy",
     timeout_seconds: float = DEPLOY_JOB_TIMEOUT_SECONDS,
+    interactive: bool | None = None,
 ) -> int:
-    """Poll a deploy/install job until terminal, printing a heartbeat each tick.
+    """Poll a deploy/install job until terminal with TTY-aware progress.
 
     The deploy and install endpoints run the (often >30s) work as a background job
     and return immediately, so the CLI polls for the result instead of holding one
@@ -1901,10 +1902,44 @@ async def _poll_deploy_job(
 
     ``action`` is the verb used in the messages ("Deploy" / "Install"); the
     grammar assumes ``<action>ing`` reads naturally ("Deploying" / "Installing").
+    Interactive terminals get an in-place spinner between the three-second HTTP
+    polls. Redirected/CI output only receives durable phase and terminal lines.
     """
     gerund = f"{action[:-1]}ing" if action.endswith("e") else f"{action}ing"
+    if interactive is None:
+        interactive = bool(click.get_text_stream("stdout").isatty())
     start = time.monotonic()
     last_phase: str | None = None
+
+    async def _wait_for_next_poll() -> None:
+        if interval <= 0:
+            return
+        if not interactive:
+            await asyncio.sleep(interval)
+            return
+
+        frames = "|/-\\"
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + interval
+        width = 0
+        frame_index = 0
+        try:
+            while True:
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    return
+                elapsed = int(time.monotonic() - start)
+                message = f"{frames[frame_index % len(frames)]} {gerund}... {elapsed}s"
+                width = max(width, len(message))
+                click.echo(f"\r{message}", nl=False)
+                frame_index += 1
+                await asyncio.sleep(min(0.08, remaining))
+        finally:
+            click.echo(f"\r{' ' * width}\r", nl=False)
+
+    def _job_details_url() -> str:
+        return f"{client.api_url.rstrip('/')}/api/platform-jobs/{job_id}"
+
     while True:
         resp = await client.get(f"/api/solutions/deploy-jobs/{job_id}")
         if resp.status_code != 200:
@@ -1913,6 +1948,7 @@ async def _poll_deploy_job(
                 f"({resp.status_code}): {resp.text[:200]}",
                 err=True,
             )
+            click.echo(f"Job details: {_job_details_url()}", err=True)
             return 1
         body = resp.json()
         status = body.get("status")
@@ -1928,6 +1964,13 @@ async def _poll_deploy_job(
             return 0
         if status == "failed":
             error = body.get("error") or "unknown error"
+            error_code: str | None = None
+            platform_response = await client.get(f"/api/platform-jobs/{job_id}")
+            if platform_response.status_code == 200:
+                platform_error = platform_response.json().get("error") or {}
+                if isinstance(platform_error, dict):
+                    error = platform_error.get("message") or error
+                    error_code = platform_error.get("code")
             # The build gates now surface as a failed job — re-attach the
             # deliberate-override hints so the operator knows how to proceed.
             if "older than installed" in error:
@@ -1943,7 +1986,9 @@ async def _poll_deploy_job(
                     f"{error}\nRe-run with --replace-secrets to overwrite "
                     "conflicting config values, or --replace-data for table data."
                 )
-            click.echo(f"{action} failed: {error}", err=True)
+            code_note = f" [{error_code}]" if error_code else ""
+            click.echo(f"{action} failed{code_note}: {error}", err=True)
+            click.echo(f"Job details: {_job_details_url()}", err=True)
             return 1
         phase = (body.get("result") or {}).get("phase")
         if isinstance(phase, str) and phase and phase != last_phase:
@@ -1956,10 +2001,9 @@ async def _poll_deploy_job(
                 f"(job {job_id}). Check the job status before retrying.",
                 err=True,
             )
+            click.echo(f"Job details: {_job_details_url()}", err=True)
             return 1
-        elapsed = int(elapsed_seconds)
-        click.echo(f"Still {gerund.lower()}... {elapsed}s")
-        await asyncio.sleep(interval)
+        await _wait_for_next_poll()
 
 
 # Vendoring modules/ + shared/ into a Solution can balloon the bundle; warn the
@@ -2210,7 +2254,10 @@ def deploy_cmd(
             extra_text_files=extra_text_files,
         )
 
-        click.echo("Uploading workspace zip...")
+        if prebuilt:
+            click.echo("Uploading workspace artifact (source + locally built app dist)...")
+        else:
+            click.echo("Uploading workspace artifact...")
         # Deploy is async server-side; the POST returns a job id quickly. We give
         # the upload itself a generous timeout (large bundles) but never block on
         # the deploy work — that is observed via the poll loop below.
