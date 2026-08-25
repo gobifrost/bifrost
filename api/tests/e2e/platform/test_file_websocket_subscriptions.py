@@ -53,19 +53,114 @@ async def _put_allow_policy(client: httpx.AsyncClient, headers: dict, *, locatio
     assert resp.status_code == 200, resp.text
 
 
+async def _policy_deny_rows(
+    client: httpx.AsyncClient,
+    headers: dict,
+    *,
+    user_id: str,
+) -> list[dict]:
+    response = await client.get(
+        "/api/audit",
+        headers=headers,
+        params={
+            "action": "policy.deny",
+            "resource_type": "file",
+            "user_id": user_id,
+            "limit": 50,
+        },
+    )
+    assert response.status_code == 200, response.text
+    return response.json()["entries"]
+
+
 @pytest.mark.e2e
 @pytest.mark.asyncio
-async def test_file_subscribe_without_policy_is_rejected(org1_user, org1):
+async def test_file_subscribe_without_policy_is_rejected_and_audited(
+    platform_admin,
+    org1_user,
+    org1,
+):
     location = f"wssub-{uuid.uuid4().hex[:8]}"
     channel = f"files:{location}:gallery"
 
-    ws, ack = await _ws_subscribe(org1_user.access_token, channel, scope=org1["id"])
-    try:
-        assert ack.get("type") == "error", ack
-        assert ack.get("channel") == channel
-        assert ack.get("message") == "Access denied"
-    finally:
-        await ws.close()
+    async with httpx.AsyncClient(base_url=TEST_API_URL) as client:
+        before = len(
+            await _policy_deny_rows(
+                client,
+                platform_admin.headers,
+                user_id=str(org1_user.user_id),
+            )
+        )
+        ws, ack = await _ws_subscribe(
+            org1_user.access_token,
+            channel,
+            scope=org1["id"],
+        )
+        try:
+            assert ack.get("type") == "error", ack
+            assert ack.get("channel") == channel
+            assert ack.get("message") == "Access denied"
+        finally:
+            await ws.close()
+
+        rows = await _policy_deny_rows(
+            client,
+            platform_admin.headers,
+            user_id=str(org1_user.user_id),
+        )
+        assert len(rows) == before + 1
+        assert rows[0]["details"] == {
+            "policy_action": "subscribe",
+            "location": location,
+            "path": "gallery",
+            "scope": org1["id"],
+            "solution_id": None,
+        }
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_file_subscribe_scope_denial_is_audited(
+    platform_admin,
+    org1_user,
+    org2,
+):
+    location = f"wssub-{uuid.uuid4().hex[:8]}"
+    channel = f"files:{location}:gallery"
+
+    async with httpx.AsyncClient(base_url=TEST_API_URL) as client:
+        before = len(
+            await _policy_deny_rows(
+                client,
+                platform_admin.headers,
+                user_id=str(org1_user.user_id),
+            )
+        )
+        ws, ack = await _ws_subscribe(
+            org1_user.access_token,
+            channel,
+            scope=org2["id"],
+        )
+        try:
+            assert ack.get("type") == "error", ack
+            assert ack.get("channel") == channel
+            assert ack.get("message") == "Access denied"
+        finally:
+            await ws.close()
+
+        rows = await _policy_deny_rows(
+            client,
+            platform_admin.headers,
+            user_id=str(org1_user.user_id),
+        )
+        assert len(rows) == before + 1
+        assert rows[0]["details"] == {
+            "policy_action": "subscribe",
+            "location": location,
+            "path": "gallery",
+            "scope": org2["id"],
+            "solution_id": None,
+        }
 
 
 @pytest.mark.e2e

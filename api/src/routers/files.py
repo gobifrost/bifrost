@@ -50,7 +50,7 @@ from src.models import (
     SearchResponse,
     WorkflowIdConflict,
 )
-from src.services.audit import emit_audit
+from src.services.audit import emit_file_policy_deny
 from src.services.editor.search import search_files_db
 from src.services.file_backend import get_backend
 from src.services.file_storage import FileStorageService
@@ -461,16 +461,13 @@ async def _deny_file_policy(
     HTTPException propagate rolls back the request-scoped session and loses
     the audit row.
     """
-    await emit_audit(
+    await emit_file_policy_deny(
         ctx.db,
-        "policy.deny",
-        resource_type="file",
-        outcome="failure",
-        details={
-            "policy_action": action,
-            "location": location,
-            "path": path,
-        },
+        policy_action=action,
+        location=location,
+        path=path,
+        scope=scope,
+        solution_id=solution_id,
     )
     await ctx.db.commit()
     # A policy denial must identify its scope inputs (no user/token data —

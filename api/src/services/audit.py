@@ -110,3 +110,30 @@ async def emit_audit(
             exc,
             exc_info=True,
         )
+
+
+async def emit_file_policy_deny(
+    db: AsyncSession,
+    *,
+    policy_action: str,
+    location: str,
+    path: str,
+    scope: str | None,
+    solution_id: UUID | None,
+    actor_override: ActorContext | None = None,
+) -> None:
+    """Emit the canonical Event Log payload for a denied file operation."""
+    await emit_audit(
+        db,
+        "policy.deny",
+        resource_type="file",
+        outcome="failure",
+        details={
+            "policy_action": policy_action,
+            "location": location,
+            "path": path,
+            "scope": scope,
+            "solution_id": str(solution_id) if solution_id else None,
+        },
+        actor_override=actor_override,
+    )

@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.services.audit import emit_audit
+from src.services.audit import emit_audit, emit_file_policy_deny
 from src.services.audit_context import (
     ActorContext,
     clear_actor,
@@ -180,3 +180,37 @@ class TestEmitAudit:
         )
 
         assert captured["user_id"] == bob_id
+
+
+@pytest.mark.asyncio
+async def test_file_policy_deny_uses_canonical_scope_payload(monkeypatch):
+    emitted = AsyncMock()
+    monkeypatch.setattr("src.services.audit.emit_audit", emitted)
+    solution_id = uuid4()
+    actor = ActorContext(user_id=uuid4(), organization_id=uuid4())
+    db = MagicMock()
+
+    await emit_file_policy_deny(
+        db,
+        policy_action="write",
+        location="reports",
+        path="quarterly/result.csv",
+        scope=str(solution_id),
+        solution_id=solution_id,
+        actor_override=actor,
+    )
+
+    emitted.assert_awaited_once_with(
+        db,
+        "policy.deny",
+        resource_type="file",
+        outcome="failure",
+        details={
+            "policy_action": "write",
+            "location": "reports",
+            "path": "quarterly/result.csv",
+            "scope": str(solution_id),
+            "solution_id": str(solution_id),
+        },
+        actor_override=actor,
+    )

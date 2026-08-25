@@ -253,9 +253,13 @@ def test_denied_read_emits_policy_deny_audit_row(
     assert entry["action"] == "policy.deny"
     assert entry["resource_type"] == "file"
     assert entry["outcome"] == "failure"
-    assert entry["details"]["policy_action"] == "read"
-    assert entry["details"]["location"] == location
-    assert entry["details"]["path"] == path
+    assert entry["details"] == {
+        "policy_action": "read",
+        "location": location,
+        "path": path,
+        "scope": scope,
+        "solution_id": None,
+    }
 
 
 @pytest.mark.e2e
@@ -286,9 +290,13 @@ def test_denied_write_emits_exactly_one_policy_deny_audit_row(
     assert entry["action"] == "policy.deny"
     assert entry["resource_type"] == "file"
     assert entry["outcome"] == "failure"
-    assert entry["details"]["policy_action"] == "write"
-    assert entry["details"]["location"] == location
-    assert entry["details"]["path"] == path
+    assert entry["details"] == {
+        "policy_action": "write",
+        "location": location,
+        "path": path,
+        "scope": scope,
+        "solution_id": None,
+    }
 
 
 @pytest.mark.e2e

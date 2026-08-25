@@ -478,6 +478,61 @@ async def test_solution_app_files_resolve_to_install_scope(
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
+async def test_solution_file_policy_denial_audits_install_scope(
+    e2e_client,
+    platform_admin,
+    org1,
+    db_session,
+):
+    solution = _create_solution(
+        e2e_client,
+        platform_admin.headers,
+        f"file-deny-audit-{uuid.uuid4().hex[:8]}",
+        org_id=org1["id"],
+    )
+    solution_id = solution["id"]
+    location = f"reports-{uuid.uuid4().hex[:8]}"
+    path = f"denied/{uuid.uuid4().hex}.txt"
+    await _declare_file_location(db_session, solution_id, location)
+
+    denied = e2e_client.post(
+        f"/api/files/write?solution={solution_id}",
+        headers=platform_admin.headers,
+        json={
+            "location": location,
+            "path": path,
+            "content": "blocked",
+            "mode": "cloud",
+        },
+    )
+    assert denied.status_code == 403, denied.text
+
+    audit = e2e_client.get(
+        "/api/audit",
+        headers=platform_admin.headers,
+        params={
+            "action": "policy.deny",
+            "resource_type": "file",
+            "user_id": str(platform_admin.user_id),
+            "limit": 50,
+        },
+    )
+    assert audit.status_code == 200, audit.text
+    entry = next(
+        row for row in audit.json()["entries"]
+        if row["details"].get("path") == path
+    )
+    assert entry["details"] == {
+        "policy_action": "write",
+        "location": location,
+        "path": path,
+        "scope": solution_id,
+        "solution_id": solution_id,
+    }
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
 async def test_solution_app_read_requires_declared_file_location(
     e2e_client,
     platform_admin,

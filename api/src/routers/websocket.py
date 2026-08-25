@@ -33,6 +33,8 @@ from src.models.contracts.policies import FileAction
 from src.models.orm import Agent
 from src.models.orm.applications import Application
 from src.models.orm.tables import Table as TableOrm
+from src.services.audit import emit_file_policy_deny
+from src.services.audit_context import ActorContext
 
 logger = logging.getLogger(__name__)
 
@@ -552,6 +554,13 @@ async def _authorize_file_subscribe(
         requested_scope=spec.scope,
     )
     if scope_result is None:
+        await _emit_file_subscribe_denial(
+            websocket=websocket,
+            user=user,
+            location=location,
+            path=prefix,
+            scope=spec.scope,
+        )
         await websocket.send_json({
             "type": "error",
             "channel": spec.name,
@@ -566,6 +575,13 @@ async def _authorize_file_subscribe(
         location=location,
         path=prefix,
     ):
+        await _emit_file_subscribe_denial(
+            websocket=websocket,
+            user=user,
+            location=location,
+            path=prefix,
+            scope=scope,
+        )
         await websocket.send_json({
             "type": "error",
             "channel": spec.name,
@@ -589,6 +605,41 @@ async def _authorize_file_subscribe(
     if not hasattr(websocket, "_file_dispatcher"):
         websocket._file_dispatcher = _make_file_dispatcher(websocket, user)  # type: ignore[attr-defined]
     return canonical_channel
+
+
+async def _emit_file_subscribe_denial(
+    *,
+    websocket: WebSocket,
+    user: UserPrincipal,
+    location: str,
+    path: str,
+    scope: str | None,
+) -> None:
+    """Persist a WebSocket denial through the same Event Log path as REST."""
+    forwarded = websocket.headers.get("x-forwarded-for")
+    ip_address = (
+        forwarded.split(",", 1)[0].strip()
+        if forwarded
+        else websocket.client.host if websocket.client else "unknown"
+    )
+    actor = ActorContext(
+        user_id=user.user_id,
+        organization_id=user.organization_id,
+        email=user.email,
+        name=user.name,
+        ip_address=ip_address,
+        user_agent=websocket.headers.get("user-agent"),
+    )
+    async with get_db_context() as db:
+        await emit_file_policy_deny(
+            db,
+            policy_action="subscribe",
+            location=location,
+            path=path,
+            scope=scope,
+            solution_id=None,
+            actor_override=actor,
+        )
 
 
 async def _handle_file_message(

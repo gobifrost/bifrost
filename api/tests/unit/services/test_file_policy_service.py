@@ -747,17 +747,18 @@ async def test_require_file_policy_denial_emits_audit(monkeypatch, db_session) -
     )
     emitted: dict = {}
 
-    async def fake_emit(db, action, **kwargs):
-        emitted["action"] = action
+    async def fake_emit(db, **kwargs):
         emitted.update(kwargs)
 
-    monkeypatch.setattr(files_module, "emit_audit", fake_emit)
+    monkeypatch.setattr(files_module, "emit_file_policy_deny", fake_emit)
+
+    solution_id = uuid4()
 
     ctx = SimpleNamespace(
         db=db_session,
         user=_user(org.id),
         org_id=org.id,
-        solution_id=None,
+        solution_id=solution_id,
     )
 
     with pytest.raises(HTTPException) as exc:
@@ -765,18 +766,18 @@ async def test_require_file_policy_denial_emits_audit(monkeypatch, db_session) -
             ctx,  # type: ignore[arg-type]
             action="read",
             location="attachments",
-            scope=str(org.id),
+            scope=str(solution_id),
             path="private/doc.txt",
+            solution_id=solution_id,
         )
 
     assert exc.value.status_code == 403
-    assert emitted["action"] == "policy.deny"
-    assert emitted["resource_type"] == "file"
-    assert emitted["outcome"] == "failure"
-    assert emitted["details"] == {
+    assert emitted == {
         "policy_action": "read",
         "location": "attachments",
         "path": "private/doc.txt",
+        "scope": str(solution_id),
+        "solution_id": solution_id,
     }
 
 
