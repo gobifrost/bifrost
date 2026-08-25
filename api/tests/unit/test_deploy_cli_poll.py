@@ -94,6 +94,26 @@ def test_poll_surfaces_failure(capsys):
     assert "https://bifrost.example/api/platform-jobs/job-2" in combined
 
 
+def test_poll_preserves_failure_when_job_details_lookup_fails(capsys):
+    class DetailsFailureClient(_FakeClient):
+        async def get(self, path: str, **kwargs):  # noqa: ANN003
+            if path.startswith("/api/platform-jobs/"):
+                raise RuntimeError("job details unavailable")
+            return await super().get(path, **kwargs)
+
+    client = DetailsFailureClient(
+        {"status": "failed", "error": "bundle downgrade blocked"}
+    )
+
+    rc = _run(_poll_deploy_job(client, "job-details-fail", interval=0.0))
+
+    captured = capsys.readouterr()
+    combined = captured.out + captured.err
+    assert rc == 1
+    assert "bundle downgrade blocked" in combined
+    assert "https://bifrost.example/api/platform-jobs/job-details-fail" in combined
+
+
 def test_poll_install_action_reports_solution_id(capsys):
     """The install command reuses the poll loop with ``action="Install"``; on
     success it echoes the solution id the job's ``result`` carries."""

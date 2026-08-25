@@ -1965,12 +1965,15 @@ async def _poll_deploy_job(
         if status == "failed":
             error = body.get("error") or "unknown error"
             error_code: str | None = None
-            platform_response = await client.get(f"/api/platform-jobs/{job_id}")
-            if platform_response.status_code == 200:
-                platform_error = platform_response.json().get("error") or {}
-                if isinstance(platform_error, dict):
-                    error = platform_error.get("message") or error
-                    error_code = platform_error.get("code")
+            try:
+                platform_response = await client.get(f"/api/platform-jobs/{job_id}")
+                if platform_response.status_code == 200:
+                    platform_error = platform_response.json().get("error") or {}
+                    if isinstance(platform_error, dict):
+                        error = platform_error.get("message") or error
+                        error_code = platform_error.get("code")
+            except Exception:  # noqa: BLE001 - diagnostics must not mask deploy error
+                pass
             # The build gates now surface as a failed job — re-attach the
             # deliberate-override hints so the operator knows how to proceed.
             if "older than installed" in error:
