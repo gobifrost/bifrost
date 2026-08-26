@@ -380,7 +380,6 @@ from bifrost import workflow, context
 @workflow(
     name="e2e_discovery_test_workflow",
     description="Test workflow for discovery",
-    execution_mode="sync"
 )
 async def e2e_discovery_test_workflow(value: str):
     return {"value": value, "user": context.email}

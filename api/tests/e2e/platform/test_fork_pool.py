@@ -16,7 +16,7 @@ SIMPLE_WORKFLOW = '''
 """Simple workflow for fork pool testing."""
 from bifrost import workflow
 
-@workflow(name="e2e_fork_simple", execution_mode="async")
+@workflow(name="e2e_fork_simple")
 async def e2e_fork_simple(value: int = 42) -> dict:
     """A simple workflow that returns a result."""
     return {"status": "ok", "value": value}
@@ -27,7 +27,7 @@ CONCURRENT_WORKFLOW = '''
 import os
 from bifrost import workflow
 
-@workflow(name="e2e_fork_concurrent", execution_mode="async")
+@workflow(name="e2e_fork_concurrent")
 async def e2e_fork_concurrent(index: int = 0) -> dict:
     """Return process ID and index to verify isolation."""
     return {
@@ -42,7 +42,7 @@ TIMEOUT_WORKFLOW = '''
 import time
 from bifrost import workflow
 
-@workflow(name="e2e_fork_timeout", execution_mode="async")
+@workflow(name="e2e_fork_timeout")
 async def e2e_fork_timeout(sleep_seconds: int = 60) -> dict:
     """Sleep for specified duration to test timeout."""
     time.sleep(sleep_seconds)
@@ -53,7 +53,7 @@ LARGE_FLAT_RESULT_WORKFLOW = '''
 """Production-shaped flat result regression for issue #480."""
 from bifrost import workflow
 
-@workflow(name="e2e_large_flat_result", execution_mode="async")
+@workflow(name="e2e_large_flat_result")
 async def e2e_large_flat_result(row_count: int = 5395) -> list[dict[str, str]]:
     """Return the scrubbed production row shape without customer values."""
     return [

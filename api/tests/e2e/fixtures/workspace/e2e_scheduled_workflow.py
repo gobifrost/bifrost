@@ -1,7 +1,7 @@
 """
 E2E Scheduled Workflow
 
-A workflow with a cron schedule for testing the schedules endpoint.
+A workflow for testing the schedules endpoint.
 """
 
 import logging
@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
     description="E2E scheduled workflow for testing cron scheduling",
     category="e2e_testing",
     tags=["e2e", "test", "scheduled"],
-    schedule="0 9 * * *",  # Every day at 9:00 AM
 )
 async def e2e_scheduled_task() -> dict:
     """

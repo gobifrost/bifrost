@@ -23,7 +23,7 @@ import os
 from bifrost import workflow
 
 
-@workflow(name="e2e_security_env_probe", execution_mode="async")
+@workflow(name="e2e_security_env_probe")
 async def e2e_security_env_probe() -> dict:
     """Introspect this process's environment for platform credentials."""
     env = os.environ
@@ -44,7 +44,7 @@ import bifrost
 from bifrost import workflow
 
 
-@workflow(name="e2e_security_sdk_control", execution_mode="async")
+@workflow(name="e2e_security_sdk_control")
 async def e2e_security_sdk_control() -> dict:
     """Exercise child -> API auth (token hand-down) with a real SDK call.
 

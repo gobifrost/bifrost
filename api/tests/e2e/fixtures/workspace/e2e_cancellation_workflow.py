@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
 @workflow(
     name="e2e_cancellation_test",
     description="Workflow with configurable sleep for cancellation testing",
-    execution_mode="async",
     category="e2e_testing",
     tags=["e2e", "test", "cancellation"],
 )

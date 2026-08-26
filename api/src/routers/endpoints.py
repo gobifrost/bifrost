@@ -85,7 +85,8 @@ async def execute_endpoint(
     This is the main entry point for external integrations to trigger workflows.
     Uses X-Bifrost-Key header for authentication instead of user JWT.
 
-    The workflow must have `endpoint_enabled=True` in its decorator.
+    The persisted workflow record must have endpoint access enabled. Endpoint
+    settings are managed through the workflow UI/API, not the decorator.
 
     Args:
         workflow_id: UUID of the workflow to execute

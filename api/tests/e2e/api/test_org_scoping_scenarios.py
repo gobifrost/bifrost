@@ -320,7 +320,6 @@ class TestScenario2b_ProviderOrgBypass:
             "@workflow(\n"
             f'    name="{workflow_name}",\n'
             '    description="Provider-org member reads another org\'s config.",\n'
-            '    execution_mode="sync",\n'
             ")\n"
             f"async def {workflow_name}():\n"
             "    try:\n"
@@ -575,7 +574,6 @@ class TestScenario4_CrossOrgBlocked:
                 '@workflow(\n'
                 f'    name="{workflow_name}",\n'
                 '    description="Attempts to clobber another org\'s mapping.",\n'
-                '    execution_mode="sync",\n'
                 ')\n'
                 f'async def {workflow_name}():\n'
                 '    try:\n'

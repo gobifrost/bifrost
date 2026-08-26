@@ -72,11 +72,11 @@ def workflow(
             ...
 
     Args:
-        name: Initial MCP tool name (defaults to function name)
+        name: Workflow name (defaults to function name)
         description: Description (defaults to first line of docstring)
         category: Category for organization (default: "General")
         tags: Optional list of tags for filtering
-        is_tool: If True, available as AI agent tool
+        is_tool: If True, register as an AI agent tool. Prefer @tool for new tools.
 
     Returns:
         Decorated function with _executable_metadata attribute

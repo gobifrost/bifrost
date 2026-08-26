@@ -169,7 +169,6 @@ from bifrost import workflow
 @workflow(
     name="e2e_ws_exec_workflow",
     description="Workflow for WebSocket execution tests",
-    execution_mode="sync"
 )
 async def e2e_ws_exec_workflow(message: str = "test"):
     """Simple test workflow."""

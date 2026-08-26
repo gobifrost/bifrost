@@ -181,7 +181,6 @@ from bifrost import workflow, files
 @workflow(
     name="e2e_file_read_workflow",
     description="Reads uploaded file from S3",
-    execution_mode="sync"
 )
 async def e2e_file_read_workflow(file_path: str):
     """Read a file from S3 and return contents."""

@@ -29,7 +29,6 @@ from bifrost import workflow, context
 @workflow(
     name="e2e_all_fields_workflow",
     description="Tests all form field types with type preservation",
-    execution_mode="sync"
 )
 async def e2e_all_fields_workflow(
     text_field: str,
@@ -614,7 +613,6 @@ from bifrost import workflow
 @workflow(
     name="e2e_multi_select_workflow",
     description="Echoes a multi-select field back with its runtime type",
-    execution_mode="sync"
 )
 async def e2e_multi_select_workflow(tags: list[str]):
     return {
@@ -711,4 +709,3 @@ async def e2e_multi_select_workflow(tags: list[str]):
         assert result["received"] == ["onboarding"]
         assert result["type"] == "list"
         assert result["length"] == 1
-

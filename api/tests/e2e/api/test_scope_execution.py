@@ -491,7 +491,6 @@ from bifrost import workflow, tables, config, knowledge, context
 @workflow(
     name="{workflow_name}",
     description="Tests scope resolution across all SDK modules",
-    execution_mode="sync",
 )
 async def {workflow_name}():
     """
@@ -617,7 +616,6 @@ from bifrost import workflow, tables, config, knowledge, context
 @workflow(
     name="{workflow_name}",
     description="Tests scope resolution across all SDK modules (global workflow)",
-    execution_mode="sync",
 )
 async def {workflow_name}():
     """
@@ -1027,7 +1025,6 @@ from bifrost import workflow, tables, config, knowledge, context
 @workflow(
     name="{workflow_name}",
     description="Tests explicit scope override in SDK operations",
-    execution_mode="sync",
 )
 async def {workflow_name}():
     """
@@ -1248,7 +1245,6 @@ from bifrost import workflow, context
 @workflow(
     name="{workflow_name}",
     description="Tests org user execution of authenticated workflow",
-    execution_mode="sync",
 )
 async def {workflow_name}():
     """Returns execution context info."""
@@ -1313,7 +1309,6 @@ from bifrost import workflow, context
 @workflow(
     name="{workflow_name}",
     description="Tests org user execution of global authenticated workflow",
-    execution_mode="sync",
 )
 async def {workflow_name}():
     """Returns execution context info."""
@@ -1379,7 +1374,6 @@ from bifrost import workflow, context
 @workflow(
     name="{workflow_name}",
     description="Tests cross-org access denial",
-    execution_mode="sync",
 )
 async def {workflow_name}():
     """Returns execution context info."""

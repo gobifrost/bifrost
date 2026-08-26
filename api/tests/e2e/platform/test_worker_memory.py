@@ -17,7 +17,7 @@ NORMAL_WORKFLOW = '''
 """Memory test: normal workflow returning moderate data."""
 from bifrost import workflow
 
-@workflow(name="e2e_mem_normal", execution_mode="async")
+@workflow(name="e2e_mem_normal")
 async def e2e_mem_normal(iteration: int = 0) -> dict:
     # Allocate ~1MB of data per execution
     data = ["x" * 1000 for _ in range(1000)]
@@ -28,7 +28,7 @@ FAILING_WORKFLOW = '''
 """Memory test: workflow that always raises (exercises traceback cleanup)."""
 from bifrost import workflow
 
-@workflow(name="e2e_mem_failing", execution_mode="async")
+@workflow(name="e2e_mem_failing")
 async def e2e_mem_failing(iteration: int = 0) -> dict:
     # Allocate data, then fail — traceback holds frame locals
     data = ["x" * 1000 for _ in range(1000)]
