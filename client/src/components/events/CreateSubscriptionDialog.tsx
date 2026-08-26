@@ -20,6 +20,11 @@ import { WorkflowSelectorDialog } from "@/components/workflows/WorkflowSelectorD
 import { AgentSelectorDialog } from "@/components/agents/AgentSelectorDialog";
 import { InputMappingForm } from "@/components/events/InputMappingForm";
 import {
+	EventCriteriaForm,
+	validateCriteria,
+	type EventCriteria,
+} from "@/components/events/EventCriteriaForm";
+import {
 	Select,
 	SelectContent,
 	SelectItem,
@@ -64,6 +69,7 @@ function CreateSubscriptionDialogContent({
 	const [workflowId, setWorkflowId] = useState("");
 	const [agentId, setAgentId] = useState("");
 	const [eventType, setEventType] = useState("");
+	const [criteria, setCriteria] = useState<EventCriteria | null>(null);
 	const [inputMapping, setInputMapping] = useState<Record<string, unknown>>(
 		{},
 	);
@@ -99,6 +105,7 @@ function CreateSubscriptionDialogContent({
 		if (targetType === "agent" && !agentId) {
 			newErrors.push("Please select an agent");
 		}
+		newErrors.push(...validateCriteria(criteria));
 		setErrors(newErrors);
 		return newErrors.length === 0;
 	};
@@ -119,6 +126,7 @@ function CreateSubscriptionDialogContent({
 					workflow_id: targetType === "workflow" ? workflowId : undefined,
 					agent_id: targetType === "agent" ? agentId : undefined,
 					event_type: eventType.trim() || undefined,
+					criteria: criteria ?? undefined,
 					input_mapping: targetType === "workflow" ? cleanedMapping : undefined,
 				// eslint-disable-next-line @typescript-eslint/no-explicit-any
 				} as any,
@@ -249,6 +257,14 @@ function CreateSubscriptionDialogContent({
 					</p>
 				</div>
 
+				<div className="space-y-2 border-t pt-4">
+					<Label>Rule Criteria (optional)</Label>
+					<p className="text-xs text-muted-foreground">
+						Only matching events queue this target. Criteria are bounded data, not executable expressions.
+					</p>
+					<EventCriteriaForm value={criteria} onChange={setCriteria} disabled={isLoading} />
+				</div>
+
 				{/* Input Mapping (shown when workflow has parameters) */}
 				{targetType === "workflow" &&
 					selectedWorkflow?.parameters &&
@@ -303,7 +319,7 @@ export function CreateSubscriptionDialog({
 }: CreateSubscriptionDialogProps) {
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="sm:max-w-[450px]">
+			<DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[760px]">
 				{open && (
 					<CreateSubscriptionDialogContent
 						onOpenChange={onOpenChange}

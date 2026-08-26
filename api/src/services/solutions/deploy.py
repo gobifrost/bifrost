@@ -35,6 +35,7 @@ from pydantic import ValidationError
 from sqlalchemy import delete, insert, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.models.contracts.events import EventCriteria
 from src.models.orm.agents import Agent, AgentRole
 from src.models.orm.events import (
     EventSource,
@@ -1851,6 +1852,13 @@ class SolutionDeployer:
             for msub in mevent.get("subscriptions") or []:
                 sub_workflow = msub.get("workflow_id")
                 sub_agent = msub.get("agent_id")
+                criteria = (
+                    EventCriteria.model_validate(msub["criteria"]).model_dump(
+                        mode="json"
+                    )
+                    if msub.get("criteria") is not None
+                    else None
+                )
                 await self.db.execute(
                     insert(EventSubscription).values(
                         id=UUID(str(msub["id"])) if msub.get("id") else uuid4(),
@@ -1859,7 +1867,7 @@ class SolutionDeployer:
                         agent_id=UUID(str(sub_agent)) if sub_agent else None,
                         target_type=msub.get("target_type", "workflow"),
                         event_type=msub.get("event_type"),
-                        filter_expression=msub.get("filter_expression"),
+                        criteria=criteria,
                         input_mapping=msub.get("input_mapping"),
                         is_active=msub.get("is_active", True),
                         solution_id=sid,

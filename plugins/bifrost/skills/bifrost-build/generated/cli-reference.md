@@ -751,15 +751,15 @@ Usage: events subscribe [OPTIONS] SOURCE_REF
   generator may surface.
 
 Options:
-  --target-type TEXT        target_type
-  --workflow TEXT           workflow ref (UUID or name) for workflow_id.
-  --agent TEXT              agent ref (UUID or name) for agent_id.
-  --event-type TEXT         event_type
-  --filter-expression TEXT  filter_expression
-  --input-mapping TEXT      input_mapping as JSON literal or @path to a
-                            YAML/JSON file.
-  --json                    Emit JSON instead of human-readable output.
-  --help                    Show this message and exit.
+  --target-type TEXT    target_type
+  --workflow TEXT       workflow ref (UUID or name) for workflow_id.
+  --agent TEXT          agent ref (UUID or name) for agent_id.
+  --event-type TEXT     event_type
+  --criteria TEXT       criteria
+  --input-mapping TEXT  input_mapping as JSON literal or @path to a YAML/JSON
+                        file.
+  --json                Emit JSON instead of human-readable output.
+  --help                Show this message and exit.
 ```
 
 ### `events update-source`
@@ -820,7 +820,7 @@ Usage: events update-subscription [OPTIONS] SOURCE_REF SUBSCRIPTION_ID
 
 Options:
   --event-type TEXT               event_type
-  --filter-expression TEXT        filter_expression
+  --criteria TEXT                 criteria
   --is-active / --no-is-active    is_active (tri-state; omit to leave
                                   unchanged).
   --input-mapping TEXT            input_mapping as JSON literal or @path to a

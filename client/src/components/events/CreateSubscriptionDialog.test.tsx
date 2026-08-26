@@ -127,6 +127,13 @@ describe("CreateSubscriptionDialog — workflow target", () => {
 		fireEvent.change(screen.getByLabelText(/event type filter/i), {
 			target: { value: "ticket.created" },
 		});
+		await user.click(screen.getByRole("button", { name: /add criteria/i }));
+		fireEvent.change(screen.getByLabelText("Criteria field"), {
+			target: { value: "event.body.priority" },
+		});
+		fireEvent.change(screen.getByLabelText("Criteria value"), {
+			target: { value: "high" },
+		});
 
 		await user.click(screen.getByRole("button", { name: /add subscription/i }));
 
@@ -137,6 +144,20 @@ describe("CreateSubscriptionDialog — workflow target", () => {
 		expect(body.event_type).toBe("ticket.created");
 		expect(body.input_mapping).toEqual({
 			ticket_id: "{{ payload.id }}",
+		});
+		expect(body.criteria).toEqual({
+			version: 1,
+			root: {
+				kind: "all",
+				items: [
+					{
+						kind: "condition",
+						field: "event.body.priority",
+						operator: "equals",
+						value: "high",
+					},
+				],
+			},
 		});
 	});
 });

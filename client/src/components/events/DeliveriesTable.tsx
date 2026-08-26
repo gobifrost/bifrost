@@ -33,12 +33,28 @@ import {
 // Extended status type to include "not_delivered"
 type DeliveryStatus = EventDelivery["status"] | "not_delivered";
 
+type RuleDecision = {
+	criteria_version: number | null;
+	outcome: "matched" | "not_matched" | "evaluation_error";
+	code: string;
+};
+
+function getRuleDecision(delivery: EventDelivery): RuleDecision | null {
+	return (
+		(
+			delivery as EventDelivery & {
+				rule_decision?: RuleDecision | null;
+			}
+		).rule_decision ?? null
+	);
+}
+
 interface DeliveriesTableProps {
 	deliveries: EventDelivery[];
 	eventId?: string;
 }
 
-function getStatusIcon(status: DeliveryStatus) {
+function getStatusIcon(status: DeliveryStatus, decision?: RuleDecision | null) {
 	switch (status) {
 		case "pending":
 			return <Clock className="h-4 w-4 text-muted-foreground" />;
@@ -49,7 +65,11 @@ function getStatusIcon(status: DeliveryStatus) {
 		case "failed":
 			return <XCircle className="h-4 w-4 text-destructive" />;
 		case "skipped":
-			return <AlertTriangle className="h-4 w-4 text-amber-500" />;
+			return decision?.outcome === "evaluation_error" ? (
+				<XCircle className="h-4 w-4 text-destructive" />
+			) : (
+				<AlertTriangle className="h-4 w-4 text-amber-500" />
+			);
 		case "not_delivered":
 			return <CircleDashed className="h-4 w-4 text-muted-foreground" />;
 		default:
@@ -57,7 +77,7 @@ function getStatusIcon(status: DeliveryStatus) {
 	}
 }
 
-function getStatusLabel(status: DeliveryStatus) {
+function getStatusLabel(status: DeliveryStatus, decision?: RuleDecision | null) {
 	switch (status) {
 		case "pending":
 			return "Pending";
@@ -68,7 +88,9 @@ function getStatusLabel(status: DeliveryStatus) {
 		case "failed":
 			return "Failed";
 		case "skipped":
-			return "Skipped";
+			return decision?.outcome === "evaluation_error"
+				? "Criteria error"
+				: "Criteria did not match";
 		case "not_delivered":
 			return "Not Delivered";
 		default:
@@ -244,7 +266,10 @@ export function DeliveriesTable({ deliveries, eventId }: DeliveriesTableProps) {
 						</div>
 						<div className="flex items-center gap-2">
 							<div className="flex items-center gap-1.5">
-								{getStatusIcon(delivery.status as DeliveryStatus)}
+								{getStatusIcon(
+									delivery.status as DeliveryStatus,
+									getRuleDecision(delivery),
+								)}
 								{delivery.status === "failed" &&
 								delivery.error_message ? (
 									<TooltipProvider>
@@ -284,7 +309,10 @@ export function DeliveriesTable({ deliveries, eventId }: DeliveriesTableProps) {
 											delivery.status as DeliveryStatus,
 										)}
 									>
-										{getStatusLabel(delivery.status as DeliveryStatus)}
+										{getStatusLabel(
+											delivery.status as DeliveryStatus,
+											getRuleDecision(delivery),
+										)}
 									</Badge>
 								)}
 							</div>
@@ -345,6 +373,15 @@ export function DeliveriesTable({ deliveries, eventId }: DeliveriesTableProps) {
 										new Date(delivery.completed_at),
 										"MMM d, HH:mm:ss",
 									)}
+								</span>
+							)}
+							{getRuleDecision(delivery) && (
+								<span>
+									Rule: {getStatusLabel(
+										delivery.status as DeliveryStatus,
+										getRuleDecision(delivery),
+									)}
+									{" · "}{getRuleDecision(delivery)?.code}
 								</span>
 							)}
 						</div>

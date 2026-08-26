@@ -64,12 +64,20 @@ class TestAgentSubscriptionValidation:
             target_type="workflow",
             workflow_id=wf_id,
             event_type="ticket.created",
-            filter_expression="$.data.priority == 'high'",
+            criteria={
+                "version": 1,
+                "root": {
+                    "kind": "condition",
+                    "field": "event.body.priority",
+                    "operator": "equals",
+                    "value": "high",
+                },
+            },
             input_mapping={"ticket_id": "{{ data.id }}"},
         )
         assert sub.workflow_id == wf_id
         assert sub.event_type == "ticket.created"
-        assert sub.filter_expression == "$.data.priority == 'high'"
+        assert sub.criteria.root.field == "event.body.priority"
         assert sub.input_mapping == {"ticket_id": "{{ data.id }}"}
 
     def test_agent_subscription_with_all_fields(self):
@@ -105,5 +113,5 @@ class TestAgentSubscriptionValidation:
         assert sub.workflow_id is None
         assert sub.agent_id is None
         assert sub.event_type is None
-        assert sub.filter_expression is None
+        assert sub.criteria is None
         assert sub.input_mapping is None

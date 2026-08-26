@@ -16,7 +16,7 @@
     {
       "agent_id": null,
       "event_type": null,
-      "filter_expression": null,
+      "criteria": null,
       "id": "<volatile>",
       "input_mapping": {
         "foo": "bar"

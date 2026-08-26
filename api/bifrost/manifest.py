@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from bifrost.field_classes import FieldClass, classify
 from bifrost.manifest_codec import Destination, EntityCodec, ImportFields
+from bifrost.contracts.events import EventCriteria
 
 logger = logging.getLogger(__name__)
 
@@ -1199,7 +1200,7 @@ class ManifestEventSubscription(EntityCodec, BaseModel):
     workflow_id: str | None = Field(default=None, description="Workflow UUID to trigger (when target_type='workflow')", **classify(FieldClass.REFERENCE))
     agent_id: str | None = Field(default=None, description="Agent UUID to run (when target_type='agent')", **classify(FieldClass.REFERENCE))
     event_type: str | None = Field(default=None, description="Filter by event type (e.g. 'ticket.created')", **classify(FieldClass.CONTENT))
-    filter_expression: str | None = Field(default=None, description="JSONPath filter expression", **classify(FieldClass.CONTENT))
+    criteria: EventCriteria | None = Field(default=None, description="Structured event rule criteria", **classify(FieldClass.CONTENT))
     input_mapping: dict | None = Field(default=None, description="Map event fields to workflow params", **classify(FieldClass.CONTENT))
     is_active: bool = Field(default=True, description="Enable/disable this subscription", **classify(FieldClass.ENVIRONMENT))
 
@@ -1212,7 +1213,7 @@ class ManifestEventSubscription(EntityCodec, BaseModel):
             workflow_id=str(sub.workflow_id) if sub.workflow_id else None,
             agent_id=str(sub.agent_id) if sub.agent_id else None,
             event_type=sub.event_type,
-            filter_expression=sub.filter_expression,
+            criteria=sub.criteria,
             input_mapping=sub.input_mapping,
             is_active=sub.is_active,
         )

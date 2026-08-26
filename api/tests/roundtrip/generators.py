@@ -36,6 +36,15 @@ DOMAIN_VALUES: dict[tuple[str, str] | str, Any] = {
     ("ManifestAgent", "channels"): ["chat"],
     ("ManifestEventSource", "source_type"): "schedule",
     ("ManifestEventSource", "overlap_policy"): "skip",
+    ("ManifestEventSubscription", "criteria"): {
+        "version": 1,
+        "root": {
+            "kind": "condition",
+            "field": "event.body.priority",
+            "operator": "equals",
+            "value": "high",
+        },
+    },
     ("ManifestConfig", "config_type"): "string",
     ("ManifestSolutionConfigSchema", "type"): "string",
     ("ManifestIntegrationConfigSchema", "type"): "string",

@@ -19,6 +19,11 @@ import {
 } from "@/services/events";
 import { useWorkflows } from "@/hooks/useWorkflows";
 import { InputMappingForm } from "@/components/events/InputMappingForm";
+import {
+	EventCriteriaForm,
+	validateCriteria,
+	type EventCriteria,
+} from "@/components/events/EventCriteriaForm";
 import type { components } from "@/lib/v1";
 
 type WorkflowMetadata = components["schemas"]["WorkflowMetadata"];
@@ -67,6 +72,13 @@ function EditSubscriptionDialogContent({
 	const [eventType, setEventType] = useState<string>(
 		subscription.event_type ?? "",
 	);
+	const [criteria, setCriteria] = useState<EventCriteria | null>(
+		(
+			subscription as EventSubscription & {
+				criteria?: EventCriteria | null;
+			}
+		).criteria ?? null,
+	);
 	const [inputMapping, setInputMapping] = useState<Record<string, unknown>>(
 		(subscription.input_mapping as Record<string, unknown>) ?? {},
 	);
@@ -76,7 +88,7 @@ function EditSubscriptionDialogContent({
 
 	const validateForm = (): boolean => {
 		const newErrors: string[] = [];
-		// Event type is optional, no validation needed
+		newErrors.push(...validateCriteria(criteria));
 		setErrors(newErrors);
 		return newErrors.length === 0;
 	};
@@ -97,8 +109,10 @@ function EditSubscriptionDialogContent({
 				},
 				body: {
 					event_type: eventType.trim() || null,
+					criteria,
 					input_mapping: cleanedMapping ?? null,
-				},
+				// eslint-disable-next-line @typescript-eslint/no-explicit-any
+				} as any,
 			});
 
 			toast.success("Subscription updated");
@@ -160,6 +174,14 @@ function EditSubscriptionDialogContent({
 					</p>
 				</div>
 
+				<div className="space-y-2 border-t pt-4">
+					<Label>Rule Criteria (optional)</Label>
+					<p className="text-xs text-muted-foreground">
+						Only matching events queue this target. Clearing criteria restores unconditional delivery.
+					</p>
+					<EventCriteriaForm value={criteria} onChange={setCriteria} disabled={isLoading} />
+				</div>
+
 				{/* Input Mapping (shown when workflow has parameters) */}
 				{selectedWorkflow?.parameters &&
 					selectedWorkflow.parameters.length > 0 && (
@@ -213,7 +235,7 @@ export function EditSubscriptionDialog({
 }: EditSubscriptionDialogProps) {
 	return (
 		<Dialog open={open} onOpenChange={onOpenChange}>
-			<DialogContent className="sm:max-w-[450px]">
+			<DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-[760px]">
 				{open && subscription && (
 					<EditSubscriptionDialogContent
 						subscription={subscription}

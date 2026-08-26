@@ -226,7 +226,15 @@ def kitchen_sink_manifest() -> Manifest:
                         target_type="workflow",
                         workflow_id=WF_ID,
                         event_type="ticket.created",
-                        filter_expression="$.priority == 'high'",
+                        criteria={
+                            "version": 1,
+                            "root": {
+                                "kind": "condition",
+                                "field": "event.body.priority",
+                                "operator": "equals",
+                                "value": "high",
+                            },
+                        },
                         input_mapping={"ticket_id": "$.id"},
                         is_active=True,
                     ),

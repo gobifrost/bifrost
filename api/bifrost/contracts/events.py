@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any
+from enum import Enum
+from typing import Any, Literal, TypeAlias
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -47,6 +48,42 @@ class EventSourceUpdate(BaseModel):
     schedule: ScheduleSourceConfig | None = Field(default=None)
 
 
+class EventCriteriaOperator(str, Enum):
+    EQUALS = "equals"
+    NOT_EQUALS = "not_equals"
+    IN = "in"
+    NOT_IN = "not_in"
+    EXISTS = "exists"
+    NOT_EXISTS = "not_exists"
+    CONTAINS = "contains"
+    STARTS_WITH = "starts_with"
+    ENDS_WITH = "ends_with"
+    GREATER_THAN = "greater_than"
+    GREATER_THAN_OR_EQUAL = "greater_than_or_equal"
+    LESS_THAN = "less_than"
+    LESS_THAN_OR_EQUAL = "less_than_or_equal"
+
+
+class EventCriteriaCondition(BaseModel):
+    kind: Literal["condition"] = "condition"
+    field: str = Field(min_length=1, max_length=255)
+    operator: EventCriteriaOperator
+    value: Any = Field(default=None)
+
+class EventCriteriaGroup(BaseModel):
+    kind: Literal["all", "any", "not"]
+    items: list["EventCriteriaNode"] = Field(min_length=1, max_length=50)
+
+EventCriteriaNode: TypeAlias = EventCriteriaCondition | EventCriteriaGroup
+
+
+class EventCriteria(BaseModel):
+    version: Literal[1] = 1
+    root: EventCriteriaNode
+
+EventCriteriaGroup.model_rebuild()
+
+
 class EventSubscriptionCreate(BaseModel):
     """Request model for creating an event subscription (CLI mirror)."""
 
@@ -54,7 +91,7 @@ class EventSubscriptionCreate(BaseModel):
     workflow_id: UUID | None = Field(default=None)
     agent_id: UUID | None = Field(default=None)
     event_type: str | None = Field(default=None, max_length=255)
-    filter_expression: str | None = Field(default=None)
+    criteria: EventCriteria | None = Field(default=None)
     input_mapping: dict[str, Any] | None = Field(default=None)
 
 
@@ -62,6 +99,6 @@ class EventSubscriptionUpdate(BaseModel):
     """Request model for updating an event subscription (CLI mirror)."""
 
     event_type: str | None = Field(default=None, max_length=255)
-    filter_expression: str | None = Field(default=None)
+    criteria: EventCriteria | None = Field(default=None)
     is_active: bool | None = Field(default=None)
     input_mapping: dict[str, Any] | None = Field(default=None)

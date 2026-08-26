@@ -225,6 +225,9 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     #
     # SDK AI completion requests gained optional `profile` (2026-08-23).
     # ADDITIVE: older SDKs omit it and continue using the Primary assignment.
+    # Event subscriptions replaced the inert filter_expression string with the
+    # structured criteria v1 contract (2026-08-26). BREAKING: older clients
+    # cannot express or inspect enforceable subscription rules.
     "e778c8be971f09d27e2600a19c152726f0b64b2c0d0785a86853aaef2da711b5"
 )
 

@@ -66,6 +66,7 @@ def _make_workflow_subscription(workflow_id=None, org_id=None):
     sub.workflow_id = workflow_id or uuid.uuid4()
     sub.agent_id = None
     sub.input_mapping = None
+    sub.criteria = None
 
     workflow = MagicMock()
     workflow.id = sub.workflow_id
@@ -177,6 +178,43 @@ async def test_emit_topic_with_subscriber_creates_delivery():
     assert count == 1
 
 
+@pytest.mark.asyncio
+async def test_emit_topic_records_criteria_non_match_without_queueable_delivery():
+    """Topic ingress uses the shared evaluator and persists a terminal decision."""
+    org_id = uuid.uuid4()
+    source = _make_source("user.invited", org_id=org_id)
+    sub = _make_workflow_subscription(org_id=org_id)
+    sub.criteria = {
+        "version": 1,
+        "root": {
+            "kind": "condition",
+            "field": "event.body.plan",
+            "operator": "equals",
+            "value": "enterprise",
+        },
+    }
+    processor, session = _make_processor(source=source, subscriptions=[sub])
+    added_objects = []
+    session.add = lambda obj: added_objects.append(obj)
+    session.flush = AsyncMock()
+
+    _event_id, count = await processor.emit_topic(
+        topic="user.invited",
+        data={"plan": "starter"},
+        organization_id=org_id,
+    )
+
+    from src.models.orm.events import EventDelivery
+
+    deliveries = [obj for obj in added_objects if isinstance(obj, EventDelivery)]
+    assert count == 1
+    assert len(deliveries) == 1
+    assert deliveries[0].status is EventDeliveryStatus.SKIPPED
+    assert deliveries[0].rule_decision == {
+        "criteria_version": 1,
+        "outcome": "not_matched",
+        "code": "criteria_not_matched",
+    }
 @pytest.mark.asyncio
 async def test_emit_topic_org_override():
     """Explicit organization_id overrides source.organization_id."""

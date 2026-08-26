@@ -498,3 +498,51 @@ async def test_schedule_creates_delivery_for_workflow_subscription(db_session):
     deliveries = await _deliveries_for_source(db_session, source.id)
     assert len(deliveries) == 1
     assert deliveries[0].workflow_id == sub.workflow_id
+
+
+@pytest.mark.asyncio
+async def test_schedule_records_criteria_evaluation_error_without_queueing(db_session):
+    """Schedule ingress fails closed when the scheduled envelope has the wrong type."""
+    from src.models.orm.workflows import Workflow
+
+    workflow = Workflow(
+        id=uuid4(),
+        name="sched-criteria-wf",
+        function_name="sched_criteria_wf",
+        path="workflows/sched_criteria_wf.py",
+    )
+    source, ss, sub = _make_source_and_subscription(target_type="workflow")
+    sub.workflow_id = workflow.id
+    sub.criteria = {
+        "version": 1,
+        "root": {
+            "kind": "condition",
+            "field": "schedule.timezone",
+            "operator": "greater_than",
+            "value": 1,
+        },
+    }
+    db_session.add_all((workflow, source, ss, sub))
+    await db_session.commit()
+
+    mock_sub_repo = AsyncMock()
+    mock_sub_repo.get_active_for_event = AsyncMock(return_value=[sub])
+
+    from src.jobs.schedulers.cron_scheduler import process_schedule_sources
+
+    with (
+        patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
+        patch(PATH_IS_VALID, return_value=True),
+        patch(PATH_SUB_REPO, return_value=mock_sub_repo),
+    ):
+        await process_schedule_sources()
+
+    deliveries = await _deliveries_for_source(db_session, source.id)
+    assert len(deliveries) == 1
+    assert deliveries[0].status == EventDeliveryStatus.SKIPPED
+    assert deliveries[0].rule_decision == {
+        "criteria_version": 1,
+        "outcome": "evaluation_error",
+        "code": "field_type_mismatch",
+    }
+    assert deliveries[0].execution_id is None

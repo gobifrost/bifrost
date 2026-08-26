@@ -253,13 +253,9 @@ async def process_schedule_sources() -> dict[str, Any]:
                                 )
                                 continue
 
-                        delivery = EventDelivery(
-                            id=uuid.uuid4(),
-                            event_id=event.id,
-                            event_subscription_id=sub.id,
-                            workflow_id=sub.workflow_id,  # None for agent targets
-                            status=EventDeliveryStatus.PENDING,
-                        )
+                        from src.services.events.processor import build_event_delivery
+
+                        delivery = build_event_delivery(event=event, subscription=sub)
                         db.add(delivery)
                         deliveries_for_event += 1
 
@@ -276,8 +272,8 @@ async def process_schedule_sources() -> dict[str, Any]:
                     queued = await processor.queue_event_deliveries(event.id)
                     results["deliveries_queued"] += queued
 
-                    # Source has been processed and its deliveries queued (if any).
-                    event.status = EventStatus.COMPLETED
+                    # queue_event_deliveries derives the terminal event status,
+                    # including criteria-only skips and evaluator failures.
 
                 except Exception as source_error:
                     error_info = {

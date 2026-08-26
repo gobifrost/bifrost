@@ -2,9 +2,7 @@
 
 from src.models.enums import EventDeliveryStatus
 
-RETRYABLE_DELIVERY_STATUSES = frozenset(
-    (EventDeliveryStatus.FAILED, EventDeliveryStatus.SKIPPED)
-)
+RETRYABLE_DELIVERY_STATUSES = frozenset((EventDeliveryStatus.FAILED,))
 
 
 def can_retry_delivery_status(status: EventDeliveryStatus) -> bool:

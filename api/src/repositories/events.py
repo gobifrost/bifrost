@@ -478,6 +478,19 @@ class EventDeliveryRepository(BaseRepository[EventDelivery]):
         result = await self.session.execute(stmt)
         return result.scalar() or 0
 
+    async def count_by_subscription_decision(
+        self,
+        subscription_id: UUID,
+        outcome: str,
+    ) -> int:
+        """Count safe persisted criteria outcomes for a subscription."""
+        stmt = select(func.count(EventDelivery.id)).where(
+            EventDelivery.event_subscription_id == subscription_id,
+            EventDelivery.rule_decision["outcome"].astext == outcome,
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar() or 0
+
     async def update_status(
         self,
         delivery_id: UUID,
@@ -546,12 +559,19 @@ class EventDeliveryRepository(BaseRepository[EventDelivery]):
         queued = status_counts.get(EventDeliveryStatus.QUEUED, 0)
         failed = status_counts.get(EventDeliveryStatus.FAILED, 0)
         success = status_counts.get(EventDeliveryStatus.SUCCESS, 0)
+        skipped = status_counts.get(EventDeliveryStatus.SKIPPED, 0)
+        evaluation_error = await self.session.scalar(
+            select(func.count(EventDelivery.id)).where(
+                EventDelivery.event_id == event_id,
+                EventDelivery.rule_decision["outcome"].astext == "evaluation_error",
+            )
+        )
 
         if pending > 0 or queued > 0:
             event.status = EventStatus.PROCESSING
-        elif failed > 0:
+        elif failed > 0 or evaluation_error:
             event.status = EventStatus.FAILED
-        elif success > 0:
+        elif success > 0 or skipped > 0:
             event.status = EventStatus.COMPLETED
         # else: keep current status
 

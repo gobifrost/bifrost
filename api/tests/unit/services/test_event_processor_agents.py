@@ -82,6 +82,7 @@ def _create_processor() -> "EventProcessor":
         session = AsyncMock()
         processor = EventProcessor(session)
         processor._delivery_repo = MagicMock()
+        processor._delivery_repo.update_event_status = AsyncMock()
         processor._event_repo = MagicMock()
         processor._subscription_repo = MagicMock()
         processor._webhook_repo = MagicMock()

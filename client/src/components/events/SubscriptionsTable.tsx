@@ -173,7 +173,7 @@ export function SubscriptionsTable({ sourceId }: SubscriptionsTableProps) {
 						<DataTableRow>
 							<DataTableHead className="w-[100px]">Type</DataTableHead>
 							<DataTableHead>Resource</DataTableHead>
-							<DataTableHead>Event Type Filter</DataTableHead>
+							<DataTableHead>Rule</DataTableHead>
 							<DataTableHead className="text-right">
 								Deliveries
 							</DataTableHead>
@@ -193,6 +193,9 @@ export function SubscriptionsTable({ sourceId }: SubscriptionsTableProps) {
 								target_type?: string;
 								agent_id?: string | null;
 								agent_name?: string | null;
+								criteria?: unknown;
+								skipped_count?: number;
+								evaluation_error_count?: number;
 							};
 							const targetType = sub.target_type || "workflow";
 							const isAgent = targetType === "agent";
@@ -200,11 +203,13 @@ export function SubscriptionsTable({ sourceId }: SubscriptionsTableProps) {
 								? (sub.agent_name || sub.agent_id || "Unknown Agent")
 								: (subscription.workflow_name || subscription.workflow_id);
 
+							const executedCount =
+								subscription.success_count + subscription.failed_count;
 							const successRate =
-								subscription.delivery_count > 0
+								executedCount > 0
 									? Math.round(
 											(subscription.success_count /
-												subscription.delivery_count) *
+												executedCount) *
 												100,
 										)
 									: null;
@@ -232,18 +237,25 @@ export function SubscriptionsTable({ sourceId }: SubscriptionsTableProps) {
 										{resourceName}
 									</DataTableCell>
 									<DataTableCell>
-										{subscription.event_type ? (
-											<Badge variant="outline">
-												{subscription.event_type}
-											</Badge>
-										) : (
-											<span className="text-muted-foreground">
-												All events
-											</span>
+									<div className="flex flex-wrap gap-1">
+										<Badge variant={sub.criteria ? "secondary" : "outline"}>
+											{sub.criteria ? "Conditional" : "All payloads"}
+										</Badge>
+										{subscription.event_type && (
+											<Badge variant="outline">{subscription.event_type}</Badge>
 										)}
+									</div>
 									</DataTableCell>
 									<DataTableCell className="text-right">
-										{subscription.delivery_count || 0}
+									<div>{subscription.delivery_count || 0}</div>
+									{((sub.skipped_count ?? 0) > 0 ||
+										(sub.evaluation_error_count ?? 0) > 0) && (
+										<div className="text-xs text-muted-foreground">
+											{sub.skipped_count ?? 0} skipped
+											{(sub.evaluation_error_count ?? 0) > 0 &&
+												` · ${sub.evaluation_error_count} errors`}
+										</div>
+									)}
 									</DataTableCell>
 									<DataTableCell className="text-right">
 										{successRate !== null ? (

@@ -160,6 +160,12 @@ async def _build_event_subscription_response(
     failed_count = await delivery_repo.count_by_subscription(
         subscription.id, status=EventDeliveryStatus.FAILED
     )
+    skipped_count = await delivery_repo.count_by_subscription_decision(
+        subscription.id, "not_matched"
+    )
+    evaluation_error_count = await delivery_repo.count_by_subscription_decision(
+        subscription.id, "evaluation_error"
+    )
 
     return EventSubscriptionResponse(
         id=subscription.id,
@@ -170,12 +176,14 @@ async def _build_event_subscription_response(
         agent_name=subscription.agent.name if subscription.agent else None,
         workflow_name=subscription.workflow.name if subscription.workflow else None,
         event_type=subscription.event_type,
-        filter_expression=subscription.filter_expression,
+        criteria=subscription.criteria,
         input_mapping=subscription.input_mapping,
         is_active=subscription.is_active,
         delivery_count=total_count,
         success_count=success_count,
         failed_count=failed_count,
+        skipped_count=skipped_count,
+        evaluation_error_count=evaluation_error_count,
         created_by=subscription.created_by,
         created_at=subscription.created_at,
         updated_at=subscription.updated_at,
@@ -785,7 +793,11 @@ async def create_subscription(
         workflow_id=request.workflow_id,
         agent_id=request.agent_id,
         event_type=request.event_type,
-        filter_expression=request.filter_expression,
+        criteria=(
+            request.criteria.model_dump(mode="json")
+            if request.criteria is not None
+            else None
+        ),
         input_mapping=request.input_mapping,
         is_active=True,
         created_by=ctx.user.email,
@@ -836,7 +848,10 @@ async def update_subscription(
     # Get subscription
     result = await db.execute(
         select(EventSubscription)
-        .options(joinedload(EventSubscription.workflow))
+        .options(
+            joinedload(EventSubscription.workflow),
+            joinedload(EventSubscription.agent),
+        )
         .where(
             EventSubscription.id == subscription_id,
             EventSubscription.event_source_id == source_id,
@@ -858,8 +873,12 @@ async def update_subscription(
     # Update fields - use model_fields_set to distinguish "not provided" from "set to null"
     if "event_type" in request.model_fields_set:
         subscription.event_type = request.event_type
-    if "filter_expression" in request.model_fields_set:
-        subscription.filter_expression = request.filter_expression
+    if "criteria" in request.model_fields_set:
+        subscription.criteria = (
+            request.criteria.model_dump(mode="json")
+            if request.criteria is not None
+            else None
+        )
     if "is_active" in request.model_fields_set and request.is_active is not None:
         subscription.is_active = request.is_active
     if "input_mapping" in request.model_fields_set:
@@ -1014,6 +1033,19 @@ async def list_events(
         failed_count = sum(
             1 for d in deliveries if d.status == EventDeliveryStatus.FAILED
         )
+        skipped_count = sum(
+            1
+            for d in deliveries
+            if d.status == EventDeliveryStatus.SKIPPED
+            and (getattr(d, "rule_decision", None) or {}).get("outcome")
+            == "not_matched"
+        )
+        evaluation_error_count = sum(
+            1
+            for d in deliveries
+            if (getattr(d, "rule_decision", None) or {}).get("outcome")
+            == "evaluation_error"
+        )
 
         items.append(
             EventResponse(
@@ -1029,6 +1061,8 @@ async def list_events(
                 delivery_count=total_deliveries,
                 success_count=success_count,
                 failed_count=failed_count,
+                skipped_count=skipped_count,
+                evaluation_error_count=evaluation_error_count,
                 created_at=event.created_at,
             )
         )
@@ -1146,6 +1180,19 @@ async def get_event(
         1 for d in deliveries if d.status == EventDeliveryStatus.SUCCESS
     )
     failed_count = sum(1 for d in deliveries if d.status == EventDeliveryStatus.FAILED)
+    skipped_count = sum(
+        1
+        for d in deliveries
+        if d.status == EventDeliveryStatus.SKIPPED
+        and (getattr(d, "rule_decision", None) or {}).get("outcome")
+        == "not_matched"
+    )
+    evaluation_error_count = sum(
+        1
+        for d in deliveries
+        if (getattr(d, "rule_decision", None) or {}).get("outcome")
+        == "evaluation_error"
+    )
 
     return EventResponse(
         id=event.id,
@@ -1160,6 +1207,8 @@ async def get_event(
         delivery_count=total_deliveries,
         success_count=success_count,
         failed_count=failed_count,
+        skipped_count=skipped_count,
+        evaluation_error_count=evaluation_error_count,
         created_at=event.created_at,
     )
 
@@ -1231,6 +1280,7 @@ async def list_deliveries(
                 if hasattr(delivery.status, "value")
                 else delivery.status,
                 error_message=delivery.error_message,
+                rule_decision=getattr(delivery, "rule_decision", None),
                 attempt_count=delivery.attempt_count,
                 next_retry_at=delivery.next_retry_at,
                 completed_at=delivery.completed_at,
@@ -1266,6 +1316,7 @@ async def list_deliveries(
                     agent_run_id=None,
                     status="not_delivered",
                     error_message=None,
+                    rule_decision=None,
                     attempt_count=0,
                     next_retry_at=None,
                     completed_at=None,
@@ -1296,8 +1347,7 @@ async def create_delivery(
     This allows retroactively sending an event to a subscription that was
     added after the event originally arrived.
     """
-    import uuid
-    from src.services.events.processor import EventProcessor
+    from src.services.events.processor import EventProcessor, build_event_delivery
 
     # Get event
     result = await db.execute(
@@ -1316,7 +1366,10 @@ async def create_delivery(
     # Get subscription and verify it belongs to the same event source
     result = await db.execute(
         select(EventSubscription)
-        .options(joinedload(EventSubscription.workflow))
+        .options(
+            joinedload(EventSubscription.workflow),
+            joinedload(EventSubscription.agent),
+        )
         .where(EventSubscription.id == request.subscription_id)
     )
     subscription = result.unique().scalar_one_or_none()
@@ -1347,13 +1400,7 @@ async def create_delivery(
         )
 
     # Create delivery record
-    delivery = EventDelivery(
-        id=uuid.uuid4(),
-        event_id=event_id,
-        event_subscription_id=subscription.id,
-        workflow_id=subscription.workflow_id,
-        status=EventDeliveryStatus.PENDING,
-    )
+    delivery = build_event_delivery(event=event, subscription=subscription)
     db.add(delivery)
     await db.flush()
 
@@ -1377,11 +1424,16 @@ async def create_delivery(
         event_subscription_id=delivery.event_subscription_id,
         workflow_id=delivery.workflow_id,
         workflow_name=subscription.workflow.name if subscription.workflow else None,
+        target_type=subscription.target_type or "workflow",
+        agent_id=subscription.agent_id,
+        agent_name=subscription.agent.name if subscription.agent else None,
         execution_id=delivery.execution_id,
+        agent_run_id=delivery.agent_run_id,
         status=delivery.status.value
         if hasattr(delivery.status, "value")
         else delivery.status,
         error_message=delivery.error_message,
+        rule_decision=getattr(delivery, "rule_decision", None),
         attempt_count=delivery.attempt_count,
         next_retry_at=delivery.next_retry_at,
         completed_at=delivery.completed_at,
