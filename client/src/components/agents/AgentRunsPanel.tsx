@@ -9,6 +9,7 @@
  * runs tab.
  */
 
+import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -32,10 +33,17 @@ import {
 	DataTableHead,
 	DataTableHeader,
 	DataTableRow,
+	DataTableFooter,
 } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
-
-import { InfiniteScrollSentinel } from "@/components/ui/infinite-scroll-sentinel";
+import {
+	Pagination,
+	PaginationContent,
+	PaginationItem,
+	PaginationLink,
+	PaginationNext,
+	PaginationPrevious,
+} from "@/components/ui/pagination";
 import {
 	useAgentRunListStream,
 	useInfiniteAgentRuns,
@@ -49,6 +57,7 @@ import { formatDate, formatDuration } from "@/lib/utils";
 import type { components } from "@/lib/v1";
 
 type AgentRun = components["schemas"]["AgentRunResponse"];
+const PAGE_SIZE = 25;
 
 function RunStatusBadge({ status }: { status: string }) {
 	switch (status) {
@@ -94,6 +103,7 @@ function VerdictGlyph({ verdict }: { verdict: AgentRun["verdict"] }) {
 export function AgentRunsPanel() {
 	const navigate = useNavigate();
 	const location = useLocation();
+	const [pageIndex, setPageIndex] = useState(0);
 	const runNavigationState = createAgentRunNavigationState({
 		href: getLocationHref(location),
 		label: "Back to run history",
@@ -104,7 +114,7 @@ export function AgentRunsPanel() {
 		hasNextPage,
 		isFetchingNextPage,
 		fetchNextPage,
-	} = useInfiniteAgentRuns({ pageSize: 50 });
+	} = useInfiniteAgentRuns({ pageSize: PAGE_SIZE });
 	const rerun = useRerunAgentRun();
 
 	// Subscribe to real-time updates; the hook patches the shared
@@ -112,8 +122,23 @@ export function AgentRunsPanel() {
 	// status changes (queued → running → completed) reflect live.
 	useAgentRunListStream({ enabled: true });
 
-	const runs: AgentRun[] = (data?.pages.flatMap((p) => p.items) ??
-		[]) as AgentRun[];
+	const runs = (data?.pages[pageIndex]?.items ?? []) as AgentRun[];
+	const total = data?.pages[0]?.total ?? 0;
+	const hasPreviousPage = pageIndex > 0;
+	const hasFollowingPage = (pageIndex + 1) * PAGE_SIZE < total;
+
+	async function handleNextPage() {
+		const nextPageIndex = pageIndex + 1;
+		if (data?.pages[nextPageIndex]) {
+			setPageIndex(nextPageIndex);
+			return;
+		}
+		if (!hasNextPage || isFetchingNextPage) return;
+		const result = await fetchNextPage();
+		if (result.data?.pages[nextPageIndex]) {
+			setPageIndex(nextPageIndex);
+		}
+	}
 
 	function handleRerun(runId: string) {
 		rerun.mutate(
@@ -259,12 +284,58 @@ export function AgentRunsPanel() {
 						</DataTableRow>
 					))}
 				</DataTableBody>
+				{total > PAGE_SIZE && (
+					<DataTableFooter>
+						<DataTableRow>
+							<DataTableCell colSpan={7} className="p-0">
+								<div className="flex items-center justify-center px-6 py-3">
+									<Pagination>
+										<PaginationContent>
+											<PaginationItem>
+												<PaginationPrevious
+													onClick={(event) => {
+														event.preventDefault();
+														if (hasPreviousPage) {
+															setPageIndex((current) => current - 1);
+														}
+													}}
+													className={
+														hasPreviousPage
+															? "cursor-pointer"
+															: "pointer-events-none opacity-50"
+													}
+													aria-disabled={!hasPreviousPage}
+												/>
+											</PaginationItem>
+											<PaginationItem>
+												<PaginationLink isActive>
+													{pageIndex + 1}
+												</PaginationLink>
+											</PaginationItem>
+											<PaginationItem>
+												<PaginationNext
+													onClick={(event) => {
+														event.preventDefault();
+														void handleNextPage();
+													}}
+													className={
+														hasFollowingPage && !isFetchingNextPage
+															? "cursor-pointer"
+															: "pointer-events-none opacity-50"
+													}
+													aria-disabled={
+														!hasFollowingPage || isFetchingNextPage
+													}
+												/>
+											</PaginationItem>
+										</PaginationContent>
+									</Pagination>
+								</div>
+							</DataTableCell>
+						</DataTableRow>
+					</DataTableFooter>
+				)}
 			</DataTable>
-			<InfiniteScrollSentinel
-				hasNext={!!hasNextPage}
-				isLoading={isFetchingNextPage}
-				onLoadMore={() => fetchNextPage()}
-			/>
 		</div>
 	);
 }

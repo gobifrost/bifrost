@@ -7,7 +7,7 @@ const mockUseInfiniteAgentRuns = vi.hoisted(() => vi.fn());
 const mockUseRerunAgentRun = vi.hoisted(() => vi.fn());
 
 vi.mock("@/services/agentRuns", () => ({
-	useInfiniteAgentRuns: () => mockUseInfiniteAgentRuns(),
+	useInfiniteAgentRuns: (params: unknown) => mockUseInfiniteAgentRuns(params),
 	useAgentRunListStream: () => undefined,
 	useRerunAgentRun: () => mockUseRerunAgentRun(),
 }));
@@ -39,6 +39,11 @@ const run = {
 	created_at: "2026-07-23T12:00:00Z",
 	started_at: "2026-07-23T12:00:00Z",
 };
+const secondPageRun = {
+	...run,
+	id: "run-26",
+	asked: "Triage ticket 428976",
+};
 
 beforeEach(() => {
 	mockUseInfiniteAgentRuns.mockReturnValue({
@@ -55,6 +60,41 @@ beforeEach(() => {
 });
 
 describe("AgentRunsPanel", () => {
+	it("uses the same 25-run Previous and Next pagination as workflows", async () => {
+		mockUseInfiniteAgentRuns.mockReturnValue({
+			data: {
+				pages: [
+					{ items: [run], total: 50 },
+					{ items: [secondPageRun], total: 50 },
+				],
+			},
+			isLoading: false,
+			hasNextPage: false,
+			isFetchingNextPage: false,
+			fetchNextPage: vi.fn(),
+		});
+
+		const { user } = renderWithProviders(
+			<Routes>
+				<Route path="/history" element={<AgentRunsPanel />} />
+			</Routes>,
+			{ initialEntries: ["/history?type=agents"] },
+		);
+
+		expect(mockUseInfiniteAgentRuns).toHaveBeenCalledWith({ pageSize: 25 });
+		expect(screen.getByRole("row", { name: /428950/ })).toBeInTheDocument();
+		expect(screen.queryByRole("row", { name: /428976/ })).not.toBeInTheDocument();
+		expect(screen.getByText("1")).toHaveAttribute("aria-current", "page");
+
+		await user.click(screen.getByLabelText("Go to next page"));
+		expect(screen.queryByRole("row", { name: /428950/ })).not.toBeInTheDocument();
+		expect(screen.getByRole("row", { name: /428976/ })).toBeInTheDocument();
+		expect(screen.getByText("2")).toHaveAttribute("aria-current", "page");
+
+		await user.click(screen.getByLabelText("Go to previous page"));
+		expect(screen.getByRole("row", { name: /428950/ })).toBeInTheDocument();
+	});
+
 	it("constrains the table and progressively collapses secondary columns", () => {
 		renderWithProviders(
 			<Routes>
