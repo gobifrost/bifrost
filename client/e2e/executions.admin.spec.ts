@@ -37,6 +37,41 @@ test.describe("Execution History", () => {
 		).toBeVisible({ timeout: 10000 });
 	});
 
+	test("should fit the execution history page on a narrow viewport", async ({
+		page,
+	}) => {
+		await page.setViewportSize({ width: 375, height: 812 });
+		await page.goto("/history");
+
+		await expect(
+			page.getByRole("heading", { name: /history|executions/i }).first(),
+		).toBeVisible({ timeout: 10000 });
+		await expect
+			.poll(() =>
+				page.evaluate(
+					() =>
+						document.documentElement.scrollWidth <=
+							document.documentElement.clientWidth,
+				),
+			)
+			.toBe(true);
+
+		const table = page.getByRole("table").first();
+		if (await table.isVisible().catch(() => false)) {
+			await expect(
+				table.getByRole("columnheader", { name: "Workflow" }),
+			).toBeVisible();
+			await expect(
+				table.getByRole("columnheader", { name: "Status" }),
+			).toBeVisible();
+			for (const name of ["Organization", "Run by", "Started", "Duration"]) {
+				await expect(
+					table.getByRole("columnheader", { name }),
+				).toBeHidden();
+			}
+		}
+	});
+
 	test("should list executions", async ({ page }) => {
 		await page.goto("/history");
 

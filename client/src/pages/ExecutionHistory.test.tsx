@@ -424,7 +424,7 @@ describe("ExecutionHistory — summary rollup", () => {
 });
 
 describe("ExecutionHistory — feed rendering", () => {
-	it("keeps metadata columns content-sized and lets Workflow fill the table", async () => {
+	it("keeps Workflow flexible and progressively collapses metadata columns", async () => {
 		mockAuth.mockReturnValue({
 			isPlatformAdmin: true,
 			user: { id: "user-1", email: "u@example.com" },
@@ -441,17 +441,22 @@ describe("ExecutionHistory — feed rendering", () => {
 		expect(
 			screen.getByRole("columnheader", { name: "Workflow" }),
 		).toHaveClass("w-full");
-		for (const name of [
-			"Organization",
-			"Status",
-			"Run by",
-			"Started",
-			"Duration",
-		]) {
-			expect(screen.getByRole("columnheader", { name })).toHaveClass(
-				"w-px",
-			);
-		}
+		expect(
+			screen.getByRole("columnheader", { name: "Organization" }),
+		).toHaveClass("hidden", "xl:table-cell");
+		expect(
+			screen.getByRole("columnheader", { name: "Status" }),
+		).toHaveClass("w-px");
+		expect(
+			screen.getByRole("columnheader", { name: "Run by" }),
+		).toHaveClass("hidden", "xl:table-cell");
+		expect(
+			screen.getByRole("columnheader", { name: "Started" }),
+		).toHaveClass("hidden", "lg:table-cell");
+		expect(
+			screen.getByRole("columnheader", { name: "Duration" }),
+		).toHaveClass("hidden", "xl:table-cell");
+		expect(screen.getByText("by Test User")).toBeInTheDocument();
 	});
 
 	it("groups rows under day separator rows", async () => {
