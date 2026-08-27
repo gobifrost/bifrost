@@ -127,6 +127,7 @@ class AdapterRegistry:
             "display_name": adapter.display_name,
             "description": adapter.description,
             "requires_integration": adapter.requires_integration,
+            "requires_organization": adapter.requires_organization,
             "config_schema": adapter.config_schema,
             "supports_renewal": adapter.renewal_interval is not None,
         }
@@ -145,6 +146,7 @@ class AdapterRegistry:
                 "display_name": adapter.display_name,
                 "description": adapter.description,
                 "requires_integration": adapter.requires_integration,
+                "requires_organization": adapter.requires_organization,
                 "config_schema": adapter.config_schema,
                 "supports_renewal": adapter.renewal_interval is not None,
             })

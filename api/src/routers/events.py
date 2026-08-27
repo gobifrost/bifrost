@@ -60,10 +60,15 @@ from src.repositories.events import (
     EventSubscriptionRepository,
 )
 from src.core.cache import get_shared_redis
+from src.config import get_settings
 from src.services.events import emit_event
 from src.services.events.registry import CURATED_TOPICS
 from src.services.events.validation import validate_topic
 from src.services.webhooks.registry import get_adapter_registry
+from src.services.webhooks.auth import (
+    build_webhook_integration_credentials,
+    resolve_webhook_integration_auth,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +78,11 @@ router = APIRouter(prefix="/api/events", tags=["Events"])
 def _build_callback_url(source_id: UUID) -> str:
     """Build callback URL path from event source ID."""
     return f"/api/hooks/{source_id}"
+
+
+def _build_public_callback_url(source_id: UUID) -> str:
+    """Build the externally reachable callback URL sent to webhook providers."""
+    return f"{get_settings().public_url.rstrip('/')}{_build_callback_url(source_id)}"
 
 
 async def _get_rate_limited_count(source_id: str) -> int:
@@ -233,8 +243,6 @@ async def get_dynamic_values(
 
     Returns a list of option objects that the UI uses to populate dropdowns.
     """
-    from src.models.orm.integrations import Integration
-
     # Get adapter
     registry = get_adapter_registry()
     adapter = registry.get(adapter_name)
@@ -245,19 +253,21 @@ async def get_dynamic_values(
             detail=f"Unknown adapter: {adapter_name}",
         )
 
-    # Load integration if provided
+    # Resolve organization-scoped OAuth credentials if the adapter needs them.
     integration = None
     if request.integration_id:
-        result = await db.execute(
-            select(Integration).where(Integration.id == request.integration_id)
-        )
-        integration = result.scalar_one_or_none()
-
-        if not integration:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Integration not found",
+        try:
+            credentials = await build_webhook_integration_credentials(
+                db,
+                request.integration_id,
+                request.organization_id,
             )
+            integration = await resolve_webhook_integration_auth(credentials)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            ) from e
 
     # Call adapter's get_dynamic_values
     try:
@@ -446,8 +456,18 @@ async def create_source(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=f"Adapter '{adapter_name}' requires integration",
                 )
-            # TODO: Load integration from database
-            # integration = await get_integration(request.webhook.integration_id)
+            try:
+                credentials = await build_webhook_integration_credentials(
+                    db,
+                    request.webhook.integration_id,
+                    target_org_id,
+                )
+                integration = await resolve_webhook_integration_auth(credentials)
+            except ValueError as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=str(e),
+                ) from e
 
         # Create webhook source record
         webhook_source = WebhookSource(
@@ -463,8 +483,7 @@ async def create_source(
         )
 
         # Call adapter subscribe (for external subscriptions)
-        # Note: callback_url is a path - client will combine with origin
-        callback_url = _build_callback_url(source.id)
+        callback_url = _build_public_callback_url(source.id)
         try:
             result = await adapter.subscribe(
                 callback_url=callback_url,
@@ -478,7 +497,10 @@ async def create_source(
 
         except Exception as e:
             logger.error(f"Failed to subscribe webhook: {e}", exc_info=True)
-            source.error_message = str(e)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Failed to create provider subscription: {e}",
+            ) from e
 
         db.add(webhook_source)
         await db.flush()
@@ -685,10 +707,18 @@ async def delete_source(
         adapter = get_adapter_registry().get(ws.adapter_name)
         if adapter:
             try:
+                integration = None
+                if adapter.requires_integration and ws.integration_id:
+                    credentials = await build_webhook_integration_credentials(
+                        db,
+                        ws.integration_id,
+                        source.organization_id,
+                    )
+                    integration = await resolve_webhook_integration_auth(credentials)
                 await adapter.unsubscribe(
                     external_id=ws.external_id,
                     state=ws.state or {},
-                    integration=ws.integration,
+                    integration=integration,
                 )
             except Exception as e:
                 logger.warning(f"Failed to unsubscribe webhook: {e}")

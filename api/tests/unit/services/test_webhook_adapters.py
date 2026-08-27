@@ -9,13 +9,22 @@ import hashlib
 import hmac
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import pytest
 
 from src.services.webhooks.adapters.generic import GenericWebhookAdapter
 from src.services.webhooks.adapters.local_fixture import LocalFixtureWebhookAdapter
+from src.services.webhooks.adapters.microsoft_graph import MicrosoftGraphAdapter
 from src.services.webhooks import registry as webhook_registry
-from src.services.webhooks.protocol import Deliver, Rejected, WebhookAdapter, WebhookRequest
+from src.services.webhooks.protocol import (
+    Deliver,
+    Rejected,
+    WebhookAdapter,
+    WebhookIntegrationAuth,
+    WebhookRequest,
+)
 
 
 def _sign(body: bytes, secret: str, prefix: str = "sha256=") -> str:
@@ -36,6 +45,98 @@ def _make_request(
         body=body,
         query_params={},
     )
+
+
+class _GraphClient:
+    """Small async client double that records Graph requests."""
+
+    def __init__(self, response):
+        self.response = response
+        self.get = AsyncMock(return_value=response)
+        self.post = AsyncMock(return_value=response)
+        self.patch = AsyncMock(return_value=response)
+        self.delete = AsyncMock(return_value=response)
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *_args):
+        return None
+
+
+def _graph_auth() -> WebhookIntegrationAuth:
+    return WebhookIntegrationAuth(
+        integration_id=uuid4(),
+        organization_id=uuid4(),
+        entity_id="tenant-covi",
+        access_token="tenant-token",
+    )
+
+
+@pytest.mark.asyncio
+async def test_graph_lists_users_with_resolved_tenant_token(monkeypatch):
+    response = SimpleNamespace(
+        status_code=200,
+        json=lambda: {
+            "value": [
+                {
+                    "id": "user-1",
+                    "displayName": "Ada Lovelace",
+                    "mail": "ada@example.com",
+                }
+            ]
+        },
+        text="",
+    )
+    client = _GraphClient(response)
+    monkeypatch.setattr(
+        "src.services.webhooks.adapters.microsoft_graph.httpx.AsyncClient",
+        lambda: client,
+    )
+
+    users = await MicrosoftGraphAdapter().get_dynamic_values(
+        "list_users",
+        _graph_auth(),
+        {},
+    )
+
+    assert users == [
+        {"id": "user-1", "displayName": "Ada Lovelace", "mail": "ada@example.com"}
+    ]
+    assert client.get.await_args.kwargs["headers"] == {
+        "Authorization": "Bearer tenant-token"
+    }
+
+
+@pytest.mark.asyncio
+async def test_graph_subscription_uses_public_callback_and_resolved_token(monkeypatch):
+    response = SimpleNamespace(
+        status_code=201,
+        json=lambda: {
+            "id": "subscription-1",
+            "expirationDateTime": "2026-08-30T12:00:00Z",
+        },
+        text="",
+    )
+    client = _GraphClient(response)
+    monkeypatch.setattr(
+        "src.services.webhooks.adapters.microsoft_graph.httpx.AsyncClient",
+        lambda: client,
+    )
+
+    result = await MicrosoftGraphAdapter().subscribe(
+        "https://dev.example.com/api/hooks/source-1",
+        {"resource": "/users/user-1/messages", "change_types": ["created"]},
+        _graph_auth(),
+    )
+
+    assert result.external_id == "subscription-1"
+    request = client.post.await_args
+    assert request.kwargs["headers"]["Authorization"] == "Bearer tenant-token"
+    assert request.kwargs["json"]["notificationUrl"] == (
+        "https://dev.example.com/api/hooks/source-1"
+    )
+    assert "includeResourceData" not in request.kwargs["json"]
 
 
 @pytest.mark.asyncio

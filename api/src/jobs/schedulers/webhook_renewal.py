@@ -14,12 +14,41 @@ from typing import Any
 
 
 from src.core.database import get_db_context
+from src.config import get_settings
+from src.services.webhooks.auth import (
+    build_webhook_integration_credentials,
+    resolve_webhook_integration_auth,
+)
 from src.services.webhooks.registry import get_adapter
 
 logger = logging.getLogger(__name__)
 
 # Check for subscriptions expiring within 48 hours
 RENEWAL_THRESHOLD_HOURS = 48
+
+
+async def _renew_or_recreate(
+    adapter: Any,
+    webhook: dict[str, Any],
+    integration: Any | None,
+) -> tuple[Any, bool]:
+    """Renew an existing subscription, or recreate it when renewal is rejected."""
+    result = await adapter.renew(
+        external_id=webhook["external_id"],
+        state=webhook["state"],
+        integration=integration,
+    )
+    if result is not None:
+        return result, False
+
+    return (
+        await adapter.subscribe(
+            callback_url=webhook["callback_url"],
+            config=webhook["config"],
+            integration=integration,
+        ),
+        True,
+    )
 
 
 async def renew_expiring_webhooks() -> dict[str, Any]:
@@ -39,6 +68,7 @@ async def renew_expiring_webhooks() -> dict[str, Any]:
         "total_webhooks": 0,
         "needs_renewal": 0,
         "renewed_successfully": 0,
+        "recreated_successfully": 0,
         "renewal_failed": 0,
         "no_renewal_support": 0,
         "errors": [],
@@ -59,14 +89,32 @@ async def renew_expiring_webhooks() -> dict[str, Any]:
                 if not adapter or adapter.renewal_interval is None:
                     results["no_renewal_support"] += 1
                     continue
+                credentials = None
+                if adapter.requires_integration and webhook.integration_id:
+                    try:
+                        credentials = await build_webhook_integration_credentials(
+                            db,
+                            webhook.integration_id,
+                            webhook.event_source.organization_id,
+                        )
+                    except ValueError as e:
+                        results["renewal_failed"] += 1
+                        results["errors"].append({
+                            "webhook_id": str(webhook.id),
+                            "adapter": webhook.adapter_name,
+                            "error": str(e),
+                        })
+                        continue
+                callback_path = f"/api/hooks/{webhook.event_source_id}"
                 webhook_data.append({
                     "id": webhook.id,
                     "adapter_name": webhook.adapter_name,
                     "external_id": webhook.external_id,
                     "state": webhook.state or {},
-                    "integration": webhook.integration if webhook.integration_id else None,
-                    "callback_path": f"/hooks/{webhook.event_source_id}",
-                    "has_event_source": webhook.event_source is not None,
+                    "config": webhook.config or {},
+                    "credentials": credentials,
+                    "callback_path": callback_path,
+                    "callback_url": f"{get_settings().public_url.rstrip('/')}{callback_path}",
                 })
 
         results["total_webhooks"] = len(webhooks)
@@ -80,13 +128,19 @@ async def renew_expiring_webhooks() -> dict[str, Any]:
                 if not adapter:
                     continue
 
-                renewal_result = await adapter.renew(
-                    external_id=wh["external_id"],
-                    state=wh["state"],
-                    integration=wh["integration"],
+                integration = None
+                if wh["credentials"] is not None:
+                    integration = await resolve_webhook_integration_auth(
+                        wh["credentials"]
+                    )
+
+                renewal_result, recreated = await _renew_or_recreate(
+                    adapter,
+                    wh,
+                    integration,
                 )
 
-                if renewal_result:
+                if not recreated:
                     renewal_results.append({
                         "id": wh["id"],
                         "expires_at": renewal_result.expires_at,
@@ -105,15 +159,20 @@ async def renew_expiring_webhooks() -> dict[str, Any]:
                 else:
                     renewal_results.append({
                         "id": wh["id"],
-                        "success": False,
-                        "has_event_source": wh["has_event_source"],
+                        "expires_at": renewal_result.expires_at,
+                        "external_id": renewal_result.external_id,
+                        "state": renewal_result.state,
+                        "success": True,
+                        "recreated": True,
                     })
-                    results["renewal_failed"] += 1
-                    results["errors"].append({
-                        "webhook_id": str(wh["id"]),
-                        "adapter": wh["adapter_name"],
-                        "error": "Renewal returned None - subscription may have expired",
-                    })
+                    results["recreated_successfully"] += 1
+                    logger.info(
+                        f"Recreated webhook subscription: {wh['callback_path']}",
+                        extra={
+                            "webhook_id": str(wh["id"]),
+                            "adapter": wh["adapter_name"],
+                        },
+                    )
 
             except Exception as e:
                 results["renewal_failed"] += 1
@@ -141,8 +200,16 @@ async def renew_expiring_webhooks() -> dict[str, Any]:
                     if rr.get("success"):
                         webhook.expires_at = rr["expires_at"]
                         webhook.updated_at = datetime.now(timezone.utc)
+                        if rr.get("external_id"):
+                            webhook.external_id = rr["external_id"]
                         if rr.get("state"):
-                            webhook.state = {**(webhook.state or {}), **rr["state"]}
+                            webhook.state = (
+                                rr["state"]
+                                if rr.get("recreated")
+                                else {**(webhook.state or {}), **rr["state"]}
+                            )
+                        if webhook.event_source:
+                            webhook.event_source.error_message = None
                     elif rr.get("has_event_source") and webhook.event_source:
                         webhook.event_source.error_message = "Webhook subscription expired and could not be renewed"
 

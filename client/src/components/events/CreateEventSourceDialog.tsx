@@ -1,4 +1,10 @@
-import { useState, useEffect, useCallback, useMemo } from "react";
+import {
+	useState,
+	useEffect,
+	useCallback,
+	useMemo,
+	type ReactNode,
+} from "react";
 import {
 	Dialog,
 	DialogContent,
@@ -22,7 +28,12 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
+import { AlertCircle, CheckCircle2, ChevronDown, Loader2 } from "lucide-react";
+import {
+	Collapsible,
+	CollapsibleContent,
+	CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { toast } from "sonner";
 import { formatDistanceToNow } from "date-fns";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
@@ -93,6 +104,30 @@ const COMMON_TIMEZONES = [
 	"Pacific/Auckland",
 ];
 
+function FormSection({
+	title,
+	description,
+	children,
+}: {
+	title: string;
+	description?: string;
+	children: ReactNode;
+}) {
+	return (
+		<section className="space-y-3 rounded-lg border bg-muted/20 p-4">
+			<div className="space-y-1">
+				<h3 className="text-sm font-semibold">{title}</h3>
+				{description && (
+					<p className="text-xs text-muted-foreground">
+						{description}
+					</p>
+				)}
+			</div>
+			<div className="space-y-4">{children}</div>
+		</section>
+	);
+}
+
 interface CreateEventSourceDialogProps {
 	open: boolean;
 	onOpenChange: (open: boolean) => void;
@@ -144,6 +179,7 @@ function CreateEventSourceDialogContent({
 	);
 	const [rateLimitWindowSeconds, setRateLimitWindowSeconds] = useState(60);
 	const [rateLimitEnabled, setRateLimitEnabled] = useState(true);
+	const [advancedOpen, setAdvancedOpen] = useState(false);
 
 	// Schedule state
 	const [cronExpression, setCronExpression] = useState("");
@@ -164,6 +200,9 @@ function CreateEventSourceDialogContent({
 
 	// Get selected adapter info
 	const selectedAdapter = adapters.find((a) => a.name === adapterName);
+	const selectedAdapterRequiresOrganization = Boolean(
+		selectedAdapter?.requires_organization,
+	);
 
 	// Filter integrations if adapter requires specific OAuth
 	const filteredIntegrations = selectedAdapter?.requires_integration
@@ -189,25 +228,28 @@ function CreateEventSourceDialogContent({
 	};
 
 	// Debounced cron validation
-	const validateCronExpression = useCallback(async (expr: string) => {
-		if (!expr.trim()) return;
+	const validateCronExpression = useCallback(
+		async (expr: string) => {
+			if (!expr.trim()) return;
 
-		try {
-			const response = await authFetch("/api/schedules/validate", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({ expression: expr, timezone }),
-			});
-			const data = await response.json();
-			setCronValidation(data);
-		} catch {
-			setCronValidation({
-				valid: false,
-				human_readable: "Failed to validate",
-				error: "Unable to connect to validation service",
-			});
-		}
-	}, [timezone]);
+			try {
+				const response = await authFetch("/api/schedules/validate", {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ expression: expr, timezone }),
+				});
+				const data = await response.json();
+				setCronValidation(data);
+			} catch {
+				setCronValidation({
+					valid: false,
+					human_readable: "Failed to validate",
+					error: "Unable to connect to validation service",
+				});
+			}
+		},
+		[timezone],
+	);
 
 	useEffect(() => {
 		if (!cronExpression) {
@@ -250,6 +292,14 @@ function CreateEventSourceDialogContent({
 			newErrors.push(
 				`This adapter requires a ${selectedAdapter.requires_integration} integration`,
 			);
+		}
+
+		if (
+			selectedAdapterRequiresOrganization &&
+			isPlatformAdmin &&
+			!organizationId
+		) {
+			newErrors.push("Please select an organization for this adapter");
 		}
 
 		if (sourceType === "schedule") {
@@ -350,73 +400,74 @@ function CreateEventSourceDialogContent({
 					</Alert>
 				)}
 
-				{/* Organization (Platform Admin Only) */}
-				{isPlatformAdmin && (
+				<FormSection
+					title="Scope"
+					description="Choose where this event source is available."
+				>
+					{isPlatformAdmin && (
+						<div className="space-y-2">
+							<Label htmlFor="organization">Organization</Label>
+							<OrganizationSelect
+								value={organizationId}
+								onChange={(value) =>
+									setOrganizationId(value ?? null)
+								}
+								showGlobal
+							/>
+							<p className="text-xs text-muted-foreground">
+								Leave as Global to make this source available to
+								all organizations.
+							</p>
+						</div>
+					)}
+
 					<div className="space-y-2">
-						<Label htmlFor="organization">Organization</Label>
-						<OrganizationSelect
-							value={organizationId}
-							onChange={(value) =>
-								setOrganizationId(value ?? null)
+						<Label htmlFor="name">Name</Label>
+						<Input
+							id="name"
+							value={name}
+							onChange={(e) => setName(e.target.value)}
+							placeholder={
+								sourceType === "schedule"
+									? "e.g., Daily Sync Schedule"
+									: "e.g., GitHub Webhooks"
 							}
-							showGlobal
 						/>
-						<p className="text-xs text-muted-foreground">
-							Leave as Global to make this source available to all
-							organizations.
-						</p>
 					</div>
-				)}
+				</FormSection>
 
-				{/* Name */}
-				<div className="space-y-2">
-					<Label htmlFor="name">Name</Label>
-					<Input
-						id="name"
-						value={name}
-						onChange={(e) => setName(e.target.value)}
-						placeholder={
-							sourceType === "schedule"
-								? "e.g., Daily Sync Schedule"
-								: "e.g., GitHub Webhooks"
-						}
-					/>
-				</div>
-
-				{/* Source Type */}
-				<div className="space-y-2">
-					<Label htmlFor="source-type">Source Type</Label>
-					<Select
-						value={sourceType}
-						onValueChange={(value) => {
-							setSourceType(value as EventSourceType);
-							setTopicPickerValue("");
-							setCustomTopic("");
-							setTopicError(null);
-						}}
-					>
-						<SelectTrigger id="source-type">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							<SelectItem value="webhook">Webhook</SelectItem>
-							<SelectItem value="schedule">Schedule</SelectItem>
-							<SelectItem value="topic">Topic</SelectItem>
-						</SelectContent>
-					</Select>
-				</div>
+				<FormSection
+					title="Trigger"
+					description="Pick how Bifrost receives or creates events."
+				>
+					<div className="space-y-2">
+						<Label htmlFor="source-type">Source Type</Label>
+						<Select
+							value={sourceType}
+							onValueChange={(value) => {
+								setSourceType(value as EventSourceType);
+								setTopicPickerValue("");
+								setCustomTopic("");
+								setTopicError(null);
+							}}
+						>
+							<SelectTrigger id="source-type" className="w-full">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="webhook">Webhook</SelectItem>
+								<SelectItem value="schedule">
+									Schedule
+								</SelectItem>
+								<SelectItem value="topic">Topic</SelectItem>
+							</SelectContent>
+						</Select>
+					</div>
+				</FormSection>
 
 				{/* Topic Configuration */}
 				{sourceType === "topic" && (
-					<>
-						<div className="border-t pt-4">
-							<div className="mb-3">
-								<h4 className="text-sm font-medium">
-									Topic Configuration
-								</h4>
-							</div>
-						</div>
-
+					<FormSection title="Topic Configuration">
 						<div className="space-y-2">
 							<Label htmlFor="topic-picker">Topic</Label>
 							<Select
@@ -432,7 +483,10 @@ function CreateEventSourceDialogContent({
 									}
 								}}
 							>
-								<SelectTrigger id="topic-picker">
+								<SelectTrigger
+									id="topic-picker"
+									className="w-full"
+								>
 									<SelectValue placeholder="Select or enter a topic..." />
 								</SelectTrigger>
 								<SelectContent>
@@ -485,172 +539,197 @@ function CreateEventSourceDialogContent({
 								least one dot.
 							</p>
 						</div>
-					</>
+					</FormSection>
 				)}
 
 				{/* Webhook Adapter */}
 				{sourceType === "webhook" && (
-					<div className="space-y-2">
-						<Label htmlFor="adapter">Webhook Adapter</Label>
-						<Select
-							value={adapterName}
-							onValueChange={handleAdapterChange}
-						>
-							<SelectTrigger id="adapter">
-								<SelectValue placeholder="Select an adapter..." />
-							</SelectTrigger>
-							<SelectContent>
-								{adapters.map((adapter) => (
-									<SelectItem
-										key={adapter.name}
-										value={adapter.name}
-									>
-										{adapter.display_name}
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
-						{selectedAdapter?.description && (
-							<p className="text-xs text-muted-foreground">
-								{selectedAdapter.description}
-							</p>
-						)}
-					</div>
-				)}
+					<FormSection
+						title={
+							selectedAdapter?.name === "microsoft_graph"
+								? "Microsoft Graph Subscription"
+								: "Webhook Subscription"
+						}
+						description={
+							selectedAdapter?.name === "microsoft_graph"
+								? "Connect the Microsoft tenant, then choose the Graph resource to subscribe to."
+								: "Choose the adapter and connection details for incoming events."
+						}
+					>
+						<div className="space-y-2">
+							<Label htmlFor="adapter">Webhook Adapter</Label>
+							<Select
+								value={adapterName}
+								onValueChange={handleAdapterChange}
+							>
+								<SelectTrigger id="adapter" className="w-full">
+									<SelectValue placeholder="Select an adapter..." />
+								</SelectTrigger>
+								<SelectContent>
+									{adapters.map((adapter) => (
+										<SelectItem
+											key={adapter.name}
+											value={adapter.name}
+										>
+											{adapter.display_name}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+							{selectedAdapter?.description && (
+								<p className="text-xs text-muted-foreground">
+									{selectedAdapter.description}
+								</p>
+							)}
+						</div>
 
-				{/* Integration (if required by adapter) */}
-				{selectedAdapter?.requires_integration && (
-					<div className="space-y-2">
-						<Label htmlFor="integration">Integration</Label>
-						<Select
-							value={integrationId}
-							onValueChange={setIntegrationId}
-						>
-							<SelectTrigger id="integration">
-								<SelectValue placeholder="Select an integration..." />
-							</SelectTrigger>
-							<SelectContent>
-								{filteredIntegrations.map((integration) => (
-									<SelectItem
-										key={integration.id}
-										value={integration.id}
+						{selectedAdapter?.requires_integration && (
+							<div className="space-y-2">
+								<Label htmlFor="integration">Integration</Label>
+								<Select
+									value={integrationId}
+									onValueChange={setIntegrationId}
+								>
+									<SelectTrigger
+										id="integration"
+										className="w-full"
 									>
-										{integration.name}
-									</SelectItem>
-								))}
-							</SelectContent>
-						</Select>
-						<p className="text-xs text-muted-foreground">
-							This adapter requires a{" "}
-							{selectedAdapter.requires_integration} integration
-							for authentication.
-						</p>
-					</div>
-				)}
-
-				{/* Dynamic Config Form - For adapters with config_schema */}
-				{sourceType === "webhook" &&
-					hasDynamicConfig &&
-					selectedAdapter && (
-						<>
-							<div className="border-t pt-4">
-								<h4 className="text-sm font-medium mb-3">
-									Configuration
-								</h4>
+										<SelectValue placeholder="Select an integration..." />
+									</SelectTrigger>
+									<SelectContent>
+										{filteredIntegrations.map(
+											(integration) => (
+												<SelectItem
+													key={integration.id}
+													value={integration.id}
+												>
+													{integration.name}
+												</SelectItem>
+											),
+										)}
+									</SelectContent>
+								</Select>
+								<p className="text-xs text-muted-foreground">
+									This adapter requires a{" "}
+									{selectedAdapter.requires_integration}{" "}
+									integration for authentication.
+								</p>
 							</div>
+						)}
+
+						{hasDynamicConfig && selectedAdapter && (
 							<DynamicConfigForm
 								adapterName={selectedAdapter.name}
 								integrationId={integrationId || undefined}
+								requiresIntegration={Boolean(
+									selectedAdapter.requires_integration,
+								)}
+								organizationId={organizationId}
 								configSchema={
 									selectedAdapter.config_schema as unknown as ConfigSchema
 								}
 								config={webhookConfig}
 								onChange={setWebhookConfig}
 							/>
-						</>
-					)}
+						)}
+					</FormSection>
+				)}
 
 				{/* Rate Limiting */}
 				{sourceType === "webhook" && (
-					<>
-						<div className="border-t pt-4">
-							<h4 className="text-sm font-medium mb-3">
-								Rate limiting
-							</h4>
-						</div>
-
-						<div className="space-y-2">
-							<Label htmlFor="rate-limit-per-minute">
-								Max events
-							</Label>
-							<Input
-								id="rate-limit-per-minute"
-								type="number"
-								min={1}
-								value={rateLimitPerMinute ?? ""}
-								onChange={(e) => {
-									const val = e.target.value;
-									setRateLimitPerMinute(
-										val === "" ? null : Number(val),
-									);
-								}}
-								placeholder="60 (leave empty to disable)"
-							/>
-							<p className="text-xs text-muted-foreground">
-								Maximum events accepted within the window below.
-								Leave empty to disable the limit.
-							</p>
-						</div>
-
-						<div className="space-y-2">
-							<Label htmlFor="rate-limit-window">
-								Per (seconds)
-							</Label>
-							<Input
-								id="rate-limit-window"
-								type="number"
-								min={1}
-								value={rateLimitWindowSeconds}
-								onChange={(e) =>
-									setRateLimitWindowSeconds(
-										Number(e.target.value),
-									)
-								}
-							/>
-							<p className="text-xs text-muted-foreground">
-								Window duration. Default 60 means the limit
-								above applies per minute.
-							</p>
-						</div>
-
-						<div className="flex items-center justify-between">
-							<div className="space-y-0.5">
-								<Label htmlFor="rate-limit-enabled">
-									Enabled
-								</Label>
+					<Collapsible
+						open={advancedOpen}
+						onOpenChange={setAdvancedOpen}
+						className="rounded-lg border"
+					>
+						<CollapsibleTrigger asChild>
+							<Button
+								type="button"
+								variant="ghost"
+								className="flex w-full items-center justify-between px-4 py-3 text-sm font-medium [&[data-state=open]>svg]:rotate-180"
+							>
+								Advanced
+								<ChevronDown className="h-4 w-4 transition-transform" />
+							</Button>
+						</CollapsibleTrigger>
+						<CollapsibleContent className="space-y-4 px-4 pb-4">
+							<div className="space-y-1">
+								<h3 className="text-sm font-semibold">
+									Rate limiting
+								</h3>
 								<p className="text-xs text-muted-foreground">
-									Disable to bypass rate limiting for this
-									source.
+									Control how many events this source accepts
+									before throttling.
 								</p>
 							</div>
-							<Switch
-								id="rate-limit-enabled"
-								checked={rateLimitEnabled}
-								onCheckedChange={setRateLimitEnabled}
-							/>
-						</div>
-					</>
+
+							<div className="space-y-2">
+								<Label htmlFor="rate-limit-per-minute">
+									Max events
+								</Label>
+								<Input
+									id="rate-limit-per-minute"
+									type="number"
+									min={1}
+									value={rateLimitPerMinute ?? ""}
+									onChange={(e) => {
+										const val = e.target.value;
+										setRateLimitPerMinute(
+											val === "" ? null : Number(val),
+										);
+									}}
+									placeholder="60 (leave empty to disable)"
+								/>
+								<p className="text-xs text-muted-foreground">
+									Maximum events accepted within the window
+									below. Leave empty to disable the limit.
+								</p>
+							</div>
+
+							<div className="space-y-2">
+								<Label htmlFor="rate-limit-window">
+									Per (seconds)
+								</Label>
+								<Input
+									id="rate-limit-window"
+									type="number"
+									min={1}
+									value={rateLimitWindowSeconds}
+									onChange={(e) =>
+										setRateLimitWindowSeconds(
+											Number(e.target.value),
+										)
+									}
+								/>
+								<p className="text-xs text-muted-foreground">
+									Window duration. Default 60 means the limit
+									above applies per minute.
+								</p>
+							</div>
+
+							<div className="flex items-center justify-between gap-4">
+								<div className="space-y-0.5">
+									<Label htmlFor="rate-limit-enabled">
+										Enabled
+									</Label>
+									<p className="text-xs text-muted-foreground">
+										Disable to bypass rate limiting for this
+										source.
+									</p>
+								</div>
+								<Switch
+									id="rate-limit-enabled"
+									checked={rateLimitEnabled}
+									onCheckedChange={setRateLimitEnabled}
+								/>
+							</div>
+						</CollapsibleContent>
+					</Collapsible>
 				)}
 
 				{/* Schedule Configuration */}
 				{sourceType === "schedule" && (
-					<>
-						<div className="border-t pt-4">
-							<h4 className="text-sm font-medium mb-3">
-								Schedule Configuration
-							</h4>
-						</div>
-
+					<FormSection title="Schedule Configuration">
 						{/* Cron Expression */}
 						<div className="space-y-2">
 							<Label htmlFor="cron-expression">
@@ -771,7 +850,7 @@ function CreateEventSourceDialogContent({
 								value={timezone}
 								onValueChange={setTimezone}
 							>
-								<SelectTrigger id="timezone">
+								<SelectTrigger id="timezone" className="w-full">
 									<SelectValue />
 								</SelectTrigger>
 								<SelectContent>
@@ -801,7 +880,10 @@ function CreateEventSourceDialogContent({
 									)
 								}
 							>
-								<SelectTrigger id="overlap-policy">
+								<SelectTrigger
+									id="overlap-policy"
+									className="w-full"
+								>
 									<SelectValue />
 								</SelectTrigger>
 								<SelectContent>
@@ -818,7 +900,7 @@ function CreateEventSourceDialogContent({
 								reserved for future use.
 							</p>
 						</div>
-					</>
+					</FormSection>
 				)}
 			</div>
 

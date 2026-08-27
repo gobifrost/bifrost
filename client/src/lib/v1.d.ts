@@ -15082,6 +15082,11 @@ export interface components {
              */
             integration_id?: string | null;
             /**
+             * Organization Id
+             * @description Organization whose integration mapping supplies tenant context
+             */
+            organization_id?: string | null;
+            /**
              * Current Config
              * @description Config values selected so far (for dependent fields)
              */
@@ -26034,6 +26039,12 @@ export interface components {
              * @description Integration name required for this adapter (e.g., 'Microsoft')
              */
             requires_integration?: string | null;
+            /**
+             * Requires Organization
+             * @description Whether this adapter requires an organization-scoped tenant mapping
+             * @default false
+             */
+            requires_organization: boolean;
             /**
              * Config Schema
              * @description JSON Schema for adapter configuration

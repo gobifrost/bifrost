@@ -24,7 +24,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { AlertCircle, ChevronDown, Info } from "lucide-react";
+import { AlertCircle, ChevronDown, Info, RefreshCw } from "lucide-react";
 import {
 	Popover,
 	PopoverContent,
@@ -134,6 +134,8 @@ export interface ConfigSchema {
 interface DynamicConfigFormProps {
 	adapterName: string;
 	integrationId?: string;
+	requiresIntegration?: boolean;
+	organizationId?: string | null;
 	configSchema: ConfigSchema;
 	config: Record<string, unknown>;
 	onChange: (config: Record<string, unknown>) => void;
@@ -192,6 +194,8 @@ function DynamicField({
 	value,
 	adapterName,
 	integrationId,
+	requiresIntegration,
+	organizationId,
 	currentConfig,
 	onChange,
 	isRequired,
@@ -201,6 +205,8 @@ function DynamicField({
 	value: unknown;
 	adapterName: string;
 	integrationId?: string;
+	requiresIntegration?: boolean;
+	organizationId?: string | null;
 	currentConfig: Record<string, unknown>;
 	onChange: (value: unknown) => void;
 	isRequired: boolean;
@@ -225,13 +231,23 @@ function DynamicField({
 		data: dynamicData,
 		isLoading,
 		error,
+		refetch,
+		isFetching,
 	} = useDynamicValues(
 		adapterName,
 		dynamicSpec?.operation,
 		integrationId,
+		organizationId,
 		currentConfig,
-		!!dynamicSpec && dependenciesSatisfied && !manualMode,
+		!!dynamicSpec &&
+			dependenciesSatisfied &&
+			!manualMode &&
+			(!requiresIntegration || !!integrationId),
 	);
+	const errorMessage =
+		error instanceof Error
+			? error.message
+			: "We could not load options for this field.";
 
 	// Handle array enum types (like change_types)
 	if (property.type === "array" && property.items?.enum) {
@@ -332,7 +348,7 @@ function DynamicField({
 					value={(value as string) || ""}
 					onValueChange={(val) => onChange(val || undefined)}
 				>
-					<SelectTrigger id={fieldName}>
+					<SelectTrigger id={fieldName} className="w-full">
 						<SelectValue
 							placeholder={`Select ${property.title || fieldName}...`}
 						/>
@@ -397,22 +413,22 @@ function DynamicField({
 		if (error || manualMode) {
 			return (
 				<div className="space-y-2">
-					<div className="flex items-center justify-between">
+					<div className="flex items-center justify-between gap-3">
 						<FieldLabel
 							htmlFor={fieldName}
 							title={property.title || fieldName}
 							isRequired={isRequired}
 							help={help}
 						/>
-						{error && !manualMode && (
-							<button
-								type="button"
-								className="text-xs text-muted-foreground hover:underline"
-								onClick={() => setManualMode(true)}
-							>
-								Enter manually
-							</button>
-						)}
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							className="h-7 px-2 text-xs text-muted-foreground"
+							onClick={() => setManualMode((current) => !current)}
+						>
+							{manualMode ? "Use list" : "Enter manually"}
+						</Button>
 					</div>
 					<div className="flex items-center gap-2">
 						<Input
@@ -432,9 +448,51 @@ function DynamicField({
 						)}
 					</div>
 					{error && (
-						<p className="text-xs text-amber-600">
-							Failed to load options. Enter value manually.
-						</p>
+						<div
+							className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300"
+							role="status"
+							aria-live="polite"
+						>
+							<div className="flex items-start gap-2">
+								<AlertCircle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+								<div className="min-w-0 flex-1 space-y-2">
+									<p className="font-medium">
+										Options did not load.
+									</p>
+									<p className="break-words">
+										{errorMessage}
+									</p>
+									<div className="flex flex-wrap gap-2">
+										<Button
+											type="button"
+											variant="outline"
+											size="sm"
+											className="h-7 px-2 text-xs"
+											onClick={() => void refetch()}
+											disabled={isFetching}
+										>
+											<RefreshCw
+												className={cn(
+													"mr-1.5 h-3 w-3",
+													isFetching &&
+														"animate-spin",
+												)}
+											/>
+											Retry
+										</Button>
+										<Button
+											type="button"
+											variant="ghost"
+											size="sm"
+											className="h-7 px-2 text-xs"
+											onClick={() => setManualMode(true)}
+										>
+											Enter manually
+										</Button>
+									</div>
+								</div>
+							</div>
+						</div>
 					)}
 				</div>
 			);
@@ -487,7 +545,10 @@ function DynamicField({
 							<ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
 						</Button>
 					</PopoverTrigger>
-					<PopoverContent className="w-[400px] p-0" align="start">
+					<PopoverContent
+						className="w-[var(--radix-popover-trigger-width)] max-w-[calc(100vw-2rem)] p-0"
+						align="start"
+					>
 						<Command>
 							<CommandInput
 								placeholder={`Search ${property.title || fieldName}...`}
@@ -586,6 +647,8 @@ function DynamicField({
 export function DynamicConfigForm({
 	adapterName,
 	integrationId,
+	requiresIntegration = false,
+	organizationId,
 	configSchema,
 	config,
 	onChange,
@@ -674,6 +737,8 @@ export function DynamicConfigForm({
 						value={config[fieldName]}
 						adapterName={adapterName}
 						integrationId={integrationId}
+						requiresIntegration={requiresIntegration}
+						organizationId={organizationId}
 						currentConfig={config}
 						onChange={(value) =>
 							handleFieldChange(fieldName, value)

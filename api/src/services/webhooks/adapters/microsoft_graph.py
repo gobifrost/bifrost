@@ -22,6 +22,7 @@ from src.services.webhooks.protocol import (
     SubscribeResult,
     ValidationResponse,
     WebhookAdapter,
+    WebhookIntegrationAuth,
     WebhookRequest,
 )
 
@@ -43,13 +44,13 @@ class MicrosoftGraphAdapter(WebhookAdapter):
     Configuration:
         resource: Graph resource path (e.g., '/users/{user-id}/messages')
         change_types: List of change types to subscribe to
-        include_resource_data: Whether to include resource data in notifications
     """
 
     name = "microsoft_graph"
     display_name = "Microsoft Graph"
     description = "Webhooks for Microsoft 365 services (Mail, Calendar, Teams, etc.)"
     requires_integration = "Microsoft"
+    requires_organization = True
     renewal_interval = timedelta(hours=24)  # Check daily, renew before 72h expiry
 
     config_schema = {
@@ -89,12 +90,6 @@ class MicrosoftGraphAdapter(WebhookAdapter):
                 "default": ["created"],
                 "uniqueItems": True,
             },
-            "include_resource_data": {
-                "type": "boolean",
-                "title": "Include Resource Data",
-                "description": "Include the changed resource data in notifications (requires additional permissions)",
-                "default": False,
-            },
         },
     }
 
@@ -120,17 +115,12 @@ class MicrosoftGraphAdapter(WebhookAdapter):
 
     async def _list_users(self, integration: Any | None) -> list[dict[str, Any]]:
         """Fetch users from Microsoft Graph API."""
-        if not integration or not integration.oauth:
-            raise ValueError("Microsoft integration with OAuth is required")
-
-        access_token = integration.oauth.access_token
-        if not access_token:
-            raise ValueError("OAuth access token is required")
+        auth = self._require_auth(integration)
 
         async with httpx.AsyncClient() as client:
             response = await client.get(
                 "https://graph.microsoft.com/v1.0/users",
-                headers={"Authorization": f"Bearer {access_token}"},
+                headers={"Authorization": f"Bearer {auth.access_token}"},
                 params={"$select": "id,displayName,mail,userPrincipalName", "$top": "100"},
                 timeout=30.0,
             )
@@ -209,12 +199,7 @@ class MicrosoftGraphAdapter(WebhookAdapter):
 
         Calls POST /subscriptions to register the webhook with Graph API.
         """
-        if not integration or not integration.oauth:
-            raise ValueError("Microsoft integration with OAuth is required")
-
-        access_token = integration.oauth.access_token
-        if not access_token:
-            raise ValueError("OAuth access token is required")
+        auth = self._require_auth(integration)
 
         # Generate client state for validation
         client_state = self.generate_secret(32)
@@ -231,16 +216,11 @@ class MicrosoftGraphAdapter(WebhookAdapter):
             "clientState": client_state,
         }
 
-        # Add resource data if requested (requires encryption certificate)
-        if config.get("include_resource_data"):
-            subscription_body["includeResourceData"] = True
-            # Note: Would need to add encryption certificate handling
-
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 "https://graph.microsoft.com/v1.0/subscriptions",
                 headers={
-                    "Authorization": f"Bearer {access_token}",
+                    "Authorization": f"Bearer {auth.access_token}",
                     "Content-Type": "application/json",
                 },
                 json=subscription_body,
@@ -279,18 +259,14 @@ class MicrosoftGraphAdapter(WebhookAdapter):
         if not external_id:
             return
 
-        if not integration or not integration.oauth:
-            return
-
-        access_token = integration.oauth.access_token
-        if not access_token:
+        if not isinstance(integration, WebhookIntegrationAuth):
             return
 
         try:
             async with httpx.AsyncClient() as client:
                 await client.delete(
                     f"https://graph.microsoft.com/v1.0/subscriptions/{external_id}",
-                    headers={"Authorization": f"Bearer {access_token}"},
+                    headers={"Authorization": f"Bearer {integration.access_token}"},
                     timeout=30.0,
                 )
         except Exception:
@@ -311,11 +287,7 @@ class MicrosoftGraphAdapter(WebhookAdapter):
         if not external_id:
             return None
 
-        if not integration or not integration.oauth:
-            return None
-
-        access_token = integration.oauth.access_token
-        if not access_token:
+        if not isinstance(integration, WebhookIntegrationAuth):
             return None
 
         # Extend for another 3 days
@@ -325,7 +297,7 @@ class MicrosoftGraphAdapter(WebhookAdapter):
             response = await client.patch(
                 f"https://graph.microsoft.com/v1.0/subscriptions/{external_id}",
                 headers={
-                    "Authorization": f"Bearer {access_token}",
+                    "Authorization": f"Bearer {integration.access_token}",
                     "Content-Type": "application/json",
                 },
                 json={"expirationDateTime": new_expiration},
@@ -340,6 +312,14 @@ class MicrosoftGraphAdapter(WebhookAdapter):
             else:
                 # Subscription may have expired - caller should recreate
                 return None
+
+    @staticmethod
+    def _require_auth(integration: Any | None) -> WebhookIntegrationAuth:
+        if not isinstance(integration, WebhookIntegrationAuth):
+            raise ValueError(
+                "Microsoft integration authentication could not be resolved for this organization"
+            )
+        return integration
 
     async def handle_request(
         self,

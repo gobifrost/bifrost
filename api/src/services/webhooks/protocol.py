@@ -9,6 +9,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from uuid import UUID
 
 from starlette.requests import Request
 
@@ -103,6 +104,16 @@ class RenewResult:
     """Updated state (merged with existing)."""
 
 
+@dataclass(frozen=True)
+class WebhookIntegrationAuth:
+    """Resolved, tenant-scoped credentials passed to a webhook adapter."""
+
+    integration_id: UUID
+    organization_id: UUID
+    entity_id: str
+    access_token: str = field(repr=False)
+
+
 @dataclass
 class ValidationResponse:
     """
@@ -184,6 +195,9 @@ class WebhookAdapter(ABC):
     requires_integration: str | None = None
     """Integration name required for this adapter (e.g., 'Microsoft')."""
 
+    requires_organization: bool = False
+    """Whether the adapter must authenticate in an organization/tenant context."""
+
     config_schema: dict[str, Any] = {}
     """JSON Schema for adapter configuration."""
 
@@ -205,7 +219,7 @@ class WebhookAdapter(ABC):
         Args:
             callback_url: Full URL for the webhook endpoint.
             config: Adapter-specific configuration from user.
-            integration: IntegrationData with OAuth credentials (if requires_integration).
+            integration: Resolved organization-scoped authentication, when required.
 
         Returns:
             SubscribeResult with external_id, state, and optional expires_at.
@@ -228,7 +242,7 @@ class WebhookAdapter(ABC):
         Args:
             external_id: ID from SubscribeResult.external_id.
             state: State dict from SubscribeResult.state.
-            integration: IntegrationData with OAuth credentials (if requires_integration).
+            integration: Resolved organization-scoped authentication, when required.
 
         Note:
             Should not raise exceptions - best effort cleanup.
@@ -274,7 +288,7 @@ class WebhookAdapter(ABC):
 
         Args:
             operation: The operation name from x-dynamic-values.operation
-            integration: IntegrationData with OAuth credentials (if requires_integration)
+            integration: Resolved organization-scoped authentication, when required.
             current_config: Config values selected so far (for dependent fields)
 
         Returns:
@@ -300,7 +314,7 @@ class WebhookAdapter(ABC):
         Args:
             external_id: ID from SubscribeResult.external_id.
             state: State dict from SubscribeResult.state.
-            integration: IntegrationData with OAuth credentials (if requires_integration).
+            integration: Resolved organization-scoped authentication, when required.
 
         Returns:
             RenewResult with new expires_at and optional state updates.

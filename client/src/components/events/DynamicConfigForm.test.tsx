@@ -7,30 +7,60 @@
  * the dependency-satisfied text-input branch renders deterministically.
  */
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen, fireEvent } from "@/test-utils";
 
+type DynamicValuesMockResult = {
+	data?: { items: Record<string, unknown>[] };
+	isLoading: boolean;
+	error: Error | null;
+	refetch: ReturnType<typeof vi.fn>;
+	isFetching: boolean;
+};
+
+const mockUseDynamicValues = vi.fn<
+	(...args: unknown[]) => DynamicValuesMockResult
+>(() => ({
+	data: { items: [] },
+	isLoading: false,
+	error: null,
+	refetch: vi.fn(),
+	isFetching: false,
+}));
+
 vi.mock("@/services/events", async () => {
-	const actual = await vi.importActual<typeof import("@/services/events")>(
-		"@/services/events",
-	);
+	const actual =
+		await vi.importActual<typeof import("@/services/events")>(
+			"@/services/events",
+		);
 	return {
 		...actual,
-		useDynamicValues: () => ({
-			data: { items: [] },
-			isLoading: false,
-			error: null,
-		}),
+		useDynamicValues: (...args: unknown[]) => mockUseDynamicValues(...args),
 	};
 });
 
 import { DynamicConfigForm, type ConfigSchema } from "./DynamicConfigForm";
 
-function renderForm(schema: ConfigSchema, config: Record<string, unknown> = {}) {
+beforeEach(() => {
+	mockUseDynamicValues.mockReset();
+	mockUseDynamicValues.mockReturnValue({
+		data: { items: [] },
+		isLoading: false,
+		error: null,
+		refetch: vi.fn(),
+		isFetching: false,
+	});
+});
+
+function renderForm(
+	schema: ConfigSchema,
+	config: Record<string, unknown> = {},
+) {
 	const onChange = vi.fn();
 	const utils = renderWithProviders(
 		<DynamicConfigForm
 			adapterName="test-adapter"
+			organizationId="org-1"
 			configSchema={schema}
 			config={config}
 			onChange={onChange}
@@ -123,5 +153,73 @@ describe("DynamicConfigForm — required markers", () => {
 			},
 		});
 		expect(screen.getByText("*")).toBeInTheDocument();
+	});
+});
+
+describe("DynamicConfigForm — dynamic values", () => {
+	it("passes organization context to dynamic value requests", () => {
+		renderForm({
+			type: "object",
+			properties: {
+				user_id: {
+					type: "string",
+					title: "User",
+					"x-dynamic-values": {
+						operation: "list_users",
+						value_path: "id",
+						label_path: "display_name",
+						depends_on: [],
+					},
+				},
+			},
+		});
+
+		expect(mockUseDynamicValues).toHaveBeenLastCalledWith(
+			"test-adapter",
+			"list_users",
+			undefined,
+			"org-1",
+			{},
+			true,
+		);
+	});
+
+	it("shows a retry action when dynamic options fail to load", async () => {
+		const refetch = vi.fn();
+		mockUseDynamicValues.mockReturnValueOnce({
+			data: undefined,
+			isLoading: false,
+			error: new Error("No tenant mapping was found"),
+			refetch,
+			isFetching: false,
+		});
+
+		const { user } = renderForm(
+			{
+				type: "object",
+				properties: {
+					user_id: {
+						type: "string",
+						title: "User",
+						"x-dynamic-values": {
+							operation: "list_users",
+							value_path: "id",
+							label_path: "display_name",
+							depends_on: [],
+						},
+					},
+				},
+			},
+			{ user_id: "user@example.com" },
+		);
+
+		expect(screen.getByRole("status")).toHaveTextContent(
+			/No tenant mapping was found/i,
+		);
+		expect(screen.getByLabelText(/user/i)).toHaveValue("user@example.com");
+
+		await user.click(screen.getByRole("button", { name: /retry/i }));
+
+		expect(refetch).toHaveBeenCalledTimes(1);
 	});
 });

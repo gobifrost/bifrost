@@ -11,13 +11,32 @@ import { renderWithProviders, screen, waitFor, fireEvent } from "@/test-utils";
 
 const mockCreate = vi.fn();
 const mockAuthFetch = vi.fn();
+const mockDynamicConfigForm = vi.fn();
+let mockIsPlatformAdmin = false;
 
 vi.mock("@/contexts/AuthContext", () => ({
-	useAuth: () => ({ isPlatformAdmin: false }),
+	useAuth: () => ({ isPlatformAdmin: mockIsPlatformAdmin }),
 }));
 
 vi.mock("@/components/forms/OrganizationSelect", () => ({
-	OrganizationSelect: () => <div data-marker="org-select" />,
+	OrganizationSelect: ({
+		value,
+		onChange,
+		showGlobal,
+	}: {
+		value: string | null;
+		onChange: (value: string | null) => void;
+		showGlobal?: boolean;
+	}) => (
+		<select
+			aria-label="Organization"
+			value={value ?? ""}
+			onChange={(event) => onChange(event.target.value || null)}
+		>
+			{showGlobal && <option value="">Global</option>}
+			<option value="org-1">Covi, Inc.</option>
+		</select>
+	),
 }));
 
 vi.mock("react-syntax-highlighter", () => ({
@@ -44,6 +63,13 @@ vi.mock("@/lib/api-client", () => ({
 	},
 }));
 
+vi.mock("./DynamicConfigForm", () => ({
+	DynamicConfigForm: (props: { organizationId?: string | null }) => {
+		mockDynamicConfigForm(props);
+		return <div>Dynamic config form {props.organizationId}</div>;
+	},
+}));
+
 vi.mock("@/services/events", async () => {
 	const actual =
 		await vi.importActual<typeof import("@/services/events")>(
@@ -64,8 +90,39 @@ vi.mock("@/services/events", async () => {
 						description: "Generic webhook adapter",
 						config_schema: {},
 					},
+					{
+						name: "microsoft_graph",
+						display_name: "Microsoft Graph",
+						description:
+							"Webhooks for Microsoft 365 services (Mail, Calendar, Teams, etc.)",
+						requires_integration: "Microsoft",
+						requires_organization: true,
+						config_schema: {
+							type: "object",
+							properties: {
+								user_id: {
+									type: "string",
+									title: "User",
+									description: "Graph user to subscribe to",
+									"x-dynamic-values": {
+										operation: "list_users",
+										value_path: "id",
+										label_path: "display_name",
+										depends_on: [],
+									},
+								},
+							},
+						},
+					},
 				],
 			},
+		}),
+		useDynamicValues: () => ({
+			data: { items: [] },
+			isLoading: false,
+			error: null,
+			refetch: vi.fn(),
+			isFetching: false,
 		}),
 		useTopics: () => ({
 			data: {
@@ -105,13 +162,24 @@ vi.mock("@/services/integrations", async () => {
 	>("@/services/integrations");
 	return {
 		...actual,
-		useIntegrations: () => ({ data: { items: [] } }),
+		useIntegrations: () => ({
+			data: {
+				items: [
+					{
+						id: "integration-1",
+						name: "Microsoft",
+					},
+				],
+			},
+		}),
 	};
 });
 
 import { CreateEventSourceDialog } from "./CreateEventSourceDialog";
 
 beforeEach(() => {
+	mockIsPlatformAdmin = false;
+	mockDynamicConfigForm.mockClear();
 	mockCreate.mockReset();
 	mockCreate.mockResolvedValue({});
 	mockAuthFetch.mockReset();
@@ -179,20 +247,28 @@ describe("CreateEventSourceDialog — webhook happy path", () => {
 });
 
 describe("CreateEventSourceDialog — webhook rate-limit section", () => {
-	it("renders rate-limit inputs for webhook sources", () => {
-		renderWithProviders(
+	it("keeps rate-limit inputs in Advanced for webhook sources", async () => {
+		const { user } = renderWithProviders(
 			<CreateEventSourceDialog open onOpenChange={() => {}} />,
 		);
+
+		expect(
+			screen.queryByLabelText(/^max events$/i),
+		).not.toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: /advanced/i }));
 
 		expect(screen.getByLabelText(/^max events$/i)).toBeInTheDocument();
 		expect(screen.getByLabelText(/per \(seconds\)/i)).toBeInTheDocument();
 		expect(screen.getByLabelText(/^enabled$/i)).toBeInTheDocument();
 	});
 
-	it("clears rate_limit_per_minute to empty string when field is cleared", () => {
-		renderWithProviders(
+	it("clears rate_limit_per_minute to empty string when field is cleared", async () => {
+		const { user } = renderWithProviders(
 			<CreateEventSourceDialog open onOpenChange={() => {}} />,
 		);
+
+		await user.click(screen.getByRole("button", { name: /advanced/i }));
 
 		const input = screen.getByLabelText(
 			/^max events$/i,
@@ -201,6 +277,69 @@ describe("CreateEventSourceDialog — webhook rate-limit section", () => {
 
 		fireEvent.change(input, { target: { value: "" } });
 		expect(input.value).toBe("");
+	});
+});
+
+describe("CreateEventSourceDialog — organization context", () => {
+	it("passes the selected organization to the dynamic webhook config form", async () => {
+		mockIsPlatformAdmin = true;
+		const { user } = renderWithProviders(
+			<CreateEventSourceDialog open onOpenChange={() => {}} />,
+		);
+
+		await user.selectOptions(
+			screen.getByLabelText(/^organization$/i),
+			"org-1",
+		);
+
+		await user.click(
+			screen.getByRole("combobox", { name: /webhook adapter/i }),
+		);
+		await user.click(
+			screen.getByRole("option", { name: /microsoft graph/i }),
+		);
+
+		await user.click(
+			screen.getByRole("combobox", { name: /integration/i }),
+		);
+		await user.click(screen.getByRole("option", { name: /microsoft/i }));
+
+		await waitFor(() =>
+			expect(mockDynamicConfigForm).toHaveBeenLastCalledWith(
+				expect.objectContaining({ organizationId: "org-1" }),
+			),
+		);
+	});
+
+	it("requires an organization when adapter metadata says one is required", async () => {
+		mockIsPlatformAdmin = true;
+		const { user } = renderWithProviders(
+			<CreateEventSourceDialog open onOpenChange={() => {}} />,
+		);
+
+		fireEvent.change(screen.getByLabelText(/^name$/i), {
+			target: { value: "Graph Subscription" },
+		});
+
+		await user.click(
+			screen.getByRole("combobox", { name: /webhook adapter/i }),
+		);
+		await user.click(
+			screen.getByRole("option", { name: /microsoft graph/i }),
+		);
+
+		await user.click(
+			screen.getByRole("combobox", { name: /integration/i }),
+		);
+		await user.click(screen.getByRole("option", { name: /microsoft/i }));
+
+		await user.click(
+			screen.getByRole("button", { name: /create event source/i }),
+		);
+
+		const alert = await screen.findByRole("alert");
+		expect(alert).toHaveTextContent(/select an organization/i);
+		expect(mockCreate).not.toHaveBeenCalled();
 	});
 });
 
@@ -272,10 +411,13 @@ describe("CreateEventSourceDialog — topic branch", () => {
 		expect(
 			await screen.findByText(/python workflow access/i),
 		).toBeVisible();
-		expect(screen.getAllByText(/from bifrost import workflow, context/i).length).toBeGreaterThan(
-			0,
-		);
-		expect(screen.getByText(/@workflow\(name="handle_builtin_event"\)/i)).toBeVisible();
+		expect(
+			screen.getAllByText(/from bifrost import workflow, context/i)
+				.length,
+		).toBeGreaterThan(0);
+		expect(
+			screen.getByText(/@workflow\(name="handle_builtin_event"\)/i),
+		).toBeVisible();
 		expect(screen.getByText(/user\.invited body/i)).toBeVisible();
 		expect(screen.getAllByText(/schema_version/i).length).toBeGreaterThan(
 			0,

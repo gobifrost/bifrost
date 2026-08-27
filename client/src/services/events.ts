@@ -77,6 +77,7 @@ export function useDynamicValues(
 	adapterName: string | undefined,
 	operation: string | undefined,
 	integrationId: string | undefined,
+	organizationId: string | null | undefined,
 	currentConfig: Record<string, unknown>,
 	enabled = true,
 ) {
@@ -90,6 +91,7 @@ export function useDynamicValues(
 			body: {
 				operation: operation!,
 				integration_id: integrationId || undefined,
+				organization_id: organizationId || undefined,
 				current_config: currentConfig,
 			},
 		},
