@@ -7,12 +7,12 @@ Agent ``retries`` remain reserved for malformed tool/output correction.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from typing import Iterator
 
 import httpx2
 from pydantic_ai.models import get_user_agent
@@ -22,10 +22,11 @@ from pydantic_ai.retries import (
     wait_retry_after,
 )
 from tenacity import (
+    AsyncRetrying,
     RetryCallState,
     retry_if_exception,
     stop_after_attempt,
-    wait_random_exponential,
+    wait_exponential_jitter,
 )
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,9 @@ logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 3
 MAX_RETRY_AFTER_SECONDS = 60.0
 RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+FALLBACK_WAIT_INITIAL_SECONDS = 2.0
+FALLBACK_WAIT_MAX_SECONDS = 6.0
+FALLBACK_WAIT_JITTER_SECONDS = 2.0
 
 
 @dataclass(frozen=True)
@@ -117,20 +121,101 @@ def _log_before_sleep(state: RetryCallState) -> None:
     )
 
 
+def _log_terminal(
+    exc: BaseException,
+    *,
+    attempt: int,
+    total_sleep_seconds: float,
+) -> None:
+    response = getattr(exc, "response", None)
+    context = _retry_context.get()
+    logger.warning(
+        "ai_provider_request_terminal",
+        extra={
+            "provider": context.provider if context else None,
+            "model": context.model if context else None,
+            "surface": context.surface if context else None,
+            "attempt": attempt,
+            "max_attempts": MAX_ATTEMPTS,
+            "status_code": getattr(response, "status_code", None),
+            "retry_after_seconds": (
+                _retry_after_seconds(response) if response is not None else None
+            ),
+            "sleep_seconds": None,
+            "total_sleep_seconds": total_sleep_seconds,
+            "error_type": type(exc).__name__,
+        },
+    )
+
+
+class AIRetryTransport(AsyncHTTPX2TenacityTransport):
+    """Retry transient failures while returning the final HTTP response.
+
+    Provider SDKs classify returned error responses themselves. Letting the
+    validation ``HTTPStatusError`` escape this lower transport boundary makes
+    OpenAI-compatible clients misclassify an exhausted 429 as a connection
+    failure instead of a rate-limit response.
+    """
+
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
+        retrying = AsyncRetrying(**self.config)
+        try:
+            async for attempt in retrying:
+                with attempt:
+                    response = await self.wrapped.handle_async_request(request)
+                    response.request = request
+                    if self.validate_response is None:
+                        return response
+                    try:
+                        self.validate_response(response)
+                    except httpx2.HTTPStatusError as exc:
+                        attempt_number = attempt.retry_state.attempt_number
+                        if (
+                            not _should_retry(exc)
+                            or attempt_number >= MAX_ATTEMPTS
+                        ):
+                            _log_terminal(
+                                exc,
+                                attempt=attempt_number,
+                                total_sleep_seconds=attempt.retry_state.idle_for,
+                            )
+                            return response
+                        await response.aclose()
+                        raise
+                    return response
+        except Exception as exc:
+            _log_terminal(
+                exc,
+                attempt=int(retrying.statistics.get("attempt_number", 1)),
+                total_sleep_seconds=float(retrying.statistics.get("idle_for", 0.0)),
+            )
+            raise
+        raise RuntimeError("AI retry transport made no request attempts")
+
+
 def _create_retry_transport(
     wrapped: httpx2.AsyncBaseTransport | None = None,
-) -> AsyncHTTPX2TenacityTransport:
-    return AsyncHTTPX2TenacityTransport(
-        config=RetryConfig(
-            retry=retry_if_exception(_should_retry),
-            wait=wait_retry_after(
-                fallback_strategy=wait_random_exponential(multiplier=1, max=4),
-                max_wait=MAX_RETRY_AFTER_SECONDS,
+    *,
+    sleep: Callable[[float], Awaitable[None]] | None = None,
+) -> AIRetryTransport:
+    config = RetryConfig(
+        retry=retry_if_exception(_should_retry),
+        wait=wait_retry_after(
+            fallback_strategy=wait_exponential_jitter(
+                initial=FALLBACK_WAIT_INITIAL_SECONDS,
+                max=FALLBACK_WAIT_MAX_SECONDS,
+                jitter=FALLBACK_WAIT_JITTER_SECONDS,
             ),
-            stop=stop_after_attempt(MAX_ATTEMPTS),
-            before_sleep=_log_before_sleep,
-            reraise=True,
+            max_wait=MAX_RETRY_AFTER_SECONDS,
         ),
+        stop=stop_after_attempt(MAX_ATTEMPTS),
+        before_sleep=_log_before_sleep,
+        reraise=True,
+    )
+    if sleep is not None:
+        config["sleep"] = sleep
+    return AIRetryTransport(
+        config=config,
         wrapped=wrapped,
         validate_response=_validate_response,
     )
