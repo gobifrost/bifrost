@@ -439,6 +439,9 @@ describe("ExecutionHistory — feed rendering", () => {
 		await renderPage();
 
 		expect(
+			screen.getByRole("region", { name: "History" }),
+		).toHaveClass("mx-auto", "w-full", "max-w-7xl");
+		expect(
 			screen.getByRole("columnheader", { name: "Workflow" }),
 		).toHaveClass("w-full");
 		expect(
@@ -456,6 +459,12 @@ describe("ExecutionHistory — feed rendering", () => {
 		expect(
 			screen.getByRole("columnheader", { name: "Duration" }),
 		).toHaveClass("hidden", "xl:table-cell");
+		expect(screen.getByRole("tablist").parentElement).toHaveClass(
+			"no-scrollbar",
+			"overflow-x-auto",
+			"sm:overflow-visible",
+		);
+		expect(screen.getByRole("tablist")).not.toHaveClass("overflow-x-auto");
 		expect(screen.getByText("by Test User")).toBeInTheDocument();
 	});
 

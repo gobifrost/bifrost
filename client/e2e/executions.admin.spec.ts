@@ -37,11 +37,26 @@ test.describe("Execution History", () => {
 		).toBeVisible({ timeout: 10000 });
 	});
 
-	test("should fit the execution history page on a narrow viewport", async ({
+	test("should cap wide layouts and fit narrow viewports", async ({
 		page,
 	}) => {
-		await page.setViewportSize({ width: 375, height: 812 });
+		await page.setViewportSize({ width: 2048, height: 900 });
 		await page.goto("/history");
+
+		const historyRegion = page.getByRole("region", { name: "History" });
+		await expect(historyRegion).toBeVisible({ timeout: 10000 });
+		const wideBounds = await historyRegion.boundingBox();
+		expect(wideBounds?.width).toBeLessThanOrEqual(1280);
+
+		const statusTabs = page.getByRole("tablist").first();
+		await expect(statusTabs).toBeVisible();
+		expect(
+			await statusTabs.evaluate(
+				(element) => getComputedStyle(element.parentElement!).overflowX,
+			),
+		).toBe("visible");
+
+		await page.setViewportSize({ width: 375, height: 812 });
 
 		await expect(
 			page.getByRole("heading", { name: /history|executions/i }).first(),

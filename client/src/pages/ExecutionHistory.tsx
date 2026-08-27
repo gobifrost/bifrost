@@ -481,11 +481,17 @@ export function ExecutionHistory() {
 	const showPaginationFooter = hasMore || pageStack.length > 0;
 
 	return (
-		<div className="flex h-full min-w-0 flex-col space-y-4 sm:space-y-6">
+		<section
+			aria-labelledby="history-heading"
+			className="mx-auto flex h-full w-full max-w-7xl min-w-0 flex-col space-y-4 sm:space-y-6"
+		>
 			{/* Header */}
 			<div className="flex items-start justify-between gap-3 sm:items-center">
 				<div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-					<h1 className="text-3xl font-extrabold tracking-tight sm:text-4xl">
+					<h1
+						id="history-heading"
+						className="text-3xl font-extrabold tracking-tight sm:text-4xl"
+					>
 						History
 					</h1>
 					{isPlatformAdmin ? (
@@ -800,14 +806,16 @@ export function ExecutionHistory() {
 					className="flex flex-col flex-1 min-h-0"
 				>
 					{/* Log Level Tabs */}
-					<TabsList className="max-w-full justify-start overflow-x-auto">
-						<TabsTrigger value="all">All</TabsTrigger>
-						<TabsTrigger value="DEBUG">Debug</TabsTrigger>
-						<TabsTrigger value="INFO">Info</TabsTrigger>
-						<TabsTrigger value="WARNING">Warning</TabsTrigger>
-						<TabsTrigger value="ERROR">Error</TabsTrigger>
-						<TabsTrigger value="CRITICAL">Critical</TabsTrigger>
-					</TabsList>
+					<div className="no-scrollbar w-fit max-w-full overflow-x-auto sm:overflow-visible">
+						<TabsList className="w-max justify-start">
+							<TabsTrigger value="all">All</TabsTrigger>
+							<TabsTrigger value="DEBUG">Debug</TabsTrigger>
+							<TabsTrigger value="INFO">Info</TabsTrigger>
+							<TabsTrigger value="WARNING">Warning</TabsTrigger>
+							<TabsTrigger value="ERROR">Error</TabsTrigger>
+							<TabsTrigger value="CRITICAL">Critical</TabsTrigger>
+						</TabsList>
+					</div>
 
 					{/* Logs View */}
 					<LogsView
@@ -825,14 +833,16 @@ export function ExecutionHistory() {
 					}
 					className="flex min-w-0 flex-1 flex-col"
 				>
-				<TabsList className="max-w-full justify-start overflow-x-auto">
-					<TabsTrigger value="all">All</TabsTrigger>
-					<TabsTrigger value="Success">Completed</TabsTrigger>
-					<TabsTrigger value="Running">Running</TabsTrigger>
-					<TabsTrigger value="Failed">Failed</TabsTrigger>
-					<TabsTrigger value="Pending">Pending</TabsTrigger>
-					<TabsTrigger value="Scheduled">Scheduled</TabsTrigger>
-				</TabsList>
+				<div className="no-scrollbar w-fit max-w-full overflow-x-auto sm:overflow-visible">
+					<TabsList className="w-max justify-start">
+						<TabsTrigger value="all">All</TabsTrigger>
+						<TabsTrigger value="Success">Completed</TabsTrigger>
+						<TabsTrigger value="Running">Running</TabsTrigger>
+						<TabsTrigger value="Failed">Failed</TabsTrigger>
+						<TabsTrigger value="Pending">Pending</TabsTrigger>
+						<TabsTrigger value="Scheduled">Scheduled</TabsTrigger>
+					</TabsList>
+				</div>
 
 				<TabsContent
 					value={statusFilter}
@@ -1247,6 +1257,6 @@ export function ExecutionHistory() {
 				onOpenChange={setDrawerOpen}
 				onExecutionChange={setDrawerExecutionId}
 			/>
-		</div>
+		</section>
 	);
 }
