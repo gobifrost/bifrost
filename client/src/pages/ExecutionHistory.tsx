@@ -885,18 +885,18 @@ export function ExecutionHistory() {
 							<DataTableHeader>
 								<DataTableRow>
 									{isPlatformAdmin && (
-										<DataTableHead>
+										<DataTableHead className="w-px">
 											Organization
 										</DataTableHead>
 									)}
-									<DataTableHead>Workflow</DataTableHead>
-									<DataTableHead>Status</DataTableHead>
-									<DataTableHead>Run by</DataTableHead>
-									<DataTableHead>Started</DataTableHead>
-									<DataTableHead className="text-right">
+									<DataTableHead className="w-full">Workflow</DataTableHead>
+									<DataTableHead className="w-px">Status</DataTableHead>
+									<DataTableHead className="w-px">Run by</DataTableHead>
+									<DataTableHead className="w-px">Started</DataTableHead>
+									<DataTableHead className="w-px text-right">
 										Duration
 									</DataTableHead>
-									<DataTableHead className="text-right"></DataTableHead>
+									<DataTableHead className="w-px text-right"></DataTableHead>
 								</DataTableRow>
 							</DataTableHeader>
 							<DataTableBody>
@@ -960,7 +960,7 @@ export function ExecutionHistory() {
 													}}
 												>
 													{isPlatformAdmin && (
-														<DataTableCell className="text-sm text-muted-foreground">
+														<DataTableCell className="w-px whitespace-nowrap text-sm text-muted-foreground">
 															{isGlobalExecution ? (
 																<span className="inline-flex items-center gap-1.5">
 																	<Globe className="h-3.5 w-3.5" />
@@ -974,7 +974,7 @@ export function ExecutionHistory() {
 														</DataTableCell>
 													)}
 													<DataTableCell
-														className="max-w-md"
+														className="w-full max-w-0"
 														data-testid="execution-workflow-cell"
 													>
 														<div className="truncate font-mono text-sm font-medium">
@@ -994,7 +994,7 @@ export function ExecutionHistory() {
 															</div>
 														)}
 													</DataTableCell>
-													<DataTableCell>
+													<DataTableCell className="w-px whitespace-nowrap">
 														<RunStatusBadge
 															status={displayStatus}
 															scheduledAt={
@@ -1002,11 +1002,11 @@ export function ExecutionHistory() {
 															}
 														/>
 													</DataTableCell>
-													<DataTableCell className="text-sm text-muted-foreground">
+													<DataTableCell className="w-px whitespace-nowrap text-sm text-muted-foreground">
 														{execution.executed_by_name}
 													</DataTableCell>
 													<DataTableCell
-														className="whitespace-nowrap text-sm text-muted-foreground"
+														className="w-px whitespace-nowrap text-sm text-muted-foreground"
 														title={
 															anchor
 																? formatDate(anchor)
@@ -1019,7 +1019,7 @@ export function ExecutionHistory() {
 																)
 															: "—"}
 													</DataTableCell>
-													<DataTableCell className="whitespace-nowrap text-right text-sm tabular-nums text-muted-foreground">
+													<DataTableCell className="w-px whitespace-nowrap text-right text-sm tabular-nums text-muted-foreground">
 														{duration ?? "—"}
 													</DataTableCell>
 													<DataTableCell className="w-px text-right">

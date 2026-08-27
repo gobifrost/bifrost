@@ -424,6 +424,36 @@ describe("ExecutionHistory — summary rollup", () => {
 });
 
 describe("ExecutionHistory — feed rendering", () => {
+	it("keeps metadata columns content-sized and lets Workflow fill the table", async () => {
+		mockAuth.mockReturnValue({
+			isPlatformAdmin: true,
+			user: { id: "user-1", email: "u@example.com" },
+		});
+		mockUseExecutions.mockReturnValue({
+			data: { executions: [makeRow()], continuation_token: null },
+			isFetching: false,
+			isError: false,
+			refetch: mockRefetch,
+		});
+
+		await renderPage();
+
+		expect(
+			screen.getByRole("columnheader", { name: "Workflow" }),
+		).toHaveClass("w-full");
+		for (const name of [
+			"Organization",
+			"Status",
+			"Run by",
+			"Started",
+			"Duration",
+		]) {
+			expect(screen.getByRole("columnheader", { name })).toHaveClass(
+				"w-px",
+			);
+		}
+	});
+
 	it("groups rows under day separator rows", async () => {
 		const today = new Date();
 		today.setHours(9, 0, 0, 0);
