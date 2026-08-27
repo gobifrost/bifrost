@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { renderWithProviders, screen, waitFor } from "@/test-utils";
+import { fireEvent, renderWithProviders, screen, waitFor } from "@/test-utils";
 
 const mockUseAuditLog = vi.fn();
 
@@ -93,9 +93,9 @@ describe("AuditLogPage policy filters", () => {
 		);
 		await user.click(screen.getByRole("combobox", { name: "Outcome filter" }));
 		await user.click(await screen.findByRole("option", { name: "Failure" }));
-		await user.type(
+		fireEvent.change(
 			screen.getByRole("searchbox", { name: "Search audit events" }),
-			filePath,
+			{ target: { value: filePath } },
 		);
 
 		await waitFor(() => {

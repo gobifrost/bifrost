@@ -1,7 +1,13 @@
 // @vitest-environment happy-dom
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { renderWithProviders, screen, waitFor, within } from "@/test-utils";
+import {
+	fireEvent,
+	renderWithProviders,
+	screen,
+	waitFor,
+	within,
+} from "@/test-utils";
 
 const mockUseApplication = vi.fn();
 const mockUsePublishApplication = vi.fn();
@@ -88,10 +94,9 @@ describe("AppCodeEditorPage publish flow", () => {
 
 		await user.click(screen.getByRole("button", { name: "Publish" }));
 		const dialog = screen.getByRole("dialog");
-		await user.type(
-			within(dialog).getByLabelText(/publish message/i),
-			"Release current source",
-		);
+		fireEvent.change(within(dialog).getByLabelText(/publish message/i), {
+			target: { value: "Release current source" },
+		});
 		await user.click(
 			within(dialog).getByRole("button", { name: "Publish" }),
 		);
