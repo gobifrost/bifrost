@@ -23,12 +23,13 @@ Approved retry policy:
 - Model requests retry at most 3 attempts total.
 - Retryable statuses are 408, 429, 500, 502, 503, and 504; transport
   timeouts and connection failures are also retryable.
-- When a 429 includes `Retry-After`, honor it if the value is `<= 60`
-  seconds.
-- When `Retry-After` is missing or invalid, use bounded exponential jitter:
-  the two fallback delays span 2-4 seconds and 4-6 seconds. A valid value
-  greater than 60 seconds is terminal at the transport layer rather than
-  occupying a worker or retrying before the provider permits it.
+- When a 429 includes a positive `Retry-After`, honor it if the value is
+  `<= 60` seconds.
+- When `Retry-After` is missing, invalid, zero, or already expired, use bounded
+  exponential jitter: the two fallback delays span 2-4 seconds and 4-6
+  seconds. A valid value greater than 60 seconds is terminal at the transport
+  layer rather than occupying a worker or retrying before the provider permits
+  it.
 - After the transport budget is exhausted, return the final HTTP response to
   the provider adapter so its status identity (especially 429) is preserved.
   Only genuine timeout and connection exceptions leave the transport as such.

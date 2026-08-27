@@ -31,11 +31,13 @@ async def _no_sleep(_delay: float) -> None:
 
 def _client(
     handler: Callable[[httpx2.Request], Awaitable[httpx2.Response]],
+    *,
+    sleep: Callable[[float], Awaitable[None]] = _no_sleep,
 ) -> httpx2.AsyncClient:
     return httpx2.AsyncClient(
         transport=_create_retry_transport(
             httpx2.MockTransport(handler),
-            sleep=_no_sleep,
+            sleep=sleep,
         )
     )
 
@@ -71,6 +73,37 @@ async def test_retries_429_with_retry_after_and_logs_context(caplog) -> None:
     assert record.status_code == 429
     assert record.retry_after_seconds == 5
     assert record.sleep_seconds == 5
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "retry_after",
+    ["0", "Wed, 21 Oct 2015 07:28:00 GMT"],
+)
+async def test_non_positive_retry_after_uses_bounded_fallback_jitter(
+    retry_after: str,
+    monkeypatch,
+) -> None:
+    attempts = 0
+    delays: list[float] = []
+    monkeypatch.setattr("tenacity.wait.random.uniform", lambda _start, _end: 0.75)
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx2.Response(429, headers={"Retry-After": retry_after})
+        return httpx2.Response(200, json={"ok": True})
+
+    async with _client(handler, sleep=record_sleep) as client:
+        response = await client.get("https://openrouter.example.test/model")
+
+    assert response.status_code == 200
+    assert attempts == 2
+    assert delays == [FALLBACK_WAIT_INITIAL_SECONDS + 0.75]
 
 
 @pytest.mark.asyncio

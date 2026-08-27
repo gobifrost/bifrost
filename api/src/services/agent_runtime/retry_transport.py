@@ -19,7 +19,6 @@ from pydantic_ai.models import get_user_agent
 from pydantic_ai.retries import (
     AsyncHTTPX2TenacityTransport,
     RetryConfig,
-    wait_retry_after,
 )
 from tenacity import (
     AsyncRetrying,
@@ -37,6 +36,11 @@ RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 FALLBACK_WAIT_INITIAL_SECONDS = 2.0
 FALLBACK_WAIT_MAX_SECONDS = 6.0
 FALLBACK_WAIT_JITTER_SECONDS = 2.0
+_FALLBACK_WAIT = wait_exponential_jitter(
+    initial=FALLBACK_WAIT_INITIAL_SECONDS,
+    max=FALLBACK_WAIT_MAX_SECONDS,
+    jitter=FALLBACK_WAIT_JITTER_SECONDS,
+)
 
 
 @dataclass(frozen=True)
@@ -95,6 +99,24 @@ def _should_retry(exc: BaseException) -> bool:
             return False
         return True
     return isinstance(exc, httpx2.TransportError)
+
+
+def _wait_for_retry(state: RetryCallState) -> float:
+    """Honor a useful Retry-After value, otherwise use bounded jitter.
+
+    A zero delta or an already-expired HTTP date is not a useful recovery
+    window. Treating either as authoritative synchronizes concurrent workers
+    into an immediate replay, which is precisely the burst pattern this
+    transport is intended to absorb.
+    """
+
+    exc = state.outcome.exception() if state.outcome is not None else None
+    response = getattr(exc, "response", None)
+    if response is not None:
+        retry_after = _retry_after_seconds(response)
+        if retry_after is not None and retry_after > 0:
+            return retry_after
+    return _FALLBACK_WAIT(state)
 
 
 def _log_before_sleep(state: RetryCallState) -> None:
@@ -200,14 +222,7 @@ def _create_retry_transport(
 ) -> AIRetryTransport:
     config = RetryConfig(
         retry=retry_if_exception(_should_retry),
-        wait=wait_retry_after(
-            fallback_strategy=wait_exponential_jitter(
-                initial=FALLBACK_WAIT_INITIAL_SECONDS,
-                max=FALLBACK_WAIT_MAX_SECONDS,
-                jitter=FALLBACK_WAIT_JITTER_SECONDS,
-            ),
-            max_wait=MAX_RETRY_AFTER_SECONDS,
-        ),
+        wait=_wait_for_retry,
         stop=stop_after_attempt(MAX_ATTEMPTS),
         before_sleep=_log_before_sleep,
         reraise=True,
