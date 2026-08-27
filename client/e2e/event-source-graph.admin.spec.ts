@@ -106,7 +106,9 @@ test.describe.serial("Microsoft Graph event source", () => {
 		await page.getByRole("option", { name: "Microsoft" }).click();
 
 		await expect(dialog.getByText("Options did not load.")).toBeVisible();
-		await expect(dialog.getByRole("button", { name: "Retry" })).toBeVisible();
+		await expect(
+			dialog.getByRole("button", { name: "Retry" }),
+		).toBeVisible();
 		tenantAvailable = true;
 		await dialog.getByRole("button", { name: "Retry" }).click();
 
@@ -120,5 +122,116 @@ test.describe.serial("Microsoft Graph event source", () => {
 				organization_id: organizationId,
 			});
 		}
+	});
+
+	test("shows Graph context and recreates the provider subscription", async ({
+		page,
+	}) => {
+		const sourceId = "11111111-1111-4111-8111-111111111111";
+		const source = {
+			id: sourceId,
+			name: "Adele inbox changes",
+			description: null,
+			source_type: "webhook",
+			organization_id: organizationId,
+			organization_name: organizationName,
+			is_active: true,
+			event_type: null,
+			webhook: {
+				adapter_name: "microsoft_graph",
+				integration_id: integrationId,
+				integration_name: "Microsoft",
+				config: {
+					user_id: "user-1",
+					resource: "/users/user-1/messages",
+					change_types: ["created"],
+				},
+				callback_url: `/api/events/webhook/${sourceId}`,
+				external_id: "graph-subscription-1",
+				provider_metadata: {
+					provider: "microsoft_graph",
+					user_id: "user-1",
+					user_display_name: "Adele Vance",
+					user_principal_name: "adele@example.com",
+					resource: "/users/user-1/messages",
+					change_types: ["created"],
+				},
+				expires_at: "2099-08-28T00:00:00Z",
+				rate_limit_per_minute: 60,
+				rate_limit_window_seconds: 60,
+				rate_limit_enabled: true,
+				rate_limited_count_24h: 0,
+			},
+			schedule: null,
+			subscription_count: 0,
+			event_count_24h: 1,
+			error_message: null,
+			created_at: "2026-08-27T20:00:00Z",
+			updated_at: "2026-08-27T20:00:00Z",
+		};
+		let resubscribeRequests = 0;
+
+		await page.route(/\/api\/events\/sources(?:\?.*)?$/, async (route) => {
+			await route.fulfill({
+				status: 200,
+				contentType: "application/json",
+				body: JSON.stringify({ items: [source], total: 1 }),
+			});
+		});
+		await page.route(
+			new RegExp(`/api/events/sources/${sourceId}/resubscribe$`),
+			async (route) => {
+				resubscribeRequests += 1;
+				await route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify(source),
+				});
+			},
+		);
+		await page.route(
+			new RegExp(`/api/events/sources/${sourceId}$`),
+			async (route) => {
+				await route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify(source),
+				});
+			},
+		);
+		await page.route(
+			new RegExp(`/api/events/sources/${sourceId}/events(?:\\?.*)?$`),
+			async (route) => {
+				await route.fulfill({
+					status: 200,
+					contentType: "application/json",
+					body: JSON.stringify({ items: [], total: 0 }),
+				});
+			},
+		);
+
+		await page.goto("/event-sources");
+		await expect(page.getByText("Adele inbox changes")).toBeVisible();
+		await expect(
+			page.getByText("Adele Vance · Mail messages · created"),
+		).toBeVisible();
+		await expect(page.getByText("Microsoft Graph")).toBeVisible();
+
+		await page.getByText("Adele inbox changes").click();
+		await expect(
+			page.getByRole("heading", { name: "Microsoft Graph" }),
+		).toBeVisible();
+		await expect(page.getByText("adele@example.com")).toBeVisible();
+		await expect(page.getByText("Connected")).toBeVisible();
+
+		await page.getByRole("button", { name: "Resubscribe" }).click();
+		const confirmation = page.getByRole("alertdialog", {
+			name: "Resubscribe to Microsoft Graph?",
+		});
+		await confirmation.getByRole("button", { name: "Resubscribe" }).click();
+		await expect.poll(() => resubscribeRequests).toBe(1);
+		await expect(
+			page.getByText("Microsoft Graph subscription recreated"),
+		).toBeVisible();
 	});
 });

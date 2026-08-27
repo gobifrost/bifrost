@@ -628,14 +628,49 @@ Options:
   --help  Show this message and exit.
 
 Commands:
+  create-graph-source  Create a Microsoft Graph webhook source with...
   create-source        Create a new event source.
+  delete-source        Delete an event source after its provider...
   get-source           Get a single event source by UUID or name.
   get-subscription     Get a single subscription by source ref +...
   list-sources         List all event sources (wrapped ``{items, total}``...
   list-subscriptions   List subscriptions for an event source.
+  resubscribe-source   Replace an event source's external provider...
   subscribe            Subscribe a workflow or agent to an event source.
   update-source        Update an event source.
   update-subscription  Update an event subscription.
+```
+
+### `events create-graph-source`
+
+```
+Usage: events create-graph-source [OPTIONS]
+
+  Create a Microsoft Graph webhook source with first-class flags.
+
+  ``--user-id`` is the Microsoft Graph object ID, not a Bifrost user ID. HOME
+  scopes the source to the caller organization; use ``--org`` to target
+  another organization. Microsoft Graph sources cannot be global.
+
+Options:
+  --name TEXT                     Event source name.  [required]
+  --integration TEXT              Microsoft integration UUID or name.
+                                  [required]
+  --user-id TEXT                  Microsoft Graph user object ID.  [required]
+  --resource [messages|events|mailFolders|contacts]
+                                  User resource collection to monitor.
+                                  [required]
+  --change-type [created|updated|deleted]
+                                  Graph change type. Repeat for multiple
+                                  values.  [default: created]
+  --global                        Target global scope (org=NULL). Alias for
+                                  --org global.
+  --org, --organization, --scope TEXT
+                                  Org UUID/name, or 'none'/'global' for global
+                                  scope. Omit = your org. (--organization /
+                                  --scope are synonyms.)
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
 ```
 
 ### `events create-source`
@@ -685,6 +720,18 @@ Options:
   --help                          Show this message and exit.
 ```
 
+### `events delete-source`
+
+```
+Usage: events delete-source [OPTIONS] REF
+
+  Delete an event source after its provider subscription is removed.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
 ### `events get-source`
 
 ```
@@ -732,6 +779,18 @@ Usage: events list-subscriptions [OPTIONS] SOURCE_REF
   List subscriptions for an event source.
 
   ``SOURCE_REF`` is a UUID or event source name.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
+### `events resubscribe-source`
+
+```
+Usage: events resubscribe-source [OPTIONS] REF
+
+  Replace an event source's external provider subscription.
 
 Options:
   --json  Emit JSON instead of human-readable output.

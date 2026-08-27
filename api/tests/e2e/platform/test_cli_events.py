@@ -156,11 +156,55 @@ class TestCliEvents:
         assert created["schedule"]["timezone"] == "UTC"
         assert created["schedule"]["enabled"] is True
 
-        # Cleanup: delete the source directly via REST (no CLI delete-source cmd).
+        # Cleanup this fixture through REST; delete-source has dedicated coverage below.
         e2e_client.delete(
             f"/api/events/sources/{source_id}",
             headers=platform_admin.headers,
         )
+
+    def test_provider_source_can_be_resubscribed_and_deleted(
+        self,
+        cli_client,
+        _invoke,
+        e2e_client,
+        platform_admin,
+    ) -> None:
+        name = f"cli-evt-provider-{uuid4().hex[:8]}"
+        create_result = _invoke([
+            "--json",
+            "create-source",
+            "--name", name,
+            "--source-type", "webhook",
+            "--adapter", "local_fixture",
+            "--webhook-config", "{}",
+        ])
+        assert create_result.exit_code == 0, create_result.output
+        source = json.loads(create_result.output)
+
+        resubscribe_result = _invoke([
+            "--json",
+            "resubscribe-source", source["id"],
+        ])
+        assert resubscribe_result.exit_code == 0, resubscribe_result.output
+        resubscribed = json.loads(resubscribe_result.output)
+        assert resubscribed["webhook"]["external_id"] == "local-scheduler-fixture"
+
+        delete_result = _invoke(["--json", "delete-source", source["id"]])
+        assert delete_result.exit_code == 0, delete_result.output
+        assert json.loads(delete_result.output) == {"deleted": source["id"]}
+        missing = e2e_client.get(
+            f"/api/events/sources/{source['id']}",
+            headers=platform_admin.headers,
+        )
+        assert missing.status_code == 404
+
+    def test_graph_create_help_exposes_first_class_provider_flags(self, _invoke) -> None:
+        result = _invoke(["create-graph-source", "--help"])
+        assert result.exit_code == 0, result.output
+        assert "--integration" in result.output
+        assert "--user-id" in result.output
+        assert "--resource" in result.output
+        assert "--change-type" in result.output
 
     def test_subscribe_workflow_and_update_event_type(
         self,

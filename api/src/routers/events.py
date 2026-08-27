@@ -69,6 +69,10 @@ from src.services.webhooks.auth import (
     build_webhook_integration_credentials,
     resolve_webhook_integration_auth,
 )
+from src.services.webhooks.lifecycle import (
+    resubscribe_provider,
+    unsubscribe_provider,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +123,11 @@ async def _build_event_source_response(
             config=ws.config or {},
             callback_url=_build_callback_url(source.id),
             external_id=ws.external_id,
+            provider_metadata=(
+                adapter.get_public_metadata(ws.config or {}, ws.state or {})
+                if (adapter := get_adapter_registry().get(ws.adapter_name))
+                else {}
+            ),
             expires_at=ws.expires_at,
             rate_limit_per_minute=ws.rate_limit_per_minute,
             rate_limit_window_seconds=ws.rate_limit_window_seconds,
@@ -676,6 +685,63 @@ async def update_source(
     return await _build_event_source_response(source, db)
 
 
+@router.post(
+    "/sources/{source_id}/resubscribe",
+    response_model=EventSourceResponse,
+    summary="Recreate an event source provider subscription",
+    description="Replace the external webhook registration while preserving the Bifrost event source.",
+)
+async def resubscribe_source(
+    source_id: UUID,
+    ctx: Context,
+    user: CurrentSuperuser,
+    db: DbSession,
+) -> EventSourceResponse:
+    """Replace an external provider subscription for a webhook source."""
+    repo = EventSourceRepository(db)
+    source = await repo.get_by_id_with_details(source_id)
+    if not source:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event source not found",
+        )
+
+    from src.services.solutions.guard import assert_not_solution_managed
+
+    assert_not_solution_managed(source)
+    if source.source_type != EventSourceType.WEBHOOK or not source.webhook_source:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only provider-managed webhook sources can be resubscribed",
+        )
+
+    try:
+        await resubscribe_provider(
+            db,
+            source,
+            _build_public_callback_url(source.id),
+        )
+    except Exception as exc:
+        logger.error(
+            "Failed to resubscribe webhook %s: %s",
+            log_safe(source_id),
+            log_safe(exc),
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Failed to recreate provider subscription: {exc}",
+        ) from exc
+
+    source = await repo.get_by_id_with_details(source_id)
+    if source is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event source not found after resubscription",
+        )
+    return await _build_event_source_response(source, db)
+
+
 @router.delete(
     "/sources/{source_id}",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -711,27 +777,28 @@ async def delete_source(
 
     assert_not_solution_managed(source)
 
-    # Call adapter unsubscribe for webhooks
+    # Confirm provider cleanup before deleting the local source. Retaining the
+    # local record on failure keeps the orphan visible and retryable.
     if source.source_type == EventSourceType.WEBHOOK and source.webhook_source:
-        ws = source.webhook_source
-        adapter = get_adapter_registry().get(ws.adapter_name)
-        if adapter:
-            try:
-                integration = None
-                if adapter.requires_integration and ws.integration_id:
-                    credentials = await build_webhook_integration_credentials(
-                        db,
-                        ws.integration_id,
-                        source.organization_id,
-                    )
-                    integration = await resolve_webhook_integration_auth(credentials)
-                await adapter.unsubscribe(
-                    external_id=ws.external_id,
-                    state=ws.state or {},
-                    integration=integration,
-                )
-            except Exception as e:
-                logger.warning(f"Failed to unsubscribe webhook: {e}")
+        try:
+            await unsubscribe_provider(db, source)
+        except Exception as exc:
+            source.error_message = f"Provider deletion failed: {exc}"
+            source.updated_at = datetime.now(timezone.utc)
+            await db.commit()
+            logger.error(
+                "Refusing to delete webhook %s because provider cleanup failed: %s",
+                log_safe(source_id),
+                log_safe(exc),
+                exc_info=True,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=(
+                    "The provider subscription could not be deleted. The Bifrost "
+                    f"event source was retained so you can retry: {exc}"
+                ),
+            ) from exc
 
     await db.delete(source)
     await db.flush()

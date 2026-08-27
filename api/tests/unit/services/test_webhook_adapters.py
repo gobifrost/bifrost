@@ -110,7 +110,17 @@ async def test_graph_lists_users_with_resolved_tenant_token(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_graph_subscription_uses_public_callback_and_resolved_token(monkeypatch):
-    response = SimpleNamespace(
+    user_response = SimpleNamespace(
+        status_code=200,
+        json=lambda: {
+            "id": "user-1",
+            "displayName": "Ada Lovelace",
+            "mail": "ada@example.com",
+            "userPrincipalName": "ada@example.com",
+        },
+        text="",
+    )
+    subscription_response = SimpleNamespace(
         status_code=201,
         json=lambda: {
             "id": "subscription-1",
@@ -118,7 +128,8 @@ async def test_graph_subscription_uses_public_callback_and_resolved_token(monkey
         },
         text="",
     )
-    client = _GraphClient(response)
+    client = _GraphClient(subscription_response)
+    client.get.return_value = user_response
     monkeypatch.setattr(
         "src.services.webhooks.adapters.microsoft_graph.httpx.AsyncClient",
         lambda: client,
@@ -126,17 +137,81 @@ async def test_graph_subscription_uses_public_callback_and_resolved_token(monkey
 
     result = await MicrosoftGraphAdapter().subscribe(
         "https://dev.example.com/api/hooks/source-1",
-        {"resource": "/users/user-1/messages", "change_types": ["created"]},
+        {
+            "user_id": "user-1",
+            "resource": "/users/user-1/messages",
+            "change_types": ["created"],
+        },
         _graph_auth(),
     )
 
     assert result.external_id == "subscription-1"
+    assert result.state["user_display_name"] == "Ada Lovelace"
     request = client.post.await_args
     assert request.kwargs["headers"]["Authorization"] == "Bearer tenant-token"
     assert request.kwargs["json"]["notificationUrl"] == (
         "https://dev.example.com/api/hooks/source-1"
     )
     assert "includeResourceData" not in request.kwargs["json"]
+
+
+@pytest.mark.asyncio
+async def test_graph_event_type_uses_configured_collection_not_object_id():
+    request = WebhookRequest(
+        method="POST",
+        path="/api/hooks/source-1",
+        headers={},
+        query_params={},
+        body=(
+            b'{"value":[{"changeType":"created","resource":'
+            b'"Users/user-1/Messages/01LONGMESSAGEID"}]}'
+        ),
+    )
+
+    result = await MicrosoftGraphAdapter().handle_request(
+        request,
+        config={"resource": "/users/user-1/messages"},
+        state={},
+    )
+
+    assert isinstance(result, Deliver)
+    assert result.event_type == "graph.messages.created"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [204, 404])
+async def test_graph_unsubscribe_accepts_deleted_or_already_missing(
+    monkeypatch, status_code
+):
+    response = SimpleNamespace(status_code=status_code, text="", json=lambda: {})
+    client = _GraphClient(response)
+    monkeypatch.setattr(
+        "src.services.webhooks.adapters.microsoft_graph.httpx.AsyncClient",
+        lambda: client,
+    )
+
+    await MicrosoftGraphAdapter().unsubscribe("subscription-1", {}, _graph_auth())
+
+    client.delete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_graph_unsubscribe_raises_when_provider_does_not_delete(monkeypatch):
+    response = SimpleNamespace(
+        status_code=503,
+        text="unavailable",
+        json=lambda: {"error": {"message": "Graph unavailable"}},
+    )
+    client = _GraphClient(response)
+    monkeypatch.setattr(
+        "src.services.webhooks.adapters.microsoft_graph.httpx.AsyncClient",
+        lambda: client,
+    )
+
+    with pytest.raises(ValueError, match="Graph unavailable"):
+        await MicrosoftGraphAdapter().unsubscribe(
+            "subscription-1", {}, _graph_auth()
+        )
 
 
 @pytest.mark.asyncio

@@ -7746,6 +7746,26 @@ export interface paths {
         patch: operations["update_source_api_events_sources__source_id__patch"];
         trace?: never;
     };
+    "/api/events/sources/{source_id}/resubscribe": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Recreate an event source provider subscription
+         * @description Replace the external webhook registration while preserving the Bifrost event source.
+         */
+        post: operations["resubscribe_source_api_events_sources__source_id__resubscribe_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/events/sources/{source_id}/subscriptions": {
         parameters: {
             query?: never;
@@ -26149,6 +26169,13 @@ export interface components {
              */
             external_id?: string | null;
             /**
+             * Provider Metadata
+             * @description Non-secret provider details for operations and display
+             */
+            provider_metadata?: {
+                [key: string]: unknown;
+            };
+            /**
              * Expires At
              * @description When the external subscription expires
              */
@@ -40727,6 +40754,37 @@ export interface operations {
                 "application/json": components["schemas"]["EventSourceUpdate"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EventSourceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resubscribe_source_api_events_sources__source_id__resubscribe_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

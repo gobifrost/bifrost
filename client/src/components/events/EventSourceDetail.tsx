@@ -14,6 +14,10 @@ import {
 	AlertTriangle,
 	RefreshCw,
 	Pencil,
+	CircleCheck,
+	Clock3,
+	UserRound,
+	Radio,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -40,12 +44,20 @@ import {
 	useEventSource,
 	useDeleteEventSource,
 	useUpdateEventSource,
+	useResubscribeEventSource,
 	type EventSourceType,
 } from "@/services/events";
 import { Switch } from "@/components/ui/switch";
 import { SubscriptionsTable } from "./SubscriptionsTable";
 import { EventsTable } from "./EventsTable";
 import { EditEventSourceDialog } from "./EditEventSourceDialog";
+import { MicrosoftGraphIcon } from "./MicrosoftGraphIcon";
+import { getErrorMessage } from "@/lib/api-error";
+import {
+	getGraphSourceSummary,
+	isMicrosoftGraphSource,
+} from "@/lib/graph-source";
+import { formatDistanceToNow } from "date-fns";
 
 interface EventSourceDetailProps {
 	sourceId: string;
@@ -84,9 +96,11 @@ export function EventSourceDetail({
 	const [copied, setCopied] = useState(false);
 	const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 	const [editDialogOpen, setEditDialogOpen] = useState(false);
+	const [resubscribeDialogOpen, setResubscribeDialogOpen] = useState(false);
 
 	const { data: source, isLoading, refetch } = useEventSource(sourceId);
 	const updateMutation = useUpdateEventSource();
+	const resubscribeMutation = useResubscribeEventSource();
 
 	// Toggle active status
 	const handleToggleActive = async () => {
@@ -141,8 +155,24 @@ export function EventSourceDetail({
 			});
 			toast.success("Event source deleted");
 			onClose();
-		} catch {
-			toast.error("Failed to delete event source");
+		} catch (error) {
+			toast.error(
+				getErrorMessage(error, "Failed to delete event source"),
+			);
+		}
+	};
+
+	const handleResubscribe = async () => {
+		try {
+			await resubscribeMutation.mutateAsync({
+				params: { path: { source_id: sourceId } },
+			});
+			setResubscribeDialogOpen(false);
+			toast.success("Microsoft Graph subscription recreated");
+		} catch (error) {
+			toast.error(
+				getErrorMessage(error, "Failed to recreate Graph subscription"),
+			);
 		}
 	};
 
@@ -180,6 +210,28 @@ export function EventSourceDetail({
 		);
 	}
 
+	const isGraph = isMicrosoftGraphSource(source);
+	const graphSummary = getGraphSourceSummary(source);
+	const graphStatus =
+		graphSummary?.health === "connected"
+			? {
+					label: "Connected",
+					icon: CircleCheck,
+					className: "text-emerald-700 dark:text-emerald-300",
+				}
+			: graphSummary?.health === "expired"
+				? {
+						label: "Expired",
+						icon: Clock3,
+						className: "text-destructive",
+					}
+				: {
+						label: "Needs attention",
+						icon: AlertTriangle,
+						className: "text-amber-700 dark:text-amber-300",
+					};
+	const GraphStatusIcon = graphStatus.icon;
+
 	return (
 		<div className="h-[calc(100vh-8rem)] flex flex-col space-y-4">
 			{/* Header row */}
@@ -189,7 +241,11 @@ export function EventSourceDetail({
 						<ArrowLeft className="h-4 w-4" />
 					</Button>
 					<div className="flex items-center gap-3 text-muted-foreground">
-						{getSourceTypeIcon(source.source_type)}
+						{isGraph ? (
+							<MicrosoftGraphIcon className="h-5 w-5 text-[#1686d9]" />
+						) : (
+							getSourceTypeIcon(source.source_type)
+						)}
 					</div>
 					<div>
 						<h1 className="text-2xl font-bold tracking-tight">
@@ -197,7 +253,9 @@ export function EventSourceDetail({
 						</h1>
 						<div className="flex items-center gap-2 text-sm text-muted-foreground">
 							<span>
-								{getSourceTypeLabel(source.source_type)}
+								{isGraph
+									? "Microsoft Graph"
+									: getSourceTypeLabel(source.source_type)}
 							</span>
 							<span>·</span>
 							{source.organization_id ? (
@@ -278,7 +336,9 @@ export function EventSourceDetail({
 				)}
 				{source.webhook?.adapter_name && (
 					<Badge variant="outline">
-						{source.webhook.adapter_name}
+						{isGraph
+							? "Microsoft Graph"
+							: source.webhook.adapter_name}
 					</Badge>
 				)}
 				<Badge variant="outline">
@@ -298,7 +358,11 @@ export function EventSourceDetail({
 							{source.schedule.timezone}
 						</Badge>
 						<Badge
-							variant={source.schedule.enabled ? "default" : "secondary"}
+							variant={
+								source.schedule.enabled
+									? "default"
+									: "secondary"
+							}
 							className={
 								source.schedule.enabled
 									? "bg-green-100 text-green-800 hover:bg-green-100 dark:bg-green-900 dark:text-green-200"
@@ -336,6 +400,116 @@ export function EventSourceDetail({
 					</Tooltip>
 				)}
 			</div>
+
+			{graphSummary && source.webhook && (
+				<section
+					aria-labelledby="graph-provider-heading"
+					className="border-y bg-muted/20 px-4 py-4"
+				>
+					<div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+						<div className="min-w-0 flex-1">
+							<div className="flex flex-wrap items-center gap-2">
+								<MicrosoftGraphIcon className="h-5 w-5 text-[#1686d9]" />
+								<h2
+									id="graph-provider-heading"
+									className="font-semibold"
+								>
+									Microsoft Graph
+								</h2>
+								<span
+									className={`inline-flex items-center gap-1.5 text-sm font-medium ${graphStatus.className}`}
+								>
+									<GraphStatusIcon className="h-4 w-4" />
+									{graphStatus.label}
+								</span>
+							</div>
+							<p className="mt-1 text-sm text-muted-foreground">
+								Provider subscription managed by Bifrost and
+								renewed automatically.
+							</p>
+
+							<dl className="mt-4 grid gap-x-8 gap-y-4 sm:grid-cols-2 xl:grid-cols-4">
+								<div className="min-w-0">
+									<dt className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+										<UserRound className="h-3.5 w-3.5" />{" "}
+										User
+									</dt>
+									<dd
+										className="mt-1 truncate text-sm font-medium"
+										title={
+											graphSummary.userSecondary ??
+											graphSummary.userLabel
+										}
+									>
+										{graphSummary.userLabel}
+									</dd>
+									{graphSummary.userSecondary && (
+										<div className="truncate text-xs text-muted-foreground">
+											{graphSummary.userSecondary}
+										</div>
+									)}
+								</div>
+								<div className="min-w-0">
+									<dt className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+										<Radio className="h-3.5 w-3.5" />{" "}
+										Resource
+									</dt>
+									<dd className="mt-1 text-sm font-medium">
+										{graphSummary.resourceLabel}
+									</dd>
+									{graphSummary.resourcePath && (
+										<div
+											className="truncate font-mono text-xs text-muted-foreground"
+											title={graphSummary.resourcePath}
+										>
+											{graphSummary.resourcePath}
+										</div>
+									)}
+								</div>
+								<div>
+									<dt className="text-xs font-medium text-muted-foreground">
+										Changes
+									</dt>
+									<dd className="mt-1 text-sm font-medium capitalize">
+										{graphSummary.changeLabel}
+									</dd>
+								</div>
+								<div>
+									<dt className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+										<Clock3 className="h-3.5 w-3.5" />{" "}
+										Provider expiry
+									</dt>
+									<dd className="mt-1 text-sm font-medium">
+										{source.webhook.expires_at
+											? formatDistanceToNow(
+													new Date(
+														source.webhook
+															.expires_at,
+													),
+													{ addSuffix: true },
+												)
+											: "Not registered"}
+									</dd>
+								</div>
+							</dl>
+						</div>
+
+						{isPlatformAdmin && (
+							<Button
+								variant="outline"
+								onClick={() => setResubscribeDialogOpen(true)}
+								disabled={resubscribeMutation.isPending}
+								className="shrink-0"
+							>
+								<RefreshCw
+									className={`mr-2 h-4 w-4 ${resubscribeMutation.isPending ? "animate-spin" : ""}`}
+								/>
+								Resubscribe
+							</Button>
+						)}
+					</div>
+				</section>
+			)}
 
 			{/* Error message if present */}
 			{source.error_message && (
@@ -389,7 +563,10 @@ export function EventSourceDetail({
 						<AlertDialogDescription>
 							Are you sure you want to delete "{source.name}"?
 							This will also delete all subscriptions and event
-							history. This action cannot be undone.
+							history. Provider-managed sources are removed from
+							the provider first; if that fails, the Bifrost
+							source is retained so you can retry. This action
+							cannot be undone.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>
@@ -399,6 +576,37 @@ export function EventSourceDetail({
 							className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
 						>
 							Delete
+						</AlertDialogAction>
+					</AlertDialogFooter>
+				</AlertDialogContent>
+			</AlertDialog>
+
+			<AlertDialog
+				open={resubscribeDialogOpen}
+				onOpenChange={setResubscribeDialogOpen}
+			>
+				<AlertDialogContent>
+					<AlertDialogHeader>
+						<AlertDialogTitle>
+							Resubscribe to Microsoft Graph?
+						</AlertDialogTitle>
+						<AlertDialogDescription>
+							Bifrost will remove the existing Graph registration
+							and create a new one using the current organization,
+							integration, user, resource, and callback URL. Use
+							this when events stop arriving or the provider
+							subscription has expired.
+						</AlertDialogDescription>
+					</AlertDialogHeader>
+					<AlertDialogFooter>
+						<AlertDialogCancel>Cancel</AlertDialogCancel>
+						<AlertDialogAction
+							onClick={handleResubscribe}
+							disabled={resubscribeMutation.isPending}
+						>
+							{resubscribeMutation.isPending
+								? "Resubscribing…"
+								: "Resubscribe"}
 						</AlertDialogAction>
 					</AlertDialogFooter>
 				</AlertDialogContent>

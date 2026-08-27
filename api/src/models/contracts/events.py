@@ -263,6 +263,10 @@ class WebhookSourceResponse(BaseModel):
         default=None,
         description="External subscription ID (from external service)",
     )
+    provider_metadata: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Non-secret provider details for operations and display",
+    )
     expires_at: datetime | None = Field(
         default=None,
         description="When the external subscription expires",

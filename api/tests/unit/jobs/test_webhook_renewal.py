@@ -1,11 +1,15 @@
 """Tests for provider webhook renewal fallback behavior."""
 
 from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
-from src.jobs.schedulers.webhook_renewal import _renew_or_recreate
+from src.jobs.schedulers.webhook_renewal import (
+    _apply_renewal_result,
+    _renew_or_recreate,
+)
 from src.services.webhooks.protocol import RenewResult, SubscribeResult
 
 
@@ -53,3 +57,19 @@ async def test_recreates_subscription_when_renewal_is_rejected():
         config=webhook["config"],
         integration="auth",
     )
+
+
+def test_failed_renewal_is_visible_on_event_source():
+    webhook = SimpleNamespace()
+    source = SimpleNamespace(error_message=None, updated_at=None)
+
+    _apply_renewal_result(
+        webhook,
+        source,
+        {"success": False, "error": "token refresh failed"},
+    )
+
+    assert source.error_message == (
+        "Provider subscription renewal failed: token refresh failed"
+    )
+    assert source.updated_at is not None

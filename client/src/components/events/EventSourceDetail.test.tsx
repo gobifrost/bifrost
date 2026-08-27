@@ -12,6 +12,7 @@ import { renderWithProviders, screen, waitFor } from "@/test-utils";
 const useEventSourceMock = vi.fn();
 const mockDelete = vi.fn();
 const mockUpdate = vi.fn();
+const mockResubscribe = vi.fn();
 let mockIsPlatformAdmin = true;
 
 vi.mock("@/contexts/AuthContext", () => ({
@@ -31,6 +32,10 @@ vi.mock("@/services/events", async () => {
 		}),
 		useUpdateEventSource: () => ({
 			mutateAsync: mockUpdate,
+			isPending: false,
+		}),
+		useResubscribeEventSource: () => ({
+			mutateAsync: mockResubscribe,
 			isPending: false,
 		}),
 	};
@@ -73,6 +78,8 @@ beforeEach(() => {
 	mockDelete.mockResolvedValue(undefined);
 	mockUpdate.mockReset();
 	mockUpdate.mockResolvedValue(undefined);
+	mockResubscribe.mockReset();
+	mockResubscribe.mockResolvedValue(undefined);
 	useEventSourceMock.mockReset();
 	mockIsPlatformAdmin = true;
 });
@@ -187,5 +194,57 @@ describe("EventSourceDetail — populated", () => {
 			.queryAllByRole("button")
 			.find((b) => b.getAttribute("title") === "Delete");
 		expect(deleteBtn).toBeUndefined();
+	});
+
+	it("shows Graph identity and recreates the provider subscription", async () => {
+		useEventSourceMock.mockReturnValue({
+			data: makeSource({
+				name: "Mailbox changes",
+				organization_id: "org-1",
+				organization_name: "Covi, Inc.",
+				webhook: {
+					adapter_name: "microsoft_graph",
+					callback_url: "/api/hooks/src-1",
+					external_id: "graph-subscription-1",
+					expires_at: "2030-08-30T00:00:00Z",
+					rate_limit_per_minute: 60,
+					rate_limit_window_seconds: 60,
+					rate_limit_enabled: true,
+					rate_limited_count_24h: 0,
+					config: {
+						resource: "/users/user-1/messages",
+						change_types: ["created"],
+					},
+					provider_metadata: {
+						user_display_name: "Ada Lovelace",
+						user_principal_name: "ada@example.com",
+					},
+				},
+			}),
+			isLoading: false,
+			refetch: vi.fn(),
+		});
+		const { user } = renderWithProviders(
+			<EventSourceDetail sourceId="src-1" onClose={() => {}} />,
+		);
+
+		expect(
+			screen.getByRole("heading", { name: "Microsoft Graph" }),
+		).toBeInTheDocument();
+		expect(screen.getByText("Ada Lovelace")).toBeInTheDocument();
+		expect(screen.getByText("Mail messages")).toBeInTheDocument();
+
+		await user.click(screen.getByRole("button", { name: "Resubscribe" }));
+		expect(
+			screen.getByRole("heading", {
+				name: /resubscribe to microsoft graph/i,
+			}),
+		).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Resubscribe" }));
+
+		await waitFor(() => expect(mockResubscribe).toHaveBeenCalledTimes(1));
+		expect(mockResubscribe.mock.calls[0]![0]).toEqual({
+			params: { path: { source_id: "src-1" } },
+		});
 	});
 });

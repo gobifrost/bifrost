@@ -27,6 +27,35 @@ logger = logging.getLogger(__name__)
 RENEWAL_THRESHOLD_HOURS = 48
 
 
+def _apply_renewal_result(
+    webhook: Any,
+    event_source: Any | None,
+    result: dict[str, Any],
+) -> None:
+    """Apply a provider renewal outcome to persisted source state."""
+    now = datetime.now(timezone.utc)
+    if result.get("success"):
+        webhook.expires_at = result["expires_at"]
+        webhook.updated_at = now
+        if result.get("external_id"):
+            webhook.external_id = result["external_id"]
+        if result.get("state"):
+            webhook.state = (
+                result["state"]
+                if result.get("recreated")
+                else {**(webhook.state or {}), **result["state"]}
+            )
+        if event_source:
+            event_source.error_message = None
+        return
+
+    if event_source:
+        event_source.error_message = (
+            f"Provider subscription renewal failed: {result['error']}"
+        )
+        event_source.updated_at = now
+
+
 async def _renew_or_recreate(
     adapter: Any,
     webhook: dict[str, Any],
@@ -176,6 +205,11 @@ async def renew_expiring_webhooks() -> dict[str, Any]:
 
             except Exception as e:
                 results["renewal_failed"] += 1
+                renewal_results.append({
+                    "id": wh["id"],
+                    "success": False,
+                    "error": str(e),
+                })
                 results["errors"].append({
                     "webhook_id": str(wh["id"]),
                     "adapter": wh["adapter_name"],
@@ -198,23 +232,11 @@ async def renew_expiring_webhooks() -> dict[str, Any]:
                     if not webhook:
                         continue
 
-                    if rr.get("success"):
-                        webhook.expires_at = rr["expires_at"]
-                        webhook.updated_at = datetime.now(timezone.utc)
-                        if rr.get("external_id"):
-                            webhook.external_id = rr["external_id"]
-                        if rr.get("state"):
-                            webhook.state = (
-                                rr["state"]
-                                if rr.get("recreated")
-                                else {**(webhook.state or {}), **rr["state"]}
-                            )
-                        event_source = await db.get(
-                            EventSource,
-                            webhook.event_source_id,
-                        )
-                        if event_source:
-                            event_source.error_message = None
+                    event_source = await db.get(
+                        EventSource,
+                        webhook.event_source_id,
+                    )
+                    _apply_renewal_result(webhook, event_source, rr)
 
                 await db.commit()
 

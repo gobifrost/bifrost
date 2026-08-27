@@ -10,6 +10,7 @@ import {
 	Building2,
 	Pencil,
 	Trash2,
+	TriangleAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -45,15 +46,23 @@ import {
 	useUpdateEventSource,
 	useDeleteEventSource,
 	type EventSource,
-	type EventSourceType,
 } from "@/services/events";
 import { formatDistanceToNow } from "date-fns";
 import { EventSourceDetail } from "@/components/events/EventSourceDetail";
 import { CreateEventSourceDialog } from "@/components/events/CreateEventSourceDialog";
 import { EditEventSourceDialog } from "@/components/events/EditEventSourceDialog";
+import { MicrosoftGraphIcon } from "@/components/events/MicrosoftGraphIcon";
+import {
+	getGraphSourceSummary,
+	isMicrosoftGraphSource,
+} from "@/lib/graph-source";
+import { getErrorMessage } from "@/lib/api-error";
 
-function getSourceTypeIcon(type: EventSourceType) {
-	switch (type) {
+function getSourceTypeIcon(source: EventSource) {
+	if (isMicrosoftGraphSource(source)) {
+		return <MicrosoftGraphIcon className="h-4 w-4 text-[#1686d9]" />;
+	}
+	switch (source.source_type) {
 		case "webhook":
 			return <Webhook className="h-4 w-4" />;
 		case "schedule":
@@ -63,8 +72,9 @@ function getSourceTypeIcon(type: EventSourceType) {
 	}
 }
 
-function getSourceTypeLabel(type: EventSourceType) {
-	switch (type) {
+function getSourceTypeLabel(source: EventSource) {
+	if (isMicrosoftGraphSource(source)) return "Microsoft Graph";
+	switch (source.source_type) {
 		case "webhook":
 			return "Webhook";
 		case "schedule":
@@ -145,8 +155,8 @@ export function Events() {
 			});
 			toast.success("Event source deleted");
 			refetch();
-		} catch {
-			toast.error("Failed to delete event source");
+		} catch (error) {
+			toast.error(getErrorMessage(error, "Failed to delete event source"));
 		} finally {
 			setDeleteDialogOpen(false);
 			setSourceToDelete(null);
@@ -348,7 +358,9 @@ export function Events() {
 							</DataTableRow>
 						</DataTableHeader>
 						<DataTableBody>
-							{filteredSources.map((source) => (
+							{filteredSources.map((source) => {
+								const graphSummary = getGraphSourceSummary(source);
+								return (
 								<DataTableRow
 									key={source.id}
 									clickable
@@ -378,11 +390,24 @@ export function Events() {
 									)}
 									<DataTableCell className="font-medium">
 										<div className="flex items-center gap-2">
-											{getSourceTypeIcon(
-												source.source_type,
-											)}
-											<div className="flex flex-col">
+											{getSourceTypeIcon(source)}
+											<div className="min-w-0 flex flex-col">
 												<span>{source.name}</span>
+												{graphSummary && (
+													<span className="flex min-w-0 items-center gap-1.5 text-xs font-normal text-muted-foreground">
+														<span className="truncate">
+															{graphSummary.userLabel} ·{" "}
+															{graphSummary.resourceLabel} ·{" "}
+															{graphSummary.changeLabel}
+														</span>
+														{graphSummary.health !== "connected" && (
+															<span className="inline-flex shrink-0 items-center gap-1 text-amber-700 dark:text-amber-300">
+																<TriangleAlert className="h-3 w-3" />
+																Needs attention
+															</span>
+														)}
+													</span>
+												)}
 												{source.source_type === "topic" && source.event_type && (
 													<span className="text-xs text-muted-foreground font-mono">
 														{source.event_type}
@@ -392,7 +417,7 @@ export function Events() {
 										</div>
 									</DataTableCell>
 									<DataTableCell className="w-0 whitespace-nowrap">
-										{getSourceTypeLabel(source.source_type)}
+										{getSourceTypeLabel(source)}
 									</DataTableCell>
 									<DataTableCell className="w-0 whitespace-nowrap text-right">
 										{source.event_count_24h || 0}
@@ -468,7 +493,8 @@ export function Events() {
 										</>
 									)}
 								</DataTableRow>
-							))}
+								);
+							})}
 						</DataTableBody>
 					</DataTable>
 				</div>
@@ -498,9 +524,11 @@ export function Events() {
 						<AlertDialogTitle>Delete Event Source</AlertDialogTitle>
 						<AlertDialogDescription>
 							Are you sure you want to delete "
-							{sourceToDelete?.name}"? This will also remove all
-							subscriptions and event history. This action cannot
-							be undone.
+								{sourceToDelete?.name}"? This will also remove all
+								subscriptions and event history. Provider-managed sources are
+								removed from the provider first; if that fails, the Bifrost
+								source is retained so you can retry. This action cannot be
+								undone.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					<AlertDialogFooter>

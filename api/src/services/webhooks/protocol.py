@@ -244,10 +244,19 @@ class WebhookAdapter(ABC):
             state: State dict from SubscribeResult.state.
             integration: Resolved organization-scoped authentication, when required.
 
-        Note:
-            Should not raise exceptions - best effort cleanup.
+        Raises:
+            Exception: If the provider cannot confirm the subscription is gone.
+                Providers should treat an already-missing subscription as success.
         """
         pass
+
+    def get_public_metadata(
+        self,
+        config: dict[str, Any],
+        state: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Return non-secret provider details that are safe to show to operators."""
+        return {}
 
     @abstractmethod
     async def handle_request(

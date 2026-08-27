@@ -20,6 +20,9 @@ parity follow-up:
 * ``bifrost events update-subscription <source-ref> <subscription-id>`` →
   ``PATCH /api/events/sources/{source_uuid}/subscriptions/{subscription_id}``
   (body from :class:`EventSubscriptionUpdate`)
+* ``bifrost events create-graph-source`` → ergonomic Microsoft Graph source creation
+* ``bifrost events resubscribe-source <ref>`` → replace the provider registration
+* ``bifrost events delete-source <ref>`` → remove the provider registration and source
 
 Flat-to-nested translation
 --------------------------
@@ -462,6 +465,117 @@ async def update_source(
     response = await client.patch(f"/api/events/sources/{source_uuid}", json=body)
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
+
+
+@events_group.command("create-graph-source")
+@click.option("--name", required=True, help="Event source name.")
+@click.option(
+    "--integration",
+    "integration_ref",
+    required=True,
+    help="Microsoft integration UUID or name.",
+)
+@click.option("--user-id", required=True, help="Microsoft Graph user object ID.")
+@click.option(
+    "--resource",
+    "resource_type",
+    required=True,
+    type=click.Choice(["messages", "events", "mailFolders", "contacts"]),
+    help="User resource collection to monitor.",
+)
+@click.option(
+    "--change-type",
+    "change_types",
+    multiple=True,
+    type=click.Choice(["created", "updated", "deleted"]),
+    default=("created",),
+    show_default=True,
+    help="Graph change type. Repeat for multiple values.",
+)
+@org_option
+@click.pass_context
+@pass_resolver
+@run_async
+async def create_graph_source(
+    ctx: click.Context,
+    name: str,
+    integration_ref: str,
+    user_id: str,
+    resource_type: str,
+    change_types: tuple[str, ...],
+    org: str | None,
+    is_global: bool,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+) -> None:
+    """Create a Microsoft Graph webhook source with first-class flags.
+
+    ``--user-id`` is the Microsoft Graph object ID, not a Bifrost user ID.
+    HOME scopes the source to the caller organization; use ``--org`` to target
+    another organization. Microsoft Graph sources cannot be global.
+    """
+    if is_global:
+        raise click.UsageError("Microsoft Graph event sources require an organization.")
+    integration_id = await resolver.resolve("integration", integration_ref)
+    target = await resolve_org_target(org, False, resolver)
+    body: dict[str, Any] = {
+        "name": name,
+        "source_type": "webhook",
+        "webhook": {
+            "adapter_name": "microsoft_graph",
+            "integration_id": integration_id,
+            "config": {
+                "user_id": user_id,
+                "resource": f"/users/{user_id}/{resource_type}",
+                "change_types": list(change_types),
+            },
+        },
+    }
+    if target.is_set:
+        body["organization_id"] = target.organization_id
+
+    response = await client.post("/api/events/sources", json=body)
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
+
+
+@events_group.command("resubscribe-source")
+@click.argument("ref")
+@click.pass_context
+@pass_resolver
+@run_async
+async def resubscribe_source(
+    ctx: click.Context,
+    ref: str,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+) -> None:
+    """Replace an event source's external provider subscription."""
+    source_uuid = await resolver.resolve("event_source", ref)
+    response = await client.post(f"/api/events/sources/{source_uuid}/resubscribe")
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
+
+
+@events_group.command("delete-source")
+@click.argument("ref")
+@click.pass_context
+@pass_resolver
+@run_async
+async def delete_source(
+    ctx: click.Context,
+    ref: str,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+) -> None:
+    """Delete an event source after its provider subscription is removed."""
+    source_uuid = await resolver.resolve("event_source", ref)
+    response = await client.delete(f"/api/events/sources/{source_uuid}")
+    response.raise_for_status()
+    output_result({"deleted": source_uuid}, ctx=ctx)
 
 
 # ---------------------------------------------------------------------------

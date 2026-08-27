@@ -199,6 +199,31 @@ export function useDeleteEventSource() {
 	});
 }
 
+/** Replace an event source's registration with its external provider. */
+export function useResubscribeEventSource() {
+	const queryClient = useQueryClient();
+
+	return $api.useMutation(
+		"post",
+		"/api/events/sources/{source_id}/resubscribe",
+		{
+			onSuccess: (_, variables) => {
+				const sourceId = variables.params.path.source_id;
+				queryClient.invalidateQueries({
+					queryKey: ["get", "/api/events/sources"],
+				});
+				queryClient.invalidateQueries({
+					queryKey: [
+						"get",
+						"/api/events/sources/{source_id}",
+						{ params: { path: { source_id: sourceId } } },
+					],
+				});
+			},
+		},
+	);
+}
+
 // ============================================================================
 // Event Subscriptions
 // ============================================================================

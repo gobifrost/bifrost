@@ -217,6 +217,27 @@ class MicrosoftGraphAdapter(WebhookAdapter):
         }
 
         async with httpx.AsyncClient() as client:
+            user_metadata: dict[str, Any] = {}
+            user_id = config.get("user_id")
+            if user_id:
+                user_response = await client.get(
+                    f"https://graph.microsoft.com/v1.0/users/{user_id}",
+                    headers={"Authorization": f"Bearer {auth.access_token}"},
+                    params={"$select": "id,displayName,mail,userPrincipalName"},
+                    timeout=30.0,
+                )
+                if user_response.status_code != 200:
+                    raise ValueError(
+                        "Failed to resolve the selected Graph user: "
+                        f"{self._error_message(user_response)}"
+                    )
+                user = user_response.json()
+                user_metadata = {
+                    "user_display_name": user.get("displayName"),
+                    "user_principal_name": user.get("userPrincipalName"),
+                    "user_mail": user.get("mail"),
+                }
+
             response = await client.post(
                 "https://graph.microsoft.com/v1.0/subscriptions",
                 headers={
@@ -231,19 +252,14 @@ class MicrosoftGraphAdapter(WebhookAdapter):
                 data = response.json()
                 return SubscribeResult(
                     external_id=data["id"],
-                    state={"client_state": client_state},
+                    state={"client_state": client_state, **user_metadata},
                     expires_at=self.parse_datetime(data["expirationDateTime"]),
                 )
             else:
-                error_msg = response.text
-                try:
-                    error_data = response.json()
-                    if "error" in error_data:
-                        error_msg = error_data["error"].get("message", error_msg)
-                except (ValueError, KeyError) as e:
-                    # Response wasn't JSON or didn't have expected shape — fall back to raw text
-                    logger.debug(f"could not parse Graph subscribe error response as JSON: {e}")
-                raise ValueError(f"Failed to create Graph subscription: {error_msg}")
+                raise ValueError(
+                    "Failed to create Graph subscription: "
+                    f"{self._error_message(response)}"
+                )
 
     async def unsubscribe(
         self,
@@ -254,24 +270,40 @@ class MicrosoftGraphAdapter(WebhookAdapter):
         """
         Delete Graph subscription.
 
-        Best effort - doesn't raise on failure.
+        A missing subscription is already clean. Other provider failures are
+        raised so Bifrost does not delete its only record of an orphan.
         """
         if not external_id:
             return
 
-        if not isinstance(integration, WebhookIntegrationAuth):
-            return
+        auth = self._require_auth(integration)
 
-        try:
-            async with httpx.AsyncClient() as client:
-                await client.delete(
-                    f"https://graph.microsoft.com/v1.0/subscriptions/{external_id}",
-                    headers={"Authorization": f"Bearer {integration.access_token}"},
-                    timeout=30.0,
-                )
-        except Exception:
-            # Best effort - subscription may have already expired
-            pass
+        async with httpx.AsyncClient() as client:
+            response = await client.delete(
+                f"https://graph.microsoft.com/v1.0/subscriptions/{external_id}",
+                headers={"Authorization": f"Bearer {auth.access_token}"},
+                timeout=30.0,
+            )
+        if response.status_code not in {204, 404}:
+            raise ValueError(
+                "Failed to delete Graph subscription: "
+                f"{self._error_message(response)}"
+            )
+
+    def get_public_metadata(
+        self,
+        config: dict[str, Any],
+        state: dict[str, Any],
+    ) -> dict[str, Any]:
+        return {
+            "provider": "Microsoft Graph",
+            "resource": config.get("resource"),
+            "change_types": config.get("change_types", []),
+            "user_id": config.get("user_id"),
+            "user_display_name": state.get("user_display_name"),
+            "user_principal_name": state.get("user_principal_name"),
+            "user_mail": state.get("user_mail"),
+        }
 
     async def renew(
         self,
@@ -365,15 +397,14 @@ class MicrosoftGraphAdapter(WebhookAdapter):
         # Future: could batch process all notifications
         first_notification = notifications[0]
 
-        # Extract event type from change type
+        # Event identity comes from the configured collection, not Graph's
+        # notification resource. The latter ends in the changed object's UUID.
         event_type = first_notification.get("changeType")
-        resource = first_notification.get("resource")
-        if resource:
-            # Create more descriptive event type
-            # e.g., "messages.created", "events.updated"
-            resource_type = resource.split("/")[-1] if "/" in resource else resource
+        configured_resource = config.get("resource")
+        if configured_resource:
+            resource_type = configured_resource.rstrip("/").split("/")[-1]
             if event_type:
-                event_type = f"{resource_type}.{event_type}"
+                event_type = f"graph.{resource_type}.{event_type}"
 
         return Deliver(
             data={
@@ -388,3 +419,14 @@ class MicrosoftGraphAdapter(WebhookAdapter):
             event_type=event_type,
             raw_headers=request.headers,
         )
+
+    @staticmethod
+    def _error_message(response: httpx.Response) -> str:
+        error_msg = response.text
+        try:
+            error_data = response.json()
+            if "error" in error_data:
+                error_msg = error_data["error"].get("message", error_msg)
+        except (ValueError, KeyError) as exc:
+            logger.debug("could not parse Graph error response as JSON: %s", exc)
+        return error_msg
