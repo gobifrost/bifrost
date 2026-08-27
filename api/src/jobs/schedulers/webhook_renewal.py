@@ -189,6 +189,7 @@ async def renew_expiring_webhooks() -> dict[str, Any]:
         # Phase 3: Persist renewal results (short-lived session)
         if renewal_results:
             async with get_db_context() as db:
+                from src.models.orm.events import EventSource
                 from src.repositories.events import WebhookSourceRepository
 
                 repo = WebhookSourceRepository(db)
@@ -208,10 +209,12 @@ async def renew_expiring_webhooks() -> dict[str, Any]:
                                 if rr.get("recreated")
                                 else {**(webhook.state or {}), **rr["state"]}
                             )
-                        if webhook.event_source:
-                            webhook.event_source.error_message = None
-                    elif rr.get("has_event_source") and webhook.event_source:
-                        webhook.event_source.error_message = "Webhook subscription expired and could not be renewed"
+                        event_source = await db.get(
+                            EventSource,
+                            webhook.event_source_id,
+                        )
+                        if event_source:
+                            event_source.error_message = None
 
                 await db.commit()
 
