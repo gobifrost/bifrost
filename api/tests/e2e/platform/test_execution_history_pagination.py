@@ -1,13 +1,15 @@
 """Execution History ordering and keyset pagination regressions."""
 
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
+from src.core.constants import PROVIDER_ORG_ID
 from src.core.principal import UserPrincipal
 from src.models.enums import ExecutionStatus
 from src.models.orm.executions import Execution
+from src.models.orm.users import User
 from src.routers.executions import ExecutionRepository, _decode_history_cursor
 
 pytestmark = pytest.mark.e2e
@@ -18,6 +20,7 @@ def _execution(
     name: str,
     status: ExecutionStatus,
     created_at: datetime,
+    executed_by: UUID,
     started_at: datetime | None = None,
     completed_at: datetime | None = None,
     scheduled_at: datetime | None = None,
@@ -27,7 +30,7 @@ def _execution(
         workflow_name=name,
         status=status,
         parameters={},
-        executed_by=None,
+        executed_by=executed_by,
         executed_by_name="History pagination test",
         created_at=created_at,
         started_at=started_at,
@@ -39,11 +42,21 @@ def _execution(
 @pytest.mark.asyncio
 async def test_history_pages_use_the_display_timeline_without_gaps(db_session):
     now = datetime(2026, 8, 27, 18, 0, tzinfo=timezone.utc)
+    user_id = uuid4()
+    db_session.add(
+        User(
+            id=user_id,
+            email=f"history-pagination-{user_id}@example.com",
+            name="History pagination test",
+            organization_id=PROVIDER_ORG_ID,
+        )
+    )
     recent = [
         _execution(
             name=f"recent-{index:02d}",
             status=ExecutionStatus.SUCCESS,
             created_at=now - timedelta(minutes=index, seconds=5),
+            executed_by=user_id,
             started_at=now - timedelta(minutes=index),
             completed_at=now - timedelta(minutes=index) + timedelta(seconds=2),
         )
@@ -53,17 +66,20 @@ async def test_history_pages_use_the_display_timeline_without_gaps(db_session):
         name="pending-with-created-at",
         status=ExecutionStatus.PENDING,
         created_at=now - timedelta(seconds=30),
+        executed_by=user_id,
     )
     future_scheduled = _execution(
         name="future-scheduled",
         status=ExecutionStatus.SCHEDULED,
         created_at=now,
+        executed_by=user_id,
         scheduled_at=now + timedelta(days=1),
     )
     stale_cancelled = _execution(
         name="stale-cancelled-scheduled",
         status=ExecutionStatus.CANCELLED,
         created_at=now - timedelta(days=77, minutes=5),
+        executed_by=user_id,
         scheduled_at=now - timedelta(days=77),
     )
     rows = [*recent, pending, future_scheduled, stale_cancelled]
@@ -71,10 +87,10 @@ async def test_history_pages_use_the_display_timeline_without_gaps(db_session):
     await db_session.flush()
 
     principal = UserPrincipal(
-        user_id=uuid4(),
+        user_id=user_id,
         email="history-admin@example.com",
-        organization_id=None,
-        is_superuser=True,
+        organization_id=PROVIDER_ORG_ID,
+        is_superuser=False,
     )
     repository = ExecutionRepository(db_session)
 
