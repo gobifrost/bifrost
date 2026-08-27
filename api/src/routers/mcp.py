@@ -455,7 +455,10 @@ async def update_mcp_config(
         updated_by=current_user.email,
     )
 
-    # Invalidate cache so auth middleware picks up changes
+    # The request-scoped DB dependency commits after the response is sent.
+    # Commit this feature-flag transition before invalidating the cache and
+    # returning so the next gateway request cannot observe the old value.
+    await db.commit()
     invalidate_mcp_config_cache()
 
     return MCPConfigResponse(
@@ -490,7 +493,8 @@ async def delete_mcp_config(
     service = MCPConfigService(db)
     deleted = await service.delete_config()
 
-    # Invalidate cache
+    # Keep the reset visible before the caller can make its next MCP request.
+    await db.commit()
     invalidate_mcp_config_cache()
 
     if deleted:
