@@ -440,7 +440,14 @@ describe("ExecutionHistory — feed rendering", () => {
 
 		expect(
 			screen.getByRole("region", { name: "History" }),
-		).toHaveClass("mx-auto", "w-full", "max-w-7xl");
+		).toHaveClass(
+			"mx-auto",
+			"h-full",
+			"min-h-0",
+			"w-full",
+			"max-w-7xl",
+			"pb-1",
+		);
 		expect(
 			screen.getByRole("columnheader", { name: "Workflow" }),
 		).toHaveClass("w-full");
@@ -465,6 +472,9 @@ describe("ExecutionHistory — feed rendering", () => {
 			"sm:overflow-visible",
 		);
 		expect(screen.getByRole("tablist")).not.toHaveClass("overflow-x-auto");
+		expect(
+			screen.getByRole("tablist").closest('[data-slot="tabs"]'),
+		).toHaveClass("min-h-0", "flex-1");
 		expect(screen.getByText("by Test User")).toBeInTheDocument();
 	});
 

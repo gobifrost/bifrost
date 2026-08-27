@@ -483,7 +483,7 @@ export function ExecutionHistory() {
 	return (
 		<section
 			aria-labelledby="history-heading"
-			className="mx-auto flex h-full w-full max-w-7xl min-w-0 flex-col space-y-4 sm:space-y-6"
+			className="mx-auto flex h-full min-h-0 w-full max-w-7xl min-w-0 flex-col space-y-4 pb-1 sm:space-y-6"
 		>
 			{/* Header */}
 			<div className="flex items-start justify-between gap-3 sm:items-center">
@@ -831,7 +831,7 @@ export function ExecutionHistory() {
 					onValueChange={(v) =>
 						setStatusFilter(v as ExecutionStatus | "all")
 					}
-					className="flex min-w-0 flex-1 flex-col"
+					className="flex min-h-0 min-w-0 flex-1 flex-col"
 				>
 				<div className="no-scrollbar w-fit max-w-full overflow-x-auto sm:overflow-visible">
 					<TabsList className="w-max justify-start">

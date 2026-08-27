@@ -55,6 +55,41 @@ beforeEach(() => {
 });
 
 describe("AgentRunsPanel", () => {
+	it("constrains the table and progressively collapses secondary columns", () => {
+		renderWithProviders(
+			<Routes>
+				<Route path="/history" element={<AgentRunsPanel />} />
+			</Routes>,
+			{ initialEntries: ["/history?type=agents"] },
+		);
+
+		const table = screen.getByRole("table");
+		expect(table.parentElement?.parentElement).toHaveClass(
+			"min-h-0",
+			"min-w-0",
+		);
+		expect(screen.getByRole("columnheader", { name: "Agent" })).toHaveClass(
+			"w-full",
+			"sm:w-40",
+		);
+		expect(screen.getByRole("columnheader", { name: "Asked" })).toHaveClass(
+			"hidden",
+			"sm:table-cell",
+		);
+		expect(screen.getByRole("columnheader", { name: "Duration" })).toHaveClass(
+			"hidden",
+			"lg:table-cell",
+		);
+		expect(screen.getByRole("columnheader", { name: "Verdict" })).toHaveClass(
+			"hidden",
+			"xl:table-cell",
+		);
+		expect(screen.getByRole("columnheader", { name: "Started" })).toHaveClass(
+			"hidden",
+			"xl:table-cell",
+		);
+	});
+
 	it("keeps fleet run history as the origin when opening a run", async () => {
 		const { user } = renderWithProviders(
 			<Routes>
@@ -67,7 +102,9 @@ describe("AgentRunsPanel", () => {
 			{ initialEntries: ["/history?type=agents"] },
 		);
 
-		await user.click(screen.getByText("Triage ticket 428950"));
+		await user.click(
+			screen.getByRole("row", { name: /Service Desk Triage.*Completed/i }),
+		);
 		expect(screen.getByTestId("navigation-state")).toHaveTextContent(
 			JSON.stringify({
 				agentRunOrigin: {

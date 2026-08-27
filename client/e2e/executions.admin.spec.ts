@@ -47,6 +47,11 @@ test.describe("Execution History", () => {
 		await expect(historyRegion).toBeVisible({ timeout: 10000 });
 		const wideBounds = await historyRegion.boundingBox();
 		expect(wideBounds?.width).toBeLessThanOrEqual(1280);
+		expect(
+			await page.locator("main").evaluate(
+				(element) => element.scrollHeight <= element.clientHeight,
+			),
+		).toBe(true);
 
 		const statusTabs = page.getByRole("tablist").first();
 		await expect(statusTabs).toBeVisible();
@@ -85,6 +90,23 @@ test.describe("Execution History", () => {
 				).toBeHidden();
 			}
 		}
+
+		await page.goto("/history?type=agents");
+		await expect(
+			page.getByText("View agent run history across the fleet"),
+		).toBeVisible({ timeout: 10000 });
+		expect(
+			await page.locator("main").evaluate(
+				(element) => element.scrollHeight <= element.clientHeight,
+			),
+		).toBe(true);
+		expect(
+			await page.evaluate(
+				() =>
+					document.documentElement.scrollWidth <=
+					document.documentElement.clientWidth,
+			),
+		).toBe(true);
 	});
 
 	test("should list executions", async ({ page }) => {
