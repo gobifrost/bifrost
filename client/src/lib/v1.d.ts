@@ -5850,6 +5850,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/agent-runs/enqueue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Enqueue Agent Run Request
+         * @description Queue an agent run and return without waiting for execution.
+         */
+        post: operations["enqueue_agent_run_request_api_agent_runs_enqueue_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/agent-runs/execute": {
         parameters: {
             query?: never;
@@ -11319,6 +11339,33 @@ export interface components {
             ai_usage?: components["schemas"]["AIUsagePublicSimple"][] | null;
             ai_totals?: components["schemas"]["AIUsageTotalsSimple"] | null;
         };
+        /** AgentRunEnqueueRequest */
+        AgentRunEnqueueRequest: {
+            /** Agent Name */
+            agent_name: string;
+            /** Input */
+            input?: {
+                [key: string]: unknown;
+            } | null;
+            /** Output Schema */
+            output_schema?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** AgentRunEnqueueResponse */
+        AgentRunEnqueueResponse: {
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /**
+             * Status
+             * @default queued
+             * @constant
+             */
+            status: "queued";
+        };
         /** AgentRunListResponse */
         AgentRunListResponse: {
             /** Items */
@@ -15815,7 +15862,7 @@ export interface components {
             event_type?: string | null;
             /**
              * Filter Expression
-             * @description Optional JSONPath filter expression (future use)
+             * @description Optional JSONPath-style event payload filter (JMESPath syntax; '$' root prefix supported)
              */
             filter_expression?: string | null;
             /**
@@ -21324,6 +21371,34 @@ export interface components {
              * @description New password (minimum 8 characters)
              */
             new_password: string;
+        };
+        /**
+         * PausedResponse
+         * @description Returned by /agent-runs/execute when the target agent is paused.
+         *
+         *     Returned with HTTP 200 — pause is a graceful, expected state, not an error.
+         *     Downstream consumers discriminate on ``status == "paused"``.
+         */
+        PausedResponse: {
+            /**
+             * Status
+             * @default paused
+             * @constant
+             */
+            status: "paused";
+            /**
+             * Accepted
+             * @default false
+             * @constant
+             */
+            accepted: false;
+            /** Message */
+            message: string;
+            /**
+             * Agent Id
+             * Format: uuid
+             */
+            agent_id: string;
         };
         /**
          * PendingDeactivation
@@ -32527,7 +32602,7 @@ export interface operations {
                 start_date?: string | null;
                 /** @description End of time range (inclusive) */
                 end_date?: string | null;
-                /** @description Free-text search on action/resource_type */
+                /** @description Free-text search on actor, organization, action, resource type, IP address, and event details */
                 search?: string | null;
                 limit?: number;
                 /** @description Pagination cursor */
@@ -37101,6 +37176,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DryRunResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    enqueue_agent_run_request_api_agent_runs_enqueue_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AgentRunEnqueueRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AgentRunEnqueueResponse"] | components["schemas"]["PausedResponse"];
                 };
             };
             /** @description Validation Error */

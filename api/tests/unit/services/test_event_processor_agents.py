@@ -51,6 +51,7 @@ def _make_delivery(
     subscription = MagicMock()
     subscription.target_type = target_type
     subscription.input_mapping = None
+    subscription.filter_expression = None
     delivery.subscription = subscription
 
     if target_type == "agent":
@@ -82,6 +83,7 @@ def _create_processor() -> "EventProcessor":
         session = AsyncMock()
         processor = EventProcessor(session)
         processor._delivery_repo = MagicMock()
+        processor._delivery_repo.update_event_status = AsyncMock()
         processor._event_repo = MagicMock()
         processor._subscription_repo = MagicMock()
         processor._webhook_repo = MagicMock()
@@ -156,6 +158,33 @@ async def test_queue_deliveries_skips_non_pending():
     processor._queue_workflow_execution.assert_not_awaited()
     # Status should remain unchanged
     assert delivery.status == EventDeliveryStatus.QUEUED
+
+
+@pytest.mark.asyncio
+async def test_queue_deliveries_rechecks_filter_before_dispatch():
+    """A pending or retried delivery cannot bypass a non-matching filter."""
+    processor = _create_processor()
+
+    event_id = uuid.uuid4()
+    event = _make_event(event_id=event_id, data={"priority": "low"})
+    delivery = _make_delivery(target_type="workflow")
+    delivery.subscription.filter_expression = "$.priority == 'high'"
+
+    processor._delivery_repo.get_by_event = AsyncMock(return_value=[delivery])
+    processor._event_repo.get_by_id = AsyncMock(return_value=event)
+    processor._queue_agent_run = AsyncMock()
+    processor._queue_workflow_execution = AsyncMock()
+    processor._broadcast_event_update = AsyncMock()
+
+    count = await processor.queue_event_deliveries(event_id)
+
+    assert count == 0
+    assert delivery.status == EventDeliveryStatus.SKIPPED
+    assert delivery.completed_at is not None
+    assert delivery.error_message == "Subscription filter did not match the event payload"
+    processor._queue_agent_run.assert_not_awaited()
+    processor._queue_workflow_execution.assert_not_awaited()
+    processor._delivery_repo.update_event_status.assert_awaited_once_with(event_id)
 
 
 @pytest.mark.asyncio

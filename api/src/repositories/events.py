@@ -526,7 +526,7 @@ class EventDeliveryRepository(BaseRepository[EventDelivery]):
         Update event status based on delivery statuses.
 
         Sets event to:
-        - COMPLETED if all deliveries succeeded
+        - COMPLETED if all deliveries reached a non-failed terminal status
         - FAILED if any delivery failed
         - PROCESSING if any delivery is pending
         """
@@ -546,12 +546,13 @@ class EventDeliveryRepository(BaseRepository[EventDelivery]):
         queued = status_counts.get(EventDeliveryStatus.QUEUED, 0)
         failed = status_counts.get(EventDeliveryStatus.FAILED, 0)
         success = status_counts.get(EventDeliveryStatus.SUCCESS, 0)
+        skipped = status_counts.get(EventDeliveryStatus.SKIPPED, 0)
 
         if pending > 0 or queued > 0:
             event.status = EventStatus.PROCESSING
         elif failed > 0:
             event.status = EventStatus.FAILED
-        elif success > 0:
+        elif success > 0 or skipped > 0:
             event.status = EventStatus.COMPLETED
         # else: keep current status
 

@@ -20,6 +20,7 @@ from typing import Any
 from uuid import UUID
 
 import sqlalchemy as sa
+from shared.event_filters import EventFilterDecision, evaluate_event_filter
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -214,6 +215,70 @@ class EventProcessor:
         self._event_repo = EventRepository(session)
         self._delivery_repo = EventDeliveryRepository(session)
 
+    @staticmethod
+    def _evaluate_subscription_filter(
+        subscription: EventSubscription,
+        payload: dict[str, Any],
+        event_id: uuid.UUID,
+    ) -> EventFilterDecision:
+        """Evaluate and log the dispatch decision for one subscription."""
+        decision = evaluate_event_filter(subscription.filter_expression, payload)
+        if decision.matches:
+            return decision
+
+        log_context = {
+            "event_id": str(event_id),
+            "subscription_id": str(subscription.id),
+        }
+        if decision.error:
+            logger.warning(
+                "Event subscription filter evaluation failed; delivery skipped",
+                extra={**log_context, "filter_error": log_safe(decision.error)},
+            )
+        else:
+            logger.info(
+                "Event subscription filter did not match; delivery skipped",
+                extra=log_context,
+            )
+        return decision
+
+    def _build_subscription_delivery(
+        self,
+        event: Event,
+        subscription: EventSubscription,
+    ) -> tuple[EventDelivery, bool]:
+        """Build a pending or observably skipped delivery for a subscription."""
+        filter_decision = self._evaluate_subscription_filter(
+            subscription,
+            event.data,
+            event.id,
+        )
+        if filter_decision.matches:
+            status = EventDeliveryStatus.PENDING
+            error_message = None
+            completed_at = None
+        else:
+            status = EventDeliveryStatus.SKIPPED
+            error_message = (
+                "Subscription filter did not match the event payload"
+                if filter_decision.error is None
+                else "Subscription filter could not be evaluated"
+            )
+            completed_at = datetime.now(timezone.utc)
+
+        return (
+            EventDelivery(
+                id=uuid.uuid4(),
+                event_id=event.id,
+                event_subscription_id=subscription.id,
+                workflow_id=subscription.workflow_id,
+                status=status,
+                error_message=error_message,
+                completed_at=completed_at,
+            ),
+            filter_decision.matches,
+        )
+
     async def process_webhook(
         self,
         event_source: EventSource,
@@ -346,9 +411,8 @@ class EventProcessor:
             logger.info(f"No subscriptions for topic '{log_safe(topic)}': {event.id}")
             return event.id, 0
 
-        event.status = EventStatus.PROCESSING
-        await self.session.flush()
-
+        deliveries_created = 0
+        matching_subscriptions = 0
         for subscription in subscriptions:
             target_type = getattr(subscription, "target_type", "workflow") or "workflow"
             if target_type == "agent":
@@ -364,24 +428,32 @@ class EventProcessor:
                     )
                     continue
 
-            delivery = EventDelivery(
-                id=uuid.uuid4(),
-                event_id=event.id,
-                event_subscription_id=subscription.id,
-                workflow_id=subscription.workflow_id,
-                status=EventDeliveryStatus.PENDING,
+            delivery, filter_matches = self._build_subscription_delivery(
+                event,
+                subscription,
             )
             self.session.add(delivery)
+            deliveries_created += 1
+            if filter_matches:
+                matching_subscriptions += 1
 
+        event.status = (
+            EventStatus.PROCESSING
+            if matching_subscriptions
+            else EventStatus.COMPLETED
+        )
         await self.session.flush()
         logger.info(
             f"Created deliveries for topic '{log_safe(topic)}': {event.id}",
             extra={
                 "event_id": str(event.id),
-                "subscription_count": len(subscriptions),
+                "delivery_count": deliveries_created,
+                "matching_subscription_count": matching_subscriptions,
+                "skipped_subscription_count": deliveries_created
+                - matching_subscriptions,
             },
         )
-        return event.id, len(subscriptions)
+        return event.id, matching_subscriptions
 
     async def _process_delivery(
         self,
@@ -442,11 +514,8 @@ class EventProcessor:
                 event_type=deliver.event_type,
             )
 
-        # Create deliveries and queue executions
-        event.status = EventStatus.PROCESSING
-        await self.session.flush()
-
         deliveries_created = 0
+        matching_subscriptions = 0
         for subscription in subscriptions:
             target_type = getattr(subscription, "target_type", "workflow") or "workflow"
 
@@ -463,17 +532,20 @@ class EventProcessor:
                     )
                     continue
 
-            # Create delivery record
-            delivery = EventDelivery(
-                id=uuid.uuid4(),
-                event_id=event.id,
-                event_subscription_id=subscription.id,
-                workflow_id=subscription.workflow_id,  # None for agent targets
-                status=EventDeliveryStatus.PENDING,
+            delivery, filter_matches = self._build_subscription_delivery(
+                event,
+                subscription,
             )
             self.session.add(delivery)
             deliveries_created += 1
+            if filter_matches:
+                matching_subscriptions += 1
 
+        event.status = (
+            EventStatus.PROCESSING
+            if matching_subscriptions
+            else EventStatus.COMPLETED
+        )
         await self.session.flush()
 
         logger.info(
@@ -481,6 +553,9 @@ class EventProcessor:
             extra={
                 "event_id": str(event.id),
                 "delivery_count": deliveries_created,
+                "matching_subscription_count": matching_subscriptions,
+                "skipped_subscription_count": deliveries_created
+                - matching_subscriptions,
             },
         )
 
@@ -499,6 +574,7 @@ class EventProcessor:
         failed_count: int = 0,
         queued_count: int = 0,
         pending_count: int = 0,
+        skipped_count: int = 0,
     ) -> None:
         """
         Broadcast event update to WebSocket subscribers.
@@ -511,6 +587,7 @@ class EventProcessor:
             failed_count: Number of failed deliveries
             queued_count: Number of queued deliveries
             pending_count: Number of pending deliveries
+            skipped_count: Number of deliveries skipped by subscription filters
         """
         from src.core.pubsub import manager
 
@@ -530,7 +607,12 @@ class EventProcessor:
                 "failed_count": failed_count,
                 "queued_count": queued_count,
                 "pending_count": pending_count,
-                "delivery_count": success_count + failed_count + queued_count + pending_count,
+                "skipped_count": skipped_count,
+                "delivery_count": success_count
+                + failed_count
+                + queued_count
+                + pending_count
+                + skipped_count,
             },
         }
 
@@ -568,8 +650,23 @@ class EventProcessor:
             if delivery.status != EventDeliveryStatus.PENDING:
                 continue
 
+            subscription = delivery.subscription
+            filter_decision = self._evaluate_subscription_filter(
+                subscription,
+                event_obj.data,
+                event_obj.id,
+            )
+            if not filter_decision.matches:
+                delivery.status = EventDeliveryStatus.SKIPPED
+                delivery.error_message = (
+                    "Subscription filter did not match the event payload"
+                    if filter_decision.error is None
+                    else "Subscription filter could not be evaluated"
+                )
+                delivery.completed_at = datetime.now(timezone.utc)
+                continue
+
             try:
-                subscription = delivery.subscription
                 if subscription and subscription.target_type == "agent":
                     await self._queue_agent_run(delivery, event_obj)
                 else:
@@ -585,6 +682,7 @@ class EventProcessor:
                 delivery.error_message = str(e)
 
         await self.session.flush()
+        await self._delivery_repo.update_event_status(event_id)
 
         # Broadcast update after queueing (use already-loaded deliveries)
         success_count = sum(
@@ -599,6 +697,9 @@ class EventProcessor:
         pending_count = sum(
             1 for d in deliveries if d.status == EventDeliveryStatus.PENDING
         )
+        skipped_count = sum(
+            1 for d in deliveries if d.status == EventDeliveryStatus.SKIPPED
+        )
 
         await self._broadcast_event_update(
             event_source_id=event_obj.event_source_id,
@@ -608,6 +709,7 @@ class EventProcessor:
             failed_count=failed_count,
             queued_count=queued_count,
             pending_count=pending_count,
+            skipped_count=skipped_count,
         )
 
         return queued

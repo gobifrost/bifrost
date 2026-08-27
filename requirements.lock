@@ -1383,6 +1383,7 @@ jmespath==1.1.0 \
     --hash=sha256:a5663118de4908c91729bea0acadca56526eb2698e83de10cd116ae0f4e97c64
     # via
     #   aiobotocore
+    #   bifrost-api (pyproject.toml)
     #   botocore
 joserfc==1.6.4 \
     --hash=sha256:34ce5f499bfcc5e9ad4cc75077f9278ab3227b71da9aaf28f9ab705f8a560d3c \

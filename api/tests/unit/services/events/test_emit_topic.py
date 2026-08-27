@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.models.enums import EventDeliveryStatus
+from src.services.webhooks.protocol import Deliver, WebhookRequest
 
 
 def _make_source(topic: str, org_id=None):
@@ -66,6 +67,7 @@ def _make_workflow_subscription(workflow_id=None, org_id=None):
     sub.workflow_id = workflow_id or uuid.uuid4()
     sub.agent_id = None
     sub.input_mapping = None
+    sub.filter_expression = None
 
     workflow = MagicMock()
     workflow.id = sub.workflow_id
@@ -175,6 +177,103 @@ async def test_emit_topic_with_subscriber_creates_delivery():
     assert deliveries[0].event_subscription_id == sub.id
     assert deliveries[0].status == EventDeliveryStatus.PENDING
     assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_emit_topic_marks_non_matching_filter_delivery_skipped():
+    """A non-matching payload is observable but never eligible for dispatch."""
+    source = _make_source("ticket.created")
+    sub = _make_workflow_subscription()
+    sub.filter_expression = "$.priority == 'high'"
+    processor, session = _make_processor(source=source, subscriptions=[sub])
+
+    added_objects = []
+    session.add = lambda obj: added_objects.append(obj)
+    session.flush = AsyncMock()
+
+    event_id, count = await processor.emit_topic(
+        topic="ticket.created",
+        data={"priority": "low"},
+    )
+
+    from src.models.enums import EventStatus
+    from src.models.orm.events import Event, EventDelivery
+
+    event = next(obj for obj in added_objects if isinstance(obj, Event))
+    delivery = next(obj for obj in added_objects if isinstance(obj, EventDelivery))
+    assert event.id == event_id
+    assert event.status == EventStatus.COMPLETED
+    assert delivery.status == EventDeliveryStatus.SKIPPED
+    assert delivery.completed_at is not None
+    assert delivery.error_message == "Subscription filter did not match the event payload"
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_emit_topic_marks_invalid_filter_delivery_skipped():
+    """An invalid filter fails closed and records why dispatch was skipped."""
+    source = _make_source("ticket.created")
+    sub = _make_workflow_subscription()
+    sub.filter_expression = "$.priority =="
+    processor, session = _make_processor(source=source, subscriptions=[sub])
+
+    added_objects = []
+    session.add = lambda obj: added_objects.append(obj)
+    session.flush = AsyncMock()
+
+    _, count = await processor.emit_topic(
+        topic="ticket.created",
+        data={"priority": "high"},
+    )
+
+    from src.models.orm.events import EventDelivery
+
+    delivery = next(obj for obj in added_objects if isinstance(obj, EventDelivery))
+    assert delivery.status == EventDeliveryStatus.SKIPPED
+    assert delivery.error_message == "Subscription filter could not be evaluated"
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_process_webhook_marks_non_matching_filter_delivery_skipped():
+    """Webhook payload filters are enforced before a delivery can be queued."""
+    source = _make_source("ticket.created")
+    sub = _make_workflow_subscription()
+    sub.filter_expression = "$.priority == 'high'"
+    processor, session = _make_processor(source=source, subscriptions=[sub])
+    processor._broadcast_event_update = AsyncMock()
+
+    added_objects = []
+    session.add = lambda obj: added_objects.append(obj)
+    session.flush = AsyncMock()
+
+    result = await processor._process_delivery(
+        webhook_source=MagicMock(),
+        event_source=source,
+        deliver=Deliver(
+            data={"priority": "low"},
+            event_type="ticket.created",
+            raw_headers={"content-type": "application/json"},
+        ),
+        request=WebhookRequest(
+            method="POST",
+            path="/hooks/example",
+            headers={},
+            query_params={},
+            body=b"{}",
+            client_ip="127.0.0.1",
+        ),
+    )
+
+    from src.models.enums import EventStatus
+    from src.models.orm.events import Event, EventDelivery
+
+    event = next(obj for obj in added_objects if isinstance(obj, Event))
+    delivery = next(obj for obj in added_objects if isinstance(obj, EventDelivery))
+    assert isinstance(result, Deliver)
+    assert event.status == EventStatus.COMPLETED
+    assert delivery.status == EventDeliveryStatus.SKIPPED
+    assert delivery.error_message == "Subscription filter did not match the event payload"
 
 
 @pytest.mark.asyncio

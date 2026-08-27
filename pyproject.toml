@@ -82,6 +82,7 @@ dependencies = [
     "reportlab>=4.4.0",  # Typed PDF artifacts through Platypus flow layout
     "python-docx>=1.2.0",  # Typed DOCX artifacts
     "openpyxl>=3.1.5",  # Typed XLSX artifacts
+    "jmespath>=1.0.1",  # Safe event subscription payload filters
 
     # =========================================================================
     # Code Transformation

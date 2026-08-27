@@ -194,7 +194,7 @@ class EventSubscriptionCreate(BaseModel):
     )
     filter_expression: str | None = Field(
         default=None,
-        description="Optional JSONPath filter expression (future use)",
+        description="Optional JSONPath-style event payload filter (JMESPath syntax; '$' root prefix supported)",
     )
     input_mapping: dict[str, Any] | None = Field(
         default=None,
