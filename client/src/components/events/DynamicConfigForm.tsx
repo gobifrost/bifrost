@@ -45,6 +45,7 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { getErrorMessage } from "@/lib/api-error";
 import { useDynamicValues } from "@/services/events";
 
 // x-dynamic-values extension in JSON Schema
@@ -244,10 +245,10 @@ function DynamicField({
 			!manualMode &&
 			(!requiresIntegration || !!integrationId),
 	);
-	const errorMessage =
-		error instanceof Error
-			? error.message
-			: "We could not load options for this field.";
+	const errorMessage = getErrorMessage(
+		error,
+		"We could not load options for this field.",
+	);
 
 	// Handle array enum types (like change_types)
 	if (property.type === "array" && property.items?.enum) {

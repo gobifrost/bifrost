@@ -222,4 +222,37 @@ describe("DynamicConfigForm — dynamic values", () => {
 
 		expect(refetch).toHaveBeenCalledTimes(1);
 	});
+
+	it("shows FastAPI error details instead of the generic fallback", () => {
+		mockUseDynamicValues.mockReturnValueOnce({
+			data: undefined,
+			isLoading: false,
+			error: {
+				detail:
+					"Integration 'Microsoft' is not mapped to the selected organization",
+			} as unknown as Error,
+			refetch: vi.fn(),
+			isFetching: false,
+		});
+
+		renderForm({
+			type: "object",
+			properties: {
+				user_id: {
+					type: "string",
+					title: "User",
+					"x-dynamic-values": {
+						operation: "list_users",
+						value_path: "id",
+						label_path: "display_name",
+						depends_on: [],
+					},
+				},
+			},
+		});
+
+		expect(screen.getByRole("status")).toHaveTextContent(
+			/Integration 'Microsoft' is not mapped to the selected organization/i,
+		);
+	});
 });
