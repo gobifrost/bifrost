@@ -17,9 +17,9 @@ from pydantic_ai.providers.openai import OpenAIProvider
 
 from src.services.agent_runtime.retry_transport import (
     FALLBACK_WAIT_INITIAL_SECONDS,
-    FALLBACK_WAIT_JITTER_SECONDS,
     FALLBACK_WAIT_MAX_SECONDS,
     MAX_ATTEMPTS,
+    MAX_RETRY_WINDOW_SECONDS,
     _create_retry_transport,
     ai_retry_context,
 )
@@ -86,7 +86,10 @@ async def test_non_positive_retry_after_uses_bounded_fallback_jitter(
 ) -> None:
     attempts = 0
     delays: list[float] = []
-    monkeypatch.setattr("tenacity.wait.random.uniform", lambda _start, _end: 0.75)
+    monkeypatch.setattr(
+        "src.services.agent_runtime.retry_transport.random.uniform",
+        lambda start, end: start + ((end - start) * 0.75),
+    )
 
     async def record_sleep(delay: float) -> None:
         delays.append(delay)
@@ -103,7 +106,33 @@ async def test_non_positive_retry_after_uses_bounded_fallback_jitter(
 
     assert response.status_code == 200
     assert attempts == 2
-    assert delays == [FALLBACK_WAIT_INITIAL_SECONDS + 0.75]
+    assert delays == [FALLBACK_WAIT_INITIAL_SECONDS * 0.875]
+
+
+@pytest.mark.asyncio
+async def test_retry_after_milliseconds_takes_precedence() -> None:
+    attempts = 0
+    delays: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx2.Response(
+                429,
+                headers={"Retry-After-Ms": "1250", "Retry-After": "5"},
+            )
+        return httpx2.Response(200)
+
+    async with _client(handler, sleep=record_sleep) as client:
+        response = await client.get("https://api.example.test/model")
+
+    assert response.status_code == 200
+    assert attempts == 2
+    assert delays == [1.25]
 
 
 @pytest.mark.asyncio
@@ -159,6 +188,36 @@ async def test_non_retryable_400_is_returned_once() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("status_code", "provider_guidance", "expected_attempts"),
+    [(429, "false", 1), (400, "true", 2)],
+)
+async def test_provider_retry_guidance_overrides_status_default(
+    status_code: int,
+    provider_guidance: str,
+    expected_attempts: int,
+) -> None:
+    attempts = 0
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx2.Response(
+                status_code,
+                headers={"x-should-retry": provider_guidance},
+            )
+        return httpx2.Response(200)
+
+    async with _client(handler) as client:
+        response = await client.get("https://api.example.test/model")
+
+    expected_status = 200 if expected_attempts > 1 else status_code
+    assert response.status_code == expected_status
+    assert attempts == expected_attempts
+
+
+@pytest.mark.asyncio
 async def test_retry_after_over_limit_is_terminal() -> None:
     attempts = 0
 
@@ -172,6 +231,28 @@ async def test_retry_after_over_limit_is_terminal() -> None:
 
     assert response.status_code == 429
     assert attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_repeated_retry_after_is_bounded_by_total_retry_window() -> None:
+    attempts = 0
+    delays: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        delays.append(delay)
+
+    async def handler(request: httpx2.Request) -> httpx2.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx2.Response(429, headers={"Retry-After": "30"})
+
+    async with _client(handler, sleep=record_sleep) as client:
+        response = await client.get("https://api.example.test/model")
+
+    assert response.status_code == 429
+    assert attempts == 3
+    assert delays == [30, 30]
+    assert sum(delays) == MAX_RETRY_WINDOW_SECONDS
 
 
 @pytest.mark.asyncio
@@ -255,10 +336,10 @@ async def test_concurrent_429_bursts_use_divergent_bounded_fallback_schedules(
     caplog,
     monkeypatch,
 ) -> None:
-    jitter_values = iter((0.0, 0.5, 1.0, 0.0, 0.5, 1.0))
+    jitter_fractions = iter(([0.0] * 5) + ([0.5] * 5) + ([1.0] * 5))
     monkeypatch.setattr(
-        "tenacity.wait.random.uniform",
-        lambda _start, _end: next(jitter_values),
+        "src.services.agent_runtime.retry_transport.random.uniform",
+        lambda start, end: start + ((end - start) * next(jitter_fractions)),
     )
 
     async def recover_after_burst(worker: int) -> int:
@@ -295,10 +376,11 @@ async def test_concurrent_429_bursts_use_divergent_bounded_fallback_schedules(
     assert set(schedules) == {"burst-0", "burst-1", "burst-2"}
     assert all(len(delays) == MAX_ATTEMPTS - 1 for delays in schedules.values())
     totals = [sum(delays) for delays in schedules.values()]
-    minimum_total = FALLBACK_WAIT_INITIAL_SECONDS * 3
-    maximum_total = min(
-        FALLBACK_WAIT_INITIAL_SECONDS + FALLBACK_WAIT_JITTER_SECONDS,
-        FALLBACK_WAIT_MAX_SECONDS,
-    ) + FALLBACK_WAIT_MAX_SECONDS
+    caps = [
+        min(FALLBACK_WAIT_INITIAL_SECONDS * (2**attempt), FALLBACK_WAIT_MAX_SECONDS)
+        for attempt in range(MAX_ATTEMPTS - 1)
+    ]
+    minimum_total = sum(cap / 2 for cap in caps)
+    maximum_total = sum(caps)
     assert all(minimum_total <= total <= maximum_total for total in totals)
     assert len(set(totals)) == len(totals)

@@ -7,6 +7,7 @@ Agent ``retries`` remain reserved for malformed tool/output correction.
 from __future__ import annotations
 
 import logging
+import random
 from collections.abc import Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -24,23 +25,16 @@ from tenacity import (
     AsyncRetrying,
     RetryCallState,
     retry_if_exception,
-    stop_after_attempt,
-    wait_exponential_jitter,
 )
 
 logger = logging.getLogger(__name__)
 
-MAX_ATTEMPTS = 3
+MAX_ATTEMPTS = 6
 MAX_RETRY_AFTER_SECONDS = 60.0
+MAX_RETRY_WINDOW_SECONDS = 60.0
 RETRYABLE_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 FALLBACK_WAIT_INITIAL_SECONDS = 2.0
-FALLBACK_WAIT_MAX_SECONDS = 6.0
-FALLBACK_WAIT_JITTER_SECONDS = 2.0
-_FALLBACK_WAIT = wait_exponential_jitter(
-    initial=FALLBACK_WAIT_INITIAL_SECONDS,
-    max=FALLBACK_WAIT_MAX_SECONDS,
-    jitter=FALLBACK_WAIT_JITTER_SECONDS,
-)
+FALLBACK_WAIT_MAX_SECONDS = 10.0
 
 
 @dataclass(frozen=True)
@@ -69,6 +63,13 @@ def ai_retry_context(*, provider: str, model: str, surface: str) -> Iterator[Non
 
 
 def _retry_after_seconds(response: httpx2.Response) -> float | None:
+    retry_after_ms = response.headers.get("Retry-After-Ms")
+    if retry_after_ms:
+        try:
+            return max(0.0, float(retry_after_ms) / 1000)
+        except ValueError:
+            pass
+
     raw = response.headers.get("Retry-After")
     if not raw:
         return None
@@ -85,6 +86,11 @@ def _retry_after_seconds(response: httpx2.Response) -> float | None:
 
 
 def _validate_response(response: httpx2.Response) -> None:
+    provider_retry = response.headers.get("x-should-retry", "").lower()
+    if provider_retry == "false":
+        return
+    if provider_retry == "true":
+        response.raise_for_status()
     if response.status_code in RETRYABLE_STATUS_CODES:
         response.raise_for_status()
 
@@ -92,6 +98,12 @@ def _validate_response(response: httpx2.Response) -> None:
 def _should_retry(exc: BaseException) -> bool:
     if isinstance(exc, httpx2.HTTPStatusError):
         response = exc.response
+        provider_retry = response.headers.get("x-should-retry", "").lower()
+        if provider_retry == "false":
+            return False
+        if provider_retry == "true":
+            retry_after = _retry_after_seconds(response)
+            return retry_after is None or retry_after <= MAX_RETRY_AFTER_SECONDS
         if response.status_code not in RETRYABLE_STATUS_CODES:
             return False
         retry_after = _retry_after_seconds(response)
@@ -99,6 +111,18 @@ def _should_retry(exc: BaseException) -> bool:
             return False
         return True
     return isinstance(exc, httpx2.TransportError)
+
+
+def _retry_elapsed_seconds(state: RetryCallState) -> float:
+    return max(state.seconds_since_start or 0.0, state.idle_for)
+
+
+def _fallback_wait(state: RetryCallState) -> float:
+    exponential_cap = min(
+        FALLBACK_WAIT_INITIAL_SECONDS * (2 ** (state.attempt_number - 1)),
+        FALLBACK_WAIT_MAX_SECONDS,
+    )
+    return random.uniform(exponential_cap / 2, exponential_cap)
 
 
 def _wait_for_retry(state: RetryCallState) -> float:
@@ -112,11 +136,37 @@ def _wait_for_retry(state: RetryCallState) -> float:
 
     exc = state.outcome.exception() if state.outcome is not None else None
     response = getattr(exc, "response", None)
+    delay: float | None = None
     if response is not None:
         retry_after = _retry_after_seconds(response)
         if retry_after is not None and retry_after > 0:
-            return retry_after
-    return _FALLBACK_WAIT(state)
+            delay = retry_after
+    if delay is None:
+        delay = _fallback_wait(state)
+    remaining = max(0.0, MAX_RETRY_WINDOW_SECONDS - _retry_elapsed_seconds(state))
+    return min(delay, remaining)
+
+
+def _stop_retrying(state: RetryCallState) -> bool:
+    if state.attempt_number >= MAX_ATTEMPTS:
+        return True
+    elapsed = _retry_elapsed_seconds(state)
+    if elapsed >= MAX_RETRY_WINDOW_SECONDS:
+        return True
+    return elapsed + state.upcoming_sleep > MAX_RETRY_WINDOW_SECONDS
+
+
+def _http_retry_budget_available(
+    exc: httpx2.HTTPStatusError,
+    state: RetryCallState,
+) -> bool:
+    if state.attempt_number >= MAX_ATTEMPTS:
+        return False
+    elapsed = _retry_elapsed_seconds(state)
+    if elapsed >= MAX_RETRY_WINDOW_SECONDS:
+        return False
+    retry_after = _retry_after_seconds(exc.response)
+    return retry_after is None or elapsed + retry_after <= MAX_RETRY_WINDOW_SECONDS
 
 
 def _log_before_sleep(state: RetryCallState) -> None:
@@ -194,7 +244,10 @@ class AIRetryTransport(AsyncHTTPX2TenacityTransport):
                         attempt_number = attempt.retry_state.attempt_number
                         if (
                             not _should_retry(exc)
-                            or attempt_number >= MAX_ATTEMPTS
+                            or not _http_retry_budget_available(
+                                exc,
+                                attempt.retry_state,
+                            )
                         ):
                             _log_terminal(
                                 exc,
@@ -223,7 +276,7 @@ def _create_retry_transport(
     config = RetryConfig(
         retry=retry_if_exception(_should_retry),
         wait=_wait_for_retry,
-        stop=stop_after_attempt(MAX_ATTEMPTS),
+        stop=_stop_retrying,
         before_sleep=_log_before_sleep,
         reraise=True,
     )

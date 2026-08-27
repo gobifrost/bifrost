@@ -20,16 +20,22 @@ Bifrost still owns:
 Approved retry policy:
 
 - Pydantic AI native transport is the sole model-request retry layer.
-- Model requests retry at most 3 attempts total.
+- Model requests retry at most 6 attempts total and never spend more than 60
+  seconds in the transport retry window.
 - Retryable statuses are 408, 429, 500, 502, 503, and 504; transport
   timeouts and connection failures are also retryable.
-- When a 429 includes a positive `Retry-After`, honor it if the value is
-  `<= 60` seconds.
+- When a 429 includes a positive `Retry-After-Ms` or `Retry-After`, honor it if
+  the value is `<= 60` seconds and fits in the remaining retry window.
+- Honor explicit provider `x-should-retry` guidance while retaining the same
+  attempt and elapsed-time bounds.
 - When `Retry-After` is missing, invalid, zero, or already expired, use bounded
-  exponential jitter: the two fallback delays span 2-4 seconds and 4-6
-  seconds. A valid value greater than 60 seconds is terminal at the transport
-  layer rather than occupying a worker or retrying before the provider permits
-  it.
+  equal-jitter exponential backoff. Five fallback delays span 1-2, 2-4, 4-8,
+  5-10, and 5-10 seconds, for a total fallback window of 17-34 seconds. The
+  non-zero floor prevents a worker from exhausting its retry budget almost
+  immediately, while the independently sampled upper half separates workers
+  after synchronized bursts. A valid value greater than 60 seconds, or one
+  that does not fit in the remaining retry window, is terminal rather than
+  occupying a worker or retrying before the provider permits it.
 - After the transport budget is exhausted, return the final HTTP response to
   the provider adapter so its status identity (especially 429) is preserved.
   Only genuine timeout and connection exceptions leave the transport as such.
@@ -155,6 +161,9 @@ be treated as a generalized recover-and-rerun mechanism.
 
 - The runtime still depends on provider-specific behavior for rate limiting and
   retry headers.
+- Request-local backoff disperses bursts but does not enforce a fleet-wide
+  provider quota. Coordinated admission control needs an explicit quota and a
+  credential/account scope; provider/model alone is not a safe limiter key.
 - Direct OpenRouter media-catalog and pricing GETs remain best-effort raw HTTP
   calls and do not yet share the model-request transport.
 - Raw media POSTs do not yet retry even an explicit 429. They remain terminal
