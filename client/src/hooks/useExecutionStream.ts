@@ -17,6 +17,10 @@ import {
 	type StreamingLog,
 	type ExecutionStatus,
 } from "@/stores/executionStreamStore";
+import {
+	mergeExecutionHistoryPage,
+	type ExecutionHistoryPage,
+} from "@/hooks/executionHistoryCache";
 
 interface UseExecutionStreamOptions {
 	/**
@@ -308,10 +312,7 @@ export function useExecutionHistory(
 
 						// Optimistically update ALL executions queries (handles different filters/pages)
 						// Query key is ["get", "/api/executions", { params: ... }]
-						const caches = queryClient.getQueriesData<{
-							executions: Array<Record<string, unknown>>;
-							continuation_token: string | null;
-						}>({
+						const caches = queryClient.getQueriesData<ExecutionHistoryPage>({
 							queryKey: ["get", "/api/executions"],
 						});
 
@@ -330,6 +331,8 @@ export function useExecutionHistory(
 												status?: string;
 												startDate?: string;
 												endDate?: string;
+												workflowId?: string;
+												workflow_name?: string;
 											};
 										};
 								  }
@@ -340,62 +343,21 @@ export function useExecutionHistory(
 								return;
 							}
 
-							const existingIndex = oldData.executions.findIndex(
-								(exec) =>
-									exec["execution_id"] ===
-									update["execution_id"],
-							);
-
-							if (existingIndex >= 0) {
-								// Update existing execution - React will handle reconciliation via key={execution_id}
-								const newExecutions = [...oldData.executions];
-								newExecutions[existingIndex] = {
-									...newExecutions[existingIndex],
-									status: update.status,
-									// Only update started_at if we have a value (handles Pending -> Running transition)
-									...(update.started_at && {
-										started_at: update.started_at,
-									}),
-									completed_at: update.completed_at,
-									duration_ms: update.duration_ms,
-								};
-
-								queryClient.setQueryData(queryKey, {
-									...oldData,
-									executions: newExecutions,
-								});
-							} else {
-								// New execution - add to beginning of list (only if no filters active)
-								// Check if query has status/date filters that might exclude this execution
-								const queryParams = params?.params?.query || {};
-								const hasFilters =
-									queryParams.status ||
+							const queryParams = params?.params?.query || {};
+							const hasFilters = Boolean(
+								queryParams.status ||
 									queryParams.startDate ||
-									queryParams.endDate;
-
-								if (!hasFilters) {
-									queryClient.setQueryData(queryKey, {
-										...oldData,
-										executions: [
-											{
-												execution_id:
-													update.execution_id,
-												workflow_name:
-													update.workflow_name,
-												status: update.status,
-												executed_by: update.executed_by,
-												executed_by_name:
-													update.executed_by_name,
-												org_id: update.org_id,
-												started_at: update.started_at,
-												completed_at:
-													update.completed_at,
-												duration_ms: update.duration_ms,
-											},
-											...oldData.executions,
-										],
-									});
-								}
+									queryParams.endDate ||
+									queryParams.workflowId ||
+									queryParams.workflow_name,
+							);
+							const nextData = mergeExecutionHistoryPage(
+								oldData,
+								update,
+								!hasFilters,
+							);
+							if (nextData !== oldData) {
+								queryClient.setQueryData(queryKey, nextData);
 							}
 						});
 					},

@@ -13,6 +13,7 @@ export interface HistoryRunLike {
 	started_at?: string | null;
 	completed_at?: string | null;
 	scheduled_at?: string | null;
+	created_at?: string | null;
 }
 
 export interface DayGroup<T extends HistoryRunLike> {
@@ -25,7 +26,11 @@ export interface DayGroup<T extends HistoryRunLike> {
 
 /** The timestamp that anchors a run on the timeline. */
 export function runAnchorDate(run: HistoryRunLike): Date | null {
-	const iso = run.started_at ?? run.scheduled_at ?? run.completed_at;
+	const iso =
+		run.started_at ??
+		run.scheduled_at ??
+		run.completed_at ??
+		run.created_at;
 	if (!iso) return null;
 	const date = parseBackendDate(iso);
 	return Number.isNaN(date.getTime()) ? null : date;

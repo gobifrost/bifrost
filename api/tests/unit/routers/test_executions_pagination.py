@@ -10,23 +10,23 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 
-def test_cursor_round_trips_started_row() -> None:
+def test_cursor_round_trips_timeline_timestamp() -> None:
     from src.routers.executions import (
         _decode_history_cursor,
         _encode_history_cursor,
     )
 
-    started = datetime(2026, 7, 10, 12, 30, 45, 123456, tzinfo=timezone.utc)
+    timeline_at = datetime(2026, 7, 10, 12, 30, 45, 123456, tzinfo=timezone.utc)
     row_id = uuid4()
 
-    token = _encode_history_cursor(started, row_id)
+    token = _encode_history_cursor(timeline_at, row_id)
     decoded = _decode_history_cursor(token)
 
-    assert decoded == (started, row_id)
+    assert decoded == (timeline_at, row_id)
 
 
-def test_cursor_round_trips_null_started_row() -> None:
-    """Scheduled/Pending rows have no started_at; the cursor must carry that."""
+def test_cursor_round_trips_legacy_null_timestamp() -> None:
+    """Cursors minted before timeline anchors may still carry a null value."""
     from src.routers.executions import (
         _decode_history_cursor,
         _encode_history_cursor,
