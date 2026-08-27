@@ -56,7 +56,7 @@ async def test_credentials_require_and_use_exact_organization_mapping(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_credentials_reject_missing_organization_mapping(monkeypatch):
+async def test_credentials_use_integration_default_without_organization_mapping(monkeypatch):
     integration_id = uuid4()
     provider = SimpleNamespace(oauth_flow_type="client_credentials")
     integration = SimpleNamespace(
@@ -66,12 +66,48 @@ async def test_credentials_reject_missing_organization_mapping(monkeypatch):
     )
     integration_result = MagicMock()
     integration_result.scalar_one_or_none.return_value = integration
-    mapping_result = MagicMock()
-    mapping_result.scalar_one_or_none.return_value = None
     db = AsyncMock()
-    db.execute.side_effect = [integration_result, mapping_result]
+    db.execute.return_value = integration_result
+    token_context = {"token_url_defaults": {"entity_id": "default-tenant"}}
+    build_context = AsyncMock(return_value=token_context)
+    monkeypatch.setattr(
+        "src.services.webhooks.auth.build_token_refresh_context",
+        build_context,
+    )
 
-    with pytest.raises(ValueError, match="not mapped to the selected organization"):
+    organization_id = uuid4()
+    credentials = await build_webhook_integration_credentials(
+        db, integration_id, organization_id
+    )
+
+    assert credentials.entity_id == "default-tenant"
+    build_context.assert_awaited_once_with(
+        db,
+        provider,
+        token=None,
+        org_id=organization_id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_credentials_reject_when_no_effective_tenant_is_configured(monkeypatch):
+    integration_id = uuid4()
+    provider = SimpleNamespace(oauth_flow_type="client_credentials")
+    integration = SimpleNamespace(
+        id=integration_id,
+        name="Microsoft",
+        oauth_provider=provider,
+    )
+    integration_result = MagicMock()
+    integration_result.scalar_one_or_none.return_value = integration
+    db = AsyncMock()
+    db.execute.return_value = integration_result
+    monkeypatch.setattr(
+        "src.services.webhooks.auth.build_token_refresh_context",
+        AsyncMock(return_value={"token_url_defaults": {}}),
+    )
+
+    with pytest.raises(ValueError, match="has no tenant configured"):
         await build_webhook_integration_credentials(db, integration_id, uuid4())
 
 

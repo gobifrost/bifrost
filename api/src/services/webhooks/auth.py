@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.security import decrypt_secret
-from src.models.orm.integrations import Integration, IntegrationMapping
+from src.models.orm.integrations import Integration
 from src.services.oauth_provider import (
     build_token_refresh_context,
     get_token_for_org,
@@ -35,7 +35,7 @@ async def build_webhook_integration_credentials(
     integration_id: UUID,
     organization_id: UUID | None,
 ) -> WebhookIntegrationCredentials:
-    """Load an integration's exact org mapping and OAuth refresh material."""
+    """Load an integration's effective tenant and OAuth refresh material."""
     if organization_id is None:
         raise ValueError("Select an organization to authenticate this webhook")
 
@@ -50,18 +50,6 @@ async def build_webhook_integration_credentials(
         raise ValueError("Integration not found")
     if not integration.oauth_provider:
         raise ValueError(f"Integration '{integration.name}' has no OAuth provider")
-
-    mapping_result = await db.execute(
-        select(IntegrationMapping).where(
-            IntegrationMapping.integration_id == integration_id,
-            IntegrationMapping.organization_id == organization_id,
-        )
-    )
-    mapping = mapping_result.scalar_one_or_none()
-    if not mapping or not mapping.entity_id:
-        raise ValueError(
-            f"Integration '{integration.name}' is not mapped to the selected organization"
-        )
 
     provider = integration.oauth_provider
     token = None
@@ -78,10 +66,16 @@ async def build_webhook_integration_credentials(
         token=token,
         org_id=organization_id,
     )
+    entity_id = token_context.get("token_url_defaults", {}).get("entity_id")
+    if not entity_id:
+        raise ValueError(
+            f"Integration '{integration.name}' has no tenant configured for the selected organization"
+        )
+
     return WebhookIntegrationCredentials(
         integration_id=integration_id,
         organization_id=organization_id,
-        entity_id=mapping.entity_id,
+        entity_id=entity_id,
         token_context=token_context,
         encrypted_access_token=token.encrypted_access_token if token else None,
         access_token_expires_at=token.expires_at if token else None,

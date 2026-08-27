@@ -481,6 +481,15 @@ async def create_source(
             created_at=now,
             updated_at=now,
         )
+        db.add(webhook_source)
+        await db.flush()
+
+        # Graph validates the callback synchronously while creating a
+        # subscription. Commit the local source first so that validation's
+        # separate request can resolve it. If provider setup fails, remove the
+        # provisional source below so the create operation remains clean from
+        # the caller's perspective.
+        await db.commit()
 
         # Call adapter subscribe (for external subscriptions)
         callback_url = _build_public_callback_url(source.id)
@@ -497,12 +506,13 @@ async def create_source(
 
         except Exception as e:
             logger.error(f"Failed to subscribe webhook: {e}", exc_info=True)
+            await db.delete(source)
+            await db.commit()
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"Failed to create provider subscription: {e}",
             ) from e
 
-        db.add(webhook_source)
         await db.flush()
 
     # Handle schedule-specific configuration
