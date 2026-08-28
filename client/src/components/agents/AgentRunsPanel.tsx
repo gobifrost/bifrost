@@ -9,6 +9,7 @@
  * runs tab.
  */
 
+import { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import {
@@ -32,10 +33,17 @@ import {
 	DataTableHead,
 	DataTableHeader,
 	DataTableRow,
+	DataTableFooter,
 } from "@/components/ui/data-table";
 import { Skeleton } from "@/components/ui/skeleton";
-
-import { InfiniteScrollSentinel } from "@/components/ui/infinite-scroll-sentinel";
+import {
+	Pagination,
+	PaginationContent,
+	PaginationItem,
+	PaginationLink,
+	PaginationNext,
+	PaginationPrevious,
+} from "@/components/ui/pagination";
 import {
 	useAgentRunListStream,
 	useInfiniteAgentRuns,
@@ -49,6 +57,7 @@ import { formatDate, formatDuration } from "@/lib/utils";
 import type { components } from "@/lib/v1";
 
 type AgentRun = components["schemas"]["AgentRunResponse"];
+const PAGE_SIZE = 25;
 
 function RunStatusBadge({ status }: { status: string }) {
 	switch (status) {
@@ -94,6 +103,7 @@ function VerdictGlyph({ verdict }: { verdict: AgentRun["verdict"] }) {
 export function AgentRunsPanel() {
 	const navigate = useNavigate();
 	const location = useLocation();
+	const [pageIndex, setPageIndex] = useState(0);
 	const runNavigationState = createAgentRunNavigationState({
 		href: getLocationHref(location),
 		label: "Back to run history",
@@ -104,7 +114,7 @@ export function AgentRunsPanel() {
 		hasNextPage,
 		isFetchingNextPage,
 		fetchNextPage,
-	} = useInfiniteAgentRuns({ pageSize: 50 });
+	} = useInfiniteAgentRuns({ pageSize: PAGE_SIZE });
 	const rerun = useRerunAgentRun();
 
 	// Subscribe to real-time updates; the hook patches the shared
@@ -112,8 +122,23 @@ export function AgentRunsPanel() {
 	// status changes (queued → running → completed) reflect live.
 	useAgentRunListStream({ enabled: true });
 
-	const runs: AgentRun[] = (data?.pages.flatMap((p) => p.items) ??
-		[]) as AgentRun[];
+	const runs = (data?.pages[pageIndex]?.items ?? []) as AgentRun[];
+	const total = data?.pages[0]?.total ?? 0;
+	const hasPreviousPage = pageIndex > 0;
+	const hasFollowingPage = (pageIndex + 1) * PAGE_SIZE < total;
+
+	async function handleNextPage() {
+		const nextPageIndex = pageIndex + 1;
+		if (data?.pages[nextPageIndex]) {
+			setPageIndex(nextPageIndex);
+			return;
+		}
+		if (!hasNextPage || isFetchingNextPage) return;
+		const result = await fetchNextPage();
+		if (result.data?.pages[nextPageIndex]) {
+			setPageIndex(nextPageIndex);
+		}
+	}
 
 	function handleRerun(runId: string) {
 		rerun.mutate(
@@ -161,19 +186,22 @@ export function AgentRunsPanel() {
 	}
 
 	return (
-		<div data-testid="agent-runs-panel">
-			<DataTable>
+		<div
+			className="flex min-h-0 min-w-0 flex-1 flex-col"
+			data-testid="agent-runs-panel"
+		>
+			<DataTable className="min-h-0 min-w-0 [&_table]:table-fixed xl:[&_table]:table-auto">
 				<DataTableHeader>
 					<DataTableRow>
-						<DataTableHead>Agent</DataTableHead>
-						<DataTableHead>Asked</DataTableHead>
-						<DataTableHead className="w-0 whitespace-nowrap">Status</DataTableHead>
-						<DataTableHead className="w-0 whitespace-nowrap text-right">
+						<DataTableHead className="w-full px-2 sm:w-40 sm:px-4">Agent</DataTableHead>
+						<DataTableHead className="hidden w-full sm:table-cell">Asked</DataTableHead>
+						<DataTableHead className="w-28 whitespace-nowrap px-2 sm:w-0 sm:px-4">Status</DataTableHead>
+						<DataTableHead className="hidden w-0 whitespace-nowrap text-right lg:table-cell">
 							Duration
 						</DataTableHead>
-						<DataTableHead className="w-0 whitespace-nowrap">Verdict</DataTableHead>
-						<DataTableHead className="w-0 whitespace-nowrap">Started</DataTableHead>
-						<DataTableHead className="w-0 whitespace-nowrap"></DataTableHead>
+						<DataTableHead className="hidden w-0 whitespace-nowrap xl:table-cell">Verdict</DataTableHead>
+						<DataTableHead className="hidden w-0 whitespace-nowrap xl:table-cell">Started</DataTableHead>
+						<DataTableHead className="w-11 whitespace-nowrap px-2 sm:px-4"></DataTableHead>
 					</DataTableRow>
 				</DataTableHeader>
 				<DataTableBody>
@@ -188,29 +216,48 @@ export function AgentRunsPanel() {
 								)
 							}
 						>
-							<DataTableCell>
-								<div className="flex items-center gap-2">
+							<DataTableCell className="min-w-0 overflow-hidden px-2 sm:px-4">
+								<div className="flex min-w-0 items-center gap-2">
 									<Bot className="h-3.5 w-3.5 text-muted-foreground" />
-									<span className="font-medium">
+									<span className="truncate font-medium">
 										{run.agent_name ?? "Agent"}
 									</span>
+									<span className="xl:hidden">
+										<VerdictGlyph verdict={run.verdict} />
+									</span>
+								</div>
+								<p className="mt-1 truncate text-xs text-muted-foreground sm:hidden">
+									{run.asked || run.did || "—"}
+								</p>
+								<div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 overflow-hidden text-xs text-muted-foreground xl:hidden">
+									<span className="inline-flex min-w-0 items-center gap-1">
+										<Clock className="h-3 w-3 shrink-0" />
+										<span className="truncate">
+											{run.started_at ? formatDate(run.started_at) : "—"}
+										</span>
+									</span>
+									{run.duration_ms != null && (
+										<span className="tabular-nums lg:hidden">
+											{formatDuration(run.duration_ms)}
+										</span>
+									)}
 								</div>
 							</DataTableCell>
-							<DataTableCell className="max-w-md truncate">
+							<DataTableCell className="hidden max-w-md truncate sm:table-cell">
 								{run.asked || run.did || "—"}
 							</DataTableCell>
-							<DataTableCell className="w-0 whitespace-nowrap">
+							<DataTableCell className="w-28 whitespace-nowrap px-2 sm:w-0 sm:px-4">
 								<RunStatusBadge status={run.status} />
 							</DataTableCell>
-							<DataTableCell className="w-0 whitespace-nowrap text-right tabular-nums">
+							<DataTableCell className="hidden w-0 whitespace-nowrap text-right tabular-nums lg:table-cell">
 								{run.duration_ms != null
 									? formatDuration(run.duration_ms)
 									: "—"}
 							</DataTableCell>
-							<DataTableCell className="w-0 whitespace-nowrap">
+							<DataTableCell className="hidden w-0 whitespace-nowrap xl:table-cell">
 								<VerdictGlyph verdict={run.verdict} />
 							</DataTableCell>
-							<DataTableCell className="w-0 whitespace-nowrap text-xs text-muted-foreground">
+							<DataTableCell className="hidden w-0 whitespace-nowrap text-xs text-muted-foreground xl:table-cell">
 								<span className="inline-flex items-center gap-1">
 									<Clock className="h-3 w-3" />
 									{run.started_at
@@ -219,12 +266,12 @@ export function AgentRunsPanel() {
 								</span>
 							</DataTableCell>
 							<DataTableCell
-								className="w-0 whitespace-nowrap"
+								className="w-11 whitespace-nowrap px-2 sm:w-0 sm:px-4"
 								onClick={(e) => e.stopPropagation()}
 							>
 								<Button
 									type="button"
-									size="sm"
+									size="icon-sm"
 									variant="ghost"
 									data-testid={`rerun-${run.id}`}
 									disabled={rerun.isPending}
@@ -237,12 +284,58 @@ export function AgentRunsPanel() {
 						</DataTableRow>
 					))}
 				</DataTableBody>
+				{total > PAGE_SIZE && (
+					<DataTableFooter>
+						<DataTableRow>
+							<DataTableCell colSpan={7} className="p-0">
+								<div className="flex items-center justify-center px-6 py-3">
+									<Pagination>
+										<PaginationContent>
+											<PaginationItem>
+												<PaginationPrevious
+													onClick={(event) => {
+														event.preventDefault();
+														if (hasPreviousPage) {
+															setPageIndex((current) => current - 1);
+														}
+													}}
+													className={
+														hasPreviousPage
+															? "cursor-pointer"
+															: "pointer-events-none opacity-50"
+													}
+													aria-disabled={!hasPreviousPage}
+												/>
+											</PaginationItem>
+											<PaginationItem>
+												<PaginationLink isActive>
+													{pageIndex + 1}
+												</PaginationLink>
+											</PaginationItem>
+											<PaginationItem>
+												<PaginationNext
+													onClick={(event) => {
+														event.preventDefault();
+														void handleNextPage();
+													}}
+													className={
+														hasFollowingPage && !isFetchingNextPage
+															? "cursor-pointer"
+															: "pointer-events-none opacity-50"
+													}
+													aria-disabled={
+														!hasFollowingPage || isFetchingNextPage
+													}
+												/>
+											</PaginationItem>
+										</PaginationContent>
+									</Pagination>
+								</div>
+							</DataTableCell>
+						</DataTableRow>
+					</DataTableFooter>
+				)}
 			</DataTable>
-			<InfiniteScrollSentinel
-				hasNext={!!hasNextPage}
-				isLoading={isFetchingNextPage}
-				onLoadMore={() => fetchNextPage()}
-			/>
 		</div>
 	);
 }

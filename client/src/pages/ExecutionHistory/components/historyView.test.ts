@@ -28,7 +28,7 @@ function run(overrides: Record<string, unknown> = {}) {
 }
 
 describe("runAnchorDate", () => {
-	it("prefers started_at, then scheduled_at, then completed_at", () => {
+	it("prefers started_at, then scheduled_at, then completed_at, then created_at", () => {
 		expect(
 			runAnchorDate(
 				run({ started_at: "2026-06-11T10:00:00Z" }),
@@ -52,6 +52,16 @@ describe("runAnchorDate", () => {
 				}),
 			)?.toISOString(),
 		).toBe("2026-06-10T08:00:00.000Z");
+		expect(
+			runAnchorDate(
+				run({
+					started_at: null,
+					scheduled_at: null,
+					completed_at: null,
+					created_at: "2026-06-09T08:00:00Z",
+				}),
+			)?.toISOString(),
+		).toBe("2026-06-09T08:00:00.000Z");
 	});
 
 	it("returns null when no timestamp exists", () => {
@@ -68,6 +78,27 @@ describe("runAnchorDate", () => {
 });
 
 describe("groupExecutionsByDay", () => {
+	it("uses created_at for a pending execution that has not started", () => {
+		const createdAt = "2026-06-11T14:00:00Z";
+		const groups = groupExecutionsByDay(
+			[
+				run({
+					execution_id: "pending",
+					status: "Pending",
+					started_at: null,
+					scheduled_at: null,
+					completed_at: null,
+					created_at: createdAt,
+				}),
+			],
+			new Date("2026-06-11T16:00:00Z"),
+		);
+
+		expect(groups).toHaveLength(1);
+		expect(groups[0].key).not.toBe("unknown");
+		expect(groups[0].executions[0].execution_id).toBe("pending");
+	});
+
 	it("groups consecutive same-day runs and labels Today/Yesterday", () => {
 		// Use a fixed "now" at local noon so day boundaries are stable.
 		const now = new Date(2026, 5, 11, 12, 0, 0); // local Jun 11, 2026

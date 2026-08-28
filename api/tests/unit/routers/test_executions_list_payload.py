@@ -23,6 +23,7 @@ def _summary_row() -> SimpleNamespace:
         started_at=datetime.now(timezone.utc),
         completed_at=datetime.now(timezone.utc),
         scheduled_at=None,
+        created_at=datetime.now(timezone.utc),
         session_id=None,
     )
 

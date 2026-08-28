@@ -16138,6 +16138,8 @@ export interface components {
             completed_at?: string | null;
             /** Scheduled At */
             scheduled_at?: string | null;
+            /** Created At */
+            created_at?: string | null;
             /** Session Id */
             session_id?: string | null;
             /** Peak Memory Bytes */
@@ -26295,6 +26297,8 @@ export interface components {
             completed_at?: string | null;
             /** Scheduled At */
             scheduled_at?: string | null;
+            /** Created At */
+            created_at?: string | null;
             /** Session Id */
             session_id?: string | null;
             /** Peak Memory Bytes */

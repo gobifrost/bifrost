@@ -96,6 +96,7 @@ class ExecutionSummary(BaseModel):
     started_at: datetime | None = None  # May be None if not started yet
     completed_at: datetime | None = None
     scheduled_at: datetime | None = None  # For Scheduled rows, when the row is due to promote
+    created_at: datetime | None = None  # Fallback timeline anchor before a run starts
     # CLI session tracking
     session_id: str | None = None  # CLI session ID if executed from local runner
     # Resource metrics (admin only, null for non-admins)
@@ -281,4 +282,3 @@ class ExecutionPublic(ExecutionBase):
     @field_serializer("created_at", "started_at", "completed_at")
     def serialize_dt(self, dt: datetime | None) -> str | None:
         return dt.isoformat() if dt else None
-

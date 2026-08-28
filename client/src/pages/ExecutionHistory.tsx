@@ -481,11 +481,17 @@ export function ExecutionHistory() {
 	const showPaginationFooter = hasMore || pageStack.length > 0;
 
 	return (
-		<div className="h-full flex flex-col space-y-6">
+		<section
+			aria-labelledby="history-heading"
+			className="mx-auto flex h-full min-h-0 w-full max-w-7xl min-w-0 flex-col space-y-4 pb-1 sm:space-y-6"
+		>
 			{/* Header */}
-			<div className="flex items-center justify-between">
-				<div className="flex items-center gap-4">
-					<h1 className="text-4xl font-extrabold tracking-tight">
+			<div className="flex items-start justify-between gap-3 sm:items-center">
+				<div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+					<h1
+						id="history-heading"
+						className="text-3xl font-extrabold tracking-tight sm:text-4xl"
+					>
 						History
 					</h1>
 					{isPlatformAdmin ? (
@@ -662,7 +668,7 @@ export function ExecutionHistory() {
 			</div>
 			{/* Summary line: the rollup an operator actually scans for. */}
 			<p
-				className="-mt-4 text-sm text-muted-foreground"
+				className="-mt-2 text-sm text-muted-foreground sm:-mt-4"
 				data-testid="history-summary"
 			>
 				{historyType === "agents" ? (
@@ -698,14 +704,14 @@ export function ExecutionHistory() {
 			<>
 			{/* Filters: search first and widest, entity filters grouped,
 			    mode/debug toggles demoted to the end of the row. */}
-			<div className="flex items-center gap-3">
+			<div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2 xl:flex xl:items-center">
 				<SearchBox
 					value={searchTerm}
 					onChange={setSearchTerm}
 					placeholder={viewMode === "logs"
 						? "Search by workflow name..."
 						: "Search by workflow name, user, or execution ID..."}
-					className="flex-1 max-w-md"
+					className="w-full sm:col-span-2 xl:max-w-md xl:flex-1"
 				/>
 				{isPlatformAdmin && (
 					<WorkflowSelector
@@ -726,11 +732,11 @@ export function ExecutionHistory() {
 						variant="combobox"
 						allowClear={true}
 						placeholder="All workflows"
-						className="w-48"
+						className="w-full xl:w-48"
 					/>
 				)}
 				{isPlatformAdmin && (
-					<div className="w-56">
+					<div className="w-full xl:w-56">
 						<OrganizationSelect
 							value={filterOrgId}
 							onChange={setFilterOrgId}
@@ -743,8 +749,9 @@ export function ExecutionHistory() {
 				<DateRangePicker
 					dateRange={dateRange}
 					onDateRangeChange={setDateRange}
+					className="w-full sm:w-auto"
 				/>
-				<div className="ml-auto flex items-center gap-3">
+				<div className="flex flex-wrap items-center gap-3 sm:col-span-2 xl:ml-auto">
 					{/* Show Local Executions - only for executions view */}
 					{viewMode === "executions" && (
 						<div className="flex items-center gap-2">
@@ -799,14 +806,16 @@ export function ExecutionHistory() {
 					className="flex flex-col flex-1 min-h-0"
 				>
 					{/* Log Level Tabs */}
-					<TabsList className="w-fit">
-						<TabsTrigger value="all">All</TabsTrigger>
-						<TabsTrigger value="DEBUG">Debug</TabsTrigger>
-						<TabsTrigger value="INFO">Info</TabsTrigger>
-						<TabsTrigger value="WARNING">Warning</TabsTrigger>
-						<TabsTrigger value="ERROR">Error</TabsTrigger>
-						<TabsTrigger value="CRITICAL">Critical</TabsTrigger>
-					</TabsList>
+					<div className="no-scrollbar w-fit max-w-full overflow-x-auto sm:overflow-visible">
+						<TabsList className="w-max justify-start">
+							<TabsTrigger value="all">All</TabsTrigger>
+							<TabsTrigger value="DEBUG">Debug</TabsTrigger>
+							<TabsTrigger value="INFO">Info</TabsTrigger>
+							<TabsTrigger value="WARNING">Warning</TabsTrigger>
+							<TabsTrigger value="ERROR">Error</TabsTrigger>
+							<TabsTrigger value="CRITICAL">Critical</TabsTrigger>
+						</TabsList>
+					</div>
 
 					{/* Logs View */}
 					<LogsView
@@ -822,16 +831,18 @@ export function ExecutionHistory() {
 					onValueChange={(v) =>
 						setStatusFilter(v as ExecutionStatus | "all")
 					}
-					className="flex flex-col flex-1 min-h-0"
+					className="flex min-h-0 min-w-0 flex-1 flex-col"
 				>
-				<TabsList className="w-fit">
-					<TabsTrigger value="all">All</TabsTrigger>
-					<TabsTrigger value="Success">Completed</TabsTrigger>
-					<TabsTrigger value="Running">Running</TabsTrigger>
-					<TabsTrigger value="Failed">Failed</TabsTrigger>
-					<TabsTrigger value="Pending">Pending</TabsTrigger>
-					<TabsTrigger value="Scheduled">Scheduled</TabsTrigger>
-				</TabsList>
+				<div className="no-scrollbar w-fit max-w-full overflow-x-auto sm:overflow-visible">
+					<TabsList className="w-max justify-start">
+						<TabsTrigger value="all">All</TabsTrigger>
+						<TabsTrigger value="Success">Completed</TabsTrigger>
+						<TabsTrigger value="Running">Running</TabsTrigger>
+						<TabsTrigger value="Failed">Failed</TabsTrigger>
+						<TabsTrigger value="Pending">Pending</TabsTrigger>
+						<TabsTrigger value="Scheduled">Scheduled</TabsTrigger>
+					</TabsList>
+				</div>
 
 				<TabsContent
 					value={statusFilter}
@@ -881,22 +892,22 @@ export function ExecutionHistory() {
 							))}
 						</div>
 					) : filteredExecutions.length > 0 ? (
-						<DataTable>
+						<DataTable className="min-w-0">
 							<DataTableHeader>
 								<DataTableRow>
 									{isPlatformAdmin && (
-										<DataTableHead>
+										<DataTableHead className="hidden w-px xl:table-cell">
 											Organization
 										</DataTableHead>
 									)}
-									<DataTableHead>Workflow</DataTableHead>
-									<DataTableHead>Status</DataTableHead>
-									<DataTableHead>Run by</DataTableHead>
-									<DataTableHead>Started</DataTableHead>
-									<DataTableHead className="text-right">
+									<DataTableHead className="w-full">Workflow</DataTableHead>
+									<DataTableHead className="w-px">Status</DataTableHead>
+									<DataTableHead className="hidden w-px xl:table-cell">Run by</DataTableHead>
+									<DataTableHead className="hidden w-px lg:table-cell">Started</DataTableHead>
+									<DataTableHead className="hidden w-px text-right xl:table-cell">
 										Duration
 									</DataTableHead>
-									<DataTableHead className="text-right"></DataTableHead>
+									<DataTableHead className="w-px text-right"></DataTableHead>
 								</DataTableRow>
 							</DataTableHeader>
 							<DataTableBody>
@@ -960,7 +971,7 @@ export function ExecutionHistory() {
 													}}
 												>
 													{isPlatformAdmin && (
-														<DataTableCell className="text-sm text-muted-foreground">
+														<DataTableCell className="hidden w-px whitespace-nowrap text-sm text-muted-foreground xl:table-cell">
 															{isGlobalExecution ? (
 																<span className="inline-flex items-center gap-1.5">
 																	<Globe className="h-3.5 w-3.5" />
@@ -974,7 +985,7 @@ export function ExecutionHistory() {
 														</DataTableCell>
 													)}
 													<DataTableCell
-														className="max-w-md"
+														className="w-full max-w-0"
 														data-testid="execution-workflow-cell"
 													>
 														<div className="truncate font-mono text-sm font-medium">
@@ -993,8 +1004,30 @@ export function ExecutionHistory() {
 																}
 															</div>
 														)}
+														<div
+															className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground xl:hidden"
+														>
+															{isPlatformAdmin && (
+																<span>
+																	{isGlobalExecution
+																		? "Global"
+																		: getOrgName(execution.org_id)}
+																</span>
+															)}
+															<span className="xl:hidden">
+																by {execution.executed_by_name}
+															</span>
+															<span className="lg:hidden">
+																{anchorIso
+																	? formatRunTime(anchorIso)
+																	: "Not started"}
+															</span>
+															<span className="xl:hidden">
+																{duration ?? "No duration"}
+															</span>
+														</div>
 													</DataTableCell>
-													<DataTableCell>
+													<DataTableCell className="w-px whitespace-nowrap">
 														<RunStatusBadge
 															status={displayStatus}
 															scheduledAt={
@@ -1002,11 +1035,11 @@ export function ExecutionHistory() {
 															}
 														/>
 													</DataTableCell>
-													<DataTableCell className="text-sm text-muted-foreground">
+													<DataTableCell className="hidden w-px whitespace-nowrap text-sm text-muted-foreground xl:table-cell">
 														{execution.executed_by_name}
 													</DataTableCell>
 													<DataTableCell
-														className="whitespace-nowrap text-sm text-muted-foreground"
+														className="hidden w-px whitespace-nowrap text-sm text-muted-foreground lg:table-cell"
 														title={
 															anchor
 																? formatDate(anchor)
@@ -1019,7 +1052,7 @@ export function ExecutionHistory() {
 																)
 															: "—"}
 													</DataTableCell>
-													<DataTableCell className="whitespace-nowrap text-right text-sm tabular-nums text-muted-foreground">
+													<DataTableCell className="hidden w-px whitespace-nowrap text-right text-sm tabular-nums text-muted-foreground xl:table-cell">
 														{duration ?? "—"}
 													</DataTableCell>
 													<DataTableCell className="w-px text-right">
@@ -1066,7 +1099,7 @@ export function ExecutionHistory() {
 																</Button>
 															)}
 															<ChevronRight
-																className="h-4 w-4 text-muted-foreground/50"
+																className="hidden h-4 w-4 text-muted-foreground/50 sm:block"
 																aria-hidden="true"
 															/>
 														</div>
@@ -1224,6 +1257,6 @@ export function ExecutionHistory() {
 				onOpenChange={setDrawerOpen}
 				onExecutionChange={setDrawerExecutionId}
 			/>
-		</div>
+		</section>
 	);
 }

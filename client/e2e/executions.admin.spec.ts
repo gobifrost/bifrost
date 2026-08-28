@@ -37,6 +37,78 @@ test.describe("Execution History", () => {
 		).toBeVisible({ timeout: 10000 });
 	});
 
+	test("should cap wide layouts and fit narrow viewports", async ({
+		page,
+	}) => {
+		await page.setViewportSize({ width: 2048, height: 900 });
+		await page.goto("/history");
+
+		const historyRegion = page.getByRole("region", { name: "History" });
+		await expect(historyRegion).toBeVisible({ timeout: 10000 });
+		const wideBounds = await historyRegion.boundingBox();
+		expect(wideBounds?.width).toBeLessThanOrEqual(1280);
+		expect(
+			await page.locator("main").evaluate(
+				(element) => element.scrollHeight <= element.clientHeight,
+			),
+		).toBe(true);
+
+		const statusTabs = page.getByRole("tablist").first();
+		await expect(statusTabs).toBeVisible();
+		expect(
+			await statusTabs.evaluate(
+				(element) => getComputedStyle(element.parentElement!).overflowX,
+			),
+		).toBe("visible");
+
+		await page.setViewportSize({ width: 375, height: 812 });
+
+		await expect(
+			page.getByRole("heading", { name: /history|executions/i }).first(),
+		).toBeVisible({ timeout: 10000 });
+		await expect
+			.poll(() =>
+				page.evaluate(
+					() =>
+						document.documentElement.scrollWidth <=
+							document.documentElement.clientWidth,
+				),
+			)
+			.toBe(true);
+
+		const table = page.getByRole("table").first();
+		if (await table.isVisible().catch(() => false)) {
+			await expect(
+				table.getByRole("columnheader", { name: "Workflow" }),
+			).toBeVisible();
+			await expect(
+				table.getByRole("columnheader", { name: "Status" }),
+			).toBeVisible();
+			for (const name of ["Organization", "Run by", "Started", "Duration"]) {
+				await expect(
+					table.getByRole("columnheader", { name }),
+				).toBeHidden();
+			}
+		}
+
+		await page.goto("/history?type=agents");
+		await expect(
+			page.getByText("View agent run history across the fleet"),
+		).toBeVisible({ timeout: 10000 });
+		expect(
+			await page.locator("main").evaluate(
+				(element) => element.scrollHeight <= element.clientHeight,
+			),
+		).toBe(true);
+		expect(
+			await page.evaluate(
+				() =>
+					document.documentElement.scrollWidth <=
+					document.documentElement.clientWidth,
+			),
+		).toBe(true);
+	});
+
 	test("should list executions", async ({ page }) => {
 		await page.goto("/history");
 

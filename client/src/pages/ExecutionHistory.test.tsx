@@ -424,6 +424,60 @@ describe("ExecutionHistory — summary rollup", () => {
 });
 
 describe("ExecutionHistory — feed rendering", () => {
+	it("keeps Workflow flexible and progressively collapses metadata columns", async () => {
+		mockAuth.mockReturnValue({
+			isPlatformAdmin: true,
+			user: { id: "user-1", email: "u@example.com" },
+		});
+		mockUseExecutions.mockReturnValue({
+			data: { executions: [makeRow()], continuation_token: null },
+			isFetching: false,
+			isError: false,
+			refetch: mockRefetch,
+		});
+
+		await renderPage();
+
+		expect(
+			screen.getByRole("region", { name: "History" }),
+		).toHaveClass(
+			"mx-auto",
+			"h-full",
+			"min-h-0",
+			"w-full",
+			"max-w-7xl",
+			"pb-1",
+		);
+		expect(
+			screen.getByRole("columnheader", { name: "Workflow" }),
+		).toHaveClass("w-full");
+		expect(
+			screen.getByRole("columnheader", { name: "Organization" }),
+		).toHaveClass("hidden", "xl:table-cell");
+		expect(
+			screen.getByRole("columnheader", { name: "Status" }),
+		).toHaveClass("w-px");
+		expect(
+			screen.getByRole("columnheader", { name: "Run by" }),
+		).toHaveClass("hidden", "xl:table-cell");
+		expect(
+			screen.getByRole("columnheader", { name: "Started" }),
+		).toHaveClass("hidden", "lg:table-cell");
+		expect(
+			screen.getByRole("columnheader", { name: "Duration" }),
+		).toHaveClass("hidden", "xl:table-cell");
+		expect(screen.getByRole("tablist").parentElement).toHaveClass(
+			"no-scrollbar",
+			"overflow-x-auto",
+			"sm:overflow-visible",
+		);
+		expect(screen.getByRole("tablist")).not.toHaveClass("overflow-x-auto");
+		expect(
+			screen.getByRole("tablist").closest('[data-slot="tabs"]'),
+		).toHaveClass("min-h-0", "flex-1");
+		expect(screen.getByText("by Test User")).toBeInTheDocument();
+	});
+
 	it("groups rows under day separator rows", async () => {
 		const today = new Date();
 		today.setHours(9, 0, 0, 0);

@@ -125,7 +125,7 @@ export interface NewExecution {
 	executed_by: string;
 	executed_by_name: string;
 	status: string;
-	started_at: string;
+	started_at: string | null;
 	timestamp: string;
 }
 
