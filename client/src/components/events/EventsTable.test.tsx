@@ -31,7 +31,7 @@ vi.mock("./EventDetailDialog", () => ({
 }));
 
 import { EventsTable } from "./EventsTable";
-import type { Event } from "@/services/events";
+import type { Event, EventSource } from "@/services/events";
 
 function makeEvent(overrides: Partial<Event> = {}): Event {
 	return {
@@ -46,6 +46,21 @@ function makeEvent(overrides: Partial<Event> = {}): Event {
 		failed_count: 0,
 		...overrides,
 	} as unknown as Event;
+}
+
+function graphSource(): EventSource {
+	return {
+		id: "src-1",
+		name: "Mailbox changes",
+		source_type: "webhook",
+		webhook: {
+			adapter_name: "microsoft_graph",
+			config: {
+				resource: "/users/user-1/messages",
+			},
+			provider_metadata: {},
+		},
+	} as unknown as EventSource;
 }
 
 describe("EventsTable — empty", () => {
@@ -89,5 +104,28 @@ describe("EventsTable — populated", () => {
 		// Before filtering, both rows are present
 		expect(screen.getByText("ticket.created")).toBeInTheDocument();
 		expect(screen.getByText("ticket.updated")).toBeInTheDocument();
+	});
+
+	it("shows a compact type for historical Graph events", () => {
+		useEventsMock.mockReturnValue({
+			data: {
+				items: [
+					makeEvent({
+						event_type: "01V6T7ZK0M0Q8SHJ4A1N5W2X9B.created",
+						data: { change_type: "created" },
+					}),
+				],
+			},
+			isLoading: false,
+		});
+
+		renderWithProviders(
+			<EventsTable sourceId="src-1" source={graphSource()} />,
+		);
+
+		expect(screen.getByText("graph.messages.created")).toBeInTheDocument();
+		expect(
+			screen.queryByText("01V6T7ZK0M0Q8SHJ4A1N5W2X9B.created"),
+		).not.toBeInTheDocument();
 	});
 });

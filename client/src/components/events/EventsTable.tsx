@@ -20,7 +20,12 @@ import {
 } from "@/components/ui/data-table";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { format, subHours, subDays } from "date-fns";
-import { useEvents, type Event, type EventStatus } from "@/services/events";
+import {
+	useEvents,
+	type Event,
+	type EventSource,
+	type EventStatus,
+} from "@/services/events";
 import { EventDetailDialog } from "./EventDetailDialog";
 import { SearchBox } from "@/components/search/SearchBox";
 import { useSearch } from "@/hooks/useSearch";
@@ -38,9 +43,11 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { getGraphEventType } from "@/lib/graph-source";
 
 interface EventsTableProps {
 	sourceId: string;
+	source?: EventSource;
 	initialEventId?: string;
 }
 
@@ -109,7 +116,7 @@ interface EventWithMeta extends Event {
 	_isNew?: boolean;
 }
 
-export function EventsTable({ sourceId, initialEventId }: EventsTableProps) {
+export function EventsTable({ sourceId, source, initialEventId }: EventsTableProps) {
 	const navigate = useNavigate();
 	const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
 	const [dateRange, setDateRange] = useState<DateRangeFilter>("24h");
@@ -135,10 +142,12 @@ export function EventsTable({ sourceId, initialEventId }: EventsTableProps) {
 	}, [statusFilter, dateRange]);
 
 	const { data, isLoading } = useEvents(sourceId, filterParams);
-	const events = useMemo(
-		() => (data?.items || []) as EventWithMeta[],
-		[data?.items],
-	);
+	const events = useMemo(() => {
+		return ((data?.items || []) as EventWithMeta[]).map((event) => ({
+			...event,
+			event_type: getGraphEventType(source, event),
+		}));
+	}, [data?.items, source]);
 
 	// Connect to WebSocket for real-time updates
 	const { isConnected } = useEventStream(sourceId);

@@ -65,6 +65,7 @@ async def _renew_or_recreate(
     result = await adapter.renew(
         external_id=webhook["external_id"],
         state=webhook["state"],
+        config=webhook["config"],
         integration=integration,
     )
     if result is not None:

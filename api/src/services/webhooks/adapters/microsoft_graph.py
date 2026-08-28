@@ -64,7 +64,7 @@ class MicrosoftGraphAdapter(WebhookAdapter):
                 "x-dynamic-values": {
                     "operation": "list_users",
                     "value_path": "id",
-                    "label_path": "displayName",
+                    "label_path": "label",
                     "depends_on": [],
                 },
             },
@@ -139,15 +139,47 @@ class MicrosoftGraphAdapter(WebhookAdapter):
             data = response.json()
             users = data.get("value", [])
 
-            # Return list of user objects with id and displayName
-            return [
-                {
-                    "id": user["id"],
-                    "displayName": user.get("displayName") or user.get("userPrincipalName", "Unknown"),
-                    "mail": user.get("mail"),
-                }
-                for user in users
-            ]
+            return [self._user_option(user) for user in users]
+
+    @staticmethod
+    def _user_option(user: dict[str, Any]) -> dict[str, Any]:
+        display_name = user.get("displayName")
+        principal_name = user.get("userPrincipalName") or user.get("mail")
+        if principal_name and display_name and principal_name != display_name:
+            label = f"{principal_name} · {display_name}"
+        else:
+            label = principal_name or display_name or "Unknown user"
+        return {
+            "id": user["id"],
+            "label": label,
+            "displayName": display_name,
+            "userPrincipalName": user.get("userPrincipalName"),
+            "mail": user.get("mail"),
+        }
+
+    async def _fetch_user_metadata(
+        self,
+        client: httpx.AsyncClient,
+        auth: WebhookIntegrationAuth,
+        user_id: str,
+    ) -> dict[str, Any]:
+        response = await client.get(
+            f"https://graph.microsoft.com/v1.0/users/{user_id}",
+            headers={"Authorization": f"Bearer {auth.access_token}"},
+            params={"$select": "id,displayName,mail,userPrincipalName"},
+            timeout=30.0,
+        )
+        if response.status_code != 200:
+            raise ValueError(
+                "Failed to resolve the selected Graph user: "
+                f"{self._error_message(response)}"
+            )
+        user = response.json()
+        return {
+            "user_display_name": user.get("displayName"),
+            "user_principal_name": user.get("userPrincipalName"),
+            "user_mail": user.get("mail"),
+        }
 
     def _list_resources(self, current_config: dict[str, Any]) -> list[dict[str, Any]]:
         """Return common Graph resource templates based on selected user."""
@@ -220,23 +252,7 @@ class MicrosoftGraphAdapter(WebhookAdapter):
             user_metadata: dict[str, Any] = {}
             user_id = config.get("user_id")
             if user_id:
-                user_response = await client.get(
-                    f"https://graph.microsoft.com/v1.0/users/{user_id}",
-                    headers={"Authorization": f"Bearer {auth.access_token}"},
-                    params={"$select": "id,displayName,mail,userPrincipalName"},
-                    timeout=30.0,
-                )
-                if user_response.status_code != 200:
-                    raise ValueError(
-                        "Failed to resolve the selected Graph user: "
-                        f"{self._error_message(user_response)}"
-                    )
-                user = user_response.json()
-                user_metadata = {
-                    "user_display_name": user.get("displayName"),
-                    "user_principal_name": user.get("userPrincipalName"),
-                    "user_mail": user.get("mail"),
-                }
+                user_metadata = await self._fetch_user_metadata(client, auth, user_id)
 
             response = await client.post(
                 "https://graph.microsoft.com/v1.0/subscriptions",
@@ -309,6 +325,7 @@ class MicrosoftGraphAdapter(WebhookAdapter):
         self,
         external_id: str | None,
         state: dict[str, Any],
+        config: dict[str, Any],
         integration: Any | None,
     ) -> RenewResult | None:
         """
@@ -338,8 +355,15 @@ class MicrosoftGraphAdapter(WebhookAdapter):
 
             if response.status_code == 200:
                 data = response.json()
+                user_metadata: dict[str, Any] = {}
+                user_id = config.get("user_id")
+                if user_id:
+                    user_metadata = await self._fetch_user_metadata(
+                        client, integration, user_id
+                    )
                 return RenewResult(
                     expires_at=self.parse_datetime(data["expirationDateTime"]),
+                    state=user_metadata,
                 )
             else:
                 # Subscription may have expired - caller should recreate

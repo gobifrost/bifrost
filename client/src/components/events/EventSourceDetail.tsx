@@ -541,7 +541,11 @@ export function EventSourceDetail({
 					value="events"
 					className="mt-4 flex-1 flex flex-col min-h-0"
 				>
-					<EventsTable sourceId={sourceId} initialEventId={eventId} />
+					<EventsTable
+						sourceId={sourceId}
+						source={source}
+						initialEventId={eventId}
+					/>
 				</TabsContent>
 			</Tabs>
 

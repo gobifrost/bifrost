@@ -313,6 +313,7 @@ class WebhookAdapter(ABC):
         self,
         external_id: str | None,
         state: dict[str, Any],
+        config: dict[str, Any],
         integration: Any | None,
     ) -> RenewResult | None:
         """
@@ -323,6 +324,7 @@ class WebhookAdapter(ABC):
         Args:
             external_id: ID from SubscribeResult.external_id.
             state: State dict from SubscribeResult.state.
+            config: Persisted adapter configuration for the subscription.
             integration: Resolved organization-scoped authentication, when required.
 
         Returns:

@@ -83,6 +83,7 @@ async def test_graph_lists_users_with_resolved_tenant_token(monkeypatch):
                     "id": "user-1",
                     "displayName": "Ada Lovelace",
                     "mail": "ada@example.com",
+                    "userPrincipalName": "ada@example.com",
                 }
             ]
         },
@@ -101,7 +102,13 @@ async def test_graph_lists_users_with_resolved_tenant_token(monkeypatch):
     )
 
     assert users == [
-        {"id": "user-1", "displayName": "Ada Lovelace", "mail": "ada@example.com"}
+        {
+            "id": "user-1",
+            "label": "ada@example.com · Ada Lovelace",
+            "displayName": "Ada Lovelace",
+            "userPrincipalName": "ada@example.com",
+            "mail": "ada@example.com",
+        }
     ]
     assert client.get.await_args.kwargs["headers"] == {
         "Authorization": "Bearer tenant-token"
@@ -153,6 +160,48 @@ async def test_graph_subscription_uses_public_callback_and_resolved_token(monkey
         "https://dev.example.com/api/hooks/source-1"
     )
     assert "includeResourceData" not in request.kwargs["json"]
+
+
+@pytest.mark.asyncio
+async def test_graph_renewal_refreshes_user_identity_metadata(monkeypatch):
+    renewal_response = SimpleNamespace(
+        status_code=200,
+        json=lambda: {"expirationDateTime": "2026-08-31T12:00:00Z"},
+        text="",
+    )
+    user_response = SimpleNamespace(
+        status_code=200,
+        json=lambda: {
+            "id": "user-1",
+            "displayName": "Ada Lovelace",
+            "mail": "ada@example.com",
+            "userPrincipalName": "ada@example.com",
+        },
+        text="",
+    )
+    client = _GraphClient(renewal_response)
+    client.get.return_value = user_response
+    monkeypatch.setattr(
+        "src.services.webhooks.adapters.microsoft_graph.httpx.AsyncClient",
+        lambda: client,
+    )
+
+    result = await MicrosoftGraphAdapter().renew(
+        external_id="subscription-1",
+        state={},
+        config={
+            "user_id": "user-1",
+            "resource": "/users/user-1/messages",
+        },
+        integration=_graph_auth(),
+    )
+
+    assert result is not None
+    assert result.state == {
+        "user_display_name": "Ada Lovelace",
+        "user_principal_name": "ada@example.com",
+        "user_mail": "ada@example.com",
+    }
 
 
 @pytest.mark.asyncio
@@ -221,6 +270,7 @@ async def test_local_fixture_adapter_renews_deterministically():
     result = await adapter.renew(
         external_id="local-scheduler-fixture",
         state={"renewal_count": 2},
+        config={},
         integration=None,
     )
 
@@ -237,6 +287,7 @@ async def test_local_fixture_adapter_rejects_unknown_subscription():
     result = await adapter.renew(
         external_id="not-the-fixture",
         state={},
+        config={},
         integration=None,
     )
 

@@ -433,7 +433,13 @@ start_test_client() {
     if [ "${BIFROST_SKIP_BUILD:-0}" != "1" ]; then
         docker compose -f "$COMPOSE_FILE" build client
     fi
-    docker compose -f "$COMPOSE_FILE" --profile client up -d --no-build --no-deps client
+    # reset_state stops and starts the API, which can change its container IP.
+    # Nginx resolves the `api` upstream when it starts, so retaining a client
+    # from a previous browser run can pin it to a dead address and make every
+    # auth request fail with 502. Recreate the lightweight client container so
+    # each run resolves the current API container.
+    docker compose -f "$COMPOSE_FILE" --profile client up -d \
+        --force-recreate --no-build --no-deps client
     echo "Waiting for production client to be healthy..."
     for i in {1..120}; do
         local client_cid

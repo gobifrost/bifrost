@@ -2,9 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import type { EventSource } from "@/services/events";
 import {
+	getGraphEventType,
 	getGraphSourceSummary,
 	isMicrosoftGraphSource,
 } from "./graph-source";
+import type { Event } from "@/services/events";
 
 function graphSource(overrides: Partial<EventSource> = {}): EventSource {
 	return {
@@ -39,13 +41,24 @@ describe("Graph source presentation", () => {
 		expect(
 			getGraphSourceSummary(source, new Date("2026-08-29T00:00:00Z")),
 		).toEqual({
-			userLabel: "Ada Lovelace",
-			userSecondary: "ada@example.com",
+			userLabel: "ada@example.com",
+			userSecondary: "Ada Lovelace",
 			resourceLabel: "Mail messages",
 			resourcePath: "/users/user-1/messages",
 			changeLabel: "created, updated",
 			health: "connected",
 		});
+	});
+
+	it("normalizes historical Graph event types from source and payload data", () => {
+		const event = {
+			event_type: "01V6T7ZK0M0Q8SHJ4A1N5W2X9B.created",
+			data: { change_type: "created" },
+		} as unknown as Event;
+
+		expect(getGraphEventType(graphSource(), event)).toBe(
+			"graph.messages.created",
+		);
 	});
 
 	it("marks missing or expired provider registrations for attention", () => {

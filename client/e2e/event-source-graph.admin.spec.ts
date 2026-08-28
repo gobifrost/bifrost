@@ -82,6 +82,7 @@ test.describe.serial("Microsoft Graph event source", () => {
 								id: "user-1",
 								display_name: "Adele Vance",
 								user_principal_name: "adele@example.com",
+								label: "adele@example.com · Adele Vance",
 							},
 						],
 					}),
@@ -114,6 +115,12 @@ test.describe.serial("Microsoft Graph event source", () => {
 
 		await expect(dialog.getByText("Options did not load.")).toBeHidden();
 		await expect(dialog.getByText("Select User...")).toBeVisible();
+		await dialog.getByText("Select User...").click();
+		await expect(
+			page.getByRole("option", {
+				name: "adele@example.com · Adele Vance",
+			}),
+		).toBeVisible();
 		expect(requests.length).toBeGreaterThanOrEqual(2);
 		for (const request of requests) {
 			expect(request).toMatchObject({
@@ -205,7 +212,26 @@ test.describe.serial("Microsoft Graph event source", () => {
 				await route.fulfill({
 					status: 200,
 					contentType: "application/json",
-					body: JSON.stringify({ items: [], total: 0 }),
+					body: JSON.stringify({
+						items: [
+							{
+								id: "22222222-2222-4222-8222-222222222222",
+								event_source_id: sourceId,
+								event_source_name: source.name,
+								event_type: "01V6T7ZK0M0Q8SHJ4A1N5W2X9B.created",
+								received_at: "2026-08-27T20:30:00Z",
+								headers: {},
+								data: { change_type: "created" },
+								source_ip: "10.0.0.1",
+								status: "completed",
+								delivery_count: 0,
+								success_count: 0,
+								failed_count: 0,
+								created_at: "2026-08-27T20:30:00Z",
+							},
+						],
+						total: 1,
+					}),
 				});
 			},
 		);
@@ -213,7 +239,7 @@ test.describe.serial("Microsoft Graph event source", () => {
 		await page.goto("/event-sources");
 		await expect(page.getByText("Adele inbox changes")).toBeVisible();
 		await expect(
-			page.getByText("Adele Vance · Mail messages · created"),
+			page.getByText("adele@example.com · Mail messages · created"),
 		).toBeVisible();
 		await expect(page.getByText("Microsoft Graph")).toBeVisible();
 
@@ -223,6 +249,11 @@ test.describe.serial("Microsoft Graph event source", () => {
 		).toBeVisible();
 		await expect(page.getByText("adele@example.com")).toBeVisible();
 		await expect(page.getByText("Connected")).toBeVisible();
+		await page.getByRole("tab", { name: /Events/ }).click();
+		await expect(page.getByText("graph.messages.created")).toBeVisible();
+		await expect(
+			page.getByText("01V6T7ZK0M0Q8SHJ4A1N5W2X9B.created"),
+		).toBeHidden();
 
 		await page.getByRole("button", { name: "Resubscribe" }).click();
 		const confirmation = page.getByRole("alertdialog", {

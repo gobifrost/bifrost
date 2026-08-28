@@ -55,6 +55,7 @@ class LocalFixtureWebhookAdapter(WebhookAdapter):
         self,
         external_id: str | None,
         state: dict[str, Any],
+        config: dict[str, Any],
         integration: Any | None,
     ) -> RenewResult | None:
         if external_id != "local-scheduler-fixture":

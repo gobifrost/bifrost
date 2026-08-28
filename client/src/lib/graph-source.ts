@@ -1,4 +1,4 @@
-import type { EventSource } from "@/services/events";
+import type { Event, EventSource } from "@/services/events";
 
 export type GraphSubscriptionHealth = "connected" | "expired" | "attention";
 
@@ -67,10 +67,10 @@ export function getGraphSourceSummary(
 
 	return {
 		userLabel:
-			displayName ?? principalName ?? (userId ? compactId(userId) : "Graph user"),
+			principalName ?? displayName ?? (userId ? compactId(userId) : "Graph user"),
 		userSecondary:
 			displayName && principalName && displayName !== principalName
-				? principalName
+				? displayName
 				: null,
 		resourceLabel:
 			(resourceKey && RESOURCE_LABELS[resourceKey]) ??
@@ -80,4 +80,24 @@ export function getGraphSourceSummary(
 		changeLabel: changes.length ? changes.join(", ") : "All changes",
 		health,
 	};
+}
+
+export function getGraphEventType(
+	source: EventSource | undefined,
+	event: Event,
+): string | null {
+	const rawType = stringValue(event.event_type);
+	if (!source || !isMicrosoftGraphSource(source)) return rawType;
+	if (rawType?.startsWith("graph.")) return rawType;
+
+	const changeType = stringValue(event.data?.change_type);
+	const metadata = source.webhook?.provider_metadata ?? {};
+	const config = source.webhook?.config ?? {};
+	const resourcePath =
+		stringValue(metadata.resource) ?? stringValue(config.resource);
+	const resourceKey = resourcePath?.replace(/\/$/, "").split("/").at(-1);
+
+	return resourceKey && changeType
+		? `graph.${resourceKey}.${changeType}`
+		: rawType;
 }
