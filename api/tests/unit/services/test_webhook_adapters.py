@@ -7,15 +7,21 @@ request handling logic.
 
 import hashlib
 import hmac
-from datetime import datetime, timezone
+import json
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import jwt
 import pytest
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 from src.services.webhooks.adapters.generic import GenericWebhookAdapter
 from src.services.webhooks.adapters.local_fixture import LocalFixtureWebhookAdapter
+from src.services.webhooks.adapters.microsoft_bot_framework import (
+    MicrosoftBotFrameworkAdapter,
+)
 from src.services.webhooks.adapters.microsoft_graph import MicrosoftGraphAdapter
 from src.services.webhooks import registry as webhook_registry
 from src.services.webhooks.protocol import (
@@ -539,3 +545,145 @@ class TestGenericWebhookAdapterSubscribe:
         )
 
         assert result.state == {}
+
+
+class TestMicrosoftBotFrameworkAdapter:
+    """Tests Microsoft Bot Framework authentication and normalization."""
+
+    app_id = "11111111-1111-1111-1111-111111111111"
+    service_url = "https://smba.trafficmanager.net/amer/"
+
+    @pytest.fixture
+    def adapter(self):
+        return MicrosoftBotFrameworkAdapter()
+
+    @pytest.fixture
+    def signing_material(self):
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        jwk = json.loads(jwt.algorithms.RSAAlgorithm.to_jwk(private_key.public_key()))
+        jwk.update({"kid": "teams-test-key", "endorsements": ["msteams"]})
+        return private_key, jwk
+
+    def _activity(self) -> dict:
+        return {
+            "type": "message",
+            "id": "activity-1",
+            "serviceUrl": self.service_url,
+            "channelId": "msteams",
+            "conversation": {"id": "conversation-1"},
+            "from": {"id": "user-1", "name": "Test User"},
+            "channelData": {
+                "tenant": {"id": "tenant-1"},
+                "team": {"id": "team-1"},
+            },
+        }
+
+    def _token(self, private_key, **claim_overrides) -> str:
+        claims = {
+            "iss": "https://api.botframework.com",
+            "aud": self.app_id,
+            "exp": datetime.now(timezone.utc) + timedelta(minutes=5),
+            "serviceurl": self.service_url,
+        }
+        claims.update(claim_overrides)
+        return jwt.encode(
+            claims,
+            private_key,
+            algorithm="RS256",
+            headers={"kid": "teams-test-key"},
+        )
+
+    def _request(self, activity: dict, token: str | None = None) -> WebhookRequest:
+        headers = {"content-type": "application/json", "cookie": "private"}
+        if token:
+            headers["authorization"] = f"Bearer {token}"
+        return WebhookRequest(
+            method="POST",
+            path="/api/hooks/test",
+            headers=headers,
+            body=json.dumps(activity).encode(),
+            query_params={},
+        )
+
+    def test_adapter_is_registered(self):
+        assert (
+            webhook_registry.AdapterRegistry().get("microsoft_bot_framework")
+            is not None
+        )
+
+    @pytest.mark.asyncio
+    async def test_subscribe_requires_app_id(self, adapter):
+        with pytest.raises(ValueError, match="app_id"):
+            await adapter.subscribe("https://example.com/hook", {}, None)
+
+    @pytest.mark.asyncio
+    async def test_missing_bearer_token_is_rejected(self, adapter):
+        result = await adapter.handle_request(
+            self._request(self._activity()), {"app_id": self.app_id}, {}
+        )
+
+        assert isinstance(result, Rejected)
+        assert result.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_valid_teams_activity_is_normalized(self, adapter, signing_material):
+        private_key, jwk = signing_material
+        adapter._get_signing_jwk = AsyncMock(return_value=jwk)
+        token = self._token(private_key)
+
+        result = await adapter.handle_request(
+            self._request(self._activity(), token),
+            {"app_id": self.app_id},
+            {},
+        )
+
+        assert isinstance(result, Deliver)
+        assert result.event_type == "microsoft_teams.message"
+        assert result.data["conversation_id"] == "conversation-1"
+        assert result.data["tenant_id"] == "tenant-1"
+        assert result.data["team_id"] == "team-1"
+        assert "authorization" not in result.raw_headers
+        assert "cookie" not in result.raw_headers
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("claim_overrides", "activity_overrides"),
+        [
+            ({"aud": "wrong-app"}, {}),
+            ({"serviceurl": "https://example.com/other"}, {}),
+            ({}, {"channelId": "webchat"}),
+        ],
+    )
+    async def test_invalid_token_or_activity_is_rejected(
+        self,
+        adapter,
+        signing_material,
+        claim_overrides,
+        activity_overrides,
+    ):
+        private_key, jwk = signing_material
+        adapter._get_signing_jwk = AsyncMock(return_value=jwk)
+        activity = {**self._activity(), **activity_overrides}
+        token = self._token(private_key, **claim_overrides)
+
+        result = await adapter.handle_request(
+            self._request(activity, token), {"app_id": self.app_id}, {}
+        )
+
+        assert isinstance(result, Rejected)
+        assert result.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_key_must_be_endorsed_for_teams(self, adapter, signing_material):
+        private_key, jwk = signing_material
+        jwk["endorsements"] = ["webchat"]
+        adapter._get_signing_jwk = AsyncMock(return_value=jwk)
+
+        result = await adapter.handle_request(
+            self._request(self._activity(), self._token(private_key)),
+            {"app_id": self.app_id},
+            {},
+        )
+
+        assert isinstance(result, Rejected)
+        assert result.status_code == 401
