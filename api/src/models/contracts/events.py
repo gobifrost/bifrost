@@ -451,6 +451,10 @@ class EventResponse(BaseModel):
 
     id: UUID = Field(..., description="Event ID")
     event_source_id: UUID = Field(..., description="Event source ID")
+    organization_id: UUID | None = Field(
+        default=None,
+        description="Organization selected for processing this event",
+    )
     event_source_name: str | None = Field(
         default=None,
         description="Event source name (for display)",

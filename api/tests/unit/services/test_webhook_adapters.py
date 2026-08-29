@@ -300,6 +300,18 @@ async def test_local_fixture_adapter_rejects_unknown_subscription():
     assert result is None
 
 
+@pytest.mark.asyncio
+async def test_local_fixture_adapter_exposes_integration_routing_key():
+    result = await LocalFixtureWebhookAdapter().handle_request(
+        _make_request(),
+        {"integration_entity_id": "tenant-customer"},
+        {},
+    )
+
+    assert isinstance(result, Deliver)
+    assert result.integration_entity_id == "tenant-customer"
+
+
 def test_local_fixture_adapter_is_registered_only_outside_production(monkeypatch):
     monkeypatch.setattr(
         webhook_registry,
@@ -618,11 +630,12 @@ class TestMicrosoftBotFrameworkAdapter:
             await adapter.subscribe("https://example.com/hook", {}, None)
 
     @pytest.mark.asyncio
-    async def test_subscribe_requires_tenant_id(self, adapter):
-        with pytest.raises(ValueError, match="tenant_id"):
-            await adapter.subscribe(
-                "https://example.com/hook", {"app_id": self.app_id}, None
-            )
+    async def test_subscribe_allows_integration_mapped_tenant_routing(self, adapter):
+        result = await adapter.subscribe(
+            "https://example.com/hook", {"app_id": self.app_id}, None
+        )
+
+        assert result.state == {}
 
     @pytest.mark.asyncio
     async def test_missing_bearer_token_is_rejected(self, adapter):
@@ -652,8 +665,25 @@ class TestMicrosoftBotFrameworkAdapter:
         assert result.data["conversation_id"] == "conversation-1"
         assert result.data["tenant_id"] == "tenant-1"
         assert result.data["team_id"] == "team-1"
+        assert result.integration_entity_id is None
         assert "authorization" not in result.raw_headers
         assert "cookie" not in result.raw_headers
+
+    @pytest.mark.asyncio
+    async def test_multitenant_activity_exposes_signed_tenant_for_mapping(
+        self, adapter, signing_material
+    ):
+        private_key, jwk = signing_material
+        adapter._get_signing_jwk = AsyncMock(return_value=jwk)
+
+        result = await adapter.handle_request(
+            self._request(self._activity(), self._token(private_key)),
+            {"app_id": self.app_id},
+            {},
+        )
+
+        assert isinstance(result, Deliver)
+        assert result.integration_entity_id == self.tenant_id
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

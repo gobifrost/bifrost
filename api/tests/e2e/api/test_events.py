@@ -546,6 +546,75 @@ class TestWebhookReceiver:
                 headers=platform_admin.headers,
             )
 
+    def test_integration_mapped_webhook_stamps_customer_organization(
+        self, e2e_client, platform_admin, org1
+    ):
+        """A global webhook routes an external tenant into its mapped org."""
+        integration_response = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={"name": f"E2E routed webhook {uuid.uuid4().hex[:8]}"},
+        )
+        assert integration_response.status_code == 201, integration_response.text
+        integration = integration_response.json()
+
+        source = None
+        try:
+            mapping_response = e2e_client.post(
+                f"/api/integrations/{integration['id']}/mappings",
+                headers=platform_admin.headers,
+                json={
+                    "organization_id": org1["id"],
+                    "entity_id": "customer-tenant",
+                    "entity_name": "Customer Tenant",
+                },
+            )
+            assert mapping_response.status_code == 201, mapping_response.text
+
+            source_response = e2e_client.post(
+                "/api/events/sources",
+                headers=platform_admin.headers,
+                json={
+                    "name": f"E2E routed source {uuid.uuid4().hex[:8]}",
+                    "source_type": "webhook",
+                    "organization_id": None,
+                    "webhook": {
+                        "adapter_name": "local_fixture",
+                        "integration_id": integration["id"],
+                        "config": {"integration_entity_id": "customer-tenant"},
+                    },
+                },
+            )
+            assert source_response.status_code == 201, source_response.text
+            source = source_response.json()
+
+            webhook_response = e2e_client.post(f"/api/hooks/{source['id']}", json={})
+            assert webhook_response.status_code == 202, webhook_response.text
+
+            def find_event():
+                response = e2e_client.get(
+                    f"/api/events/sources/{source['id']}/events",
+                    headers=platform_admin.headers,
+                )
+                if response.status_code != 200:
+                    return None
+                events = response.json()["items"]
+                return events[0] if events else None
+
+            event = poll_until(find_event, max_wait=5.0)
+            assert event is not None
+            assert event["organization_id"] == org1["id"]
+        finally:
+            if source is not None:
+                e2e_client.delete(
+                    f"/api/events/sources/{source['id']}",
+                    headers=platform_admin.headers,
+                )
+            e2e_client.delete(
+                f"/api/integrations/{integration['id']}",
+                headers=platform_admin.headers,
+            )
+
     def test_webhook_creates_event(self, e2e_client, platform_admin, event_source):
         """Webhook POST creates Event record."""
         source_id = event_source["id"]

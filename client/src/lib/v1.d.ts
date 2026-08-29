@@ -15636,6 +15636,11 @@ export interface components {
              */
             event_source_id: string;
             /**
+             * Organization Id
+             * @description Organization selected for processing this event
+             */
+            organization_id?: string | null;
+            /**
              * Event Source Name
              * @description Event source name (for display)
              */

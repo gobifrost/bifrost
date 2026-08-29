@@ -49,7 +49,14 @@ class LocalFixtureWebhookAdapter(WebhookAdapter):
         config: dict[str, Any],
         state: dict[str, Any],
     ) -> HandleResult:
-        return Deliver(event_type="local.fixture", data={})
+        integration_entity_id = str(
+            config.get("integration_entity_id") or ""
+        ).strip() or None
+        return Deliver(
+            event_type="local.fixture",
+            data={"integration_entity_id": integration_entity_id},
+            integration_entity_id=integration_entity_id,
+        )
 
     async def renew(
         self,

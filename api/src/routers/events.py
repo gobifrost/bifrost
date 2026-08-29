@@ -1126,6 +1126,7 @@ async def list_events(
             EventResponse(
                 id=event.id,
                 event_source_id=event.event_source_id,
+                organization_id=event.organization_id,
                 event_source_name=source.name,
                 event_type=event.event_type,
                 received_at=event.received_at,
@@ -1257,6 +1258,7 @@ async def get_event(
     return EventResponse(
         id=event.id,
         event_source_id=event.event_source_id,
+        organization_id=event.organization_id,
         event_source_name=source.name if source else None,
         event_type=event.event_type,
         received_at=event.received_at,

@@ -145,6 +145,15 @@ class Deliver:
     raw_headers: dict[str, str] | None = None
     """Original request headers (for logging)."""
 
+    integration_entity_id: str | None = None
+    """External tenant/entity ID used to resolve the destination organization.
+
+    When present, the webhook source must be linked to an Integration and the
+    processor resolves an organization-specific IntegrationMapping before it
+    records or dispatches the event. This keeps multitenant webhook routing
+    behind the same allowlist that integration calls use.
+    """
+
 
 @dataclass
 class Rejected:

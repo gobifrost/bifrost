@@ -33,6 +33,7 @@ from src.models.orm.events import (
     EventSubscription,
     WebhookSource,
 )
+from src.models.orm.integrations import IntegrationMapping
 from src.repositories.events import (
     EventDeliveryRepository,
     EventRepository,
@@ -468,11 +469,52 @@ class EventProcessor:
         Creates event record, finds subscriptions, creates deliveries,
         and queues workflow executions.
         """
+        event_organization_id = event_source.organization_id
+        if deliver.integration_entity_id is not None:
+            if webhook_source.integration_id is None:
+                logger.error(
+                    "Webhook delivery requested integration routing without a linked integration",
+                    extra={"event_source_id": str(event_source.id)},
+                )
+                return Rejected(
+                    message="Webhook integration routing is not configured",
+                    status_code=500,
+                )
+
+            mapping_result = await self.session.execute(
+                sa.select(IntegrationMapping).where(
+                    IntegrationMapping.integration_id == webhook_source.integration_id,
+                    IntegrationMapping.entity_id == deliver.integration_entity_id,
+                    IntegrationMapping.organization_id.is_not(None),
+                )
+            )
+            mappings = list(mapping_result.scalars().all())
+            if not mappings:
+                logger.warning(
+                    "Webhook tenant has no integration mapping",
+                    extra={"event_source_id": str(event_source.id)},
+                )
+                return Rejected(
+                    message="Webhook tenant is not configured",
+                    status_code=403,
+                )
+            if len(mappings) > 1:
+                logger.error(
+                    "Webhook tenant has ambiguous integration mappings",
+                    extra={"event_source_id": str(event_source.id)},
+                )
+                return Rejected(
+                    message="Webhook tenant routing is ambiguous",
+                    status_code=500,
+                )
+            event_organization_id = mappings[0].organization_id
+
         # Create event record
         event = Event(
             id=uuid.uuid4(),
             event_source_id=event_source.id,
             event_type=deliver.event_type,
+            organization_id=event_organization_id,
             received_at=datetime.now(timezone.utc),
             headers=deliver.raw_headers,
             data=deliver.data,
@@ -531,6 +573,22 @@ class EventProcessor:
                         f"Subscription {subscription.id} has no workflow, skipping"
                     )
                     continue
+
+            target = subscription.agent if target_type == "agent" else subscription.workflow
+            target_org_id = getattr(target, "organization_id", None)
+            if (
+                event.organization_id is not None
+                and target_org_id is not None
+                and target_org_id != event.organization_id
+            ):
+                logger.warning(
+                    "Skipping cross-organization event subscription",
+                    extra={
+                        "event_id": str(event.id),
+                        "subscription_id": str(subscription.id),
+                    },
+                )
+                continue
 
             delivery, filter_matches = self._build_subscription_delivery(
                 event,
@@ -782,13 +840,15 @@ class EventProcessor:
             received_at=event.received_at.isoformat() if event.received_at else "",
         )
 
-        # Use the centralized system execution helper
-        # Use workflow's org_id so org-scoped workflows only access their org's data
+        # Org-scoped workflows always retain their own scope. A global workflow
+        # receiving an integration-routed event executes in the mapped customer
+        # organization so its integrations, tables, and files resolve there.
+        execution_org_id = workflow.organization_id or event.organization_id
         execution_id = await enqueue_system_workflow_execution(
             workflow_id=str(workflow.id),
             parameters=parameters,
             source="Event System",
-            org_id=str(workflow.organization_id) if workflow.organization_id else None,
+            org_id=str(execution_org_id) if execution_org_id else None,
             event=event_context,
         )
 
@@ -841,7 +901,8 @@ class EventProcessor:
             "source_ip": event.source_ip,
         }
 
-        org_id = str(agent.organization_id) if agent.organization_id else None
+        execution_org_id = agent.organization_id or event.organization_id
+        org_id = str(execution_org_id) if execution_org_id else None
 
         run_id = await enqueue_agent_run(
             agent_id=str(agent.id),

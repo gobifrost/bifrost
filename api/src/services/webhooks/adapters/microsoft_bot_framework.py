@@ -43,7 +43,7 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
 
     config_schema = {
         "type": "object",
-        "required": ["app_id", "tenant_id"],
+        "required": ["app_id"],
         "properties": {
             "app_id": {
                 "type": "string",
@@ -53,7 +53,11 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
             "tenant_id": {
                 "type": "string",
                 "title": "Microsoft Tenant ID",
-                "description": "Entra tenant ID allowed to send Teams activities.",
+                "description": (
+                    "Optional fixed Entra tenant ID. Omit it on a multitenant "
+                    "source linked to an Integration; the signed activity tenant "
+                    "is then resolved through that Integration's mappings."
+                ),
             },
         },
     }
@@ -67,9 +71,6 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
         app_id = str(config.get("app_id") or "").strip()
         if not app_id:
             raise ValueError("Microsoft Bot Framework app_id is required")
-        tenant_id = str(config.get("tenant_id") or "").strip()
-        if not tenant_id:
-            raise ValueError("Microsoft Bot Framework tenant_id is required")
         return SubscribeResult()
 
     async def unsubscribe(
@@ -95,11 +96,7 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
             return Rejected(
                 message="Bot Framework app ID is not configured", status_code=500
             )
-        tenant_id = str(config.get("tenant_id") or "").strip()
-        if not tenant_id:
-            return Rejected(
-                message="Bot Framework tenant ID is not configured", status_code=500
-            )
+        tenant_id = str(config.get("tenant_id") or "").strip() or None
 
         authorization = request.headers.get("authorization", "")
         scheme, separator, token = authorization.partition(" ")
@@ -109,7 +106,9 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
             )
 
         try:
-            await self._validate_token(token.strip(), app_id, tenant_id, payload)
+            activity_tenant_id = await self._validate_token(
+                token.strip(), app_id, tenant_id, payload
+            )
         except (jwt.PyJWTError, KeyError, TypeError, ValueError) as exc:
             logger.warning(
                 "Bot Framework token validation failed: %s", type(exc).__name__
@@ -142,6 +141,7 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
                 "reply_to_id": payload.get("replyToId"),
             },
             event_type=f"microsoft_teams.{activity_type}",
+            integration_entity_id=(activity_tenant_id if tenant_id is None else None),
             raw_headers={
                 key: value
                 for key, value in request.headers.items()
@@ -153,9 +153,9 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
         self,
         token: str,
         app_id: str,
-        tenant_id: str,
+        tenant_id: str | None,
         payload: dict[str, Any],
-    ) -> None:
+    ) -> str:
         header = jwt.get_unverified_header(token)
         if header.get("alg") != "RS256":
             raise ValueError("Unsupported signing algorithm")
@@ -194,11 +194,14 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
             if isinstance(channel_data, dict)
             else None
         )
-        if activity_tenant_id != tenant_id:
+        if not isinstance(activity_tenant_id, str) or not activity_tenant_id.strip():
+            raise ValueError("Microsoft Teams activity tenant is required")
+        if tenant_id is not None and activity_tenant_id != tenant_id:
             raise ValueError("Microsoft Teams tenant mismatch")
         endorsements = jwk.get("endorsements") or []
         if channel_id not in endorsements:
             raise ValueError("Signing key is not endorsed for Microsoft Teams")
+        return activity_tenant_id
 
     async def _get_signing_jwk(self, kid: str) -> dict[str, Any]:
         keys = await self._get_jwks()

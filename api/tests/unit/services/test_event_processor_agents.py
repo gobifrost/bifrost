@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.models.enums import EventDeliveryStatus
+from src.services.webhooks.protocol import Deliver, Rejected, WebhookRequest
 
 if TYPE_CHECKING:
     from src.services.events.processor import EventProcessor
@@ -24,6 +25,7 @@ def _make_event(
     event_id: uuid.UUID | None = None,
     event_type: str = "ticket.created",
     data: dict | None = None,
+    organization_id: uuid.UUID | None = None,
 ) -> MagicMock:
     event = MagicMock()
     event.id = event_id or uuid.uuid4()
@@ -34,6 +36,7 @@ def _make_event(
     event.received_at = datetime(2026, 1, 1, tzinfo=timezone.utc)
     event.source_ip = "10.0.0.1"
     event.status = "processing"
+    event.organization_id = organization_id
     return event
 
 
@@ -227,3 +230,119 @@ async def test_queue_agent_run_calls_enqueue():
         assert input_data["_event"]["body"] == event.data
         assert input_data["_event"]["headers"] == event.headers
         assert input_data["_event"]["source_ip"] == event.source_ip
+
+
+@pytest.mark.asyncio
+async def test_global_workflow_uses_integration_routed_event_organization():
+    """A global event handler resolves integrations in the mapped customer org."""
+    processor = _create_processor()
+    workflow = MagicMock()
+    workflow.id = uuid.uuid4()
+    workflow.organization_id = None
+    delivery = _make_delivery(target_type="workflow", workflow=workflow)
+    customer_org_id = uuid.uuid4()
+    event = _make_event(organization_id=customer_org_id)
+    execution_id = uuid.uuid4()
+
+    with patch(
+        "src.services.execution.async_executor.enqueue_system_workflow_execution",
+        new_callable=AsyncMock,
+        return_value=str(execution_id),
+    ) as mock_enqueue:
+        await processor._queue_workflow_execution(delivery, event)
+
+    assert mock_enqueue.await_args.kwargs["org_id"] == str(customer_org_id)
+    assert delivery.execution_id == execution_id
+
+
+@pytest.mark.asyncio
+async def test_global_agent_uses_integration_routed_event_organization():
+    """A global event agent runs in the mapped customer organization."""
+    processor = _create_processor()
+    agent = MagicMock()
+    agent.id = uuid.uuid4()
+    agent.organization_id = None
+    delivery = _make_delivery(target_type="agent", agent=agent)
+    customer_org_id = uuid.uuid4()
+    event = _make_event(organization_id=customer_org_id)
+
+    with patch(
+        "src.services.execution.agent_run_service.enqueue_agent_run",
+        new_callable=AsyncMock,
+        return_value=str(uuid.uuid4()),
+    ) as mock_enqueue:
+        await processor._queue_agent_run(delivery, event)
+
+    assert mock_enqueue.await_args.kwargs["org_id"] == str(customer_org_id)
+
+
+@pytest.mark.asyncio
+async def test_webhook_integration_mapping_stamps_customer_organization():
+    """The authenticated external tenant selects the event's customer org."""
+    processor = _create_processor()
+    processor.session.add = MagicMock()
+    customer_org_id = uuid.uuid4()
+    mapping_result = MagicMock()
+    mapping_result.scalars.return_value.all.return_value = [
+        MagicMock(organization_id=customer_org_id)
+    ]
+    processor.session.execute = AsyncMock(return_value=mapping_result)
+    processor._subscription_repo.get_active_for_event = AsyncMock(return_value=[])
+    processor._broadcast_event_update = AsyncMock()
+    event_source = MagicMock(
+        id=uuid.uuid4(),
+        organization_id=None,
+    )
+    webhook_source = MagicMock(integration_id=uuid.uuid4())
+    deliver = Deliver(
+        data={"tenant_id": "customer-tenant"},
+        event_type="microsoft_teams.message",
+        integration_entity_id="customer-tenant",
+    )
+    request = WebhookRequest(
+        method="POST",
+        path=f"/api/hooks/{event_source.id}",
+        headers={},
+        query_params={},
+        body=b"{}",
+        client_ip="10.0.0.1",
+    )
+
+    result = await processor._process_delivery(
+        webhook_source, event_source, deliver, request
+    )
+
+    assert isinstance(result, Deliver)
+    event = processor.session.add.call_args.args[0]
+    assert event.organization_id == customer_org_id
+    assert event.data["tenant_id"] == "customer-tenant"
+
+
+@pytest.mark.asyncio
+async def test_webhook_integration_mapping_rejects_unknown_tenant():
+    """A signed Teams activity is still denied unless its tenant is mapped."""
+    processor = _create_processor()
+    processor.session.add = MagicMock()
+    mapping_result = MagicMock()
+    mapping_result.scalars.return_value.all.return_value = []
+    processor.session.execute = AsyncMock(return_value=mapping_result)
+    event_source = MagicMock(id=uuid.uuid4(), organization_id=None)
+    webhook_source = MagicMock(integration_id=uuid.uuid4())
+    request = WebhookRequest(
+        method="POST",
+        path=f"/api/hooks/{event_source.id}",
+        headers={},
+        query_params={},
+        body=b"{}",
+    )
+
+    result = await processor._process_delivery(
+        webhook_source,
+        event_source,
+        Deliver(data={}, integration_entity_id="unknown-tenant"),
+        request,
+    )
+
+    assert isinstance(result, Rejected)
+    assert result.status_code == 403
+    processor.session.add.assert_not_called()
