@@ -84,6 +84,7 @@
 | GET | `/api/applications/{app_id}/bundle-manifest` |
 | GET | `/api/applications/{app_id}/dependencies` |
 | PUT | `/api/applications/{app_id}/dependencies` |
+| POST | `/api/applications/{app_id}/deploy` |
 | GET | `/api/applications/{app_id}/dist/{path}` |
 | GET | `/api/applications/{app_id}/draft` |
 | PUT | `/api/applications/{app_id}/draft` |
