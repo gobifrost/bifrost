@@ -1,9 +1,8 @@
-"""standalone_v2 apps have NO publish/draft concept — created == published.
+"""V2 Apps have deployment state without a publish/draft concept.
 
-The v1 draft→publish editor flow doesn't apply to v2 (source-built + served), so
-`is_published` is unconditionally True for v2 and `has_unpublished_changes` is
-False. This is what stops the v1 "Not Published"/"Open Editor" screen from
-leaking onto a v2 app reached by slug. Pure ORM-property logic, no DB needed.
+The compatibility ``is_published`` field means launchable for V2 Apps: an
+independent App needs an active artifact, while a Solution App keeps its
+existing unversioned deploy artifact behavior.
 """
 from __future__ import annotations
 
@@ -16,9 +15,14 @@ def _app(app_model: str, snapshot=None) -> Application:
     return a
 
 
-def test_v2_is_always_published_even_without_snapshot():
-    # No published_snapshot, but v2 → still "published" (created == published).
-    assert _app("standalone_v2", snapshot=None).is_published is True
+def test_independent_v2_is_not_launchable_before_deploy():
+    assert _app("standalone_v2", snapshot=None).is_published is False
+
+
+def test_independent_v2_is_launchable_with_active_deployment():
+    app = _app("standalone_v2")
+    app.active_deployment_id = "11111111-1111-1111-1111-111111111111"
+    assert app.is_published is True
 
 
 def test_v2_has_no_unpublished_changes():

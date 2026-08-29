@@ -98,7 +98,7 @@ class ExecutionFetchError extends Error {
  * `<BifrostProvider>` (throws otherwise — same contract as `useBifrostContext`).
  */
 export function useWorkflow<T = unknown>(workflowRef: string): UseWorkflowState<T> {
-  const { authedFetch, appId } = useBifrostContext();
+  const { authedFetch, appId, orgScope } = useBifrostContext();
   const [data, setData] = useState<T | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
@@ -151,9 +151,10 @@ export function useWorkflow<T = unknown>(workflowRef: string): UseWorkflowState<
             workflow_id: workflowRef,
             input_data: input,
             // Scope a path::function ref to THIS install's own workflow (so it
-            // can't resolve a sibling install's workflow sharing the path).
-            ...(appId ? { app_id: appId } : {}),
-          }),
+						// can't resolve a sibling install's workflow sharing the path).
+						...(appId ? { app_id: appId } : {}),
+						...(orgScope ? { org_id: orgScope } : {}),
+					}),
         });
         if (!resp.ok) {
           throw new Error(`workflow execution failed: ${resp.status} ${resp.statusText}`);
@@ -265,7 +266,7 @@ export function useWorkflow<T = unknown>(workflowRef: string): UseWorkflowState<
         if (seq === seqRef.current) setLoading(false);
       }
     },
-    [authedFetch, workflowRef, appId],
+		[authedFetch, workflowRef, appId, orgScope],
   );
 
   return { data, loading, error, run, logs, status, executionId };

@@ -145,6 +145,10 @@ class ApplicationPublic(ApplicationBase):
     slug: str
     organization_id: UUID | None
     published_at: datetime | None
+    deployed_at: datetime | None = Field(
+        default=None,
+        description="When the currently active app artifact was deployed.",
+    )
     created_at: datetime
     updated_at: datetime
     created_by: str | None
@@ -155,8 +159,9 @@ class ApplicationPublic(ApplicationBase):
     is_solution_managed: bool = Field(default=False, description="True if managed by a deployed Solution (read-only on platform)")
     solution_id: UUID | None = Field(default=None, description="UUID of the owning Solution install (null if not solution-managed)")
     role_ids: list[UUID] = Field(default_factory=list)
-    repo_path: str = Field(
-        description="Workspace-relative path to the app's source directory. Mutated via POST /api/applications/{id}/replace."
+    repo_path: str | None = Field(
+        default=None,
+        description="Workspace source path for legacy or Solution-owned apps. Independent apps have no server-side source path.",
     )
     logo: str | None = Field(
         default=None,

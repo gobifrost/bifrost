@@ -637,6 +637,7 @@ async def generate_manifest(
         apps={
             str(app.id): serialize_app(app, app_roles_by_app.get(str(app.id), []))
             for app in apps_list
+            if app.repo_path is not None
         },
         mcp_servers={
             str(server.id): serialize_mcp_server(

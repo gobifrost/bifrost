@@ -231,7 +231,7 @@ class TestGetV2DistAsset:
         from uuid import uuid4
 
         app_id = uuid4()
-        fake_app = SimpleNamespace(id=app_id)
+        fake_app = SimpleNamespace(id=app_id, active_deployment_id=None)
 
         async def _fake_get_app(ctx, _app_id):
             return fake_app
@@ -241,7 +241,7 @@ class TestGetV2DistAsset:
         )
 
         class _FakeBuilder:
-            async def read_dist(self, _app_id, _rel):
+            async def read_dist(self, _app_id, _rel, *, deployment_id=None):
                 raise read_dist_exc
 
         monkeypatch.setattr(

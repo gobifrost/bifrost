@@ -103,6 +103,31 @@ describe("useWorkflow", () => {
     expect(calls[0].body.app_id).toBe("app-123");
   });
 
+  it("sends runtime org scope separately from App identity", async () => {
+    const calls: { body: Record<string, unknown> }[] = [];
+    const fakeFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({ body: init?.body ? JSON.parse(String(init.body)) : {} });
+      return new Response(JSON.stringify({ execution_id: "e0", status: "Success", result: {} }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }) as typeof fetch;
+    render(
+      <BifrostProvider
+        baseUrl="https://dev.example"
+        token="tok-x"
+        appId="app-123"
+        orgScope="runtime-org"
+        fetchImpl={fakeFetch}
+      >
+        <Runner onResult={() => {}} />
+      </BifrostProvider>,
+    );
+    screen.getByText("go").click();
+    await waitFor(() => expect(calls.length).toBe(1));
+    expect(calls[0].body).toMatchObject({ app_id: "app-123", org_id: "runtime-org" });
+  });
+
   it("omits app_id when the host supplies none (dev / non-solution app)", async () => {
     const calls: { body: Record<string, unknown> }[] = [];
     const fakeFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {

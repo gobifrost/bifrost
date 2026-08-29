@@ -54,7 +54,7 @@ function isV2App(app: ApplicationListItem): boolean {
 }
 
 function canLaunchApp(app: ApplicationListItem): boolean {
-	return app.is_published || isV2App(app);
+	return app.is_published;
 }
 
 export function ApplicationListSurface({
@@ -134,7 +134,9 @@ export function ApplicationListSurface({
 					<DataTableBody>
 						{apps.map((app) => {
 							const opensPreview =
-								!canLaunchApp(app) && Boolean(onPreview);
+								!isV2App(app) &&
+								!canLaunchApp(app) &&
+								Boolean(onPreview);
 							return (
 								<DataTableRow
 									key={app.id}
@@ -203,7 +205,9 @@ export function ApplicationListSurface({
 													variant="default"
 													className="text-xs"
 												>
-													Published
+													{isV2App(app)
+														? "Deployed"
+														: "Published"}
 												</Badge>
 											)}
 											{app.has_unpublished_changes && (
@@ -221,14 +225,18 @@ export function ApplicationListSurface({
 														className="text-xs"
 													>
 														{isV2App(app)
-															? "V2"
+															? "Not deployed"
 															: "Empty"}
 													</Badge>
 												)}
 										</div>
 									</DataTableCell>
 									<DataTableCell className="w-0 whitespace-nowrap">
-										{app.is_published ? "Published" : "-"}
+										{app.is_published
+											? isV2App(app)
+												? "Deployed"
+												: "Published"
+											: "-"}
 									</DataTableCell>
 									<DataTableCell className="w-0 whitespace-nowrap text-right">
 										<div className="flex gap-1 justify-end">
@@ -238,7 +246,9 @@ export function ApplicationListSurface({
 												disabled={!canLaunchApp(app)}
 												title={
 													!canLaunchApp(app)
-														? "No published version"
+														? isV2App(app)
+															? "Deploy this App first"
+															: "No published version"
 														: `Open ${term(terminology, "app", "formalSingularLower")}`
 												}
 											>
@@ -281,20 +291,21 @@ export function ApplicationListSurface({
 																<Pencil className="h-4 w-4" />
 															</Button>
 														)}
-														{onOpenCode && (
-															<Button
-																variant="ghost"
-																size="sm"
-																onClick={() =>
-																	onOpenCode(
-																		app,
-																	)
-																}
-																title="Code editor"
-															>
-																<Code2 className="h-4 w-4" />
-															</Button>
-														)}
+														{!isV2App(app) &&
+															onOpenCode && (
+																<Button
+																	variant="ghost"
+																	size="sm"
+																	onClick={() =>
+																		onOpenCode(
+																			app,
+																		)
+																	}
+																	title="Code editor"
+																>
+																	<Code2 className="h-4 w-4" />
+																</Button>
+															)}
 														{onDelete && (
 															<Button
 																variant="ghost"
@@ -325,10 +336,11 @@ export function ApplicationListSurface({
 	return (
 		<div className="grid grid-cols-1 gap-4 sm:grid-cols-[repeat(auto-fill,minmax(320px,1fr))]">
 			{apps.map((app) => {
-				const opensPreview = !canLaunchApp(app) && Boolean(onPreview);
+				const opensPreview =
+					!isV2App(app) && !canLaunchApp(app) && Boolean(onPreview);
 				const defaultTarget = canLaunchApp(app)
 					? () => onLaunch(app)
-					: onPreview
+					: !isV2App(app) && onPreview
 						? () => onPreview(app)
 						: undefined;
 				const orgLabel = isPlatformAdmin
@@ -398,7 +410,7 @@ export function ApplicationListSurface({
 												<Pencil className="h-3.5 w-3.5" />
 											</Button>
 										)}
-										{onOpenCode && (
+										{!isV2App(app) && onOpenCode && (
 											<Button
 												type="button"
 												variant="ghost"
@@ -471,7 +483,9 @@ export function ApplicationListSurface({
 										variant="default"
 										className="text-[10px] px-1.5 py-0"
 									>
-										Published
+										{isV2App(app)
+											? "Deployed"
+											: "Published"}
 									</Badge>
 								)}
 								{app.has_unpublished_changes && (
@@ -485,7 +499,9 @@ export function ApplicationListSurface({
 								{!app.is_published &&
 									!app.has_unpublished_changes && (
 										<span className="text-[11px] text-muted-foreground">
-											{isV2App(app) ? "V2" : "Empty"}
+											{isV2App(app)
+												? "Not deployed"
+												: "Empty"}
 										</span>
 									)}
 							</div>

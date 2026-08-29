@@ -120,6 +120,9 @@ class DevProxyConfig:
     # workflow ref that misses locally may fall back to the platform's shared
     # _repo/ content at all. Mirrors the module-loader semantics (§3.5).
     global_repo_access: bool = False
+    # Independent Apps always execute the platform's live workflows. Solution
+    # start leaves this true so it can keep its local FunctionHost behavior.
+    local_workflows: bool = True
     refresh_token: Callable[[str], Awaitable[str | None]] | None = None
     auth_expired: bool = False
     branding: dict[str, Any] | None = None
@@ -762,6 +765,33 @@ async def _execute_handler(request: web.Request) -> web.Response:
     host = request.app[_HOST]
     body = await request.json()
     ref = str(body.get("workflow_id", ""))
+
+    if not cfg.local_workflows:
+        # App start is a live-data development loop. App identity and runtime
+        # organization are separate inputs: the former is carried by app_id /
+        # X-Bifrost-App; the latter is an explicit execution override that the
+        # API independently authorizes.
+        body["app_id"] = cfg.app_id
+        if cfg.org_id:
+            body["org_id"] = cfg.org_id
+        try:
+            resp = await _authed_upstream_request(
+                request,
+                "POST",
+                f"{cfg.upstream_url}/api/workflows/execute",
+                json=body,
+            )
+        except httpx.HTTPError:
+            return web.json_response(
+                {"detail": f"Dev API unreachable at {cfg.upstream_url}"}, status=502
+            )
+        if resp is None:
+            return _dev_auth_expired_json_response()
+        return web.Response(
+            body=resp.content,
+            status=resp.status_code,
+            headers=_passthrough_headers(resp, "application/json"),
+        )
 
     if not ref:
         # Inline `code` execution (no workflow ref) — nothing to resolve

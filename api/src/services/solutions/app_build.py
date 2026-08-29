@@ -43,8 +43,18 @@ class SolutionAppBuilder:
         self._settings = settings or get_settings()
         self._bucket: str = self._settings.s3_bucket or ""
 
-    def _dist_key(self, app_id: UUID | str, rel: str = "") -> str:
-        base = f"{APPS_PREFIX}{app_id}/dist/"
+    def _dist_key(
+        self,
+        app_id: UUID | str,
+        rel: str = "",
+        *,
+        deployment_id: UUID | str | None = None,
+    ) -> str:
+        base = (
+            f"{APPS_PREFIX}{app_id}/deployments/{deployment_id}/dist/"
+            if deployment_id is not None
+            else f"{APPS_PREFIX}{app_id}/dist/"
+        )
         return f"{base}{rel.lstrip('/')}" if rel else base
 
     def _client(self):
@@ -96,6 +106,21 @@ class SolutionAppBuilder:
         """Full-replace upload of an already-compiled dist/ to
         ``_apps/{app_id}/dist/`` (cheap PUTs). Runs AFTER the DB commit."""
         await self._upload_dist(app_id, dist)
+
+    async def upload_deployment(
+        self,
+        app_id: UUID | str,
+        deployment_id: UUID | str,
+        dist: dict[str, bytes],
+    ) -> None:
+        """Upload one immutable deployment without touching the active build."""
+        async with self._client() as c:
+            for rel, data in dist.items():
+                await c.put_object(
+                    Bucket=self._bucket,
+                    Key=self._dist_key(app_id, rel, deployment_id=deployment_id),
+                    Body=data,
+                )
 
     async def build(
         self,
@@ -195,15 +220,29 @@ class SolutionAppBuilder:
             for rel, data in dist.items():
                 await c.put_object(Bucket=self._bucket, Key=self._dist_key(app_id, rel), Body=data)
 
-    async def read_dist(self, app_id: UUID | str, rel: str) -> bytes:
+    async def read_dist(
+        self,
+        app_id: UUID | str,
+        rel: str,
+        *,
+        deployment_id: UUID | str | None = None,
+    ) -> bytes:
         """Read one built dist file back from ``_apps/{app_id}/dist/``."""
         async with self._client() as c:
-            resp = await c.get_object(Bucket=self._bucket, Key=self._dist_key(app_id, rel))
+            resp = await c.get_object(
+                Bucket=self._bucket,
+                Key=self._dist_key(app_id, rel, deployment_id=deployment_id),
+            )
             return await resp["Body"].read()
 
-    async def list_dist(self, app_id: UUID | str) -> list[str]:
+    async def list_dist(
+        self,
+        app_id: UUID | str,
+        *,
+        deployment_id: UUID | str | None = None,
+    ) -> list[str]:
         """List the relative paths of an app's uploaded ``dist/``."""
-        prefix = self._dist_key(app_id)
+        prefix = self._dist_key(app_id, deployment_id=deployment_id)
         strip = len(prefix)
         paths: list[str] = []
         token = None
@@ -227,3 +266,15 @@ class SolutionAppBuilder:
         async with self._client() as c:
             for rel in await self.list_dist(app_id):
                 await c.delete_object(Bucket=self._bucket, Key=self._dist_key(app_id, rel))
+
+    async def delete_deployment(
+        self, app_id: UUID | str, deployment_id: UUID | str
+    ) -> None:
+        """Delete one versioned deployment artifact."""
+        rels = await self.list_dist(app_id, deployment_id=deployment_id)
+        async with self._client() as c:
+            for rel in rels:
+                await c.delete_object(
+                    Bucket=self._bucket,
+                    Key=self._dist_key(app_id, rel, deployment_id=deployment_id),
+                )

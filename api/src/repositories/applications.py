@@ -178,22 +178,6 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         if existing:
             raise ValueError(f"Application with slug '{data.slug}' already exists")
 
-        # standalone_v2 apps render only from a built dist, and the ONLY thing
-        # that builds + serves that dist is a Solution deploy (deploy.py builds
-        # to _apps/{id}/). A bare `apps create` makes a LOOSE (non-solution) app
-        # — solution apps are created by deploy, not here — so a v2 app created
-        # this way could never render. Bark instead of silently making a dead
-        # app. v2 = a Solutions thing: scaffold with `bifrost solution
-        # scaffold-app` and deploy. inline_v1 is the standalone/legacy model.
-        if data.app_model == "standalone_v2":
-            raise ValueError(
-                "standalone_v2 apps live in a Solution (only a Solution deploy "
-                "builds + serves their dist). Create one with "
-                "`bifrost solution scaffold-app <slug>` inside a Solution "
-                "workspace, then `bifrost solution deploy`. To make a legacy "
-                "standalone app here, pass app_model='inline_v1' explicitly."
-            )
-
         application = Application(
             name=data.name,
             slug=data.slug,
@@ -203,13 +187,15 @@ class ApplicationRepository(OrgScopedRepository[Application]):
             created_by=created_by,
             access_level=data.access_level,
             app_model=data.app_model,
-            repo_path=f"apps/{data.slug}",
+            repo_path=(f"apps/{data.slug}" if data.app_model == "inline_v1" else None),
         )
         self.session.add(application)
         await self.session.flush()
 
-        # Scaffold initial files via FileStorageService
-        await self._scaffold_code_files(application.slug)
+        # V1 source remains workspace-owned. V2 source is local-only and is
+        # uploaded transiently by `bifrost app deploy`.
+        if data.app_model == "inline_v1":
+            await self._scaffold_code_files(application.slug)
 
         # Add role associations if role_based access
         if data.access_level == "role_based" and data.role_ids:

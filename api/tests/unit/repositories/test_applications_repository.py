@@ -11,6 +11,7 @@ MultipleResultsFound. Mirrors test_deploy_takes_advisory_lock_on_slug.
 from __future__ import annotations
 
 import uuid
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -68,17 +69,18 @@ async def test_create_application_takes_slug_advisory_lock_first(db_session, mon
     ), "duplicate-check SELECT not found after the lock"
 
 
-async def test_create_application_barks_on_v2_default(db_session):
-    """A bare `apps create` defaults to standalone_v2, but a loose (non-solution)
-    v2 app can never render (only a Solution deploy builds its dist). So
-    create_application REFUSES v2 with a message pointing at the Solution flow.
-    Solution apps are created by deploy, not this path."""
+async def test_create_application_creates_v2_without_repo_source(db_session, monkeypatch):
+    """Independent V2 Apps have metadata only; source never enters _repo."""
     repo = ApplicationRepository(db_session, org_id=None, user_id=None, is_superuser=True)
-    with pytest.raises(ValueError, match="Solution"):
-        await repo.create_application(
-            ApplicationCreate(name="V2 loose", slug=f"v2-{uuid.uuid4().hex[:8]}"),
-            created_by="dev@x",
-        )
+    scaffold = AsyncMock()
+    monkeypatch.setattr(repo, "_scaffold_code_files", scaffold)
+    app = await repo.create_application(
+        ApplicationCreate(name="V2 App", slug=f"v2-{uuid.uuid4().hex[:8]}"),
+        created_by="dev@x",
+    )
+    assert app.repo_path is None
+    assert app.solution_id is None
+    scaffold.assert_not_awaited()
 
 
 async def test_create_application_default_is_v2():

@@ -111,6 +111,26 @@ describe("Applications — app launch behavior", () => {
 		).toBeInTheDocument();
 		expect(screen.queryByText(/open published/i)).not.toBeInTheDocument();
 	});
+
+	it("shows an undeployed v2 App without an in-platform code editor", async () => {
+		mockUseApplications.mockReturnValue({
+			data: {
+				applications: [
+					makeApp({
+						app_model: "standalone_v2",
+						is_published: false,
+					}),
+				],
+			},
+			isLoading: false,
+			refetch: vi.fn(),
+		});
+		await renderPage();
+		expect(screen.getByText("Not deployed")).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: /code editor/i }),
+		).not.toBeInTheDocument();
+	});
 });
 
 describe("Applications — solution-managed badge (grid view)", () => {

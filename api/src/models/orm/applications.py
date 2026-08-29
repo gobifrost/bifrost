@@ -41,7 +41,10 @@ class Application(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), nullable=False)
-    repo_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    # Legacy inline apps and Solution-owned apps have source in the workspace.
+    # Independently deployed v2 apps deliberately do not: their source only
+    # exists on the developer's machine and as transient deploy input.
+    repo_path: Mapped[str | None] = mapped_column(String(500), nullable=True)
     organization_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("organizations.id", ondelete="CASCADE"), default=None
     )
@@ -62,6 +65,14 @@ class Application(Base):
     # NULL = never published, empty dict = published with no files
     published_snapshot: Mapped[dict | None] = mapped_column(
         JSON, default=None, nullable=True
+    )
+
+    # Independent v2 deployments are immutable, versioned artifacts. Switching
+    # this pointer after a complete upload makes activation atomic and leaves
+    # the previous deployment live if a build or upload fails.
+    active_deployment_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    deployed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None, nullable=True
     )
 
     # Access control (follows same pattern as forms)
@@ -116,15 +127,16 @@ class Application(Base):
     def is_published(self) -> bool:
         """Whether the app is live/openable.
 
-        standalone_v2 apps have NO publish concept — there is no draft→live
-        editor flow; a v2 app is source-built and served, so created == published
-        (it's "published" by existing). The publish/draft model is v1-only, so
-        is_published is unconditionally True for v2 and the v1 "Not Published"
-        gate never applies to it. For inline_v1 it stays "published at least once"
-        (a published_snapshot exists).
+        standalone_v2 apps have no publish concept: Solution-owned apps are
+        launchable after their Solution deploy, while independently managed
+        apps are launchable after their first App deploy. ``is_published`` is a
+        compatibility field for existing launch gates. For inline_v1 it still
+        means "published at least once" (a published_snapshot exists).
         """
         if self.app_model == "standalone_v2":
-            return True
+            # Solution deployments still use the original unversioned artifact
+            # path. Detached apps become launchable only after app deploy.
+            return self.solution_id is not None or self.active_deployment_id is not None
         return self.published_snapshot is not None
 
     @property
@@ -146,4 +158,6 @@ class Application(Base):
     @property
     def repo_prefix(self) -> str:
         """Return the repo path prefix for this app, with trailing slash."""
+        if self.repo_path is None:
+            raise ValueError("This app has no server-side source path")
         return f"{self.repo_path.rstrip('/')}/"

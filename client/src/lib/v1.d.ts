@@ -9164,6 +9164,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/applications/{app_id}/deploy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deploy an App
+         * @description Build local App source and atomically activate the resulting artifact.
+         *
+         *     Source is staged only for the platform job and is deleted whether the job
+         *     succeeds or fails. The Application row and object storage retain compiled
+         *     ``dist`` files only.
+         */
+        post: operations["deploy_application_api_applications__app_id__deploy_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/applications/{app_id}/publish": {
         parameters: {
             query?: never;
@@ -11951,6 +11975,11 @@ export interface components {
             organization_id: string | null;
             /** Published At */
             published_at: string | null;
+            /**
+             * Deployed At
+             * @description When the currently active app artifact was deployed.
+             */
+            deployed_at?: string | null;
             /** Created At */
             created_at: string | null;
             /** Updated At */
@@ -11987,9 +12016,9 @@ export interface components {
             role_ids?: string[];
             /**
              * Repo Path
-             * @description Workspace-relative path to the app's source directory. Mutated via POST /api/applications/{id}/replace.
+             * @description Workspace source path for legacy or Solution-owned apps. Independent apps have no server-side source path.
              */
-            repo_path: string;
+            repo_path?: string | null;
             /**
              * Logo
              * @description Inline presentation logo as a data URL on single-application responses.
@@ -12566,6 +12595,11 @@ export interface components {
              * @enum {string}
              */
             cost_basis: "history" | "fallback";
+        };
+        /** Body_deploy_application_api_applications__app_id__deploy_post */
+        Body_deploy_application_api_applications__app_id__deploy_post: {
+            /** Source */
+            source: string;
         };
         /** Body_deploy_solution_api_solutions__solution_id__deploy_post */
         Body_deploy_solution_api_solutions__solution_id__deploy_post: {
@@ -43575,6 +43609,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApplicationDefinition"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deploy_application_api_applications__app_id__deploy_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                app_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_deploy_application_api_applications__app_id__deploy_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
                 };
             };
             /** @description Validation Error */

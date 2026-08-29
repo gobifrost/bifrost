@@ -42,11 +42,7 @@ export function AppRouter({ preview = false }: AppRouterProps) {
 	const isEmbed = hasRole("EmbedUser");
 
 	// Fetch application metadata
-	const {
-		data: application,
-		isLoading,
-		error,
-	} = useApplication(slugParam);
+	const { data: application, isLoading, error } = useApplication(slugParam);
 
 	// Drive the browser tab title + favicon from the open app. Skipped in embed
 	// mode, where the host page owns its own chrome. Must run before the early
@@ -75,7 +71,8 @@ export function AppRouter({ preview = false }: AppRouterProps) {
 						<div className="flex items-center gap-2 text-destructive">
 							<AlertTriangle className="h-5 w-5" />
 							<CardTitle>
-								{term(terminology, "app", "formalSingular")} Error
+								{term(terminology, "app", "formalSingular")}{" "}
+								Error
 							</CardTitle>
 						</div>
 						<CardDescription>
@@ -107,13 +104,14 @@ export function AppRouter({ preview = false }: AppRouterProps) {
 						<div className="flex items-center gap-2 text-muted-foreground">
 							<AlertTriangle className="h-5 w-5" />
 							<CardTitle>
-								{term(terminology, "app", "formalSingular")} Not Found
+								{term(terminology, "app", "formalSingular")} Not
+								Found
 							</CardTitle>
 						</div>
 						<CardDescription>
 							The requested{" "}
-							{term(terminology, "app", "formalSingularLower")} does
-							not exist or you don't have access to it.
+							{term(terminology, "app", "formalSingularLower")}{" "}
+							does not exist or you don't have access to it.
 						</CardDescription>
 					</CardHeader>
 					<CardContent>
@@ -130,21 +128,23 @@ export function AppRouter({ preview = false }: AppRouterProps) {
 		);
 	}
 
-	// Handle not published (only for non-preview mode). standalone_v2 apps have
-	// NO publish concept (created == published; deploy serves the source) — the
-	// v1 "Not Published"/"Open Editor" screen must never apply to them. The
-	// server already reports is_published=true for v2; this guards the client too.
-	if (!preview && application.app_model !== "standalone_v2" && !application.is_published) {
+	// V1 uses publish/draft. V2 uses deploy and has no in-platform editor.
+	if (!preview && !application.is_published) {
+		const isV2 = application.app_model === "standalone_v2";
 		return (
 			<div className="min-h-screen flex items-center justify-center p-4">
 				<Card className="max-w-md w-full">
 					<CardHeader>
 						<div className="flex items-center gap-2 text-muted-foreground">
 							<AlertTriangle className="h-5 w-5" />
-							<CardTitle>Not Published</CardTitle>
+							<CardTitle>
+								{isV2 ? "Not Deployed" : "Not Published"}
+							</CardTitle>
 						</div>
 						<CardDescription>
-							This application has not been published yet.
+							{isV2
+								? "Deploy this App from its local project with `bifrost app deploy`."
+								: "This application has not been published yet."}
 						</CardDescription>
 					</CardHeader>
 					<CardContent className="flex gap-2">
@@ -155,13 +155,15 @@ export function AppRouter({ preview = false }: AppRouterProps) {
 							<ArrowLeft className="mr-2 h-4 w-4" />
 							Back
 						</Button>
-						<Button
-							onClick={() =>
-								navigate(`/apps/${slugParam}/edit`)
+						{!isV2 && (
+							<Button
+								onClick={() =>
+									navigate(`/apps/${slugParam}/edit`)
 							}
-						>
-							Open Editor
-						</Button>
+							>
+								Open Editor
+							</Button>
+						)}
 					</CardContent>
 				</Card>
 			</div>

@@ -252,6 +252,38 @@ async def test_local_path_ref_runs_in_function_host():
         await up_runner.cleanup()
 
 
+async def test_app_start_forwards_workflow_to_live_platform_with_separate_scope():
+    record = {}
+    up_port, dev_port = _free_port(), _free_port()
+    up_runner = await _serve(_make_upstream(record), up_port)
+    cfg = DevProxyConfig(
+        upstream_url=f"http://127.0.0.1:{up_port}",
+        token="t",
+        app_id="app-id",
+        org_id="runtime-org",
+        local_workflows=False,
+    )
+    dev_runner = await _serve(
+        build_dev_app(cfg, None, vite_url="http://127.0.0.1:1"), dev_port
+    )
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                f"http://127.0.0.1:{dev_port}/api/workflows/execute",
+                json={"workflow_id": "loose-live-workflow", "input_data": {"x": 1}},
+            )
+        assert response.status_code == 200
+        assert record["execute_body"] == {
+            "workflow_id": "loose-live-workflow",
+            "input_data": {"x": 1},
+            "app_id": "app-id",
+            "org_id": "runtime-org",
+        }
+    finally:
+        await dev_runner.cleanup()
+        await up_runner.cleanup()
+
+
 class _RaisingHost:
     def resolve(self, ref):
         return ref

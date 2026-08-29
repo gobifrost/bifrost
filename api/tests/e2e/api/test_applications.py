@@ -89,6 +89,42 @@ class TestApplicationCRUD:
         # Cleanup
         _delete_app(e2e_client, platform_admin.headers, app["id"])
 
+    def test_create_independent_v2_application_has_no_repo_source(
+        self, e2e_client, platform_admin
+    ):
+        response = e2e_client.post(
+            "/api/applications",
+            headers=platform_admin.headers,
+            json={
+                "name": "Independent V2 App",
+                "slug": "independent-v2-app",
+                "app_model": "standalone_v2",
+            },
+        )
+        assert response.status_code == 201, response.text
+        app = response.json()
+        assert app["repo_path"] is None
+        assert app["solution_id"] is None
+        assert app["is_published"] is False
+        assert app["has_unpublished_changes"] is False
+
+        source_response = e2e_client.get(
+            f"/api/applications/{app['id']}/files",
+            headers=platform_admin.headers,
+        )
+        assert source_response.status_code == 409
+        assert "source is local" in source_response.json()["detail"]
+
+        _delete_app(e2e_client, platform_admin.headers, app["id"])
+
+    def test_non_admin_cannot_deploy_an_application(self, e2e_client, org1_user):
+        response = e2e_client.post(
+            f"/api/applications/{uuid.uuid4()}/deploy",
+            headers=org1_user.headers,
+            files={"source": ("source.zip", b"not-a-zip", "application/zip")},
+        )
+        assert response.status_code == 403
+
     def test_get_application_by_slug(self, e2e_client, platform_admin):
         """Get application by slug."""
         app = _create_app(e2e_client, platform_admin.headers, "get-test-app", name="Get Test App")

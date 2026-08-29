@@ -244,7 +244,6 @@ export function StandaloneV2App({
 	entry,
 	css,
 	baseUrl,
-	appOrgId,
 	runtimeContract,
 }: StandaloneV2AppProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
@@ -277,8 +276,9 @@ export function StandaloneV2App({
 		const basename = isPreview
 			? `/apps/${appSlug}/preview`
 			: `/apps/${appSlug}`;
-		const orgScope =
-			appOrgId ?? (scope.type === "organization" ? scope.orgId : null);
+		// Visibility/deployment scope is separate from runtime data scope. All
+		// Apps run against the user's currently selected organization.
+		const orgScope = scope.type === "organization" ? scope.orgId : null;
 		const entryUrl = new URL(
 			`${assets.baseUrl}/${assets.entry}`,
 			window.location.origin,
@@ -452,7 +452,6 @@ export function StandaloneV2App({
 		isPreview,
 		assets,
 		sourceKey,
-		appOrgId,
 		scope,
 		token,
 	]);

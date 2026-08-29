@@ -254,6 +254,11 @@ async def _get_app_workflow_ids(db: DbSession, app_id: UUID) -> set[UUID]:
     if not app:
         return set()
 
+    # Independently deployed V2 Apps have no server-side source tree. Their
+    # workflow references are resolved dynamically by the live SDK at runtime.
+    if app.repo_path is None:
+        return set()
+
     # Scan file_index for source code
     prefix = app.repo_prefix
     fi_result = await db.execute(
@@ -636,6 +641,15 @@ async def get_workflow_usage_stats(
 
         apps: list[EntityUsage] = []
         for app_row in all_apps:
+            if app_row.repo_path is None:
+                apps.append(
+                    EntityUsage(
+                        id=str(app_row.id),
+                        name=app_row.name,
+                        workflow_count=0,
+                    )
+                )
+                continue
             prefix = app_row.repo_path.rstrip("/") + "/"
             fi_result = await db.execute(
                 select(FileIndex.content).where(

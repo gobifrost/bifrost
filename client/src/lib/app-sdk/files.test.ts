@@ -4,12 +4,14 @@ import {
 	FileNotFoundError,
 	FilePolicyError,
 	files,
+	setDefaultFileScope,
 	setBifrostTransport,
 } from "./files";
 
 let restoreTransport: (() => void) | null = null;
 
 afterEach(() => {
+	setDefaultFileScope(null);
 	restoreTransport?.();
 	restoreTransport = null;
 	vi.unstubAllGlobals();
@@ -27,6 +29,15 @@ function okNoContent() {
 }
 
 describe("files web SDK", () => {
+	it("uses the provider's runtime organization when scope is omitted", async () => {
+		const fetchMock = vi.fn().mockResolvedValue(okJson({ content: "hello", binary: false }));
+		vi.stubGlobal("fetch", fetchMock);
+		setDefaultFileScope("runtime-org");
+
+		await files.read("docs/readme.txt");
+
+		expect(JSON.parse(fetchMock.mock.calls[0][1].body).scope).toBe("runtime-org");
+	});
 	it("read posts to /api/files/read with workspace defaults", async () => {
 		const fetchMock = vi
 			.fn()

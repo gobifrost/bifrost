@@ -3,6 +3,7 @@
 from src.jobs.platform.application_publish import (
     APPLICATION_PUBLISH_DEFINITION,
 )
+from src.jobs.platform.application_deploy import APPLICATION_DEPLOY_DEFINITION
 from src.jobs.platform.base import PlatformJobDefinition
 from src.jobs.platform.system_maintenance import (
     ARTIFACT_RETENTION_CLEANUP_DEFINITION,
@@ -23,6 +24,7 @@ from src.jobs.platform.video_generation import (
 )
 
 _DEFINITIONS = {
+    APPLICATION_DEPLOY_DEFINITION.job_type: APPLICATION_DEPLOY_DEFINITION,
     APPLICATION_PUBLISH_DEFINITION.job_type: APPLICATION_PUBLISH_DEFINITION,
     OAUTH_REFRESH_DEFINITION.job_type: OAUTH_REFRESH_DEFINITION,
     WEBHOOK_RENEWAL_DEFINITION.job_type: WEBHOOK_RENEWAL_DEFINITION,

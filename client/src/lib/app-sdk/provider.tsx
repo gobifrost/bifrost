@@ -18,7 +18,7 @@
  * deployed. The v1 globalThis path is untouched.
  */
 import {
-  createContext,
+	createContext,
   useCallback,
   useContext,
   useEffect,
@@ -28,6 +28,7 @@ import {
   type ReactNode,
 } from "react";
 
+import { setDefaultFileScope } from "./files";
 import { setBifrostTransport, setDefaultAppScope } from "./tables";
 
 export interface BifrostContextValue {
@@ -222,10 +223,11 @@ export function BifrostProvider({
   const installKey = `${baseUrl}|${token}|${orgScope ?? ""}|${appId ?? ""}`;
   const installedRef = useRef<{
     key: string;
-    fetchImpl: typeof fetch | undefined;
-    restoreTransport: () => void;
-    restoreScope: () => void;
-  } | null>(null);
+		fetchImpl: typeof fetch | undefined;
+		restoreTransport: () => void;
+		restoreScope: () => void;
+		restoreFileScope: () => void;
+	} | null>(null);
   // Restore scheduled by the effect cleanup, pending in a microtask. A
   // re-install (render-time or effect re-run) cancels it by replacing the
   // marker, so StrictMode's synthetic cleanup→re-setup never actually
@@ -246,17 +248,19 @@ export function BifrostProvider({
         // (the table equivalent of the useWorkflow app_id, Codex #15).
         ...(appId ? { "X-Bifrost-App": appId } : {}),
       },
-    });
-    const restoreScope = setDefaultAppScope(orgScope);
-    const prev = installedRef.current;
+		});
+		const restoreScope = setDefaultAppScope(orgScope);
+		const restoreFileScope = setDefaultFileScope(orgScope);
+		const prev = installedRef.current;
     installedRef.current = {
       key: installKey,
       fetchImpl,
       // Keep the FIRST install's restores: unmount must return to the
       // pre-mount transport/scope, not to one of our own intermediates.
-      restoreTransport: prev?.restoreTransport ?? restoreTransport,
-      restoreScope: prev?.restoreScope ?? restoreScope,
-    };
+			restoreTransport: prev?.restoreTransport ?? restoreTransport,
+			restoreScope: prev?.restoreScope ?? restoreScope,
+			restoreFileScope: prev?.restoreFileScope ?? restoreFileScope,
+		};
   };
   const installRef = useRef(install);
   installRef.current = install;
@@ -290,10 +294,11 @@ export function BifrostProvider({
       queueMicrotask(() => {
         if (pendingRestoreRef.current !== pending) return;
         pendingRestoreRef.current = null;
-        installedRef.current = null;
-        installed.restoreTransport();
-        installed.restoreScope();
-      });
+				installedRef.current = null;
+				installed.restoreTransport();
+				installed.restoreScope();
+				installed.restoreFileScope();
+			});
     };
   }, []);
 

@@ -156,7 +156,7 @@ describe("StandaloneV2App", () => {
 		expect(bootstrap).toMatchObject({
 			token: "tok-1",
 			basename: "/apps/dash",
-			orgScope: "org-42",
+			orgScope: null,
 			appId: "app-1",
 		});
 		expect(window.__BIFROST_APP__).toBeUndefined();
@@ -183,7 +183,7 @@ describe("StandaloneV2App", () => {
 		expect(mount.mock.calls[0][1]).toMatchObject({
 			baseUrl: window.location.origin,
 			token: "local-serving-token",
-			orgScope: "local-install-org",
+			orgScope: "stale-musick-org",
 			appId: "app-1",
 			basename: "/apps/dash",
 		});

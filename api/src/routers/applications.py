@@ -16,7 +16,9 @@ import asyncio
 import base64
 import logging
 import re
-from uuid import UUID
+import tempfile
+from pathlib import Path
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
@@ -24,7 +26,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
-from src.core.auth import Context, CurrentUser
+from src.core.auth import Context, CurrentSuperuser, CurrentUser
 from src.core.log_safety import log_safe
 from src.core.org_filter import resolve_org_filter
 from src.core.pubsub import publish_app_draft_update
@@ -44,6 +46,10 @@ from src.jobs.platform.application_publish import (
     APPLICATION_PUBLISH_DEFINITION,
     ApplicationPublishPayload,
 )
+from src.jobs.platform.application_deploy import (
+    APPLICATION_DEPLOY_DEFINITION,
+    ApplicationDeployPayload,
+)
 from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.models.orm.applications import Application
 from src.services.platform_jobs import (
@@ -51,6 +57,7 @@ from src.services.platform_jobs import (
     ensure_platform_job_notification,
     publish_platform_job_update,
 )
+from src.services.application_deploy_storage import ApplicationDeployStorage
 from src.services.solutions.guard import assert_entity_id_not_solution_managed
 from src.core.exceptions import AccessDeniedError
 from shared.logo_processing import (
@@ -143,6 +150,7 @@ async def application_to_public(
         icon=application.icon,
         organization_id=application.organization_id,
         published_at=application.published_at,
+        deployed_at=application.deployed_at,
         created_at=application.created_at,
         updated_at=application.updated_at,
         created_by=application.created_by,
@@ -475,6 +483,8 @@ async def delete_application(
 ) -> None:
     """Delete an application by ID."""
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
+    application = await get_application_by_id_or_404(ctx, app_id)
+    active_deployment_id = application.active_deployment_id
     repo = ApplicationRepository(
         ctx.db,
         ctx.org_id,
@@ -489,6 +499,18 @@ async def delete_application(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Application '{app_id}' not found",
         )
+    await ctx.db.commit()
+    if active_deployment_id is not None:
+        from src.services.solutions.app_build import SolutionAppBuilder
+
+        try:
+            await SolutionAppBuilder().delete_deployment(app_id, active_deployment_id)
+        except Exception:
+            logger.warning(
+                "Failed to remove deleted App deployment %s",
+                active_deployment_id,
+                exc_info=True,
+            )
 
 
 # =============================================================================
@@ -519,6 +541,11 @@ async def get_draft(
         is_external=user.is_external,
     )
     app = await get_application_by_id_or_404(ctx, app_id)
+    if app.repo_path is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This App's source is local. Use `bifrost app deploy`.",
+        )
     export_data = await repo.export_application(app)
     return ApplicationDefinition(
         definition=export_data,
@@ -552,6 +579,11 @@ async def save_draft(
         is_external=user.is_external,
     )
     app = await get_application_by_id_or_404(ctx, app_id)
+    if app.repo_path is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This App has no server-side draft or editor.",
+        )
 
     # Extract files from definition and update
     files_data = data.definition.get("files", [])
@@ -568,6 +600,106 @@ async def save_draft(
 # =============================================================================
 # Publish Endpoint
 # =============================================================================
+
+
+@router.post(
+    "/{app_id}/deploy",
+    response_model=PlatformJobAccepted,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Deploy an App",
+)
+async def deploy_application(
+    app_id: UUID,
+    source: UploadFile = File(...),
+    *,
+    ctx: Context,
+    user: CurrentSuperuser,
+    response: Response,
+) -> PlatformJobAccepted:
+    """Build local App source and atomically activate the resulting artifact.
+
+    Source is staged only for the platform job and is deleted whether the job
+    succeeds or fails. The Application row and object storage retain compiled
+    ``dist`` files only.
+    """
+    application = await get_application_by_id_or_404(ctx, app_id)
+    if application.solution_id is not None or application.app_model != "standalone_v2":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only independently managed V2 Apps can be deployed with this command.",
+        )
+
+    job_id = uuid4()
+    deployment_id = uuid4()
+    storage = ApplicationDeployStorage(job_id)
+    worker_owns_source = False
+    tmp = tempfile.NamedTemporaryFile(
+        prefix="bifrost-app-upload-", suffix=".zip", delete=False
+    )
+    tmp_path = Path(tmp.name)
+    try:
+        with tmp:
+            while chunk := await source.read(8 * 1024 * 1024):
+                tmp.write(chunk)
+        input_sha256, _size = await storage.write_path(tmp_path)
+        job, reused = await enqueue_platform_job(
+            ctx.db,
+            APPLICATION_DEPLOY_DEFINITION,
+            ApplicationDeployPayload(
+                application_id=application.id,
+                deployment_id=deployment_id,
+                input_sha256=input_sha256,
+            ),
+            job_id=job_id,
+            dedupe_key=str(application.id),
+            resource_lock_key=f"application:{application.id}",
+            organization_id=application.organization_id,
+            requested_by_user_id=user.user_id,
+            requested_by_email=user.email,
+            requested_by_name=user.name or user.email or "Unknown",
+            resource_type="application",
+            resource_id=str(application.id),
+            title=f"Deploying {application.name}",
+            action_url=f"/apps/{application.slug}",
+        )
+        if reused:
+            await storage.delete()
+            if job.requested_by_user_id != str(user.user_id):
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="An App deployment is already in progress.",
+                )
+        if job.notification_id is None:
+            try:
+                await ensure_platform_job_notification(ctx.db, job)
+            except Exception:
+                logger.warning(
+                    "App deploy queued without a progress notification",
+                    extra={"platform_job_id": str(job.id)},
+                    exc_info=True,
+                )
+        await ctx.db.commit()
+        worker_owns_source = True
+        await ctx.db.refresh(job)
+        await publish_platform_job_update(job)
+        response.headers["Location"] = f"/api/platform-jobs/{job.id}"
+        return PlatformJobAccepted(
+            job_id=job.id,
+            notification_id=job.notification_id,
+            status=job.status,
+            reused=reused,
+        )
+    except Exception:
+        # Once committed the worker owns deletion. Before that, avoid leaving
+        # an unreferenced source object behind.
+        if not worker_owns_source:
+            try:
+                await storage.delete()
+            except Exception:
+                logger.warning("Failed to clean rejected App source upload", exc_info=True)
+        raise
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 @router.post(
@@ -596,6 +728,11 @@ async def publish_application(
     # Publishing a solution-managed app is a deploy-owned action.
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
     application = await get_application_by_id_or_404(ctx, app_id)
+    if application.app_model == "standalone_v2":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="V2 Apps are deployed, not published. Use `bifrost app deploy`.",
+        )
     job, reused = await enqueue_platform_job(
         ctx.db,
         APPLICATION_PUBLISH_DEFINITION,
@@ -667,6 +804,12 @@ async def replace_application_endpoint(
     """
     # Repointing a solution-managed app's source is a deploy-owned action.
     await assert_entity_id_not_solution_managed(ctx.db, Application, app_id)
+    app = await get_application_by_id_or_404(ctx, app_id)
+    if app.app_model == "standalone_v2":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="V2 App source is local and cannot be assigned an _repo path.",
+        )
     repo = ApplicationRepository(
         ctx.db,
         ctx.org_id,
@@ -758,6 +901,11 @@ async def validate_application(
     from src.models.orm.workflows import Workflow
 
     app = await get_application_by_id_or_404(ctx, app_id)
+    if app.repo_path is None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This App's source is local. Run validation in the local project.",
+        )
     prefix = app.repo_prefix
 
     # Get all app files

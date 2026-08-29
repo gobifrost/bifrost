@@ -709,6 +709,10 @@ def main(args: list[str] | None = None) -> int:
             from bifrost.commands.solution import handle_solution
             return handle_solution(args[1:])
 
+        if command == "app":
+            from bifrost.commands.app import handle_app
+            return handle_app(args[1:])
+
         if command == "deploy":
             from bifrost.commands.solution import handle_deploy
             return handle_deploy(args[1:])
@@ -743,6 +747,7 @@ Commands:
   push        Push local files to Bifrost platform (alias for sync)
   pull        Pull files from Bifrost platform to local directory (alias for sync)
   solution    Manage Solution installs (create, bind, scaffold-app, start, deploy, install)
+  app         Create, bind, start, and deploy an App project
   deploy      Deploy the current Solution workspace (alias for 'solution deploy')
   watch       Watch for file changes and auto-push
   api         Generic authenticated API request
