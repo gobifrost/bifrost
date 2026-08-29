@@ -163,6 +163,7 @@ class TestEventSourceCRUD:
         # Should have at least the generic adapter
         adapter_names = [a["name"] for a in data["adapters"]]
         assert "generic" in adapter_names
+        assert "microsoft_bot_framework" in adapter_names
 
     def test_create_webhook_source(self, e2e_client, platform_admin):
         """Platform admin creates webhook event source."""
@@ -505,6 +506,45 @@ class TestWebhookReceiver:
 
         assert response.status_code == 202, f"Expected 202, got {response.status_code}: {response.text}"
         assert response.text == "Accepted"
+
+    def test_teams_bot_webhook_requires_microsoft_bearer_token(
+        self, e2e_client, platform_admin
+    ):
+        """Teams bot sources reject unauthenticated public requests."""
+        create_response = e2e_client.post(
+            "/api/events/sources",
+            headers=platform_admin.headers,
+            json={
+                "name": f"E2E Teams Bot {uuid.uuid4().hex[:8]}",
+                "source_type": "webhook",
+                "organization_id": None,
+                "webhook": {
+                    "adapter_name": "microsoft_bot_framework",
+                    "config": {
+                        "app_id": "11111111-1111-1111-1111-111111111111",
+                        "tenant_id": "22222222-2222-2222-2222-222222222222",
+                    },
+                },
+            },
+        )
+        assert create_response.status_code == 201, create_response.text
+        source = create_response.json()
+
+        try:
+            response = e2e_client.post(
+                f"/api/hooks/{source['id']}",
+                json={
+                    "type": "message",
+                    "channelId": "msteams",
+                    "serviceUrl": "https://smba.trafficmanager.net/amer/",
+                },
+            )
+            assert response.status_code == 401, response.text
+        finally:
+            e2e_client.delete(
+                f"/api/events/sources/{source['id']}",
+                headers=platform_admin.headers,
+            )
 
     def test_webhook_creates_event(self, e2e_client, platform_admin, event_source):
         """Webhook POST creates Event record."""
