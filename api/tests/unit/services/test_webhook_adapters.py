@@ -27,6 +27,7 @@ from src.services.webhooks import registry as webhook_registry
 from src.services.webhooks.protocol import (
     Deliver,
     Rejected,
+    SubscribeResult,
     WebhookAdapter,
     WebhookIntegrationAuth,
     WebhookRequest,
@@ -625,6 +626,19 @@ class TestMicrosoftBotFrameworkAdapter:
             )
 
     @pytest.mark.asyncio
+    async def test_subscribe_allows_integration_mapping_admission(self, adapter):
+        result = await adapter.subscribe(
+            "https://example.com/hook",
+            {
+                "app_id": self.app_id,
+                "tenant_admission": "integration_mappings",
+            },
+            None,
+        )
+
+        assert isinstance(result, SubscribeResult)
+
+    @pytest.mark.asyncio
     async def test_missing_bearer_token_is_rejected(self, adapter):
         result = await adapter.handle_request(
             self._request(self._activity()),
@@ -717,3 +731,29 @@ class TestMicrosoftBotFrameworkAdapter:
 
         assert isinstance(result, Rejected)
         assert result.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_mapping_admission_defers_tenant_authorization_to_processor(
+        self, adapter, signing_material
+    ):
+        private_key, jwk = signing_material
+        adapter._get_signing_jwk = AsyncMock(return_value=jwk)
+        activity = self._activity()
+        activity["channelData"]["tenant"]["id"] = "customer-tenant"
+
+        result = await adapter.handle_request(
+            self._request(activity, self._token(private_key)),
+            {
+                "app_id": self.app_id,
+                "tenant_admission": "integration_mappings",
+            },
+            {},
+        )
+
+        assert isinstance(result, Deliver)
+        assert (
+            adapter.get_mapping_entity_id(
+                result, {"tenant_admission": "integration_mappings"}
+            )
+            == "customer-tenant"
+        )

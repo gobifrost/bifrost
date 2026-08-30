@@ -145,6 +145,9 @@ class Deliver:
     raw_headers: dict[str, str] | None = None
     """Original request headers (for logging)."""
 
+    organization_id: UUID | None = None
+    """Organization resolved from an authenticated integration mapping."""
+
 
 @dataclass
 class Rejected:
@@ -203,6 +206,9 @@ class WebhookAdapter(ABC):
 
     renewal_interval: timedelta | None = None
     """How often to check for subscription renewal. None = no renewal needed."""
+
+    mapping_integration_name: str | None = None
+    """Integration whose mappings may authorize and scope incoming deliveries."""
 
     # ==================== ABSTRACT METHODS ====================
 
@@ -279,6 +285,18 @@ class WebhookAdapter(ABC):
             - Rejected: Reject the request (invalid signature, etc.)
         """
         pass
+
+    def uses_integration_mapping(self, config: dict[str, Any]) -> bool:
+        """Return whether this source authorizes deliveries through mappings."""
+        return False
+
+    def get_mapping_entity_id(
+        self,
+        deliver: Deliver,
+        config: dict[str, Any],
+    ) -> str | None:
+        """Return the external entity ID to resolve for a mapped delivery."""
+        return None
 
     # ==================== OPTIONAL METHODS ====================
 

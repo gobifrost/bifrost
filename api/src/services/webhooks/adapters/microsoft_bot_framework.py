@@ -30,6 +30,7 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
     display_name = "Microsoft Bot Framework"
     description = "Authenticated Microsoft Teams bot activities"
     requires_integration = None
+    mapping_integration_name = "Microsoft Teams Bot"
     renewal_interval = None
 
     _OPENID_URL = "https://login.botframework.com/v1/.well-known/openidconfiguration"
@@ -43,7 +44,7 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
 
     config_schema = {
         "type": "object",
-        "required": ["app_id", "tenant_id"],
+        "required": ["app_id"],
         "properties": {
             "app_id": {
                 "type": "string",
@@ -53,7 +54,20 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
             "tenant_id": {
                 "type": "string",
                 "title": "Microsoft Tenant ID",
-                "description": "Entra tenant ID allowed to send Teams activities.",
+                "description": (
+                    "Entra tenant ID allowed to send Teams activities when tenant "
+                    "admission uses one configured tenant."
+                ),
+            },
+            "tenant_admission": {
+                "type": "string",
+                "title": "Tenant Admission",
+                "description": (
+                    "Authorize one configured tenant or resolve the activity tenant "
+                    "through mappings on the linked Microsoft Teams Bot integration."
+                ),
+                "enum": ["configured_tenant", "integration_mappings"],
+                "default": "configured_tenant",
             },
         },
     }
@@ -68,7 +82,7 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
         if not app_id:
             raise ValueError("Microsoft Bot Framework app_id is required")
         tenant_id = str(config.get("tenant_id") or "").strip()
-        if not tenant_id:
+        if not tenant_id and not self.uses_integration_mapping(config):
             raise ValueError("Microsoft Bot Framework tenant_id is required")
         return SubscribeResult()
 
@@ -96,7 +110,7 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
                 message="Bot Framework app ID is not configured", status_code=500
             )
         tenant_id = str(config.get("tenant_id") or "").strip()
-        if not tenant_id:
+        if not tenant_id and not self.uses_integration_mapping(config):
             return Rejected(
                 message="Bot Framework tenant ID is not configured", status_code=500
             )
@@ -109,7 +123,12 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
             )
 
         try:
-            await self._validate_token(token.strip(), app_id, tenant_id, payload)
+            await self._validate_token(
+                token.strip(),
+                app_id,
+                tenant_id or None,
+                payload,
+            )
         except (jwt.PyJWTError, KeyError, TypeError, ValueError) as exc:
             logger.warning(
                 "Bot Framework token validation failed: %s", type(exc).__name__
@@ -149,11 +168,23 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
             },
         )
 
+    def uses_integration_mapping(self, config: dict[str, Any]) -> bool:
+        return config.get("tenant_admission") == "integration_mappings"
+
+    def get_mapping_entity_id(
+        self,
+        deliver: Deliver,
+        config: dict[str, Any],
+    ) -> str | None:
+        if not self.uses_integration_mapping(config):
+            return None
+        return str(deliver.data.get("tenant_id") or "").strip() or None
+
     async def _validate_token(
         self,
         token: str,
         app_id: str,
-        tenant_id: str,
+        tenant_id: str | None,
         payload: dict[str, Any],
     ) -> None:
         header = jwt.get_unverified_header(token)
@@ -194,7 +225,7 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
             if isinstance(channel_data, dict)
             else None
         )
-        if activity_tenant_id != tenant_id:
+        if tenant_id is not None and activity_tenant_id != tenant_id:
             raise ValueError("Microsoft Teams tenant mismatch")
         endorsements = jwk.get("endorsements") or []
         if channel_id not in endorsements:

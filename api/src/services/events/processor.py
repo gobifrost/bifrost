@@ -33,6 +33,7 @@ from src.models.orm.events import (
     EventSubscription,
     WebhookSource,
 )
+from src.models.orm.integrations import IntegrationMapping
 from src.repositories.events import (
     EventDeliveryRepository,
     EventRepository,
@@ -335,6 +336,16 @@ class EventProcessor:
             return result
 
         if isinstance(result, Deliver):
+            mapping_entity_id = adapter.get_mapping_entity_id(result, config)
+            if mapping_entity_id is not None:
+                mapping_result = await self._authorize_mapped_delivery(
+                    webhook_source=webhook_source,
+                    adapter=adapter,
+                    deliver=result,
+                    entity_id=mapping_entity_id,
+                )
+                if isinstance(mapping_result, Rejected):
+                    return mapping_result
             # Process the event
             return await self._process_delivery(
                 webhook_source=webhook_source,
@@ -349,6 +360,55 @@ class EventProcessor:
             message="Internal error",
             status_code=500,
         )
+
+    async def _authorize_mapped_delivery(
+        self,
+        *,
+        webhook_source: WebhookSource,
+        adapter: Any,
+        deliver: Deliver,
+        entity_id: str,
+    ) -> Deliver | Rejected:
+        """Authorize and scope a delivery through one integration mapping."""
+        integration = webhook_source.integration
+        expected_integration_name = adapter.mapping_integration_name
+        if (
+            integration is None
+            or integration.is_deleted
+            or integration.name != expected_integration_name
+        ):
+            logger.error(
+                "Mapped webhook source is not linked to its required integration",
+                extra={"adapter_name": adapter.name},
+            )
+            return Rejected(
+                message="Webhook mapping integration is not configured",
+                status_code=500,
+            )
+
+        mapping_rows = await self.session.execute(
+            sa.select(IntegrationMapping.organization_id).where(
+                IntegrationMapping.integration_id == integration.id,
+                sa.func.lower(IntegrationMapping.entity_id) == entity_id.lower(),
+                IntegrationMapping.organization_id.is_not(None),
+            )
+        )
+        organization_ids = set(mapping_rows.scalars().all())
+        if len(organization_ids) != 1:
+            logger.warning(
+                "Mapped webhook delivery was rejected",
+                extra={
+                    "adapter_name": adapter.name,
+                    "mapping_match_count": len(organization_ids),
+                },
+            )
+            return Rejected(
+                message="Webhook tenant is not authorized",
+                status_code=403,
+            )
+
+        deliver.organization_id = organization_ids.pop()
+        return deliver
 
     async def emit_topic(
         self,
@@ -473,6 +533,7 @@ class EventProcessor:
             id=uuid.uuid4(),
             event_source_id=event_source.id,
             event_type=deliver.event_type,
+            organization_id=deliver.organization_id,
             received_at=datetime.now(timezone.utc),
             headers=deliver.raw_headers,
             data=deliver.data,

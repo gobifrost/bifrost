@@ -53,6 +53,7 @@ from src.models.orm.events import (
     ScheduleSource,
     WebhookSource,
 )
+from src.models.orm.integrations import Integration
 from src.repositories.events import (
     EventDeliveryRepository,
     EventRepository,
@@ -477,6 +478,38 @@ async def create_source(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail=str(e),
                 ) from e
+
+        uses_integration_mapping = getattr(
+            adapter, "uses_integration_mapping", lambda _config: False
+        )(request.webhook.config)
+        if uses_integration_mapping:
+            mapping_integration_name = getattr(
+                adapter, "mapping_integration_name", None
+            )
+            if not request.webhook.integration_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Adapter '{adapter_name}' requires an integration for "
+                        "mapped-tenant admission"
+                    ),
+                )
+            mapping_integration = await db.get(
+                Integration, request.webhook.integration_id
+            )
+            if (
+                mapping_integration is None
+                or mapping_integration.is_deleted
+                or mapping_integration.name != mapping_integration_name
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(
+                        f"Adapter '{adapter_name}' requires the "
+                        f"'{mapping_integration_name}' integration for "
+                        "mapped-tenant admission"
+                    ),
+                )
 
         # Create webhook source record
         webhook_source = WebhookSource(

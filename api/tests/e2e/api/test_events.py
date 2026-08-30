@@ -195,6 +195,67 @@ class TestEventSourceCRUD:
             headers=platform_admin.headers,
         )
 
+    def test_create_mapped_teams_source_requires_teams_integration(
+        self, e2e_client, platform_admin
+    ):
+        """Mapped Teams admission is bound to the Teams integration."""
+        without_integration = e2e_client.post(
+            "/api/events/sources",
+            headers=platform_admin.headers,
+            json={
+                "name": f"E2E Mapped Teams Missing {uuid.uuid4().hex[:8]}",
+                "source_type": "webhook",
+                "webhook": {
+                    "adapter_name": "microsoft_bot_framework",
+                    "config": {
+                        "app_id": "11111111-1111-1111-1111-111111111111",
+                        "tenant_admission": "integration_mappings",
+                    },
+                },
+            },
+        )
+        assert without_integration.status_code == 400, without_integration.text
+
+        integration_response = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={"name": "Microsoft Teams Bot", "config_schema": []},
+        )
+        assert integration_response.status_code == 201, integration_response.text
+        integration = integration_response.json()
+
+        source = None
+        try:
+            create_response = e2e_client.post(
+                "/api/events/sources",
+                headers=platform_admin.headers,
+                json={
+                    "name": f"E2E Mapped Teams {uuid.uuid4().hex[:8]}",
+                    "source_type": "webhook",
+                    "webhook": {
+                        "adapter_name": "microsoft_bot_framework",
+                        "integration_id": integration["id"],
+                        "config": {
+                            "app_id": "11111111-1111-1111-1111-111111111111",
+                            "tenant_admission": "integration_mappings",
+                        },
+                    },
+                },
+            )
+            assert create_response.status_code == 201, create_response.text
+            source = create_response.json()
+            assert source["webhook"]["integration_id"] == integration["id"]
+        finally:
+            if source is not None:
+                e2e_client.delete(
+                    f"/api/events/sources/{source['id']}",
+                    headers=platform_admin.headers,
+                )
+            e2e_client.delete(
+                f"/api/integrations/{integration['id']}",
+                headers=platform_admin.headers,
+            )
+
     def test_create_webhook_source_returns_callback_url(self, e2e_client, platform_admin):
         """Verify callback URL is /api/hooks/{uuid}."""
         source_name = f"E2E Callback URL Test {uuid.uuid4().hex[:8]}"
