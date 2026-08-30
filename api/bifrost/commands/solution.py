@@ -2996,71 +2996,9 @@ def capture_cmd(
         raise SystemExit(rc)
 
 
-# Composed shadcn "recipe" components (not a single `add`): primitives + a small
-# vendored wrapper. migrate-app vendors the combobox wrapper from this template.
-_COMBOBOX_WRAPPER = '''\
-import { useState } from "react";
-import { Check, ChevronsUpDown } from "lucide-react";
-
-import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import {
-  Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList,
-} from "@/components/ui/command";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-
-export interface ComboboxOption { value: string; label: string; }
-export interface ComboboxProps {
-  options: ComboboxOption[];
-  value?: string;
-  onValueChange?: (value: string) => void;
-  placeholder?: string;
-  searchPlaceholder?: string;
-  emptyText?: string;
-  className?: string;
-}
-
-export function Combobox({
-  options, value, onValueChange, placeholder = "Select…",
-  searchPlaceholder = "Search…", emptyText = "No results.", className,
-}: ComboboxProps) {
-  const [open, setOpen] = useState(false);
-  const selected = options.find((o) => o.value === value);
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button variant="outline" role="combobox" aria-expanded={open}
-          className={cn("w-full justify-between font-normal", className)}>
-          {selected ? selected.label : placeholder}
-          <ChevronsUpDown className="opacity-50" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent className="w-(--radix-popover-trigger-width) p-0">
-        <Command>
-          <CommandInput placeholder={searchPlaceholder} />
-          <CommandList>
-            <CommandEmpty>{emptyText}</CommandEmpty>
-            <CommandGroup>
-              {options.map((o) => (
-                <CommandItem key={o.value} value={o.label}
-                  onSelect={() => { onValueChange?.(o.value); setOpen(false); }}>
-                  <Check className={cn(value === o.value ? "opacity-100" : "opacity-0")} />
-                  {o.label}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
-  );
-}
-'''
-
-
 @solution_group.command(
     name="migrate-app",
-    help="Migrate a v1 inline app dir to a scaffolded standalone_v2 app: scaffold "
+    help="Migrate a v1 inline App directory to a scaffolded V2 App: scaffold "
     "+ port source + rewrite imports + install shadcn. STOPS before build/wire and "
     "prints a checklist of the judgment steps left to you.",
 )
@@ -3076,135 +3014,12 @@ def migrate_app_cmd(source: str, v2_slug: str, title: str | None) -> None:
     v1 layout (``pages/`` + ``components/``); anything else is reported, not
     guessed.
     """
-    import shutil as _shutil
-    import subprocess as _sp
-
     src_dir = pathlib.Path(source).resolve()
     title = title or v2_slug
-
-    # 1. Scaffold the v2 skeleton (Tailwind v4 + radix-rhea + theme already wired).
     app_dir = _scaffold_app(v2_slug, None)
+    from bifrost.app_migration import migrate_v1_source
 
-    # 2. Port v1 source. v1 layout = pages/ + components/ (+ _layout.tsx). Copy
-    #    what exists; report anything unexpected rather than guessing.
-    notes: list[str] = []
-    (app_dir / "src" / "pages").mkdir(parents=True, exist_ok=True)
-    (app_dir / "src" / "components").mkdir(parents=True, exist_ok=True)
-    # Port ALL source files under pages/ + components/ — not just .tsx. A page or
-    # component routinely imports a sibling .ts helper (e.g. metricDefinitions.ts),
-    # a .css, or a .tsx that's a util; dropping those silently breaks the build.
-    ported = 0
-    _SRC_EXT = {".tsx", ".ts", ".jsx", ".js", ".css", ".json"}
-    for sub in ("pages", "components"):
-        srcsub = src_dir / sub
-        if srcsub.is_dir():
-            for f in srcsub.rglob("*"):
-                if not f.is_file() or ".tmp." in f.name or f.suffix not in _SRC_EXT:
-                    continue
-                rel = f.relative_to(srcsub)
-                dest = app_dir / "src" / sub / rel
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                _shutil.copy(f, dest)
-                ported += 1
-    # The v1 _layout.tsx defines the app's shared nav chrome (NavLink sections +
-    # <Outlet/>). It's NOT auto-wired — port it next to the pages so it's visible,
-    # and the checklist tells the human to turn it into the v2 RootLayout.
-    layout_src = src_dir / "_layout.tsx"
-    has_layout = layout_src.is_file()
-    if has_layout:
-        _shutil.copy(layout_src, app_dir / "src" / "_layout.tsx")
-        ported += 1
-    # Flag non-standard top-level files (e.g. app.yaml, extra dirs) NOT ported.
-    extras = [
-        p.name for p in src_dir.iterdir()
-        if p.name not in ("pages", "components", "_layout.tsx")
-        and not p.name.startswith(".")
-    ]
-    if extras:
-        notes.append(f"v1 app had non-standard top-level entries not auto-ported: {extras} — review by hand.")
-
-    # 3. Deterministic import rewrite (--v2) — compute the shadcn-add list + split.
-    from bifrost.migrate_v2 import (
-        compute_shadcn_adds,
-        is_ui_source,
-        rewrite_v2_imports,
-        scan_third_party_deps,
-    )
-    from bifrost.migrate_imports import load_lucide_icon_names
-
-    lucide = frozenset(load_lucide_icon_names())
-    tsx_files = [
-        p for p in sorted((app_dir / "src").rglob("*.tsx")) if not is_ui_source(p)
-    ]
-    sources = {p: p.read_text(encoding="utf-8") for p in tsx_files}
-    adds = compute_shadcn_adds(list(sources.values()))
-    for p, srctext in sources.items():
-        new = rewrite_v2_imports(srctext, lucide)
-        if new != srctext:
-            p.write_text(new, encoding="utf-8")
-    # Third-party deps the v1 app imports DIRECTLY (not from bifrost) — the rewrite
-    # leaves these alone, so they must be npm-installed or the build breaks on e.g.
-    # recharts. Scan the post-rewrite sources (so our own @/ + sonner additions
-    # don't count) across ALL ported source, not just tsx.
-    all_src = [p.read_text() for p in (app_dir / "src").rglob("*")
-               if p.is_file() and p.suffix in {".tsx", ".ts", ".jsx", ".js"}
-               and not is_ui_source(p)]
-    third_party = scan_third_party_deps(all_src)
-    # Collect TODO markers (unresolved v1 imports) + no-v2-equivalent hooks.
-    unresolved = [p.name for p, _ in sources.items() if "TODO(migrate)" in p.read_text()]
-    no_v2_hook = sorted({
-        h for txt in (p.read_text() for p in tsx_files)
-        for h in ("useUser", "useAppState", "RequireRole") if h in txt
-    })
-
-    # 4. Install shadcn components (real radix-rhea source) + recipe + third-party.
-    click.echo("Installing dependencies …")
-    _sp.run(["npm", "install"], cwd=app_dir, check=False, capture_output=True)
-    if adds:
-        click.echo(f"shadcn components: {' '.join(adds)}")
-        _sp.run(["npx", "shadcn@latest", "add", *adds, "--yes"],
-                cwd=app_dir, check=False, capture_output=True)
-        _sp.run(["npm", "install", "radix-ui", "sonner"],
-                cwd=app_dir, check=False, capture_output=True)
-        # Vendor the combobox recipe wrapper if the app uses it.
-        if "combobox" in adds:
-            (app_dir / "src" / "components" / "ui" / "combobox.tsx").write_text(_COMBOBOX_WRAPPER)
-    if third_party:
-        click.echo(f"third-party deps (direct v1 imports): {' '.join(third_party)}")
-        _sp.run(["npm", "install", *third_party], cwd=app_dir, check=False, capture_output=True)
-
-    # 5. STOP. Print the judgment checklist — never silently build/wire/deploy.
-    click.echo("")
-    click.echo(f"✓ Ported {ported} file(s), {len(adds)} shadcn component(s), "
-               f"{len(third_party)} third-party dep(s).")
-    click.echo("")
-    click.echo("NEXT (human judgment — migrate-app stops here ON PURPOSE):")
-    # Route wiring — the load-bearing step. v1 used FILE-BASED routing
-    # (pages/<path>.tsx → /<path>, [id].tsx → :id, _layout.tsx = shared chrome).
-    # v2 uses plain react-router, so the routes must be authored explicitly.
-    click.echo("  1. Wire src/App.tsx routes from the ported pages. v1 used FILE-BASED routing;")
-    click.echo("     recreate it with react-router: pages/foo.tsx → <Route path=\"foo\">, ")
-    click.echo("     pages/a/b.tsx → path=\"a/b\", pages/x/[id].tsx → path=\"x/:id\" (useParams()).")
-    click.echo(f"     Add <BifrostHeader title=\"{title}\"/> + <Toaster/> at the top.")
-    if has_layout:
-        click.echo("     src/_layout.tsx is the v1 shared nav chrome — make it the RootLayout: a")
-        click.echo("     parent <Route element={<RootLayout/>}> whose RootLayout renders the nav +")
-        click.echo("     <Outlet/>; nest the section pages under it. (It already uses <Outlet/>.)")
-    if unresolved:
-        click.echo(f"  2. Resolve TODO(migrate) imports in: {unresolved} (no auto-mapping found).")
-    if no_v2_hook:
-        click.echo(f"  3. Port v1-only hooks (NO v2 SDK equivalent): {no_v2_hook}. There is no")
-        click.echo("     useUser in v2 — use `useBifrostContext()` from \"bifrost\" for token/org/")
-        click.echo("     logout/theme; decode the JWT in ctx.token if you need the user's email.")
-    click.echo("  4. Workflow refs: rewrite any UUID refs to portable path::fn (and ensure "
-               "those workflows exist in the target env).")
-    for n in notes:
-        click.echo(f"  • {n}")
-    click.echo("  5. `npm run build` (must pass — a build error names the missing import), then")
-    click.echo("     `bifrost solution start` AND screenshot at least 2 routes (render ≠ build).")
-    click.echo("  6. Cutover: `bifrost solution swap-slugs <old> <new>`, then `bifrost solution "
-               "capture` LAST (capture is terminal — deploy after it wipes captures).")
-    click.echo(f"\nApp at {app_dir}")
+    migrate_v1_source(src_dir, app_dir, title=title, lifecycle="solution")
 
 
 @solution_group.command(
@@ -3222,43 +3037,13 @@ def swap_slugs_cmd(app_a: str, app_b: str) -> None:
     is a deploy-owned property for those).
     """
 
-    async def _run() -> int:
-        client = BifrostClient.get_instance(require_auth=True)
+    from bifrost.commands.app import swap_app_slugs
 
-        async def _resolve(ref: str) -> str:
-            # An id passes straight through; a slug resolves via GET /{slug}.
-            try:
-                import uuid as _uuid
-
-                _uuid.UUID(ref)
-                return ref
-            except (ValueError, AttributeError):
-                pass
-            resp = await client.get(f"/api/applications/{ref}")
-            if resp.status_code != 200:
-                raise click.ClickException(
-                    f"No application '{ref}' ({resp.status_code}): {resp.text[:160]}"
-                )
-            return resp.json()["id"]
-
-        a_id = await _resolve(app_a)
-        b_id = await _resolve(app_b)
-        resp = await client.post(
-            "/api/applications/swap-slugs", json={"app_a": a_id, "app_b": b_id}
+    asyncio.run(
+        swap_app_slugs(
+            BifrostClient.get_instance(require_auth=True), app_a, app_b
         )
-        if resp.status_code not in (200, 201):
-            raise click.ClickException(
-                f"Slug swap failed ({resp.status_code}): {resp.text[:300]}"
-            )
-        apps = resp.json().get("applications", [])
-        for app in apps:
-            click.echo(f"  {app['name']} → /apps/{app['slug']}")
-        click.echo("Slug swap complete.")
-        return 0
-
-    rc = asyncio.run(_run())
-    if rc:
-        raise SystemExit(rc)
+    )
 
 
 _SDK_DOWNLOAD_SUFFIX = "/api/sdk/download"

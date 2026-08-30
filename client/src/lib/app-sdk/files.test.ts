@@ -179,6 +179,25 @@ describe("files web SDK", () => {
 		});
 	});
 
+	it("signedUrl combines the provider organization with custom expiration", async () => {
+		const fetchMock = vi.fn().mockResolvedValue(
+			okJson({
+				url: "https://s3/x",
+				path: "_repo/x",
+				expires_in: 3600,
+			}),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+		setDefaultFileScope("runtime-org");
+
+		await files.signedUrl("x.txt", { method: "GET", expiresIn: 3600 });
+
+		expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+			scope: "runtime-org",
+			expires_in: 3600,
+		});
+	});
+
 	it("signedUrls uses the batch endpoint without workflow endpoints", async () => {
 		const fetchMock = vi
 			.fn()

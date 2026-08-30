@@ -30,6 +30,7 @@ TOP_LEVEL_COMMANDS = {
     "push",
     "pull",
     "solution",
+    "app",
     "deploy",
     "watch",
     "api",

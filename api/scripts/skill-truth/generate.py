@@ -36,11 +36,12 @@ def _walk_group(name: str, group: click.Group, lines: list[str], depth: int = 0)
 
 def gen_cli_reference() -> str:
     from bifrost.commands import ENTITY_GROUPS
+    from bifrost.commands.app import app_group
     from bifrost.commands.solution import solution_group
 
     lines: list[str] = ["# CLI Reference (generated — do not edit)\n"]
     lines.append("> Regenerate: `python api/scripts/skill-truth/generate.py`. CI enforces freshness.\n")
-    groups = {**ENTITY_GROUPS, "solution": solution_group}
+    groups = {**ENTITY_GROUPS, "app": app_group, "solution": solution_group}
     for name in sorted(groups):
         _walk_group(name, groups[name], lines)
     return "\n".join(lines) + "\n"

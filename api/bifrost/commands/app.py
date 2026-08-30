@@ -85,25 +85,17 @@ async def _find_app(client: BifrostClient, ref: str) -> dict:
     return match
 
 
-@app_group.command("create")
-@click.argument("path", default=".", type=click.Path(file_okay=False))
-@click.option("--name", default=None, help="App display name (default: directory name).")
-@click.option("--slug", default=None, help="URL slug (default: derived from name).")
-@click.option("--org", "org_ref", default=None, help="Organization UUID or name.")
-@click.option("--global", "is_global", is_flag=True, help="Create a globally visible App.")
-@click.option("--url", "api_url", default=None, help="Bifrost instance URL.")
-def create_cmd(
-    path: str,
+def _create_project(
+    root: pathlib.Path,
+    *,
     name: str | None,
     slug: str | None,
     org_ref: str | None,
     is_global: bool,
     api_url: str | None,
-) -> None:
-    """Create a Vite project and its remote App record."""
+) -> tuple[dict, str]:
     if org_ref and is_global:
         raise click.UsageError("Use either --org or --global, not both.")
-    root = pathlib.Path(path).resolve()
     if root.exists() and any(root.iterdir()):
         raise click.ClickException(f"{root} is not empty.")
     display_name = name or (root.name if root.name not in {"", "."} else "my-app")
@@ -135,8 +127,77 @@ def create_cmd(
         # The remote row is intentionally retained: deleting it automatically
         # would be a destructive side effect after a local filesystem failure.
         raise
+    return app, app_slug
+
+
+@app_group.command("create")
+@click.argument("path", default=".", type=click.Path(file_okay=False))
+@click.option("--name", default=None, help="App display name (default: directory name).")
+@click.option("--slug", default=None, help="URL slug (default: derived from name).")
+@click.option("--org", "org_ref", default=None, help="Organization UUID or name.")
+@click.option("--global", "is_global", is_flag=True, help="Create a globally visible App.")
+@click.option("--url", "api_url", default=None, help="Bifrost instance URL.")
+def create_cmd(
+    path: str,
+    name: str | None,
+    slug: str | None,
+    org_ref: str | None,
+    is_global: bool,
+    api_url: str | None,
+) -> None:
+    """Create a Vite project and its remote App record."""
+    root = pathlib.Path(path).resolve()
+    app, _ = _create_project(
+        root,
+        name=name,
+        slug=slug,
+        org_ref=org_ref,
+        is_global=is_global,
+        api_url=api_url,
+    )
     click.echo(f"Created App {app['id']} in {root}")
     click.echo("Run `npm install`, then `bifrost app start`.")
+
+
+@app_group.command("migrate")
+@click.argument("source", type=click.Path(exists=True, file_okay=False))
+@click.argument("path", type=click.Path(file_okay=False))
+@click.option("--name", default=None, help="App display name (default: destination name).")
+@click.option("--slug", default=None, help="Temporary V2 URL slug (default: derived from name).")
+@click.option("--org", "org_ref", default=None, help="Organization UUID or name.")
+@click.option("--global", "is_global", is_flag=True, help="Create a globally visible App.")
+@click.option("--url", "api_url", default=None, help="Bifrost instance URL.")
+def migrate_cmd(
+    source: str,
+    path: str,
+    name: str | None,
+    slug: str | None,
+    org_ref: str | None,
+    is_global: bool,
+    api_url: str | None,
+) -> None:
+    """Migrate a pulled v1 App directory into an independent V2 App project."""
+    source_root = pathlib.Path(source).resolve()
+    root = pathlib.Path(path).resolve()
+    if source_root == root or source_root in root.parents:
+        raise click.ClickException("Migration destination must be outside the v1 source directory.")
+    app, app_slug = _create_project(
+        root,
+        name=name,
+        slug=slug,
+        org_ref=org_ref,
+        is_global=is_global,
+        api_url=api_url,
+    )
+    from bifrost.app_migration import migrate_v1_source
+
+    migrate_v1_source(
+        source_root,
+        root,
+        title=name or app_slug,
+        lifecycle="app",
+    )
+    click.echo(f"Created migrated App {app['id']} in {root}")
 
 
 @app_group.command("bind")
@@ -185,6 +246,45 @@ def _zip_project(root: pathlib.Path, destination: pathlib.Path) -> None:
             included += 1
     if included == 0:
         raise click.ClickException("The App project contains no deployable files.")
+
+
+async def swap_app_slugs(client: BifrostClient, app_a: str, app_b: str) -> None:
+    """Resolve two App refs and atomically exchange their public slugs."""
+    from uuid import UUID
+
+    async def resolve(ref: str) -> str:
+        try:
+            UUID(ref)
+            return ref
+        except (TypeError, ValueError):
+            response = await client.get(f"/api/applications/{ref}")
+            if response.status_code != 200:
+                raise click.ClickException(
+                    f"No application '{ref}' ({response.status_code}): "
+                    f"{response.text[:160]}"
+                )
+            return str(response.json()["id"])
+
+    response = await client.post(
+        "/api/applications/swap-slugs",
+        json={"app_a": await resolve(app_a), "app_b": await resolve(app_b)},
+    )
+    if response.status_code not in (200, 201):
+        raise click.ClickException(
+            f"Slug swap failed ({response.status_code}): {response.text[:300]}"
+        )
+    for app in response.json().get("applications", []):
+        click.echo(f"  {app['name']} → /apps/{app['slug']}")
+    click.echo("Slug swap complete.")
+
+
+@app_group.command("swap-slugs")
+@click.argument("app_a")
+@click.argument("app_b")
+@click.option("--url", "api_url", default=None, help="Bifrost instance URL.")
+def swap_slugs_cmd(app_a: str, app_b: str, api_url: str | None) -> None:
+    """Atomically exchange v1 and independent V2 App slugs during cutover."""
+    asyncio.run(swap_app_slugs(_client(api_url), app_a, app_b))
 
 
 async def _wait_for_deploy(client: BifrostClient, job_id: str) -> dict:

@@ -54,9 +54,10 @@ class Finding:
 
 def _load_groups() -> dict[str, "click.Group"]:
     from bifrost.commands import ENTITY_GROUPS
+    from bifrost.commands.app import app_group
     from bifrost.commands.solution import solution_group
 
-    return {**ENTITY_GROUPS, "solution": solution_group}
+    return {**ENTITY_GROUPS, "app": app_group, "solution": solution_group}
 
 
 def _block_mode(filename: str, info: str) -> str:
