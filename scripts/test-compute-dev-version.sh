@@ -39,24 +39,24 @@ run_test() {
 }
 
 run_test "tag at HEAD, no commits ahead" \
-  'git commit --allow-empty -m init -q && git tag v0.8.0' \
-  '0.8.1-dev.0' 0
+  'GIT_AUTHOR_DATE=@1000000000 GIT_COMMITTER_DATE=@1000000000 git commit --allow-empty -m init -q && git tag v0.8.0' \
+  '0.8.1-dev.1000000000' 0
 
-run_test "tag with 1 commit ahead" \
-  'git commit --allow-empty -m init -q && git tag v0.8.0 && git commit --allow-empty -m c1 -q' \
-  '0.8.1-dev.1' 0
+run_test "version follows HEAD committer timestamp" \
+  'GIT_AUTHOR_DATE=@1000000000 GIT_COMMITTER_DATE=@1000000000 git commit --allow-empty -m init -q && git tag v0.8.0 && GIT_AUTHOR_DATE=@1000000042 GIT_COMMITTER_DATE=@1000000042 git commit --allow-empty -m c1 -q' \
+  '0.8.1-dev.1000000042' 0
 
-run_test "tag with 47 commits ahead" \
-  'git commit --allow-empty -m init -q && git tag v0.8.0 && for i in $(seq 47); do git commit --allow-empty -m "c$i" -q; done' \
-  '0.8.1-dev.47' 0
+run_test "history length does not determine sequence" \
+  'GIT_AUTHOR_DATE=@1000000000 GIT_COMMITTER_DATE=@1000000000 git commit --allow-empty -m init -q && git tag v0.8.0 && for i in $(seq 47); do GIT_AUTHOR_DATE=@1000000047 GIT_COMMITTER_DATE=@1000000047 git commit --allow-empty -m "c$i" -q; done' \
+  '0.8.1-dev.1000000047' 0
 
 run_test "release sets next dev cycle floor" \
-  'git commit --allow-empty -m init -q && git tag v0.8.0 && git commit --allow-empty -m c1 -q && git tag v0.9.0 && git commit --allow-empty -m c2 -q' \
-  '0.9.1-dev.1' 0
+  'GIT_AUTHOR_DATE=@1000000000 GIT_COMMITTER_DATE=@1000000000 git commit --allow-empty -m init -q && git tag v0.8.0 && GIT_AUTHOR_DATE=@1000000001 GIT_COMMITTER_DATE=@1000000001 git commit --allow-empty -m c1 -q && git tag v0.9.0 && GIT_AUTHOR_DATE=@1000000002 GIT_COMMITTER_DATE=@1000000002 git commit --allow-empty -m c2 -q' \
+  '0.9.1-dev.1000000002' 0
 
 run_test "minor with double-digit patch" \
-  'git commit --allow-empty -m init -q && git tag v1.2.10 && git commit --allow-empty -m c1 -q' \
-  '1.2.11-dev.1' 0
+  'GIT_AUTHOR_DATE=@1000000000 GIT_COMMITTER_DATE=@1000000000 git commit --allow-empty -m init -q && git tag v1.2.10 && GIT_AUTHOR_DATE=@1000000001 GIT_COMMITTER_DATE=@1000000001 git commit --allow-empty -m c1 -q' \
+  '1.2.11-dev.1000000001' 0
 
 run_test "no tags fails loudly" \
   'git commit --allow-empty -m init -q' \

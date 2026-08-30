@@ -98,7 +98,7 @@ Event publishing operations (async).
 
 **`files.exists(path: str, location: str = 'workspace', mode: Mode = 'cloud', scope: str | None = None) -> bool`**
 
-**`files.get_signed_url(path: str, method: Literal['PUT', 'GET'] = 'PUT', content_type: str = 'application/octet-stream', location: str = 'uploads', scope: str | None = None) -> dict`**
+**`files.get_signed_url(path: str, method: Literal['PUT', 'GET'] = 'PUT', content_type: str = 'application/octet-stream', location: str = 'uploads', scope: str | None = None, expires_in: int = 600) -> dict`**
 
 **`files.list(directory: str = '', location: str = 'workspace', mode: Mode = 'cloud', scope: str | None = None) -> list[str]`**
 

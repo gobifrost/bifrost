@@ -333,6 +333,7 @@ class files:
         content_type: str = "application/octet-stream",
         location: str = "uploads",
         scope: str | None = None,
+        expires_in: int = 600,
     ) -> dict:
         """
         Generate a presigned S3 URL for direct file upload or download.
@@ -345,6 +346,7 @@ class files:
                 compatibility with form upload flows. Use "workspace" to sign
                 URLs for files written via `files.write_bytes(..., location="workspace")`.
             scope: Org scope; provider-org override allowed.
+            expires_in: URL lifetime in seconds, from 1 second through 7 days.
 
         Returns:
             dict with keys: url, path, expires_in
@@ -367,6 +369,7 @@ class files:
                 "content_type": content_type,
                 "location": location,
                 "scope": effective_scope,
+                "expires_in": expires_in,
             }
         )
         raise_for_status_with_detail(response)

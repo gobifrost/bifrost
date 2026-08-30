@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
 # Compute a monotonic semver dev version for the current commit.
 #
-# Format: <next-patch>-dev.<commits-since-tag>
-# Example: latest tag v0.8.0, 47 commits ahead -> 0.8.1-dev.47
+# Format: <next-patch>-dev.<HEAD-committer-epoch>
+# Example: latest tag v0.8.0, HEAD committed at epoch 1788062400
+#          -> 0.8.1-dev.1788062400
+#
+# The committer timestamp is part of the commit object, so an exact merge
+# candidate and the same commit on main compute the same version. Unlike a
+# commits-since-tag count, it also cannot move backwards merely because a PR
+# was rebased or squash-merged with fewer commits in its resulting history.
 #
 # Requires: a `v<MAJOR>.<MINOR>.<PATCH>` annotated tag in history.
 # Exits non-zero with a diagnostic on stderr if no usable tag exists.
@@ -24,6 +30,10 @@ minor="${BASH_REMATCH[2]}"
 patch="${BASH_REMATCH[3]}"
 next_patch=$((patch + 1))
 
-commits=$(git rev-list "${last_tag}..HEAD" --count)
+sequence=$(git show -s --format=%ct HEAD 2>/dev/null || true)
+if ! [[ "$sequence" =~ ^[1-9][0-9]*$ ]]; then
+  echo "compute-dev-version: could not read a positive HEAD committer timestamp" >&2
+  exit 1
+fi
 
-printf '%s.%s.%s-dev.%s\n' "$major" "$minor" "$next_patch" "$commits"
+printf '%s.%s.%s-dev.%s\n' "$major" "$minor" "$next_patch" "$sequence"

@@ -23970,6 +23970,12 @@ export interface components {
              * @description Org scope. Required for non-workspace, non-uploads locations.
              */
             scope?: string | null;
+            /**
+             * Expires In
+             * @description URL expiration in seconds (maximum 7 days)
+             * @default 600
+             */
+            expires_in: number;
         };
         /**
          * SignedUrlResponse

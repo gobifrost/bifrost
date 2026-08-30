@@ -32,13 +32,22 @@ class TestSignedUrlRoundTrip:
         }
         return e2e_client.post("/api/files/write", headers=headers, json=body)
 
-    def _sign(self, e2e_client, headers, path: str, location: str, scope: str | None = None):
+    def _sign(
+        self,
+        e2e_client,
+        headers,
+        path: str,
+        location: str,
+        scope: str | None = None,
+        expires_in: int = 600,
+    ):
         body = {
             "path": path,
             "method": "GET",
             "location": location,
             "content_type": "application/octet-stream",
             "scope": scope,
+            "expires_in": expires_in,
         }
         return e2e_client.post("/api/files/signed-url", headers=headers, json=body)
 
@@ -50,9 +59,16 @@ class TestSignedUrlRoundTrip:
         write = self._write(e2e_client, platform_admin.headers, path, "workspace", content)
         assert write.status_code == 204, f"write failed: {write.text}"
 
-        sign = self._sign(e2e_client, platform_admin.headers, path, "workspace")
+        sign = self._sign(
+            e2e_client,
+            platform_admin.headers,
+            path,
+            "workspace",
+            expires_in=604800,
+        )
         assert sign.status_code == 200, f"sign failed: {sign.text}"
         signed = sign.json()
+        assert signed["expires_in"] == 604800
         assert signed["path"] == f"_repo/{path}", (
             f"workspace sign should target _repo/, got {signed['path']}"
         )
