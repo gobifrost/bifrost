@@ -147,6 +147,24 @@ describe("files web SDK", () => {
 			content_type: "application/octet-stream",
 			location: "workspace",
 			scope: null,
+			expires_in: 600,
+		});
+	});
+
+	it("signedUrl forwards a custom expiration", async () => {
+		const fetchMock = vi
+			.fn()
+			.mockResolvedValue(okJson({ url: "https://s3/x", path: "_repo/x", expires_in: 604800 }));
+		vi.stubGlobal("fetch", fetchMock);
+
+		const result = await files.signedUrl("x.txt", {
+			method: "GET",
+			expiresIn: 604800,
+		});
+
+		expect(result.expiresIn).toBe(604800);
+		expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+			expires_in: 604800,
 		});
 	});
 

@@ -169,6 +169,12 @@ class SignedUrlRequest(BaseModel):
     content_type: str = Field(default="application/octet-stream", description="MIME type (only used for PUT)")
     location: str = Field(default="uploads", description="Storage location. Defaults to 'uploads' for backwards compatibility with form upload flows.")
     scope: str | None = Field(default=None, description="Org scope. Required for non-workspace, non-uploads locations.")
+    expires_in: int = Field(
+        default=600,
+        ge=1,
+        le=604800,
+        description="URL expiration in seconds (maximum 7 days)",
+    )
 
 
 class SignedUrlResponse(BaseModel):
@@ -1009,15 +1015,18 @@ async def _build_signed_url(
         url = await file_storage.generate_presigned_upload_url(
             path=s3_path,
             content_type=request.content_type,
+            expires_in=request.expires_in,
         )
     else:
         url = await file_storage.generate_presigned_download_url(
             path=s3_path,
+            expires_in=request.expires_in,
         )
 
     return SignedUrlResponse(
         url=url,
         path=s3_path,
+        expires_in=request.expires_in,
     )
 
 

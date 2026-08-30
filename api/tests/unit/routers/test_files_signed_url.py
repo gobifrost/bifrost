@@ -5,10 +5,11 @@ Tests path validation, location/scope handling, and presigned URL generation.
 Path resolution is delegated to `shared.file_paths.resolve_s3_key`.
 """
 
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
+from pydantic import ValidationError
 
 from src.core.principal import UserPrincipal
 from src.routers.files import (
@@ -59,6 +60,7 @@ class TestSignedUrlRequestModel:
         assert req.content_type == "application/octet-stream"
         assert req.location == "uploads"  # backwards-compat default
         assert req.scope is None
+        assert req.expires_in == 600
 
     def test_explicit_get(self):
         req = SignedUrlRequest(path="data.csv", method="GET")
@@ -71,6 +73,15 @@ class TestSignedUrlRequestModel:
     def test_explicit_scope(self):
         req = SignedUrlRequest(path="file.txt", location="temp", scope="org-123")
         assert req.scope == "org-123"
+
+    def test_explicit_expiration(self):
+        req = SignedUrlRequest(path="file.txt", expires_in=604800)
+        assert req.expires_in == 604800
+
+    @pytest.mark.parametrize("expires_in", [0, 604801])
+    def test_rejects_expiration_outside_s3_bounds(self, expires_in):
+        with pytest.raises(ValidationError):
+            SignedUrlRequest(path="file.txt", expires_in=expires_in)
 
 
 class TestSignedUrlResponseModel:
@@ -213,9 +224,11 @@ class TestPresignedUrlGeneration:
         req = SignedUrlRequest(path="file.pdf", method="PUT", content_type="application/pdf", scope=str(ORG_A))
         result = await get_signed_url(req, _ctx(), MagicMock(), AsyncMock())
         assert result.url == "https://s3/put-url"
+        assert result.expires_in == 600
         mock_fss.generate_presigned_upload_url.assert_awaited_once_with(
             path=f"uploads/{ORG_A}/file.pdf",
             content_type="application/pdf",
+            expires_in=600,
         )
 
     @pytest.mark.asyncio
@@ -225,9 +238,16 @@ class TestPresignedUrlGeneration:
         mock_fss.generate_presigned_download_url = AsyncMock(return_value="https://s3/get-url")
         mock_fss_class.return_value = mock_fss
 
-        req = SignedUrlRequest(path="file.pdf", method="GET", scope=str(ORG_A))
+        req = SignedUrlRequest(
+            path="file.pdf",
+            method="GET",
+            scope=str(ORG_A),
+            expires_in=604800,
+        )
         result = await get_signed_url(req, _ctx(), MagicMock(), AsyncMock())
         assert result.url == "https://s3/get-url"
+        assert result.expires_in == 604800
         mock_fss.generate_presigned_download_url.assert_awaited_once_with(
             path=f"uploads/{ORG_A}/file.pdf",
+            expires_in=604800,
         )

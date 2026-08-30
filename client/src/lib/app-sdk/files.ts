@@ -32,6 +32,7 @@ export interface SignedUrlOptions {
 	contentType?: string;
 	location?: string;
 	scope?: string | null;
+	expiresIn?: number;
 }
 
 export interface SignedUrlResult {
@@ -61,6 +62,7 @@ function signedDefaults(options: SignedUrlOptions = {}) {
 		content_type: options.contentType ?? "application/octet-stream",
 		location: options.location ?? "workspace",
 		scope: options.scope ?? null,
+		expires_in: options.expiresIn ?? 600,
 	};
 }
 
