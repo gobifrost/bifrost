@@ -158,6 +158,107 @@ Options:
   --help                          Show this message and exit.
 ```
 
+## `app`
+
+```
+Usage: app [OPTIONS] COMMAND [ARGS]...
+
+  Create, bind, run, and deploy an App project.
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  bind        Bind a cloned Vite project to an existing App.
+  create      Create a Vite project and its remote App record.
+  deploy      Build and atomically deploy the current App project.
+  migrate     Migrate a pulled v1 App directory into an independent V2...
+  start       Run the local Vite App against live Bifrost resources.
+  swap-slugs  Atomically exchange v1 and independent V2 App slugs during...
+```
+
+### `app bind`
+
+```
+Usage: app bind [OPTIONS] REF [PATH]
+
+  Bind a cloned Vite project to an existing App.
+
+Options:
+  --url TEXT  Bifrost instance URL.
+  --help      Show this message and exit.
+```
+
+### `app create`
+
+```
+Usage: app create [OPTIONS] [PATH]
+
+  Create a Vite project and its remote App record.
+
+Options:
+  --name TEXT  App display name (default: directory name).
+  --slug TEXT  URL slug (default: derived from name).
+  --org TEXT   Organization UUID or name.
+  --global     Create a globally visible App.
+  --url TEXT   Bifrost instance URL.
+  --help       Show this message and exit.
+```
+
+### `app deploy`
+
+```
+Usage: app deploy [OPTIONS] [PATH]
+
+  Build and atomically deploy the current App project.
+
+Options:
+  --help  Show this message and exit.
+```
+
+### `app migrate`
+
+```
+Usage: app migrate [OPTIONS] SOURCE PATH
+
+  Migrate a pulled v1 App directory into an independent V2 App project.
+
+Options:
+  --name TEXT  App display name (default: destination name).
+  --slug TEXT  Temporary V2 URL slug (default: derived from name).
+  --org TEXT   Organization UUID or name.
+  --global     Create a globally visible App.
+  --url TEXT   Bifrost instance URL.
+  --help       Show this message and exit.
+```
+
+### `app start`
+
+```
+Usage: app start [OPTIONS] [PATH]
+
+  Run the local Vite App against live Bifrost resources.
+
+Options:
+  --org TEXT         Run against another authorized organization.
+  --port INTEGER     [default: 3000]
+  --host TEXT        [default: 127.0.0.1]
+  --public-url TEXT
+  --help             Show this message and exit.
+```
+
+### `app swap-slugs`
+
+```
+Usage: app swap-slugs [OPTIONS] APP_A APP_B
+
+  Atomically exchange v1 and independent V2 App slugs during cutover.
+
+Options:
+  --url TEXT  Bifrost instance URL.
+  --help      Show this message and exit.
+```
+
 ## `apps`
 
 ```
@@ -1833,7 +1934,7 @@ Commands:
   export        Download a Solution's workspace zip (shareable or full...
   init          Alias for `solution create`: scaffold and create a remote...
   install       Install a Solution from a workspace zip (drag-and-drop...
-  migrate-app   Migrate a v1 inline app dir to a scaffolded standalone_v2...
+  migrate-app   Migrate a v1 inline App directory to a scaffolded V2 App:...
   pull          Pull captured entities into the local .bifrost/ manifest...
   scaffold-app  Scaffold a standalone_v2 React app (package.json, vite,...
   sdk           Manage the app's vendored Bifrost SDK.
@@ -2009,8 +2110,8 @@ Options:
 ```
 Usage: solution migrate-app [OPTIONS] SOURCE V2_SLUG
 
-  Migrate a v1 inline app dir to a scaffolded standalone_v2 app: scaffold +
-  port source + rewrite imports + install shadcn. STOPS before build/wire and
+  Migrate a v1 inline App directory to a scaffolded V2 App: scaffold + port
+  source + rewrite imports + install shadcn. STOPS before build/wire and
   prints a checklist of the judgment steps left to you.
 
 Options:

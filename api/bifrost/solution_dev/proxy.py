@@ -699,13 +699,17 @@ async def _ws_proxy(request: web.Request, target_ws_url: str) -> web.WebSocketRe
             # both would leave the surviving pump (and this handler, the
             # ClientSession, and the upstream socket) alive forever on every
             # browser reload.
-            _, pending = await asyncio.wait(
+            done, pending = await asyncio.wait(
                 [asyncio.ensure_future(c2s()), asyncio.ensure_future(s2c())],
                 return_when=asyncio.FIRST_COMPLETED,
             )
             for task in pending:
                 task.cancel()
-            await asyncio.gather(*pending, return_exceptions=True)
+            # Retrieve both pumps' outcomes. The completed pump can fail when
+            # the browser closes while an upstream frame is in flight; leaving
+            # that result unread emits "Task exception was never retrieved"
+            # during an otherwise clean `app start` / `solution start` stop.
+            await asyncio.gather(*done, *pending, return_exceptions=True)
             await ws_client.close()
             await ws_server.close()
     finally:

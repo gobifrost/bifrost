@@ -1,36 +1,38 @@
 ---
 name: migrate
-description: Migrate a legacy Bifrost v1 (inline) app and its backing entities into a clean, installable v2 Solution. Use when the user wants to move an existing _repo app into Solutions, modernize a v1 inline app to standalone_v2, capture loose workflows/tables/configs into a Solution, or standardize/rename a messy workspace. Trigger phrases — "migrate this app to a solution", "move X into a solution", "v1 to v2", "/migrate", "convert my app to standalone v2", "capture these workflows into a solution".
+description: Migrate a legacy Bifrost v1 inline App into either an independent V2 App backed by live platform resources or a clean, installable V2 Solution with captured backing entities. Use for v1-to-v2 modernization, App cutover, Solution capture, or workspace cleanup. Trigger phrases — "migrate this app", "migrate this app to a solution", "move X into a solution", "v1 to v2", "/migrate", "convert my app to v2", "capture these workflows into a solution".
 ---
 
-# Bifrost Migrate (v1 → v2 Solution)
+# Bifrost Migrate (v1 → V2 App or Solution)
 
-Move a legacy inline (`inline_v1`) app and its non-shared backing entities into a clean,
-installable **Solution** (`standalone_v2`), with standardized folders and renamed workflows.
+Move a legacy inline (`inline_v1`) App into one of two explicit ownership models:
+
+- an **independent V2 App** in a normal git repository, continuing to use live workflows, tables, files, configs, and integrations; or
+- an installable **Solution** that owns the V2 App and selected non-shared backing definitions together.
 
 This skill is **judgment-heavy orchestration**, not a one-shot command. It drives existing
-primitives (`bifrost solution migrate-app`, `bifrost solution scaffold-app`, `bifrost solution
-start`, `bifrost solution swap-slugs`, `bifrost solution capture`) and makes the per-app calls a
+primitives (`bifrost app migrate`, `bifrost app start`, `bifrost app deploy`, `bifrost app swap-slugs`, `bifrost solution migrate-app`, `bifrost solution scaffold-app`, `bifrost solution
+start`, `bifrost solution swap-slugs`, `bifrost solution capture`) and makes the per-App calls a
 deterministic command can't: which shadcn components to add, whether layout/theme translate, what
 is safe to capture vs. irreducibly shared.
 
-## The hard rule of why this exists (read first)
+## Choose ownership before migrating
 
-- **A v1 app CANNOT live in a Solution.** Deploy hard-rejects non-`standalone_v2`. Capture refuses
-  inline_v1 apps (it would build an uninstallable bundle). So you do **not** "capture the app" —
-  you **re-author it as v2** and capture its **backing tables/workflows/configs**.
+- Choose an **independent App** when only the frontend should move local and deploy independently while existing platform resources remain live and shared. There is no manifest, capture, or Solution install.
+- Choose a **Solution** when the App and its non-shared backing definitions must be portable, installable, and lifecycle-managed together.
+- **A v1 App cannot be captured into a Solution.** Re-author the frontend as V2, then capture only the selected backing tables/workflows/configs. Independent migration captures nothing by design.
 - **The v1→v2 import surface gap is large.** v1 `import … from "bifrost"` injects ~40 shadcn UI
   components + React + react-router + lucide + `cn`/`format` at runtime. The v2 `bifrost` SDK
   exports only: `BifrostProvider`, `useBifrostContext`, `BifrostHeader`, `useWorkflow`, `useTable`,
   `useInfiniteTable`, `tables`. **No UI components, no React, no router.** Nearly every v1 import
-  line must be rewritten — that's what `bifrost solution migrate-app` does (deterministically).
+  line must be rewritten — both `bifrost app migrate` and `bifrost solution migrate-app` use the same deterministic rewrite.
 
 ## Who runs what
 
 | Action | Who | Why |
 |---|---|---|
-| `bifrost solution migrate-app`, `bifrost solution scaffold-app`, `solution capture --dry-run`/apply, `solution swap-slugs`, `bifrost api GET …`, `npx shadcn add`, file writes under the new app dir | **Agent** | non-interactive, scoped |
-| `bifrost solution start` | **Agent** starts it; **user** drives the browser | long-running dev server; user confirms design |
+| `bifrost app migrate`, `app deploy`, `app swap-slugs`, `bifrost solution migrate-app`, `solution capture --dry-run`/apply, `solution swap-slugs`, `bifrost api GET …`, `npx shadcn add`, file writes under the new App dir | **Agent** | non-interactive, scoped |
+| `bifrost app start` or `bifrost solution start` | **Agent** starts it; **user** drives the browser | long-running dev server; user confirms design |
 | `bifrost watch` / `sync` / `push` / `git push` | **User** | broad blast radius, deploy cadence |
 
 ## Gather org preferences up front (AskUserQuestion)
@@ -41,8 +43,7 @@ Before touching code, collect the conventions — they shape every later step:
    `orders_sync_records`). Renames MUST rewrite every ref (this skill does that — see step 6).
 2. **Folder layout.** Default: flat `workflows/` + flat `modules/` (NOT nested "feature" dirs).
    Standardize whatever mess `_repo` is in.
-3. **Which app(s)** to migrate, and the **target Solution** (existing install id, or create and bind
-   a new one with `bifrost solution create` / `init`).
+3. **Which App(s)** to migrate and the **target ownership model**. For an independent App, choose its destination repo/path, temporary slug, visibility, and org/global App scope. For a Solution, choose the existing install or create/bind one with `bifrost solution create`.
 4. **Confirm-in-browser or skip.** Offer to skip the browser-confirm loop once the user trusts the
    output.
 
@@ -54,7 +55,43 @@ the dev environment"). All `bifrost` calls below use that scratch CLI.
 
 ---
 
-## Per-app migration flow
+## Independent App migration flow
+
+Use this path when backing resources intentionally stay live rather than becoming Solution-owned.
+
+### 1. Read the v1 App and inventory dependencies
+
+- Pull/read the v1 source under `_repo/{repo_path}/`.
+- Inventory every workflow, table, managed-file location, config, and integration the App uses, plus the App/workflow/table/file access tuple in each target organization.
+- Identify UUID workflow refs and rewrite them to portable `path::function` refs. Independent deploy does not remap or capture backing entities.
+
+### 2. Create and port the independent V2 project
+
+```bash
+bifrost app migrate /path/to/pulled/v1-source ./<new-slug> \
+  --name "<Title>" --slug <new-slug> [--org <ref> | --global]
+```
+
+This creates the remote V2 App, writes its gitignored `.env` binding, scaffolds a normal Vite project, ports source, rewrites imports, installs detected dependencies, and prints the remaining judgment checklist. It does not write App source to `_repo`, create YAML, or capture platform resources.
+
+### 3. Wire, build, and browser-confirm
+
+- Complete route/layout wiring, v1-only hook replacement, theming, and error/loading/empty states.
+- Run `bifrost app start` first so the selected instance's SDK is installed transiently. Confirm every route, deep-link refresh, and core interaction in a browser, then run `npm run build`.
+- Exercise live workflow, table, and file behavior in the current org, then use `bifrost app start --org <ref>` as an authorized operator. Confirm an ordinary viewer cannot override scope.
+
+### 4. Deploy and cut over
+
+```bash
+bifrost app deploy
+bifrost app swap-slugs <old-v1-slug> <new-v2-slug>
+```
+
+Deploy before swapping. Launch the deployed App and repeat the browser/resource checks. The swap is atomic and parks the v1 App at the temporary slug for rollback. A failed deploy must leave the prior V2 artifact active. There is no capture step.
+
+---
+
+## Solution migration flow
 
 Do ONE app at a time, fully, before the next. Each step gates the following.
 
@@ -233,7 +270,23 @@ A's Solution would orphan B's reference across the scope boundary. Report it; le
 
 ## Verification before declaring done
 
-- The v2 app builds + runs under `bifrost solution start`, every page works.
+For either ownership model:
+
+- The V2 App builds and every route works in a real browser through the correct `start` command.
+- If theme support is present, every page and overlay is visually verified in both light and dark mode.
+- Workflow refs are portable, and live/deployed calls were exercised through the App rather than only in isolation.
+- The live slug serves the V2 row after the atomic swap, while the v1 row remains available under the parked slug until rollback is no longer needed.
+
+For an independent App:
+
+- `.env` is ignored; no App source or metadata YAML exists in `_repo` or permanent upload storage.
+- Default and authorized alternate-org runtime scopes were verified, including denial for an unauthorized viewer.
+- Live workflows, tables, and files work locally and after deploy; none became Solution-owned.
+- A deliberately broken redeploy leaves the active artifact unchanged.
+
+For a Solution:
+
+- The V2 App builds + runs under `bifrost solution start`, every page works.
 - If `supportsTheme` is present, every page and overlay is visually verified in both light and dark
   mode and uses theme tokens throughout; otherwise the theme toggle is absent.
 - Capture `--dry-run` shows no dangling refs after rename (refs rewritten).

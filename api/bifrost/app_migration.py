@@ -265,8 +265,9 @@ def migrate_v1_source(
         )
     else:
         click.echo(
-            "  5. `npm run build`, then `bifrost app start` and inspect every "
-            "route against the intended live organization."
+            "  5. Run `bifrost app start` first so the instance-matched SDK is "
+            "installed, inspect every route against the intended live organization, "
+            "then run `npm run build`."
         )
         click.echo(
             "  6. Deploy with `bifrost app deploy`. The App keeps using live "

@@ -1,16 +1,14 @@
 # Web SDK v2
 
-The instance-served `bifrost` package is the runtime SDK for `standalone_v2` Solution apps. Use `../generated/web-sdk-surface.md` for the exact export/type surface. Read `apps-v2.md` for project structure and `app-quality.md` for UI completion.
+The instance-served `bifrost` package is the runtime SDK for V2 Apps, both independent and Solution-owned. Use `../generated/web-sdk-surface.md` for the exact export/type surface. Read `apps-v2.md` for project structure and `app-quality.md` for UI completion.
 
 ## Keeping an existing app current
 
-The web SDK is vendored into each app. A platform deployment does not update an existing app's installed SDK automatically. When a reported behavior is fixed in the web SDK, or an app predates the SDK behavior it now relies on, refresh that app before rebuilding it:
+The CLI installs the selected instance's web SDK into local dependencies for development, and each server-side deploy builds with that instance's SDK. When a reported behavior is fixed in the web SDK, or an App predates the SDK behavior it now relies on, refresh it before rebuilding:
 
-```bash
-bifrost solution sdk update [PATH] --app <app-slug>
-```
+For a Solution App, run `bifrost solution sdk update [PATH] --app <app-slug>`. For an independent App, `bifrost app start` installs the selected instance's current SDK transiently; remove a stale `node_modules/bifrost` only when the CLI reports a contract mismatch, then start again.
 
-Omit `--app` for a single-app Solution. This command downloads the SDK from the connected Bifrost instance and reinstalls the vendored package; do not hand-edit the generated SDK files. After updating, run the app's typecheck, tests, and production build, then redeploy it. API-only execution fixes and host-shell asset fixes do not require an app SDK update.
+Omit `--app` for a single-App Solution. The Solution command downloads the SDK from the connected Bifrost instance and reinstalls the vendored package; do not hand-edit generated SDK files. After updating, run the App's typecheck, tests, and production build, then redeploy it. API-only execution fixes and host-shell asset fixes do not require an App SDK update.
 
 ## Provider and context
 
@@ -55,7 +53,7 @@ await createOrder.mutate({ customerId, lines });
 
 Initial query data is nullable. Render loading and error states before accessing it. Keep query parameter objects stable so ordinary renders do not create accidental refetch loops. For mutations, expose progress, handle rejection, and prevent duplicate action where necessary.
 
-Workflow hooks resolve within the current app/Solution context. A UUID is environment-specific; a bare name can be ambiguous and may proxy to a deployed copy during local work.
+Workflow hooks resolve within the current App context. Solution Apps prefer their install's workflows; independent Apps use live registered workflows in the selected organization. A UUID is environment-specific, so prefer a portable path/function ref.
 
 ## Tables
 
@@ -88,7 +86,7 @@ const reports = useFiles("reports/", {
 await files.write("reports/status.txt", "ready", { location: "documents" });
 ```
 
-Solution locations must be declared. Render denied separately from empty, and use signed upload/download behavior for large binary data. Read `files.md`.
+Solution locations must be declared. Independent Apps use live managed-file locations and policies. Render denied separately from empty, and use signed upload/download behavior for large binary data. Read `files.md`.
 
 ## Errors
 

@@ -16,15 +16,27 @@ references:
       - api/bifrost/commands/apps.py
       - api/bifrost/platform_names.py
       - client/src/lib/app-code-runtime.ts
-    verified_at_sha: 3b29c703c87059b382aad7c90b41c9054d3c719e
+    verified_at_sha: b70a55c77024659b69536842335b515f629dd45e
 
   - file: references/apps-v2.md
     source_globs:
+      - api/bifrost/commands/app.py
       - api/bifrost/commands/solution.py
       - api/bifrost/manifest.py
       - client/src/lib/app-sdk/*.ts
       - client/src/lib/app-sdk/*.tsx
-    verified_at_sha: 3b29c703c87059b382aad7c90b41c9054d3c719e
+    verified_at_sha: b70a55c77024659b69536842335b515f629dd45e
+
+  - file: references/apps-independent.md
+    source_globs:
+      - api/bifrost/app_binding.py
+      - api/bifrost/app_migration.py
+      - api/bifrost/commands/app.py
+      - api/src/jobs/platform/application_deploy.py
+      - api/src/routers/applications.py
+      - client/src/lib/app-sdk/*.ts
+      - client/src/lib/app-sdk/*.tsx
+    verified_at_sha: b70a55c77024659b69536842335b515f629dd45e
 
   - file: references/entities.md
     source_globs:
@@ -113,7 +125,7 @@ references:
       - client/src/lib/app-sdk/use-files.ts
       - client/src/lib/app-sdk/use-table.ts
       - client/src/lib/app-sdk/use-workflow*.ts
-    verified_at_sha: 3b29c703c87059b382aad7c90b41c9054d3c719e
+    verified_at_sha: b70a55c77024659b69536842335b515f629dd45e
 
   - file: references/workflows.md
     source_globs:
