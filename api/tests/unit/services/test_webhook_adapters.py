@@ -551,7 +551,6 @@ class TestMicrosoftBotFrameworkAdapter:
     """Tests Microsoft Bot Framework authentication and normalization."""
 
     app_id = "11111111-1111-1111-1111-111111111111"
-    tenant_id = "tenant-1"
     service_url = "https://smba.trafficmanager.net/amer/"
 
     @pytest.fixture
@@ -618,17 +617,18 @@ class TestMicrosoftBotFrameworkAdapter:
             await adapter.subscribe("https://example.com/hook", {}, None)
 
     @pytest.mark.asyncio
-    async def test_subscribe_requires_tenant_id(self, adapter):
-        with pytest.raises(ValueError, match="tenant_id"):
-            await adapter.subscribe(
-                "https://example.com/hook", {"app_id": self.app_id}, None
-            )
+    async def test_subscribe_only_requires_app_id(self, adapter):
+        result = await adapter.subscribe(
+            "https://example.com/hook", {"app_id": self.app_id}, None
+        )
+
+        assert result.state == {}
 
     @pytest.mark.asyncio
     async def test_missing_bearer_token_is_rejected(self, adapter):
         result = await adapter.handle_request(
             self._request(self._activity()),
-            {"app_id": self.app_id, "tenant_id": self.tenant_id},
+            {"app_id": self.app_id},
             {},
         )
 
@@ -643,7 +643,7 @@ class TestMicrosoftBotFrameworkAdapter:
 
         result = await adapter.handle_request(
             self._request(self._activity(), token),
-            {"app_id": self.app_id, "tenant_id": self.tenant_id},
+            {"app_id": self.app_id},
             {},
         )
 
@@ -678,7 +678,7 @@ class TestMicrosoftBotFrameworkAdapter:
 
         result = await adapter.handle_request(
             self._request(activity, token),
-            {"app_id": self.app_id, "tenant_id": self.tenant_id},
+            {"app_id": self.app_id},
             {},
         )
 
@@ -693,7 +693,7 @@ class TestMicrosoftBotFrameworkAdapter:
 
         result = await adapter.handle_request(
             self._request(self._activity(), self._token(private_key)),
-            {"app_id": self.app_id, "tenant_id": self.tenant_id},
+            {"app_id": self.app_id},
             {},
         )
 
@@ -701,7 +701,7 @@ class TestMicrosoftBotFrameworkAdapter:
         assert result.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_activity_from_another_tenant_is_rejected(
+    async def test_activity_tenant_is_delivered_for_downstream_routing(
         self, adapter, signing_material
     ):
         private_key, jwk = signing_material
@@ -711,9 +711,9 @@ class TestMicrosoftBotFrameworkAdapter:
 
         result = await adapter.handle_request(
             self._request(activity, self._token(private_key)),
-            {"app_id": self.app_id, "tenant_id": self.tenant_id},
+            {"app_id": self.app_id},
             {},
         )
 
-        assert isinstance(result, Rejected)
-        assert result.status_code == 401
+        assert isinstance(result, Deliver)
+        assert result.data["tenant_id"] == "other-tenant"

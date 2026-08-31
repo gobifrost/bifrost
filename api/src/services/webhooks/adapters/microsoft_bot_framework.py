@@ -43,17 +43,12 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
 
     config_schema = {
         "type": "object",
-        "required": ["app_id", "tenant_id"],
+        "required": ["app_id"],
         "properties": {
             "app_id": {
                 "type": "string",
                 "title": "Microsoft App ID",
                 "description": "Application/client ID registered for the Azure Bot.",
-            },
-            "tenant_id": {
-                "type": "string",
-                "title": "Microsoft Tenant ID",
-                "description": "Entra tenant ID allowed to send Teams activities.",
             },
         },
     }
@@ -67,9 +62,6 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
         app_id = str(config.get("app_id") or "").strip()
         if not app_id:
             raise ValueError("Microsoft Bot Framework app_id is required")
-        tenant_id = str(config.get("tenant_id") or "").strip()
-        if not tenant_id:
-            raise ValueError("Microsoft Bot Framework tenant_id is required")
         return SubscribeResult()
 
     async def unsubscribe(
@@ -95,11 +87,6 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
             return Rejected(
                 message="Bot Framework app ID is not configured", status_code=500
             )
-        tenant_id = str(config.get("tenant_id") or "").strip()
-        if not tenant_id:
-            return Rejected(
-                message="Bot Framework tenant ID is not configured", status_code=500
-            )
 
         authorization = request.headers.get("authorization", "")
         scheme, separator, token = authorization.partition(" ")
@@ -109,7 +96,7 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
             )
 
         try:
-            await self._validate_token(token.strip(), app_id, tenant_id, payload)
+            await self._validate_token(token.strip(), app_id, payload)
         except (jwt.PyJWTError, KeyError, TypeError, ValueError) as exc:
             logger.warning(
                 "Bot Framework token validation failed: %s", type(exc).__name__
@@ -153,7 +140,6 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
         self,
         token: str,
         app_id: str,
-        tenant_id: str,
         payload: dict[str, Any],
     ) -> None:
         header = jwt.get_unverified_header(token)
@@ -188,14 +174,6 @@ class MicrosoftBotFrameworkAdapter(WebhookAdapter):
         channel_id = str(payload.get("channelId") or "")
         if channel_id != "msteams":
             raise ValueError("Only Microsoft Teams activities are accepted")
-        channel_data = payload.get("channelData")
-        activity_tenant_id = (
-            (channel_data.get("tenant") or {}).get("id")
-            if isinstance(channel_data, dict)
-            else None
-        )
-        if activity_tenant_id != tenant_id:
-            raise ValueError("Microsoft Teams tenant mismatch")
         endorsements = jwk.get("endorsements") or []
         if channel_id not in endorsements:
             raise ValueError("Signing key is not endorsed for Microsoft Teams")
