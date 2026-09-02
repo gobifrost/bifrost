@@ -62,8 +62,6 @@ class MCPToolAccessService:
     async def get_accessible_tools(
         self,
         user_roles: list[str],
-        is_superuser: bool,
-        is_provider_org: bool = False,
         user_id: UUID | str | None = None,
         org_id: UUID | str | None = None,
         is_external: bool = False,
@@ -78,28 +76,21 @@ class MCPToolAccessService:
 
         Args:
             user_roles: List of role names the user has (from JWT claims)
-            is_superuser: Whether user is platform admin
-            is_provider_org: Whether the caller belongs to the platform/provider org
             user_id: User UUID for per-workflow role check (from JWT claims).
-                Required for non-superusers — without it, role-based workflows
+                Required — without it, role-based workflows
                 fall back to "deny" because role membership cannot be checked.
             org_id: User's organization UUID for per-workflow org scope check
-                (from JWT claims). Required for non-superusers — without it,
+                (from JWT claims). Without it,
                 org-scoped workflows fall back to "deny" because the in-scope
                 check cannot evaluate.
 
         Returns:
             MCPToolAccessResult containing the filtered tool inventory
         """
-        scope_bypass = has_scope_bypass(
-            is_platform_admin=is_superuser,
-            is_provider_org=is_provider_org,
-        )
-
         # Step 1: Get accessible agents
         accessible_agents = await self._get_accessible_agents(
             user_roles=user_roles,
-            is_superuser=scope_bypass,
+            is_superuser=False,
             is_external=is_external,
             org_id=org_id,
         )
@@ -109,7 +100,7 @@ class MCPToolAccessService:
         tools: list[ToolInfo] = []
         seen_tool_ids: set[str] = set()  # Deduplicate across agents
         workflow_repo = self._build_workflow_repo(
-            user_id=user_id, org_id=org_id, is_superuser=scope_bypass,
+            user_id=user_id, org_id=org_id, is_superuser=False,
             is_external=is_external,
         )
 

@@ -72,6 +72,7 @@ def _gateway_service(current_user: CurrentActiveUser):
             user_id=current_user.user_id,
             org_id=current_user.organization_id,
             is_platform_admin=current_user.is_superuser,
+            is_provider_org=current_user.is_provider_org,
             is_external=current_user.is_external,
             user_email=current_user.email,
             user_name=current_user.name,
@@ -530,8 +531,6 @@ async def list_mcp_tools(
     tool_service = MCPToolAccessService(db)
     result = await tool_service.get_accessible_tools(
         user_roles=current_user.roles,
-        is_superuser=current_user.is_superuser,
-        is_provider_org=current_user.is_provider_org,
         user_id=current_user.user_id,
         org_id=current_user.organization_id,
         is_external=current_user.is_external,

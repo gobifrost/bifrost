@@ -6,6 +6,8 @@ from uuid import uuid4
 import pytest
 
 from src.services.mcp_server.auth import BifrostAuthProvider
+from src.services.mcp_server.server import MCPContext
+from src.services.mcp_server.tools._http_bridge import _token_from_context
 
 
 @pytest.mark.asyncio
@@ -34,3 +36,19 @@ async def test_verify_token_preserves_canonical_scope_bypass_claims():
     assert token is not None
     assert token.claims["is_superuser"] is False
     assert token.claims["is_provider_org"] is True
+
+
+def test_http_bridge_fallback_preserves_provider_org_claim():
+    from src.core.security import decode_token
+
+    context = MCPContext(
+        user_id=uuid4(),
+        org_id=uuid4(),
+        is_provider_org=True,
+        user_email="provider@example.com",
+    )
+
+    payload = decode_token(_token_from_context(context), expected_type="access")
+
+    assert payload is not None
+    assert payload["is_provider_org"] is True

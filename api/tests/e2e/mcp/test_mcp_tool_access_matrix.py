@@ -1081,6 +1081,65 @@ class TestMcpToolAccessMatrix:
         )
         assert "ok" in content_text, content_text
 
+    async def test_provider_gateway_discovery_requires_explicit_agent_target(
+        self,
+        seeded_agent_with_tools: dict[str, Any],
+        e2e_client,
+        provider_org_user,
+    ) -> None:
+        """Provider bypass applies to exact targets, not unscoped discovery."""
+        agent = seeded_agent_with_tools["agent"]
+        headers = {
+            "Authorization": f"Bearer {provider_org_user.access_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+        }
+
+        search_response = e2e_client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "bifrost_search_capabilities",
+                    "arguments": {"query": agent["name"]},
+                },
+            },
+        )
+        assert search_response.status_code == 200, search_response.text
+        search_payload = _parse_mcp_response(search_response)
+        search_result = search_payload["result"]
+        assert not search_result.get("isError", False), search_payload
+        search_data = search_result.get("structuredContent")
+        assert isinstance(search_data, dict), search_payload
+        assert agent["id"] not in {
+            item["id"] for item in search_data.get("agents", [])
+        }
+
+        explicit_response = e2e_client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "bifrost_search_capabilities",
+                    "arguments": {"agent_id": agent["id"]},
+                },
+            },
+        )
+        assert explicit_response.status_code == 200, explicit_response.text
+        explicit_payload = _parse_mcp_response(explicit_response)
+        explicit_result = explicit_payload["result"]
+        assert not explicit_result.get("isError", False), explicit_payload
+        explicit_data = explicit_result.get("structuredContent")
+        assert isinstance(explicit_data, dict), explicit_payload
+        assert "agents" in explicit_data, explicit_data
+        assert explicit_data["agents"][0]["id"] == agent["id"]
+
     async def test_customer_org_platform_admin_cannot_list_or_call_cross_org_tool(
         self,
         seeded_agent_with_tools: dict[str, Any],

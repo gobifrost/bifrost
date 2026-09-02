@@ -21,6 +21,7 @@ from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
 
+from shared.scope_resolver import has_scope_bypass
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
 from src.models.contracts.agents import (
@@ -777,7 +778,10 @@ async def _check_agent_access(db: DbSession, user, agent: Agent) -> bool:
         db,
         org_id=user.organization_id,
         user_id=user.user_id,
-        is_superuser=user.is_platform_admin,
+        is_superuser=has_scope_bypass(
+            is_platform_admin=user.is_platform_admin,
+            is_provider_org=user.is_provider_org,
+        ),
         is_external=user.is_external,
     )
     accessible = await repo.get(id=agent.id)

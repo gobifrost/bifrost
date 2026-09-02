@@ -18,7 +18,6 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from shared.scope_resolver import has_scope_bypass
-from src.core.org_filter import OrgFilterType
 from src.models.orm.agents import Agent
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.executions import Execution
@@ -260,12 +259,13 @@ class MCPAgentGatewayService:
         from src.core.database import get_db_context
 
         async with get_db_context() as db:
-            repo = self._agent_repo(db)
-            if self._has_scope_bypass:
-                return await repo.list_all_in_scope(
-                    OrgFilterType.ALL,
-                    active_only=True,
-                )
+            repo = AgentRepository(
+                db,
+                org_id=self.context.org_id,
+                user_id=self.context.user_id,
+                is_superuser=False,
+                is_external=self.context.is_external,
+            )
             return await repo.list_agents(active_only=True)
 
     async def accessible_agent_count(self) -> int:

@@ -326,7 +326,6 @@ class TestGetAccessibleTools:
 
                 result = await service.get_accessible_tools(
                     user_roles=[],
-                    is_superuser=True,
                 )
 
         system_tools = [t for t in result.tools if t.type == "system"]
@@ -354,7 +353,6 @@ class TestGetAccessibleTools:
 
             result = await service.get_accessible_tools(
                 user_roles=[],
-                is_superuser=False,
             )
 
         workflow_tools = [t for t in result.tools if t.type == "workflow"]
@@ -385,7 +383,6 @@ class TestGetAccessibleTools:
 
             result = await service.get_accessible_tools(
                 user_roles=[],
-                is_superuser=True,
             )
 
         # Should have 2 unique system tools, not 3
@@ -420,7 +417,6 @@ class TestGetAccessibleTools:
 
             result = await service.get_accessible_tools(
                 user_roles=[],
-                is_superuser=False,
             )
 
         workflow_tools = [t for t in result.tools if t.type == "workflow"]
@@ -583,7 +579,6 @@ class TestSystemToolMetadata:
 
             result = await service.get_accessible_tools(
                 user_roles=[],
-                is_superuser=False,
             )
 
         assert len(result.tools) == 1
@@ -618,7 +613,6 @@ class TestEdgeCases:
 
             result = await service.get_accessible_tools(
                 user_roles=["Other Role"],
-                is_superuser=False,
             )
 
         assert len(result.tools) == 0
@@ -642,7 +636,6 @@ class TestEdgeCases:
 
             result = await service.get_accessible_tools(
                 user_roles=[],
-                is_superuser=False,
             )
 
         assert len(result.tools) == 0
@@ -668,7 +661,6 @@ class TestEdgeCases:
 
             result = await service.get_accessible_tools(
                 user_roles=[],
-                is_superuser=False,
             )
 
         workflow_tool = [t for t in result.tools if t.type == "workflow"][0]
@@ -707,7 +699,6 @@ class TestSearchKnowledgeAutoInjection:
 
             result = await service.get_accessible_tools(
                 user_roles=[],
-                is_superuser=True,
             )
 
         tool_ids = {t.id for t in result.tools}
@@ -734,7 +725,6 @@ class TestSearchKnowledgeAutoInjection:
 
             result = await service.get_accessible_tools(
                 user_roles=[],
-                is_superuser=True,
             )
 
         tool_ids = {t.id for t in result.tools}
@@ -762,7 +752,6 @@ class TestSearchKnowledgeAutoInjection:
 
             result = await service.get_accessible_tools(
                 user_roles=[],
-                is_superuser=True,
             )
 
         sk_tools = [t for t in result.tools if t.id == "search_knowledge"]

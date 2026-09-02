@@ -36334,6 +36334,8 @@ export interface operations {
                 active_only?: boolean;
                 /** @description Include per-agent run stats in the list response. */
                 include_stats?: boolean;
+                /** @description Apply ordinary organization and role visibility even for impersonation-capable callers. Used by chat discovery. */
+                discovery_only?: boolean;
             };
             header?: never;
             path?: never;

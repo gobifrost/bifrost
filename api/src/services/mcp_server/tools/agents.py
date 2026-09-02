@@ -72,15 +72,12 @@ async def get_agent_schema(context: Any) -> ToolResult:  # noqa: ARG001
 
 async def list_agents(context: Any) -> ToolResult:
     """List all agents."""
-    from src.core.org_filter import OrgFilterType
     from src.repositories.agents import AgentRepository
 
     logger.info("MCP list_agents called")
 
     try:
         async with get_tool_db(context) as db:
-            # Determine org_id and admin status based on context
-            is_admin = context.is_platform_admin
             if context.org_id:
                 org_id = UUID(str(context.org_id)) if isinstance(context.org_id, str) else context.org_id
             else:
@@ -95,16 +92,10 @@ async def list_agents(context: Any) -> ToolResult:
                 session=db,
                 org_id=org_id,
                 user_id=user_id,
-                is_superuser=is_admin,
+                is_superuser=False,
                 is_external=context.is_external,
             )
-
-            if is_admin:
-                # Platform admins see all agents using list_all_in_scope
-                agents = await repo.list_all_in_scope(OrgFilterType.ALL, active_only=True)
-            else:
-                # Regular users use list_agents with built-in cascade + role-based access
-                agents = await repo.list_agents(active_only=True)
+            agents = await repo.list_agents(active_only=True)
 
             agents_data = [
                 {

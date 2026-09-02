@@ -1,5 +1,6 @@
 """Unit tests for the unscoped MCP agent gateway."""
 
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -63,6 +64,45 @@ def _resolved_tool(
         source_identity=f"workflow:{uuid4()}",
         source_id=uuid4(),
     )
+
+
+@pytest.mark.asyncio
+async def test_provider_discovery_does_not_use_scope_bypass():
+    context = _context()
+    context.is_provider_org = True
+    service = MCPAgentGatewayService(context)
+    db = MagicMock()
+    repo = MagicMock()
+    repo.list_agents = AsyncMock(return_value=[])
+
+    @asynccontextmanager
+    async def db_context():
+        yield db
+
+    with (
+        patch("src.core.database.get_db_context", return_value=db_context()),
+        patch(
+            "src.services.mcp_server.gateway.AgentRepository",
+            return_value=repo,
+        ) as repo_cls,
+    ):
+        assert await service._list_accessible_agents() == []
+
+    assert repo_cls.call_args.kwargs["is_superuser"] is False
+    repo.list_agents.assert_awaited_once_with(active_only=True)
+
+
+def test_provider_explicit_target_uses_scope_bypass():
+    context = _context()
+    context.is_provider_org = True
+    service = MCPAgentGatewayService(context)
+
+    with patch(
+        "src.services.mcp_server.gateway.AgentRepository",
+    ) as repo_cls:
+        service._agent_repo(MagicMock())
+
+    assert repo_cls.call_args.kwargs["is_superuser"] is True
 
 
 def test_workflow_reference_is_stable_across_display_name_change():

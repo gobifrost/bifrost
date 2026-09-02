@@ -35,6 +35,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
+from shared.scope_resolver import has_scope_bypass
 from src.core.principal import UserPrincipal
 from src.models.contracts.agents import (
     AgentSwitch,
@@ -192,7 +193,10 @@ class AgentExecutor:
                 session,
                 org_id=user.organization_id,
                 user_id=user.user_id,
-                is_superuser=user.is_superuser,
+                is_superuser=has_scope_bypass(
+                    is_platform_admin=user.is_platform_admin,
+                    is_provider_org=user.is_provider_org,
+                ),
                 is_external=user.is_external,
             )
             accessible_agent = await repo.get_agent_with_access_check(new_agent.id)
@@ -260,7 +264,6 @@ class AgentExecutor:
             self._session_factory,
             user_id=user.user_id if user else None,
             org_id=user.organization_id if user else None,
-            is_superuser=user.is_superuser if user else False,
             is_external=user.is_external if user else False,
         )
 
