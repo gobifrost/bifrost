@@ -3,8 +3,53 @@
  * Uses openapi-react-query for type-safe API calls
  */
 
-import { useQueryClient } from "@tanstack/react-query";
-import { $api } from "@/lib/api-client";
+import {
+	keepPreviousData,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
+import { $api, apiClient } from "@/lib/api-client";
+
+export interface UsersPageParams {
+	scope?: string | null;
+	includeInactive?: boolean;
+	search?: string;
+	sortBy: "name" | "email" | "status" | "created" | "last_login";
+	sortDirection: "asc" | "desc";
+	limit: number;
+	offset: number;
+}
+
+export function useUsersPage(params: UsersPageParams) {
+	return useQuery({
+		queryKey: ["get", "/api/users", { page: params }],
+		queryFn: async () => {
+			const query = {
+				scope: params.scope === null ? "global" : params.scope,
+				include_inactive: params.includeInactive || undefined,
+				search: params.search?.trim() || undefined,
+				sort_by: params.sortBy,
+				sort_direction: params.sortDirection,
+				limit: params.limit,
+				offset: params.offset,
+			};
+			const { data, error, response } = await apiClient.GET(
+				"/api/users",
+				{
+					params: { query },
+				},
+			);
+			if (error) throw error;
+			return {
+				items: data ?? [],
+				total: Number(
+					response.headers.get("X-Total-Count") ?? data?.length ?? 0,
+				),
+			};
+		},
+		placeholderData: keepPreviousData,
+	});
+}
 
 /**
  * Fetch all users filtered by current scope.
@@ -24,6 +69,7 @@ export function useUsers() {
 export function useUsersFiltered(
 	scope?: string | null,
 	includeInactive?: boolean,
+	enabled = true,
 ) {
 	// Build query params - convert null to "global" for the API
 	const queryParams: { scope?: string; include_inactive?: boolean } = {};
@@ -36,11 +82,16 @@ export function useUsersFiltered(
 		queryParams.include_inactive = true;
 	}
 
-	return $api.useQuery("get", "/api/users", {
-		params: {
-			query: queryParams,
+	return $api.useQuery(
+		"get",
+		"/api/users",
+		{
+			params: {
+				query: queryParams,
+			},
 		},
-	});
+		{ enabled },
+	);
 }
 
 /**

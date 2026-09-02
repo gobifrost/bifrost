@@ -49,6 +49,63 @@ class TestUserListing:
         assert org1_user.email in emails
         assert org2_user.email in emails
 
+    def test_user_listing_supports_server_pagination_search_and_sort(
+        self, e2e_client, platform_admin, org1
+    ):
+        marker = "User page boundary"
+        created_ids = []
+        try:
+            for name, email in [
+                (f"{marker} Alpha", "user-page-alpha@gobifrost.dev"),
+                (f"{marker} Bravo", "user-page-bravo@gobifrost.dev"),
+            ]:
+                create = e2e_client.post(
+                    "/api/users",
+                    headers=platform_admin.headers,
+                    json={
+                        "name": name,
+                        "email": email,
+                        "organization_id": org1["id"],
+                        "is_superuser": False,
+                        "invite": False,
+                    },
+                )
+                assert create.status_code == 201, create.text
+                created_ids.append(create.json()["id"])
+
+            first = e2e_client.get(
+                "/api/users",
+                headers=platform_admin.headers,
+                params={
+                    "search": marker,
+                    "sort_by": "name",
+                    "sort_direction": "asc",
+                    "limit": 1,
+                    "offset": 0,
+                },
+            )
+            assert first.status_code == 200, first.text
+            assert first.headers["X-Total-Count"] == "2"
+            assert [user["name"] for user in first.json()] == [f"{marker} Alpha"]
+
+            second = e2e_client.get(
+                "/api/users",
+                headers=platform_admin.headers,
+                params={
+                    "search": marker,
+                    "sort_by": "name",
+                    "sort_direction": "asc",
+                    "limit": 1,
+                    "offset": 1,
+                },
+            )
+            assert [user["name"] for user in second.json()] == [f"{marker} Bravo"]
+        finally:
+            for user_id in created_ids:
+                e2e_client.delete(
+                    f"/api/users/{user_id}", headers=platform_admin.headers
+                )
+
     def test_system_user_hidden_from_listing(self, e2e_client, platform_admin):
         """System user should never appear in user listings."""
         response = e2e_client.get(

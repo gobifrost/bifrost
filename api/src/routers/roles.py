@@ -8,9 +8,10 @@ Manage roles for organization users.
 
 import logging
 from datetime import datetime, timezone
+from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Query, Response, status
 from sqlalchemy import func, select, delete
 
 from src.core.auth import CurrentSuperuser
@@ -28,6 +29,7 @@ from src.models import (
     AgentRole as AgentRoleORM,
     Form as FormORM,
     User as UserORM,
+    Organization as OrganizationORM,
     Agent as AgentORM,
 )
 from src.models.orm.applications import Application as ApplicationORM
@@ -40,6 +42,7 @@ from src.models import (
     RolePublic,
     RoleUpdate,
     RoleUsersResponse,
+    RoleUserSummary,
     RoleFormsResponse,
     RoleAgentsResponse,
     RoleAppsResponse,
@@ -90,28 +93,13 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/roles", tags=["Roles"])
 
 
-@router.get(
-    "",
-    response_model=list[RolePublic],
-    summary="List all roles",
-    description="Get all roles (Platform admin only)",
-)
-async def list_roles(
-    user: CurrentSuperuser,
-    db: DbSession,
-) -> list[RolePublic]:
-    """List all roles with inline consumer counts (users/forms/agents/apps/workflows/knowledge)."""
-    query = select(RoleORM).order_by(RoleORM.name)
-    result = await db.execute(query)
-    roles = result.scalars().all()
+async def _get_consumer_counts(
+    db: DbSession, role_ids: list[UUID]
+) -> dict[UUID, RoleConsumerCounts]:
+    counts_by_role = {role_id: RoleConsumerCounts() for role_id in role_ids}
+    if not counts_by_role:
+        return counts_by_role
 
-    counts_by_role: dict[UUID, RoleConsumerCounts] = {
-        r.id: RoleConsumerCounts() for r in roles
-    }
-
-    # Six grouped COUNT queries — one per consumer type. Cheap on small/medium
-    # workspaces; if the role count ever explodes, replace with a single UNION
-    # ALL query.
     aggregates: list[tuple[str, "object"]] = [
         ("users", UserRoleORM),
         ("forms", FormRoleORM),
@@ -121,14 +109,64 @@ async def list_roles(
         ("knowledge", KnowledgeNamespaceRoleORM),
     ]
     for field, orm in aggregates:
-        agg = await db.execute(
-            select(orm.role_id, func.count()).group_by(orm.role_id)  # type: ignore[attr-defined]
+        aggregate = await db.execute(
+            select(orm.role_id, func.count())  # type: ignore[attr-defined]
+            .where(orm.role_id.in_(counts_by_role))  # type: ignore[attr-defined]
+            .group_by(orm.role_id)  # type: ignore[attr-defined]
         )
-        for role_id, count in agg.all():
+        for role_id, count in aggregate.all():
             entry = counts_by_role.get(role_id)
-            if entry is None:
-                continue
-            setattr(entry, field, int(count))
+            if entry is not None:
+                setattr(entry, field, int(count))
+    return counts_by_role
+
+
+@router.get(
+    "",
+    response_model=list[RolePublic],
+    summary="List all roles",
+    description="Get all roles (Platform admin only)",
+)
+async def list_roles(
+    user: CurrentSuperuser,
+    db: DbSession,
+    response: Response,
+    search: str | None = Query(None, description="Search role name or description"),
+    sort_by: Literal["name", "created"] = Query("name"),
+    sort_direction: Literal["asc", "desc"] = Query("asc"),
+    limit: int | None = Query(
+        None,
+        ge=1,
+        le=100,
+        description="Maximum rows to return; omit for the legacy unbounded response",
+    ),
+    offset: int = Query(0, ge=0, description="Rows to skip when limit is set"),
+) -> list[RolePublic]:
+    """List all roles with inline consumer counts (users/forms/agents/apps/workflows/knowledge)."""
+    query = select(RoleORM)
+    if search and (term := search.strip()):
+        pattern = f"%{term}%"
+        query = query.where(
+            RoleORM.name.ilike(pattern) | RoleORM.description.ilike(pattern)
+        )
+
+    total = await db.scalar(
+        select(func.count()).select_from(query.order_by(None).subquery())
+    )
+    response.headers["X-Total-Count"] = str(total or 0)
+
+    sort_expression = RoleORM.name if sort_by == "name" else RoleORM.created_at
+    if sort_direction == "desc":
+        sort_expression = sort_expression.desc()
+    else:
+        sort_expression = sort_expression.asc()
+    query = query.order_by(sort_expression, RoleORM.id.asc())
+    if limit is not None:
+        query = query.offset(offset).limit(limit)
+    result = await db.execute(query)
+    roles = result.scalars().all()
+
+    counts_by_role = await _get_consumer_counts(db, [role.id for role in roles])
 
     out: list[RolePublic] = []
     for r in roles:
@@ -178,7 +216,9 @@ async def create_role(
         resource_id=role.id,
         details={"name": role.name},
     )
-    return RolePublic.model_validate(role)
+    public = RolePublic.model_validate(role)
+    public.consumer_counts = (await _get_consumer_counts(db, [role.id]))[role.id]
+    return public
 
 
 @router.get(
@@ -202,7 +242,9 @@ async def get_role(
             detail="Role not found",
         )
 
-    return RolePublic.model_validate(role)
+    public = RolePublic.model_validate(role)
+    public.consumer_counts = (await _get_consumer_counts(db, [role.id]))[role.id]
+    return public
 
 
 @router.patch(
@@ -343,10 +385,34 @@ async def get_role_users(
 ) -> RoleUsersResponse:
     """Get all users assigned to a role."""
     result = await db.execute(
-        select(UserRoleORM.user_id).where(UserRoleORM.role_id == role_id)
+        select(
+            UserORM,
+            OrganizationORM.name,
+            OrganizationORM.is_provider,
+        )
+        .join(UserRoleORM, UserRoleORM.user_id == UserORM.id)
+        .outerjoin(OrganizationORM, OrganizationORM.id == UserORM.organization_id)
+        .where(
+            UserRoleORM.role_id == role_id,
+            UserORM.is_system.is_(False),
+        )
+        .order_by(func.coalesce(UserORM.name, UserORM.email), UserORM.email)
     )
-    user_ids = [str(uid) for uid in result.scalars().all()]
-    return RoleUsersResponse(user_ids=user_ids)
+    users = [
+        RoleUserSummary(
+            id=assigned_user.id,
+            name=assigned_user.name,
+            email=assigned_user.email,
+            organization_id=assigned_user.organization_id,
+            organization_name=organization_name,
+            organization_is_provider=bool(organization_is_provider),
+        )
+        for assigned_user, organization_name, organization_is_provider in result.all()
+    ]
+    return RoleUsersResponse(
+        user_ids=[str(assigned_user.id) for assigned_user in users],
+        users=users,
+    )
 
 
 @router.post(

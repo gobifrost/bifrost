@@ -57,6 +57,7 @@ export interface ConsumerTabProps {
 	hideSecondary?: boolean;
 	/** Show an Organization column. Items must populate `org`. */
 	showOrgColumn?: boolean;
+	onRequestCandidates?: () => void;
 	onAssign: (ids: string[]) => Promise<void>;
 	onUnassign: (ids: string[]) => Promise<void>;
 }
@@ -80,6 +81,7 @@ export function ConsumerTab({
 	secondaryColumnLabel = "Description",
 	hideSecondary = false,
 	showOrgColumn = false,
+	onRequestCandidates,
 	onAssign,
 	onUnassign,
 }: ConsumerTabProps) {
@@ -147,7 +149,9 @@ export function ConsumerTab({
 			setSelected(new Set());
 		} catch (e) {
 			toast.error(
-				e instanceof Error ? e.message : `Failed to remove ${consumerLabel}`,
+				e instanceof Error
+					? e.message
+					: `Failed to remove ${consumerLabel}`,
 			);
 		} finally {
 			setSubmitting(false);
@@ -163,7 +167,12 @@ export function ConsumerTab({
 					placeholder={`Search ${consumerLabel}...`}
 					className="flex-1"
 				/>
-				<Button onClick={() => setDrawerOpen(true)}>
+				<Button
+					onClick={() => {
+						onRequestCandidates?.();
+						setDrawerOpen(true);
+					}}
+				>
 					<Plus className="h-4 w-4 mr-1.5" />
 					Assign {consumerLabel}
 				</Button>
@@ -205,7 +214,9 @@ export function ConsumerTab({
 								{primaryColumnLabel}
 							</DataTableHead>
 							{!hideSecondary && (
-								<DataTableHead>{secondaryColumnLabel}</DataTableHead>
+								<DataTableHead>
+									{secondaryColumnLabel}
+								</DataTableHead>
 							)}
 						</DataTableRow>
 					</DataTableHeader>
@@ -215,7 +226,9 @@ export function ConsumerTab({
 								<DataTableCell className="w-0 whitespace-nowrap">
 									<Checkbox
 										checked={effectiveSelected.has(item.id)}
-										onCheckedChange={() => toggleOne(item.id)}
+										onCheckedChange={() =>
+											toggleOne(item.id)
+										}
 										aria-label={`Select ${item.primary}`}
 									/>
 								</DataTableCell>
@@ -236,10 +249,14 @@ export function ConsumerTab({
 														{item.secondary}
 													</span>
 												</TooltipTrigger>
-												<TooltipContent>{item.secondary}</TooltipContent>
+												<TooltipContent>
+													{item.secondary}
+												</TooltipContent>
 											</Tooltip>
 										) : (
-											<span className="text-muted-foreground/60">-</span>
+											<span className="text-muted-foreground/60">
+												-
+											</span>
 										)}
 									</DataTableCell>
 								)}
@@ -377,7 +394,9 @@ function AssignDrawer({
 			setPicked(new Set());
 		} catch (e) {
 			toast.error(
-				e instanceof Error ? e.message : `Failed to assign ${consumerLabel}`,
+				e instanceof Error
+					? e.message
+					: `Failed to assign ${consumerLabel}`,
 			);
 		} finally {
 			setSubmitting(false);
@@ -394,8 +413,8 @@ function AssignDrawer({
 					<SheetTitle>Assign {consumerLabel}</SheetTitle>
 					<SheetDescription>
 						Pick the {consumerLabel} you want to add to this role.
-						Already-assigned entries are hidden by default — toggle the switch
-						below to see them.
+						Already-assigned entries are hidden by default — toggle
+						the switch below to see them.
 					</SheetDescription>
 				</SheetHeader>
 

@@ -22988,6 +22988,30 @@ export interface components {
             } | null;
         };
         /**
+         * RoleUserSummary
+         * @description Display-ready user identity returned by the role detail endpoint.
+         */
+        RoleUserSummary: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string | null;
+            /** Email */
+            email: string;
+            /** Organization Id */
+            organization_id: string | null;
+            /** Organization Name */
+            organization_name: string | null;
+            /**
+             * Organization Is Provider
+             * @default false
+             */
+            organization_is_provider: boolean;
+        };
+        /**
          * RoleUsersResponse
          * @description Response model for getting users assigned to a role
          */
@@ -22997,6 +23021,11 @@ export interface components {
              * @description List of user IDs assigned to the role
              */
             user_ids: string[];
+            /**
+             * Users
+             * @description Display-ready summaries for users assigned to the role
+             */
+            users?: components["schemas"]["RoleUserSummary"][];
         };
         /**
          * RoleWorkflowsResponse
@@ -28716,6 +28745,15 @@ export interface operations {
                 scope?: string | null;
                 /** @description Include inactive (disabled) users */
                 include_inactive?: boolean;
+                /** @description Search user name or email */
+                search?: string | null;
+                /** @description Sort field; omit to preserve the legacy email order */
+                sort_by?: ("name" | "email" | "status" | "created" | "last_login") | null;
+                sort_direction?: "asc" | "desc";
+                /** @description Maximum rows to return; omit for the legacy unbounded response */
+                limit?: number | null;
+                /** @description Rows to skip when limit is set */
+                offset?: number;
             };
             header?: never;
             path?: never;
@@ -29094,7 +29132,16 @@ export interface operations {
     };
     list_roles_api_roles_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Search role name or description */
+                search?: string | null;
+                sort_by?: "name" | "created";
+                sort_direction?: "asc" | "desc";
+                /** @description Maximum rows to return; omit for the legacy unbounded response */
+                limit?: number | null;
+                /** @description Rows to skip when limit is set */
+                offset?: number;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -29108,6 +29155,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RolePublic"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

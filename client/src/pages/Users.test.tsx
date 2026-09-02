@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, waitFor, within } from "@/test-utils";
 
-const mockUseUsersFiltered = vi.fn();
+const mockUseUsersPage = vi.fn();
+const mockUseUser = vi.fn();
 const mockUseDeleteUser = vi.fn();
 const mockUseUpdateUser = vi.fn();
 const mockUseOrganizations = vi.fn();
@@ -17,7 +18,8 @@ const mockToastError = vi.fn();
 const mockRefetch = vi.fn();
 
 vi.mock("@/hooks/useUsers", () => ({
-	useUsersFiltered: (...args: unknown[]) => mockUseUsersFiltered(...args),
+	useUsersPage: (...args: unknown[]) => mockUseUsersPage(...args),
+	useUser: (...args: unknown[]) => mockUseUser(...args),
 	useDeleteUser: () => mockUseDeleteUser(),
 	useUpdateUser: () => mockUseUpdateUser(),
 }));
@@ -119,11 +121,14 @@ describe("Users — registration links", () => {
 		originalWriteText = navigator.clipboard?.writeText.bind(
 			navigator.clipboard,
 		);
-		mockUseUsersFiltered.mockReturnValue({
-			data: [pendingInviteUser()],
+		mockUseUsersPage.mockReturnValue({
+			data: { items: [pendingInviteUser()], total: 1 },
 			isLoading: false,
+			isFetching: false,
+			isError: false,
 			refetch: vi.fn(),
 		});
+		mockUseUser.mockReturnValue({ data: undefined });
 		mockUseDeleteUser.mockReturnValue({ mutateAsync: vi.fn() });
 		mockUseUpdateUser.mockReturnValue({ mutateAsync: vi.fn() });
 		mockUseOrganizations.mockReturnValue({
@@ -250,12 +255,15 @@ describe("Users — registration links", () => {
 describe("Users", () => {
 	beforeEach(() => {
 		mockRefetch.mockReset();
-		mockUseUsersFiltered.mockReset();
-		mockUseUsersFiltered.mockReturnValue({
-			data: [makeUser()],
+		mockUseUsersPage.mockReset();
+		mockUseUsersPage.mockReturnValue({
+			data: { items: [makeUser()], total: 1 },
 			isLoading: false,
+			isFetching: false,
+			isError: false,
 			refetch: mockRefetch,
 		});
+		mockUseUser.mockReturnValue({ data: undefined });
 		mockUseOrganizations.mockReset();
 		mockUseOrganizations.mockReturnValue({
 			data: [
@@ -298,12 +306,22 @@ describe("Users", () => {
 	it("includes inactive users when Show Inactive is enabled", async () => {
 		const { user } = renderWithProviders(<Users />);
 
-		expect(mockUseUsersFiltered).toHaveBeenLastCalledWith(undefined, false);
-
-		await user.click(
-			screen.getByRole("switch", { name: "Show Inactive" }),
+		expect(mockUseUsersPage).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				includeInactive: false,
+				offset: 0,
+				limit: 25,
+			}),
 		);
 
-		expect(mockUseUsersFiltered).toHaveBeenLastCalledWith(undefined, true);
+		await user.click(screen.getByRole("switch", { name: "Show Inactive" }));
+
+		expect(mockUseUsersPage).toHaveBeenLastCalledWith(
+			expect.objectContaining({
+				includeInactive: true,
+				offset: 0,
+				limit: 25,
+			}),
+		);
 	});
 });

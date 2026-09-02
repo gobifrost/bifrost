@@ -66,6 +66,54 @@ class TestRoleCRUD:
         role_names = [r["name"] for r in roles]
         assert "E2E Test Role" in role_names
 
+    def test_role_listing_supports_server_pagination_search_and_sort(
+        self, e2e_client, platform_admin
+    ):
+        created = []
+        try:
+            for name in ["Paged role Alpha", "Paged role Bravo"]:
+                response = e2e_client.post(
+                    "/api/roles",
+                    headers=platform_admin.headers,
+                    json={"name": name, "description": "pagination boundary"},
+                )
+                assert response.status_code == 201, response.text
+                created.append(response.json()["id"])
+
+            first = e2e_client.get(
+                "/api/roles",
+                headers=platform_admin.headers,
+                params={
+                    "search": "Paged role",
+                    "sort_by": "name",
+                    "sort_direction": "asc",
+                    "limit": 1,
+                    "offset": 0,
+                },
+            )
+            assert first.status_code == 200, first.text
+            assert first.headers["X-Total-Count"] == "2"
+            assert [role["name"] for role in first.json()] == ["Paged role Alpha"]
+            assert first.json()[0]["consumer_counts"]["users"] == 0
+
+            second = e2e_client.get(
+                "/api/roles",
+                headers=platform_admin.headers,
+                params={
+                    "search": "Paged role",
+                    "sort_by": "name",
+                    "sort_direction": "asc",
+                    "limit": 1,
+                    "offset": 1,
+                },
+            )
+            assert [role["name"] for role in second.json()] == ["Paged role Bravo"]
+        finally:
+            for role_id in created:
+                e2e_client.delete(
+                    f"/api/roles/{role_id}", headers=platform_admin.headers
+                )
+
     def test_assign_role_to_user(self, e2e_client, platform_admin, org1_user, test_role):
         """Platform admin can assign role to user."""
         response = e2e_client.post(
@@ -76,6 +124,22 @@ class TestRoleCRUD:
         # Accept 200, 201, or 204
         assert response.status_code in [200, 201, 204], \
             f"Assign role failed: {response.status_code} - {response.text}"
+
+        assigned = e2e_client.get(
+            f"/api/roles/{test_role['id']}/users",
+            headers=platform_admin.headers,
+        )
+        assert assigned.status_code == 200, assigned.text
+        assert assigned.json()["users"] == [
+            {
+                "id": str(org1_user.user_id),
+                "name": org1_user.name,
+                "email": org1_user.email,
+                "organization_id": str(org1_user.organization_id),
+                "organization_name": "Bifrost Dev Org",
+                "organization_is_provider": False,
+            }
+        ]
 
 
 @pytest.mark.e2e

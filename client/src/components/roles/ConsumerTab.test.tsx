@@ -98,10 +98,12 @@ describe("ConsumerTab", () => {
 
 	it("opens the AssignDrawer when the Assign button is clicked", async () => {
 		const user = userEvent.setup();
+		const onRequestCandidates = vi.fn();
 		renderWithProviders(
 			<ConsumerTab
 				{...defaults}
 				candidates={[{ id: "c", primary: "Carol" }]}
+				onRequestCandidates={onRequestCandidates}
 			/>,
 		);
 
@@ -117,5 +119,6 @@ describe("ConsumerTab", () => {
 		expect(
 			screen.getByText(/pick the users you want to add/i),
 		).toBeInTheDocument();
+		expect(onRequestCandidates).toHaveBeenCalledOnce();
 	});
 });

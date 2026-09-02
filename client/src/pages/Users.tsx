@@ -39,10 +39,10 @@ import {
 	AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { SearchBox } from "@/components/search/SearchBox";
-import { useSearch } from "@/hooks/useSearch";
 import {
-	useUsersFiltered,
 	useDeleteUser,
+	useUser,
+	useUsersPage,
 	useUpdateUser,
 } from "@/hooks/useUsers";
 import { useUserSelection } from "@/hooks/useUserSelection";
@@ -72,6 +72,7 @@ import {
 } from "@/hooks/useUserInvites";
 import { useEventSources } from "@/services/events";
 import { toast } from "sonner";
+import { ListPagination } from "@/components/pagination/ListPagination";
 import type { components, components as v1 } from "@/lib/v1";
 type User = components["schemas"]["UserPublic"];
 type Organization = components["schemas"]["OrganizationPublic"];
@@ -83,6 +84,7 @@ type RegistrationLinkDialogState = {
 
 type SortColumn = "name" | "email" | "status" | "created" | "last_login";
 type SortDirection = "asc" | "desc";
+const PAGE_SIZE = 25;
 
 function SortIcon({
 	column,
@@ -116,20 +118,25 @@ export function Users() {
 	);
 	const [sortColumn, setSortColumn] = useState<SortColumn>("name");
 	const [sortDirection, setSortDirection] = useState<SortDirection>("asc");
+	const [offset, setOffset] = useState(0);
 	const [registrationLinkDialog, setRegistrationLinkDialog] =
 		useState<RegistrationLinkDialogState>(null);
 
 	const { scope } = useOrgScope();
 	const { user: currentUser, isPlatformAdmin } = useAuth();
 
-	const {
-		data: users,
-		isLoading,
-		refetch,
-	} = useUsersFiltered(
-		isPlatformAdmin ? filterOrgId : undefined,
-		showDisabled,
-	);
+	const usersQuery = useUsersPage({
+		scope: isPlatformAdmin ? filterOrgId : undefined,
+		includeInactive: showDisabled,
+		search: searchTerm,
+		sortBy: sortColumn,
+		sortDirection,
+		limit: PAGE_SIZE,
+		offset,
+	});
+	const users = usersQuery.data?.items ?? [];
+	const total = usersQuery.data?.total ?? 0;
+	const { data: routeSelectedUser } = useUser(userId);
 	const deleteMutation = useDeleteUser();
 	const updateMutation = useUpdateUser();
 	const resendMutation = useResendInvite();
@@ -158,62 +165,13 @@ export function Users() {
 		if (!orgId) return { name: "Platform", isProvider: false };
 		const org = organizations?.find((o: Organization) => o.id === orgId);
 		return {
-			name: org?.name || orgId,
+			name: org?.name || (organizations ? "Unknown organization" : "Loading…"),
 			isProvider: org?.is_provider ?? false,
 		};
 	};
 
-	const filteredUsers = useSearch(users || [], searchTerm, ["email", "name"]);
-
-	const routeSelectedUser = useMemo(
-		() => users?.find((user) => user.id === userId),
-		[users, userId],
-	);
 	const editDialogUser = selectedUser ?? routeSelectedUser;
 	const isEditDialogOpen = isEditOpen || Boolean(routeSelectedUser);
-
-	const sortedUsers = useMemo(() => {
-		if (!filteredUsers) return [];
-		return [...filteredUsers].sort((a, b) => {
-			const dir = sortDirection === "asc" ? 1 : -1;
-			switch (sortColumn) {
-				case "name":
-					return (
-						dir *
-						(a.name || a.email || "").localeCompare(
-							b.name || b.email || "",
-						)
-					);
-				case "email":
-					return dir * (a.email || "").localeCompare(b.email || "");
-				case "status": {
-					const aVal = a.invite_status ?? "active";
-					const bVal = b.invite_status ?? "active";
-					return dir * aVal.localeCompare(bVal);
-				}
-				case "created": {
-					const aDate = a.created_at
-						? new Date(a.created_at).getTime()
-						: 0;
-					const bDate = b.created_at
-						? new Date(b.created_at).getTime()
-						: 0;
-					return dir * (aDate - bDate);
-				}
-				case "last_login": {
-					const aDate = a.last_login
-						? new Date(a.last_login).getTime()
-						: 0;
-					const bDate = b.last_login
-						? new Date(b.last_login).getTime()
-						: 0;
-					return dir * (aDate - bDate);
-				}
-				default:
-					return 0;
-			}
-		});
-	}, [filteredUsers, sortColumn, sortDirection]);
 
 	const handleSort = (column: SortColumn) => {
 		if (sortColumn === column) {
@@ -222,6 +180,7 @@ export function Users() {
 			setSortColumn(column);
 			setSortDirection("asc");
 		}
+		setOffset(0);
 	};
 
 	// ===== Bulk selection + actions =====
@@ -229,7 +188,7 @@ export function Users() {
 		() => (currentUser ? [currentUser.id] : []),
 		[currentUser],
 	);
-	const selection = useUserSelection(sortedUsers, disabledSelectionIds);
+	const selection = useUserSelection(users, disabledSelectionIds);
 
 	type BulkMode = "move_org" | "replace_roles" | "disable" | "enable" | null;
 	const [bulkMode, setBulkMode] = useState<BulkMode>(null);
@@ -389,18 +348,15 @@ export function Users() {
 					<Button
 						variant="outline"
 						size="icon"
-						onClick={() => refetch()}
+						onClick={() => usersQuery.refetch()}
 						title="Refresh"
+						aria-label="Refresh users"
 					>
 						<RefreshCw className="h-4 w-4" />
 					</Button>
-					<Button
-						variant="outline"
-						size="icon"
-						onClick={() => setIsCreateOpen(true)}
-						title="Create User"
-					>
-						<Plus className="h-4 w-4" />
+					<Button onClick={() => setIsCreateOpen(true)}>
+						<Plus className="h-4 w-4 mr-1.5" />
+						Create user
 					</Button>
 				</div>
 			</div>
@@ -409,7 +365,10 @@ export function Users() {
 			<div className="flex items-center gap-4">
 				<SearchBox
 					value={searchTerm}
-					onChange={setSearchTerm}
+					onChange={(value) => {
+						setSearchTerm(value);
+						setOffset(0);
+					}}
 					placeholder="Search users by email or name..."
 					className="flex-1"
 				/>
@@ -417,7 +376,10 @@ export function Users() {
 					<div className="w-64">
 						<OrganizationSelect
 							value={filterOrgId}
-							onChange={setFilterOrgId}
+							onChange={(value) => {
+								setFilterOrgId(value);
+								setOffset(0);
+							}}
 							showAll={true}
 							showGlobal={false}
 							placeholder="All users"
@@ -428,7 +390,10 @@ export function Users() {
 					<Switch
 						id="show-disabled"
 						checked={showDisabled}
-						onCheckedChange={setShowDisabled}
+						onCheckedChange={(checked) => {
+							setShowDisabled(checked);
+							setOffset(0);
+						}}
 					/>
 					<Label
 						htmlFor="show-disabled"
@@ -440,337 +405,382 @@ export function Users() {
 			</div>
 
 			{/* Content */}
-			<div className="flex-1 min-h-0">
-				{isLoading ? (
+			<div className="flex-1 min-h-0" aria-busy={usersQuery.isFetching}>
+				{usersQuery.isLoading ? (
 					<div className="space-y-2">
 						{[...Array(5)].map((_, i) => (
 							<Skeleton key={i} className="h-12 w-full" />
 						))}
 					</div>
-				) : sortedUsers && sortedUsers.length > 0 ? (
-					<DataTable>
-						<DataTableHeader>
-							<DataTableRow>
-								<DataTableHead className="w-0 whitespace-nowrap">
-									<Checkbox
-										aria-label="Select all visible users"
-										checked={
-											selection.allVisibleSelected
-												? true
-												: selection.someVisibleSelected
-													? "indeterminate"
-													: false
-										}
-										onCheckedChange={() =>
-											selection.toggleAllVisible()
-										}
-									/>
-								</DataTableHead>
-								<DataTableHead className="w-0 whitespace-nowrap">
-									Organization
-								</DataTableHead>
-								<DataTableHead
-									className="w-0 whitespace-nowrap cursor-pointer select-none"
-									onClick={() => handleSort("name")}
-								>
-									Name
-									<SortIcon
-										column="name"
-										sortColumn={sortColumn}
-										sortDirection={sortDirection}
-									/>
-								</DataTableHead>
-								<DataTableHead
-									className="cursor-pointer select-none"
-									onClick={() => handleSort("email")}
-								>
-									Email
-									<SortIcon
-										column="email"
-										sortColumn={sortColumn}
-										sortDirection={sortDirection}
-									/>
-								</DataTableHead>
-								<DataTableHead
-									className="w-0 whitespace-nowrap cursor-pointer select-none"
-									onClick={() => handleSort("status")}
-								>
-									Status
-									<SortIcon
-										column="status"
-										sortColumn={sortColumn}
-										sortDirection={sortDirection}
-									/>
-								</DataTableHead>
-								<DataTableHead
-									className="w-0 whitespace-nowrap cursor-pointer select-none"
-									onClick={() => handleSort("created")}
-								>
-									Created
-									<SortIcon
-										column="created"
-										sortColumn={sortColumn}
-										sortDirection={sortDirection}
-									/>
-								</DataTableHead>
-								<DataTableHead
-									className="w-0 whitespace-nowrap cursor-pointer select-none"
-									onClick={() => handleSort("last_login")}
-								>
-									Last Login
-									<SortIcon
-										column="last_login"
-										sortColumn={sortColumn}
-										sortDirection={sortDirection}
-									/>
-								</DataTableHead>
-								<DataTableHead className="w-0 whitespace-nowrap text-right sticky right-0 bg-background"></DataTableHead>
-							</DataTableRow>
-						</DataTableHeader>
-						<DataTableBody>
-							{sortedUsers.map((user) => {
-								const orgInfo = getOrgInfo(
-									user.organization_id,
-								);
-								return (
-									<DataTableRow
-										key={user.id}
-										clickable
-										onClick={() => handleEditUser(user)}
-										className={
-											"group/row" +
-											(!user.is_active
-												? " opacity-60"
-												: "")
-										}
+				) : usersQuery.isError ? (
+					<div className="flex flex-col items-center justify-center rounded-lg border py-12 text-center">
+						<h3 className="text-lg font-semibold">
+							Users could not be loaded
+						</h3>
+						<p className="mt-2 text-sm text-muted-foreground">
+							Check your connection and try again.
+						</p>
+						<Button
+							className="mt-4"
+							variant="outline"
+							onClick={() => usersQuery.refetch()}
+						>
+							Try again
+						</Button>
+					</div>
+				) : users.length > 0 ? (
+					<div>
+						<DataTable>
+							<DataTableHeader>
+								<DataTableRow>
+									<DataTableHead className="w-0 whitespace-nowrap">
+										<Checkbox
+											aria-label="Select all visible users"
+											checked={
+												selection.allVisibleSelected
+													? true
+													: selection.someVisibleSelected
+														? "indeterminate"
+														: false
+											}
+											onCheckedChange={() =>
+												selection.toggleAllVisible()
+											}
+										/>
+									</DataTableHead>
+									<DataTableHead className="w-0 whitespace-nowrap">
+										Organization
+									</DataTableHead>
+									<DataTableHead
+										className="w-0 whitespace-nowrap cursor-pointer select-none"
+										onClick={() => handleSort("name")}
 									>
-										<DataTableCell
-											className="w-0 whitespace-nowrap"
-											onClick={(e) => e.stopPropagation()}
+										Name
+										<SortIcon
+											column="name"
+											sortColumn={sortColumn}
+											sortDirection={sortDirection}
+										/>
+									</DataTableHead>
+									<DataTableHead
+										className="cursor-pointer select-none"
+										onClick={() => handleSort("email")}
+									>
+										Email
+										<SortIcon
+											column="email"
+											sortColumn={sortColumn}
+											sortDirection={sortDirection}
+										/>
+									</DataTableHead>
+									<DataTableHead
+										className="w-0 whitespace-nowrap cursor-pointer select-none"
+										onClick={() => handleSort("status")}
+									>
+										Status
+										<SortIcon
+											column="status"
+											sortColumn={sortColumn}
+											sortDirection={sortDirection}
+										/>
+									</DataTableHead>
+									<DataTableHead
+										className="w-0 whitespace-nowrap cursor-pointer select-none"
+										onClick={() => handleSort("created")}
+									>
+										Created
+										<SortIcon
+											column="created"
+											sortColumn={sortColumn}
+											sortDirection={sortDirection}
+										/>
+									</DataTableHead>
+									<DataTableHead
+										className="w-0 whitespace-nowrap cursor-pointer select-none"
+										onClick={() => handleSort("last_login")}
+									>
+										Last Login
+										<SortIcon
+											column="last_login"
+											sortColumn={sortColumn}
+											sortDirection={sortDirection}
+										/>
+									</DataTableHead>
+									<DataTableHead className="w-0 whitespace-nowrap text-right sticky right-0 bg-background"></DataTableHead>
+								</DataTableRow>
+							</DataTableHeader>
+							<DataTableBody>
+								{users.map((user) => {
+									const orgInfo = getOrgInfo(
+										user.organization_id,
+									);
+									return (
+										<DataTableRow
+											key={user.id}
+											clickable
+											onClick={() => handleEditUser(user)}
+											className={
+												"group/row" +
+												(!user.is_active
+													? " opacity-60"
+													: "")
+											}
 										>
-											{isSelf(user) ? (
-												<Tooltip>
-													<TooltipTrigger asChild>
-														<span>
-															<Checkbox
-																checked={false}
-																disabled
-																aria-label="Cannot select yourself"
-															/>
-														</span>
-													</TooltipTrigger>
-													<TooltipContent>
-														You can't include
-														yourself in a bulk
-														action
-													</TooltipContent>
-												</Tooltip>
-											) : (
-												<Checkbox
-													aria-label={`Select ${user.name || user.email}`}
-													checked={selection.isSelected(
-														user.id,
+											<DataTableCell
+												className="w-0 whitespace-nowrap"
+												onClick={(e) =>
+													e.stopPropagation()
+												}
+											>
+												{isSelf(user) ? (
+													<Tooltip>
+														<TooltipTrigger asChild>
+															<span>
+																<Checkbox
+																	checked={
+																		false
+																	}
+																	disabled
+																	aria-label="Cannot select yourself"
+																/>
+															</span>
+														</TooltipTrigger>
+														<TooltipContent>
+															You can't include
+															yourself in a bulk
+															action
+														</TooltipContent>
+													</Tooltip>
+												) : (
+													<Checkbox
+														aria-label={`Select ${user.name || user.email}`}
+														checked={selection.isSelected(
+															user.id,
+														)}
+														onClick={(e) => {
+															selection.toggle(
+																user.id,
+																{
+																	shiftKey:
+																		e.shiftKey,
+																},
+															);
+															e.preventDefault();
+														}}
+													/>
+												)}
+											</DataTableCell>
+											<DataTableCell className="w-0 whitespace-nowrap text-sm">
+												<span className="inline-flex items-center gap-1">
+													{orgInfo.isProvider ? (
+														<Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />
+													) : (
+														<Building2 className="h-3.5 w-3.5 text-muted-foreground" />
 													)}
-													onClick={(e) => {
-														selection.toggle(
+													<span>{orgInfo.name}</span>
+												</span>
+											</DataTableCell>
+											<DataTableCell className="w-0 whitespace-nowrap">
+												<div className="flex items-center gap-1.5">
+													<span className="font-medium">
+														{user.name ||
+															user.email}
+													</span>
+													{user.is_superuser && (
+														<Tooltip>
+															<TooltipTrigger
+																asChild
+															>
+																<Crown className="h-4 w-4 shrink-0 text-amber-500 fill-amber-500" />
+															</TooltipTrigger>
+															<TooltipContent>
+																Platform Admin
+															</TooltipContent>
+														</Tooltip>
+													)}
+													{user.is_external && (
+														<Tooltip>
+															<TooltipTrigger
+																asChild
+															>
+																<Badge
+																	variant="outline"
+																	className="text-xs shrink-0"
+																>
+																	External
+																</Badge>
+															</TooltipTrigger>
+															<TooltipContent>
+																External user —
+																sees only what
+																the Everyone
+																tier or an
+																explicit role
+																grant allows
+															</TooltipContent>
+														</Tooltip>
+													)}
+												</div>
+											</DataTableCell>
+											<DataTableCell
+												className="text-muted-foreground max-w-0"
+												onClick={(e) =>
+													e.stopPropagation()
+												}
+											>
+												<UserEmailCell
+													email={user.email}
+												/>
+											</DataTableCell>
+											<DataTableCell className="w-0 whitespace-nowrap">
+												<UserStatusBadge
+													status={
+														user.invite_status ??
+														"active"
+													}
+												/>
+											</DataTableCell>
+											<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
+												{user.created_at
+													? new Date(
+															user.created_at,
+														).toLocaleDateString()
+													: "N/A"}
+											</DataTableCell>
+											<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
+												{user.last_login
+													? new Date(
+															user.last_login,
+														).toLocaleDateString()
+													: "Never"}
+											</DataTableCell>
+											<DataTableCell
+												className="w-0 whitespace-nowrap text-right sticky right-0 bg-card group-hover/row:bg-[color-mix(in_oklch,var(--card),var(--muted)_50%)]"
+												onClick={(e) =>
+													e.stopPropagation()
+												}
+											>
+												<UserActionsMenu
+													status={
+														user.invite_status ??
+														"active"
+													}
+													isActive={user.is_active}
+													isSelf={isSelf(user)}
+													onResend={() =>
+														resendMutation.mutate(
 															user.id,
 															{
-																shiftKey:
-																	e.shiftKey,
+																onSuccess: (
+																	res,
+																) => {
+																	toast.success(
+																		res.event_emitted
+																			? `Invite automation triggered for ${user.email}`
+																			: "Invite regenerated (no automations — copy link from regenerate)",
+																	);
+																},
+																onError: (
+																	e: unknown,
+																) =>
+																	toast.error(
+																		e instanceof
+																			Error
+																			? e.message
+																			: "Failed to resend invite",
+																	),
 															},
-														);
-														e.preventDefault();
-													}}
+														)
+													}
+													onRegenerate={() =>
+														regenerateMutation.mutate(
+															user.id,
+															{
+																onSuccess: (
+																	res,
+																) => {
+																	showRegistrationLink(
+																		user,
+																		res.registration_url,
+																	);
+																},
+																onError: (
+																	e: unknown,
+																) =>
+																	toast.error(
+																		e instanceof
+																			Error
+																			? e.message
+																			: "Failed to regenerate link",
+																	),
+															},
+														)
+													}
+													onCopyLink={() =>
+														regenerateMutation.mutate(
+															user.id,
+															{
+																onSuccess: (
+																	res,
+																) => {
+																	showRegistrationLink(
+																		user,
+																		res.registration_url,
+																	);
+																},
+																onError: (
+																	e: unknown,
+																) =>
+																	toast.error(
+																		e instanceof
+																			Error
+																			? e.message
+																			: "Failed to copy link",
+																	),
+															},
+														)
+													}
+													onRevoke={() =>
+														revokeMutation.mutate(
+															user.id,
+															{
+																onSuccess: () =>
+																	toast.success(
+																		"Invite revoked",
+																	),
+																onError: (
+																	e: unknown,
+																) =>
+																	toast.error(
+																		e instanceof
+																			Error
+																			? e.message
+																			: "Failed to revoke invite",
+																	),
+															},
+														)
+													}
+													onToggleActive={() =>
+														handleToggleActive(user)
+													}
+													onDelete={() =>
+														handleDeleteUser(user)
+													}
 												/>
-											)}
-										</DataTableCell>
-										<DataTableCell className="w-0 whitespace-nowrap text-sm">
-											<span className="inline-flex items-center gap-1">
-												{orgInfo.isProvider ? (
-													<Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />
-												) : (
-													<Building2 className="h-3.5 w-3.5 text-muted-foreground" />
-												)}
-												<span>{orgInfo.name}</span>
-											</span>
-										</DataTableCell>
-										<DataTableCell className="w-0 whitespace-nowrap">
-											<div className="flex items-center gap-1.5">
-												<span className="font-medium">
-													{user.name || user.email}
-												</span>
-												{user.is_superuser && (
-													<Tooltip>
-														<TooltipTrigger asChild>
-															<Crown className="h-4 w-4 shrink-0 text-amber-500 fill-amber-500" />
-														</TooltipTrigger>
-														<TooltipContent>
-															Platform Admin
-														</TooltipContent>
-													</Tooltip>
-												)}
-												{user.is_external && (
-													<Tooltip>
-														<TooltipTrigger asChild>
-															<Badge
-																variant="outline"
-																className="text-xs shrink-0"
-															>
-																External
-															</Badge>
-														</TooltipTrigger>
-														<TooltipContent>
-															External user — sees only what the Everyone tier or an explicit role grant allows
-														</TooltipContent>
-													</Tooltip>
-												)}
-											</div>
-										</DataTableCell>
-										<DataTableCell
-											className="text-muted-foreground max-w-0"
-											onClick={(e) => e.stopPropagation()}
-										>
-											<UserEmailCell email={user.email} />
-										</DataTableCell>
-										<DataTableCell className="w-0 whitespace-nowrap">
-											<UserStatusBadge
-												status={
-													user.invite_status ??
-													"active"
-												}
-											/>
-										</DataTableCell>
-										<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
-											{user.created_at
-												? new Date(
-														user.created_at,
-													).toLocaleDateString()
-												: "N/A"}
-										</DataTableCell>
-										<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
-											{user.last_login
-												? new Date(
-														user.last_login,
-													).toLocaleDateString()
-												: "Never"}
-										</DataTableCell>
-										<DataTableCell
-											className="w-0 whitespace-nowrap text-right sticky right-0 bg-card group-hover/row:bg-[color-mix(in_oklch,var(--card),var(--muted)_50%)]"
-											onClick={(e) => e.stopPropagation()}
-										>
-											<UserActionsMenu
-												status={
-													user.invite_status ??
-													"active"
-												}
-												isActive={user.is_active}
-												isSelf={isSelf(user)}
-												onResend={() =>
-													resendMutation.mutate(
-														user.id,
-														{
-															onSuccess: (
-																res,
-															) => {
-																toast.success(
-																	res.event_emitted
-																		? `Invite automation triggered for ${user.email}`
-																		: "Invite regenerated (no automations — copy link from regenerate)",
-																);
-															},
-															onError: (
-																e: unknown,
-															) =>
-																toast.error(
-																	e instanceof
-																		Error
-																		? e.message
-																		: "Failed to resend invite",
-																),
-														},
-													)
-												}
-												onRegenerate={() =>
-													regenerateMutation.mutate(
-														user.id,
-														{
-															onSuccess: (
-																res,
-															) => {
-																showRegistrationLink(
-																	user,
-																	res.registration_url,
-																);
-															},
-															onError: (
-																e: unknown,
-															) =>
-																toast.error(
-																	e instanceof
-																		Error
-																		? e.message
-																		: "Failed to regenerate link",
-																),
-														},
-													)
-												}
-												onCopyLink={() =>
-													regenerateMutation.mutate(
-														user.id,
-														{
-															onSuccess: (
-																res,
-															) => {
-																showRegistrationLink(
-																	user,
-																	res.registration_url,
-																);
-															},
-															onError: (
-																e: unknown,
-															) =>
-																toast.error(
-																	e instanceof
-																		Error
-																		? e.message
-																		: "Failed to copy link",
-																),
-														},
-													)
-												}
-												onRevoke={() =>
-													revokeMutation.mutate(
-														user.id,
-														{
-															onSuccess: () =>
-																toast.success(
-																	"Invite revoked",
-																),
-															onError: (
-																e: unknown,
-															) =>
-																toast.error(
-																	e instanceof
-																		Error
-																		? e.message
-																		: "Failed to revoke invite",
-																),
-														},
-													)
-												}
-												onToggleActive={() =>
-													handleToggleActive(user)
-												}
-												onDelete={() =>
-													handleDeleteUser(user)
-												}
-											/>
-										</DataTableCell>
-									</DataTableRow>
-								);
-							})}
-						</DataTableBody>
-					</DataTable>
+											</DataTableCell>
+										</DataTableRow>
+									);
+								})}
+							</DataTableBody>
+						</DataTable>
+						<ListPagination
+							offset={offset}
+							limit={PAGE_SIZE}
+							total={total}
+							isFetching={usersQuery.isFetching}
+							onPageChange={setOffset}
+						/>
+					</div>
 				) : (
 					<div className="flex flex-col items-center justify-center py-12 text-center">
 						<UserCog className="h-12 w-12 text-muted-foreground" />
