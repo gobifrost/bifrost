@@ -52,6 +52,7 @@ export function UserActionsMenu({
 			</DropdownMenuTrigger>
 			<DropdownMenuContent
 				align="end"
+				className="w-max min-w-40 whitespace-nowrap"
 				onClick={(e) => e.stopPropagation()}
 			>
 				{showInviteActions && (
@@ -82,7 +83,7 @@ export function UserActionsMenu({
 				)}
 				<DropdownMenuItem onClick={onToggleActive} disabled={isSelf}>
 					<Power className="mr-2 h-4 w-4" />
-					{isActive ? "Disable user" : "Enable user"}
+					{isActive ? "Disable" : "Enable"}
 				</DropdownMenuItem>
 				<DropdownMenuItem
 					onClick={onDelete}
@@ -90,7 +91,7 @@ export function UserActionsMenu({
 					className="text-destructive"
 				>
 					<Trash2 className="mr-2 h-4 w-4" />
-					Delete permanently
+					Delete
 				</DropdownMenuItem>
 			</DropdownMenuContent>
 		</DropdownMenu>

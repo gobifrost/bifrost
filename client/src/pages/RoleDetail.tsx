@@ -312,6 +312,7 @@ function useOrgLookup() {
 }
 
 function UsersTab({ roleId }: { roleId: string }) {
+	const navigate = useNavigate();
 	const [search, setSearch] = useState("");
 	const [offset, setOffset] = useState(0);
 	const pageSize = 25;
@@ -387,6 +388,8 @@ function UsersTab({ roleId }: { roleId: string }) {
 				isFetching,
 				onPageChange: setOffset,
 			}}
+			onItemClick={(item) => navigate(`/users/${item.id}`)}
+			getItemHref={(item) => `/users/${item.id}`}
 			onRequestCandidates={() => setCandidatesRequested(true)}
 			onAssign={async (ids) => {
 				await assignMut.mutateAsync({

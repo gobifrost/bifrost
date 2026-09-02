@@ -127,6 +127,15 @@ test.describe("Roles detail", () => {
 			page.getByText(new RegExp(`RoleDetail User ${SUFFIX}`)),
 		).toBeVisible();
 
+		// Assigned users open the same detail route as rows on the Users page.
+		await page.getByText(new RegExp(`RoleDetail User ${SUFFIX}`)).click();
+		await expect(page).toHaveURL(new RegExp(`/users/${userId}$`));
+		await page.goBack();
+		await expect(page).toHaveURL(new RegExp(`/roles/${roleId}/users$`));
+		await expect(
+			page.getByRole("heading", { name: ROLE_NAME }),
+		).toBeVisible();
+
 		// Tick + unassign.
 		await page
 			.getByLabel(new RegExp(`Select RoleDetail User ${SUFFIX}`))

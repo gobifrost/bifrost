@@ -68,6 +68,8 @@ export interface ConsumerTabProps {
 		isFetching?: boolean;
 		onPageChange: (offset: number) => void;
 	};
+	onItemClick?: (item: ConsumerTabItem) => void;
+	getItemHref?: (item: ConsumerTabItem) => string;
 	onRequestCandidates?: () => void;
 	onAssign: (ids: string[]) => Promise<void>;
 	onUnassign: (ids: string[]) => Promise<void>;
@@ -95,6 +97,8 @@ export function ConsumerTab({
 	searchValue,
 	onSearchChange,
 	pagination,
+	onItemClick,
+	getItemHref,
 	onRequestCandidates,
 	onAssign,
 	onUnassign,
@@ -241,8 +245,16 @@ export function ConsumerTab({
 								<DataTableRow
 									key={item.id}
 									className="group/row"
+									clickable={Boolean(onItemClick)}
+									href={getItemHref?.(item)}
+									onClick={() => onItemClick?.(item)}
 								>
-									<DataTableCell className="w-0 whitespace-nowrap">
+									<DataTableCell
+										className="w-0 whitespace-nowrap"
+										onClick={(event) =>
+											event.stopPropagation()
+										}
+									>
 										<Checkbox
 											checked={effectiveSelected.has(
 												item.id,

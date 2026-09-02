@@ -46,6 +46,28 @@ describe("ConsumerTab", () => {
 		expect(screen.getByText("bob@example.com")).toBeInTheDocument();
 	});
 
+	it("opens an assigned item without treating checkbox selection as navigation", async () => {
+		const user = userEvent.setup();
+		const onItemClick = vi.fn();
+		renderWithProviders(
+			<ConsumerTab
+				{...defaults}
+				items={[{ id: "a", primary: "Alice" }]}
+				onItemClick={onItemClick}
+				getItemHref={(item) => `/users/${item.id}`}
+			/>,
+		);
+
+		await user.click(screen.getByText("Alice"));
+		expect(onItemClick).toHaveBeenCalledWith(
+			expect.objectContaining({ id: "a" }),
+		);
+
+		onItemClick.mockClear();
+		await user.click(screen.getByLabelText("Select Alice"));
+		expect(onItemClick).not.toHaveBeenCalled();
+	});
+
 	it("filters items by search across primary and secondary", async () => {
 		const user = userEvent.setup();
 		renderWithProviders(
