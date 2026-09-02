@@ -17,6 +17,7 @@ from jsonschema.validators import validator_for
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from shared.scope_resolver import has_scope_bypass
 from src.core.org_filter import OrgFilterType
 from src.models.orm.agents import Agent
 from src.models.orm.agent_runs import AgentRun
@@ -241,7 +242,10 @@ class MCPAgentGatewayService:
 
     @property
     def _has_scope_bypass(self) -> bool:
-        return self.context.is_platform_admin or self.context.is_provider_org
+        return has_scope_bypass(
+            is_platform_admin=self.context.is_platform_admin,
+            is_provider_org=self.context.is_provider_org,
+        )
 
     def _agent_repo(self, session: Any) -> AgentRepository:
         return AgentRepository(

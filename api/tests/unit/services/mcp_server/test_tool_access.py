@@ -11,10 +11,19 @@ from uuid import uuid4
 import pytest
 
 from src.models.enums import AgentAccessLevel
+from src.services.mcp_server.server import MCPContext
 from src.services.mcp_server.tool_access import MCPToolAccessService
 
 
 # ==================== Fixtures ====================
+
+
+def test_mcp_scope_bypass_requires_superuser_or_provider_org():
+    user_id = uuid4()
+
+    assert MCPContext(user_id=user_id).has_scope_bypass is False
+    assert MCPContext(user_id=user_id, is_platform_admin=True).has_scope_bypass is True
+    assert MCPContext(user_id=user_id, is_provider_org=True).has_scope_bypass is True
 
 
 @pytest.fixture

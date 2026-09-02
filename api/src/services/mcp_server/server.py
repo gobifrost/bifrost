@@ -23,6 +23,8 @@ from uuid import UUID
 
 from fastmcp.tools import ToolResult
 
+from shared.scope_resolver import has_scope_bypass
+
 if TYPE_CHECKING:
     from fastmcp import FastMCP
 
@@ -155,6 +157,14 @@ class MCPContext:
             self.user_id = UUID(self.user_id)
         if isinstance(self.org_id, str) and self.org_id:
             self.org_id = UUID(self.org_id)
+
+    @property
+    def has_scope_bypass(self) -> bool:
+        """Whether this caller may cross organization scope boundaries."""
+        return has_scope_bypass(
+            is_platform_admin=self.is_platform_admin,
+            is_provider_org=self.is_provider_org,
+        )
 
 
 # =============================================================================
@@ -706,7 +716,7 @@ async def _execute_workflow_tool_impl(
                 db,
                 org_id=context.org_id,
                 user_id=context.user_id,
-                is_superuser=context.is_platform_admin,
+                is_superuser=context.has_scope_bypass,
                 is_external=context.is_external,
             )
             workflow = await repo.get(id=workflow_id)
