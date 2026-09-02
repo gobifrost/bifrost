@@ -606,10 +606,7 @@ export function Users() {
 												)}
 											</div>
 										</DataTableCell>
-										<DataTableCell
-											className="text-muted-foreground max-w-0"
-											onClick={(e) => e.stopPropagation()}
-										>
+										<DataTableCell className="text-muted-foreground max-w-0">
 											<UserEmailCell email={user.email} />
 										</DataTableCell>
 										<DataTableCell className="w-0 whitespace-nowrap">

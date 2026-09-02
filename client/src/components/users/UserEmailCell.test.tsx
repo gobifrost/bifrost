@@ -26,6 +26,19 @@ describe("UserEmailCell", () => {
 		).toBeInTheDocument();
 	});
 
+	it("lets clicks on the email text bubble to the user row", () => {
+		const rowClick = vi.fn();
+		renderWithProviders(
+			<div onClick={rowClick}>
+				<UserEmailCell email="alice@example.com" />
+			</div>,
+		);
+
+		fireEvent.click(screen.getByText("alice@example.com"));
+
+		expect(rowClick).toHaveBeenCalledOnce();
+	});
+
 	it("does not bubble copy clicks up to the row (would otherwise open edit dialog)", () => {
 		const rowClick = vi.fn();
 		renderWithProviders(

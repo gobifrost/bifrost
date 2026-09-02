@@ -93,7 +93,10 @@ test.describe("User Details", () => {
 			}).observe(document.body, { childList: true, subtree: true });
 		});
 
-		await userRow.locator("td").nth(2).click();
+		const emailCell = userRow.locator("td").nth(3);
+		const email = (await emailCell.textContent())?.trim();
+		expect(email).toBeTruthy();
+		await emailCell.getByText(email!, { exact: true }).click();
 		await expect(page).toHaveURL(/\/users\/[0-9a-f-]+$/);
 		await expect(
 			page.getByRole("dialog", { name: /edit user/i }),
