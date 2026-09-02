@@ -161,6 +161,20 @@ describe("ChatInput — @ mentions", () => {
 });
 
 describe("ChatInput — attachments and model profile", () => {
+	it("matches the conversation column width", () => {
+		const { container } = renderWithProviders(
+			<ChatInput onSend={vi.fn()} />,
+		);
+
+		expect(container.firstElementChild?.firstElementChild).toHaveClass(
+			"max-w-4xl",
+		);
+		expect(screen.getByLabelText("Chat input").parentElement).toHaveClass(
+			"bg-card",
+			"text-card-foreground",
+		);
+	});
+
 	it("keeps primary composer controls touch-sized on phones", () => {
 		const { container } = renderWithProviders(
 			<ChatInput onSend={vi.fn()} />,

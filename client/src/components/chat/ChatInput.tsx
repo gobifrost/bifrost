@@ -306,7 +306,7 @@ export function ChatInput({
 
 	return (
 		<div className="px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2 sm:px-4 sm:pb-4">
-			<div className="mx-auto max-w-3xl">
+			<div className="mx-auto max-w-4xl">
 				<div
 					onDrop={handleDrop}
 					onDragOver={(event) => {
@@ -315,7 +315,7 @@ export function ChatInput({
 					}}
 					onDragLeave={() => setIsDragging(false)}
 					className={cn(
-						"relative rounded-2xl border bg-background shadow-sm transition-colors",
+						"relative rounded-2xl border bg-card text-card-foreground shadow-sm transition-colors",
 						"focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20",
 						isDragging && "border-primary bg-primary/5",
 					)}
