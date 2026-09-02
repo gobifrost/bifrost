@@ -326,7 +326,6 @@ async def list_agents(
     - Users see AUTHENTICATED agents + ROLE_BASED agents assigned to their roles
     """
     if discovery_only:
-        filter_type = None
         filter_org_id = user.organization_id
         is_admin = False
     else:
@@ -348,7 +347,7 @@ async def list_agents(
         is_external=user.is_external,
     )
 
-    if is_admin and filter_type is not None:
+    if is_admin:
         # Admins use list_all_in_scope with filter_type for flexibility
         agents = await repo.list_all_in_scope(filter_type, active_only=active_only)
     else:
