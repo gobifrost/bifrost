@@ -19469,6 +19469,12 @@ export interface components {
             /** Tool Ref */
             tool_ref?: string | null;
             /**
+             * Discovery Scope
+             * @default accessible
+             * @enum {string}
+             */
+            discovery_scope: "accessible" | "all";
+            /**
              * Limit
              * @default 10
              */
@@ -36334,6 +36340,8 @@ export interface operations {
                 active_only?: boolean;
                 /** @description Include per-agent run stats in the list response. */
                 include_stats?: boolean;
+                /** @description Apply ordinary organization and role visibility even for impersonation-capable callers. Used by chat discovery. */
+                discovery_only?: boolean;
             };
             header?: never;
             path?: never;

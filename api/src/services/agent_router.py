@@ -14,7 +14,6 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.log_safety import log_safe
-from src.core.org_filter import OrgFilterType
 from src.models.orm import Agent
 from src.repositories.agents import AgentRepository
 from src.services.llm import get_llm_client, LLMMessage
@@ -43,13 +42,11 @@ class AgentRouter:
         *,
         user_id: UUID | None = None,
         org_id: UUID | None = None,
-        is_superuser: bool = False,
         is_external: bool = False,
     ):
         self._session_factory = session_factory
         self._user_id = user_id
         self._org_id = org_id
-        self._is_superuser = is_superuser
         self._is_external = is_external
 
     @asynccontextmanager
@@ -213,14 +210,9 @@ Your response (agent name or DIRECT):"""
                 session=session,
                 org_id=self._org_id,
                 user_id=self._user_id,
-                is_superuser=self._is_superuser,
+                is_superuser=False,
                 is_external=self._is_external,
             )
-            if self._is_superuser:
-                return await repo.list_all_in_scope(
-                    filter_type=OrgFilterType.ALL,
-                    active_only=True,
-                )
             return await repo.list_agents(active_only=True)
 
     def strip_mention(self, message: str) -> str:

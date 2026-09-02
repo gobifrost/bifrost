@@ -483,6 +483,46 @@ class TestConversationsAccessControl:
             except Exception as cleanup_exc:
                 logger.debug(f"agent cleanup skipped: {cleanup_exc}")
 
+    def test_provider_user_can_explicitly_chat_with_cross_org_agent(
+        self,
+        e2e_client,
+        platform_admin,
+        provider_org_user,
+        org1,
+    ):
+        """An explicit chat agent selection activates provider impersonation."""
+        agent_resp = e2e_client.post(
+            "/api/agents",
+            json={
+                "name": f"Provider Explicit Target {uuid4().hex[:8]}",
+                "system_prompt": "Test only.",
+                "channels": ["chat"],
+                "access_level": "role_based",
+                "organization_id": org1["id"],
+            },
+            headers=platform_admin.headers,
+        )
+        assert agent_resp.status_code == 201, agent_resp.text
+        agent = agent_resp.json()
+
+        try:
+            response = e2e_client.post(
+                "/api/chat/conversations",
+                json={
+                    "agent_id": agent["id"],
+                    "channel": "chat",
+                    "title": "Explicit provider test",
+                },
+                headers=provider_org_user.headers,
+            )
+            assert response.status_code == 201, response.text
+            assert response.json()["agent_id"] == agent["id"]
+        finally:
+            e2e_client.delete(
+                f"/api/agents/{agent['id']}",
+                headers=platform_admin.headers,
+            )
+
 
 # =============================================================================
 # Message Tests

@@ -72,6 +72,11 @@ UNSET: Final[_Unset] = _Unset()
 RequestedScope = _Unset | None | UUID
 
 
+def has_scope_bypass(*, is_platform_admin: bool, is_provider_org: bool) -> bool:
+    """Return whether a principal may target global or another organization."""
+    return is_platform_admin or is_provider_org
+
+
 def resolve_effective_scope(
     *,
     caller_org_id: UUID | None,
@@ -104,7 +109,10 @@ def resolve_effective_scope(
             scope. The message identifies the rule that failed without
             disclosing other orgs' existence.
     """
-    bypass = is_platform_admin or is_provider_org
+    bypass = has_scope_bypass(
+        is_platform_admin=is_platform_admin,
+        is_provider_org=is_provider_org,
+    )
 
     if isinstance(requested_scope, _Unset):
         return caller_org_id

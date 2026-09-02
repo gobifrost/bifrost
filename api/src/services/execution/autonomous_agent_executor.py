@@ -510,6 +510,15 @@ class AutonomousAgentExecutor:
     # Tool dispatch
     # ------------------------------------------------------------------
 
+    def _execution_org_id(self, agent: Agent) -> UUID | None:
+        """Use authenticated caller scope, or agent scope for autonomous runs."""
+        if self._caller_user_id is not None:
+            raw_org_id = self._caller.get("organization_id") if self._caller else None
+            if raw_org_id is None:
+                return None
+            return UUID(str(raw_org_id))
+        return agent.organization_id
+
     async def _execute_tool(self, tool_call: ToolCallRequest, agent: Agent) -> str:
         """Execute a tool call, mirroring AgentExecutor's dispatch logic."""
         # Knowledge search
@@ -569,13 +578,13 @@ class AutonomousAgentExecutor:
                     and self._caller.get("name")
                     else agent.name
                 ),
+                organization_id=self._execution_org_id(agent),
                 is_platform_admin=(
                     bool(self._caller.get("is_platform_admin", False))
                     if self._caller_user_id and self._caller
                     else False
                 ),
             ),
-            organization_id=agent.organization_id,
             artifact_workspace_id=(
                 self._ancestor_run_ids[0]
                 if self._ancestor_run_ids
@@ -1067,7 +1076,11 @@ class AutonomousAgentExecutor:
                         if self._caller_user_id
                         else SYSTEM_USER_ID
                     ),
-                    org_id=str(agent.organization_id) if agent.organization_id else None,
+                    org_id=(
+                        str(execution_org_id)
+                        if (execution_org_id := self._execution_org_id(agent))
+                        else None
+                    ),
                     is_platform_admin=(
                         bool(self._caller.get("is_platform_admin", False))
                         if self._caller_user_id and self._caller

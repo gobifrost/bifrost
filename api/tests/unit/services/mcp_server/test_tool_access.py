@@ -11,10 +11,19 @@ from uuid import uuid4
 import pytest
 
 from src.models.enums import AgentAccessLevel
+from src.services.mcp_server.server import MCPContext
 from src.services.mcp_server.tool_access import MCPToolAccessService
 
 
 # ==================== Fixtures ====================
+
+
+def test_mcp_scope_bypass_requires_superuser_or_provider_org():
+    user_id = uuid4()
+
+    assert MCPContext(user_id=user_id).has_scope_bypass is False
+    assert MCPContext(user_id=user_id, is_platform_admin=True).has_scope_bypass is True
+    assert MCPContext(user_id=user_id, is_provider_org=True).has_scope_bypass is True
 
 
 @pytest.fixture
@@ -299,6 +308,42 @@ class TestGetAccessibleTools:
     """Tests for get_accessible_tools()."""
 
     @pytest.mark.asyncio
+    async def test_platform_settings_inventory_preserves_admin_access(
+        self, service
+    ):
+        """The REST settings inventory can enumerate without changing /mcp discovery."""
+        accessible_agents = AsyncMock(return_value=[])
+        workflow_repo = MagicMock()
+
+        with (
+            patch.object(
+                service,
+                "_get_accessible_agents",
+                accessible_agents,
+            ),
+            patch.object(
+                service,
+                "_build_workflow_repo",
+                return_value=workflow_repo,
+            ) as build_workflow_repo,
+            patch.object(service, "_apply_config_filters", return_value=[]),
+            patch(
+                "src.services.mcp_server.tool_access.MCPConfigService"
+            ) as config_service,
+        ):
+            config_service.return_value.get_config = AsyncMock(
+                return_value=MagicMock()
+            )
+            result = await service.get_accessible_tools(
+                user_roles=[],
+                is_superuser=True,
+            )
+
+        assert result.tools == []
+        assert accessible_agents.await_args.kwargs["is_superuser"] is True
+        assert build_workflow_repo.call_args.kwargs["is_superuser"] is True
+
+    @pytest.mark.asyncio
     async def test_collects_system_tools_from_agents(self, service, mock_session, mock_agent):
         """Should collect system tools from accessible agents."""
         agent = mock_agent(
@@ -317,7 +362,6 @@ class TestGetAccessibleTools:
 
                 result = await service.get_accessible_tools(
                     user_roles=[],
-                    is_superuser=True,
                 )
 
         system_tools = [t for t in result.tools if t.type == "system"]
@@ -345,7 +389,6 @@ class TestGetAccessibleTools:
 
             result = await service.get_accessible_tools(
                 user_roles=[],
-                is_superuser=False,
             )
 
         workflow_tools = [t for t in result.tools if t.type == "workflow"]
@@ -376,7 +419,6 @@ class TestGetAccessibleTools:
 
             result = await service.get_accessible_tools(
                 user_roles=[],
-                is_superuser=True,
             )
 
         # Should have 2 unique system tools, not 3
@@ -411,7 +453,6 @@ class TestGetAccessibleTools:
 
             result = await service.get_accessible_tools(
                 user_roles=[],
-                is_superuser=False,
             )
 
         workflow_tools = [t for t in result.tools if t.type == "workflow"]
@@ -574,7 +615,6 @@ class TestSystemToolMetadata:
 
             result = await service.get_accessible_tools(
                 user_roles=[],
-                is_superuser=False,
             )
 
         assert len(result.tools) == 1
@@ -609,7 +649,6 @@ class TestEdgeCases:
 
             result = await service.get_accessible_tools(
                 user_roles=["Other Role"],
-                is_superuser=False,
             )
 
         assert len(result.tools) == 0
@@ -633,7 +672,6 @@ class TestEdgeCases:
 
             result = await service.get_accessible_tools(
                 user_roles=[],
-                is_superuser=False,
             )
 
         assert len(result.tools) == 0
@@ -659,7 +697,6 @@ class TestEdgeCases:
 
             result = await service.get_accessible_tools(
                 user_roles=[],
-                is_superuser=False,
             )
 
         workflow_tool = [t for t in result.tools if t.type == "workflow"][0]
@@ -698,7 +735,6 @@ class TestSearchKnowledgeAutoInjection:
 
             result = await service.get_accessible_tools(
                 user_roles=[],
-                is_superuser=True,
             )
 
         tool_ids = {t.id for t in result.tools}
@@ -725,7 +761,6 @@ class TestSearchKnowledgeAutoInjection:
 
             result = await service.get_accessible_tools(
                 user_roles=[],
-                is_superuser=True,
             )
 
         tool_ids = {t.id for t in result.tools}
@@ -753,7 +788,6 @@ class TestSearchKnowledgeAutoInjection:
 
             result = await service.get_accessible_tools(
                 user_roles=[],
-                is_superuser=True,
             )
 
         sk_tools = [t for t in result.tools if t.id == "search_knowledge"]
@@ -792,6 +826,38 @@ class TestSearchKnowledgeAutoInjection:
         assert result is not None
         tool_ids = {t.id for t in result.tools}
         assert "search_knowledge" in tool_ids
+
+    @pytest.mark.asyncio
+    async def test_provider_org_caller_bypasses_agent_role_requirement(
+        self, service, mock_session, mock_agent
+    ):
+        """Platform-org impersonation has the same scope bypass as superuser."""
+        agent = mock_agent(
+            access_level=AgentAccessLevel.ROLE_BASED,
+            system_tools=["list_workflows"],
+            roles=["Customer Operator"],
+        )
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.unique.return_value.first.return_value = agent
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with patch("src.services.mcp_server.tool_access.MCPConfigService") as mock_config_cls:
+            mock_config = MagicMock(allowed_tool_ids=None, blocked_tool_ids=None)
+            mock_config_cls.return_value.get_config = AsyncMock(
+                return_value=mock_config
+            )
+
+            result = await service.get_tools_for_agent(
+                agent_id=agent.id,
+                user_roles=[],
+                is_superuser=False,
+                is_provider_org=True,
+                user_id=uuid4(),
+                org_id=uuid4(),
+            )
+
+        assert result is not None
+        assert {tool.id for tool in result.tools} == {"list_workflows"}
 
     @pytest.mark.asyncio
     async def test_get_tools_for_agent_no_inject_without_namespaces(

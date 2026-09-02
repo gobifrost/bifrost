@@ -14,6 +14,7 @@ class AgentWorkflowCaller:
     user_id: str
     email: str
     name: str
+    organization_id: UUID | str | None
     is_platform_admin: bool = False
 
 
@@ -23,7 +24,6 @@ async def execute_agent_workflow_tool(
     workflow_name: str,
     parameters: dict[str, Any],
     caller: AgentWorkflowCaller,
-    organization_id: UUID | str | None,
     execution_id: str | None = None,
     artifact_workspace_id: str | None = None,
     sync: bool = True,
@@ -38,7 +38,7 @@ async def execute_agent_workflow_tool(
         user_id=caller.user_id,
         user_email=caller.email,
         user_name=caller.name,
-        org_id=str(organization_id) if organization_id else None,
+        org_id=str(caller.organization_id) if caller.organization_id else None,
         is_platform_admin=caller.is_platform_admin,
         is_agent=True,
         execution_id=execution_id,

@@ -21,6 +21,7 @@ from shared.policy_rules import PolicyRuleDomainMismatch, PolicyRuleNotFound, re
 from src.repositories.policy_rule import PolicyRuleRepository
 from shared.policies.subscription import decide_visibility_change
 from shared.role_cache import get_user_roles
+from shared.scope_resolver import has_scope_bypass
 from src.core.auth import get_current_user_ws
 from src.core.principal import UserPrincipal
 from src.core.database import get_db_context
@@ -1570,7 +1571,10 @@ async def _process_chat_message(
                     db,
                     org_id=user.organization_id,
                     user_id=user.user_id,
-                    is_superuser=user.is_superuser,
+                    is_superuser=has_scope_bypass(
+                        is_platform_admin=user.is_platform_admin,
+                        is_provider_org=user.is_provider_org,
+                    ),
                     is_external=user.is_external,
                 )
                 accessible_agent = await repo.get_agent_with_access_check(conversation.agent_id)

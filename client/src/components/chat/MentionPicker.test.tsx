@@ -14,15 +14,22 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderWithProviders, screen, fireEvent } from "@/test-utils";
 
-const agentsRef: { data: Array<Record<string, unknown>> } = { data: [] };
+const { agentsRef, useAgentsMock } = vi.hoisted(() => {
+	const agents = { data: [] as Array<Record<string, unknown>> };
+	return {
+		agentsRef: agents,
+		useAgentsMock: vi.fn(() => ({ data: agents.data })),
+	};
+});
 
 vi.mock("@/hooks/useAgents", () => ({
-	useAgents: () => ({ data: agentsRef.data }),
+	useAgents: useAgentsMock,
 }));
 
 import { MentionPicker } from "./MentionPicker";
 
 beforeEach(() => {
+	useAgentsMock.mockClear();
 	agentsRef.data = [
 		{
 			id: "a-1",
@@ -59,6 +66,9 @@ describe("MentionPicker — visibility", () => {
 		expect(screen.getByText("SupportBot")).toBeInTheDocument();
 		expect(screen.getByText("DevBot")).toBeInTheDocument();
 		expect(screen.getByText("DataBot")).toBeInTheDocument();
+		expect(useAgentsMock).toHaveBeenCalledWith(undefined, {
+			discoveryOnly: true,
+		});
 	});
 });
 

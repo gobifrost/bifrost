@@ -358,6 +358,38 @@ class TestAgentScopeFiltering:
         assert scoped_agents["org1"]["id"] in agent_ids, "Should see org1 agent"
         assert scoped_agents["org2"]["id"] in agent_ids, "Should see org2 agent"
 
+    def test_platform_admin_chat_discovery_does_not_expand_for_admin_status(
+        self, e2e_client, platform_admin, scoped_agents
+    ):
+        """Chat discovery uses normal scope even for a platform admin."""
+        response = e2e_client.get(
+            "/api/agents",
+            params={"discovery_only": True},
+            headers=platform_admin.headers,
+        )
+        assert response.status_code == 200
+        agent_ids = {agent["id"] for agent in response.json()}
+
+        assert scoped_agents["global"]["id"] in agent_ids
+        assert scoped_agents["org1"]["id"] not in agent_ids
+        assert scoped_agents["org2"]["id"] not in agent_ids
+
+    def test_provider_chat_discovery_does_not_expand_for_impersonation(
+        self, e2e_client, provider_org_user, scoped_agents
+    ):
+        """Provider impersonation is explicit, not a discovery entitlement."""
+        response = e2e_client.get(
+            "/api/agents",
+            params={"discovery_only": True},
+            headers=provider_org_user.headers,
+        )
+        assert response.status_code == 200
+        agent_ids = {agent["id"] for agent in response.json()}
+
+        assert scoped_agents["global"]["id"] in agent_ids
+        assert scoped_agents["org1"]["id"] not in agent_ids
+        assert scoped_agents["org2"]["id"] not in agent_ids
+
     def test_platform_admin_scope_global_sees_only_global(
         self, e2e_client, platform_admin, scoped_agents
     ):
@@ -431,6 +463,18 @@ class TestAgentScopeFiltering:
         # historically returned (tools, delegated agents, roles, owner).
         assert "tools" in data or "tool_ids" in data
         assert "roles" in data or "role_ids" in data
+
+    def test_provider_user_can_explicitly_get_cross_org_agent(
+        self, e2e_client, provider_org_user, scoped_agents
+    ):
+        """An exact agent ID activates the provider caller's scope bypass."""
+        org2_agent_id = scoped_agents["org2"]["id"]
+        response = e2e_client.get(
+            f"/api/agents/{org2_agent_id}",
+            headers=provider_org_user.headers,
+        )
+        assert response.status_code == 200, response.text
+        assert response.json()["id"] == org2_agent_id
 
     def test_org_user_cannot_get_cross_org_agent(
         self, e2e_client, org1_user, scoped_agents

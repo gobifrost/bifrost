@@ -35,6 +35,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
+from shared.scope_resolver import has_scope_bypass
 from src.core.principal import UserPrincipal
 from src.models.contracts.agents import (
     AgentSwitch,
@@ -192,7 +193,10 @@ class AgentExecutor:
                 session,
                 org_id=user.organization_id,
                 user_id=user.user_id,
-                is_superuser=user.is_superuser,
+                is_superuser=has_scope_bypass(
+                    is_platform_admin=user.is_platform_admin,
+                    is_provider_org=user.is_provider_org,
+                ),
                 is_external=user.is_external,
             )
             accessible_agent = await repo.get_agent_with_access_check(new_agent.id)
@@ -260,7 +264,6 @@ class AgentExecutor:
             self._session_factory,
             user_id=user.user_id if user else None,
             org_id=user.organization_id if user else None,
-            is_superuser=user.is_superuser if user else False,
             is_external=user.is_external if user else False,
         )
 
@@ -1361,23 +1364,47 @@ class AgentExecutor:
                 )
             resolved_workflow_id, resolved_workflow_name = resolved_workflow
 
-            # Get user info from conversation
-            user = conversation.user if conversation else None
-
-            # Get org_id from agent (workflows are not org-scoped)
-            org_id = str(agent.organization_id) if agent and agent.organization_id else None
+            # Chat constructs the authenticated caller once at entry and passes
+            # it through every dispatch path. Prefer that canonical context so
+            # workflow execution does not depend on a lazily loaded ORM user.
+            # The conversation fallback preserves direct/internal callers that
+            # predate the shared caller context.
+            user = conversation.user if conversation and not caller else None
+            caller_has_scope = caller is not None and "organization_id" in caller
 
             execution_response = await execute_agent_workflow_tool(
                 workflow_id=resolved_workflow_id,
                 workflow_name=resolved_workflow_name,
                 parameters=tool_call.arguments or {},
                 caller=AgentWorkflowCaller(
-                    user_id=str(user.id) if user else "system",
-                    email=user.email if user else "system@internal.gobifrost.com",
-                    name=user.name if user else "System",
-                    is_platform_admin=user.is_superuser if user else False,
+                    user_id=(
+                        str(caller.get("user_id"))
+                        if caller and caller.get("user_id")
+                        else str(user.id) if user else "system"
+                    ),
+                    email=(
+                        str(caller.get("email"))
+                        if caller and caller.get("email")
+                        else user.email if user else "system@internal.gobifrost.com"
+                    ),
+                    name=(
+                        str(caller.get("name"))
+                        if caller and caller.get("name")
+                        else user.name if user else "System"
+                    ),
+                    organization_id=(
+                        caller.get("organization_id")
+                        if caller_has_scope and caller
+                        else user.organization_id
+                        if user is not None
+                        else agent.organization_id if agent else None
+                    ),
+                    is_platform_admin=(
+                        bool(caller.get("is_platform_admin", False))
+                        if caller
+                        else user.is_superuser if user else False
+                    ),
                 ),
-                organization_id=org_id,
                 execution_id=execution_id,
                 artifact_workspace_id=str(conversation.id) if conversation else None,
             )
@@ -1823,7 +1850,13 @@ class AgentExecutor:
             # via get_tool_db() fallback, avoiding long-lived connection holds
             context = MCPContext(
                 user_id=str(user.id) if user else "",
-                org_id=str(agent.organization_id) if agent.organization_id else None,
+                org_id=(
+                    str(user.organization_id)
+                    if user and user.organization_id
+                    else str(agent.organization_id)
+                    if not user and agent.organization_id
+                    else None
+                ),
                 is_platform_admin=user.is_superuser if user else False,
                 user_email=user.email if user else "",
                 user_name=user.name if user else "",

@@ -80,6 +80,7 @@ class ToolFilterMiddleware(Middleware):
 
         user_roles = token.claims.get("roles", [])
         is_superuser = token.claims.get("is_superuser", False)
+        is_provider_org = token.claims.get("is_provider_org", False)
         is_external = token.claims.get("is_external", False)
         user_id = token.claims.get("user_id")
         org_id = token.claims.get("org_id")
@@ -100,6 +101,7 @@ class ToolFilterMiddleware(Middleware):
                     agent_id=agent_id,
                     user_roles=user_roles,
                     is_superuser=is_superuser,
+                    is_provider_org=is_provider_org,
                     user_id=user_id,
                     org_id=org_id,
                     is_external=is_external,
@@ -180,6 +182,7 @@ class ToolFilterMiddleware(Middleware):
 
         user_roles = token.claims.get("roles", [])
         is_superuser = token.claims.get("is_superuser", False)
+        is_provider_org = token.claims.get("is_provider_org", False)
         is_external = token.claims.get("is_external", False)
         user_id = token.claims.get("user_id")
         org_id = token.claims.get("org_id")
@@ -196,6 +199,7 @@ class ToolFilterMiddleware(Middleware):
                     agent_id=agent_id,
                     user_roles=user_roles,
                     is_superuser=is_superuser,
+                    is_provider_org=is_provider_org,
                     user_id=user_id,
                     org_id=org_id,
                     is_external=is_external,

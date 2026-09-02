@@ -40,10 +40,15 @@ function getErrorMessage(error: unknown, fallback: string): string {
  * - Omitted (undefined): show all agents (superusers) / user's org + global (org users)
  * - "global": show only global agents (org_id IS NULL)
  * - UUID string: show that org's agents + global agents
+ * - discoveryOnly: apply ordinary org/role visibility even for administrators
  */
 export function useAgents(
 	filterScope?: string | null,
-	options?: { includeInactive?: boolean; includeStats?: boolean },
+	options?: {
+		includeInactive?: boolean;
+		includeStats?: boolean;
+		discoveryOnly?: boolean;
+	},
 ) {
 	// Build query params - scope is the new filter parameter
 	const queryParams: Record<string, string | boolean | undefined> = {};
@@ -62,10 +67,13 @@ export function useAgents(
 	if (options?.includeStats) {
 		queryParams.include_stats = true;
 	}
+	if (options?.discoveryOnly) {
+		queryParams.discovery_only = true;
+	}
 
 	return $api.useQuery("get", "/api/agents", {
 		params: {
-			// Type assertion needed until types are regenerated
+			// Narrow the dynamically assembled map to this endpoint's query shape.
 			query:
 				Object.keys(queryParams).length > 0 ? queryParams : undefined,
 		} as {
@@ -73,6 +81,7 @@ export function useAgents(
 				category?: string | null;
 				active_only?: boolean;
 				include_stats?: boolean;
+				discovery_only?: boolean;
 				scope?: string;
 			};
 		},

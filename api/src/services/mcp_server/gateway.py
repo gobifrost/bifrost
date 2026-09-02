@@ -17,6 +17,7 @@ from jsonschema.validators import validator_for
 from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
+from shared.scope_resolver import has_scope_bypass
 from src.core.org_filter import OrgFilterType
 from src.models.orm.agents import Agent
 from src.models.orm.agent_runs import AgentRun
@@ -58,6 +59,7 @@ GatewayToolSource = Literal[
     "delegation",
     "external_mcp",
 ]
+DiscoveryScope = Literal["accessible", "all"]
 
 
 class GatewayError(Exception):
@@ -239,26 +241,56 @@ class MCPAgentGatewayService:
     def __init__(self, context: MCPContext):
         self.context = context
 
+    @property
+    def _has_scope_bypass(self) -> bool:
+        return has_scope_bypass(
+            is_platform_admin=self.context.is_platform_admin,
+            is_provider_org=self.context.is_provider_org,
+        )
+
     def _agent_repo(self, session: Any) -> AgentRepository:
         return AgentRepository(
             session,
             org_id=self.context.org_id,
             user_id=self.context.user_id,
-            is_superuser=self.context.is_platform_admin,
+            is_superuser=self._has_scope_bypass,
             is_external=self.context.is_external,
         )
+
+    def _authorize_discovery_scope(self, discovery_scope: DiscoveryScope) -> None:
+        if discovery_scope == "all" and not self._has_scope_bypass:
+            raise GatewayError(
+                "IMPERSONATION_FORBIDDEN",
+                "Cross-organization discovery requires platform/provider impersonation authority.",
+            )
 
     async def _list_accessible_agents(self) -> list[Agent]:
         from src.core.database import get_db_context
 
         async with get_db_context() as db:
-            repo = self._agent_repo(db)
-            if self.context.is_platform_admin:
-                return await repo.list_all_in_scope(
-                    OrgFilterType.ALL,
-                    active_only=True,
-                )
+            repo = AgentRepository(
+                db,
+                org_id=self.context.org_id,
+                user_id=self.context.user_id,
+                is_superuser=False,
+                is_external=self.context.is_external,
+            )
             return await repo.list_agents(active_only=True)
+
+    async def _list_discovery_agents(
+        self, discovery_scope: DiscoveryScope
+    ) -> list[Agent]:
+        self._authorize_discovery_scope(discovery_scope)
+        if discovery_scope == "accessible":
+            return await self._list_accessible_agents()
+
+        from src.core.database import get_db_context
+
+        async with get_db_context() as db:
+            return await self._agent_repo(db).list_all_in_scope(
+                OrgFilterType.ALL,
+                active_only=True,
+            )
 
     async def accessible_agent_count(self) -> int:
         """Return the caller's live accessible-agent count."""
@@ -270,9 +302,11 @@ class MCPAgentGatewayService:
         query: str | None = None,
         agent_id: str | None = None,
         tool_ref: str | None = None,
+        discovery_scope: DiscoveryScope = "accessible",
         limit: int = 10,
     ) -> dict[str, Any]:
         """Search agents and tools, then progressively hydrate one selection."""
+        self._authorize_discovery_scope(discovery_scope)
         bounded_limit = min(max(limit, 1), MAX_CAPABILITY_RESULTS)
         if agent_id is not None:
             snapshot = await self.get_agent_snapshot(agent_id)
@@ -292,7 +326,7 @@ class MCPAgentGatewayService:
             )
 
         snapshots: list[AgentToolSnapshot] = []
-        for agent in await self._list_accessible_agents():
+        for agent in await self._list_discovery_agents(discovery_scope):
             snapshots.append(await self.get_agent_snapshot(str(agent.id)))
 
         candidates: list[tuple[int, str, AgentToolSnapshot, ResolvedGatewayTool | None]] = []
@@ -1174,6 +1208,7 @@ class MCPAgentGatewayService:
             user_id=self.context.user_id,
             org_id=self.context.org_id,
             is_platform_admin=self.context.is_platform_admin,
+            is_provider_org=self.context.is_provider_org,
             is_external=self.context.is_external,
             user_email=self.context.user_email,
             user_name=self.context.user_name,
@@ -1215,9 +1250,9 @@ class MCPAgentGatewayService:
                 user_id=str(self.context.user_id),
                 email=self.context.user_email,
                 name=self.context.user_name or "MCP User",
+                organization_id=self.context.org_id,
                 is_platform_admin=self.context.is_platform_admin,
             ),
-            organization_id=self.context.org_id,
             sync=not async_execution,
         )
         data = {
