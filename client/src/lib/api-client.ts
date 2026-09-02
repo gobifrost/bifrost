@@ -156,6 +156,17 @@ function isTokenExpiringSoon(token: string): boolean {
 // Lock to prevent concurrent refresh attempts
 let refreshPromise: Promise<boolean> | null = null;
 
+interface PlatformAuthBridge {
+	getAccessToken: () => string | null;
+	canRefreshAccessToken: () => boolean;
+	refreshAccessToken: () => Promise<boolean>;
+	handleAuthenticationFailure: () => void;
+}
+
+type PlatformAuthGlobal = typeof globalThis & {
+	__BIFROST_PLATFORM_AUTH_V1__?: PlatformAuthBridge;
+};
+
 /**
  * Refresh the access token using the refresh token cookie
  * Uses HttpOnly cookie for refresh token (more secure than localStorage)
@@ -231,6 +242,19 @@ function handleAuthFailure(): void {
 		window.location.href = `/login?returnTo=${encodeURIComponent(currentPath)}`;
 	}
 }
+
+// Standalone V2 apps execute in the platform document but ship their own copy
+// of the web SDK. This bridge lets that SDK share the host's live token and
+// single-flight refresh path without adding a new bootstrap prop that every
+// Solution entry would have to forward. Embed sessions intentionally remain
+// non-refreshable: their short-lived capability token must re-enter the embed
+// handshake instead of borrowing the signed-in user's refresh cookie.
+(globalThis as PlatformAuthGlobal).__BIFROST_PLATFORM_AUTH_V1__ = {
+	getAccessToken: getActiveToken,
+	canRefreshAccessToken: () => !isEmbedSession(),
+	refreshAccessToken,
+	handleAuthenticationFailure: handleAuthFailure,
+};
 
 /**
  * Ensure we have a valid (non-expiring) access token before making a request

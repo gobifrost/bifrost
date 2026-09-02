@@ -1,9 +1,29 @@
-import { render, screen } from "@testing-library/react";
-import { StrictMode, useEffect } from "react";
-import { describe, expect, it, vi } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import { createRef, StrictMode, useEffect } from "react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { BifrostProvider, useBifrostContext } from "./provider";
 import { getBifrostTransport } from "./tables";
+
+interface TestPlatformAuthBridge {
+	getAccessToken: () => string | null;
+	canRefreshAccessToken: () => boolean;
+	refreshAccessToken: () => Promise<boolean>;
+	handleAuthenticationFailure: () => void;
+}
+
+type TestPlatformAuthGlobal = typeof globalThis & {
+	__BIFROST_PLATFORM_AUTH_V1__?: TestPlatformAuthBridge;
+};
+
+function setPlatformAuth(bridge: TestPlatformAuthBridge): void {
+	(globalThis as TestPlatformAuthGlobal).__BIFROST_PLATFORM_AUTH_V1__ =
+		bridge;
+}
+
+afterEach(() => {
+	delete (globalThis as TestPlatformAuthGlobal).__BIFROST_PLATFORM_AUTH_V1__;
+});
 
 function Probe() {
   const c = useBifrostContext();
@@ -17,7 +37,11 @@ function Probe() {
 describe("BifrostProvider", () => {
   it("provides baseUrl, token, and orgScope via context", () => {
     render(
-      <BifrostProvider baseUrl="https://dev.example" token="tok-123" orgScope="org-9">
+			<BifrostProvider
+				baseUrl="https://dev.example"
+				token="tok-123"
+				orgScope="org-9"
+			>
         <Probe />
       </BifrostProvider>,
     );
@@ -39,9 +63,15 @@ describe("BifrostProvider", () => {
 
   it("exposes an authed fetch that attaches the bearer token and base url", async () => {
     let captured: { url: string; auth: string | null } | null = null;
-    const fakeFetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+		const fakeFetch = (async (
+			input: RequestInfo | URL,
+			init?: RequestInit,
+		) => {
       const headers = new Headers(init?.headers);
-      captured = { url: String(input), auth: headers.get("Authorization") };
+			captured = {
+				url: String(input),
+				auth: headers.get("Authorization"),
+			};
       return new Response("{}", { status: 200 });
     }) as typeof fetch;
 
@@ -53,7 +83,11 @@ describe("BifrostProvider", () => {
     }
 
     render(
-      <BifrostProvider baseUrl="https://dev.example" token="tok-abc" fetchImpl={fakeFetch}>
+			<BifrostProvider
+				baseUrl="https://dev.example"
+				token="tok-abc"
+				fetchImpl={fakeFetch}
+			>
         <Caller />
       </BifrostProvider>,
     );
@@ -63,6 +97,140 @@ describe("BifrostProvider", () => {
     expect(captured!.url).toBe("https://dev.example/api/workflows/run");
     expect(captured!.auth).toBe("Bearer tok-abc");
   });
+
+	it("uses the host's live token on later requests without remounting", async () => {
+		let liveToken = "tok-1";
+		setPlatformAuth({
+			getAccessToken: () => liveToken,
+			canRefreshAccessToken: () => true,
+			refreshAccessToken: vi.fn().mockResolvedValue(true),
+			handleAuthenticationFailure: vi.fn(),
+		});
+		const seen: string[] = [];
+		const fakeFetch = vi.fn(
+			async (_input: RequestInfo | URL, init?: RequestInit) => {
+				seen.push(
+					new Headers(init?.headers).get("Authorization") ?? "",
+				);
+				return new Response("{}", { status: 200 });
+			},
+		);
+		const callSdkRef = createRef<typeof fetch>();
+
+		function Caller() {
+			const { authedFetch } = useBifrostContext();
+			useEffect(() => {
+				callSdkRef.current = authedFetch;
+			}, [authedFetch]);
+			return null;
+		}
+
+		render(
+			<BifrostProvider
+				baseUrl="/"
+				token="bootstrap-token"
+				fetchImpl={fakeFetch}
+			>
+				<Caller />
+			</BifrostProvider>,
+		);
+		await waitFor(() => expect(callSdkRef.current).toBeDefined());
+		await callSdkRef.current!("/api/first");
+		liveToken = "tok-2";
+		await callSdkRef.current!("/api/second");
+
+		expect(seen).toEqual(["Bearer tok-1", "Bearer tok-2"]);
+		expect(screen.queryByText("Not authenticated")).not.toBeInTheDocument();
+	});
+
+	it("refreshes once after a 401 and retries the request with the rotated token", async () => {
+		let liveToken = "tok-old";
+		const refreshAccessToken = vi.fn(async () => {
+			liveToken = "tok-new";
+			return true;
+		});
+		const handleAuthenticationFailure = vi.fn();
+		setPlatformAuth({
+			getAccessToken: () => liveToken,
+			canRefreshAccessToken: () => true,
+			refreshAccessToken,
+			handleAuthenticationFailure,
+		});
+		const seen: string[] = [];
+		const fakeFetch = vi.fn(
+			async (_input: RequestInfo | URL, init?: RequestInit) => {
+				const authorization =
+					new Headers(init?.headers).get("Authorization") ?? "";
+				seen.push(authorization);
+				return new Response("{}", {
+					status: authorization === "Bearer tok-old" ? 401 : 200,
+				});
+			},
+		);
+		const callSdkRef = createRef<typeof fetch>();
+
+		function Caller() {
+			const { authedFetch } = useBifrostContext();
+			useEffect(() => {
+				callSdkRef.current = authedFetch;
+			}, [authedFetch]);
+			return null;
+		}
+
+		render(
+			<BifrostProvider baseUrl="/" token="tok-old" fetchImpl={fakeFetch}>
+				<Caller />
+			</BifrostProvider>,
+		);
+		await waitFor(() => expect(callSdkRef.current).toBeDefined());
+		const response = await callSdkRef.current!("/api/workflows/execute", {
+			method: "POST",
+			body: JSON.stringify({ input: "preserved" }),
+		});
+
+		expect(response.status).toBe(200);
+		expect(seen).toEqual(["Bearer tok-old", "Bearer tok-new"]);
+		expect(refreshAccessToken).toHaveBeenCalledTimes(1);
+		expect(handleAuthenticationFailure).not.toHaveBeenCalled();
+		expect(fakeFetch.mock.calls.map(([, init]) => init?.body)).toEqual([
+			JSON.stringify({ input: "preserved" }),
+			JSON.stringify({ input: "preserved" }),
+		]);
+	});
+
+	it("hands an unrecoverable 401 back to the platform auth failure handler", async () => {
+		const handleAuthenticationFailure = vi.fn();
+		setPlatformAuth({
+			getAccessToken: () => "tok-old",
+			canRefreshAccessToken: () => true,
+			refreshAccessToken: vi.fn().mockResolvedValue(false),
+			handleAuthenticationFailure,
+		});
+		const fakeFetch = vi
+			.fn()
+			.mockResolvedValue(new Response("{}", { status: 401 }));
+		const callSdkRef = createRef<typeof fetch>();
+
+		function Caller() {
+			const { authedFetch } = useBifrostContext();
+			useEffect(() => {
+				callSdkRef.current = authedFetch;
+			}, [authedFetch]);
+			return null;
+		}
+
+		render(
+			<BifrostProvider baseUrl="/" token="tok-old" fetchImpl={fakeFetch}>
+				<Caller />
+			</BifrostProvider>,
+		);
+		await waitFor(() => expect(callSdkRef.current).toBeDefined());
+		const response = await callSdkRef.current!("/api/private");
+
+		expect(response.status).toBe(401);
+		expect(handleAuthenticationFailure).toHaveBeenCalledTimes(1);
+		expect(fakeFetch).toHaveBeenCalledTimes(1);
+	});
 
   it("treats / as the browser's same-origin transport", async () => {
     let captured: string | null = null;
@@ -78,7 +246,11 @@ describe("BifrostProvider", () => {
     }
 
     render(
-      <BifrostProvider baseUrl="/" token="tok-forwarded" fetchImpl={fakeFetch}>
+			<BifrostProvider
+				baseUrl="/"
+				token="tok-forwarded"
+				fetchImpl={fakeFetch}
+			>
         <Caller />
       </BifrostProvider>,
     );
@@ -94,7 +266,10 @@ describe("BifrostProvider", () => {
     // execution goes through authedFetch. Both must carry the same context
     // signal or the server derives a different install scope per surface.
     let captured: { appHeader: string | null } | null = null;
-    const fakeFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+		const fakeFetch = (async (
+			_input: RequestInfo | URL,
+			init?: RequestInit,
+		) => {
       const headers = new Headers(init?.headers);
       captured = { appHeader: headers.get("X-Bifrost-App") };
       return new Response("{}", { status: 200 });
@@ -123,7 +298,10 @@ describe("BifrostProvider", () => {
 
   it("omits X-Bifrost-App on authedFetch when no appId is bound", async () => {
     let captured: { appHeader: string | null } | null = null;
-    const fakeFetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+		const fakeFetch = (async (
+			_input: RequestInfo | URL,
+			init?: RequestInit,
+		) => {
       const headers = new Headers(init?.headers);
       captured = { appHeader: headers.get("X-Bifrost-App") };
       return new Response("{}", { status: 200 });
@@ -136,7 +314,11 @@ describe("BifrostProvider", () => {
     }
 
     render(
-      <BifrostProvider baseUrl="https://dev.example" token="tok-abc" fetchImpl={fakeFetch}>
+			<BifrostProvider
+				baseUrl="https://dev.example"
+				token="tok-abc"
+				fetchImpl={fakeFetch}
+			>
         <Caller />
       </BifrostProvider>,
     );
@@ -147,9 +329,7 @@ describe("BifrostProvider", () => {
 
   it("routes the table SDK through baseUrl + bearer while mounted", async () => {
     const { tables } = await import("./tables");
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(
+		const fetchMock = vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ id: "r", data: {} }), {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -174,9 +354,7 @@ describe("BifrostProvider", () => {
     // restore is deferred by a microtask (StrictMode cancellation window).
     unmount();
     await Promise.resolve();
-    const globalFetch = vi
-      .fn()
-      .mockResolvedValue(
+		const globalFetch = vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ id: "r", data: {} }), {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -184,14 +362,14 @@ describe("BifrostProvider", () => {
       );
     vi.stubGlobal("fetch", globalFetch);
     await tables.get("notes", "r");
-    expect(globalFetch.mock.calls[0][0]).toBe("/api/tables/notes/documents/r");
+		expect(globalFetch.mock.calls[0][0]).toBe(
+			"/api/tables/notes/documents/r",
+		);
   });
 
   it("routes the file SDK through the provider app header while mounted", async () => {
     const { files } = await import("./files");
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValue(
+		const fetchMock = vi.fn().mockResolvedValue(
         new Response(JSON.stringify({ exists: true }), {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -209,12 +387,16 @@ describe("BifrostProvider", () => {
       </BifrostProvider>,
     );
 
-    await expect(files.exists("reports/q1.txt", { location: "reports" })).resolves.toBe(true);
+		await expect(
+			files.exists("reports/q1.txt", { location: "reports" }),
+		).resolves.toBe(true);
     const [, init] = fetchMock.mock.calls[0];
-    const requestHeaders = init.headers as Record<string, string>;
-    expect(fetchMock.mock.calls[0][0]).toBe("https://dev.example/api/files/exists");
-    expect(requestHeaders.Authorization).toBe("Bearer tok-file");
-    expect(requestHeaders["X-Bifrost-App"]).toBe("app-123");
+		const requestHeaders = new Headers(init.headers);
+		expect(fetchMock.mock.calls[0][0]).toBe(
+			"https://dev.example/api/files/exists",
+		);
+		expect(requestHeaders.get("Authorization")).toBe("Bearer tok-file");
+		expect(requestHeaders.get("X-Bifrost-App")).toBe("app-123");
   });
 
   it("installs the transport before child mount effects run", () => {
@@ -251,7 +433,10 @@ describe("BifrostProvider", () => {
     }
     const { unmount } = render(
       <StrictMode>
-        <BifrostProvider baseUrl="https://strict.example" token="tok-sm">
+				<BifrostProvider
+					baseUrl="https://strict.example"
+					token="tok-sm"
+				>
           <TransportProbe />
         </BifrostProvider>
       </StrictMode>,
