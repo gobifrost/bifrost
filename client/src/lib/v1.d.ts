@@ -19469,6 +19469,12 @@ export interface components {
             /** Tool Ref */
             tool_ref?: string | null;
             /**
+             * Discovery Scope
+             * @default accessible
+             * @enum {string}
+             */
+            discovery_scope: "accessible" | "all";
+            /**
              * Limit
              * @default 10
              */

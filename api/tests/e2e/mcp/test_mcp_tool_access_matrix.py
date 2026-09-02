@@ -1081,7 +1081,7 @@ class TestMcpToolAccessMatrix:
         )
         assert "ok" in content_text, content_text
 
-    async def test_provider_gateway_discovery_requires_explicit_agent_target(
+    async def test_provider_gateway_discovery_requires_explicit_scope_or_target(
         self,
         seeded_agent_with_tools: dict[str, Any],
         e2e_client,
@@ -1094,6 +1094,27 @@ class TestMcpToolAccessMatrix:
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
+
+        tools_response = e2e_client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 0,
+                "method": "tools/list",
+                "params": {},
+            },
+        )
+        assert tools_response.status_code == 200, tools_response.text
+        tools_payload = _parse_mcp_response(tools_response)
+        search_tool = next(
+            tool
+            for tool in tools_payload["result"]["tools"]
+            if tool["name"] == "bifrost_search_capabilities"
+        )
+        assert search_tool["inputSchema"]["properties"]["discovery_scope"][
+            "enum"
+        ] == ["accessible", "all"]
 
         search_response = e2e_client.post(
             "/mcp",
@@ -1118,12 +1139,35 @@ class TestMcpToolAccessMatrix:
             item["id"] for item in search_data.get("agents", [])
         }
 
-        explicit_response = e2e_client.post(
+        all_response = e2e_client.post(
             "/mcp",
             headers=headers,
             json={
                 "jsonrpc": "2.0",
                 "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "bifrost_search_capabilities",
+                    "arguments": {
+                        "query": agent["name"],
+                        "discovery_scope": "all",
+                    },
+                },
+            },
+        )
+        assert all_response.status_code == 200, all_response.text
+        all_payload = _parse_mcp_response(all_response)
+        all_result = all_payload["result"]
+        all_data = all_result.get("structuredContent")
+        assert isinstance(all_data, dict), all_payload
+        assert agent["id"] in {item["id"] for item in all_data.get("agents", [])}
+
+        explicit_response = e2e_client.post(
+            "/mcp",
+            headers=headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 3,
                 "method": "tools/call",
                 "params": {
                     "name": "bifrost_search_capabilities",
@@ -1177,6 +1221,28 @@ class TestMcpToolAccessMatrix:
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
+        all_search = e2e_client.post(
+            "/mcp",
+            headers=customer_headers,
+            json={
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "tools/call",
+                "params": {
+                    "name": "bifrost_search_capabilities",
+                    "arguments": {
+                        "query": agent["name"],
+                        "discovery_scope": "all",
+                    },
+                },
+            },
+        )
+        assert all_search.status_code == 200, all_search.text
+        all_search_payload = _parse_mcp_response(all_search)
+        all_search_data = all_search_payload["result"].get("structuredContent")
+        assert isinstance(all_search_data, dict), all_search_payload
+        assert all_search_data["code"] == "IMPERSONATION_FORBIDDEN"
+
         customer_list = e2e_client.post(
             f"/mcp/{agent['id']}",
             headers=customer_headers,

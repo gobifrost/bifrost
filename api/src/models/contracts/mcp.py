@@ -118,6 +118,7 @@ class MCPGatewayCapabilitySearchRequest(BaseModel):
     query: str | None = Field(default=None, max_length=500)
     agent_id: str | None = None
     tool_ref: str | None = None
+    discovery_scope: Literal["accessible", "all"] = "accessible"
     limit: int = Field(default=10, ge=1, le=20)
 
     @model_validator(mode="after")

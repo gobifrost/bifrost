@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import selectinload
 
 from shared.scope_resolver import has_scope_bypass
+from src.core.org_filter import OrgFilterType
 from src.models.orm.agents import Agent
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.executions import Execution
@@ -58,6 +59,7 @@ GatewayToolSource = Literal[
     "delegation",
     "external_mcp",
 ]
+DiscoveryScope = Literal["accessible", "all"]
 
 
 class GatewayError(Exception):
@@ -255,6 +257,13 @@ class MCPAgentGatewayService:
             is_external=self.context.is_external,
         )
 
+    def _authorize_discovery_scope(self, discovery_scope: DiscoveryScope) -> None:
+        if discovery_scope == "all" and not self._has_scope_bypass:
+            raise GatewayError(
+                "IMPERSONATION_FORBIDDEN",
+                "Cross-organization discovery requires platform/provider impersonation authority.",
+            )
+
     async def _list_accessible_agents(self) -> list[Agent]:
         from src.core.database import get_db_context
 
@@ -268,6 +277,21 @@ class MCPAgentGatewayService:
             )
             return await repo.list_agents(active_only=True)
 
+    async def _list_discovery_agents(
+        self, discovery_scope: DiscoveryScope
+    ) -> list[Agent]:
+        self._authorize_discovery_scope(discovery_scope)
+        if discovery_scope == "accessible":
+            return await self._list_accessible_agents()
+
+        from src.core.database import get_db_context
+
+        async with get_db_context() as db:
+            return await self._agent_repo(db).list_all_in_scope(
+                OrgFilterType.ALL,
+                active_only=True,
+            )
+
     async def accessible_agent_count(self) -> int:
         """Return the caller's live accessible-agent count."""
         return len(await self._list_accessible_agents())
@@ -278,9 +302,11 @@ class MCPAgentGatewayService:
         query: str | None = None,
         agent_id: str | None = None,
         tool_ref: str | None = None,
+        discovery_scope: DiscoveryScope = "accessible",
         limit: int = 10,
     ) -> dict[str, Any]:
         """Search agents and tools, then progressively hydrate one selection."""
+        self._authorize_discovery_scope(discovery_scope)
         bounded_limit = min(max(limit, 1), MAX_CAPABILITY_RESULTS)
         if agent_id is not None:
             snapshot = await self.get_agent_snapshot(agent_id)
@@ -300,7 +326,7 @@ class MCPAgentGatewayService:
             )
 
         snapshots: list[AgentToolSnapshot] = []
-        for agent in await self._list_accessible_agents():
+        for agent in await self._list_discovery_agents(discovery_scope):
             snapshots.append(await self.get_agent_snapshot(str(agent.id)))
 
         candidates: list[tuple[int, str, AgentToolSnapshot, ResolvedGatewayTool | None]] = []

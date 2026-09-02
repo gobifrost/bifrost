@@ -105,6 +105,59 @@ def test_provider_explicit_target_uses_scope_bypass():
     assert repo_cls.call_args.kwargs["is_superuser"] is True
 
 
+@pytest.mark.asyncio
+async def test_provider_can_explicitly_discover_all_agents():
+    context = _context()
+    context.is_provider_org = True
+    service = MCPAgentGatewayService(context)
+    db = MagicMock()
+    repo = MagicMock()
+    repo.list_all_in_scope = AsyncMock(return_value=[])
+
+    @asynccontextmanager
+    async def db_context():
+        yield db
+
+    with (
+        patch("src.core.database.get_db_context", return_value=db_context()),
+        patch(
+            "src.services.mcp_server.gateway.AgentRepository",
+            return_value=repo,
+        ) as repo_cls,
+    ):
+        assert await service._list_discovery_agents("all") == []
+
+    assert repo_cls.call_args.kwargs["is_superuser"] is True
+    repo.list_all_in_scope.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_ordinary_caller_cannot_discover_all_agents():
+    service = MCPAgentGatewayService(_context())
+
+    with pytest.raises(GatewayError) as exc_info:
+        await service._list_discovery_agents("all")
+
+    assert exc_info.value.code == "IMPERSONATION_FORBIDDEN"
+
+
+@pytest.mark.asyncio
+async def test_ordinary_caller_cannot_combine_all_scope_with_exact_agent():
+    service = MCPAgentGatewayService(_context())
+
+    with (
+        patch.object(service, "get_agent_snapshot", new_callable=AsyncMock) as snapshot,
+        pytest.raises(GatewayError) as exc_info,
+    ):
+        await service.search_capabilities(
+            agent_id=str(uuid4()),
+            discovery_scope="all",
+        )
+
+    assert exc_info.value.code == "IMPERSONATION_FORBIDDEN"
+    snapshot.assert_not_awaited()
+
+
 def test_workflow_reference_is_stable_across_display_name_change():
     service = MCPAgentGatewayService(_context())
     agent = _agent()
