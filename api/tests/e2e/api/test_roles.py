@@ -114,12 +114,19 @@ class TestRoleCRUD:
                     f"/api/roles/{role_id}", headers=platform_admin.headers
                 )
 
-    def test_assign_role_to_user(self, e2e_client, platform_admin, org1_user, test_role):
+    def test_assign_role_to_user(
+        self, e2e_client, platform_admin, org1_user, org2_user, test_role
+    ):
         """Platform admin can assign role to user."""
         response = e2e_client.post(
             f"/api/roles/{test_role['id']}/users",
             headers=platform_admin.headers,
-            json={"user_ids": [str(org1_user.user_id)]},
+            json={
+                "user_ids": [
+                    str(org1_user.user_id),
+                    str(org2_user.user_id),
+                ]
+            },
         )
         # Accept 200, 201, or 204
         assert response.status_code in [200, 201, 204], \
@@ -128,18 +135,33 @@ class TestRoleCRUD:
         assigned = e2e_client.get(
             f"/api/roles/{test_role['id']}/users",
             headers=platform_admin.headers,
+            params={"limit": 1, "offset": 0},
         )
         assert assigned.status_code == 200, assigned.text
-        assert assigned.json()["users"] == [
-            {
-                "id": str(org1_user.user_id),
-                "name": org1_user.name,
-                "email": org1_user.email,
-                "organization_id": str(org1_user.organization_id),
-                "organization_name": "Bifrost Dev Org",
-                "organization_is_provider": False,
-            }
-        ]
+        first_page = assigned.json()
+        assert first_page["total"] == 2
+        assert len(first_page["users"]) == 1
+        assert first_page["user_ids"] == [first_page["users"][0]["id"]]
+        assert first_page["users"][0]["name"] == org1_user.name
+        assert first_page["users"][0]["organization_name"] == "Bifrost Dev Org"
+
+        second = e2e_client.get(
+            f"/api/roles/{test_role['id']}/users",
+            headers=platform_admin.headers,
+            params={"limit": 1, "offset": 1},
+        )
+        assert second.status_code == 200, second.text
+        assert second.json()["total"] == 2
+        assert second.json()["users"][0]["name"] == org2_user.name
+
+        searched = e2e_client.get(
+            f"/api/roles/{test_role['id']}/users",
+            headers=platform_admin.headers,
+            params={"search": org2_user.email, "limit": 25, "offset": 0},
+        )
+        assert searched.status_code == 200, searched.text
+        assert searched.json()["total"] == 1
+        assert searched.json()["users"][0]["email"] == org2_user.email
 
 
 @pytest.mark.e2e

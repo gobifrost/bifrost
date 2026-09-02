@@ -134,13 +134,42 @@ export function useDeleteRole() {
 	});
 }
 
-export function useRoleUsers(roleId: string | undefined) {
-	return $api.useQuery(
-		"get",
-		"/api/roles/{role_id}/users",
-		{ params: { path: { role_id: roleId ?? "" } } },
-		{ enabled: !!roleId },
-	);
+export interface RoleUsersPageParams {
+	search?: string;
+	limit: number;
+	offset: number;
+}
+
+export function useRoleUsersPage(
+	roleId: string | undefined,
+	params: RoleUsersPageParams,
+) {
+	return useQuery({
+		queryKey: [
+			"get",
+			"/api/roles/{role_id}/users",
+			{ roleId, page: params },
+		],
+		enabled: !!roleId,
+		queryFn: async () => {
+			const { data, error } = await apiClient.GET(
+				"/api/roles/{role_id}/users",
+				{
+					params: {
+						path: { role_id: roleId ?? "" },
+						query: {
+							search: params.search?.trim() || undefined,
+							limit: params.limit,
+							offset: params.offset,
+						},
+					},
+				},
+			);
+			if (error) throw error;
+			return data;
+		},
+		placeholderData: keepPreviousData,
+	});
 }
 
 export function useAssignUsersToRole() {
@@ -148,16 +177,12 @@ export function useAssignUsersToRole() {
 
 	return $api.useMutation("post", "/api/roles/{role_id}/users", {
 		onSuccess: (_, variables) => {
-			const roleId = variables.params?.path?.role_id;
 			const userIds =
 				(variables.body as AssignUsersToRoleRequest)?.user_ids || [];
 			queryClient.invalidateQueries({
-				queryKey: [
-					"get",
-					"/api/roles/{role_id}/users",
-					{ params: { path: { role_id: roleId } } },
-				],
+				queryKey: ["get", "/api/roles/{role_id}/users"],
 			});
+			invalidateRoleList(queryClient);
 			toast.success("Users assigned", {
 				description: `${userIds.length} user(s) assigned to role`,
 			});

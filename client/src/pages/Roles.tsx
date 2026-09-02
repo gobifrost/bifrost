@@ -22,6 +22,7 @@ import {
 	DataTable,
 	DataTableBody,
 	DataTableCell,
+	DataTableFooter,
 	DataTableHead,
 	DataTableHeader,
 	DataTableRow,
@@ -233,61 +234,68 @@ export function Roles() {
 						</CardContent>
 					</Card>
 				) : (
-					<div aria-busy={rolesQuery.isFetching}>
-						<DataTable>
-							<DataTableHeader>
-								<DataTableRow>
-									<DataTableHead
-										className="w-0 whitespace-nowrap cursor-pointer select-none"
-										onClick={() => handleSort("name")}
-									>
-										Name
-										<SortIcon
-											column="name"
-											sortColumn={sortColumn}
-											sortDirection={sortDirection}
-										/>
-									</DataTableHead>
-									<DataTableHead>Description</DataTableHead>
-									<DataTableHead className="whitespace-nowrap">
-										Consumers
-									</DataTableHead>
-									<DataTableHead
-										className="w-0 whitespace-nowrap cursor-pointer select-none"
-										onClick={() => handleSort("created")}
-									>
-										Created
-										<SortIcon
-											column="created"
-											sortColumn={sortColumn}
-											sortDirection={sortDirection}
-										/>
-									</DataTableHead>
-									<DataTableHead className="w-0 whitespace-nowrap text-right sticky right-0 bg-background">
-										Actions
-									</DataTableHead>
-								</DataTableRow>
-							</DataTableHeader>
-							<DataTableBody>
-								{roles.map((role) => (
-									<RoleRow
-										key={role.id}
-										role={role}
-										onEdit={() => handleEdit(role)}
-										onDelete={() => handleDelete(role)}
-										onNavigate={(to) => navigate(to)}
+					<DataTable
+						className="max-h-full"
+						aria-busy={rolesQuery.isFetching}
+					>
+						<DataTableHeader>
+							<DataTableRow>
+								<DataTableHead
+									className="w-0 whitespace-nowrap cursor-pointer select-none"
+									onClick={() => handleSort("name")}
+								>
+									Name
+									<SortIcon
+										column="name"
+										sortColumn={sortColumn}
+										sortDirection={sortDirection}
 									/>
-								))}
-							</DataTableBody>
-						</DataTable>
-						<ListPagination
-							offset={offset}
-							limit={PAGE_SIZE}
-							total={total}
-							isFetching={rolesQuery.isFetching}
-							onPageChange={setOffset}
-						/>
-					</div>
+								</DataTableHead>
+								<DataTableHead>Description</DataTableHead>
+								<DataTableHead className="whitespace-nowrap">
+									Consumers
+								</DataTableHead>
+								<DataTableHead
+									className="w-0 whitespace-nowrap cursor-pointer select-none"
+									onClick={() => handleSort("created")}
+								>
+									Created
+									<SortIcon
+										column="created"
+										sortColumn={sortColumn}
+										sortDirection={sortDirection}
+									/>
+								</DataTableHead>
+								<DataTableHead className="w-0 whitespace-nowrap text-right sticky right-0 bg-background">
+									Actions
+								</DataTableHead>
+							</DataTableRow>
+						</DataTableHeader>
+						<DataTableBody>
+							{roles.map((role) => (
+								<RoleRow
+									key={role.id}
+									role={role}
+									onEdit={() => handleEdit(role)}
+									onDelete={() => handleDelete(role)}
+									onNavigate={(to) => navigate(to)}
+								/>
+							))}
+						</DataTableBody>
+						<DataTableFooter>
+							<DataTableRow>
+								<DataTableCell colSpan={5} className="p-0">
+									<ListPagination
+										offset={offset}
+										limit={PAGE_SIZE}
+										total={total}
+										isFetching={rolesQuery.isFetching}
+										onPageChange={setOffset}
+									/>
+								</DataTableCell>
+							</DataTableRow>
+						</DataTableFooter>
+					</DataTable>
 				)}
 			</div>
 

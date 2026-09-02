@@ -47,6 +47,14 @@ describe("Roles", () => {
 
 		expect(screen.getByText("Billing admins")).toBeInTheDocument();
 		expect(screen.getByText("1–25 of 30")).toBeInTheDocument();
+		expect(
+			screen
+				.getByRole("navigation", { name: /pagination/i })
+				.closest("tfoot"),
+		).not.toBeNull();
+		expect(
+			screen.getAllByRole("table")[0].parentElement?.parentElement,
+		).toHaveClass("max-h-full");
 		expect(mockUseRolesPage).toHaveBeenLastCalledWith(
 			expect.objectContaining({ limit: 25, offset: 0 }),
 		);

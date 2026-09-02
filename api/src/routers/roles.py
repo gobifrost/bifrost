@@ -382,9 +382,17 @@ async def get_role_users(
     role_id: UUID,
     user: CurrentSuperuser,
     db: DbSession,
+    search: str | None = Query(None, description="Search assigned user name or email"),
+    limit: int | None = Query(
+        None,
+        ge=1,
+        le=100,
+        description="Maximum rows to return; omit for the legacy unbounded response",
+    ),
+    offset: int = Query(0, ge=0, description="Rows to skip when limit is set"),
 ) -> RoleUsersResponse:
-    """Get all users assigned to a role."""
-    result = await db.execute(
+    """Get users assigned to a role."""
+    query = (
         select(
             UserORM,
             OrganizationORM.name,
@@ -396,7 +404,24 @@ async def get_role_users(
             UserRoleORM.role_id == role_id,
             UserORM.is_system.is_(False),
         )
-        .order_by(func.coalesce(UserORM.name, UserORM.email), UserORM.email)
+    )
+    if search and (term := search.strip()):
+        pattern = f"%{term}%"
+        query = query.where(
+            UserORM.name.ilike(pattern) | UserORM.email.ilike(pattern)
+        )
+
+    total = await db.scalar(
+        select(func.count()).select_from(query.order_by(None).subquery())
+    )
+    query = query.order_by(
+        func.coalesce(UserORM.name, UserORM.email), UserORM.email
+    )
+    if limit is not None:
+        query = query.offset(offset).limit(limit)
+
+    result = await db.execute(
+        query
     )
     users = [
         RoleUserSummary(
@@ -412,6 +437,7 @@ async def get_role_users(
     return RoleUsersResponse(
         user_ids=[str(assigned_user.id) for assigned_user in users],
         users=users,
+        total=total or 0,
     )
 
 

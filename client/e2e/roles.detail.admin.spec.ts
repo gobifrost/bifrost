@@ -82,6 +82,7 @@ test.describe("Roles detail", () => {
 			page.getByText(new RegExp(`RoleDetail User ${SUFFIX}`)),
 		).toBeVisible();
 		await expect(page.getByText(userId, { exact: true })).toHaveCount(0);
+		await expect(page.getByText("1–1 of 1", { exact: true })).toBeVisible();
 
 		// Remove the seeded assignment so the rest of the test exercises the
 		// empty → assign → assigned lifecycle.

@@ -52,7 +52,11 @@ describe("ConsumerTab", () => {
 			<ConsumerTab
 				{...defaults}
 				items={[
-					{ id: "a", primary: "Alice", secondary: "alice@example.com" },
+					{
+						id: "a",
+						primary: "Alice",
+						secondary: "alice@example.com",
+					},
 					{ id: "b", primary: "Bob", secondary: "bob@example.com" },
 				]}
 			/>,
@@ -107,9 +111,7 @@ describe("ConsumerTab", () => {
 			/>,
 		);
 
-		await user.click(
-			screen.getByRole("button", { name: /assign users/i }),
-		);
+		await user.click(screen.getByRole("button", { name: /assign users/i }));
 
 		// Candidate is rendered inside the drawer once it opens
 		await waitFor(() => {
@@ -120,5 +122,33 @@ describe("ConsumerTab", () => {
 			screen.getByText(/pick the users you want to add/i),
 		).toBeInTheDocument();
 		expect(onRequestCandidates).toHaveBeenCalledOnce();
+	});
+
+	it("keeps pagination in the pinned table footer", async () => {
+		const user = userEvent.setup();
+		const onPageChange = vi.fn();
+		renderWithProviders(
+			<ConsumerTab
+				{...defaults}
+				items={[{ id: "a", primary: "Alice" }]}
+				pagination={{
+					offset: 0,
+					limit: 25,
+					total: 30,
+					onPageChange,
+				}}
+			/>,
+		);
+
+		const pagination = screen.getByRole("navigation", {
+			name: /pagination/i,
+		});
+		expect(pagination.closest("tfoot")).not.toBeNull();
+		expect(
+			screen.getAllByRole("table")[0].parentElement?.parentElement,
+		).toHaveClass("max-h-full");
+
+		await user.click(screen.getByRole("link", { name: /next page/i }));
+		expect(onPageChange).toHaveBeenCalledWith(25);
 	});
 });

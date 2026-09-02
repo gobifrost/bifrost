@@ -23026,6 +23026,12 @@ export interface components {
              * @description Display-ready summaries for users assigned to the role
              */
             users?: components["schemas"]["RoleUserSummary"][];
+            /**
+             * Total
+             * @description Total users assigned to the role after filtering
+             * @default 0
+             */
+            total: number;
         };
         /**
          * RoleWorkflowsResponse
@@ -29298,7 +29304,14 @@ export interface operations {
     };
     get_role_users_api_roles__role_id__users_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Search assigned user name or email */
+                search?: string | null;
+                /** @description Maximum rows to return; omit for the legacy unbounded response */
+                limit?: number | null;
+                /** @description Rows to skip when limit is set */
+                offset?: number;
+            };
             header?: never;
             path: {
                 role_id: string;

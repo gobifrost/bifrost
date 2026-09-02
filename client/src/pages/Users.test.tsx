@@ -324,4 +324,24 @@ describe("Users", () => {
 			}),
 		);
 	});
+
+	it("keeps pagination in the bounded table footer", () => {
+		mockUseUsersPage.mockReturnValue({
+			data: { items: [makeUser()], total: 30 },
+			isLoading: false,
+			isFetching: false,
+			isError: false,
+			refetch: mockRefetch,
+		});
+
+		renderWithProviders(<Users />);
+
+		const pagination = screen.getByRole("navigation", {
+			name: /pagination/i,
+		});
+		expect(pagination.closest("tfoot")).not.toBeNull();
+		expect(
+			screen.getAllByRole("table")[0].parentElement?.parentElement,
+		).toHaveClass("max-h-full");
+	});
 });

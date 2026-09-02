@@ -31,7 +31,7 @@ export function ListPagination({
 	const last = Math.min(offset + limit, total);
 
 	return (
-		<div className="flex flex-wrap items-center justify-between gap-3 border-t px-2 py-3 text-sm text-muted-foreground">
+		<div className="flex flex-wrap items-center justify-between gap-3 px-6 py-4 text-sm text-muted-foreground">
 			<span aria-live="polite">
 				{first}–{last} of {total}
 			</span>

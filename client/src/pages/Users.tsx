@@ -16,6 +16,7 @@ import {
 	DataTable,
 	DataTableBody,
 	DataTableCell,
+	DataTableFooter,
 	DataTableHead,
 	DataTableHeader,
 	DataTableRow,
@@ -165,7 +166,9 @@ export function Users() {
 		if (!orgId) return { name: "Platform", isProvider: false };
 		const org = organizations?.find((o: Organization) => o.id === orgId);
 		return {
-			name: org?.name || (organizations ? "Unknown organization" : "Loading…"),
+			name:
+				org?.name ||
+				(organizations ? "Unknown organization" : "Loading…"),
 			isProvider: org?.is_provider ?? false,
 		};
 	};
@@ -429,358 +432,346 @@ export function Users() {
 						</Button>
 					</div>
 				) : users.length > 0 ? (
-					<div>
-						<DataTable>
-							<DataTableHeader>
-								<DataTableRow>
-									<DataTableHead className="w-0 whitespace-nowrap">
-										<Checkbox
-											aria-label="Select all visible users"
-											checked={
-												selection.allVisibleSelected
-													? true
-													: selection.someVisibleSelected
-														? "indeterminate"
-														: false
-											}
-											onCheckedChange={() =>
-												selection.toggleAllVisible()
-											}
-										/>
-									</DataTableHead>
-									<DataTableHead className="w-0 whitespace-nowrap">
-										Organization
-									</DataTableHead>
-									<DataTableHead
-										className="w-0 whitespace-nowrap cursor-pointer select-none"
-										onClick={() => handleSort("name")}
+					<DataTable className="max-h-full">
+						<DataTableHeader>
+							<DataTableRow>
+								<DataTableHead className="w-0 whitespace-nowrap">
+									<Checkbox
+										aria-label="Select all visible users"
+										checked={
+											selection.allVisibleSelected
+												? true
+												: selection.someVisibleSelected
+													? "indeterminate"
+													: false
+										}
+										onCheckedChange={() =>
+											selection.toggleAllVisible()
+										}
+									/>
+								</DataTableHead>
+								<DataTableHead className="w-0 whitespace-nowrap">
+									Organization
+								</DataTableHead>
+								<DataTableHead
+									className="w-0 whitespace-nowrap cursor-pointer select-none"
+									onClick={() => handleSort("name")}
+								>
+									Name
+									<SortIcon
+										column="name"
+										sortColumn={sortColumn}
+										sortDirection={sortDirection}
+									/>
+								</DataTableHead>
+								<DataTableHead
+									className="cursor-pointer select-none"
+									onClick={() => handleSort("email")}
+								>
+									Email
+									<SortIcon
+										column="email"
+										sortColumn={sortColumn}
+										sortDirection={sortDirection}
+									/>
+								</DataTableHead>
+								<DataTableHead
+									className="w-0 whitespace-nowrap cursor-pointer select-none"
+									onClick={() => handleSort("status")}
+								>
+									Status
+									<SortIcon
+										column="status"
+										sortColumn={sortColumn}
+										sortDirection={sortDirection}
+									/>
+								</DataTableHead>
+								<DataTableHead
+									className="w-0 whitespace-nowrap cursor-pointer select-none"
+									onClick={() => handleSort("created")}
+								>
+									Created
+									<SortIcon
+										column="created"
+										sortColumn={sortColumn}
+										sortDirection={sortDirection}
+									/>
+								</DataTableHead>
+								<DataTableHead
+									className="w-0 whitespace-nowrap cursor-pointer select-none"
+									onClick={() => handleSort("last_login")}
+								>
+									Last Login
+									<SortIcon
+										column="last_login"
+										sortColumn={sortColumn}
+										sortDirection={sortDirection}
+									/>
+								</DataTableHead>
+								<DataTableHead className="w-0 whitespace-nowrap text-right sticky right-0 bg-background"></DataTableHead>
+							</DataTableRow>
+						</DataTableHeader>
+						<DataTableBody>
+							{users.map((user) => {
+								const orgInfo = getOrgInfo(
+									user.organization_id,
+								);
+								return (
+									<DataTableRow
+										key={user.id}
+										clickable
+										onClick={() => handleEditUser(user)}
+										className={
+											"group/row" +
+											(!user.is_active
+												? " opacity-60"
+												: "")
+										}
 									>
-										Name
-										<SortIcon
-											column="name"
-											sortColumn={sortColumn}
-											sortDirection={sortDirection}
-										/>
-									</DataTableHead>
-									<DataTableHead
-										className="cursor-pointer select-none"
-										onClick={() => handleSort("email")}
-									>
-										Email
-										<SortIcon
-											column="email"
-											sortColumn={sortColumn}
-											sortDirection={sortDirection}
-										/>
-									</DataTableHead>
-									<DataTableHead
-										className="w-0 whitespace-nowrap cursor-pointer select-none"
-										onClick={() => handleSort("status")}
-									>
-										Status
-										<SortIcon
-											column="status"
-											sortColumn={sortColumn}
-											sortDirection={sortDirection}
-										/>
-									</DataTableHead>
-									<DataTableHead
-										className="w-0 whitespace-nowrap cursor-pointer select-none"
-										onClick={() => handleSort("created")}
-									>
-										Created
-										<SortIcon
-											column="created"
-											sortColumn={sortColumn}
-											sortDirection={sortDirection}
-										/>
-									</DataTableHead>
-									<DataTableHead
-										className="w-0 whitespace-nowrap cursor-pointer select-none"
-										onClick={() => handleSort("last_login")}
-									>
-										Last Login
-										<SortIcon
-											column="last_login"
-											sortColumn={sortColumn}
-											sortDirection={sortDirection}
-										/>
-									</DataTableHead>
-									<DataTableHead className="w-0 whitespace-nowrap text-right sticky right-0 bg-background"></DataTableHead>
-								</DataTableRow>
-							</DataTableHeader>
-							<DataTableBody>
-								{users.map((user) => {
-									const orgInfo = getOrgInfo(
-										user.organization_id,
-									);
-									return (
-										<DataTableRow
-											key={user.id}
-											clickable
-											onClick={() => handleEditUser(user)}
-											className={
-												"group/row" +
-												(!user.is_active
-													? " opacity-60"
-													: "")
-											}
+										<DataTableCell
+											className="w-0 whitespace-nowrap"
+											onClick={(e) => e.stopPropagation()}
 										>
-											<DataTableCell
-												className="w-0 whitespace-nowrap"
-												onClick={(e) =>
-													e.stopPropagation()
-												}
-											>
-												{isSelf(user) ? (
+											{isSelf(user) ? (
+												<Tooltip>
+													<TooltipTrigger asChild>
+														<span>
+															<Checkbox
+																checked={false}
+																disabled
+																aria-label="Cannot select yourself"
+															/>
+														</span>
+													</TooltipTrigger>
+													<TooltipContent>
+														You can't include
+														yourself in a bulk
+														action
+													</TooltipContent>
+												</Tooltip>
+											) : (
+												<Checkbox
+													aria-label={`Select ${user.name || user.email}`}
+													checked={selection.isSelected(
+														user.id,
+													)}
+													onClick={(e) => {
+														selection.toggle(
+															user.id,
+															{
+																shiftKey:
+																	e.shiftKey,
+															},
+														);
+														e.preventDefault();
+													}}
+												/>
+											)}
+										</DataTableCell>
+										<DataTableCell className="w-0 whitespace-nowrap text-sm">
+											<span className="inline-flex items-center gap-1">
+												{orgInfo.isProvider ? (
+													<Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />
+												) : (
+													<Building2 className="h-3.5 w-3.5 text-muted-foreground" />
+												)}
+												<span>{orgInfo.name}</span>
+											</span>
+										</DataTableCell>
+										<DataTableCell className="w-0 whitespace-nowrap">
+											<div className="flex items-center gap-1.5">
+												<span className="font-medium">
+													{user.name || user.email}
+												</span>
+												{user.is_superuser && (
 													<Tooltip>
 														<TooltipTrigger asChild>
-															<span>
-																<Checkbox
-																	checked={
-																		false
-																	}
-																	disabled
-																	aria-label="Cannot select yourself"
-																/>
-															</span>
+															<Crown className="h-4 w-4 shrink-0 text-amber-500 fill-amber-500" />
 														</TooltipTrigger>
 														<TooltipContent>
-															You can't include
-															yourself in a bulk
-															action
+															Platform Admin
 														</TooltipContent>
 													</Tooltip>
-												) : (
-													<Checkbox
-														aria-label={`Select ${user.name || user.email}`}
-														checked={selection.isSelected(
-															user.id,
-														)}
-														onClick={(e) => {
-															selection.toggle(
-																user.id,
-																{
-																	shiftKey:
-																		e.shiftKey,
-																},
-															);
-															e.preventDefault();
-														}}
-													/>
 												)}
-											</DataTableCell>
-											<DataTableCell className="w-0 whitespace-nowrap text-sm">
-												<span className="inline-flex items-center gap-1">
-													{orgInfo.isProvider ? (
-														<Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />
-													) : (
-														<Building2 className="h-3.5 w-3.5 text-muted-foreground" />
-													)}
-													<span>{orgInfo.name}</span>
-												</span>
-											</DataTableCell>
-											<DataTableCell className="w-0 whitespace-nowrap">
-												<div className="flex items-center gap-1.5">
-													<span className="font-medium">
-														{user.name ||
-															user.email}
-													</span>
-													{user.is_superuser && (
-														<Tooltip>
-															<TooltipTrigger
-																asChild
+												{user.is_external && (
+													<Tooltip>
+														<TooltipTrigger asChild>
+															<Badge
+																variant="outline"
+																className="text-xs shrink-0"
 															>
-																<Crown className="h-4 w-4 shrink-0 text-amber-500 fill-amber-500" />
-															</TooltipTrigger>
-															<TooltipContent>
-																Platform Admin
-															</TooltipContent>
-														</Tooltip>
-													)}
-													{user.is_external && (
-														<Tooltip>
-															<TooltipTrigger
-																asChild
-															>
-																<Badge
-																	variant="outline"
-																	className="text-xs shrink-0"
-																>
-																	External
-																</Badge>
-															</TooltipTrigger>
-															<TooltipContent>
-																External user —
-																sees only what
-																the Everyone
-																tier or an
-																explicit role
-																grant allows
-															</TooltipContent>
-														</Tooltip>
-													)}
-												</div>
-											</DataTableCell>
-											<DataTableCell
-												className="text-muted-foreground max-w-0"
-												onClick={(e) =>
-													e.stopPropagation()
+																External
+															</Badge>
+														</TooltipTrigger>
+														<TooltipContent>
+															External user — sees
+															only what the
+															Everyone tier or an
+															explicit role grant
+															allows
+														</TooltipContent>
+													</Tooltip>
+												)}
+											</div>
+										</DataTableCell>
+										<DataTableCell
+											className="text-muted-foreground max-w-0"
+											onClick={(e) => e.stopPropagation()}
+										>
+											<UserEmailCell email={user.email} />
+										</DataTableCell>
+										<DataTableCell className="w-0 whitespace-nowrap">
+											<UserStatusBadge
+												status={
+													user.invite_status ??
+													"active"
 												}
-											>
-												<UserEmailCell
-													email={user.email}
-												/>
-											</DataTableCell>
-											<DataTableCell className="w-0 whitespace-nowrap">
-												<UserStatusBadge
-													status={
-														user.invite_status ??
-														"active"
-													}
-												/>
-											</DataTableCell>
-											<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
-												{user.created_at
-													? new Date(
-															user.created_at,
-														).toLocaleDateString()
-													: "N/A"}
-											</DataTableCell>
-											<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
-												{user.last_login
-													? new Date(
-															user.last_login,
-														).toLocaleDateString()
-													: "Never"}
-											</DataTableCell>
-											<DataTableCell
-												className="w-0 whitespace-nowrap text-right sticky right-0 bg-card group-hover/row:bg-[color-mix(in_oklch,var(--card),var(--muted)_50%)]"
-												onClick={(e) =>
-													e.stopPropagation()
+											/>
+										</DataTableCell>
+										<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
+											{user.created_at
+												? new Date(
+														user.created_at,
+													).toLocaleDateString()
+												: "N/A"}
+										</DataTableCell>
+										<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
+											{user.last_login
+												? new Date(
+														user.last_login,
+													).toLocaleDateString()
+												: "Never"}
+										</DataTableCell>
+										<DataTableCell
+											className="w-0 whitespace-nowrap text-right sticky right-0 bg-card group-hover/row:bg-[color-mix(in_oklch,var(--card),var(--muted)_50%)]"
+											onClick={(e) => e.stopPropagation()}
+										>
+											<UserActionsMenu
+												status={
+													user.invite_status ??
+													"active"
 												}
-											>
-												<UserActionsMenu
-													status={
-														user.invite_status ??
-														"active"
-													}
-													isActive={user.is_active}
-													isSelf={isSelf(user)}
-													onResend={() =>
-														resendMutation.mutate(
-															user.id,
-															{
-																onSuccess: (
-																	res,
-																) => {
-																	toast.success(
-																		res.event_emitted
-																			? `Invite automation triggered for ${user.email}`
-																			: "Invite regenerated (no automations — copy link from regenerate)",
-																	);
-																},
-																onError: (
-																	e: unknown,
-																) =>
-																	toast.error(
-																		e instanceof
-																			Error
-																			? e.message
-																			: "Failed to resend invite",
-																	),
+												isActive={user.is_active}
+												isSelf={isSelf(user)}
+												onResend={() =>
+													resendMutation.mutate(
+														user.id,
+														{
+															onSuccess: (
+																res,
+															) => {
+																toast.success(
+																	res.event_emitted
+																		? `Invite automation triggered for ${user.email}`
+																		: "Invite regenerated (no automations — copy link from regenerate)",
+																);
 															},
-														)
-													}
-													onRegenerate={() =>
-														regenerateMutation.mutate(
-															user.id,
-															{
-																onSuccess: (
-																	res,
-																) => {
-																	showRegistrationLink(
-																		user,
-																		res.registration_url,
-																	);
-																},
-																onError: (
-																	e: unknown,
-																) =>
-																	toast.error(
-																		e instanceof
-																			Error
-																			? e.message
-																			: "Failed to regenerate link",
-																	),
+															onError: (
+																e: unknown,
+															) =>
+																toast.error(
+																	e instanceof
+																		Error
+																		? e.message
+																		: "Failed to resend invite",
+																),
+														},
+													)
+												}
+												onRegenerate={() =>
+													regenerateMutation.mutate(
+														user.id,
+														{
+															onSuccess: (
+																res,
+															) => {
+																showRegistrationLink(
+																	user,
+																	res.registration_url,
+																);
 															},
-														)
-													}
-													onCopyLink={() =>
-														regenerateMutation.mutate(
-															user.id,
-															{
-																onSuccess: (
-																	res,
-																) => {
-																	showRegistrationLink(
-																		user,
-																		res.registration_url,
-																	);
-																},
-																onError: (
-																	e: unknown,
-																) =>
-																	toast.error(
-																		e instanceof
-																			Error
-																			? e.message
-																			: "Failed to copy link",
-																	),
+															onError: (
+																e: unknown,
+															) =>
+																toast.error(
+																	e instanceof
+																		Error
+																		? e.message
+																		: "Failed to regenerate link",
+																),
+														},
+													)
+												}
+												onCopyLink={() =>
+													regenerateMutation.mutate(
+														user.id,
+														{
+															onSuccess: (
+																res,
+															) => {
+																showRegistrationLink(
+																	user,
+																	res.registration_url,
+																);
 															},
-														)
-													}
-													onRevoke={() =>
-														revokeMutation.mutate(
-															user.id,
-															{
-																onSuccess: () =>
-																	toast.success(
-																		"Invite revoked",
-																	),
-																onError: (
-																	e: unknown,
-																) =>
-																	toast.error(
-																		e instanceof
-																			Error
-																			? e.message
-																			: "Failed to revoke invite",
-																	),
-															},
-														)
-													}
-													onToggleActive={() =>
-														handleToggleActive(user)
-													}
-													onDelete={() =>
-														handleDeleteUser(user)
-													}
-												/>
-											</DataTableCell>
-										</DataTableRow>
-									);
-								})}
-							</DataTableBody>
-						</DataTable>
-						<ListPagination
-							offset={offset}
-							limit={PAGE_SIZE}
-							total={total}
-							isFetching={usersQuery.isFetching}
-							onPageChange={setOffset}
-						/>
-					</div>
+															onError: (
+																e: unknown,
+															) =>
+																toast.error(
+																	e instanceof
+																		Error
+																		? e.message
+																		: "Failed to copy link",
+																),
+														},
+													)
+												}
+												onRevoke={() =>
+													revokeMutation.mutate(
+														user.id,
+														{
+															onSuccess: () =>
+																toast.success(
+																	"Invite revoked",
+																),
+															onError: (
+																e: unknown,
+															) =>
+																toast.error(
+																	e instanceof
+																		Error
+																		? e.message
+																		: "Failed to revoke invite",
+																),
+														},
+													)
+												}
+												onToggleActive={() =>
+													handleToggleActive(user)
+												}
+												onDelete={() =>
+													handleDeleteUser(user)
+												}
+											/>
+										</DataTableCell>
+									</DataTableRow>
+								);
+							})}
+						</DataTableBody>
+						<DataTableFooter>
+							<DataTableRow>
+								<DataTableCell colSpan={8} className="p-0">
+									<ListPagination
+										offset={offset}
+										limit={PAGE_SIZE}
+										total={total}
+										isFetching={usersQuery.isFetching}
+										onPageChange={setOffset}
+									/>
+								</DataTableCell>
+							</DataTableRow>
+						</DataTableFooter>
+					</DataTable>
 				) : (
 					<div className="flex flex-col items-center justify-center py-12 text-center">
 						<UserCog className="h-12 w-12 text-muted-foreground" />

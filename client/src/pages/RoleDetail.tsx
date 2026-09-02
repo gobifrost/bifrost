@@ -49,7 +49,7 @@ import {
 import {
 	useRole,
 	useDeleteRole,
-	useRoleUsers,
+	useRoleUsersPage,
 	useRoleForms,
 	useRoleAgents,
 	useRoleApps,
@@ -312,7 +312,18 @@ function useOrgLookup() {
 }
 
 function UsersTab({ roleId }: { roleId: string }) {
-	const { data: assigned, isLoading } = useRoleUsers(roleId);
+	const [search, setSearch] = useState("");
+	const [offset, setOffset] = useState(0);
+	const pageSize = 25;
+	const {
+		data: assigned,
+		isLoading,
+		isFetching,
+	} = useRoleUsersPage(roleId, {
+		search,
+		limit: pageSize,
+		offset,
+	});
 	const [candidatesRequested, setCandidatesRequested] = useState(false);
 	const { data: allUsers, isLoading: loadingAll } = useUsersFiltered(
 		undefined,
@@ -356,10 +367,26 @@ function UsersTab({ roleId }: { roleId: string }) {
 			candidates={candidates}
 			candidatesLoading={loadingAll}
 			consumerLabel="users"
-			emptyHint="No users assigned to this role yet."
+			emptyHint={
+				search
+					? "No assigned users match your search."
+					: "No users assigned to this role yet."
+			}
 			primaryColumnLabel="Name"
 			secondaryColumnLabel="Email"
 			showOrgColumn
+			searchValue={search}
+			onSearchChange={(value) => {
+				setSearch(value);
+				setOffset(0);
+			}}
+			pagination={{
+				offset,
+				limit: pageSize,
+				total: assigned?.total ?? 0,
+				isFetching,
+				onPageChange: setOffset,
+			}}
 			onRequestCandidates={() => setCandidatesRequested(true)}
 			onAssign={async (ids) => {
 				await assignMut.mutateAsync({

@@ -347,6 +347,10 @@ class RoleUsersResponse(BaseModel):
         default_factory=list,
         description="Display-ready summaries for users assigned to the role",
     )
+    total: int = Field(
+        default=0,
+        description="Total users assigned to the role after filtering",
+    )
 
 
 class RoleFormsResponse(BaseModel):
