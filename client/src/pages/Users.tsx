@@ -109,7 +109,6 @@ export function Users() {
 	const { userId } = useParams<{ userId?: string }>();
 	const [selectedUser, setSelectedUser] = useState<User | undefined>();
 	const [isCreateOpen, setIsCreateOpen] = useState(false);
-	const [isEditOpen, setIsEditOpen] = useState(false);
 	const [isDeleteOpen, setIsDeleteOpen] = useState(false);
 	const [isDisableOpen, setIsDisableOpen] = useState(false);
 	const [searchTerm, setSearchTerm] = useState("");
@@ -173,9 +172,6 @@ export function Users() {
 		};
 	};
 
-	const editDialogUser = selectedUser ?? routeSelectedUser;
-	const isEditDialogOpen = isEditOpen || Boolean(routeSelectedUser);
-
 	const handleSort = (column: SortColumn) => {
 		if (sortColumn === column) {
 			setSortDirection((d) => (d === "asc" ? "desc" : "asc"));
@@ -229,8 +225,6 @@ export function Users() {
 	};
 
 	const handleEditUser = (user: User) => {
-		setSelectedUser(user);
-		setIsEditOpen(true);
 		if (userId !== user.id) {
 			navigate(`/users/${user.id}`);
 		}
@@ -318,8 +312,6 @@ export function Users() {
 	};
 
 	const handleEditClose = () => {
-		setIsEditOpen(false);
-		setSelectedUser(undefined);
 		if (userId) navigate("/users", { replace: true });
 	};
 
@@ -842,9 +834,9 @@ export function Users() {
 			/>
 
 			<EditUserDialog
-				user={editDialogUser}
-				open={isEditDialogOpen}
-				onOpenChange={handleEditClose}
+				user={routeSelectedUser}
+				open={Boolean(userId && routeSelectedUser)}
+				onOpenChange={(open) => !open && handleEditClose()}
 			/>
 
 			<RegistrationLinkDialog

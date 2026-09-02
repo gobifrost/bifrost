@@ -16,6 +16,7 @@ const mockUseEventSources = vi.fn();
 const mockToastSuccess = vi.fn();
 const mockToastError = vi.fn();
 const mockRefetch = vi.fn();
+const mockEditUserDialog = vi.fn();
 
 vi.mock("@/hooks/useUsers", () => ({
 	useUsersPage: (...args: unknown[]) => mockUseUsersPage(...args),
@@ -66,7 +67,12 @@ vi.mock("@/components/users/CreateUserDialog", () => ({
 }));
 
 vi.mock("@/components/users/EditUserDialog", () => ({
-	EditUserDialog: () => null,
+	EditUserDialog: (props: { open: boolean; user?: { id: string } }) => {
+		mockEditUserDialog(props);
+		return props.open ? (
+			<div role="dialog">Edit user test dialog</div>
+		) : null;
+	},
 }));
 
 vi.mock("@/components/users/BulkUserDialogs", () => ({
@@ -166,6 +172,18 @@ describe("Users — registration links", () => {
 		});
 		mockToastSuccess.mockReset();
 		mockToastError.mockReset();
+		mockEditUserDialog.mockClear();
+	});
+
+	it("waits for the route-selected user instead of pre-opening the dialog", async () => {
+		const { user } = renderWithProviders(<Users />);
+
+		await user.click(screen.getByText("Alice"));
+
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		expect(mockEditUserDialog).toHaveBeenLastCalledWith(
+			expect.objectContaining({ open: false, user: undefined }),
+		);
 	});
 
 	afterEach(() => {
