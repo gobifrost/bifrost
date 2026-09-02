@@ -152,15 +152,14 @@ async def global_integration(e2e_client, platform_admin, db_session, org1):
     db_session.add(provider)
     await db_session.flush()
 
-    db_session.add(
-        OAuthToken(
-            organization_id=None,
-            provider_id=provider.id,
-            user_id=None,
-            encrypted_access_token=encrypt_secret(GLOBAL_ACCESS_TOKEN).encode(),
-            scopes=["read"],
-        )
+    token = OAuthToken(
+        organization_id=None,
+        provider_id=provider.id,
+        user_id=None,
+        encrypted_access_token=encrypt_secret(GLOBAL_ACCESS_TOKEN).encode(),
+        scopes=["read"],
     )
+    db_session.add(token)
     await db_session.commit()
 
     # Org-scoped mapping in the external user's own org (org1), with a
@@ -184,6 +183,13 @@ async def global_integration(e2e_client, platform_admin, db_session, org1):
         "org_id": org1["id"],
     }
 
+    # Integration deletion is soft, so its provider and client-credentials
+    # token do not cascade away. Remove them explicitly: otherwise each
+    # function-scoped fixture invocation leaves another refreshable token for
+    # the live scheduler to sweep later in the E2E run.
+    await db_session.delete(token)
+    await db_session.delete(provider)
+    await db_session.commit()
     e2e_client.delete(
         f"/api/integrations/{integration_id}", headers=platform_admin.headers
     )
@@ -362,3 +368,20 @@ class TestExternalIntegrationsRefreshToken:
             f"normal org user must reach the global provider (not 404): "
             f"{resp.status_code} {resp.text}"
         )
+
+
+@pytest.mark.asyncio
+async def test_global_integration_fixture_removes_refreshable_oauth_state(db_session):
+    """Repeated fixture use must not pollute the later live scheduler tests."""
+    from sqlalchemy import func, select
+
+    from src.models.orm import OAuthProvider
+    from src.models.orm.oauth import OAuthToken
+
+    leaked_tokens = await db_session.scalar(
+        select(func.count())
+        .select_from(OAuthToken)
+        .join(OAuthProvider)
+        .where(OAuthProvider.provider_name.like("ext_integ_provider_%"))
+    )
+    assert leaked_tokens == 0
