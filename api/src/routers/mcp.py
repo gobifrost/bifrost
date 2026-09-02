@@ -529,10 +529,12 @@ async def list_mcp_tools(
             detail="External MCP access is disabled",
         )
 
-    # Per-user tool access is role-scoped inside MCPToolAccessService.
+    # This REST inventory backs the platform settings allow/block controls.
+    # Normal MCP discovery remains role-scoped in the protocol gateway.
     tool_service = MCPToolAccessService(db)
     result = await tool_service.get_accessible_tools(
         user_roles=current_user.roles,
+        is_superuser=current_user.is_superuser,
         user_id=current_user.user_id,
         org_id=current_user.organization_id,
         is_external=current_user.is_external,

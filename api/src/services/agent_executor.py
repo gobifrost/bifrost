@@ -1364,23 +1364,46 @@ class AgentExecutor:
                 )
             resolved_workflow_id, resolved_workflow_name = resolved_workflow
 
-            # Get user info from conversation
-            user = conversation.user if conversation else None
+            # Chat constructs the authenticated caller once at entry and passes
+            # it through every dispatch path. Prefer that canonical context so
+            # workflow execution does not depend on a lazily loaded ORM user.
+            # The conversation fallback preserves direct/internal callers that
+            # predate the shared caller context.
+            user = conversation.user if conversation and not caller else None
+            caller_has_scope = caller is not None and "organization_id" in caller
 
             execution_response = await execute_agent_workflow_tool(
                 workflow_id=resolved_workflow_id,
                 workflow_name=resolved_workflow_name,
                 parameters=tool_call.arguments or {},
                 caller=AgentWorkflowCaller(
-                    user_id=str(user.id) if user else "system",
-                    email=user.email if user else "system@internal.gobifrost.com",
-                    name=user.name if user else "System",
+                    user_id=(
+                        str(caller.get("user_id"))
+                        if caller and caller.get("user_id")
+                        else str(user.id) if user else "system"
+                    ),
+                    email=(
+                        str(caller.get("email"))
+                        if caller and caller.get("email")
+                        else user.email if user else "system@internal.gobifrost.com"
+                    ),
+                    name=(
+                        str(caller.get("name"))
+                        if caller and caller.get("name")
+                        else user.name if user else "System"
+                    ),
                     organization_id=(
-                        user.organization_id
-                        if user
+                        caller.get("organization_id")
+                        if caller_has_scope and caller
+                        else user.organization_id
+                        if user is not None
                         else agent.organization_id if agent else None
                     ),
-                    is_platform_admin=user.is_superuser if user else False,
+                    is_platform_admin=(
+                        bool(caller.get("is_platform_admin", False))
+                        if caller
+                        else user.is_superuser if user else False
+                    ),
                 ),
                 execution_id=execution_id,
                 artifact_workspace_id=str(conversation.id) if conversation else None,

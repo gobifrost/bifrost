@@ -308,6 +308,42 @@ class TestGetAccessibleTools:
     """Tests for get_accessible_tools()."""
 
     @pytest.mark.asyncio
+    async def test_platform_settings_inventory_preserves_admin_access(
+        self, service
+    ):
+        """The REST settings inventory can enumerate without changing /mcp discovery."""
+        accessible_agents = AsyncMock(return_value=[])
+        workflow_repo = MagicMock()
+
+        with (
+            patch.object(
+                service,
+                "_get_accessible_agents",
+                accessible_agents,
+            ),
+            patch.object(
+                service,
+                "_build_workflow_repo",
+                return_value=workflow_repo,
+            ) as build_workflow_repo,
+            patch.object(service, "_apply_config_filters", return_value=[]),
+            patch(
+                "src.services.mcp_server.tool_access.MCPConfigService"
+            ) as config_service,
+        ):
+            config_service.return_value.get_config = AsyncMock(
+                return_value=MagicMock()
+            )
+            result = await service.get_accessible_tools(
+                user_roles=[],
+                is_superuser=True,
+            )
+
+        assert result.tools == []
+        assert accessible_agents.await_args.kwargs["is_superuser"] is True
+        assert build_workflow_repo.call_args.kwargs["is_superuser"] is True
+
+    @pytest.mark.asyncio
     async def test_collects_system_tools_from_agents(self, service, mock_session, mock_agent):
         """Should collect system tools from accessible agents."""
         agent = mock_agent(

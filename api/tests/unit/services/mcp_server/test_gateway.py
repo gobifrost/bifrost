@@ -701,7 +701,8 @@ async def test_delegation_allows_explicit_synchronous_execution():
 
 @pytest.mark.asyncio
 async def test_workflow_dispatch_returns_only_the_workflow_result():
-    service = MCPAgentGatewayService(_context())
+    context = _context()
+    service = MCPAgentGatewayService(context)
     tool = _resolved_tool()
     response = MagicMock()
     response.execution_id = str(uuid4())
@@ -714,10 +715,11 @@ async def test_workflow_dispatch_returns_only_the_workflow_result():
     with patch(
         "src.services.execution.service.execute_tool",
         new=AsyncMock(return_value=response),
-    ):
+    ) as execute:
         result = await service._dispatch_workflow(tool, {"ticket_id": 42})
 
     assert result == [{"ticket": 42}]
+    assert execute.await_args.kwargs["org_id"] == str(context.org_id)
 
 
 @pytest.mark.asyncio
