@@ -143,6 +143,7 @@ def create_agent_model(config: LLMConfig, *, model: str | None = None) -> Model:
             )
 
         from openai import AsyncOpenAI
+        from pydantic_ai.models.openai import OpenAIChatModel
         from pydantic_ai.providers.openai import OpenAIProvider
 
         client = AsyncOpenAI(
@@ -152,6 +153,8 @@ def create_agent_model(config: LLMConfig, *, model: str | None = None) -> Model:
             max_retries=0,
         )
         provider = OpenAIProvider(openai_client=client)
+        if config.openai_transport == "chat_completions":
+            return OpenAIChatModel(model_name, provider=provider)
         return infer_model(
             f"openai:{model_name}",
             provider_factory=lambda _provider_name: provider,

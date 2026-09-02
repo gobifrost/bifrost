@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 from cryptography.fernet import Fernet
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -212,11 +212,27 @@ class AIModelService:
                 "Please configure the API key in System Settings > AI Configuration."
             )
 
+        openai_transport = profile.openai_transport
+        if connection.provider == "openai_compatible" and openai_transport is None:
+            from src.services.openai_transport_detection import (
+                detect_openai_transport,
+            )
+
+            openai_transport = await detect_openai_transport(
+                api_key=api_key,
+                endpoint=connection.endpoint,
+                model=profile.model,
+            )
+            profile.openai_transport = openai_transport
+            profile.updated_at = datetime.now(timezone.utc)
+            await self.session.flush()
+
         return LLMConfig(
             provider=provider,
             model=profile.model,
             api_key=api_key,
             endpoint=connection.endpoint,
+            openai_transport=openai_transport,
         )
 
     async def list_chat_profiles(self) -> tuple[list[AIModelProfile], UUID | None]:
@@ -379,12 +395,21 @@ class AIModelService:
                 trimmed_name, exclude_id=connection.id
             )
             connection.name = trimmed_name
+        transport_may_change = (
+            provider is not None or endpoint_provided or api_key is not None
+        )
         if provider is not None:
             connection.provider = provider
         if provider is not None or endpoint_provided:
             connection.endpoint = self.normalize_endpoint(connection.provider, endpoint)
         if api_key is not None:
             connection.encrypted_api_key = self.encrypt_api_key(api_key)
+        if transport_may_change:
+            await self.session.execute(
+                update(AIModelProfile)
+                .where(AIModelProfile.connection_id == connection.id)
+                .values(openai_transport=None)
+            )
         connection.updated_at = datetime.now(timezone.utc)
         await self.session.flush()
         return connection
@@ -517,11 +542,13 @@ class AIModelService:
         if connection_id is not None:
             await self.get_connection(connection_id)
             profile.connection_id = connection_id
+            profile.openai_transport = None
         if model is not None:
             trimmed_model = model.strip()
             if not trimmed_model:
                 raise ValueError("Model id is required")
             profile.model = trimmed_model
+            profile.openai_transport = None
         if capabilities_provided:
             profile.capabilities = (
                 capabilities.model_dump(mode="json") if capabilities else None

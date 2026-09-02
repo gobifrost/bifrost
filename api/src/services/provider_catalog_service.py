@@ -137,6 +137,16 @@ class ProviderCatalogService:
                     ProviderModelInfo(m.id, m.id, _model_output_modalities(m))
                     for m in sorted(response.data, key=lambda item: item.id)
                 ]
+                hostname = (urlparse(endpoint).hostname or "") if endpoint else ""
+                if hostname.endswith((".openai.azure.com", ".services.ai.azure.com")):
+                    return ProviderTestResult(
+                        True,
+                        (
+                            f"Connected to {endpoint_label}. Microsoft Foundry's model "
+                            "catalog does not identify deployment names; enter the "
+                            "deployment name manually."
+                        ),
+                    )
                 if _is_openrouter_endpoint(endpoint):
                     try:
                         models = await list_openrouter_models(api_key)

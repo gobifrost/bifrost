@@ -112,6 +112,7 @@ class LLMConfig:
     model: str
     api_key: str
     endpoint: str | None = None
+    openai_transport: Literal["responses", "chat_completions"] | None = None
     # Optional parameters
     extra_params: dict[str, Any] = field(default_factory=dict)
 

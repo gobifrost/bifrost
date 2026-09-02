@@ -1,7 +1,35 @@
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
 import httpx
 import pytest
 
-from src.services.provider_catalog_service import list_openrouter_models
+from src.services.provider_catalog_service import (
+    ProviderCatalogService,
+    list_openrouter_models,
+)
+
+
+@pytest.mark.asyncio
+async def test_foundry_catalog_is_not_presented_as_deployment_names():
+    client = SimpleNamespace(
+        models=SimpleNamespace(
+            list=AsyncMock(
+                return_value=SimpleNamespace(
+                    data=[SimpleNamespace(id="gpt-5.6-luna-2026-07-09")]
+                )
+            )
+        )
+    )
+    with patch("openai.AsyncOpenAI", return_value=client):
+        result = await ProviderCatalogService().list_openai(
+            "sk-test",
+            "https://example.openai.azure.com/openai/v1",
+        )
+
+    assert result.success is True
+    assert result.models is None
+    assert "deployment name manually" in result.message
 
 
 @pytest.mark.asyncio
