@@ -133,6 +133,7 @@ class MCPContext:
     user_id: UUID | str
     org_id: UUID | str | None = None
     is_platform_admin: bool = False
+    is_provider_org: bool = False
     # External (portal/guest) principal — no global tier, no authenticated-
     # tier entitlement. Mirrors UserPrincipal.is_external (the claim is
     # already bypass-neutralized at token mint).
@@ -186,6 +187,7 @@ def _get_context_from_token() -> MCPContext:
         user_id=token.claims.get("user_id", ""),
         org_id=token.claims.get("org_id"),
         is_platform_admin=token.claims.get("is_superuser", False),
+        is_provider_org=token.claims.get("is_provider_org", False),
         is_external=token.claims.get("is_external", False),
         user_email=token.claims.get("email", ""),
         user_name=token.claims.get("name", ""),
@@ -216,6 +218,7 @@ async def _get_runtime_context() -> MCPContext:
 
     user_roles = token.claims.get("roles", [])
     is_superuser = token.claims.get("is_superuser", False)
+    is_provider_org = token.claims.get("is_provider_org", False)
     is_external = token.claims.get("is_external", False)
     user_id = token.claims.get("user_id")
     org_id = token.claims.get("org_id")
@@ -230,6 +233,7 @@ async def _get_runtime_context() -> MCPContext:
                     agent_id=agent_id,
                     user_roles=user_roles,
                     is_superuser=is_superuser,
+                    is_provider_org=is_provider_org,
                     user_id=user_id,
                     org_id=org_id,
                     is_external=is_external,
@@ -243,6 +247,7 @@ async def _get_runtime_context() -> MCPContext:
         user_id=token.claims.get("user_id", ""),
         org_id=token.claims.get("org_id"),
         is_platform_admin=is_superuser,
+        is_provider_org=is_provider_org,
         is_external=is_external,
         user_email=token.claims.get("email", ""),
         user_name=token.claims.get("name", ""),

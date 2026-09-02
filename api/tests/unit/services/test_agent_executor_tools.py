@@ -464,9 +464,13 @@ class TestWorkflowToolIdResolution:
             mock_conversation.user = MagicMock()
             mock_conversation.user.id = uuid4()
             mock_conversation.user.name = "Test User"
+            mock_conversation.user.email = "test@example.com"
+            caller_org_id = uuid4()
+            mock_conversation.user.organization_id = caller_org_id
+            mock_conversation.user.is_superuser = False
 
             mock_agent = MagicMock()
-            mock_agent.organization_id = uuid4()
+            mock_agent.organization_id = None
 
             await executor._execute_tool(
                 tool_call, agent=mock_agent, conversation=mock_conversation
@@ -477,6 +481,7 @@ class TestWorkflowToolIdResolution:
         assert execution_kwargs["workflow_id"] == str(workflow_id)
         assert execution_kwargs["workflow_name"] == "Execute HaloPSA SQL"
         assert execution_kwargs["is_agent"] is True
+        assert execution_kwargs["org_id"] == str(caller_org_id)
 
         # Verify the DB query used Workflow.id, not Workflow.name
         call_args = mock_session.execute.call_args

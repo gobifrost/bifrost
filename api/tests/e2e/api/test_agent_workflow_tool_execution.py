@@ -16,11 +16,14 @@ from pydantic_ai.messages import (
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.settings import ModelSettings
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import selectinload
 
 from src.core.principal import UserPrincipal
+from src.models.enums import AgentAccessLevel
 from src.models.orm.agents import Agent, Conversation
+from src.models.orm.executions import Execution
+from src.models.orm.workflows import Workflow
 from src.services.agent_executor import AgentExecutor
 from src.services.llm.base import LLMConfig
 from src.services.llm.pydantic_client import PydanticAIClient
@@ -76,12 +79,26 @@ def _session_factory_for(session):
 
 async def test_chat_executes_workflow_tool_through_live_worker(
     e2e_client,
-    platform_admin,
+    org1_user,
     db_session,
     test_agent_with_tools,
 ):
     agent_data = test_agent_with_tools["agent"]
     workflow = test_agent_with_tools["workflow"]
+    await db_session.execute(
+        update(Agent)
+        .where(Agent.id == UUID(agent_data["id"]))
+        .values(
+            access_level=AgentAccessLevel.EVERYONE,
+            organization_id=None,
+        )
+    )
+    await db_session.execute(
+        update(Workflow)
+        .where(Workflow.id == UUID(workflow["id"]))
+        .values(organization_id=None)
+    )
+    await db_session.commit()
     conversation_response = e2e_client.post(
         "/api/chat/conversations",
         json={
@@ -89,7 +106,7 @@ async def test_chat_executes_workflow_tool_through_live_worker(
             "channel": "chat",
             "title": "Workflow tool session boundary",
         },
-        headers=platform_admin.headers,
+        headers=org1_user.headers,
     )
     assert conversation_response.status_code == 201, conversation_response.text
     conversation_id = UUID(conversation_response.json()["id"])
@@ -145,13 +162,13 @@ async def test_chat_executes_workflow_tool_through_live_worker(
                 .where(Conversation.id == conversation_id)
             )
             conversation = result.scalar_one()
-            assert platform_admin.user_id is not None
+            assert org1_user.user_id is not None
             principal = UserPrincipal(
-                user_id=platform_admin.user_id,
-                email=platform_admin.email,
-                name=platform_admin.name,
-                organization_id=platform_admin.organization_id,
-                is_superuser=platform_admin.is_superuser,
+                user_id=org1_user.user_id,
+                email=org1_user.email,
+                name=org1_user.name,
+                organization_id=org1_user.organization_id,
+                is_superuser=org1_user.is_superuser,
             )
             executor = AgentExecutor(_session_factory_for(db_session))
             final_content = ""
@@ -169,7 +186,7 @@ async def test_chat_executes_workflow_tool_through_live_worker(
         assert final_content == "Workflow tool completed."
         messages_response = e2e_client.get(
             f"/api/chat/conversations/{conversation_id}/messages",
-            headers=platform_admin.headers,
+            headers=org1_user.headers,
         )
         assert messages_response.status_code == 200, messages_response.text
         tool_calls = [
@@ -180,8 +197,13 @@ async def test_chat_executes_workflow_tool_through_live_worker(
         assert len(tool_calls) == 1
         assert tool_calls[0]["tool_state"] == "completed"
         assert tool_calls[0]["tool_result"] == "result: session boundary"
+        execution_id = tool_calls[0]["execution_id"]
+        assert execution_id is not None
+        execution = await db_session.get(Execution, UUID(execution_id))
+        assert execution is not None
+        assert execution.organization_id == org1_user.organization_id
     finally:
         e2e_client.delete(
             f"/api/chat/conversations/{conversation_id}",
-            headers=platform_admin.headers,
+            headers=org1_user.headers,
         )

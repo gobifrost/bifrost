@@ -1364,9 +1364,6 @@ class AgentExecutor:
             # Get user info from conversation
             user = conversation.user if conversation else None
 
-            # Get org_id from agent (workflows are not org-scoped)
-            org_id = str(agent.organization_id) if agent and agent.organization_id else None
-
             execution_response = await execute_agent_workflow_tool(
                 workflow_id=resolved_workflow_id,
                 workflow_name=resolved_workflow_name,
@@ -1375,9 +1372,13 @@ class AgentExecutor:
                     user_id=str(user.id) if user else "system",
                     email=user.email if user else "system@internal.gobifrost.com",
                     name=user.name if user else "System",
+                    organization_id=(
+                        user.organization_id
+                        if user
+                        else agent.organization_id if agent else None
+                    ),
                     is_platform_admin=user.is_superuser if user else False,
                 ),
-                organization_id=org_id,
                 execution_id=execution_id,
                 artifact_workspace_id=str(conversation.id) if conversation else None,
             )
@@ -1823,7 +1824,13 @@ class AgentExecutor:
             # via get_tool_db() fallback, avoiding long-lived connection holds
             context = MCPContext(
                 user_id=str(user.id) if user else "",
-                org_id=str(agent.organization_id) if agent.organization_id else None,
+                org_id=(
+                    str(user.organization_id)
+                    if user and user.organization_id
+                    else str(agent.organization_id)
+                    if not user and agent.organization_id
+                    else None
+                ),
                 is_platform_admin=user.is_superuser if user else False,
                 user_email=user.email if user else "",
                 user_name=user.name if user else "",

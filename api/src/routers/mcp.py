@@ -531,6 +531,7 @@ async def list_mcp_tools(
     result = await tool_service.get_accessible_tools(
         user_roles=current_user.roles,
         is_superuser=current_user.is_superuser,
+        is_provider_org=current_user.is_provider_org,
         user_id=current_user.user_id,
         org_id=current_user.organization_id,
         is_external=current_user.is_external,

@@ -20,6 +20,7 @@ async def test_execute_agent_workflow_tool_builds_canonical_agent_context():
         user_id=str(uuid4()),
         email="person@example.com",
         name="Person",
+        organization_id=organization_id,
         is_platform_admin=True,
     )
 
@@ -33,7 +34,6 @@ async def test_execute_agent_workflow_tool_builds_canonical_agent_context():
             workflow_name="ticket_lookup",
             parameters={"ticket_id": 42},
             caller=caller,
-            organization_id=organization_id,
             execution_id="execution-1",
             artifact_workspace_id="workspace-1",
             sync=False,

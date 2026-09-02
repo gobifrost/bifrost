@@ -794,6 +794,38 @@ class TestSearchKnowledgeAutoInjection:
         assert "search_knowledge" in tool_ids
 
     @pytest.mark.asyncio
+    async def test_provider_org_caller_bypasses_agent_role_requirement(
+        self, service, mock_session, mock_agent
+    ):
+        """Platform-org impersonation has the same scope bypass as superuser."""
+        agent = mock_agent(
+            access_level=AgentAccessLevel.ROLE_BASED,
+            system_tools=["list_workflows"],
+            roles=["Customer Operator"],
+        )
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.unique.return_value.first.return_value = agent
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with patch("src.services.mcp_server.tool_access.MCPConfigService") as mock_config_cls:
+            mock_config = MagicMock(allowed_tool_ids=None, blocked_tool_ids=None)
+            mock_config_cls.return_value.get_config = AsyncMock(
+                return_value=mock_config
+            )
+
+            result = await service.get_tools_for_agent(
+                agent_id=agent.id,
+                user_roles=[],
+                is_superuser=False,
+                is_provider_org=True,
+                user_id=uuid4(),
+                org_id=uuid4(),
+            )
+
+        assert result is not None
+        assert {tool.id for tool in result.tools} == {"list_workflows"}
+
+    @pytest.mark.asyncio
     async def test_get_tools_for_agent_no_inject_without_namespaces(
         self, service, mock_session, mock_agent
     ):

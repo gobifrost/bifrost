@@ -239,12 +239,16 @@ class MCPAgentGatewayService:
     def __init__(self, context: MCPContext):
         self.context = context
 
+    @property
+    def _has_scope_bypass(self) -> bool:
+        return self.context.is_platform_admin or self.context.is_provider_org
+
     def _agent_repo(self, session: Any) -> AgentRepository:
         return AgentRepository(
             session,
             org_id=self.context.org_id,
             user_id=self.context.user_id,
-            is_superuser=self.context.is_platform_admin,
+            is_superuser=self._has_scope_bypass,
             is_external=self.context.is_external,
         )
 
@@ -253,7 +257,7 @@ class MCPAgentGatewayService:
 
         async with get_db_context() as db:
             repo = self._agent_repo(db)
-            if self.context.is_platform_admin:
+            if self._has_scope_bypass:
                 return await repo.list_all_in_scope(
                     OrgFilterType.ALL,
                     active_only=True,
@@ -1174,6 +1178,7 @@ class MCPAgentGatewayService:
             user_id=self.context.user_id,
             org_id=self.context.org_id,
             is_platform_admin=self.context.is_platform_admin,
+            is_provider_org=self.context.is_provider_org,
             is_external=self.context.is_external,
             user_email=self.context.user_email,
             user_name=self.context.user_name,
@@ -1215,9 +1220,9 @@ class MCPAgentGatewayService:
                 user_id=str(self.context.user_id),
                 email=self.context.user_email,
                 name=self.context.user_name or "MCP User",
+                organization_id=self.context.org_id,
                 is_platform_admin=self.context.is_platform_admin,
             ),
-            organization_id=self.context.org_id,
             sync=not async_execution,
         )
         data = {

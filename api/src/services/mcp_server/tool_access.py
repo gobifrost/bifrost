@@ -62,6 +62,7 @@ class MCPToolAccessService:
         self,
         user_roles: list[str],
         is_superuser: bool,
+        is_provider_org: bool = False,
         user_id: UUID | str | None = None,
         org_id: UUID | str | None = None,
         is_external: bool = False,
@@ -77,6 +78,7 @@ class MCPToolAccessService:
         Args:
             user_roles: List of role names the user has (from JWT claims)
             is_superuser: Whether user is platform admin
+            is_provider_org: Whether the caller belongs to the platform/provider org
             user_id: User UUID for per-workflow role check (from JWT claims).
                 Required for non-superusers — without it, role-based workflows
                 fall back to "deny" because role membership cannot be checked.
@@ -88,10 +90,12 @@ class MCPToolAccessService:
         Returns:
             MCPToolAccessResult containing the filtered tool inventory
         """
+        has_scope_bypass = is_superuser or is_provider_org
+
         # Step 1: Get accessible agents
         accessible_agents = await self._get_accessible_agents(
             user_roles=user_roles,
-            is_superuser=is_superuser,
+            is_superuser=has_scope_bypass,
             is_external=is_external,
             org_id=org_id,
         )
@@ -101,7 +105,7 @@ class MCPToolAccessService:
         tools: list[ToolInfo] = []
         seen_tool_ids: set[str] = set()  # Deduplicate across agents
         workflow_repo = self._build_workflow_repo(
-            user_id=user_id, org_id=org_id, is_superuser=is_superuser,
+            user_id=user_id, org_id=org_id, is_superuser=has_scope_bypass,
             is_external=is_external,
         )
 
@@ -148,6 +152,7 @@ class MCPToolAccessService:
         agent_id: UUID | str,
         user_roles: list[str],
         is_superuser: bool,
+        is_provider_org: bool = False,
         user_id: UUID | str | None = None,
         org_id: UUID | str | None = None,
         is_external: bool = False,
@@ -163,12 +168,15 @@ class MCPToolAccessService:
             agent_id: The agent UUID to scope to
             user_roles: List of role names the user has (from JWT claims)
             is_superuser: Whether user is platform admin
+            is_provider_org: Whether the caller belongs to the platform/provider org
             user_id: User UUID for per-workflow role check (from JWT claims).
             org_id: User's org UUID for per-workflow org scope check (from claims).
 
         Returns:
             AgentScopedToolResult if agent exists and user has access, None otherwise
         """
+        has_scope_bypass = is_superuser or is_provider_org
+
         # Query the specific agent with tools and roles eagerly loaded.
         # Org-scope IN THE DATABASE (LEAK #2): a by-id fetch must not reach an
         # agent outside the caller's org cascade — otherwise a role_based agent
@@ -183,7 +191,7 @@ class MCPToolAccessService:
             .where(Agent.is_active.is_(True))
         )
 
-        if not is_superuser:
+        if not has_scope_bypass:
             scope_org = UUID(org_id) if isinstance(org_id, str) and org_id else org_id
             if scope_org is not None:
                 query = query.where(
@@ -203,7 +211,9 @@ class MCPToolAccessService:
             return None
 
         # Check access using same rules as _get_accessible_agents
-        if not self._check_agent_access(agent, user_roles, is_superuser, is_external):
+        if not self._check_agent_access(
+            agent, user_roles, has_scope_bypass, is_external
+        ):
             logger.warning(f"User denied access to agent {agent_id}")
             return None
 
@@ -228,7 +238,7 @@ class MCPToolAccessService:
         # the executor). seen_tool_ids is fresh because this is an
         # agent-scoped call: no cross-agent dedup needed.
         workflow_repo = self._build_workflow_repo(
-            user_id=user_id, org_id=org_id, is_superuser=is_superuser,
+            user_id=user_id, org_id=org_id, is_superuser=has_scope_bypass,
             is_external=is_external,
         )
         for workflow_info in await self._visible_workflows_for_agent(
