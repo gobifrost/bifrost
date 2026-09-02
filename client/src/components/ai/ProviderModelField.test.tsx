@@ -89,6 +89,11 @@ describe("ProviderModelField", () => {
 				screen.getByRole("option", { name: "Text Embedding 3 Large" }),
 			).toBeInTheDocument(),
 		);
+		expect(
+			screen.getByText(
+				"This list is supplied by the provider and may include models your account cannot access. Choose a model available to your account.",
+			),
+		).toBeInTheDocument();
 		fireEvent.change(screen.getByLabelText("Model"), {
 			target: { value: "text-embedding-3-large" },
 		});

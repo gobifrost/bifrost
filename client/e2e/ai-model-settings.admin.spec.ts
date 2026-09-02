@@ -307,6 +307,11 @@ test.describe("AI model settings", () => {
 		await profileDialog.getByLabel("Profile Name").fill("Support Chat");
 		await profileDialog.getByLabel("Provider Connection").click();
 		await page.getByRole("option", { name: /Default/ }).click();
+		await expect(
+			profileDialog.getByText(
+				"This list is supplied by the provider and may include models your account cannot access. Choose a model available to your account.",
+			),
+		).toBeVisible();
 		await profileDialog.getByLabel("Model", { exact: true }).click();
 		await page
 			.getByRole("option", { name: "GPT-5.1 mini gpt-5.1-mini" })

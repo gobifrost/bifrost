@@ -37,21 +37,30 @@ export function ProviderModelField({
 			<Label htmlFor={id}>Model</Label>
 			{!modelsQuery.isError &&
 			(!connectionId || modelsQuery.isLoading || options.length > 0) ? (
-				<Combobox
-					id={id}
-					value={value}
-					onValueChange={onValueChange}
-					options={options}
-					placeholder={
-						connectionId
-							? "Select a model"
-							: "Select a provider first"
-					}
-					searchPlaceholder="Search models..."
-					emptyText="No models reported by this provider."
-					disabled={!connectionId}
-					isLoading={modelsQuery.isLoading}
-				/>
+				<>
+					<Combobox
+						id={id}
+						value={value}
+						onValueChange={onValueChange}
+						options={options}
+						placeholder={
+							connectionId
+								? "Select a model"
+								: "Select a provider first"
+						}
+						searchPlaceholder="Search models..."
+						emptyText="No models reported by this provider."
+						disabled={!connectionId}
+						isLoading={modelsQuery.isLoading}
+					/>
+					{Boolean(modelsQuery.data?.models.length) && (
+						<p className="text-xs text-muted-foreground">
+							This list is supplied by the provider and may
+							include models your account cannot access. Choose a
+							model available to your account.
+						</p>
+					)}
+				</>
 			) : (
 				<>
 					<Input
