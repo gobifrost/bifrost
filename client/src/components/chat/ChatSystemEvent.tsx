@@ -18,6 +18,8 @@ export interface SystemEvent {
 	id: string;
 	type: SystemEventType;
 	timestamp: string;
+	/** Client message ID for the user turn that caused this event. */
+	turnId?: string;
 	// For agent switches
 	agentName?: string;
 	agentId?: string;

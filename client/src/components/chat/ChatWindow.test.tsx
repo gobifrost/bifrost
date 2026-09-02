@@ -293,6 +293,47 @@ describe("ChatWindow — messages render & send", () => {
 		expect(screen.getByText("pong")).toBeInTheDocument();
 	});
 
+	it("keeps routed activity after its user message despite clock skew", () => {
+		messagesRef.data = [
+			{
+				id: "user-1",
+				role: "user",
+				content: "Route this",
+				created_at: "2026-04-20T00:00:20Z",
+			},
+			{
+				id: "assistant-1",
+				role: "assistant",
+				content: "Done",
+				duration_ms: 1_000,
+				created_at: "2026-04-20T00:00:10Z",
+			},
+		];
+		storeSelectors.systemEventsByConversation = {
+			"c-1": [
+				{
+					id: "route-1",
+					type: "agent_switch",
+					turnId: "user-1",
+					timestamp: "2026-04-20T00:00:05Z",
+				},
+			],
+		};
+
+		const { container } = renderWithProviders(
+			<ChatWindow conversationId="c-1" />,
+		);
+		const renderedItems = Array.from(
+			container.querySelectorAll("[data-marker]"),
+		).map((element) => element.getAttribute("data-marker"));
+
+		expect(renderedItems).toEqual([
+			"chat-message",
+			"sys-event",
+			"chat-message",
+		]);
+	});
+
 	it("uses the persisted run summary duration even when its content is empty", () => {
 		messagesRef.data = [
 			{

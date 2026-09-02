@@ -114,33 +114,34 @@ export function mergeMessages(
 /**
  * Integrate incoming messages into existing array
  * - Deduplication is now handled by the chat store's dedupStateByConversation
- * - This function just merges and sorts for consistency
+ * - API order is authoritative; local-only messages retain arrival order
  */
 export function integrateMessages(
   existing: UnifiedMessage[],
   incoming: UnifiedMessage[]
 ): UnifiedMessage[] {
-  const byId = new Map<string, UnifiedMessage>();
+  // The API already returns messages in authoritative sequence order, while
+  // the local store records streamed messages in arrival order. Preserve both
+  // orders instead of comparing browser and server clocks: clock skew can put
+  // a response before the user message that caused it.
+  const integrated = existing.map((message) => ({ ...message }));
+  const indexById = new Map(
+    integrated.map((message, index) => [message.id, index])
+  );
 
-  // Index existing messages
-  existing.forEach((m) => {
-    byId.set(m.id, m);
-  });
-
-  // Merge incoming (updates existing, adds new)
-  incoming.forEach((m) => {
-    const existingMsg = byId.get(m.id);
-    if (existingMsg) {
-      byId.set(m.id, mergeMessages(existingMsg, m));
-    } else {
-      byId.set(m.id, m);
+  incoming.forEach((message) => {
+    const existingIndex = indexById.get(message.id);
+    if (existingIndex === undefined) {
+      indexById.set(message.id, integrated.length);
+      integrated.push(message);
+      return;
     }
+
+    integrated[existingIndex] = mergeMessages(
+      integrated[existingIndex],
+      message
+    );
   });
 
-  // Sort by createdAt + ID for stability
-  return Array.from(byId.values()).sort((a, b) => {
-    const timeDiff =
-      new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-    return timeDiff !== 0 ? timeDiff : a.id.localeCompare(b.id);
-  });
+  return integrated;
 }

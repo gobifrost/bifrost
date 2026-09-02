@@ -74,6 +74,9 @@ import { useChatStream } from "./useChatStream";
 
 beforeEach(() => {
 	vi.clearAllMocks();
+	vi.mocked(webSocketService.isConnected).mockReturnValue(true);
+	vi.mocked(webSocketService.connectToChat).mockResolvedValue(undefined);
+	vi.mocked(webSocketService.sendChatMessage).mockReturnValue(true);
 	mocks.callbacks.chat = undefined;
 	mocks.callbacks.job = undefined;
 	mocks.store.messagesByConversation = {};
@@ -88,7 +91,67 @@ beforeEach(() => {
 	);
 });
 
-describe("useChatStream video jobs", () => {
+describe("useChatStream", () => {
+	it("renders and subscribes the first message before waiting for transport", async () => {
+		const queryClient = new QueryClient();
+		const wrapper = ({ children }: { children: ReactNode }) => (
+			<QueryClientProvider client={queryClient}>
+				{children}
+			</QueryClientProvider>
+		);
+		let resolveConnection: (() => void) | undefined;
+		vi.mocked(webSocketService.isConnected).mockReturnValue(false);
+		vi.mocked(webSocketService.connectToChat).mockImplementation(
+			() =>
+				new Promise<void>((resolve) => {
+					resolveConnection = resolve;
+				}),
+		);
+		const { result } = renderHook(
+			() => useChatStream({ conversationId: undefined }),
+			{ wrapper },
+		);
+
+		let sendPromise: Promise<void> | undefined;
+		act(() => {
+			sendPromise = result.current.sendMessage("hello", "conversation-1");
+		});
+
+		expect(mocks.store.addMessage).toHaveBeenCalledWith(
+			"conversation-1",
+			expect.objectContaining({ content: "hello", isOptimistic: true }),
+		);
+		expect(mocks.store.startStreaming).toHaveBeenCalledOnce();
+		expect(webSocketService.onChatStream).toHaveBeenCalledWith(
+			"conversation-1",
+			expect.any(Function),
+		);
+		expect(webSocketService.sendChatMessage).not.toHaveBeenCalled();
+
+		act(() => {
+			mocks.callbacks.chat?.({
+				type: "agent_switch",
+				conversation_id: "conversation-1",
+				agent_switch: {
+					agent_name: "Router target",
+					agent_id: "agent-1",
+					reason: "routed",
+				},
+			});
+		});
+		expect(mocks.store.addSystemEvent).toHaveBeenCalledWith(
+			"conversation-1",
+			expect.objectContaining({
+				type: "agent_switch",
+				turnId: expect.any(String),
+			}),
+		);
+
+		resolveConnection?.();
+		await sendPromise;
+		expect(webSocketService.sendChatMessage).toHaveBeenCalledOnce();
+	});
+
 	it("does not end an active run when the new conversation subscription mounts", async () => {
 		const queryClient = new QueryClient();
 		const wrapper = ({ children }: { children: ReactNode }) => (

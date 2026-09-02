@@ -65,6 +65,9 @@ export function useChatStream({
 	const handleChunkRef = useRef<((chunk: ChatStreamChunk) => void) | null>(
 		null,
 	);
+	const chatUnsubscribeRef = useRef<(() => void) | null>(null);
+	const subscribedConversationIdRef = useRef<string | null>(null);
+	const activeUserMessageIdRef = useRef<string | null>(null);
 	const artifactJobUnsubscribersRef = useRef(new Map<string, () => void>());
 	const runAssistantMessageIdRef = useRef<string | null>(null);
 
@@ -97,10 +100,7 @@ export function useChatStream({
 	// Handle incoming chat stream chunks
 	const handleChunk = useCallback(
 		(chunk: ChatStreamChunk) => {
-			const observeArtifactJob = (
-				result: unknown,
-				messageId: string,
-			) => {
+			const observeArtifactJob = (result: unknown, messageId: string) => {
 				if (!result || typeof result !== "object") return;
 				const job = result as {
 					type?: string;
@@ -154,24 +154,30 @@ export function useChatStream({
 									"Open the notification for details.",
 							});
 						}
-						artifactJobUnsubscribersRef.current
-							.get(job.job_id!)?.();
+						artifactJobUnsubscribersRef.current.get(
+							job.job_id!,
+						)?.();
 						artifactJobUnsubscribersRef.current.delete(job.job_id!);
 						if (convId) {
-							useChatStore.getState().updateMessage(convId, messageId, {
-								tool_state:
-									update.status === "succeeded"
-										? "completed"
-										: "error",
-								tool_result: {
-									...job,
-									status: update.status,
-								},
-							});
+							useChatStore
+								.getState()
+								.updateMessage(convId, messageId, {
+									tool_state:
+										update.status === "succeeded"
+											? "completed"
+											: "error",
+									tool_result: {
+										...job,
+										status: update.status,
+									},
+								});
 						}
 					},
 				);
-				artifactJobUnsubscribersRef.current.set(job.job_id, unsubscribe);
+				artifactJobUnsubscribersRef.current.set(
+					job.job_id,
+					unsubscribe,
+				);
 			};
 
 			// Handle title update - refresh conversations to show new title
@@ -256,7 +262,8 @@ export function useChatStream({
 
 					// Create assistant message (with server-provided ID and current timestamp)
 					if (chunk.assistant_message_id) {
-						runAssistantMessageIdRef.current = chunk.assistant_message_id;
+						runAssistantMessageIdRef.current =
+							chunk.assistant_message_id;
 						const assistantMessage: UnifiedMessage = {
 							id: chunk.assistant_message_id,
 							conversation_id: convId,
@@ -367,8 +374,7 @@ export function useChatStream({
 				case "artifact_ready": {
 					const convId = currentConversationIdRef.current;
 					const artifact = chunk.artifact;
-					if (!convId || !chunk.message_id || !artifact?.id)
-						break;
+					if (!convId || !chunk.message_id || !artifact?.id) break;
 					const messages =
 						useChatStore.getState().messagesByConversation[
 							convId
@@ -377,9 +383,7 @@ export function useChatStream({
 						(item) => item.id === chunk.message_id,
 					);
 					const attachments = message?.attachments ?? [];
-					if (
-						!attachments.some((item) => item.id === artifact.id)
-					) {
+					if (!attachments.some((item) => item.id === artifact.id)) {
 						useChatStore
 							.getState()
 							.updateMessage(convId, chunk.message_id, {
@@ -484,7 +488,9 @@ export function useChatStream({
 						: null;
 
 					const summaryMessageId =
-						chunk.message_id || runAssistantMessageIdRef.current || streamingId;
+						chunk.message_id ||
+						runAssistantMessageIdRef.current ||
+						streamingId;
 
 					// The final segment may have a temporary client ID when it starts
 					// after tool execution. Replace that ID with the persisted summary
@@ -494,7 +500,8 @@ export function useChatStream({
 						useChatStore
 							.getState()
 							.updateMessage(convId, messageToFinalize, {
-								...(summaryMessageId && messageToFinalize !== summaryMessageId
+								...(summaryMessageId &&
+								messageToFinalize !== summaryMessageId
 									? { id: summaryMessageId }
 									: {}),
 								isStreaming: false,
@@ -512,6 +519,7 @@ export function useChatStream({
 							.setStreamingMessageIdForConversation(convId, null);
 					}
 					runAssistantMessageIdRef.current = null;
+					activeUserMessageIdRef.current = null;
 
 					completeStream();
 
@@ -544,6 +552,8 @@ export function useChatStream({
 								id: `event-${Date.now()}`,
 								type: "agent_switch",
 								timestamp: new Date().toISOString(),
+								turnId:
+									activeUserMessageIdRef.current ?? undefined,
 								agentName: chunk.agent_switch.agent_name,
 								agentId: chunk.agent_switch.agent_id,
 								reason:
@@ -586,12 +596,14 @@ export function useChatStream({
 							id: `error-${Date.now()}`,
 							type: "error",
 							timestamp: new Date().toISOString(),
+							turnId: activeUserMessageIdRef.current ?? undefined,
 							error: errorMsg,
 						});
 					}
 
 					// Clear any pending question on error
 					setPendingQuestion(null);
+					activeUserMessageIdRef.current = null;
 					resetStream();
 					break;
 				}
@@ -615,6 +627,35 @@ export function useChatStream({
 		handleChunkRef.current = handleChunk;
 	}, [handleChunk]);
 
+	const subscribeToConversation = useCallback(
+		(targetConversationId: string) => {
+			currentConversationIdRef.current = targetConversationId;
+			if (
+				subscribedConversationIdRef.current === targetConversationId &&
+				chatUnsubscribeRef.current
+			) {
+				return;
+			}
+
+			chatUnsubscribeRef.current?.();
+			chatUnsubscribeRef.current = webSocketService.onChatStream(
+				targetConversationId,
+				(chunk) => handleChunkRef.current?.(chunk),
+			);
+			subscribedConversationIdRef.current = targetConversationId;
+		},
+		[],
+	);
+
+	useEffect(
+		() => () => {
+			chatUnsubscribeRef.current?.();
+			chatUnsubscribeRef.current = null;
+			subscribedConversationIdRef.current = null;
+		},
+		[],
+	);
+
 	// Send message via WebSocket
 	const sendMessage = useCallback(
 		async (
@@ -628,11 +669,6 @@ export function useChatStream({
 			if (!targetConversationId) {
 				toast.error("No conversation selected");
 				return;
-			}
-
-			// Ensure connected
-			if (!webSocketService.isConnected()) {
-				await webSocketService.connectToChat(targetConversationId);
 			}
 
 			// Generate stable ID for user message
@@ -651,39 +687,45 @@ export function useChatStream({
 				isOptimistic: true,
 				localId: userMessageId, // Use same ID as localId for dedup
 			};
+			activeUserMessageIdRef.current = userMessageId;
 			addMessage(targetConversationId, userMessage);
 
-			// Start streaming state (no assistant placeholder yet - created on message_start)
+			// Show the sent message and run state before transport setup. This is
+			// especially important for the first turn, when the conversation channel
+			// does not exist until after the conversation-creation request completes.
 			startStreaming();
+			subscribeToConversation(targetConversationId);
 
-			// Send the chat message with localId for deduplication
-			const sent = webSocketService.sendChatMessage(
-				targetConversationId,
-				message,
-				userMessageId,
-				attachments.map((attachment) => attachment.id),
-				modelProfileId,
-			);
-			if (!sent) {
-				try {
+			try {
+				// Install the local callback before joining the server channel so no
+				// routing or tool chunks can arrive in the gap between connect and subscribe.
+				await webSocketService.connectToChat(targetConversationId);
+
+				// Send the chat message with localId for deduplication
+				let sent = webSocketService.sendChatMessage(
+					targetConversationId,
+					message,
+					userMessageId,
+					attachments.map((attachment) => attachment.id),
+					modelProfileId,
+				);
+				if (!sent) {
 					await webSocketService.connectToChat(targetConversationId);
-					const retried = webSocketService.sendChatMessage(
+					sent = webSocketService.sendChatMessage(
 						targetConversationId,
 						message,
 						userMessageId,
 						attachments.map((attachment) => attachment.id),
 						modelProfileId,
 					);
-					if (!retried) throw new Error("WebSocket is not connected");
-				} catch (error) {
-					console.error(
-						"[useChatStream] Failed to send message:",
-						error,
-					);
-					setStreamError("Failed to send message");
-					resetStream();
-					throw error;
 				}
+				if (!sent) throw new Error("WebSocket is not connected");
+			} catch (error) {
+				console.error("[useChatStream] Failed to send message:", error);
+				setStreamError("Failed to send message");
+				activeUserMessageIdRef.current = null;
+				resetStream();
+				throw error;
 			}
 		},
 		[
@@ -692,6 +734,7 @@ export function useChatStream({
 			startStreaming,
 			setStreamError,
 			resetStream,
+			subscribeToConversation,
 		],
 	);
 
@@ -699,17 +742,13 @@ export function useChatStream({
 	useEffect(() => {
 		if (!conversationId) return;
 
-		let unsubscribe: (() => void) | null = null;
+		// Subscribe locally before joining the channel. The first message may be
+		// sent by the pre-navigation render with a conversation ID override.
+		subscribeToConversation(conversationId);
 
-		// Connect and subscribe
 		const setup = async () => {
 			try {
 				await webSocketService.connectToChat(conversationId);
-				// Subscribe to chat stream (replaces any existing callback)
-				unsubscribe = webSocketService.onChatStream(
-					conversationId,
-					(chunk) => handleChunkRef.current?.(chunk),
-				);
 				setIsConnected(true);
 			} catch (error) {
 				console.error("[useChatStream] Failed to connect:", error);
@@ -717,11 +756,7 @@ export function useChatStream({
 			}
 		};
 		setup();
-
-		return () => {
-			unsubscribe?.();
-		};
-	}, [conversationId]);
+	}, [conversationId, subscribeToConversation]);
 
 	// Track connection status from service via event subscription
 	useEffect(() => {

@@ -237,7 +237,9 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 		(profile) => profile.id === selectedModelProfileId,
 	)
 		? selectedModelProfileId
-		: (modelProfileData?.default_profile_id ?? modelProfiles[0]?.id ?? null);
+		: (modelProfileData?.default_profile_id ??
+			modelProfiles[0]?.id ??
+			null);
 
 	// Use WebSocket streaming
 	const {
@@ -277,6 +279,14 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 	const timeline = useMemo<TimelineItem[]>(() => {
 		const items: TimelineItem[] = [];
 		let currentToolGroup: MessagePublic[] = [];
+		const placedEventIds = new Set<string>();
+		const eventsByTurnId = new Map<string, SystemEvent[]>();
+		for (const event of systemEvents) {
+			if (!event.turnId) continue;
+			const turnEvents = eventsByTurnId.get(event.turnId) ?? [];
+			turnEvents.push(event);
+			eventsByTurnId.set(event.turnId, turnEvents);
+		}
 
 		const flushToolGroup = () => {
 			if (currentToolGroup.length > 0) {
@@ -304,25 +314,46 @@ export function ChatWindow({ conversationId, agentName }: ChatWindowProps) {
 					data: msg,
 					timestamp: msg.created_at,
 				});
+
+				if (msg.role === "user") {
+					const unifiedMessage = msg as UnifiedMessage;
+					const turnIds = [msg.id, unifiedMessage.localId].filter(
+						(value): value is string => Boolean(value),
+					);
+					for (const turnId of turnIds) {
+						for (const event of eventsByTurnId.get(turnId) ?? []) {
+							if (placedEventIds.has(event.id)) continue;
+							items.push({
+								type: "event",
+								data: event,
+								timestamp: event.timestamp,
+							});
+							placedEventIds.add(event.id);
+						}
+					}
+				}
 			}
 		}
 		flushToolGroup();
 
-		// Add system events
+		// Events created before turn anchoring was available retain their timestamp
+		// position. Anchored events are already placed immediately after the user
+		// message that caused them, independent of browser/server clock skew.
 		for (const event of systemEvents) {
-			items.push({
+			if (placedEventIds.has(event.id)) continue;
+			const eventItem: TimelineItem = {
 				type: "event",
 				data: event,
 				timestamp: event.timestamp,
-			});
+			};
+			const insertionIndex = items.findIndex(
+				(item) =>
+					new Date(item.timestamp).getTime() >
+					new Date(event.timestamp).getTime(),
+			);
+			if (insertionIndex === -1) items.push(eventItem);
+			else items.splice(insertionIndex, 0, eventItem);
 		}
-
-		// Sort by timestamp
-		items.sort(
-			(a, b) =>
-				new Date(a.timestamp).getTime() -
-				new Date(b.timestamp).getTime(),
-		);
 
 		return items;
 	}, [messages, systemEvents]);

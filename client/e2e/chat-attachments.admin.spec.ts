@@ -225,7 +225,18 @@ test.describe("Chat attachments and model profiles", () => {
 
 		await page.getByLabel("Chat input").fill("Summarize this file");
 		await page.getByRole("button", { name: "Send message" }).click();
+		const userMessage = page.getByText("Summarize this file", {
+			exact: true,
+		});
+		await expect(userMessage).toBeVisible();
 		await expect(page.getByText("Thinking…")).toBeVisible();
+		const [userBox, activityBox] = await Promise.all([
+			userMessage.boundingBox(),
+			page.getByText("Thinking…").boundingBox(),
+		]);
+		expect(userBox).not.toBeNull();
+		expect(activityBox).not.toBeNull();
+		expect(userBox!.y).toBeLessThan(activityBox!.y);
 		await page.screenshot({
 			path: "playwright-results/screenshots/chat-thinking.png",
 			fullPage: true,
@@ -286,6 +297,12 @@ test.describe("Chat attachments and model profiles", () => {
 			}),
 		).toHaveCount(0);
 		await page.getByRole("button", { name: /Worked for 1s/i }).click();
+		await expect(
+			page.getByText("Routed to", { exact: true }),
+		).toBeVisible();
+		await expect(
+			page.getByText("Document Agent", { exact: true }),
+		).toBeVisible();
 		await page
 			.getByRole("button", { name: /create_text_artifact/i })
 			.click();
