@@ -1001,7 +1001,9 @@ class WebSocketService {
 		if (!conversationId) return;
 
 		const callback = this.chatStreamCallbacks.get(conversationId);
-		callback?.(envelope);
+		if (callback) {
+			callback(envelope);
+		}
 	}
 
 	private dispatchAppDraftUpdate(update: AppDraftUpdate) {
