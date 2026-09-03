@@ -11,6 +11,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 from uuid import UUID
 
+from shared.path_matching import path_within_any
 from shared.policies.functions import FUNCTIONS
 from src.models.contracts.policies import Expr
 
@@ -171,6 +172,10 @@ def _eval_op(
         if not isinstance(b, list):
             return False
         return a in b
+    if op == "path_within_any":
+        path = _eval_node(value[0], row, user, resolvers)
+        prefixes = _eval_node(value[1], row, user, resolvers)
+        return path_within_any(path, prefixes)
     if op == "is_null":
         return _eval_node(value, row, user, resolvers) is None
     raise ValueError(f"unknown operator {op!r}")

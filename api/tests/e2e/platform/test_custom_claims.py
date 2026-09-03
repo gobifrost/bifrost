@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -243,6 +243,119 @@ class TestCustomClaims:
 
         assert {row["data"]["title"] for row in alice_rows} == {"alice"}
         assert {row["data"]["title"] for row in bob_rows} == {"bob"}
+
+    @pytest.mark.asyncio
+    async def test_claim_scoped_file_path_reads_real_object_storage(
+        self,
+        e2e_client,
+        db_session,
+        platform_admin,
+        org_admin,
+        org1,
+        alice_user,
+        bob_user,
+    ):
+        from src.models.contracts.policies import FilePolicies
+        from src.services.file_policy_service import FilePolicyService
+
+        source_table, source_id = _create_claim_source(e2e_client, org_admin, org1)
+        claim_name = f"allowed_resource_paths_{uuid4().hex[:8]}"
+        created = e2e_client.post(
+            "/api/claims",
+            headers=org_admin.headers,
+            json={
+                "name": claim_name,
+                "type": "list",
+                "query": {
+                    "table": source_table,
+                    "where": {"eq": [{"row": "user_id"}, {"user": "user_id"}]},
+                    "select": "path_prefix",
+                },
+            },
+        )
+        assert created.status_code == 201, created.text
+
+        root = f"site-a:category-1/{uuid4().hex[:8]}"
+        allowed_prefix = f"{root}/pdf"
+        allowed_path = f"{allowed_prefix}/document-001/drawing.pdf"
+        denied_path = f"{root}/download/document-001/drawing.dwg"
+        _insert(
+            e2e_client,
+            org_admin.headers,
+            source_id,
+            {
+                "user_id": str(alice_user.user_id),
+                "path_prefix": allowed_prefix,
+            },
+        )
+
+        await FilePolicyService(db_session).upsert_policy(
+            organization_id=UUID(org1["id"]),
+            location="temp",
+            path=root,
+            policies=FilePolicies.model_validate(
+                {
+                    "policies": [
+                        {
+                            "name": "seed_objects",
+                            "actions": ["write"],
+                            "when": {"user": "is_platform_admin"},
+                        },
+                        {
+                            "name": "claim_scoped_read",
+                            "actions": ["read"],
+                            "when": {
+                                "path_within_any": [
+                                    {"file": "path"},
+                                    {"claims": claim_name},
+                                ]
+                            },
+                        },
+                    ]
+                }
+            ),
+        )
+        await db_session.commit()
+
+        for path in (allowed_path, denied_path):
+            write = e2e_client.post(
+                "/api/files/write",
+                headers=platform_admin.headers,
+                json={
+                    "path": path,
+                    "content": "synthetic document",
+                    "location": "temp",
+                    "scope": org1["id"],
+                    "mode": "cloud",
+                },
+            )
+            assert write.status_code == 204, write.text
+
+        allowed = e2e_client.post(
+            "/api/files/read",
+            headers=alice_user.headers,
+            json={
+                "path": allowed_path,
+                "location": "temp",
+                "scope": org1["id"],
+                "mode": "cloud",
+            },
+        )
+        assert allowed.status_code == 200, allowed.text
+        assert allowed.json()["content"] == "synthetic document"
+
+        for user, path in ((alice_user, denied_path), (bob_user, allowed_path)):
+            denied = e2e_client.post(
+                "/api/files/read",
+                headers=user.headers,
+                json={
+                    "path": path,
+                    "location": "temp",
+                    "scope": org1["id"],
+                    "mode": "cloud",
+                },
+            )
+            assert denied.status_code == 403, denied.text
 
     def test_delete_referenced_claim_refused(self, e2e_client, org_admin, org1):
         source_table, _source_id = _create_claim_source(e2e_client, org_admin, org1)

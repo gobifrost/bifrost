@@ -74,7 +74,6 @@ async def test_service_selects_longest_prefix_and_ignores_siblings(db_session) -
         user=_user(org.id),
     ) is False
 
-
 @pytest.mark.asyncio
 async def test_service_isolates_organization_scoped_policies(db_session) -> None:
     org_a = Organization(id=uuid4(), name=f"FilesA-{uuid4().hex[:8]}", created_by="test")
@@ -692,6 +691,66 @@ async def test_service_preresolves_custom_claims_before_evaluation(
         path="claims/denied.txt",
         user=_user(org.id),
     ) is False
+
+
+@pytest.mark.asyncio
+async def test_service_applies_one_root_policy_to_compound_claim_scopes(
+    db_session, monkeypatch
+) -> None:
+    from src.services import file_policy_service as service_module
+
+    org = Organization(id=uuid4(), name=f"Files-{uuid4().hex[:8]}", created_by="test")
+    db_session.add(org)
+    await db_session.flush()
+    service = FilePolicyService(db_session)
+    await service.upsert_policy(
+        organization_id=org.id,
+        location="documents",
+        path="",
+        policies=FilePolicies.model_validate(
+            {
+                "policies": [
+                    {
+                        "name": "claim_read",
+                        "actions": ["read"],
+                        "when": {
+                            "path_within_any": [
+                                {"file": "path"},
+                                {"claims": "allowed_resource_paths"},
+                            ]
+                        },
+                    }
+                ]
+            }
+        ),
+        created_by=uuid4(),
+    )
+
+    async def fake_preresolve(user, policies, db, org_id, solution_id=None):
+        assert org_id == org.id
+        user.claims["allowed_resource_paths"] = [
+            "site-a:category-1/pdf",
+            "site-b:category-2/pdf",
+            "site-b:category-2/download",
+        ]
+
+    monkeypatch.setattr(service_module, "preresolve_for_policies", fake_preresolve)
+    user = _user(org.id)
+
+    async def allowed(path: str) -> bool:
+        return await service.is_allowed(
+            "read",
+            organization_id=org.id,
+            location="documents",
+            path=path,
+            user=user,
+        )
+
+    assert await allowed("site-a:category-1/pdf/doc-1/file.pdf") is True
+    assert await allowed("site-a:category-1/download/doc-1/file.dwg") is False
+    assert await allowed("site-a:category-2/pdf/doc-1/file.pdf") is False
+    assert await allowed("site-annex:category-1/pdf/doc-1/file.pdf") is False
+    assert await allowed("site-b:category-2/download/doc-2/file.dwg") is True
 
 
 @pytest.mark.asyncio
